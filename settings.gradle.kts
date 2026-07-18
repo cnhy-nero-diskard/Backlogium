@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Backlogium"
 include(":app")
+include(":gamification")

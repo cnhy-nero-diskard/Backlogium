@@ -63,6 +63,25 @@ Goal: lock the rules before they're baked into a schema.
 - [ ] Polish pass: animations for quest completions, streak milestones
 - **Checkpoint:** go live, watch stats update on stream in real time
 
+## Setup
+
+### Steam credentials (`local.properties`)
+
+The Android app reads your Steam Web API key and SteamID64 at build time from
+`local.properties` (git-ignored — never committed) and exposes them through
+`BuildConfig`. Add these two lines to `local.properties` at the repo root:
+
+```properties
+steam.apiKey=YOUR_STEAM_WEB_API_KEY
+steam.steamId=YOUR_STEAMID64
+```
+
+- Get an API key at <https://steamcommunity.com/dev/apikey>.
+- Find your SteamID64 (a 17-digit number) via your profile URL or a lookup tool.
+- Both keys are optional for the build to succeed: if either is blank, the app
+  builds normally and shows a "Steam not configured" state instead of crashing.
+- Your Steam profile **and game details must be public** for playtime to be visible.
+
 ## Notes
 
 - Each phase should be testable on its own before moving to the next.
