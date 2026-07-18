@@ -18,8 +18,8 @@ val localProperties = Properties().apply {
         file.inputStream().use { load(it) }
     }
 }
-val steamApiKey: String = localProperties.getProperty("steam.apiKey", "")
-val steamId: String = localProperties.getProperty("steam.steamId", "")
+val steamApiKey: String = localProperties.getProperty("steam.apiKey", "").trim()
+val steamId: String = localProperties.getProperty("steam.steamId", "").trim()
 
 android {
     namespace = "com.example.backlogium"
