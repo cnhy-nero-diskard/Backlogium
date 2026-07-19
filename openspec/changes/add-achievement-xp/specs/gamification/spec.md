@@ -71,13 +71,13 @@ single total XP value that drives the existing level curve, without introducing 
 separate achievement-only level or progress bar.
 
 #### Scenario: Combined total XP
-- **WHEN** the engine is given both tracked minutes and a list of unlocked achievements
-- **THEN** the resulting total XP equals playtime XP plus achievement XP, and level and
-  progress-into-level are derived from that combined total using the existing level
-  curve
+- **WHEN** the engine is given both per-game playtime inputs and a list of unlocked achievements
+- **THEN** the resulting total XP equals the summed per-game playtime XP plus achievement XP,
+  and level and progress-into-level are derived from that combined total using the
+  existing level curve
 
 #### Scenario: No achievements supplied
-- **WHEN** the engine is given tracked minutes and no achievements (or omits the
+- **WHEN** the engine is given per-game playtime inputs and no achievements (or omits the
   achievements argument)
-- **THEN** the resulting total XP equals playtime XP alone, unchanged from the base
-  engine's existing behavior
+- **THEN** the resulting total XP equals the summed per-game playtime XP alone, unchanged
+  from the base engine's existing behavior

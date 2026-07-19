@@ -1,10 +1,12 @@
 ## Context
 
-The base engine (`add-gamification-engine`) computes XP from tracked minutes only:
-`xp(totalMinutes, cfg) -> XpState`. This change adds a second XP source — unlocked
-Steam achievements, weighted by rarity — that feeds into the *same* `XpState`, not a
-parallel currency. It stays inside the engine's existing constraints: pure functions,
-no clock, no I/O, no persistence, no Android/networking deps.
+The base engine (`add-gamification-engine`) computes playtime XP per game, with
+diminishing returns relative to each game's HowLongToBeat completionist average:
+`xp(games: List<GamePlaytimeInput>, cfg) -> XpState`, where `xp()` sums `gameXp(...)`
+across the supplied games before deriving level/progress. This change adds a second XP
+source — unlocked Steam achievements, weighted by rarity — that feeds into the *same*
+`XpState`, not a parallel currency. It stays inside the engine's existing constraints:
+pure functions, no clock, no I/O, no persistence, no Android/networking deps.
 
 ## Goals / Non-Goals
 
@@ -13,8 +15,9 @@ no clock, no I/O, no persistence, no Android/networking deps.
   formula, so payouts are bounded and predictable.
 - Keep achievement XP and playtime XP as one unified pool feeding the existing level
   curve — no separate "achievement level."
-- Preserve backward compatibility: existing callers of `xp(totalMinutes, cfg)` keep
-  working unchanged.
+- Compose with the base engine's per-game `xp(games, cfg)` signature as a single
+  additional defaulted parameter, keeping one XP entry point rather than a parallel
+  `xpWithAchievements()` path.
 
 **Non-Goals:**
 - Fetching `GetGlobalAchievementPercentagesForApp` or per-player unlock state (owned by
@@ -26,21 +29,24 @@ no clock, no I/O, no persistence, no Android/networking deps.
 ## Boundary
 
 ```
-   steam-sync                    gamification engine                app-ui
-   ──────────                    ───────────────────                ──────
-   fetches achievement    ─▶  AchievementInput(id, unlocked,  ─▶  renders XP bar,
-   unlock state +             globalUnlockPercent)                 rarity badges,
-   global percentages         │  (pure functions)                  level, quest, streak
-   (per player, per app)      ▼
-                    tierFor(percent) -> RarityTier
-                    achievementXp(achievements, cfg) -> Int
-                    xp(totalMinutes, achievements, cfg) -> XpState
+   steam-sync                       gamification engine                app-ui
+   ──────────                       ───────────────────                ──────
+   supplies per-game minutes +  ─▶  GamePlaytimeInput(gameId,    ─▶  renders XP bar,
+   HLTB completionist averages      minutesPlayed,                    rarity badges,
+                                     completionistAverageMinutes)      level, quest, streak
+   fetches achievement          ─▶  AchievementInput(id, unlocked,
+   unlock state + global             globalUnlockPercent)
+   percentages (per player,          │  (pure functions)
+   per app)                          ▼
+                       tierFor(percent) -> RarityTier
+                       achievementXp(achievements, cfg) -> Int
+                       xp(games, achievements, cfg) -> XpState
                               │
                     app persists the returned XpState (Room)
 ```
 
-The engine never reaches out for rarity data; the caller supplies it per achievement,
-same pattern as `DayInput` for minutes.
+The engine never reaches out for rarity data (or HLTB data); the caller supplies both
+per achievement and per game, same pattern as the base engine's `GamePlaytimeInput`.
 
 ## Public surface (illustrative, extends the base engine)
 
@@ -63,13 +69,14 @@ data class RuleConfig(
 )
 
 object Gamification {
-    // ...existing functions unchanged...
+    // ...existing functions unchanged (including gameXp, per-game diminishing returns)...
 
     fun tierFor(globalUnlockPercent: Double): RarityTier
     fun achievementXp(achievements: List<AchievementInput>, cfg: RuleConfig = RuleConfig()): Int
 
-    // Extends the existing signature with a default empty list — old call sites unaffected.
-    fun xp(totalMinutes: Int, achievements: List<AchievementInput> = emptyList(), cfg: RuleConfig = RuleConfig()): XpState
+    // Extends the base engine's per-game signature with a defaulted empty list — no
+    // existing call site (both changes are still unimplemented) requires modification.
+    fun xp(games: List<GamePlaytimeInput>, achievements: List<AchievementInput> = emptyList(), cfg: RuleConfig = RuleConfig()): XpState
 }
 ```
 
@@ -86,9 +93,14 @@ tierFor(percent):
 achievementXp(achievements, cfg) =
   sum over unlocked achievements of xpFor(tierFor(a.globalUnlockPercent), cfg)
 
-totalXp = (totalMinutes * cfg.xpPerMinute) + achievementXp(achievements, cfg)
+totalXp = Σ gameXp(g.minutesPlayed, g.completionistAverageMinutes, cfg) over games
+          + achievementXp(achievements, cfg)
 level, xpIntoLevel, xpForNext  <- unchanged, derived from totalXp exactly as today
 ```
+
+Playtime XP itself is unchanged by this proposal — it's still the base engine's
+per-game diminishing-returns sum. Achievement XP simply adds one more term to the same
+total before the level curve is applied.
 
 Boundary values belong to the more-common (higher) tier: exactly 50% is `COMMON`,
 exactly 20% is `UNCOMMON`, exactly 5% is `RARE`, exactly 1% is `EPIC`. Locked
@@ -114,9 +126,12 @@ achievements contribute zero regardless of rarity.
   progress bar. Simpler mental model for the player and reuses the existing level math
   unchanged.
 - **Additive signature change to `xp()`.** Adding `achievements` as a defaulted
-  parameter (rather than a new `xpWithAchievements()` function) keeps one XP entry
-  point and avoids two divergent code paths computing "total XP" differently. Existing
-  callers passing only `totalMinutes` are unaffected.
+  parameter alongside the base engine's `games: List<GamePlaytimeInput>` (rather than a
+  new `xpWithAchievements()` function) keeps one XP entry point and avoids two
+  divergent code paths computing "total XP" differently. Neither this change nor
+  `add-gamification-engine` is implemented yet, so there's no shipped call site to
+  preserve — the defaulted parameter is chosen for a clean single entry point going
+  forward, not backward compatibility.
 
 ## Risks / Trade-offs
 
@@ -137,8 +152,9 @@ achievements contribute zero regardless of rarity.
 ## Migration Plan
 
 Not applicable — additive change to a not-yet-archived capability (`gamification`) with
-no persisted schema or shipped call sites yet. `xp()` gains a defaulted parameter, so no
-existing call site requires modification.
+no persisted schema or shipped call sites yet. `xp()` gains a defaulted `achievements`
+parameter on top of the base engine's `games`-based signature, so no existing call site
+requires modification.
 
 ## Open Questions
 

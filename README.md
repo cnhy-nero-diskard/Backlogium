@@ -93,9 +93,23 @@ curve: `xpAt(L) = 50·(L−1)·L` (L2 at 100 XP, L3 at 300 XP, L4 at 600 XP, ...
 
 All constants (`xpPerMinute`, the zero-point multiple, the decay exponent, level base)
 are tunable, not hardcoded. Full rules, rationale, and edge cases live in
-[`openspec/changes/add-gamification-engine`](openspec/changes/add-gamification-engine);
-rarity-tiered achievement XP is proposed separately in
-[`openspec/changes/add-achievement-xp`](openspec/changes/add-achievement-xp).
+[`openspec/changes/add-gamification-engine`](openspec/changes/add-gamification-engine).
+
+### Achievement XP (proposed, not yet merged)
+
+A separate proposal, [`openspec/changes/add-achievement-xp`](openspec/changes/add-achievement-xp),
+adds a second, additive term for unlocked Steam achievements, weighted by rarity tier
+(Steam's global unlock percentage — `COMMON`/`UNCOMMON`/`RARE`/`EPIC`/`LEGENDARY`, each
+with its own fixed XP award):
+
+```text
+totalXp = Σ gameXp(g.minutesPlayed, g.completionistAverageMinutes) over games
+          + achievementXp(unlockedAchievements)
+```
+
+One unified XP pool, not a separate achievement level — locked achievements contribute
+nothing, and rarer unlocks are worth more. This part is still a proposal, reconciled to
+compose with the per-game formula above but not yet folded into the base engine.
 
 ## Setup
 

@@ -48,7 +48,8 @@ before it touches Room schema or UI.
   achievement unlock state and pass them into the engine, and persist the resulting XP —
   that wiring and schema work is out of scope here.
 - **Sequencing:** depends on `add-gamification-engine`'s public surface (`RuleConfig`,
-  `XpState`) already existing; extends it rather than replacing it.
+  `XpState`, `GamePlaytimeInput`, and the per-game `xp(games, cfg)` shape) already
+  existing; extends it rather than replacing it.
 
 ## Non-goals
 

@@ -14,9 +14,9 @@
   (higher) tier (50/20/5/1 cut points)
 - [ ] 2.2 `achievementXp(achievements, cfg)` — sum of tiered XP for unlocked
   achievements only; locked achievements contribute zero; empty list returns zero
-- [ ] 2.3 Extend `xp(totalMinutes, cfg)` to `xp(totalMinutes, achievements = emptyList(), cfg)`,
-  combining playtime XP and achievement XP additively before deriving level via the
-  existing `levelState`
+- [ ] 2.3 Extend `xp(games, cfg)` to `xp(games, achievements = emptyList(), cfg)`,
+  combining the summed per-game playtime XP and achievement XP additively before
+  deriving level via the existing `levelState`
 
 ## 3. Tests (JVM unit)
 
@@ -24,9 +24,9 @@
   resolve to the higher tier
 - [ ] 3.2 `achievementXp`: single unlocked achievement per tier, locked achievement
   contributes zero, mixed-tier list sums correctly, empty list is zero
-- [ ] 3.3 `xp(...)` with achievements: combined total matches playtime XP + achievement
-  XP; omitting achievements matches pre-existing playtime-only behavior exactly
-  (regression check against current `xp()` tests)
+- [ ] 3.3 `xp(...)` with achievements: combined total matches summed per-game playtime XP
+  + achievement XP; omitting achievements matches the base engine's playtime-only
+  behavior exactly (regression check against `add-gamification-engine`'s `xp()` tests)
 - [ ] 3.4 `RuleConfig` overrides: non-default per-tier XP values are honored
 
 ## 4. Handoff
