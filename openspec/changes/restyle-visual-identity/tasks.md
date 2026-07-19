@@ -53,13 +53,18 @@
       invalid/unreachable URL and confirm the error state renders instead of a blank
       space; throttle network to confirm the placeholder shows during load.
 
-## 6. Streak milestone rule (gamification module)
+## 6. Streak milestone rule (app module, not the pure `:gamification` module)
 
-- [ ] 6.1 Add a documented `STREAK_MILESTONE_INTERVAL_DAYS` constant (default `7`) to
-      the `gamification` module alongside its existing tunables.
-- [ ] 6.2 Add a pure `isStreakMilestone(streakDays: Int): Boolean` function next to
-      `GamificationUpdater`.
-- [ ] 6.3 Add unit tests in the `gamification` module's test suite covering: non-
+- [ ] 6.1 Add a documented `STREAK_MILESTONE_INTERVAL_DAYS` constant (default `7`) in
+      the app module's `domain` package (e.g. a new `StreakMilestone.kt` alongside
+      `GamificationUpdater.kt`) — deliberately NOT in the pure `:gamification` module,
+      since that module's current `Gamification.kt` is a stub slated for wholesale
+      replacement by `add-gamification-engine` and new code added there risks being
+      dropped when that change lands (see design.md decision 5).
+- [ ] 6.2 Add a pure `isStreakMilestone(streakDays: Int): Boolean` function in that
+      same file.
+- [ ] 6.3 Add unit tests alongside the app module's existing domain tests (same
+      location as `GamificationUpdaterTest.kt`/`SessionDifferTest.kt`) covering: non-
       multiple-of-7 returns false, exact multiples (7, 14) return true, 0/negative
       streak returns false.
 
@@ -69,9 +74,14 @@
       streak milestone, screening for tintability toward the gold accent (per
       design.md risk on color mismatch).
 - [ ] 7.2 Bundle both chosen JSON files under `app/src/main/res/raw/`.
-- [ ] 7.3 In `HomeScreen.kt`'s Level card, detect a level increment (compare current
-      vs previous level from `HomeViewModel`'s state) and play the level-up
-      `LottieAnimation` inline when it occurs.
+- [ ] 7.3 In `HomeScreen.kt`'s Level card, seed
+      `remember { mutableStateOf(state.level) }` on first composition and, in a
+      `LaunchedEffect(state.level)`, compare the new value against the remembered one
+      to detect an increment (updating the remembered value each check); play the
+      level-up `LottieAnimation` inline when an increment is detected. `HomeUiState`
+      has no "previous level" field today, so this is tracked in Compose state, not
+      persisted (see design.md decision 6) — an increment while the app was fully
+      killed (not just backgrounded) won't animate on next launch, which is accepted.
 - [ ] 7.4 In `HomeScreen.kt`'s Streak card, call `isStreakMilestone` (task 6.2) on the
       current streak and play the milestone `LottieAnimation` inline when true.
 - [ ] 7.5 Manually verify both animations play once per triggering event (not on every

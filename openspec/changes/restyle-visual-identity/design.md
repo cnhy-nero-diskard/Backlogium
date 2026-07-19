@@ -94,21 +94,53 @@ e.g. a generic game-controller glyph from the new icon set) painters/composables
 Coil already tracks loading vs success vs error internally — this is wiring existing
 Coil capability, not building new state tracking.
 
-### 5. Streak-milestone cadence: a named constant in the `gamification` module, not the UI layer
+### 5. Streak-milestone cadence: a named constant in the app module, not the pure `:gamification` module
 The "every 7 days" check becomes a documented constant (e.g.
-`STREAK_MILESTONE_INTERVAL_DAYS = 7`) alongside the module's existing tunables, with a
-small pure function such as `isStreakMilestone(streakDays: Int): Boolean` next to
-`GamificationUpdater`. `HomeScreen.kt` calls that function to decide whether to play
-the Lottie clip; it does not reimplement the modulo check inline.
-- **Why not UI-local:** the gamification module already unit-tests exactly this kind
-  of rule (`GamificationUpdaterTest.kt`), and keeping the cadence there means it's
-  covered by the same test discipline and stays consistent with how
-  `add-achievement-xp` treats tier thresholds as configuration, not embedded literals.
+`STREAK_MILESTONE_INTERVAL_DAYS = 7`) and a small pure function
+`isStreakMilestone(streakDays: Int): Boolean`, placed in the **app module**
+(`com.example.backlogium.domain`, alongside `GamificationUpdater`) rather than inside
+the pure `:gamification` Gradle module. `HomeScreen.kt` calls that function to decide
+whether to play the Lottie clip; it does not reimplement the modulo check inline.
+- **Why not inside `:gamification`:** that module's current `Gamification.kt` is an
+  explicitly self-declared stub ("This is the stub surface consumed by the Android
+  app... [`add-gamification-engine`] owns the full, exhaustively unit-tested
+  implementation") — `add-gamification-engine` (0/14 implementation tasks done as of
+  this writing) is expected to replace that file's contents wholesale with the real
+  per-game engine, not patch it incrementally. Adding new, unrelated code to a file
+  slated for wholesale replacement risks it being silently dropped when that other
+  change lands, since whoever implements it has no reason to know about a milestone
+  helper bolted onto the stub. The app module (`GamificationUpdater` and its
+  surrounding `domain` package) is stable and untouched by that work, so it's the
+  safe home.
+- **Why not UI-local (inline in `HomeScreen.kt`):** the app module already unit-tests
+  this kind of small pure rule the same way (`GamificationUpdaterTest.kt`,
+  `SessionDifferTest.kt` in `app/src/test/.../domain/`), so placing it there keeps it
+  covered by that same test discipline instead of being an untested inline check.
 - **Why not XP-bearing:** a milestone here is purely a celebratory UI trigger — it
   does not award XP or change `XpState`, so it does not touch the additive
-  playtime+achievement XP combination `add-achievement-xp` established.
+  playtime+achievement XP combination `add-achievement-xp` established, and has no
+  reason to live inside the XP engine's boundary regardless of the module question
+  above.
 
-### 6. Lottie: `lottie-compose`, assets bundled as raw resources
+### 6. Level-up detection: track "previous level" in Compose state, not persisted
+`HomeUiState` only carries the current level — there is no "previous level" anywhere
+today. Detecting an increment is done entirely on the UI side: `HomeScreen.kt` seeds
+`remember { mutableStateOf(state.level) }` on first composition and compares against
+it inside a `LaunchedEffect(state.level)`, updating the remembered value after each
+check.
+- **Why not persisted (Room/DataStore):** this is a celebratory-only signal with no
+  gameplay consequence; persisting "last acknowledged level" would add a schema field
+  for a purely decorative trigger and contradicts this change's "no schema change"
+  migration plan (below). The trade-off is that a level-up occurring while the app is
+  fully killed (not just backgrounded) won't animate on next launch — accepted, since
+  `remember` seeding from the *current* value on first composition (rather than
+  defaulting to e.g. 0) means it never fires a false increment on cold start either.
+- **Why this doesn't depend on the real engine:** the comparison only needs two
+  `Int`s and is agnostic to how `state.level` was computed — it works identically
+  whether `state.level` comes from today's stub math or the real per-game engine
+  once `add-gamification-engine` lands.
+
+### 7. Lottie: `lottie-compose`, assets bundled as raw resources
 Add `com.airbnb.android:lottie-compose` and bundle two chosen free/community
 LottieFiles JSON animations under `res/raw/`, played via `LottieAnimation` inline
 inside the existing Level card (level-up) and Streak card (milestone) — not a
