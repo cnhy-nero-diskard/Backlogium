@@ -21,13 +21,30 @@ without altering call sites or stored schema.
 - **THEN** the engine uses documented defaults (1 XP per minute; quest = 30 min of any game)
 
 ### Requirement: XP and levels
-The engine SHALL compute total XP from tracked minutes at the configured rate and
-derive a level from total XP using a documented monotonic curve, along with progress
-toward the next level.
+The engine SHALL compute XP per game from that game's tracked minutes with diminishing
+returns relative to its HowLongToBeat completionist-average length, sum XP across all
+supplied games into a total, and derive a level from that total using a documented
+monotonic curve, along with progress toward the next level.
 
-#### Scenario: Earning XP from tracked minutes
-- **WHEN** the engine is given a total of M tracked minutes
-- **THEN** total XP is `M × rate` (default 1 XP per minute)
+#### Scenario: Early playtime earns near the base rate
+- **WHEN** a game's tracked minutes are small relative to its completionist-average length
+- **THEN** the XP earned is close to the flat `minutes × rate` amount, with only a small reduction from the taper
+
+#### Scenario: Playtime at the completionist average earns a very small marginal rate
+- **WHEN** a game's tracked minutes exactly equal its completionist-average length
+- **THEN** the marginal XP rate at that point is reduced to a documented small fraction of the base rate, per the configured decay curve
+
+#### Scenario: Playtime at or beyond twice the completionist average earns no further XP
+- **WHEN** a game's tracked minutes reach or exceed twice its completionist-average length
+- **THEN** no additional XP is earned for minutes at or beyond that point, and total XP for that game does not increase further
+
+#### Scenario: Missing completionist-average data
+- **WHEN** a game has no completionist-average length available
+- **THEN** that game's XP is computed at the flat, uncapped rate (`minutes × rate`), with no taper applied
+
+#### Scenario: Total XP across a library
+- **WHEN** the engine is given tracked minutes and completionist-average lengths for multiple games
+- **THEN** total XP is the sum of each game's individually computed XP
 
 #### Scenario: Deriving level and progress
 - **WHEN** total XP is provided
