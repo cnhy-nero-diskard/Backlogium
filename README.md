@@ -31,7 +31,8 @@ Goal: prove reliable access to your own data before building anything on top.
 ### Phase 2 — Gamification model (design, not code)
 Goal: lock the rules before they're baked into a schema.
 
-- [ ] XP rules: playtime-based, milestone-based, or hybrid
+- [x] XP rules: playtime-based, with diminishing returns per game (see
+  [Gamification rules](#gamification-rules-locked) below)
 - [ ] "Goal games" definition — manual tag vs. auto-detected via time-to-beat threshold
 - [ ] Quests/streaks — daily targets, weekly goals, what breaks a streak
 - [ ] Sketch of session summary / focus score
@@ -62,6 +63,39 @@ Goal: lock the rules before they're baked into a schema.
 - [ ] Add as an OBS Browser Source, position/style it
 - [ ] Polish pass: animations for quest completions, streak milestones
 - **Checkpoint:** go live, watch stats update on stream in real time
+
+## Gamification rules (locked)
+
+### The formula
+
+```text
+gameXp(M, T) = xpPerMinute · (Z / (k+1)) · (1 − (1 − min(M,Z)/Z)^(k+1))
+
+where:
+  T = completionistAverageMinutes   (HowLongToBeat completionist average, in minutes)
+  Z = 2.0 · T                       (zero point: 2× the average earns nothing further)
+  k = 4                             (decay exponent)
+```
+
+Playtime XP has diminishing returns **per game**, relative to that game's HowLongToBeat
+completionist-average length — grinding one game well past a completionist's expected
+time stops paying out, instead of XP scaling with minutes forever.
+
+- Early playtime earns close to the flat rate (1 XP/minute by default).
+- At exactly the completionist average (`M = T`), the marginal rate has tapered to a
+  very small fraction of the base rate (`0.5⁴ = 6.25%`).
+- At twice the completionist average (`M = 2T`) and beyond, that game earns **zero**
+  further XP.
+- Games with no HowLongToBeat data fall back to the flat, uncapped rate.
+
+Total XP is the sum of `gameXp(...)` across a player's library, feeding the same level
+curve: `xpAt(L) = 50·(L−1)·L` (L2 at 100 XP, L3 at 300 XP, L4 at 600 XP, ...).
+
+All constants (`xpPerMinute`, the zero-point multiple, the decay exponent, level base)
+are tunable, not hardcoded. Full rules, rationale, and edge cases live in
+[`openspec/changes/add-gamification-engine`](openspec/changes/add-gamification-engine);
+rarity-tiered achievement XP is proposed separately in
+[`openspec/changes/add-achievement-xp`](openspec/changes/add-achievement-xp).
 
 ## Setup
 
