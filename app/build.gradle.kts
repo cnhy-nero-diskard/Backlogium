@@ -106,6 +106,10 @@ dependencies {
     // Image loading
     implementation(libs.coil.compose)
 
+    // Visual identity (restyle-visual-identity)
+    implementation(libs.lottie.compose)
+    implementation(libs.compose.icons.tabler)
+
     // Tests
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

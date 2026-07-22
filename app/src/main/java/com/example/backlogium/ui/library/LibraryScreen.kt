@@ -1,5 +1,7 @@
 package com.example.backlogium.ui.library
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,8 +13,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -25,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -32,9 +37,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.KeyboardOptions
-import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.util.UiFormat
+import compose.icons.TablerIcons
+import compose.icons.tablericons.DeviceGamepad
 import kotlin.math.roundToInt
 
 /** Mutable dialog state: which game is being edited and whether it is already a goal. */
@@ -193,10 +200,37 @@ private fun BacklogGameRow(game: BacklogGameUi, onClick: () -> Unit) {
 
 @Composable
 private fun GameIcon(iconUrl: String) {
-    AsyncImage(
+    val shape = RoundedCornerShape(8.dp)
+    SubcomposeAsyncImage(
         model = iconUrl,
         contentDescription = null,
-        modifier = Modifier.size(40.dp),
+        modifier = Modifier
+            .size(40.dp)
+            .clip(shape),
+        // Themed placeholder while the Steam CDN thumbnail loads.
+        loading = {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            )
+        },
+        // Themed fallback (generic controller glyph) when the image fails to load.
+        error = {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = TablerIcons.DeviceGamepad,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+        },
     )
 }
 
