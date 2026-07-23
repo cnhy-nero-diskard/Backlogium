@@ -1,6 +1,7 @@
 package com.example.backlogium.ui.home
 
 import androidx.annotation.RawRes
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -30,10 +32,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.SubcomposeAsyncImage
 import com.airbnb.lottie.compose.LottieAnimation
 import com.airbnb.lottie.compose.LottieCompositionSpec
 import com.airbnb.lottie.compose.animateLottieCompositionAsState
@@ -45,6 +49,7 @@ import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.Clock
+import compose.icons.tablericons.DeviceGamepad
 import compose.icons.tablericons.Flame
 
 @Composable
@@ -89,6 +94,15 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        // "Now playing" banner: conditionally composed so it adds no layout when not in-game.
+        val nowPlayingName = state.nowPlayingName
+        if (state.isInGame && nowPlayingName != null) {
+            NowPlayingBanner(
+                name = nowPlayingName,
+                iconUrl = state.nowPlayingIconUrl,
+            )
+        }
+
         state.lastSyncError?.let { error ->
             Card(
                 colors = CardDefaults.cardColors(
@@ -232,6 +246,76 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
                 }
             }
         }
+    }
+}
+
+/**
+ * Compact "Now playing" banner shown only while the player is in-game. Displays the running
+ * game's name, plus its icon when one is resolvable (name-only otherwise, with a themed
+ * controller glyph in place of the missing art).
+ */
+@Composable
+private fun NowPlayingBanner(name: String, iconUrl: String?) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val shape = RoundedCornerShape(8.dp)
+            if (iconUrl != null) {
+                SubcomposeAsyncImage(
+                    model = iconUrl,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(shape),
+                    error = { NowPlayingIconFallback() },
+                    loading = { NowPlayingIconFallback() },
+                )
+            } else {
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(shape),
+                ) { NowPlayingIconFallback() }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = "Now playing",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NowPlayingIconFallback() {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = TablerIcons.DeviceGamepad,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
