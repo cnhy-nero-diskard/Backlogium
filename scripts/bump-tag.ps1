@@ -102,8 +102,9 @@ if (git status --porcelain) {
     Write-Warning "Working tree has uncommitted changes. The tag will still be created on the current HEAD commit ($currentCommit), not on your uncommitted changes."
 }
 
-$existingTagCommit = git rev-list -n 1 $newTag 2>$null
-if ($LASTEXITCODE -eq 0 -and $existingTagCommit) {
+$existingTag = git tag --list $newTag
+if ($existingTag) {
+    $existingTagCommit = git rev-list -n 1 $newTag
     throw "Tag '$newTag' already exists (commit $existingTagCommit). Refusing to overwrite."
 }
 
