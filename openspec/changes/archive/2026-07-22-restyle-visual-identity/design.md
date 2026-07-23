@@ -79,13 +79,26 @@ Fonts API (Google Fonts provider).
   (Library, History).
 
 ### 3. Icon set: one Compose-native icon library, not per-icon SVG imports
-Adopt a single community Compose icon library (Phosphor Icons) as a Gradle dependency
-and replace every emoji usage (nav bar: 🏠🎮📜; status glyphs: 🔥✅⏳) with icon
-composables from it.
+Adopt a single community Compose icon library as a Gradle dependency and replace every
+emoji usage (nav bar: 🏠🎮📜; status glyphs: 🔥✅⏳) with icon composables from it.
+- **Library choice — Tabler Icons (`br.com.devsrsouza.compose.icons:tabler-icons`), not
+  Phosphor:** Phosphor was the original pick, but it has no maintained Compose port on
+  Maven Central (the well-known `compose-icons` project does not publish a Phosphor
+  module, and no standalone port exists there). Tabler Icons — from the same
+  `compose-icons` project — is the chosen substitute: it is a single, consistent,
+  stroke-based family (the same rationale that motivated Phosphor) with full coverage of
+  the glyphs this change needs (Home, DeviceGamepad, History, Flame, CircleCheck, Clock,
+  CircleMinus). Concrete mapping: nav Home→`Home`, Library→`DeviceGamepad`,
+  History→`History`; streak→`Flame`; quest complete/in-progress→`CircleCheck`/`Clock`;
+  History daily met/not-met→`CircleCheck`/`CircleMinus`; game-art error fallback→
+  `DeviceGamepad`.
 - **Alternative considered:** hand-import individual SVGs as vector drawables.
   Rejected — a packaged library gives a consistent stroke weight/visual family across
   all six replacements for less effort than curating six one-off assets, and is easy
   to swap wholesale later if the aesthetic direction changes.
+- **Alternative considered:** keep Phosphor via a JitPack third-party port. Rejected for
+  v1 — adds a non-Maven-Central repository and a less-vetted dependency for no visual
+  gain over Tabler's equally clean stroke family.
 
 ### 4. Game-art states: Coil's built-in placeholder/error slots, no new state machine
 `LibraryScreen.kt`'s `GameIcon` moves from a bare `AsyncImage(model = iconUrl, ...)` to

@@ -1,5 +1,7 @@
 package com.example.backlogium.ui.library
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,11 +13,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -25,23 +27,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.text.KeyboardOptions
-import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.util.UiFormat
-import kotlin.math.roundToInt
+import compose.icons.TablerIcons
+import compose.icons.tablericons.DeviceGamepad
 
 /** Mutable dialog state: which game is being edited and whether it is already a goal. */
 private data class GoalDialogTarget(
     val appId: Long,
     val name: String,
-    val currentTargetMinutes: Int,
     val isGoal: Boolean,
 )
 
@@ -83,7 +84,6 @@ fun LibraryScreen(viewModel: LibraryViewModel = hiltViewModel()) {
                         dialogTarget = GoalDialogTarget(
                             appId = game.appId,
                             name = game.name,
-                            currentTargetMinutes = game.targetMinutes,
                             isGoal = true,
                         )
                     },
@@ -99,7 +99,6 @@ fun LibraryScreen(viewModel: LibraryViewModel = hiltViewModel()) {
                     dialogTarget = GoalDialogTarget(
                         appId = game.appId,
                         name = game.name,
-                        currentTargetMinutes = 0,
                         isGoal = false,
                     )
                 },
@@ -111,8 +110,8 @@ fun LibraryScreen(viewModel: LibraryViewModel = hiltViewModel()) {
         GoalDialog(
             target = target,
             onDismiss = { dialogTarget = null },
-            onSave = { minutes ->
-                viewModel.tagGoal(target.appId, minutes)
+            onTag = {
+                viewModel.tagGoal(target.appId)
                 dialogTarget = null
             },
             onUntag = {
@@ -147,18 +146,10 @@ private fun GoalGameRow(game: GoalGameUi, onClick: () -> Unit) {
         ) {
             GameIcon(game.iconUrl)
             Spacer(Modifier.width(12.dp))
-            Column(Modifier.fillMaxWidth()) {
+            Column {
                 Text(game.name, style = MaterialTheme.typography.bodyLarge)
-                Spacer(Modifier.height(4.dp))
-                LinearProgressIndicator(
-                    progress = { game.progress },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(2.dp))
                 Text(
-                    text = "${UiFormat.minutes(game.playtimeForever)} / " +
-                        "${UiFormat.minutes(game.targetMinutes)} " +
-                        "(${(game.progress * 100).roundToInt()}%)",
+                    text = UiFormat.minutes(game.playtimeForever) + " played",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -193,55 +184,73 @@ private fun BacklogGameRow(game: BacklogGameUi, onClick: () -> Unit) {
 
 @Composable
 private fun GameIcon(iconUrl: String) {
-    AsyncImage(
+    val shape = RoundedCornerShape(8.dp)
+    SubcomposeAsyncImage(
         model = iconUrl,
         contentDescription = null,
-        modifier = Modifier.size(40.dp),
+        modifier = Modifier
+            .size(40.dp)
+            .clip(shape),
+        // Themed placeholder while the Steam CDN thumbnail loads.
+        loading = {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            )
+        },
+        // Themed fallback (generic controller glyph) when the image fails to load.
+        error = {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = TablerIcons.DeviceGamepad,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+        },
     )
 }
 
+/**
+ * Confirm marking or unmarking a game as a goal. No typed target is collected (restyle-fixes):
+ * completion lengths will come from HowLongToBeat, so the dialog is purely a flag toggle.
+ */
 @Composable
 private fun GoalDialog(
     target: GoalDialogTarget,
     onDismiss: () -> Unit,
-    onSave: (Int) -> Unit,
+    onTag: () -> Unit,
     onUntag: () -> Unit,
 ) {
-    var text by remember {
-        mutableStateOf(if (target.currentTargetMinutes > 0) target.currentTargetMinutes.toString() else "")
-    }
-    val parsed = text.toIntOrNull()
-
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (target.isGoal) "Edit goal" else "Set as goal") },
+        title = { Text(if (target.isGoal) "Remove goal" else "Set as goal") },
         text = {
-            Column {
-                Text(target.name, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it.filter(Char::isDigit) },
-                    label = { Text("Target (minutes)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                )
-            }
+            Text(
+                text = if (target.isGoal) {
+                    "Remove \"${target.name}\" from your goal games?"
+                } else {
+                    "Mark \"${target.name}\" as a goal game?"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
         },
         confirmButton = {
-            TextButton(
-                onClick = { parsed?.let(onSave) },
-                enabled = parsed != null && parsed > 0,
-            ) {
-                Text("Save")
+            if (target.isGoal) {
+                TextButton(onClick = onUntag) { Text("Remove") }
+            } else {
+                TextButton(onClick = onTag) { Text("Set goal") }
             }
         },
         dismissButton = {
-            if (target.isGoal) {
-                TextButton(onClick = onUntag) { Text("Untag") }
-            } else {
-                TextButton(onClick = onDismiss) { Text("Cancel") }
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
 }

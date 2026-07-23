@@ -25,7 +25,8 @@ same components are being touched anyway.
 - Introduce a distinct display font for large numeral moments only (Level N, streak
   count, XP totals) via `Type.kt`; body text stays on `FontFamily.Default`.
 - Replace all emoji placeholders (nav bar icons and status glyphs: 🏠🎮📜🔥✅⏳) app-wide
-  with a single icon set (Phosphor Icons, Compose port).
+  with a single icon set (Tabler Icons, Compose port — substituted for Phosphor, which has
+  no Compose port on Maven Central; see design.md decision 3).
 - Define loading / loaded / error states for the 40dp Steam CDN game-art thumbnails on
   the Library screen (currently undefined, per `docs/ui-screens-descriptor.md`).
 - Add inline Lottie celebratory animations at two triggers, using free/community
@@ -56,7 +57,9 @@ same components are being touched anyway.
   triggers), `ui/library/LibraryScreen.kt` (game row icons + new loading/error states),
   `ui/history/HistoryScreen.kt` and the bottom navigation (emoji → icon-set swap),
   `ui/components/EmptyState.kt` (candidate for an icon per the descriptor's note).
-- **New dependency:** a Lottie-for-Compose library and a Compose Phosphor Icons port.
+- **New dependency:** a Lottie-for-Compose library (`com.airbnb.android:lottie-compose`) and
+  a Compose icon library (`br.com.devsrsouza.compose.icons:tabler-icons`, substituting for
+  Phosphor).
 - **Sequencing:** builds on `add-android-steam-app` (in progress, 35/39 tasks) for the
   screens being restyled, and on `add-gamification-engine` (done) for the
   `currentStreak`/level data the new triggers read. Does not depend on
