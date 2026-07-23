@@ -1,10 +1,12 @@
 package com.example.backlogium.domain
 
+import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.gamification.AchievementInput
 import com.example.backlogium.gamification.DayInput
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.GamePlaytimeInput
@@ -28,6 +30,7 @@ class GamificationUpdater @Inject constructor(
     private val dailyProgressDao: DailyProgressDao,
     private val playerProfileDao: PlayerProfileDao,
     private val hltbDataDao: HltbDataDao,
+    private val achievementDao: AchievementDao,
 ) {
 
     /**
@@ -45,7 +48,17 @@ class GamificationUpdater @Inject constructor(
                 completionistAverageMinutes = hltbDataDao.getByAppId(row.appId)?.completionistMinutes,
             )
         }
-        val xpState = Gamification.xp(games, cfg = config)
+        // Unlocked achievements, rarity-tiered by their first-unlock snapshot percent (never the
+        // live one — see the add-steam-achievements rarity-drift policy). Locked/un-snapshotted
+        // achievements are excluded here and would contribute 0 XP anyway.
+        val achievements = achievementDao.getAllUnlocked().map { row ->
+            AchievementInput(
+                id = row.apiName,
+                unlocked = row.unlocked,
+                globalUnlockPercent = row.snapshotPercent,
+            )
+        }
+        val xpState = Gamification.xp(games, achievements, cfg = config)
 
         // Recompute each stored day's quest status and persist any change.
         val days = dailyProgressDao.getAllOrdered()

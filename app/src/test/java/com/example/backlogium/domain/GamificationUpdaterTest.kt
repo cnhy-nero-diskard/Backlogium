@@ -1,10 +1,14 @@
 package com.example.backlogium.domain
 
+import com.example.backlogium.data.local.dao.AchievementCounts
+import com.example.backlogium.data.local.dao.AchievementDao
+import com.example.backlogium.data.local.dao.AchievementFetchedAt
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameTrackedMinutes
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.PlayerProfile
@@ -45,8 +49,9 @@ class GamificationUpdaterTest {
             ),
         )
         val profileDao = FakePlayerProfileDao()
+        val achievementDao = FakeAchievementDao(emptyList()) // empty set -> playtime-only totals
 
-        val updater = GamificationUpdater(sessionDao, dailyDao, profileDao, hltbDao)
+        val updater = GamificationUpdater(sessionDao, dailyDao, profileDao, hltbDao, achievementDao)
         updater.recompute(today = LocalDate.parse("2026-07-17"), config = RuleConfig())
 
         val profile = profileDao.get()!!
@@ -60,6 +65,38 @@ class GamificationUpdaterTest {
         assertTrue(dailyDao.getByDate("2026-07-15")!!.questMet)
         assertEquals(false, dailyDao.getByDate("2026-07-16")!!.questMet)
         assertTrue(dailyDao.getByDate("2026-07-17")!!.questMet)
+    }
+
+    @Test
+    fun recompute_addsAchievementXpOnTopOfPlaytimeXp() = runTest {
+        // Same 300 playtime-XP setup as above, plus one unlocked, snapshotted (rare, 5% ->
+        // 40 XP) achievement and one locked achievement (contributes nothing) -> 340 total.
+        val sessionDao = FakeSessionDao(listOf(session(minutes = 200), session(minutes = 100)))
+        val hltbDao = FakeHltbDataDao()
+        val dailyDao = FakeDailyProgressDao(listOf(DailyProgress("2026-07-17", minutesPlayed = 40)))
+        val profileDao = FakePlayerProfileDao()
+        val achievementDao = FakeAchievementDao(
+            listOf(
+                Achievement(
+                    appId = 1L,
+                    apiName = "ACH_UNLOCKED",
+                    unlocked = true,
+                    snapshotPercent = 10.0,
+                    fetchedAt = 0L,
+                ),
+                Achievement(
+                    appId = 1L,
+                    apiName = "ACH_LOCKED",
+                    unlocked = false,
+                    fetchedAt = 0L,
+                ),
+            ),
+        )
+
+        val updater = GamificationUpdater(sessionDao, dailyDao, profileDao, hltbDao, achievementDao)
+        updater.recompute(today = LocalDate.parse("2026-07-17"), config = RuleConfig())
+
+        assertEquals(340, profileDao.get()!!.totalXp)
     }
 
     private fun session(minutes: Int) = Session(
@@ -120,5 +157,16 @@ class GamificationUpdaterTest {
 
         override fun observe(): Flow<PlayerProfile?> = flowOf(profile)
         override suspend fun get(): PlayerProfile? = profile
+    }
+
+    /** Seeded, read-only stand-in: only [getAllUnlocked] is exercised by the updater. */
+    private class FakeAchievementDao(private val achievements: List<Achievement>) : AchievementDao {
+        override suspend fun upsertAll(achievements: List<Achievement>) = Unit
+        override fun observeForGame(appId: Long): Flow<List<Achievement>> = flowOf(emptyList())
+        override suspend fun getForGame(appId: Long): List<Achievement> = emptyList()
+        override fun observeCounts(): Flow<List<AchievementCounts>> = flowOf(emptyList())
+        override suspend fun fetchedAtByApp(): List<AchievementFetchedAt> = emptyList()
+        override suspend fun deleteMarker(appId: Long) = Unit
+        override suspend fun getAllUnlocked(): List<Achievement> = achievements.filter { it.unlocked }
     }
 }

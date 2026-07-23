@@ -10,10 +10,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import com.example.backlogium.ui.gamedetail.GameDetailScreen
 import com.example.backlogium.ui.history.HistoryScreen
 import com.example.backlogium.ui.home.HomeScreen
 import com.example.backlogium.ui.library.LibraryScreen
@@ -22,6 +25,10 @@ import com.example.backlogium.ui.review.HltbReviewScreen
 
 /** Route for the HLTB match-review surface — a sub-destination reached from the Library. */
 private const val ROUTE_HLTB_REVIEW = "hltb_review"
+
+/** Route for the per-game detail screen — a sub-destination reached from the Library. */
+private const val ROUTE_GAME_DETAIL = "game_detail/{appId}"
+private fun gameDetailRoute(appId: Long) = "game_detail/$appId"
 
 /** App shell: bottom navigation between Home, Library, and History. */
 @Composable
@@ -66,10 +73,17 @@ fun BacklogiumAppRoot() {
         ) {
             composable(Destination.HOME.route) { HomeScreen() }
             composable(Destination.LIBRARY.route) {
-                LibraryScreen(onOpenReview = { navController.navigate(ROUTE_HLTB_REVIEW) })
+                LibraryScreen(
+                    onOpenReview = { navController.navigate(ROUTE_HLTB_REVIEW) },
+                    onOpenGameDetail = { appId -> navController.navigate(gameDetailRoute(appId)) },
+                )
             }
             composable(Destination.HISTORY.route) { HistoryScreen() }
             composable(ROUTE_HLTB_REVIEW) { HltbReviewScreen() }
+            composable(
+                route = ROUTE_GAME_DETAIL,
+                arguments = listOf(navArgument("appId") { type = NavType.LongType }),
+            ) { GameDetailScreen() }
         }
     }
 }

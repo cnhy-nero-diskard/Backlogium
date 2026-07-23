@@ -3,6 +3,7 @@ package com.example.backlogium.di
 import android.content.Context
 import androidx.room.Room
 import com.example.backlogium.data.local.BacklogiumDatabase
+import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
@@ -23,7 +24,7 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): BacklogiumDatabase =
         Room.databaseBuilder(context, BacklogiumDatabase::class.java, BacklogiumDatabase.NAME)
-            .addMigrations(BacklogiumDatabase.MIGRATION_1_2)
+            .addMigrations(BacklogiumDatabase.MIGRATION_1_2, BacklogiumDatabase.MIGRATION_2_3)
             .fallbackToDestructiveMigration()
             .build()
 
@@ -41,4 +42,7 @@ object DatabaseModule {
 
     @Provides
     fun provideHltbDataDao(db: BacklogiumDatabase): HltbDataDao = db.hltbDataDao()
+
+    @Provides
+    fun provideAchievementDao(db: BacklogiumDatabase): AchievementDao = db.achievementDao()
 }

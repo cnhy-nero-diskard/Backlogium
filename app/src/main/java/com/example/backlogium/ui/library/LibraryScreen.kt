@@ -1,4 +1,4 @@
-package com.example.backlogium.ui.library
+﻿package com.example.backlogium.ui.library
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,6 +21,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -45,6 +46,8 @@ import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.DeviceGamepad
+import compose.icons.tablericons.DotsVertical
+import compose.icons.tablericons.Trophy
 
 /** Mutable dialog state: which game is being edited and whether it is already a goal. */
 private data class GoalDialogTarget(
@@ -56,6 +59,7 @@ private data class GoalDialogTarget(
 @Composable
 fun LibraryScreen(
     onOpenReview: () -> Unit = {},
+    onOpenGameDetail: (Long) -> Unit = {},
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -100,7 +104,8 @@ fun LibraryScreen(
             items(state.goalGames, key = { it.appId }) { game ->
                 GoalGameRow(
                     game = game,
-                    onClick = {
+                    onClick = { onOpenGameDetail(game.appId) },
+                    onManageGoal = {
                         dialogTarget = GoalDialogTarget(
                             appId = game.appId,
                             name = game.name,
@@ -115,7 +120,8 @@ fun LibraryScreen(
         items(state.backlog, key = { it.appId }) { game ->
             BacklogGameRow(
                 game = game,
-                onClick = {
+                onClick = { onOpenGameDetail(game.appId) },
+                onManageGoal = {
                     dialogTarget = GoalDialogTarget(
                         appId = game.appId,
                         name = game.name,
@@ -210,7 +216,7 @@ private fun SectionHeader(text: String) {
 }
 
 @Composable
-private fun GoalGameRow(game: GoalGameUi, onClick: () -> Unit) {
+private fun GoalGameRow(game: GoalGameUi, onClick: () -> Unit, onManageGoal: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -223,7 +229,7 @@ private fun GoalGameRow(game: GoalGameUi, onClick: () -> Unit) {
         ) {
             GameIcon(game.iconUrl)
             Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(game.name, style = MaterialTheme.typography.bodyLarge)
                 Text(
                     text = UiFormat.minutes(game.playtimeForever) + " played",
@@ -249,13 +255,17 @@ private fun GoalGameRow(game: GoalGameUi, onClick: () -> Unit) {
                 }
                 Spacer(Modifier.height(4.dp))
                 HltbStatusLabel(status = game.hltbStatus, op = game.fetchOp)
+                AchievementCountLabel(unlocked = game.achievementUnlocked, total = game.achievementTotal)
+            }
+            IconButton(onClick = onManageGoal) {
+                Icon(imageVector = TablerIcons.DotsVertical, contentDescription = "Manage goal")
             }
         }
     }
 }
 
 @Composable
-private fun BacklogGameRow(game: BacklogGameUi, onClick: () -> Unit) {
+private fun BacklogGameRow(game: BacklogGameUi, onClick: () -> Unit, onManageGoal: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -268,7 +278,7 @@ private fun BacklogGameRow(game: BacklogGameUi, onClick: () -> Unit) {
         ) {
             GameIcon(game.iconUrl)
             Spacer(Modifier.width(12.dp))
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(game.name, style = MaterialTheme.typography.bodyLarge)
                 Text(
                     text = UiFormat.minutes(game.playtimeForever) + " played",
@@ -280,6 +290,10 @@ private fun BacklogGameRow(game: BacklogGameUi, onClick: () -> Unit) {
                     Spacer(Modifier.height(4.dp))
                     HltbStatusLabel(status = game.hltbStatus, op = game.fetchOp)
                 }
+                AchievementCountLabel(unlocked = game.achievementUnlocked, total = game.achievementTotal)
+            }
+            IconButton(onClick = onManageGoal) {
+                Icon(imageVector = TablerIcons.DotsVertical, contentDescription = "Manage goal")
             }
         }
     }
@@ -342,6 +356,29 @@ private fun HltbStatusLabel(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = modifier,
+        )
+    }
+}
+
+/** Compact "unlocked / total" achievement badge; shown only once achievement data exists. */
+@Composable
+private fun AchievementCountLabel(unlocked: Int?, total: Int?) {
+    if (unlocked == null || total == null) return
+    Row(
+        modifier = Modifier.padding(top = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = TablerIcons.Trophy,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(14.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = "$unlocked / $total achievements",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
