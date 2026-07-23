@@ -57,6 +57,15 @@ unlocked achievement's tiered XP value; locked achievements SHALL NOT contribute
 - **WHEN** the engine is given an achievement marked as not unlocked
 - **THEN** that achievement contributes zero XP regardless of its global unlock percentage
 
+#### Scenario: Unlocked achievement with no global stat
+- **WHEN** an unlocked achievement has no global unlock percentage available (null)
+- **THEN** it cannot be classified into a tier and contributes zero XP, rather than
+  defaulting to any tier's award
+
+#### Scenario: Genuinely zero-percent achievement
+- **WHEN** an unlocked achievement has a global unlock percentage of exactly 0.0
+- **THEN** it is classified as `LEGENDARY` and awarded the legendary XP value
+
 #### Scenario: Multiple achievements across tiers
 - **WHEN** the engine is given several unlocked achievements spanning different rarity tiers
 - **THEN** the returned achievement XP equals the sum of each achievement's tiered XP value

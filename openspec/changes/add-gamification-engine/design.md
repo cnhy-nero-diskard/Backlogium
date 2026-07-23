@@ -155,3 +155,13 @@ Pure JVM unit tests, no instrumentation:
   open: an unresolved completionist average is common (new/obscure games,
   HowLongToBeat gaps) and shouldn't silently zero out or block XP for those games.
   Revisit if real data suggests a stricter default is better.
+- **Streak grace preserves but does not grow the streak (locked).** A day that fails
+  the quest but falls within the `streakGraceDays` allowance is *forgiven*: the current
+  streak keeps its value and grace is consumed, but the streak does **not** increment
+  for that day — only met days increment it. A met day resets the grace budget back to
+  full. Once failures exceed the grace allowance, the current streak resets to zero.
+  So with `streakGraceDays = 1`, the sequence `met, met, unmet, met` yields a current
+  streak of 3 (the gap is forgiven and the following met day extends it), not 4. This
+  matches the shipped stub's implementation and keeps grace a "don't punish one slip"
+  rule rather than a "credit the slip" rule. Default `streakGraceDays = 0` means any
+  unmet day breaks immediately.

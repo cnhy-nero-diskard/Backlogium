@@ -56,7 +56,7 @@ enum class RarityTier { COMMON, UNCOMMON, RARE, EPIC, LEGENDARY }
 data class AchievementInput(
     val id: String,
     val unlocked: Boolean,
-    val globalUnlockPercent: Double,   // 0.0 .. 100.0, from Steam's global stats
+    val globalUnlockPercent: Double?,  // 0.0 .. 100.0 from Steam; null = no global stat available
 )
 
 data class RuleConfig(
@@ -106,6 +106,12 @@ Boundary values belong to the more-common (higher) tier: exactly 50% is `COMMON`
 exactly 20% is `UNCOMMON`, exactly 5% is `RARE`, exactly 1% is `EPIC`. Locked
 achievements contribute zero regardless of rarity.
 
+A concrete `0.0` is a real percentage (genuinely ultra-rare) and tiers as `LEGENDARY`.
+A **null** `globalUnlockPercent` means Steam returned no global stat for that
+achievement — it cannot be tiered, so it contributes **zero** XP even when unlocked,
+rather than defaulting to the top tier. This keeps a missing/absent stat from silently
+paying out the maximum award.
+
 ## Decisions
 
 - **Tiers over a continuous formula.** A continuous `xp = base × (100 / percent)`
@@ -121,6 +127,12 @@ achievements contribute zero regardless of rarity.
   payout amount. Alternative considered: put boundaries in `RuleConfig` too — rejected
   for now to avoid config drift where two builds disagree on what counts as "rare";
   can be revisited if real data shows the cut points are wrong.
+- **Null rarity contributes zero; `0.0` is legendary (locked).** `globalUnlockPercent`
+  is nullable. A null (Steam has no global stat for the achievement) is treated as
+  "un-tierable" and awards zero XP even when unlocked; a concrete `0.0` is a genuine
+  ultra-rare value and tiers as `LEGENDARY`. This separates "no data" from "vanishingly
+  rare" so an absent stat never silently pays out the top award. `tierFor` therefore only
+  accepts a non-null percent; `achievementXp` skips achievements whose percent is null.
 - **One unified XP pool.** Achievement XP adds directly into the same total that
   drives the level curve, rather than a separate achievement-level or achievement-only
   progress bar. Simpler mental model for the player and reuses the existing level math
@@ -128,10 +140,12 @@ achievements contribute zero regardless of rarity.
 - **Additive signature change to `xp()`.** Adding `achievements` as a defaulted
   parameter alongside the base engine's `games: List<GamePlaytimeInput>` (rather than a
   new `xpWithAchievements()` function) keeps one XP entry point and avoids two
-  divergent code paths computing "total XP" differently. Neither this change nor
-  `add-gamification-engine` is implemented yet, so there's no shipped call site to
-  preserve — the defaulted parameter is chosen for a clean single entry point going
-  forward, not backward compatibility.
+  divergent code paths computing "total XP" differently. The one shipped consumer —
+  `GamificationUpdater.recompute` — is migrated to the list-based `xp(games, cfg)` by
+  `add-gamification-engine` (this change depends on that migration landing first); the
+  defaulted `achievements` parameter then extends that signature without forcing a
+  second edit to the consumer, since omitting the argument reproduces playtime-only
+  behavior exactly.
 
 ## Risks / Trade-offs
 

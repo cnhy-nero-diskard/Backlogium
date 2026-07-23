@@ -100,3 +100,9 @@ honoring the configured grace allowance.
 #### Scenario: Longest preserved after a break
 - **WHEN** a streak breaks after reaching length N
 - **THEN** the longest streak remains N even as the current streak resets
+
+#### Scenario: Grace forgives a gap without crediting it
+- **WHEN** an unmet day falls within the configured grace allowance and is followed by met days
+- **THEN** the current streak is preserved across the gap and increments only for the met
+  days — the forgiven day itself does not add to the streak — and a subsequent met day
+  restores the full grace allowance

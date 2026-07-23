@@ -3,7 +3,8 @@
 ## 1. Types & config
 
 - [ ] 1.1 `RarityTier` enum (`COMMON`, `UNCOMMON`, `RARE`, `EPIC`, `LEGENDARY`)
-- [ ] 1.2 `AchievementInput` value type (`id`, `unlocked`, `globalUnlockPercent`)
+- [ ] 1.2 `AchievementInput` value type (`id`, `unlocked`, `globalUnlockPercent: Double?`
+  — null means Steam has no global stat)
 - [ ] 1.3 Add per-tier XP fields to `RuleConfig` with documented defaults
   (`commonAchievementXp`, `uncommonAchievementXp`, `rareAchievementXp`,
   `epicAchievementXp`, `legendaryAchievementXp`)
@@ -13,7 +14,8 @@
 - [ ] 2.1 `tierFor(globalUnlockPercent)` — boundary values resolve to the more-common
   (higher) tier (50/20/5/1 cut points)
 - [ ] 2.2 `achievementXp(achievements, cfg)` — sum of tiered XP for unlocked
-  achievements only; locked achievements contribute zero; empty list returns zero
+  achievements only; locked achievements contribute zero; achievements with a null
+  `globalUnlockPercent` contribute zero (un-tierable); empty list returns zero
 - [ ] 2.3 Extend `xp(games, cfg)` to `xp(games, achievements = emptyList(), cfg)`,
   combining the summed per-game playtime XP and achievement XP additively before
   deriving level via the existing `levelState`
@@ -23,7 +25,8 @@
 - [ ] 3.1 `tierFor`: each tier's interior value, and exact boundaries (50%, 20%, 5%, 1%)
   resolve to the higher tier
 - [ ] 3.2 `achievementXp`: single unlocked achievement per tier, locked achievement
-  contributes zero, mixed-tier list sums correctly, empty list is zero
+  contributes zero, null-percent achievement contributes zero, `0.0` percent tiers as
+  `LEGENDARY`, mixed-tier list sums correctly, empty list is zero
 - [ ] 3.3 `xp(...)` with achievements: combined total matches summed per-game playtime XP
   + achievement XP; omitting achievements matches the base engine's playtime-only
   behavior exactly (regression check against `add-gamification-engine`'s `xp()` tests)
