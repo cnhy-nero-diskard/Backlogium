@@ -1,0 +1,15 @@
+# Normalize line endings on checkin; check out with native endings
+* text=auto
+
+# Scripts must keep their platform endings
+*.sh   text eol=lf
+*.bat  text eol=crlf
+gradlew    text eol=lf
+gradlew.bat text eol=crlf
+
+# Treat these as binary (no EOL munging, no diff)
+*.png  binary
+*.webp binary
+*.jar  binary
+*.keystore binary
+*.jks  binary
