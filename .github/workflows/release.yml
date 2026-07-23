@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  # Decide whether this tag qualifies for a release:
+  #   1. the tagged commit must be contained in the master branch, and
+  #   2. the tag must be a minor or major release (patch component == 0).
+  # A tag push carries no branch, so we resolve branch membership from history.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      eligible: ${{ steps.check.outputs.eligible }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need full history + all branches for containment check
+
+      - name: Evaluate release gates
+        id: check
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          echo "Tag: $TAG"
+
+          if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::notice::Tag '$TAG' is not vX.Y.Z — skipping release."
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          PATCH="${BASH_REMATCH[3]}"
+
+          if [[ "$PATCH" != "0" ]]; then
+            echo "::notice::'$TAG' is a patch release (patch=$PATCH) — skipping release."
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Is the tagged commit reachable from origin/master?
+          SHA="$(git rev-list -n 1 "$TAG")"
+          if git merge-base --is-ancestor "$SHA" origin/master; then
+            echo "::notice::'$TAG' (@$SHA) is on master and is a minor/major release — proceeding."
+            echo "eligible=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::'$TAG' (@$SHA) is not contained in master — skipping release."
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  release:
+    needs: gate
+    if: needs.gate.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # required to create the GitHub Release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run unit tests
+        run: ./gradlew test
+
+      - name: Assemble release APK
+        run: ./gradlew assembleRelease
+
+      - name: Collect APK
+        id: apk
+        run: |
+          set -euo pipefail
+          APK="$(find app/build/outputs/apk/release -name '*.apk' | head -n1)"
+          if [[ -z "$APK" ]]; then
+            echo "No release APK found." >&2
+            exit 1
+          fi
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: ${{ steps.apk.outputs.path }}
