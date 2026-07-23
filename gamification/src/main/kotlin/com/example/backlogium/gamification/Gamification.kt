@@ -90,17 +90,48 @@ object Gamification {
      * Total XP for a player's library, plus the derived level and progress into it.
      *
      * Sums [gameXp] across every supplied game — each game's XP taper is computed against
-     * its own completionist average — then derives level/progress via [levelState].
+     * its own completionist average — adds [achievementXp] for any unlocked, rarity-tiered
+     * achievements into the *same* pool, then derives level/progress via [levelState].
      *
-     * The sibling `add-achievement-xp` change extends this on top of the same list
-     * signature by adding a defaulted `achievements` parameter, folding achievement XP into
-     * the same total before it reaches [levelState]; that shared seam is why [levelState]
-     * stays public.
+     * [achievements] defaults to empty, so omitting it reproduces playtime-only behavior
+     * exactly. Achievement XP is additive: it is one unified pool with playtime XP, not a
+     * separate currency or level. [levelState] stays public as the shared seam.
      */
-    fun xp(games: List<GamePlaytimeInput>, cfg: RuleConfig = RuleConfig()): XpState {
-        val totalXp = games.sumOf { gameXp(it.minutesPlayed, it.completionistAverageMinutes, cfg) }
-        return levelState(totalXp, cfg)
+    fun xp(
+        games: List<GamePlaytimeInput>,
+        achievements: List<AchievementInput> = emptyList(),
+        cfg: RuleConfig = RuleConfig(),
+    ): XpState {
+        val playtimeXp = games.sumOf { gameXp(it.minutesPlayed, it.completionistAverageMinutes, cfg) }
+        return levelState(playtimeXp + achievementXp(achievements, cfg), cfg)
     }
+
+    /**
+     * Rarity tier for an achievement's [globalUnlockPercent] (0.0..100.0). Cut points are
+     * fixed: boundary values resolve to the more-common (higher) tier — exactly 50% is
+     * [RarityTier.COMMON], 20% [RarityTier.UNCOMMON], 5% [RarityTier.RARE], 1% [RarityTier.EPIC].
+     * A concrete `0.0` (genuinely ultra-rare) tiers as [RarityTier.LEGENDARY].
+     */
+    fun tierFor(globalUnlockPercent: Double): RarityTier = when {
+        globalUnlockPercent >= 50.0 -> RarityTier.COMMON
+        globalUnlockPercent >= 20.0 -> RarityTier.UNCOMMON
+        globalUnlockPercent >= 5.0 -> RarityTier.RARE
+        globalUnlockPercent >= 1.0 -> RarityTier.EPIC
+        else -> RarityTier.LEGENDARY
+    }
+
+    /**
+     * Total XP contributed by a player's unlocked achievements, weighted by rarity tier.
+     *
+     * Locked achievements contribute zero. An achievement with a null [AchievementInput.globalUnlockPercent]
+     * is un-tierable (Steam has no global stat) and contributes zero even when unlocked —
+     * distinct from a `0.0` percent, which is a real ultra-rare value tiering as legendary.
+     */
+    fun achievementXp(achievements: List<AchievementInput>, cfg: RuleConfig = RuleConfig()): Int =
+        achievements.sumOf { a ->
+            val percent = a.globalUnlockPercent
+            if (!a.unlocked || percent == null) 0 else xpForTier(tierFor(percent), cfg)
+        }
 
     /**
      * Diminishing-returns XP for a single game's tracked minutes.
@@ -180,6 +211,15 @@ object Gamification {
             }
         }
         return StreakState(current = current, longest = longest)
+    }
+
+    // XP award for a rarity tier, from the tunable RuleConfig per-tier constants.
+    private fun xpForTier(tier: RarityTier, cfg: RuleConfig): Int = when (tier) {
+        RarityTier.COMMON -> cfg.commonAchievementXp
+        RarityTier.UNCOMMON -> cfg.uncommonAchievementXp
+        RarityTier.RARE -> cfg.rareAchievementXp
+        RarityTier.EPIC -> cfg.epicAchievementXp
+        RarityTier.LEGENDARY -> cfg.legendaryAchievementXp
     }
 
     // xpAt(L) = levelBase * (L - 1) * L : cumulative XP required to reach level L.

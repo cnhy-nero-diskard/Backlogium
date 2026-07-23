@@ -45,7 +45,7 @@ class GamificationUpdater @Inject constructor(
                 completionistAverageMinutes = hltbDataDao.getByAppId(row.appId)?.completionistMinutes,
             )
         }
-        val xpState = Gamification.xp(games, config)
+        val xpState = Gamification.xp(games, cfg = config)
 
         // Recompute each stored day's quest status and persist any change.
         val days = dailyProgressDao.getAllOrdered()
