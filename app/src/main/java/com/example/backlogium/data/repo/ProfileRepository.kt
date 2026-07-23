@@ -19,6 +19,9 @@ class ProfileRepository @Inject constructor(
     val profile: Flow<PlayerProfile?> = profileDao.observe()
     val dailyProgress: Flow<List<DailyProgress>> = dailyProgressDao.observeAll()
 
+    /** True while a manual "Sync now" poll is enqueued or running (WorkManager-backed). */
+    val syncInProgress: Flow<Boolean> = syncScheduler.syncInProgress
+
     /** Enqueue an immediate one-time poll. */
     fun syncNow() = syncScheduler.syncNow()
 }

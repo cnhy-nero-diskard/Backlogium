@@ -17,6 +17,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -209,11 +210,26 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Last sync: ${UiFormat.dateTime(state.lastSyncAt)}",
+                text = if (state.isSyncing) {
+                    "Syncing…"
+                } else {
+                    "Last sync: ${UiFormat.dateTime(state.lastSyncAt)}"
+                },
                 style = MaterialTheme.typography.bodySmall,
             )
-            Button(onClick = viewModel::syncNow) {
-                Text("Sync now")
+            Button(
+                onClick = viewModel::syncNow,
+                enabled = !state.isSyncing,
+            ) {
+                if (state.isSyncing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                } else {
+                    Text("Sync now")
+                }
             }
         }
     }

@@ -28,6 +28,7 @@ data class HomeUiState(
     val longestStreak: Int = 0,
     val lastSyncAt: Long = 0L,
     val lastSyncError: String? = null,
+    val isSyncing: Boolean = false,
 ) {
     val xpFraction: Float
         get() = if (xpForNext > 0) (xpIntoLevel.toFloat() / xpForNext).coerceIn(0f, 1f) else 0f
@@ -45,7 +46,8 @@ class HomeViewModel @Inject constructor(
         profileRepository.dailyProgress,
         settings.ruleConfigFlow,
         settings.steamIdFlow,
-    ) { profile, days, config, steamId ->
+        profileRepository.syncInProgress,
+    ) { profile, days, config, steamId, isSyncing ->
         val todayKey = time.today().toString()
         val todayProgress = days.firstOrNull { it.date == todayKey }
         val xpState = Gamification.levelState(profile?.totalXp ?: 0, config)
@@ -63,6 +65,7 @@ class HomeViewModel @Inject constructor(
             longestStreak = profile?.longestStreak ?: 0,
             lastSyncAt = profile?.lastSyncAt ?: 0L,
             lastSyncError = profile?.lastSyncError,
+            isSyncing = isSyncing,
         )
     }.stateIn(
         scope = viewModelScope,

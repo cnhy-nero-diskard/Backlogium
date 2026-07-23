@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import com.example.backlogium.BuildConfig
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.repo.GameRepository
-import com.example.backlogium.gamification.Gamification
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,8 +18,6 @@ data class GoalGameUi(
     val name: String,
     val iconUrl: String,
     val playtimeForever: Int,
-    val targetMinutes: Int,
-    val progress: Float,
 )
 
 data class BacklogGameUi(
@@ -52,14 +49,11 @@ class LibraryViewModel @Inject constructor(
             loading = false,
             configured = BuildConfig.STEAM_API_KEY.isNotBlank() && steamId.isNotBlank(),
             goalGames = goals.map { game ->
-                val target = game.targetMinutes ?: 0
                 GoalGameUi(
                     appId = game.appId,
                     name = game.name,
                     iconUrl = game.iconUrl,
                     playtimeForever = game.playtimeForever,
-                    targetMinutes = target,
-                    progress = Gamification.goalProgress(game.playtimeForever, target).fraction.toFloat(),
                 )
             },
             backlog = backlog.map { game ->
@@ -77,8 +71,8 @@ class LibraryViewModel @Inject constructor(
         initialValue = LibraryUiState(),
     )
 
-    fun tagGoal(appId: Long, targetMinutes: Int) = viewModelScope.launch {
-        gameRepository.tagGoal(appId, targetMinutes)
+    fun tagGoal(appId: Long) = viewModelScope.launch {
+        gameRepository.tagGoal(appId)
     }
 
     fun untagGoal(appId: Long) = viewModelScope.launch {
