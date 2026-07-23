@@ -12,6 +12,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkRequest
+import androidx.work.workDataOf
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -72,6 +73,31 @@ class SyncScheduler @Inject constructor(
 
         workManager.enqueueUniqueWork(
             SteamSyncWorker.ONE_TIME_NAME,
+            ExistingWorkPolicy.KEEP,
+            request,
+        )
+    }
+
+    /** Emits true while a HowLongToBeat refresh sweep is enqueued or running. */
+    val hltbRefreshInProgress: Flow<Boolean> = workManager
+        .getWorkInfosForUniqueWorkFlow(HltbRefreshWorker.ONE_TIME_NAME)
+        .map { infos ->
+            infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
+        }
+
+    /**
+     * Enqueue the one-shot HowLongToBeat batch refresh. [force] re-fetches every game,
+     * ignoring the freshness window (the manual/testing case). Not expedited: the throttled
+     * sweep can run long. Keeps any in-flight refresh rather than stacking duplicates.
+     */
+    fun refreshHltbNow(force: Boolean) {
+        val request = OneTimeWorkRequestBuilder<HltbRefreshWorker>()
+            .setConstraints(networkConstraints)
+            .setInputData(workDataOf(HltbRefreshWorker.KEY_FORCE to force))
+            .build()
+
+        workManager.enqueueUniqueWork(
+            HltbRefreshWorker.ONE_TIME_NAME,
             ExistingWorkPolicy.KEEP,
             request,
         )
