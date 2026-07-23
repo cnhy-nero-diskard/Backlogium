@@ -60,7 +60,7 @@
 - [x] 8.6 "Steam not configured" / "profile may be private" empty states
 
 ## 9. Validation (README Phase 3–4 checkpoints)
-- [ ] 9.1 Install on device; verify baseline creates no fake sessions
-- [ ] 9.2 Play a real game; confirm a session appears after the next poll
-- [ ] 9.3 Track a few days; confirm streak, quest, and goal progress behave
-- [ ] 9.4 Airplane mode: app still renders last synced state
+- [x] 9.1 Install on device; verify baseline creates no fake sessions
+- [x] 9.2 Play a real game; confirm a session appears after the next poll
+- [x] 9.3 Track a few days; confirm streak, quest, and goal progress behave
+- [x] 9.4 Airplane mode: app still renders last synced state

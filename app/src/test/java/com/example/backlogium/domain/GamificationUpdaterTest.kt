@@ -1,9 +1,12 @@
 package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.dao.DailyProgressDao
+import com.example.backlogium.data.local.dao.GameTrackedMinutes
+import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.DailyProgress
+import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.gamification.RuleConfig
@@ -23,13 +26,15 @@ class GamificationUpdaterTest {
 
     @Test
     fun recompute_persistsExpectedXpLevelQuestAndStreak() = runTest {
-        // 300 tracked minutes across sessions -> 300 XP -> exactly level 3.
+        // 300 tracked minutes on one game with no HLTB row -> flat fallback -> 300 XP ->
+        // exactly level 3. This guards the null-completionist path in the migrated engine.
         val sessionDao = FakeSessionDao(
             listOf(
                 session(minutes = 200),
                 session(minutes = 100),
             ),
         )
+        val hltbDao = FakeHltbDataDao() // no rows -> completionistMinutes resolves to null
         // Four days: met, met, unmet, met -> current streak 1, longest 2.
         val dailyDao = FakeDailyProgressDao(
             listOf(
@@ -41,7 +46,7 @@ class GamificationUpdaterTest {
         )
         val profileDao = FakePlayerProfileDao()
 
-        val updater = GamificationUpdater(sessionDao, dailyDao, profileDao)
+        val updater = GamificationUpdater(sessionDao, dailyDao, profileDao, hltbDao)
         updater.recompute(today = LocalDate.parse("2026-07-17"), config = RuleConfig())
 
         val profile = profileDao.get()!!
@@ -73,7 +78,19 @@ class GamificationUpdaterTest {
         override suspend fun getOpenSession(appId: Long): Session? = null
         override fun observeRecent(limit: Int): Flow<List<Session>> = flowOf(sessions)
         override suspend fun getAll(): List<Session> = sessions
-        override suspend fun totalTrackedMinutes(): Int = sessions.sumOf { it.minutes }
+        override suspend fun trackedMinutesByGame(): List<GameTrackedMinutes> =
+            sessions.groupBy { it.appId }
+                .map { (appId, group) -> GameTrackedMinutes(appId, group.sumOf { it.minutes }) }
+    }
+
+    /** No HLTB rows: every lookup returns null, exercising the engine's flat-rate fallback. */
+    private class FakeHltbDataDao : HltbDataDao {
+        override suspend fun upsert(data: HltbData) = Unit
+        override suspend fun getByAppId(appId: Long): HltbData? = null
+        override fun observeAll(): Flow<List<HltbData>> = flowOf(emptyList())
+        override suspend fun getAll(): List<HltbData> = emptyList()
+        override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(emptyList())
+        override suspend fun appIdsStaleOrMissing(cutoff: Long): List<Long> = emptyList()
     }
 
     private class FakeDailyProgressDao(initial: List<DailyProgress>) : DailyProgressDao {

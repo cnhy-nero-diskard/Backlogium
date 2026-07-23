@@ -1,11 +1,13 @@
 package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.dao.DailyProgressDao
+import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.gamification.DayInput
 import com.example.backlogium.gamification.Gamification
+import com.example.backlogium.gamification.GamePlaytimeInput
 import com.example.backlogium.gamification.RuleConfig
 import java.time.LocalDate
 import javax.inject.Inject
@@ -16,7 +18,8 @@ import javax.inject.Inject
  * logic — only the I/O and the injected "today".
  *
  * Two distinct playtime inputs (kept separate, per design):
- * - **XP** is fed the sum of post-baseline `Session.minutes` (only playtime the app tracked).
+ * - **XP** is fed per-game tracked `Session.minutes` (only playtime the app tracked), joined
+ *   with each game's HowLongToBeat completionist length so the engine can taper XP per game.
  * - **Goal progress** is fed each game's total `playtimeForever` and is derived in the UI
  *   layer via [com.example.backlogium.gamification.Gamification.goalProgress].
  */
@@ -24,6 +27,7 @@ class GamificationUpdater @Inject constructor(
     private val sessionDao: SessionDao,
     private val dailyProgressDao: DailyProgressDao,
     private val playerProfileDao: PlayerProfileDao,
+    private val hltbDataDao: HltbDataDao,
 ) {
 
     /**
@@ -32,9 +36,16 @@ class GamificationUpdater @Inject constructor(
      * tunable rules.
      */
     suspend fun recompute(today: LocalDate, config: RuleConfig = RuleConfig()) {
-        // XP/level from total tracked minutes.
-        val totalTracked = sessionDao.totalTrackedMinutes()
-        val xpState = Gamification.xp(totalTracked, config)
+        // XP/level from per-game tracked minutes, each tapered against that game's HLTB
+        // completionist average. Games with no HLTB row resolve to null -> flat fallback.
+        val games = sessionDao.trackedMinutesByGame().map { row ->
+            GamePlaytimeInput(
+                gameId = row.appId.toString(),
+                minutesPlayed = row.minutes,
+                completionistAverageMinutes = hltbDataDao.getByAppId(row.appId)?.completionistMinutes,
+            )
+        }
+        val xpState = Gamification.xp(games, config)
 
         // Recompute each stored day's quest status and persist any change.
         val days = dailyProgressDao.getAllOrdered()
