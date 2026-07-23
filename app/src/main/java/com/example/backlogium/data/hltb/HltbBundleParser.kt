@@ -3,31 +3,34 @@ package com.example.backlogium.data.hltb
 import com.example.backlogium.data.hltb.dto.HltbSearchResponse
 
 /**
- * Pure parsing for the HowLongToBeat scrape: locate the Next.js `_app` JS bundle in the
- * homepage HTML, extract the current search endpoint path out of that bundle, and map a
- * search response to candidates. Kept side-effect-free so it is unit-testable against
- * captured fixtures — the fragile, rotation-prone bits live here rather than in the network
- * code.
+ * Pure parsing for the HowLongToBeat scrape: enumerate the Next.js JS chunks referenced by the
+ * homepage, extract the current POST search endpoint path out of a chunk, and map a search
+ * response to candidates. Kept side-effect-free so it is unit-testable against captured
+ * fixtures — the fragile, rotation-prone bits live here rather than in the network code.
  */
 object HltbBundleParser {
 
-    /** Hard-coded fallback used only when the endpoint path cannot be extracted. */
-    const val FALLBACK_ENDPOINT = "/api/seek"
+    /**
+     * Hard-coded fallback / fast-path endpoint used when dynamic extraction is unnecessary or
+     * fails. HLTB currently serves search at `/api/bleed` (with an `/api/bleed/init` handshake).
+     */
+    const val FALLBACK_ENDPOINT = "/api/bleed"
 
-    // e.g. /_next/static/chunks/pages/_app-1a2b3c4d5e6f7890.js
-    private val APP_BUNDLE_REGEX =
-        Regex("""/_next/static/chunks/pages/_app-[0-9a-fA-F]+\.js""")
+    // Any Next.js chunk the homepage pulls in (names are opaque hashes, no stable "_app-").
+    private val CHUNK_REGEX = Regex("""/_next/static/chunks/[^"']+\.js""")
 
-    // The web client builds the search URL with a fetch("/api/<path>", {method:"POST"}) call.
-    private val ENDPOINT_REGEX =
-        Regex("""fetch\(\s*["'](/api/[a-zA-Z0-9/_-]+)["']""")
+    // The web client posts the search via fetch("/api/<name>", { ... method:"POST" ... }).
+    private val ENDPOINT_REGEX = Regex(
+        """fetch\(\s*["'](/api/[a-zA-Z0-9_]+)["']\s*,\s*\{[^}]*method\s*:\s*["']POST["']""",
+    )
 
-    /** The `_app-*.js` bundle path referenced by the homepage, or null if not found. */
-    fun extractAppBundlePath(html: String): String? = APP_BUNDLE_REGEX.find(html)?.value
+    /** All `_next/static/chunks` JS paths referenced by the homepage HTML (de-duplicated). */
+    fun extractChunkPaths(html: String): List<String> =
+        CHUNK_REGEX.findAll(html).map { it.value }.distinct().toList()
 
-    /** The current POST search endpoint path from the bundle, or null if not found. */
-    fun extractEndpoint(appJs: String): String? =
-        ENDPOINT_REGEX.find(appJs)?.groupValues?.getOrNull(1)
+    /** The current POST search endpoint path from a chunk's JS, or null if not present. */
+    fun extractSearchEndpoint(chunkJs: String): String? =
+        ENDPOINT_REGEX.find(chunkJs)?.groupValues?.getOrNull(1)
 
     /** Map a raw search response to candidates, converting `comp_*` seconds to minutes. */
     fun mapCandidates(response: HltbSearchResponse): List<HltbCandidate> =

@@ -1,13 +1,19 @@
 package com.example.backlogium.data.hltb
 
 import com.example.backlogium.data.hltb.dto.HltbInitResponse
-import com.example.backlogium.data.hltb.dto.HltbSearchRequest
 import com.example.backlogium.data.hltb.dto.HltbSearchResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -18,14 +24,20 @@ import javax.inject.Singleton
 
 /**
  * Client-side HowLongToBeat reader. No backend, no API key. Performs HLTB's anti-scrape
- * dance at call time: GET the homepage → locate the `_app-*.js` bundle → extract the current
- * POST search endpoint (falling back to a hard-coded path) → GET `{endpoint}/init` for the
- * per-session token → POST the search with browser `User-Agent`/`Referer`/`Origin` and the
- * auth token.
+ * handshake at call time:
  *
- * The resolved endpoint + token are cached **in memory only** for a short window so a batch
- * sweep reuses one handshake, and are re-resolved when that window lapses or the search is
- * rejected (endpoint/token rotated). They are never persisted.
+ * 1. `GET {endpoint}/init?t=<now>` → a per-request `token` plus a dynamically-named
+ *    `hpKey`/`hpVal` pair.
+ * 2. `POST {endpoint}` with browser `User-Agent`/`Referer`/`Origin`, the auth headers
+ *    `x-auth-token`/`x-hp-key`/`x-hp-val`, and a search body that also carries a field named
+ *    `hpKey` whose value is `hpVal`.
+ *
+ * The endpoint is the known `/api/bleed` fast-path; if its init fails (HLTB rotated the path)
+ * the current endpoint is rediscovered by scanning the homepage's JS chunks for the `POST`
+ * `fetch` call, then falling back to the hard-coded path. The resolved endpoint + token are
+ * cached **in memory only** for a short window so a batch sweep reuses one handshake, and are
+ * re-resolved when that window lapses or a search is rejected (HTTP 403 / rotation). They are
+ * never persisted.
  */
 @Singleton
 class ScrapingHltbDataSource @Inject constructor(
@@ -36,8 +48,8 @@ class ScrapingHltbDataSource @Inject constructor(
     private data class Session(
         val endpoint: String,
         val token: String?,
-        val key: String?,
-        val value: String?,
+        val hpKey: String?,
+        val hpVal: String?,
         val resolvedAt: Long,
     )
 
@@ -47,10 +59,11 @@ class ScrapingHltbDataSource @Inject constructor(
     private var session: Session? = null
 
     override suspend fun search(name: String): List<HltbCandidate> = withContext(Dispatchers.IO) {
-        val body = runCatching { postSearch(name, resolveSession(force = false)) }
+        val terms = name.trim().split(WHITESPACE).filter { it.isNotBlank() }
+        val body = runCatching { postSearch(terms, resolveSession(force = false)) }
             .getOrElse {
-                // Likely a rotated endpoint/token: re-resolve once and retry before giving up.
-                postSearch(name, resolveSession(force = true))
+                // Rejected (expired token / rotated endpoint): re-resolve once and retry.
+                postSearch(terms, resolveSession(force = true))
             }
         HltbBundleParser.mapCandidates(json.decodeFromString(HltbSearchResponse.serializer(), body))
     }
@@ -63,36 +76,92 @@ class ScrapingHltbDataSource @Inject constructor(
             return cached
         }
 
-        val homepage = httpGet("$BASE_URL/")
-        val endpoint = HltbBundleParser.extractAppBundlePath(homepage)
-            ?.let { bundlePath -> HltbBundleParser.extractEndpoint(httpGet("$BASE_URL$bundlePath")) }
-            ?: HltbBundleParser.FALLBACK_ENDPOINT
+        // Fast path: try the known endpoint's init first (one request, no chunk scan).
+        var endpoint = HltbBundleParser.FALLBACK_ENDPOINT
+        var init = tryInit(endpoint)
 
-        // The token handshake is best-effort; the search still goes out if it is unavailable.
-        val init = runCatching {
-            json.decodeFromString(HltbInitResponse.serializer(), httpGet("$BASE_URL$endpoint/init"))
-        }.getOrNull()
+        // Known endpoint failed → rediscover the current one from the site bundle, then init.
+        if (init == null) {
+            endpoint = discoverEndpoint()
+            init = tryInit(endpoint) ?: error("HLTB endpoint/init resolution failed")
+        }
 
         Session(
             endpoint = endpoint,
-            token = init?.token,
-            key = init?.key,
-            value = init?.value,
+            token = init.token,
+            hpKey = init.hpKey,
+            hpVal = init.hpVal,
             resolvedAt = System.currentTimeMillis(),
         ).also { session = it }
     }
 
-    private fun postSearch(name: String, session: Session): String {
-        val terms = name.split(WHITESPACE).filter { it.isNotBlank() }
-        val payload = json.encodeToString(
-            HltbSearchRequest.serializer(),
-            HltbSearchRequest(searchTerms = terms),
-        )
+    /** GET the endpoint's `/init` handshake, returning null unless it yields a usable token. */
+    private fun tryInit(endpoint: String): HltbInitResponse? = runCatching {
+        val stamp = System.currentTimeMillis()
+        val body = httpGet("$BASE_URL$endpoint/init?t=$stamp")
+        json.decodeFromString(HltbInitResponse.serializer(), body)
+            .takeIf { !it.token.isNullOrEmpty() }
+    }.getOrNull()
+
+    /** Scan the homepage's JS chunks for the current POST search endpoint; fall back if absent. */
+    private fun discoverEndpoint(): String = runCatching {
+        val chunks = HltbBundleParser.extractChunkPaths(httpGet("$BASE_URL/"))
+        for (path in chunks) {
+            val js = runCatching { httpGet("$BASE_URL$path") }.getOrNull() ?: continue
+            HltbBundleParser.extractSearchEndpoint(js)?.let { return@runCatching it }
+        }
+        HltbBundleParser.FALLBACK_ENDPOINT
+    }.getOrDefault(HltbBundleParser.FALLBACK_ENDPOINT)
+
+    private fun postSearch(terms: List<String>, session: Session): String {
+        val payload = buildJsonObject {
+            put("searchType", "games")
+            putJsonArray("searchTerms") { terms.forEach { add(it) } }
+            put("searchPage", 1)
+            put("size", 20)
+            putJsonObject("searchOptions") {
+                putJsonObject("games") {
+                    put("userId", 0)
+                    put("platform", "")
+                    put("sortCategory", "popular")
+                    put("rangeCategory", "main")
+                    putJsonObject("rangeTime") {
+                        put("min", JsonNull)
+                        put("max", JsonNull)
+                    }
+                    putJsonObject("gameplay") {
+                        put("perspective", "")
+                        put("flow", "")
+                        put("genre", "")
+                        put("difficulty", "")
+                    }
+                    putJsonObject("rangeYear") {
+                        put("min", "")
+                        put("max", "")
+                    }
+                    put("modifier", "")
+                }
+                putJsonObject("users") { put("sortCategory", "postcount") }
+                putJsonObject("lists") { put("sortCategory", "follows") }
+                put("filter", "")
+                put("sort", 0)
+                put("randomizer", 0)
+            }
+            put("useCache", true)
+            // The init handshake's key/val must also travel as a dynamically-named body field.
+            val hpKey = session.hpKey
+            val hpVal = session.hpVal
+            if (!hpKey.isNullOrEmpty() && hpVal != null) put(hpKey, hpVal)
+        }
+
         val builder = Request.Builder()
             .url("$BASE_URL${session.endpoint}")
             .headers(browserHeaders())
-            .post(payload.toRequestBody(JSON_MEDIA_TYPE))
-        session.token?.let { builder.header("Authorization", "Bearer $it") }
+            .post(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+        session.token?.let { builder.header("x-auth-token", it) }
+        session.hpKey?.let { builder.header("x-hp-key", it) }
+        session.hpVal?.let { builder.header("x-hp-val", it) }
+
         client.newCall(builder.build()).execute().use { response ->
             if (!response.isSuccessful) error("HLTB search failed: HTTP ${response.code}")
             return response.body?.string()?.takeIf { it.isNotBlank() }
@@ -112,7 +181,7 @@ class ScrapingHltbDataSource @Inject constructor(
         .add("User-Agent", USER_AGENT)
         .add("Referer", "$BASE_URL/")
         .add("Origin", BASE_URL)
-        .add("Accept", "application/json, text/plain, */*")
+        .add("Accept", "*/*")
         .build()
 
     companion object {

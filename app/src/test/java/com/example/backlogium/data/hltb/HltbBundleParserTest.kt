@@ -4,43 +4,59 @@ import com.example.backlogium.data.hltb.dto.HltbSearchGame
 import com.example.backlogium.data.hltb.dto.HltbSearchResponse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Fixture-based tests for the fragile scrape parsing: the `_app-*.js` bundle path, the POST
- * search endpoint, and the seconds → minutes candidate mapping.
+ * Fixture-based tests for the fragile scrape parsing: the JS chunk enumeration, the POST
+ * search endpoint extraction, and the seconds → minutes candidate mapping. Fixtures mirror
+ * the shape of HowLongToBeat's current homepage/bundle (turbopack-hashed chunk names and the
+ * `fetch("/api/bleed",{method:"POST"})` call).
  */
 class HltbBundleParserTest {
 
     @Test
-    fun extractAppBundlePath_findsHashedAppChunk() {
+    fun extractChunkPaths_findsHashedChunks() {
         val html = """
             <html><head>
-            <script src="/_next/static/chunks/webpack-abc.js"></script>
-            <script src="/_next/static/chunks/pages/_app-1a2b3c4d5e6f7890.js"></script>
+            <script src="/_next/static/chunks/19cd32hawdh7y.js"></script>
+            <script src="/_next/static/chunks/turbopack-41gx43om5hpju.js"></script>
+            <script src="https://cdn.example.com/other.js"></script>
             </head></html>
         """.trimIndent()
 
+        val chunks = HltbBundleParser.extractChunkPaths(html)
+
         assertEquals(
-            "/_next/static/chunks/pages/_app-1a2b3c4d5e6f7890.js",
-            HltbBundleParser.extractAppBundlePath(html),
+            listOf(
+                "/_next/static/chunks/19cd32hawdh7y.js",
+                "/_next/static/chunks/turbopack-41gx43om5hpju.js",
+            ),
+            chunks,
         )
     }
 
     @Test
-    fun extractAppBundlePath_returnsNullWhenAbsent() {
-        assertNull(HltbBundleParser.extractAppBundlePath("<html><body>no bundle here</body></html>"))
+    fun extractChunkPaths_returnsEmptyWhenNone() {
+        assertTrue(HltbBundleParser.extractChunkPaths("<html><body>nope</body></html>").isEmpty())
     }
 
     @Test
-    fun extractEndpoint_readsPostFetchPath() {
-        val js = """function s(e){return fetch("/api/seek/xyz",{method:"POST",body:e})}"""
-        assertEquals("/api/seek/xyz", HltbBundleParser.extractEndpoint(js))
+    fun extractSearchEndpoint_readsPostFetchPath() {
+        val js = """let i=await fetch("/api/bleed",{method:"POST",headers:{"Content-Type":""}})"""
+        assertEquals("/api/bleed", HltbBundleParser.extractSearchEndpoint(js))
     }
 
     @Test
-    fun extractEndpoint_returnsNullWhenNoFetchPresent() {
-        assertNull(HltbBundleParser.extractEndpoint("const x = 1; // nothing fetch-like"))
+    fun extractSearchEndpoint_ignoresGetFetches() {
+        // The init GET must not be mistaken for the search endpoint.
+        val js = """let e=await fetch(`/api/bleed/init?t=${'$'}{Date.now()}`);"""
+        assertNull(HltbBundleParser.extractSearchEndpoint(js))
+    }
+
+    @Test
+    fun extractSearchEndpoint_returnsNullWhenNoPostFetch() {
+        assertNull(HltbBundleParser.extractSearchEndpoint("const x = 1; // nothing"))
     }
 
     @Test
@@ -48,11 +64,11 @@ class HltbBundleParserTest {
         val response = HltbSearchResponse(
             data = listOf(
                 HltbSearchGame(
-                    gameId = 42L,
+                    gameId = 7231L,
                     gameName = "Portal 2",
-                    compMainSeconds = 3600, // 60m
-                    compPlusSeconds = 5400, // 90m
-                    comp100Seconds = 7200, // 120m
+                    compMainSeconds = 30730, // ~512m
+                    compPlusSeconds = 49433, // ~824m
+                    comp100Seconds = 81179, // ~1353m
                     compAllSeconds = 0, // absent -> null
                 ),
             ),
@@ -62,11 +78,11 @@ class HltbBundleParserTest {
 
         assertEquals(1, candidates.size)
         val c = candidates.first()
-        assertEquals(42L, c.hltbId)
+        assertEquals(7231L, c.hltbId)
         assertEquals("Portal 2", c.name)
-        assertEquals(60, c.mainStoryMinutes)
-        assertEquals(90, c.mainExtraMinutes)
-        assertEquals(120, c.completionistMinutes)
+        assertEquals(512, c.mainStoryMinutes)
+        assertEquals(824, c.mainExtraMinutes)
+        assertEquals(1353, c.completionistMinutes)
         assertNull(c.allStylesMinutes)
     }
 

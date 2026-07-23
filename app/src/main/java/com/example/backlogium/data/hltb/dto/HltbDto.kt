@@ -23,35 +23,14 @@ data class HltbSearchGame(
 )
 
 /**
- * Response of the endpoint's `/init` handshake: the per-session token and key/val pair the
- * search POST must echo back. Resolved at call time and never persisted.
+ * Response of the search endpoint's `/init` handshake. Yields the per-request token and the
+ * dynamically-named `hpKey`/`hpVal` pair, which the search must echo back both as headers
+ * (`x-auth-token`/`x-hp-key`/`x-hp-val`) and as a body field named `hpKey` with value `hpVal`.
+ * Resolved at call time and never persisted.
  */
 @Serializable
 data class HltbInitResponse(
     val token: String? = null,
-    val key: String? = null,
-    @SerialName("val") val value: String? = null,
-)
-
-/** Body of the search POST. Fields mirror the shape HowLongToBeat's web client sends. */
-@Serializable
-data class HltbSearchRequest(
-    val searchType: String = "games",
-    val searchTerms: List<String>,
-    val searchPage: Int = 1,
-    val size: Int = 20,
-    val searchOptions: HltbSearchOptions = HltbSearchOptions(),
-)
-
-@Serializable
-data class HltbSearchOptions(
-    val games: HltbGamesOptions = HltbGamesOptions(),
-    val useCache: Boolean = true,
-)
-
-@Serializable
-data class HltbGamesOptions(
-    val userId: Int = 0,
-    val platform: String = "",
-    val sortCategory: String = "popular",
+    val hpKey: String? = null,
+    val hpVal: String? = null,
 )
