@@ -1,6 +1,5 @@
 package com.example.backlogium.ui.theme
 
-import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -11,33 +10,44 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
+// Dark-first "Steam-native dark + gold accent" scheme (restyle-visual-identity).
 private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+    primary = Gold,
+    onPrimary = OnGold,
+    primaryContainer = GoldContainer,
+    onPrimaryContainer = OnGoldContainer,
+    secondary = SteelBlue,
+    onSecondary = OnSteelBlue,
+    tertiary = SteelBlueLight,
+    background = NavyBackground,
+    onBackground = OnNavy,
+    surface = NavySurface,
+    onSurface = OnNavy,
+    surfaceVariant = NavySurfaceVariant,
+    onSurfaceVariant = OnNavyVariant,
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    primary = GoldLight,
+    onPrimary = OnGoldLight,
+    primaryContainer = GoldContainerLight,
+    onPrimaryContainer = OnGoldContainerLight,
+    secondary = SteelBlueDark,
+    tertiary = SteelBlueDark,
+    background = LightBackground,
+    onBackground = OnLight,
+    surface = LightSurface,
+    onSurface = OnLight,
+    surfaceVariant = LightSurfaceVariant,
+    onSurfaceVariant = OnLightVariant,
 )
 
 @Composable
 fun BacklogiumTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
+    // Dynamic (wallpaper-derived) color is intentionally OFF by default so the custom
+    // Steam-native identity is the app's look on every device (restyle-visual-identity).
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {

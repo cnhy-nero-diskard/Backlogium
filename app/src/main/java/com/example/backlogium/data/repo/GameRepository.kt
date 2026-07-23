@@ -15,9 +15,13 @@ class GameRepository @Inject constructor(
     val goalGames: Flow<List<Game>> = gameDao.observeGoalGames()
     val backlog: Flow<List<Game>> = gameDao.observeBacklog()
 
-    /** Tag a game as a goal with a target (minutes), or update an existing goal's target. */
-    suspend fun tagGoal(appId: Long, targetMinutes: Int) =
-        gameDao.setGoal(appId, isGoal = true, targetMinutes = targetMinutes)
+    /**
+     * Mark a game as a goal. No user-entered target is required (restyle-fixes): the manual
+     * minutes target is retired until HowLongToBeat-sourced completion lengths arrive, so the
+     * dormant [Game.targetMinutes] column is left untouched here.
+     */
+    suspend fun tagGoal(appId: Long) =
+        gameDao.setGoalFlag(appId, isGoal = true)
 
     /** Remove a game's goal tag and clear its target. */
     suspend fun untagGoal(appId: Long) =

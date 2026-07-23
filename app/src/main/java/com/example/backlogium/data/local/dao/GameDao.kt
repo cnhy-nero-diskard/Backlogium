@@ -33,6 +33,10 @@ interface GameDao {
     @Query("UPDATE games SET isGoal = :isGoal, targetMinutes = :targetMinutes WHERE appId = :appId")
     suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?)
 
+    /** Toggle only the goal flag, leaving the dormant targetMinutes column untouched. */
+    @Query("UPDATE games SET isGoal = :isGoal WHERE appId = :appId")
+    suspend fun setGoalFlag(appId: Long, isGoal: Boolean)
+
     @Query("SELECT COUNT(*) FROM games")
     suspend fun count(): Int
 }

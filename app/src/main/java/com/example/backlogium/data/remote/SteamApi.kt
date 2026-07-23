@@ -1,6 +1,7 @@
 package com.example.backlogium.data.remote
 
 import com.example.backlogium.data.remote.dto.OwnedGamesResponse
+import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import retrofit2.http.GET
 import retrofit2.http.Query
@@ -24,4 +25,14 @@ interface SteamApi {
         @Query("key") key: String,
         @Query("steamid") steamId: String,
     ): SteamLevelResponse
+
+    /**
+     * Current player state, including the running game (`gameid`/`gameextrainfo`) when
+     * in-game. The query param is `steamids` (plural, CSV); pass the single configured id.
+     */
+    @GET("ISteamUser/GetPlayerSummaries/v2/")
+    suspend fun getPlayerSummaries(
+        @Query("key") key: String,
+        @Query("steamids") steamIds: String,
+    ): PlayerSummariesResponse
 }

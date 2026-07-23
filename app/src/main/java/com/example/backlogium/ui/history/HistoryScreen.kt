@@ -5,9 +5,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,6 +22,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.util.UiFormat
+import compose.icons.TablerIcons
+import compose.icons.tablericons.CircleCheck
+import compose.icons.tablericons.CircleMinus
 
 @Composable
 fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
@@ -131,9 +136,15 @@ private fun DayStatRow(day: DayStatUi) {
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            Text(
-                text = if (day.questMet) "✅" else "—",
-                style = MaterialTheme.typography.titleMedium,
+            Icon(
+                imageVector = if (day.questMet) TablerIcons.CircleCheck else TablerIcons.CircleMinus,
+                contentDescription = if (day.questMet) "Quest met" else "Quest not met",
+                tint = if (day.questMet) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.size(24.dp),
             )
         }
     }

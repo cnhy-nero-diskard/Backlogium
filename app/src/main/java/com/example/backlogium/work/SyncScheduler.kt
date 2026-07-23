@@ -9,9 +9,12 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkRequest
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -31,6 +34,16 @@ class SyncScheduler @Inject constructor(
         get() = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
+
+    /**
+     * Emits true while a manual "Sync now" poll is enqueued or running. WorkManager is the single
+     * source of truth here — no separate in-memory flag that could desync from the actual work.
+     */
+    val syncInProgress: Flow<Boolean> = workManager
+        .getWorkInfosForUniqueWorkFlow(SteamSyncWorker.ONE_TIME_NAME)
+        .map { infos ->
+            infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
+        }
 
     /** Enqueue the periodic poll, keeping any already-scheduled work. Idempotent. */
     fun ensurePeriodicSync() {
