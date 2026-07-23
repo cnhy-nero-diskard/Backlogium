@@ -26,8 +26,8 @@ data class GoalGameUi(
     val name: String,
     val iconUrl: String,
     val playtimeForever: Int,
-    /** HowLongToBeat Main Story length, if resolved. Null → no completion-based progress. */
-    val mainStoryMinutes: Int? = null,
+    /** HowLongToBeat Completionist length, if resolved. Null → no completion-based progress. */
+    val completionistMinutes: Int? = null,
     /** Persisted match status from the cache, or null when no lookup has been stored yet. */
     val hltbStatus: HltbMatchStatus? = null,
     /** In-flight/failed state of a manual lookup, layered over [hltbStatus]. */
@@ -71,6 +71,7 @@ class LibraryViewModel @Inject constructor(
         settings.steamIdFlow,
     ) { goals, backlog, hltb, review, steamId ->
         val rowByAppId = hltb.associateBy { it.appId }
+        val goalIds = goals.mapTo(HashSet()) { it.appId }
         LibraryUiState(
             loading = false,
             configured = BuildConfig.STEAM_API_KEY.isNotBlank() && steamId.isNotBlank(),
@@ -81,11 +82,14 @@ class LibraryViewModel @Inject constructor(
                     name = game.name,
                     iconUrl = game.iconUrl,
                     playtimeForever = game.playtimeForever,
-                    mainStoryMinutes = row?.mainStoryMinutes,
+                    completionistMinutes = row?.completionistMinutes,
                     hltbStatus = row?.matchStatus,
                 )
             },
-            backlog = backlog.map { game ->
+            // Drop any game already shown as a goal: goalGames and backlog come from two
+            // independent Room queries that can momentarily both contain a just-tagged game,
+            // and a duplicate appId across LazyColumn items crashes Compose.
+            backlog = backlog.filterNot { it.appId in goalIds }.map { game ->
                 BacklogGameUi(
                     appId = game.appId,
                     name = game.name,

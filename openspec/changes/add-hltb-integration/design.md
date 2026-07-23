@@ -28,7 +28,7 @@ Store HLTB data in a new Room entity keyed by `appId` (FK to `games`), rather th
 - **Alternative considered:** columns on `Game` — simplest, but couples the two writers and bloats the sync upsert.
 
 ### Store all four metrics; consumers select
-The cache retains Main Story, Main+Extras, Completionist, and All-Styles. Goal progress uses **Main Story** ("beat it"); the gamification engine uses **Completionist average**. Storing all four means changing which metric feeds a feature never forces a re-fetch.
+The cache retains Main Story, Main+Extras, Completionist, and All-Styles. Goal progress uses **Completionist** (100%); the gamification engine uses **Completionist average**. Storing all four means changing which metric feeds a feature never forces a re-fetch (this decision was updated from Main Story to Completionist after review).
 
 ### `HltbDataSource` interface as the seam
 ```

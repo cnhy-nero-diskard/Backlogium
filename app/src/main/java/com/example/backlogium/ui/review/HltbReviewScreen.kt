@@ -98,12 +98,12 @@ private fun CandidateRow(candidate: HltbCandidate, onClick: () -> Unit) {
     ) {
         Column(modifier = Modifier.padding(end = 8.dp)) {
             Text(candidate.name, style = MaterialTheme.typography.bodyLarge)
-            val mainStory = candidate.mainStoryMinutes
+            val completionist = candidate.completionistMinutes
             Text(
-                text = if (mainStory != null) {
-                    "Main Story: ${UiFormat.minutes(mainStory)}"
+                text = if (completionist != null) {
+                    "Completionist: ${UiFormat.minutes(completionist)}"
                 } else {
-                    "No Main Story length"
+                    "No Completionist length"
                 },
                 style = MaterialTheme.typography.bodySmall,
             )

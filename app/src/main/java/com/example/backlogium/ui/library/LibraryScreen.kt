@@ -229,10 +229,10 @@ private fun GoalGameRow(game: GoalGameUi, onClick: () -> Unit) {
                     text = UiFormat.minutes(game.playtimeForever) + " played",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                // Goal progress against the HowLongToBeat Main Story length, shown only when one
-                // is available (add-hltb-integration). No length yet → no completion progress.
-                game.mainStoryMinutes?.let { mainStory ->
-                    val fraction = Gamification.goalProgress(game.playtimeForever, mainStory)
+                // Goal progress against the HowLongToBeat Completionist length, shown only when
+                // one is available (add-hltb-integration). No length yet → no completion progress.
+                game.completionistMinutes?.let { completionist ->
+                    val fraction = Gamification.goalProgress(game.playtimeForever, completionist)
                         .fraction
                         .toFloat()
                     Spacer(Modifier.height(6.dp))
@@ -243,7 +243,7 @@ private fun GoalGameRow(game: GoalGameUi, onClick: () -> Unit) {
                     Spacer(Modifier.height(2.dp))
                     Text(
                         text = "${UiFormat.minutes(game.playtimeForever)} / " +
-                            "${UiFormat.minutes(mainStory)} to beat",
+                            "${UiFormat.minutes(completionist)} to 100%",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
