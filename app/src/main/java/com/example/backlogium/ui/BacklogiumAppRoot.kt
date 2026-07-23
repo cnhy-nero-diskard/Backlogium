@@ -18,6 +18,10 @@ import com.example.backlogium.ui.history.HistoryScreen
 import com.example.backlogium.ui.home.HomeScreen
 import com.example.backlogium.ui.library.LibraryScreen
 import com.example.backlogium.ui.navigation.Destination
+import com.example.backlogium.ui.review.HltbReviewScreen
+
+/** Route for the HLTB match-review surface — a sub-destination reached from the Library. */
+private const val ROUTE_HLTB_REVIEW = "hltb_review"
 
 /** App shell: bottom navigation between Home, Library, and History. */
 @Composable
@@ -61,8 +65,11 @@ fun BacklogiumAppRoot() {
             modifier = Modifier.padding(innerPadding),
         ) {
             composable(Destination.HOME.route) { HomeScreen() }
-            composable(Destination.LIBRARY.route) { LibraryScreen() }
+            composable(Destination.LIBRARY.route) {
+                LibraryScreen(onOpenReview = { navController.navigate(ROUTE_HLTB_REVIEW) })
+            }
             composable(Destination.HISTORY.route) { HistoryScreen() }
+            composable(ROUTE_HLTB_REVIEW) { HltbReviewScreen() }
         }
     }
 }
