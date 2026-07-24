@@ -1,63 +1,78 @@
-# Gaming Session Tracker & OBS Overlay
+# Gaming Session Tracker (Android) — Steam playtime, gamified
 
-A gamified companion app that tracks Steam playtime/progress, syncs to the cloud, and surfaces live stats on stream through an OBS overlay.
+A gamified companion app that tracks your Steam playtime and progress and turns it
+into XP, levels, quests, and streaks. Today it is a self-contained, **offline-first
+Android app**; cloud sync and a live OBS stream overlay are planned (see the roadmap).
 
 ## Stack
 
 - **Data source:** Steam Web API
-- **Client:** Android (Kotlin, Jetpack Compose, Room DB)
-- **Sync:** Firebase (Firestore, real-time listeners)
-- **Output:** OBS Browser Source overlay (HTML/JS, hosted on Firebase Hosting)
+- **Client:** Android (Kotlin, Jetpack Compose, Room DB, Hilt, WorkManager)
+- **Local storage:** Room (game/session/achievement data) + Preferences DataStore
+  (encrypted Steam credentials, app state)
+- **Gamification:** a standalone `:gamification` JVM module (pure Kotlin, unit-tested)
+- **Extra data:** HowLongToBeat completionist times (used to taper playtime XP)
+- **Planned:** cloud sync (Firestore) + an OBS Browser Source overlay — *not yet built*
 
 ## Architecture
 
 ```
-Steam Web API → Cloud sync backend (Firestore) → Android app
-                                                 → OBS browser source overlay
+Steam Web API ─┐
+HowLongToBeat ─┴→ Android app (Room + DataStore, gamification engine)   ← today
+                     └→ (planned) Firestore sync → OBS browser overlay
 ```
 
-Phone and PC never talk to each other directly — Firestore keeps them in sync, so the app and the overlay both just read/write the same cloud state, from anywhere.
+The current app runs entirely on-device: it pulls from the Steam Web API (and scrapes
+HowLongToBeat for completionist times), stores everything locally, and computes XP
+locally. The cloud-sync layer and the browser-source overlay below are the remaining
+roadmap items — the phone does not yet talk to any backend.
 
 ## Roadmap
 
-### Phase 1 — Steam API foundation
+Phases 1–4 are **done** — there is a working, offline-first Android app that tracks
+real Steam sessions, awards XP (playtime *and* achievements), and shows level/quests/
+streaks/history. Phases 5–6 (cloud sync + OBS overlay) are the remaining work.
+
+### Phase 1 — Steam API foundation ✅
 Goal: prove reliable access to your own data before building anything on top.
 
-- [ ] Get a Steam Web API key + find SteamID64
-- [ ] Test calls: `GetOwnedGames`, `GetRecentlyPlayedGames`, `GetPlayerAchievements`, `IPlayerService/GetSteamLevel`
-- [ ] Decide refresh/polling strategy (Steam doesn't push updates)
-- **Checkpoint:** script that correctly prints current game + playtime
+- [x] Get a Steam Web API key + find SteamID64 (now captured via in-app onboarding)
+- [x] Steam calls wired: `GetOwnedGames`, `GetRecentlyPlayedGames`, `GetPlayerAchievements`, `GetSchemaForGame`, `ResolveVanityURL`, player summaries/level
+- [x] Refresh strategy decided: WorkManager-scheduled polling (`SteamSyncWorker`) — Steam doesn't push
+- **Checkpoint:** app correctly reflects current game + playtime
 
-### Phase 2 — Gamification model (design, not code)
+### Phase 2 — Gamification model ✅
 Goal: lock the rules before they're baked into a schema.
 
 - [x] XP rules: playtime-based, with diminishing returns per game (see
   [Gamification rules](#gamification-rules-locked) below)
-- [ ] "Goal games" definition — manual tag vs. auto-detected via time-to-beat threshold
-- [ ] Quests/streaks — daily targets, weekly goals, what breaks a streak
-- [ ] Sketch of session summary / focus score
-- **Checkpoint:** one-page spec of rules → becomes the data model in Phase 3
+- [x] Achievement XP: additive term weighted by Steam rarity tier (now **merged**)
+- [x] "Goal games": manual tag with a per-game target (set from the Library screen)
+- [x] Quests/streaks: daily playtime target, current/longest streak, milestone at every 7 days
+- **Checkpoint:** rules live in the tested `:gamification` module and in
+  [`openspec/specs/gamification`](openspec/specs/gamification/spec.md)
 
-### Phase 3 — Android app: data layer + core logic
-- [ ] Set up Android project (Kotlin, Jetpack Compose)
-- [ ] Room DB: sessions, games, quests, XP, streaks
-- [ ] Service to pull Steam data and map it into the rule engine from Phase 2
-- [ ] Fully offline first — no cloud yet
-- **Checkpoint:** app installed on phone, accurately tracking real sessions for a few days
+### Phase 3 — Android app: data layer + core logic ✅
+- [x] Android project (Kotlin, Jetpack Compose, Hilt)
+- [x] Room DB: games, sessions, achievements, daily stats, XP/streak state
+- [x] Steam + HowLongToBeat data pulled and mapped into the gamification engine
+- [x] Fully offline-first — everything on-device, no cloud
+- **Checkpoint:** app installs and tracks real sessions
 
-### Phase 4 — Android app: UI/UX
-- [ ] Home screen: XP/level, active quest, streak
-- [ ] Game library view: goal games with progress bars, backlog games
-- [ ] Session history / stats view
-- **Checkpoint:** app feels usable day-to-day, not just functional
+### Phase 4 — Android app: UI/UX ✅
+- [x] Home: level/XP, today's quest, streak, "now playing", Steam-history import, sync + credentials
+- [x] Library: goal games with progress bars vs. backlog; tap to set/edit a goal; per-game detail with achievements
+- [x] History: recent sessions + per-day play totals and quest results
+- [x] HowLongToBeat match-review screen for ambiguous matches
+- **Checkpoint:** app is usable day-to-day
 
-### Phase 5 — Cloud sync layer (Firebase)
+### Phase 5 — Cloud sync layer (Firebase) — planned
 - [ ] Set up Firestore, mirror the Room schema (small, focused documents — not full history dumps)
 - [ ] Push local state to Firestore on change via real-time listeners (not polling)
 - [ ] Set a billing alert (~$1) as a safety net
 - **Checkpoint:** phone data appears live in the Firebase console while playing
 
-### Phase 6 — OBS overlay (final deliverable)
+### Phase 6 — OBS overlay (final deliverable) — planned
 - [ ] Build overlay as a static HTML/JS page (Firebase Hosting)
 - [ ] Listen to the same Firestore doc the phone writes to; render XP bar, current quest, streak, session timer
 - [ ] Add as an OBS Browser Source, position/style it
@@ -92,15 +107,14 @@ Total XP is the sum of `gameXp(...)` across a player's library, feeding the same
 curve: `xpAt(L) = 50·(L−1)·L` (L2 at 100 XP, L3 at 300 XP, L4 at 600 XP, ...).
 
 All constants (`xpPerMinute`, the zero-point multiple, the decay exponent, level base)
-are tunable, not hardcoded. Full rules, rationale, and edge cases live in
-[`openspec/changes/add-gamification-engine`](openspec/changes/add-gamification-engine).
+are tunable, not hardcoded. Full rules, rationale, and edge cases live in the
+[`gamification` spec](openspec/specs/gamification/spec.md).
 
-### Achievement XP (proposed, not yet merged)
+### Achievement XP (implemented)
 
-A separate proposal, [`openspec/changes/add-achievement-xp`](openspec/changes/add-achievement-xp),
-adds a second, additive term for unlocked Steam achievements, weighted by rarity tier
-(Steam's global unlock percentage — `COMMON`/`UNCOMMON`/`RARE`/`EPIC`/`LEGENDARY`, each
-with its own fixed XP award):
+Achievement XP is now folded into the engine. A second, additive term counts unlocked
+Steam achievements, weighted by rarity tier (Steam's global unlock percentage —
+`COMMON`/`UNCOMMON`/`RARE`/`EPIC`/`LEGENDARY`, each with its own fixed XP award):
 
 ```text
 totalXp = Σ gameXp(g.minutesPlayed, g.completionistAverageMinutes) over games
@@ -108,27 +122,48 @@ totalXp = Σ gameXp(g.minutesPlayed, g.completionistAverageMinutes) over games
 ```
 
 One unified XP pool, not a separate achievement level — locked achievements contribute
-nothing, and rarer unlocks are worth more. This part is still a proposal, reconciled to
-compose with the per-game formula above but not yet folded into the base engine.
+nothing, and rarer unlocks are worth more. Per-game achievement progress (and a "game
+completed" milestone at 100%) is shown on the game-detail screen.
 
 ## Setup
 
-### Steam credentials (`local.properties`)
+### Steam credentials (in-app onboarding)
 
-The Android app reads your Steam Web API key and SteamID64 at build time from
-`local.properties` (git-ignored — never committed) and exposes them through
-`BuildConfig`. Add these two lines to `local.properties` at the repo root:
+You do **not** need to edit any files or rebuild to connect your Steam account. On
+first launch (when no credentials are stored), the app shows a full-screen, two-step
+onboarding flow:
+
+1. **API key** — paste your Steam Web API key (there's an in-app link to
+   <https://steamcommunity.com/dev/apikey>). It's entered behind a password field.
+2. **SteamID** — either paste your raw 17-digit SteamID64, or paste your Steam
+   profile URL and let the app resolve it (`.../profiles/<id>` is read directly;
+   `.../id/<vanity>` is resolved via the Steam Web API).
+
+Credentials are **encrypted at rest** with an Android Keystore-backed key and stored
+in an encrypted DataStore — never in plaintext, never committed to source. The API
+key is masked wherever it's shown. You can change credentials any time from the
+**Steam account** card on the Home screen ("Edit" reopens onboarding).
+
+Notes:
+
+- Your Steam profile **and game details must be public** for playtime to be visible.
+- If decryption ever fails (e.g. the Keystore key was invalidated), the app treats
+  credentials as absent and re-shows onboarding rather than crashing.
+
+### Optional: seed credentials at build time (`local.properties`)
+
+For local development you can pre-seed credentials so you skip onboarding on a fresh
+install. The build reads optional values from `local.properties` (git-ignored — never
+committed) into `BuildConfig`:
 
 ```properties
 steam.apiKey=YOUR_STEAM_WEB_API_KEY
 steam.steamId=YOUR_STEAMID64
 ```
 
-- Get an API key at <https://steamcommunity.com/dev/apikey>.
-- Find your SteamID64 (a 17-digit number) via your profile URL or a lookup tool.
-- Both keys are optional for the build to succeed: if either is blank, the app
-  builds normally and shows a "Steam not configured" state instead of crashing.
-- Your Steam profile **and game details must be public** for playtime to be visible.
+These are imported into the encrypted store **once**, only when it's empty. After that
+the encrypted store is the single source of truth and `BuildConfig` is never consulted
+again. Both are optional — leave them blank and just use onboarding.
 
 ## Notes
 

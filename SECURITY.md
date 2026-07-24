@@ -12,6 +12,14 @@ initial response within a few days.
 
 ## Secrets
 
-This app requires a Steam Web API key and SteamID64. These are configured in
-`local.properties`, which is git-ignored and must **never** be committed. If you
-believe a credential has been exposed, rotate it immediately.
+This app requires a Steam Web API key and SteamID64. They are normally entered
+through the in-app onboarding flow and stored **encrypted at rest** using an Android
+Keystore-backed key (encrypted DataStore) — never in plaintext preferences, and never
+committed to source. The API key is masked wherever it is displayed and is not logged.
+
+Optionally, `local.properties` (git-ignored, and which must **never** be committed) can
+seed those values at build time via `BuildConfig`; they are imported into the encrypted
+store once and thereafter the encrypted store is the source of truth.
+
+If you believe a credential has been exposed, rotate it immediately (regenerate the key
+at <https://steamcommunity.com/dev/apikey>).

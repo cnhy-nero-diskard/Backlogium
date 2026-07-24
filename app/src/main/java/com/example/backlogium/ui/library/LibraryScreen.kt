@@ -70,7 +70,7 @@ fun LibraryScreen(
     if (!state.configured) {
         EmptyState(
             title = "Steam not configured",
-            message = "Add your Steam credentials to local.properties and rebuild to load your library.",
+            message = "Connect your Steam account from the Home screen to load your library.",
         )
         return
     }
