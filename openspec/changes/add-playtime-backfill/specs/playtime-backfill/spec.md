@@ -43,3 +43,22 @@ subsequent syncs or repeated invocations, while continuing to track new playtime
 #### Scenario: Growing Steam total is not re-imported
 - **WHEN** a later sync observes a higher lifetime Steam total for an already-imported game
 - **THEN** the increase is counted only as newly tracked playtime, not as additional imported history
+
+#### Scenario: Imported history survives syncs
+- **WHEN** a sync refreshes each game's Steam data after history has been imported
+- **THEN** the captured historical portion is preserved on each game, so recomputed XP still
+  reflects the imported history and does not drop back to tracked-only
+
+### Requirement: Reset an import
+The system SHALL let the user undo a completed import, clearing the captured historical
+playtime and returning to the not-imported state, and SHALL recompute XP so it reflects only
+tracked playtime afterward. Resetting SHALL NOT discard tracked playtime.
+
+#### Scenario: Undoing an import
+- **WHEN** the user resets a completed import
+- **THEN** the captured historical playtime no longer counts toward XP, XP is recomputed from
+  tracked playtime only, and the import is offered again
+
+#### Scenario: Reset preserves tracked playtime
+- **WHEN** the user resets a completed import
+- **THEN** playtime tracked after install is unchanged and still counts toward XP

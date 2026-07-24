@@ -2,6 +2,7 @@ package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
+import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
@@ -20,8 +21,11 @@ import javax.inject.Inject
  * logic — only the I/O and the injected "today".
  *
  * Two distinct playtime inputs (kept separate, per design):
- * - **XP** is fed per-game tracked `Session.minutes` (only playtime the app tracked), joined
- *   with each game's HowLongToBeat completionist length so the engine can taper XP per game.
+ * - **XP** is fed per-game tracked `Session.minutes` (only playtime the app tracked) plus any
+ *   frozen `Game.backfillMinutes` from an opt-in Steam-history import, joined with each game's
+ *   HowLongToBeat completionist length so the engine can taper XP per game. Because `gameXp`
+ *   tapers over *cumulative* minutes, feeding `backfill + tracked` as one total yields the
+ *   correctly bounded XP with no engine change.
  * - **Goal progress** is fed each game's total `playtimeForever` and is derived in the UI
  *   layer via [com.example.backlogium.gamification.Gamification.goalProgress].
  */
@@ -31,6 +35,7 @@ class GamificationUpdater @Inject constructor(
     private val playerProfileDao: PlayerProfileDao,
     private val hltbDataDao: HltbDataDao,
     private val achievementDao: AchievementDao,
+    private val gameDao: GameDao,
 ) {
 
     /**
@@ -39,15 +44,22 @@ class GamificationUpdater @Inject constructor(
      * tunable rules.
      */
     suspend fun recompute(today: LocalDate, config: RuleConfig = RuleConfig()) {
-        // XP/level from per-game tracked minutes, each tapered against that game's HLTB
-        // completionist average. Games with no HLTB row resolve to null -> flat fallback.
-        val games = sessionDao.trackedMinutesByGame().map { row ->
-            GamePlaytimeInput(
-                gameId = row.appId.toString(),
-                minutesPlayed = row.minutes,
-                completionistAverageMinutes = hltbDataDao.getByAppId(row.appId)?.completionistMinutes,
-            )
-        }
+        // XP/level from each game's cumulative minutes = frozen backfill offset (0 unless the
+        // player opted in to importing Steam history) + tracked session minutes, tapered
+        // against that game's HLTB completionist average. Games with no HLTB row resolve to
+        // null -> flat fallback. The union covers backfilled games with no tracked sessions.
+        val trackedByGame = sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes }
+        val backfillByGame = gameDao.getAll().associate { it.appId to it.backfillMinutes }
+        val games = (trackedByGame.keys + backfillByGame.keys)
+            .map { appId -> appId to (backfillByGame[appId] ?: 0) + (trackedByGame[appId] ?: 0) }
+            .filter { (_, minutes) -> minutes > 0 }
+            .map { (appId, minutes) ->
+                GamePlaytimeInput(
+                    gameId = appId.toString(),
+                    minutesPlayed = minutes,
+                    completionistAverageMinutes = hltbDataDao.getByAppId(appId)?.completionistMinutes,
+                )
+            }
         // Unlocked achievements, rarity-tiered by their first-unlock snapshot percent (never the
         // live one — see the add-steam-achievements rarity-drift policy). Locked/un-snapshotted
         // achievements are excluded here and would contribute 0 XP anyway.

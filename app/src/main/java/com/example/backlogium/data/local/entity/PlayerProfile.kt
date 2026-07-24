@@ -18,6 +18,8 @@ data class PlayerProfile(
     val longestStreak: Int = 0,
     val lastSyncAt: Long = 0L,
     val lastSyncError: String? = null,
+    /** True once the player has opted in to importing historical Steam playtime (one-time). */
+    val playtimeBackfilled: Boolean = false,
 ) {
     companion object {
         const val SINGLETON_ID = 0

@@ -24,7 +24,11 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): BacklogiumDatabase =
         Room.databaseBuilder(context, BacklogiumDatabase::class.java, BacklogiumDatabase.NAME)
-            .addMigrations(BacklogiumDatabase.MIGRATION_1_2, BacklogiumDatabase.MIGRATION_2_3)
+            .addMigrations(
+                BacklogiumDatabase.MIGRATION_1_2,
+                BacklogiumDatabase.MIGRATION_2_3,
+                BacklogiumDatabase.MIGRATION_3_4,
+            )
             .fallbackToDestructiveMigration()
             .build()
 

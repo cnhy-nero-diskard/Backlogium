@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -23,7 +24,9 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -50,6 +53,7 @@ import compose.icons.TablerIcons
 import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.Clock
 import compose.icons.tablericons.DeviceGamepad
+import compose.icons.tablericons.Download
 import compose.icons.tablericons.Flame
 
 @Composable
@@ -217,6 +221,14 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
             }
         }
 
+        // Opt-in one-time Steam-history import.
+        HistoryImportCard(
+            imported = state.historyImported,
+            importing = state.isImportingHistory,
+            onImport = viewModel::importSteamHistory,
+            onReset = viewModel::resetHistoryImport,
+        )
+
         // Sync controls.
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -246,6 +258,146 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
                 }
             }
         }
+    }
+}
+
+/**
+ * One-time "Import Steam history" control (add-playtime-backfill). Before importing it offers
+ * the action behind a confirmation that spells out the effect (counts past playtime toward XP,
+ * one-time, matched games capped / unmatched counted in full). After importing it reflects the
+ * completed state and offers a reset that undoes the import so it can be run again.
+ */
+@Composable
+private fun HistoryImportCard(
+    imported: Boolean,
+    importing: Boolean,
+    onImport: () -> Unit,
+    onReset: () -> Unit,
+) {
+    var showConfirm by remember { mutableStateOf(false) }
+    var showResetConfirm by remember { mutableStateOf(false) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Steam history", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            if (imported) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = TablerIcons.CircleCheck,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "History imported",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
+                Text(
+                    text = "Past playtime already counts toward your XP.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(8.dp))
+                TextButton(
+                    onClick = { showResetConfirm = true },
+                    enabled = !importing,
+                ) {
+                    if (importing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Text("Reset import")
+                    }
+                }
+            } else {
+                Text(
+                    text = "Count your pre-install Steam playtime toward XP. One-time only.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = { showConfirm = true },
+                    enabled = !importing,
+                ) {
+                    if (importing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = TablerIcons.Download,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Import Steam history")
+                    }
+                }
+            }
+        }
+    }
+
+    if (showConfirm) {
+        AlertDialog(
+            onDismissRequest = { showConfirm = false },
+            title = { Text("Import Steam history?") },
+            text = {
+                Text(
+                    "This counts your past Steam playtime toward XP and can only be done once. " +
+                        "Games matched to HowLongToBeat are capped by the usual taper; unmatched " +
+                        "games count their full playtime.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showConfirm = false
+                        onImport()
+                    },
+                ) {
+                    Text("Import")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirm = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    if (showResetConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirm = false },
+            title = { Text("Reset imported history?") },
+            text = {
+                Text(
+                    "This removes imported past playtime from your XP; your level drops back to " +
+                        "reflect tracked playtime only. Streaks and tracked sessions are kept, and " +
+                        "you can import again afterward.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showResetConfirm = false
+                        onReset()
+                    },
+                ) {
+                    Text("Reset")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirm = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 }
 

@@ -15,3 +15,8 @@ and SHALL reflect whether history has already been imported so the action is cle
 #### Scenario: Communicating the effect before importing
 - **WHEN** the user is about to import history
 - **THEN** the UI indicates that importing counts past playtime toward XP and is a one-time action
+
+#### Scenario: Resetting a completed import
+- **WHEN** historical playtime has been imported
+- **THEN** the UI offers a control to reset the import, and after resetting the import is
+  offered again

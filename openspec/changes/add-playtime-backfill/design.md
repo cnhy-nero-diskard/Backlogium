@@ -52,6 +52,16 @@ the rest — with no change to the engine.
   owns the rules; this owns the one-time import behavior and how its offset combines with
   tracked minutes — an app-data concern, same separation as `steam-achievements` vs
   `gamification`.
+- **The frozen offset must survive syncs.** The Steam poll rebuilds each `Game` row from the
+  DTO and upserts it; that rebuild MUST carry `backfillMinutes` over from the existing row
+  (alongside `isGoal` / `targetMinutes`), exactly because it is app-owned state absent from the
+  Steam payload. Dropping it resets the offset to 0 and the next recompute silently erases all
+  imported XP. *Why called out:* it is the one non-obvious coupling between this feature and the
+  otherwise-independent sync path, and the failure is silent (XP just collapses on next sync).
+- **Reset is the inverse of import.** Undo clears every `backfillMinutes` to 0, unsets the flag,
+  and recomputes — returning to the not-imported state. Safe to re-import afterward because the
+  offset is computed as `playtimeForever − trackedMinutes` (a *set*, not an accumulate), so a
+  second import refreezes the same historical portion. Tracked sessions/streaks are untouched.
 
 ## Data / flow
 
@@ -96,7 +106,10 @@ additive step; assign sequential versions).
 
 ## Open Questions
 
-- Should opt-in offer an "undo" (clear `backfillMinutes`, unset the flag, recompute) if a
-  player dislikes the jump? Not built here; the flag makes it mechanically possible later.
+- ~~Should opt-in offer an "undo" (clear `backfillMinutes`, unset the flag, recompute) if a
+  player dislikes the jump?~~ **Resolved: yes.** A reset control on the Home card clears the
+  offsets + flag and recomputes; re-import is safe (set semantics). It also doubles as the
+  recovery path for installs whose offsets were wiped by the pre-fix sync bug.
 - Where does the control live — Home, or a dedicated settings screen the app does not yet
-  have? Deferred to implementation; the spec only requires the control exist and be one-time.
+  have? **Resolved: Home**, as a dedicated "Steam history" card (the app has no settings
+  screen yet).

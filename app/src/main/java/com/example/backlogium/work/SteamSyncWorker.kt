@@ -129,6 +129,9 @@ class SteamSyncWorker @AssistedInject constructor(
                 isGoal = existing?.isGoal ?: false,
                 targetMinutes = existing?.targetMinutes,
                 lastSyncedAt = now,
+                // Preserve the frozen opt-in history offset; rebuilding the row from the DTO
+                // would otherwise reset it to 0 and wipe imported XP on the next sync.
+                backfillMinutes = existing?.backfillMinutes ?: 0,
             )
         }
         gameDao.upsertAll(updatedGames)

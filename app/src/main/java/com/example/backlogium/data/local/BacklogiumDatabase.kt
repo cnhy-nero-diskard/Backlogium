@@ -27,7 +27,7 @@ import com.example.backlogium.data.local.entity.Session
         HltbData::class,
         Achievement::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -86,6 +86,24 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "PRIMARY KEY(`appId`, `apiName`), " +
                         "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) " +
                         "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+            }
+        }
+
+        /**
+         * v3 → v4: additive only — add the opt-in playtime-backfill columns. `games` gains a
+         * frozen historical-playtime offset and `player_profile` gains the one-time "imported"
+         * flag. Both default to the current (no-backfill) behavior, so existing installs are
+         * unchanged until the user opts in (add-playtime-backfill).
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `games` ADD COLUMN `backfillMinutes` INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL(
+                    "ALTER TABLE `player_profile` " +
+                        "ADD COLUMN `playtimeBackfilled` INTEGER NOT NULL DEFAULT 0",
                 )
             }
         }
