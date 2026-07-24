@@ -5,6 +5,7 @@ import com.example.backlogium.data.remote.dto.GlobalAchievementPercentagesRespon
 import com.example.backlogium.data.remote.dto.OwnedGamesResponse
 import com.example.backlogium.data.remote.dto.PlayerAchievementsResponse
 import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
+import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import retrofit2.http.GET
 import retrofit2.http.Query
@@ -61,4 +62,15 @@ interface SteamApi {
         @Query("key") key: String,
         @Query("appid") appId: Long,
     ): GameSchemaResponse
+
+    /**
+     * Resolve a vanity profile name (the `<vanity>` in `steamcommunity.com/id/<vanity>`) to a
+     * SteamID64. `success = 1` → [steamid][com.example.backlogium.data.remote.dto.ResolveVanityResult.steamId]
+     * populated; `success = 42` → no match.
+     */
+    @GET("ISteamUser/ResolveVanityURL/v1/")
+    suspend fun resolveVanityUrl(
+        @Query("key") key: String,
+        @Query("vanityurl") vanityUrl: String,
+    ): ResolveVanityResponse
 }

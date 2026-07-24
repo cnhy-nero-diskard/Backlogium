@@ -47,25 +47,31 @@ import com.airbnb.lottie.compose.animateLottieCompositionAsState
 import com.airbnb.lottie.compose.rememberLottieComposition
 import com.example.backlogium.R
 import com.example.backlogium.domain.isStreakMilestone
-import com.example.backlogium.ui.components.EmptyState
+import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
+import compose.icons.tablericons.BrandSteam
 import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.Clock
 import compose.icons.tablericons.DeviceGamepad
 import compose.icons.tablericons.Download
 import compose.icons.tablericons.Flame
+import compose.icons.tablericons.Pencil
 
 @Composable
-fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
+fun HomeScreen(
+    onEditCredentials: () -> Unit,
+    viewModel: HomeViewModel = hiltViewModel(),
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
+    if (state.loading) return
+
     if (!state.configured) {
-        EmptyState(
-            title = "Steam not configured",
-            message = "Add steam.apiKey and steam.steamId to local.properties and rebuild. " +
-                "Your Steam profile and game details must also be public.",
-        )
+        // Full-screen onboarding takeover replaces the old dead-end "not configured" message.
+        // Completion flips credentialsStateFlow, so this screen recomposes to the configured
+        // content automatically — no explicit navigation needed here.
+        OnboardingScreen(onCompleted = {})
         return
     }
 
@@ -221,6 +227,13 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
             }
         }
 
+        // Steam account: active id + masked key, with an action to reopen onboarding.
+        SteamAccountCard(
+            steamId = state.steamId,
+            apiKeyMasked = state.apiKeyMasked,
+            onEdit = onEditCredentials,
+        )
+
         // Opt-in one-time Steam-history import.
         HistoryImportCard(
             imported = state.historyImported,
@@ -256,6 +269,52 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
                 } else {
                     Text("Sync now")
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Compact "Steam account" card shown while configured: the active SteamID64 and a masked API key,
+ * plus an "Edit" action that reopens the onboarding flow to change credentials. The raw API key
+ * never reaches this composable — [apiKeyMasked] is already redacted upstream.
+ */
+@Composable
+private fun SteamAccountCard(
+    steamId: String,
+    apiKeyMasked: String,
+    onEdit: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = TablerIcons.BrandSteam,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Steam account", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = "SteamID $steamId",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    text = "API key $apiKeyMasked",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            TextButton(onClick = onEdit) {
+                Icon(TablerIcons.Pencil, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Edit")
             }
         }
     }

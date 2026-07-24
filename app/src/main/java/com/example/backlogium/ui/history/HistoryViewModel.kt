@@ -2,8 +2,8 @@ package com.example.backlogium.ui.history
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.backlogium.BuildConfig
-import com.example.backlogium.data.local.SettingsDataStore
+import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.SessionRepository
@@ -41,19 +41,19 @@ class HistoryViewModel @Inject constructor(
     sessionRepository: SessionRepository,
     gameRepository: GameRepository,
     profileRepository: ProfileRepository,
-    settings: SettingsDataStore,
+    credentials: CredentialsRepository,
 ) : ViewModel() {
 
     val uiState: StateFlow<HistoryUiState> = combine(
         sessionRepository.recentSessions,
         gameRepository.library,
         profileRepository.dailyProgress,
-        settings.steamIdFlow,
-    ) { sessions, games, days, steamId ->
+        credentials.credentialsStateFlow,
+    ) { sessions, games, days, credState ->
         val nameById = games.associate { it.appId to it.name }
         HistoryUiState(
             loading = false,
-            configured = BuildConfig.STEAM_API_KEY.isNotBlank() && steamId.isNotBlank(),
+            configured = credState is CredentialsState.Configured,
             sessions = sessions.map { session ->
                 SessionUi(
                     id = session.id,

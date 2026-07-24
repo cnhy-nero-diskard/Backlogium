@@ -2,8 +2,10 @@ package com.example.backlogium.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.backlogium.BuildConfig
+import com.example.backlogium.data.credentials.maskApiKey
 import com.example.backlogium.data.local.SettingsDataStore
+import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.ProfileRepository
@@ -23,6 +25,10 @@ import javax.inject.Inject
 data class HomeUiState(
     val loading: Boolean = true,
     val configured: Boolean = true,
+    /** Active SteamID64, shown on the Steam account card when configured. */
+    val steamId: String = "",
+    /** Masked form of the API key for display; the raw key is never surfaced to the UI. */
+    val apiKeyMasked: String = "",
     val level: Int = 1,
     val xpIntoLevel: Int = 0,
     val xpForNext: Int = 0,
@@ -51,6 +57,7 @@ data class HomeUiState(
 class HomeViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
     private val liveStatusRepository: LiveStatusRepository,
+    private val credentials: CredentialsRepository,
     private val settings: SettingsDataStore,
     private val time: TimeProvider,
 ) : ViewModel() {
@@ -59,15 +66,18 @@ class HomeViewModel @Inject constructor(
         profileRepository.profile,
         profileRepository.dailyProgress,
         settings.ruleConfigFlow,
-        settings.steamIdFlow,
+        credentials.credentialsStateFlow,
         profileRepository.syncInProgress,
-    ) { profile, days, config, steamId, isSyncing ->
+    ) { profile, days, config, credState, isSyncing ->
         val todayKey = time.today().toString()
         val todayProgress = days.firstOrNull { it.date == todayKey }
         val xpState = Gamification.levelState(profile?.totalXp ?: 0, config)
+        val configured = credState as? CredentialsState.Configured
         HomeUiState(
             loading = false,
-            configured = BuildConfig.STEAM_API_KEY.isNotBlank() && steamId.isNotBlank(),
+            configured = configured != null,
+            steamId = configured?.steamId ?: "",
+            apiKeyMasked = configured?.let { maskApiKey(it.apiKey) } ?: "",
             level = xpState.level,
             xpIntoLevel = xpState.xpIntoLevel,
             xpForNext = xpState.xpForNext,

@@ -21,10 +21,14 @@ import com.example.backlogium.ui.history.HistoryScreen
 import com.example.backlogium.ui.home.HomeScreen
 import com.example.backlogium.ui.library.LibraryScreen
 import com.example.backlogium.ui.navigation.Destination
+import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.review.HltbReviewScreen
 
 /** Route for the HLTB match-review surface — a sub-destination reached from the Library. */
 private const val ROUTE_HLTB_REVIEW = "hltb_review"
+
+/** Route for the credentials onboarding flow — reached from the Home "Edit" action. */
+private const val ROUTE_ONBOARDING = "onboarding"
 
 /** Route for the per-game detail screen — a sub-destination reached from the Library. */
 private const val ROUTE_GAME_DETAIL = "game_detail/{appId}"
@@ -71,7 +75,9 @@ fun BacklogiumAppRoot() {
             startDestination = Destination.HOME.route,
             modifier = Modifier.padding(innerPadding),
         ) {
-            composable(Destination.HOME.route) { HomeScreen() }
+            composable(Destination.HOME.route) {
+                HomeScreen(onEditCredentials = { navController.navigate(ROUTE_ONBOARDING) })
+            }
             composable(Destination.LIBRARY.route) {
                 LibraryScreen(
                     onOpenReview = { navController.navigate(ROUTE_HLTB_REVIEW) },
@@ -79,6 +85,9 @@ fun BacklogiumAppRoot() {
                 )
             }
             composable(Destination.HISTORY.route) { HistoryScreen() }
+            composable(ROUTE_ONBOARDING) {
+                OnboardingScreen(onCompleted = { navController.popBackStack() })
+            }
             composable(ROUTE_HLTB_REVIEW) { HltbReviewScreen() }
             composable(
                 route = ROUTE_GAME_DETAIL,

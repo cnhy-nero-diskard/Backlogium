@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.example.backlogium.BuildConfig
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
@@ -17,6 +16,7 @@ import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.AchievementRepository
+import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.SessionDiffer
 import com.example.backlogium.domain.TimeProvider
@@ -35,6 +35,7 @@ class SteamSyncWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val steamApi: SteamApi,
     private val settings: SettingsDataStore,
+    private val credentials: CredentialsRepository,
     private val gameDao: GameDao,
     private val sessionDao: SessionDao,
     private val dailyProgressDao: DailyProgressDao,
@@ -46,13 +47,13 @@ class SteamSyncWorker @AssistedInject constructor(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
-        val apiKey = BuildConfig.STEAM_API_KEY
-        val steamId = settings.steamIdFlow.first()
-
-        if (apiKey.isBlank() || steamId.isBlank()) {
+        val creds = credentials.currentCredentials()
+        if (creds == null) {
             recordError("Steam not configured")
             return Result.success() // config issue: retrying won't help
         }
+        val apiKey = creds.apiKey
+        val steamId = creds.steamId
 
         return try {
             val owned = steamApi.getOwnedGames(apiKey, steamId)
