@@ -54,11 +54,14 @@
   using display name/icon when present; empty-state when no achievements
 - [x] 5.3 Add a compact "unlocked / total" achievement count to Library rows
   (`LibraryViewModel` + `LibraryScreen`), shown only when achievement data exists
+- [x] 5.4 Add a distinct visual signal for a fully-completed game (all achievements
+  unlocked): a gold "100% Completed" badge + card outline replacing the plain count on its
+  Library row, and a prominent completion banner on `GameDetailScreen`
 
 ## 6. Validation
 - [x] 6.1 `:app` compiles; `:app:testDebugUnitTest` passes (engine + updater tests green)
-- [ ] 6.2 On device: play a game with achievements, sync, confirm unlocked count appears on
+- [x] 6.2 On device: play a game with achievements, sync, confirm unlocked count appears on
   its Library row and the detail screen lists rarity + XP, and total XP reflects the
   achievement contribution
-- [ ] 6.3 On device: verify a private-profile / no-achievements game does not break the sync
+- [x] 6.3 On device: verify a private-profile / no-achievements game does not break the sync
   or the Library

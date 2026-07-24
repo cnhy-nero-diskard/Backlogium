@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -61,8 +62,54 @@ fun GameDetailScreen(viewModel: GameDetailViewModel = hiltViewModel()) {
                 modifier = Modifier.padding(bottom = 12.dp),
             )
         }
+        if (state.allUnlocked) {
+            item { GameCompletedBanner() }
+        }
         items(state.achievements, key = { it.apiName }) { achievement ->
             AchievementRow(achievement)
+        }
+    }
+}
+
+/**
+ * Striking, unmissable banner shown when every achievement for a game is unlocked (100%
+ * completion) — the gold accent reserved elsewhere for level-up/streak moments, so it reads
+ * as a comparable milestone.
+ */
+@Composable
+private fun GameCompletedBanner() {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = TablerIcons.Trophy,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(32.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = "GAME COMPLETED",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
+                Text(
+                    text = "Every achievement unlocked",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
+            }
         }
     }
 }

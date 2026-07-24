@@ -32,7 +32,11 @@ data class GameDetailUiState(
     val loading: Boolean = true,
     val gameName: String = "",
     val achievements: List<AchievementUi> = emptyList(),
-)
+) {
+    /** True once every known achievement for this game is unlocked (100% completion). */
+    val allUnlocked: Boolean
+        get() = achievements.isNotEmpty() && achievements.all { it.unlocked }
+}
 
 /**
  * Drives the per-game detail screen: this game's achievements, each resolved to a rarity tier
