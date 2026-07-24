@@ -2,10 +2,10 @@ package com.example.backlogium.ui.library
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.backlogium.BuildConfig
-import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.repo.AchievementRepository
+import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.HltbRepository
 import com.example.backlogium.work.SyncScheduler
@@ -64,7 +64,7 @@ class LibraryViewModel @Inject constructor(
     private val hltbRepository: HltbRepository,
     private val achievementRepository: AchievementRepository,
     private val syncScheduler: SyncScheduler,
-    private val settings: SettingsDataStore,
+    private val credentials: CredentialsRepository,
 ) : ViewModel() {
 
     /** Per-game manual-lookup state, keyed by appId. Not persisted — cleared on success. */
@@ -75,13 +75,13 @@ class LibraryViewModel @Inject constructor(
         gameRepository.backlog,
         hltbRepository.allData,
         hltbRepository.needsReview,
-        settings.steamIdFlow,
-    ) { goals, backlog, hltb, review, steamId ->
+        credentials.credentialsStateFlow,
+    ) { goals, backlog, hltb, review, credState ->
         val rowByAppId = hltb.associateBy { it.appId }
         val goalIds = goals.mapTo(HashSet()) { it.appId }
         LibraryUiState(
             loading = false,
-            configured = BuildConfig.STEAM_API_KEY.isNotBlank() && steamId.isNotBlank(),
+            configured = credState is CredentialsState.Configured,
             goalGames = goals.map { game ->
                 val row = rowByAppId[game.appId]
                 GoalGameUi(

@@ -1,12 +1,9 @@
 package com.example.backlogium.data.repo
 
-import com.example.backlogium.BuildConfig
-import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.remote.SteamApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -42,7 +39,7 @@ sealed interface NowPlaying {
 class LiveStatusRepository @Inject constructor(
     private val steamApi: SteamApi,
     private val gameDao: GameDao,
-    private val settings: SettingsDataStore,
+    private val credentials: CredentialsRepository,
 ) {
     /**
      * Emits an immediate [NowPlaying.NotPlaying] so consumers never block on the first
@@ -62,10 +59,10 @@ class LiveStatusRepository @Inject constructor(
     }
 
     private suspend fun fetch(): NowPlaying {
-        val apiKey = BuildConfig.STEAM_API_KEY
-        val steamId = settings.steamIdFlow.first()
         // Unconfigured (or private) profiles simply report not-in-game — no error surfaced.
-        if (apiKey.isBlank() || steamId.isBlank()) return NowPlaying.NotPlaying
+        val creds = credentials.currentCredentials() ?: return NowPlaying.NotPlaying
+        val apiKey = creds.apiKey
+        val steamId = creds.steamId
 
         val player = steamApi.getPlayerSummaries(apiKey, steamId)
             .response.players.firstOrNull()
