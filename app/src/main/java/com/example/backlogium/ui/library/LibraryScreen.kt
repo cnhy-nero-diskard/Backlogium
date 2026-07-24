@@ -1,5 +1,6 @@
-package com.example.backlogium.ui.library
+﻿package com.example.backlogium.ui.library
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,9 +19,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -45,6 +48,8 @@ import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.DeviceGamepad
+import compose.icons.tablericons.DotsVertical
+import compose.icons.tablericons.Trophy
 
 /** Mutable dialog state: which game is being edited and whether it is already a goal. */
 private data class GoalDialogTarget(
@@ -56,6 +61,7 @@ private data class GoalDialogTarget(
 @Composable
 fun LibraryScreen(
     onOpenReview: () -> Unit = {},
+    onOpenGameDetail: (Long) -> Unit = {},
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -100,7 +106,8 @@ fun LibraryScreen(
             items(state.goalGames, key = { it.appId }) { game ->
                 GoalGameRow(
                     game = game,
-                    onClick = {
+                    onClick = { onOpenGameDetail(game.appId) },
+                    onManageGoal = {
                         dialogTarget = GoalDialogTarget(
                             appId = game.appId,
                             name = game.name,
@@ -115,7 +122,8 @@ fun LibraryScreen(
         items(state.backlog, key = { it.appId }) { game ->
             BacklogGameRow(
                 game = game,
-                onClick = {
+                onClick = { onOpenGameDetail(game.appId) },
+                onManageGoal = {
                     dialogTarget = GoalDialogTarget(
                         appId = game.appId,
                         name = game.name,
@@ -210,12 +218,14 @@ private fun SectionHeader(text: String) {
 }
 
 @Composable
-private fun GoalGameRow(game: GoalGameUi, onClick: () -> Unit) {
+private fun GoalGameRow(game: GoalGameUi, onClick: () -> Unit, onManageGoal: () -> Unit) {
+    val completed = isGameCompleted(game.achievementUnlocked, game.achievementTotal)
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .clickable(onClick = onClick),
+        border = completedBorder(completed),
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -223,7 +233,7 @@ private fun GoalGameRow(game: GoalGameUi, onClick: () -> Unit) {
         ) {
             GameIcon(game.iconUrl)
             Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(game.name, style = MaterialTheme.typography.bodyLarge)
                 Text(
                     text = UiFormat.minutes(game.playtimeForever) + " played",
@@ -249,18 +259,24 @@ private fun GoalGameRow(game: GoalGameUi, onClick: () -> Unit) {
                 }
                 Spacer(Modifier.height(4.dp))
                 HltbStatusLabel(status = game.hltbStatus, op = game.fetchOp)
+                AchievementCountLabel(unlocked = game.achievementUnlocked, total = game.achievementTotal)
+            }
+            IconButton(onClick = onManageGoal) {
+                Icon(imageVector = TablerIcons.DotsVertical, contentDescription = "Manage goal")
             }
         }
     }
 }
 
 @Composable
-private fun BacklogGameRow(game: BacklogGameUi, onClick: () -> Unit) {
+private fun BacklogGameRow(game: BacklogGameUi, onClick: () -> Unit, onManageGoal: () -> Unit) {
+    val completed = isGameCompleted(game.achievementUnlocked, game.achievementTotal)
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .clickable(onClick = onClick),
+        border = completedBorder(completed),
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -268,7 +284,7 @@ private fun BacklogGameRow(game: BacklogGameUi, onClick: () -> Unit) {
         ) {
             GameIcon(game.iconUrl)
             Spacer(Modifier.width(12.dp))
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(game.name, style = MaterialTheme.typography.bodyLarge)
                 Text(
                     text = UiFormat.minutes(game.playtimeForever) + " played",
@@ -280,6 +296,10 @@ private fun BacklogGameRow(game: BacklogGameUi, onClick: () -> Unit) {
                     Spacer(Modifier.height(4.dp))
                     HltbStatusLabel(status = game.hltbStatus, op = game.fetchOp)
                 }
+                AchievementCountLabel(unlocked = game.achievementUnlocked, total = game.achievementTotal)
+            }
+            IconButton(onClick = onManageGoal) {
+                Icon(imageVector = TablerIcons.DotsVertical, contentDescription = "Manage goal")
             }
         }
     }
@@ -342,6 +362,67 @@ private fun HltbStatusLabel(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = modifier,
+        )
+    }
+}
+
+/** True once a game's achievement counts show every known achievement unlocked. */
+private fun isGameCompleted(unlocked: Int?, total: Int?): Boolean =
+    total != null && total > 0 && unlocked == total
+
+/** Gold outline reserved for a fully-completed game's row; null (no border) otherwise. */
+@Composable
+private fun completedBorder(completed: Boolean): BorderStroke? =
+    if (completed) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
+
+/**
+ * Compact "unlocked / total" achievement badge; shown only once achievement data exists. Once
+ * every achievement is unlocked, this becomes a striking gold "100% Completed" pill instead of
+ * the plain count, so a fully-completed game is unmistakable at a glance in the list.
+ */
+@Composable
+private fun AchievementCountLabel(unlocked: Int?, total: Int?) {
+    if (unlocked == null || total == null) return
+    if (isGameCompleted(unlocked, total)) {
+        Row(
+            modifier = Modifier
+                .padding(top = 4.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.primary)
+                .padding(horizontal = 8.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = TablerIcons.Trophy,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(14.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = "100% COMPLETED",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+        return
+    }
+    Row(
+        modifier = Modifier.padding(top = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = TablerIcons.Trophy,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(14.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = "$unlocked / $total achievements",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

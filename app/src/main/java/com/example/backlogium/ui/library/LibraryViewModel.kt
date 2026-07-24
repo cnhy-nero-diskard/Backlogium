@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.backlogium.BuildConfig
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.HltbMatchStatus
+import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.HltbRepository
 import com.example.backlogium.work.SyncScheduler
@@ -32,6 +33,9 @@ data class GoalGameUi(
     val hltbStatus: HltbMatchStatus? = null,
     /** In-flight/failed state of a manual lookup, layered over [hltbStatus]. */
     val fetchOp: HltbFetchOp? = null,
+    /** Unlocked/total achievement counts, null when no achievement data is stored yet. */
+    val achievementUnlocked: Int? = null,
+    val achievementTotal: Int? = null,
 )
 
 data class BacklogGameUi(
@@ -41,6 +45,8 @@ data class BacklogGameUi(
     val playtimeForever: Int,
     val hltbStatus: HltbMatchStatus? = null,
     val fetchOp: HltbFetchOp? = null,
+    val achievementUnlocked: Int? = null,
+    val achievementTotal: Int? = null,
 )
 
 data class LibraryUiState(
@@ -56,6 +62,7 @@ data class LibraryUiState(
 class LibraryViewModel @Inject constructor(
     private val gameRepository: GameRepository,
     private val hltbRepository: HltbRepository,
+    private val achievementRepository: AchievementRepository,
     private val syncScheduler: SyncScheduler,
     private val settings: SettingsDataStore,
 ) : ViewModel() {
@@ -106,11 +113,26 @@ class LibraryViewModel @Inject constructor(
         content,
         syncScheduler.hltbRefreshInProgress,
         fetchOps,
-    ) { state, refreshing, ops ->
+        achievementRepository.counts,
+    ) { state, refreshing, ops, achievementCounts ->
         state.copy(
             refreshing = refreshing,
-            goalGames = state.goalGames.map { it.copy(fetchOp = ops[it.appId]) },
-            backlog = state.backlog.map { it.copy(fetchOp = ops[it.appId]) },
+            goalGames = state.goalGames.map {
+                val counts = achievementCounts[it.appId]
+                it.copy(
+                    fetchOp = ops[it.appId],
+                    achievementUnlocked = counts?.unlocked,
+                    achievementTotal = counts?.total,
+                )
+            },
+            backlog = state.backlog.map {
+                val counts = achievementCounts[it.appId]
+                it.copy(
+                    fetchOp = ops[it.appId],
+                    achievementUnlocked = counts?.unlocked,
+                    achievementTotal = counts?.total,
+                )
+            },
         )
     }.stateIn(
         scope = viewModelScope,

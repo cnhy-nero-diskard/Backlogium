@@ -1,6 +1,9 @@
 package com.example.backlogium.data.remote
 
+import com.example.backlogium.data.remote.dto.GameSchemaResponse
+import com.example.backlogium.data.remote.dto.GlobalAchievementPercentagesResponse
 import com.example.backlogium.data.remote.dto.OwnedGamesResponse
+import com.example.backlogium.data.remote.dto.PlayerAchievementsResponse
 import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import retrofit2.http.GET
@@ -35,4 +38,27 @@ interface SteamApi {
         @Query("key") key: String,
         @Query("steamids") steamIds: String,
     ): PlayerSummariesResponse
+
+    /** Per-player unlock state for one app's achievements. `success = false` when the profile
+     * is private or the app has no stats — see [PlayerAchievementsResult][com.example.backlogium.data.remote.dto.PlayerAchievementsResult]. */
+    @GET("ISteamUserStats/GetPlayerAchievements/v1/")
+    suspend fun getPlayerAchievements(
+        @Query("key") key: String,
+        @Query("steamid") steamId: String,
+        @Query("appid") appId: Long,
+    ): PlayerAchievementsResponse
+
+    /** Global unlock percentage for each of one app's achievements (not per-player). */
+    @GET("ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/")
+    suspend fun getGlobalAchievementPercentages(
+        @Query("gameid") gameId: Long,
+    ): GlobalAchievementPercentagesResponse
+
+    /** Display name + icon per achievement for one app. Games with no achievement schema
+     * return an empty result rather than an error. */
+    @GET("ISteamUserStats/GetSchemaForGame/v2/")
+    suspend fun getSchemaForGame(
+        @Query("key") key: String,
+        @Query("appid") appId: Long,
+    ): GameSchemaResponse
 }

@@ -25,6 +25,14 @@ interface SessionDao {
     @Query("SELECT * FROM sessions ORDER BY startAt ASC")
     suspend fun getAll(): List<Session>
 
-    @Query("SELECT COALESCE(SUM(minutes), 0) FROM sessions")
-    suspend fun totalTrackedMinutes(): Int
+    /**
+     * Tracked minutes summed per game. The gamification engine tapers XP against each game's
+     * own completionist length, so it needs the per-`appId` breakdown rather than a single
+     * library-wide total.
+     */
+    @Query("SELECT appId, COALESCE(SUM(minutes), 0) AS minutes FROM sessions GROUP BY appId")
+    suspend fun trackedMinutesByGame(): List<GameTrackedMinutes>
 }
+
+/** Per-game tracked-minutes projection for [SessionDao.trackedMinutesByGame]. */
+data class GameTrackedMinutes(val appId: Long, val minutes: Int)

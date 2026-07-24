@@ -5,11 +5,13 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HltbData
@@ -23,8 +25,9 @@ import com.example.backlogium.data.local.entity.Session
         DailyProgress::class,
         PlayerProfile::class,
         HltbData::class,
+        Achievement::class,
     ],
-    version = 2,
+    version = 4,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -34,6 +37,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun dailyProgressDao(): DailyProgressDao
     abstract fun playerProfileDao(): PlayerProfileDao
     abstract fun hltbDataDao(): HltbDataDao
+    abstract fun achievementDao(): AchievementDao
 
     companion object {
         const val NAME = "backlogium.db"
@@ -58,6 +62,48 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "PRIMARY KEY(`appId`), " +
                         "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) " +
                         "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+            }
+        }
+
+        /**
+         * v2 → v3: additive only — create the `achievements` table. No existing data is
+         * altered or backfilled (add-steam-achievements).
+         */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `achievements` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`apiName` TEXT NOT NULL, " +
+                        "`displayName` TEXT, " +
+                        "`iconUrl` TEXT, " +
+                        "`unlocked` INTEGER NOT NULL, " +
+                        "`unlockedAt` INTEGER, " +
+                        "`globalPercent` REAL, " +
+                        "`snapshotPercent` REAL, " +
+                        "`fetchedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`, `apiName`), " +
+                        "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+            }
+        }
+
+        /**
+         * v3 → v4: additive only — add the opt-in playtime-backfill columns. `games` gains a
+         * frozen historical-playtime offset and `player_profile` gains the one-time "imported"
+         * flag. Both default to the current (no-backfill) behavior, so existing installs are
+         * unchanged until the user opts in (add-playtime-backfill).
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `games` ADD COLUMN `backfillMinutes` INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL(
+                    "ALTER TABLE `player_profile` " +
+                        "ADD COLUMN `playtimeBackfilled` INTEGER NOT NULL DEFAULT 0",
                 )
             }
         }

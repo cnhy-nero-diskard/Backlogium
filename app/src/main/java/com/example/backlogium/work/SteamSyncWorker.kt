@@ -16,6 +16,7 @@ import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamIconMapper
+import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.SessionDiffer
 import com.example.backlogium.domain.TimeProvider
@@ -40,6 +41,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private val profileDao: PlayerProfileDao,
     private val differ: SessionDiffer,
     private val gamificationUpdater: GamificationUpdater,
+    private val achievementRepository: AchievementRepository,
     private val time: TimeProvider,
 ) : CoroutineWorker(appContext, params) {
 
@@ -66,7 +68,7 @@ class SteamSyncWorker @AssistedInject constructor(
                 steamApi.getSteamLevel(apiKey, steamId).response.playerLevel
             }.getOrDefault(profileDao.get()?.steamLevel ?: 0)
 
-            persistPoll(games, steamId, steamLevel)
+            persistPoll(games, apiKey, steamId, steamLevel)
             Result.success()
         } catch (e: Exception) {
             // Network / transient error: surface it, keep data, let WorkManager back off.
@@ -77,6 +79,7 @@ class SteamSyncWorker @AssistedInject constructor(
 
     private suspend fun persistPoll(
         games: List<com.example.backlogium.data.remote.dto.OwnedGameDto>,
+        apiKey: String,
         steamId: String,
         steamLevel: Int,
     ) {
@@ -126,6 +129,9 @@ class SteamSyncWorker @AssistedInject constructor(
                 isGoal = existing?.isGoal ?: false,
                 targetMinutes = existing?.targetMinutes,
                 lastSyncedAt = now,
+                // Preserve the frozen opt-in history offset; rebuilding the row from the DTO
+                // would otherwise reset it to 0 and wipe imported XP on the next sync.
+                backfillMinutes = existing?.backfillMinutes ?: 0,
             )
         }
         gameDao.upsertAll(updatedGames)
@@ -144,7 +150,8 @@ class SteamSyncWorker @AssistedInject constructor(
             ),
         )
 
-        // Update sync status, then recompute derived gamification values.
+        // Update sync status, then fetch in-scope achievements (freshness-gated, best-effort —
+        // never fails the poll) before recomputing derived gamification values.
         profileDao.upsert(
             profile.copy(
                 steamId = steamId,
@@ -153,6 +160,7 @@ class SteamSyncWorker @AssistedInject constructor(
                 lastSyncError = null,
             ),
         )
+        runCatching { achievementRepository.syncInScopeGames(apiKey, steamId) }
         gamificationUpdater.recompute(today, config)
     }
 

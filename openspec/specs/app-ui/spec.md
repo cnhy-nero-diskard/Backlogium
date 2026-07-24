@@ -2,11 +2,24 @@
 
 ## Purpose
 
-Defines the Android app's UI behavior: the Home screen, visual theming, typography,
-iconography, game art states, celebratory animations, the Library screen, and sync
-feedback on Home.
+Defines the Android app's UI behavior: the app shell and navigation, the Home screen,
+visual theming, typography, iconography, game art states, celebratory animations, the
+Library screen, the History screen, and sync feedback on Home.
 
 ## Requirements
+
+### Requirement: App shell and navigation
+The system SHALL present a Compose UI with navigation between Home, Library, and
+History screens, and all screens SHALL render from locally stored state so the app
+is fully usable offline.
+
+#### Scenario: Offline launch
+- **WHEN** the app is opened without network
+- **THEN** all screens display the last synced state and never block on a network call
+
+#### Scenario: Navigating between screens
+- **WHEN** the user selects a destination from the app's navigation
+- **THEN** the corresponding screen (Home, Library, or History) is shown
 
 ### Requirement: Home screen
 The system SHALL provide a Home screen showing the player's level and XP progress,
@@ -166,6 +179,58 @@ The system SHALL provide a surface listing games flagged as needing an HLTB matc
 - **WHEN** the user opens the match-review surface and no games are flagged
 - **THEN** the surface indicates there is nothing to review
 
+### Requirement: Game detail screen with achievements
+The system SHALL provide a game detail screen, reachable by selecting a game from the
+Library, that lists that game's achievements with each achievement's unlock state, rarity
+tier, and the XP it contributes, using its display name and icon when available.
+
+#### Scenario: Opening a game's detail
+- **WHEN** the user selects a game in the Library
+- **THEN** a detail screen for that game is shown listing its achievements
+
+#### Scenario: Achievement rarity and XP shown
+- **WHEN** the detail screen shows an unlocked achievement that has a rarity snapshot
+- **THEN** it displays the achievement's rarity tier and the XP it contributes
+
+#### Scenario: Locked achievement shown without XP
+- **WHEN** the detail screen shows a locked achievement
+- **THEN** it is displayed as locked and shows no XP contribution
+
+#### Scenario: Game without achievement data
+- **WHEN** the user opens the detail for a game that has no stored achievements
+- **THEN** the screen indicates there are no achievements to show rather than appearing broken
+
+### Requirement: Per-game achievement count on Library rows
+The system SHALL display, on each Library game row that has stored achievement data, a
+compact count of unlocked achievements out of that game's total.
+
+#### Scenario: Row shows unlocked-of-total count
+- **WHEN** the Library shows a game with stored achievement data
+- **THEN** the row displays how many of the game's achievements are unlocked out of its total
+
+#### Scenario: Row without achievement data
+- **WHEN** the Library shows a game with no stored achievement data
+- **THEN** the row shows no achievement count and is otherwise unchanged
+
+### Requirement: Distinct visual signal for a fully-completed game
+The system SHALL visually distinguish a game whose achievements are all unlocked from one
+that is merely in progress, both on its Library row and on its detail screen.
+
+#### Scenario: Fully-completed game stands out on the Library row
+- **WHEN** the Library shows a game whose unlocked achievement count equals its total (and
+  that total is greater than zero)
+- **THEN** the row displays a distinct "100% Completed" indicator in place of the plain
+  unlocked-of-total count
+
+#### Scenario: Fully-completed game is announced on its detail screen
+- **WHEN** the user opens the detail screen for a game whose achievements are all unlocked
+- **THEN** the screen displays a prominent completion banner distinct from the per-achievement
+  list
+
+#### Scenario: In-progress game shows no completion signal
+- **WHEN** a game has stored achievement data but its unlocked count is less than its total
+- **THEN** neither the Library row nor the detail screen displays the completion indicator
+
 ### Requirement: Sync-in-progress feedback on Home
 The system SHALL reflect an in-flight manual sync on the Home screen: while a "Sync now"
 poll is running, the trigger control SHALL show a progress indicator and be disabled,
@@ -180,3 +245,36 @@ and SHALL return to its idle state when the poll completes.
 - **WHEN** an in-flight sync completes (successfully or with an error)
 - **THEN** the sync control returns to its enabled idle state and the screen reflects the
   updated last-sync time or any sync error
+
+### Requirement: History screen
+The system SHALL provide a History screen listing recently synthesized sessions and
+per-day play statistics.
+
+#### Scenario: Recent sessions
+- **WHEN** the History screen is shown
+- **THEN** it lists recent sessions with game, date, and duration, most recent first
+
+#### Scenario: Daily stats
+- **WHEN** daily progress exists
+- **THEN** the screen shows per-day totals and whether each day's quest was met
+
+### Requirement: Import Steam history control
+The system SHALL provide a control that lets the user import their historical Steam playtime,
+and SHALL reflect whether history has already been imported so the action is clearly one-time.
+
+#### Scenario: Offering the import
+- **WHEN** the user has not yet imported historical playtime
+- **THEN** the UI presents a control to import Steam history
+
+#### Scenario: Reflecting completed import
+- **WHEN** historical playtime has already been imported
+- **THEN** the control reflects the imported state rather than offering the import again as if unused
+
+#### Scenario: Communicating the effect before importing
+- **WHEN** the user is about to import history
+- **THEN** the UI indicates that importing counts past playtime toward XP and is a one-time action
+
+#### Scenario: Resetting a completed import
+- **WHEN** historical playtime has been imported
+- **THEN** the UI offers a control to reset the import, and after resetting the import is
+  offered again

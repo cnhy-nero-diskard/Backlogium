@@ -11,10 +11,13 @@ import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class HomeUiState(
@@ -35,6 +38,10 @@ data class HomeUiState(
     val isInGame: Boolean = false,
     val nowPlayingName: String? = null,
     val nowPlayingIconUrl: String? = null,
+    /** True once historical Steam playtime has been imported (one-time). */
+    val historyImported: Boolean = false,
+    /** True while the one-time history import runs. */
+    val isImportingHistory: Boolean = false,
 ) {
     val xpFraction: Float
         get() = if (xpForNext > 0) (xpIntoLevel.toFloat() / xpForNext).coerceIn(0f, 1f) else 0f
@@ -73,8 +80,13 @@ class HomeViewModel @Inject constructor(
             lastSyncAt = profile?.lastSyncAt ?: 0L,
             lastSyncError = profile?.lastSyncError,
             isSyncing = isSyncing,
+            historyImported = profile?.playtimeBackfilled ?: false,
         )
     }
+
+    // Local, view-scoped flag for the in-flight import (the persisted result lands via the
+    // profile flow); kept out of baseState so the button can show progress immediately.
+    private val isImportingHistory = MutableStateFlow(false)
 
     // Folding the live poll in here (rather than a separate collector) makes the 30s poll
     // observation-scoped: WhileSubscribed keeps LiveStatusRepository.nowPlaying collected only
@@ -82,14 +94,16 @@ class HomeViewModel @Inject constructor(
     val uiState: StateFlow<HomeUiState> = combine(
         baseState,
         liveStatusRepository.nowPlaying,
-    ) { state, nowPlaying ->
+        isImportingHistory,
+    ) { state, nowPlaying, importing ->
+        val withImport = state.copy(isImportingHistory = importing)
         when (nowPlaying) {
-            is NowPlaying.InGame -> state.copy(
+            is NowPlaying.InGame -> withImport.copy(
                 isInGame = true,
                 nowPlayingName = nowPlaying.name,
                 nowPlayingIconUrl = nowPlaying.iconUrl,
             )
-            NowPlaying.NotPlaying -> state
+            NowPlaying.NotPlaying -> withImport
         }
     }.stateIn(
         scope = viewModelScope,
@@ -98,4 +112,30 @@ class HomeViewModel @Inject constructor(
     )
 
     fun syncNow() = profileRepository.syncNow()
+
+    /**
+     * Run the one-time historical-playtime import. Idempotent in the use-case; the resulting
+     * XP/level change flows back through the observed profile. Guards against concurrent taps.
+     */
+    fun importSteamHistory() = runHistoryOp { profileRepository.importSteamHistory() }
+
+    /**
+     * Undo a prior import so it can be run again (recovery / opt-out). Clears the frozen
+     * offsets and flag; the XP/level change flows back through the observed profile.
+     */
+    fun resetHistoryImport() = runHistoryOp { profileRepository.resetSteamHistoryImport() }
+
+    // Serialize import/reset behind one in-flight flag so the buttons show progress and
+    // concurrent taps can't overlap.
+    private fun runHistoryOp(op: suspend () -> Unit) {
+        if (isImportingHistory.value) return
+        viewModelScope.launch {
+            isImportingHistory.update { true }
+            try {
+                op()
+            } finally {
+                isImportingHistory.update { false }
+            }
+        }
+    }
 }
