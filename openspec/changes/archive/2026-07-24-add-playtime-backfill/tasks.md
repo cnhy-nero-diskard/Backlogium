@@ -44,6 +44,6 @@
 
 ## 5. Validation
 - [x] 5.1 `:app` compiles; `:app:testDebugUnitTest` passes
-- [ ] 5.2 On device: with pre-install playtime, tap Import; confirm XP/level jump is bounded
+- [x] 5.2 On device: with pre-install playtime, tap Import; confirm XP/level jump is bounded
   for HLTB-matched games and reflects history; verify a second tap does nothing
-- [ ] 5.3 On device: confirm ongoing play after import still accrues XP without re-importing
+- [x] 5.3 On device: confirm ongoing play after import still accrues XP without re-importing
