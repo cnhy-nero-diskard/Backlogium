@@ -36,7 +36,7 @@
 
 ## 6. Verification
 
-- [ ] 6.1 Manually verify first-run seed from an existing configured build, and a fresh build landing in onboarding
-- [ ] 6.2 Manually verify both SteamID paths (raw ID, `/profiles/` URL, `/id/` vanity URL) and each error state
-- [ ] 6.3 Confirm the stored credential blob is ciphertext on disk and the API key never appears in logs
+- [x] 6.1 Manually verify first-run seed from an existing configured build, and a fresh build landing in onboarding
+- [x] 6.2 Manually verify both SteamID paths (raw ID, `/profiles/` URL, `/id/` vanity URL) and each error state
+- [x] 6.3 Confirm the stored credential blob is ciphertext on disk and the API key never appears in logs
 - [x] 6.4 Run `openspec validate --change add-onboarding-credentials --strict` and the project build/tests
