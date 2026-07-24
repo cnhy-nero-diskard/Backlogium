@@ -2,11 +2,24 @@
 
 ## Purpose
 
-Defines the Android app's UI behavior: the Home screen, visual theming, typography,
-iconography, game art states, celebratory animations, the Library screen, and sync
-feedback on Home.
+Defines the Android app's UI behavior: the app shell and navigation, the Home screen,
+visual theming, typography, iconography, game art states, celebratory animations, the
+Library screen, the History screen, and sync feedback on Home.
 
 ## Requirements
+
+### Requirement: App shell and navigation
+The system SHALL present a Compose UI with navigation between Home, Library, and
+History screens, and all screens SHALL render from locally stored state so the app
+is fully usable offline.
+
+#### Scenario: Offline launch
+- **WHEN** the app is opened without network
+- **THEN** all screens display the last synced state and never block on a network call
+
+#### Scenario: Navigating between screens
+- **WHEN** the user selects a destination from the app's navigation
+- **THEN** the corresponding screen (Home, Library, or History) is shown
 
 ### Requirement: Home screen
 The system SHALL provide a Home screen showing the player's level and XP progress,
@@ -180,3 +193,15 @@ and SHALL return to its idle state when the poll completes.
 - **WHEN** an in-flight sync completes (successfully or with an error)
 - **THEN** the sync control returns to its enabled idle state and the screen reflects the
   updated last-sync time or any sync error
+
+### Requirement: History screen
+The system SHALL provide a History screen listing recently synthesized sessions and
+per-day play statistics.
+
+#### Scenario: Recent sessions
+- **WHEN** the History screen is shown
+- **THEN** it lists recent sessions with game, date, and duration, most recent first
+
+#### Scenario: Daily stats
+- **WHEN** daily progress exists
+- **THEN** the screen shows per-day totals and whether each day's quest was met
