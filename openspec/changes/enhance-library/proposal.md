@@ -1,10 +1,12 @@
-# Library navigation, universal completion progress, and targeted HLTB refresh
+# Library navigation, sorting, universal completion progress, and targeted HLTB refresh
 
 ## Why
 
-The Library is a flat, unfiltered, unsearchable list of every owned game. For a library of any
-real size that makes it a scrolling exercise: there is no way to find a specific game, and no way to
-see what a game has *contributed* despite XP being the app's central currency.
+The Library is a flat, unfiltered, unsearchable, unsortable list of every owned game. For a library
+of any real size that makes it a scrolling exercise: there is no way to find a specific game, no way
+to reorder by anything you care about, and no way to see what a game has *contributed* despite XP
+being the app's central currency. Ordering is fixed in the DAO — tagged games alphabetically, the rest
+by playtime — so the one useful order that exists is neither visible nor changeable.
 
 It also carries a leftover from before the HowLongToBeat integration. The goal-games section was
 built around a **manual hours target** the user typed per game — `GameRepository.tagGoal` still
@@ -25,9 +27,12 @@ three specific games, the only option is to sweep all 300.
 
 - **Completion progress for every game** that has a HowLongToBeat length, not only tagged ones —
   claiming the dividend the HLTB integration already paid for.
-- **The tagged section is relabelled** from "Goal games" to "Focus", since it no longer implies a
-  target the user set. Its meaning becomes what it actually is now: a curated shortlist of games
-  being actively tracked, whose minutes are accounted separately.
+- **Both sections are relabelled**: "Goal games" becomes **Focus**, since it no longer implies a
+  target the user set — its meaning becomes what it actually is, a curated shortlist of actively
+  tracked games whose minutes are accounted separately. "Backlog" becomes **Your games**, since with
+  progress now on every row a 200-hour game sitting under "Backlog" describes nothing.
+- **Per-list sorting**: each list gets its own sort control — playtime, name, recently played, or XP
+  contributed — so Focus and Your games can be ordered independently. The chosen order persists.
 - **Search**: a name filter over the whole Library, preserving section structure.
 - **XP badge**: each game shows its total contribution to the player's XP — tapered playtime XP
   plus its unlocked achievements' rarity XP — so the badges sum to the player's real total.
@@ -40,22 +45,23 @@ three specific games, the only option is to sweep all 300.
 ## Capabilities
 
 ### Modified Capabilities
-- `app-ui`: completion progress is shown for any game with a known completion length; the tagged
-  section is relabelled; the Library gains search, an XP badge per game, batch progress with a
-  per-game log, and a multi-select mode for targeted refresh.
+- `app-ui`: completion progress is shown for any game with a known completion length; both sections
+  are relabelled; the Library gains per-list sorting, search, an XP badge per game, batch progress
+  with a per-game log, and a multi-select mode for targeted refresh.
 - `hltb-data`: the batch refresh accepts an explicit subset of games, forces refresh for an
   explicit selection regardless of freshness, and reports per-game outcomes as it proceeds.
 
 ## Impact
 
-- **Affected code (new):** a search field, an XP-per-game derivation, a selection mode, and a
-  progress/log surface.
+- **Affected code (new):** a search field, per-list sort controls, an XP-per-game derivation, a
+  selection mode, and a progress/log surface.
 - **Affected code (modified):** `HltbRepository.refreshBatch` widens its progress callback to carry
   the per-game outcome; `HltbRefreshWorker` accepts an appId subset and reports the current game +
   outcome via `setProgress`; `SyncScheduler` exposes the progress data instead of discarding it;
-  `LibraryViewModel`/`LibraryScreen`; user-facing "goal" copy in `LibraryScreen` and `HistoryScreen`.
-- **No Room migration.** Nothing new is persisted — every addition is a read-side derivation or
-  transient view state.
+  `LibraryViewModel`/`LibraryScreen`; user-facing "goal" and "backlog" copy in `LibraryScreen` and
+  `HistoryScreen`; `SettingsDataStore` gains the two persisted sort keys.
+- **No Room migration.** The only persisted additions are two Preferences DataStore keys for the sort
+  selections; everything else is a read-side derivation or transient view state.
 - **No engine change.** `Gamification.gameXp` and `achievementXp` are called as-is; the badge uses
   exactly the inputs `GamificationUpdater` uses.
 
@@ -73,8 +79,10 @@ three specific games, the only option is to sweep all 300.
   migration; renaming columns would need one for zero functional gain. Internal names stay.
 - **Dropping the dormant `Game.targetMinutes` column.** Harmless where it is; removing it costs a
   migration.
-- **Sorting controls** (by playtime, name, completion). Search plus the Focus shortlist addresses
-  the find-a-game problem.
+- **Sorting by completion percentage or achievement percentage.** Both are derivable, and completion
+  sorting pairs naturally with progress bars now being on every row — but each needs a defined
+  position for games missing HLTB or achievement data, and four options already cover the questions
+  worth asking. Deferred rather than rejected.
 - **Filtering by anything but name** (genre, HLTB status, completion).
 - **Persisting the batch log across process death.** The log is a progress aid, not a record.
 - **Changing how XP is computed.** The badge reports the existing computation.

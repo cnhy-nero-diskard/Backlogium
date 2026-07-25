@@ -131,7 +131,10 @@ sync path are all untouched; this is a read-side regrouping plus one new DAO que
 
 ## Open Questions
 
-- Should the 30-day default be user-adjustable, or is "load older" enough?
+- ~~Should the 30-day default be user-adjustable?~~ **Settled: leave it as is.** A detailed
+  playtime history is planned as part of a future analytics tab, which is where an unbounded or
+  configurable range belongs. This screen stays a recent-history browser with "load older" as its
+  escape hatch, and should not grow a second, competing long-range view.
 - Worth showing a per-day XP figure on the header, now that per-game XP contribution is being derived
   elsewhere? Tempting, but XP is not attributed per day anywhere in the engine — it is recomputed from
   cumulative totals — so a per-day XP number would have to be invented. Deliberately out of scope.

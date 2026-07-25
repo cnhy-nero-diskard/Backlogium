@@ -6,7 +6,8 @@ the rest of the library, and SHALL allow adding a game to that set and removing 
 display progress against a HowLongToBeat-sourced completion length when one is available, whether or
 not it belongs to the curated set, and SHALL display no completion-based progress when none is
 available. The curated set SHALL be labelled in terms of active tracking rather than in terms of a
-user-entered target, since no such target is collected.
+user-entered target, since no such target is collected, and the remaining games SHALL be labelled
+without implying that they are unplayed or awaiting play.
 
 #### Scenario: Game with an HLTB length shows progress
 - **WHEN** the Library is shown and a game has a HowLongToBeat-sourced completion length
@@ -32,12 +33,50 @@ user-entered target, since no such target is collected.
 - **THEN** their labels describe active tracking, and no label implies a completion target set by the
   user
 
+#### Scenario: Remaining games labelled without implying they are unplayed
+- **WHEN** the section holding games outside the tracked set is presented
+- **THEN** its label does not describe those games as a backlog or as awaiting play, since a game with
+  substantial playtime and visible completion progress can belong to it
+
 #### Scenario: Tracked minutes still accounted separately
 - **WHEN** playtime is recorded for a game in the tracked set
 - **THEN** it continues to be accounted separately in per-day progress and reflected in History, as
   it is today
 
 ## ADDED Requirements
+
+### Requirement: Per-list Library sorting
+The system SHALL let the user choose the sort order of each Library list independently, offering at
+least playtime, name, recent activity, and contributed XP, and SHALL remember each list's chosen order
+between visits.
+
+#### Scenario: Sorting a list
+- **WHEN** the user chooses a sort order for a Library list
+- **THEN** that list is reordered accordingly and the other list's order is unaffected
+
+#### Scenario: Available orders
+- **WHEN** the sort options for a list are presented
+- **THEN** they include ordering by playtime, by name, by recent activity, and by contributed XP
+
+#### Scenario: Order remembered
+- **WHEN** the user leaves the Library and returns
+- **THEN** each list is still ordered as the user last chose
+
+#### Scenario: Default orders
+- **WHEN** the user has never chosen a sort order
+- **THEN** each list uses its existing default order
+
+#### Scenario: Stable ordering
+- **WHEN** two games compare equal under the chosen sort key
+- **THEN** their relative order is determined consistently rather than arbitrarily
+
+#### Scenario: Games missing the sort key
+- **WHEN** a list is sorted by a key that some games have no value for
+- **THEN** those games are ordered last rather than being omitted or placed arbitrarily
+
+#### Scenario: Sorting combined with search
+- **WHEN** a search filter is active
+- **THEN** the matching games are presented in the chosen sort order
 
 ### Requirement: Library search
 The system SHALL provide a name search that filters the Library, preserving the section structure

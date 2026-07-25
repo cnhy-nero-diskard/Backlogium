@@ -13,13 +13,15 @@
     `NavySurfaceVariant #232A38`, `OnNavy #E4E8F0`, `OnNavyVariant #AEB6C4`
   - Secondary/tertiary (steel blue): `SteelBlue #7FA6C9`, `OnSteelBlue #0B1722`,
     `SteelBlueLight #9DBBD8`
+  - Live/active (green): the presence token added by `enhance-now-playing` for the Library's
+    running-game dot — include it if that change has landed, and leave a note to add it if it has not
   - Light scheme: `GoldLight #7A5A00`, `OnGoldLight #FFFFFF`, `GoldContainerLight #FFDF9C`,
     `OnGoldContainerLight #261A00`, `LightBackground`/`LightSurface #FBF8F1`,
     `LightSurfaceVariant #EDE6D6`, `OnLight #1B1B17`, `OnLightVariant #4C4738`,
     `SteelBlueDark #2F5B7C`
 - [ ] 1.3 State the **accent rule** explicitly: gold is reserved for milestone moments (level-up,
   streak milestone, 100% completion) — not a general-purpose highlight; steel-blue/tertiary carries
-  ordinary emphasis
+  ordinary emphasis and the in-game lane; green means live presence only
 - [ ] 1.4 Note that the app pins `BacklogiumTheme(dynamicColor = false)`, so this palette is the look
   on every device, and that it is dark-first with a light scheme kept for system light-mode users
 - [ ] 1.5 Link `docs/ui-screens-descriptor.md` (per-screen reference) and `ui/theme/Color.kt`

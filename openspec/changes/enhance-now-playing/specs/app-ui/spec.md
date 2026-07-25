@@ -25,6 +25,34 @@ session time while the player is in a game, and SHALL remove it once the game en
 - **WHEN** the user taps the notification
 - **THEN** the app is opened
 
+### Requirement: Live indicator on the running game in the Library
+The Library SHALL mark the game the player is currently in with a live indicator, regardless of which
+section that game appears in, and SHALL mark no game when the running game cannot be identified.
+
+#### Scenario: Running game marked
+- **WHEN** the player is in a game that is present in the stored library
+- **THEN** that game's Library row displays a live indicator
+
+#### Scenario: Marked in either section
+- **WHEN** the running game belongs to the tracked set, or to the remaining games
+- **THEN** it is marked in whichever section it appears in
+
+#### Scenario: Ordering unaffected
+- **WHEN** a game is marked as running
+- **THEN** its position in the list is unchanged, so the user's chosen sort order is preserved
+
+#### Scenario: Running game not identifiable
+- **WHEN** the player is in a game whose identity cannot be resolved to a game in the stored library
+- **THEN** no game is marked, rather than marking a game matched by name
+
+#### Scenario: Not in a game
+- **WHEN** the player is not in a game
+- **THEN** no Library row displays a live indicator
+
+#### Scenario: Indicator cleared when presence ends
+- **WHEN** presence observation stops
+- **THEN** no row continues to display a live indicator
+
 ## MODIFIED Requirements
 
 ### Requirement: Home screen
@@ -32,8 +60,8 @@ The system SHALL provide a Home screen showing the player's level and XP progres
 quest status, the current streak, and a "Now playing" indicator reflecting the player's current
 in-game state. While the player is in a game, the "Now playing" indicator SHALL be the most
 visually prominent element on Home, presenting enlarged game art, the game's name, and the elapsed
-session time, in a color lane distinct from the accent reserved for milestone moments. When
-credentials are configured, the Home screen SHALL also show a Steam account card exposing the
+session time, in a color lane distinct from the accent reserved for milestone moments, and SHALL convey
+its active state through motion as well as color. When credentials are configured, the Home screen SHALL also show a Steam account card exposing the
 active SteamID and a masked API key with an action that reopens the onboarding flow. When
 credentials are not configured, the Home screen SHALL present the onboarding flow as a full-screen
 takeover rather than a static "Steam not configured" message.
@@ -61,6 +89,20 @@ takeover rather than a static "Steam not configured" message.
 - **WHEN** the now-playing card is displayed
 - **THEN** it does not use the accent color reserved for level-up, streak-milestone, and
   completion moments
+
+#### Scenario: Card conveys an active state through motion
+- **WHEN** the now-playing card is displayed
+- **THEN** it presents continuous, ambient motion that distinguishes an active session from a static
+  card, without competing with the app's celebratory milestone animations
+
+#### Scenario: Reduced motion respected
+- **WHEN** the system indicates that animations should be reduced or disabled
+- **THEN** the card is presented without motion, and the active state remains legible from its elapsed
+  time and its presence alone
+
+#### Scenario: No motion when not in a game
+- **WHEN** the player is not in a game
+- **THEN** no now-playing animation runs
 
 #### Scenario: Elapsed time not presented as exact
 - **WHEN** elapsed session time is shown

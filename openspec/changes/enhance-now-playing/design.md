@@ -28,7 +28,8 @@ persisted live-status state in the app. That is a deliberate, narrow exception t
 ## Goals / Non-Goals
 
 **Goals:**
-- Now-playing is the most prominent element on Home while in game.
+- Now-playing is the most prominent element on Home while in game, and reads as live rather than static.
+- The running game is identifiable in the Library.
 - An accurate elapsed timer that survives app restart and resets per game.
 - Presence visible outside the app via an ongoing notification.
 - Polling bounded to in-game periods only.
@@ -36,6 +37,7 @@ persisted live-status state in the app. That is a deliberate, narrow exception t
 **Non-Goals:**
 - The live timer influencing XP (explicitly forbidden — see Decisions).
 - A permanently resident service; notification actions; replacing the periodic sync.
+- Motion anywhere but the now-playing card; live indicators beyond the Library row and Home card.
 
 ## Decisions
 
@@ -89,6 +91,54 @@ persisted live-status state in the app. That is a deliberate, narrow exception t
   Cleared when the service stops. Skipped silently when `POST_NOTIFICATIONS` was never granted —
   the same graceful degradation `HltbRefreshWorker` already implements.
 
+- **The card carries a slowly flowing gradient, driven by an infinite transition over a brush offset.**
+  A `rememberInfiniteTransition` animates a horizontal offset feeding a linear-gradient brush across
+  the card, cycling over several seconds — slow enough to read as breathing, not pulsing.
+  *Why motion at all:* colour distinguishes *categories*; motion distinguishes *states*. A static
+  steel-blue card says "this card is about the game you're playing"; a moving one says "this is
+  happening now". That is the actual thing being communicated, and it is why a brighter static colour
+  would not substitute.
+  *Why a gradient rather than a pulse or a blink:* a pulsing card competes with the level-up and
+  streak-milestone Lottie animations, which are the app's designated attention-grabbing moments. A slow
+  directional flow occupies a different register — ambient, not celebratory.
+  *Composition-scoped by construction:* `rememberInfiniteTransition` stops when the card leaves
+  composition, and the card is only composed while in game. There is no animation running on a screen
+  that is not visible, and none at all when no game is running.
+
+- **The animation honors the system's reduced-motion setting.** When animations are disabled at the OS
+  level, the card renders the same gradient statically rather than animating.
+  *Why:* a continuously moving surface is precisely what motion-sensitivity settings exist to
+  suppress. Android exposes this via the animator duration scale; a zero scale means no motion.
+  *Consequence:* liveness must not depend on motion alone — the timer is ticking and the card is
+  present, so the state is still legible without it.
+
+- **The Library marks the running game with a small live dot, in whichever section it sits.** Driven by
+  matching `NowPlaying.InGame.gameId` against each row's `appId`.
+  *Why in the Library at all:* it is the screen that lists every game, and it currently knows the least
+  about the one fact that is happening right now. *Why a dot rather than reordering or a banner:*
+  ordering is now user-controlled per list, so hoisting the running game would fight the chosen sort;
+  a dot marks without rearranging.
+  *New dependency, deliberately sequenced:* `LibraryViewModel` does not inject `LiveStatusRepository`
+  today. Under the current observation-scoped design, having Library observe `nowPlaying` would start a
+  30s poll whenever the Library is open — an unwanted side effect. Once this change moves ownership to
+  the service, Library becomes a pure observer of shared state and the dot costs nothing. **The dot
+  should therefore land with the service rework, not before it.**
+
+- **`gameId` can be null or unmatched, and the dot simply does not appear.** Steam's `gameid` may not
+  parse, and the running game may not be in the owned set at all (a non-Steam shortcut, family sharing).
+  *Why not fall back to name matching:* `gameExtraInfo` is a display string, and matching it against
+  library names would occasionally mark the wrong game. A missing dot is a smaller failure than a
+  misplaced one.
+
+- **A dedicated "live" green token is added to the palette.** `Color.kt` currently carries only the gold
+  accent, the navy surface family, and the steel-blue secondary — no green. The dot needs one, and it is
+  semantic (live/active), not decorative.
+  *Why green specifically:* it is the near-universal convention for active presence, and it is
+  unambiguously distinct from both the gold milestone accent and the steel-blue in-game lane, so a dot
+  can never be mistaken for either.
+  *Cross-change note:* `document-color-palette` documents the palette in the README. Whichever change
+  lands second must carry the token into that documentation.
+
 ## Risks / Trade-offs
 
 - **Battery** — the dominant risk. Mitigations: service runs only while in game; 30s poll is a
@@ -104,6 +154,14 @@ persisted live-status state in the app. That is a deliberate, narrow exception t
   release, as this is a store-review surface, not just a technical one.
 - **Two "session" concepts** — a permanent comprehension cost for future contributors. Mitigated
   by naming (`LiveSession` vs `Session`) and by keeping the live one out of `domain/` entirely.
+- **Continuous animation cost** — a gradient animating while Home is open redraws every frame. Confined
+  to one card, only while in game, only while composed. Worth confirming it does not measurably add to
+  the service's battery figure, since both are active in exactly the same window.
+- **Motion as the sole liveness cue** — defeated by reduced-motion settings, which is why the ticking
+  timer and the card's presence must carry the meaning independently.
+- **A stale dot** — if the service dies and presence goes unrefreshed, the Library could mark a game
+  that is no longer running. Bounded by the existing behavior that a failed fetch retains the last
+  value; worth ensuring presence clears when the service stops rather than lingering.
 
 ## Migration Plan
 
@@ -115,9 +173,14 @@ Manifest additions: `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, and th
 declaration with `android:foregroundServiceType="dataSync"`. `POST_NOTIFICATIONS` is already
 declared.
 
+One additive colour token in `ui/theme/Color.kt` for live/active presence, wired into the theme's
+scheme. No existing colour changes.
+
 ## Open Questions
 
 - Should the notification also appear when the app is in the *foreground*? Leaning yes (simpler:
   service lifecycle drives it unconditionally), but it is arguably redundant with the Home card.
+- Should the live dot also animate (a slow pulse)? Leaning no — one moving thing per screen, and the
+  Library is a dense list where a pulsing dot per row would be noise.
 - Should a user-facing "track presence in the background" toggle ship with this change or follow
   it? Deferring, but a battery-conscious user will want it.

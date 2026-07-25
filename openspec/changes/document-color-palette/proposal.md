@@ -18,7 +18,8 @@ knew it existed.
 - A **color palette section in the README**: the token families (accent, dark surfaces,
   secondary/tertiary, light scheme) with their hex values, roles, and on-color pairings.
 - An explicit statement of the **accent rule** — gold is reserved for milestone moments (level-up,
-  streak milestones, 100% completion) and is not a general-purpose highlight.
+  streak milestones, 100% completion) and is not a general-purpose highlight; steel-blue carries
+  ordinary emphasis and the in-game lane; green, once added, means live presence only.
 - A pointer to `docs/ui-screens-descriptor.md` as the fuller per-screen reference, and to
   `ui/theme/Color.kt` as the source of truth for values.
 

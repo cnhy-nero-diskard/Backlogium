@@ -47,13 +47,34 @@
 - [ ] 5.5 Copy must read as time since detection, not as an exact launch time
 - [ ] 5.6 `HomeUiState`: add elapsed/started-at; keep the card conditional so layout is unchanged
   when not in game
+- [ ] 5.7 Flowing gradient: `rememberInfiniteTransition` animating a horizontal offset into a
+  linear-gradient brush over the card, cycling over several seconds — ambient, not pulsing
+- [ ] 5.8 Honor reduced motion: when the system animator duration scale is zero, render the gradient
+  statically instead of animating
+- [ ] 5.9 Confirm the animation stops with composition (it should, by construction) and that nothing
+  animates when no game is running
 
-## 6. Verification
-- [ ] 6.1 Confirm by inspection that no `domain/` code and no `GamificationUpdater` path reads
+## 6. Library live dot
+- [ ] 6.1 `LibraryViewModel`: inject live status and expose the running `appId` — **only after** the
+  service rework in section 2/3, so observing presence from the Library does not start a poll
+- [ ] 6.2 Add a live/active green token to `ui/theme/Color.kt` and wire it into the theme scheme;
+  no existing colors change
+- [ ] 6.3 Render a small dot on the matching row, in whichever section it appears
+- [ ] 6.4 Match on `appId` against `NowPlaying.InGame.gameId`; when `gameId` is null or absent from the
+  library, mark nothing — never fall back to name matching
+- [ ] 6.5 Do not reorder or hoist the running game; the user's chosen sort stands
+- [ ] 6.6 Ensure presence clears when the service stops, so no row keeps a stale dot
+- [ ] 6.7 If `document-color-palette` has already landed, add the new token to the README palette
+
+## 7. Verification
+- [ ] 7.1 Confirm by inspection that no `domain/` code and no `GamificationUpdater` path reads
   live session state
-- [ ] 6.2 Manually verify: background the app mid-session → notification persists and ticks;
+- [ ] 7.2 Manually verify: background the app mid-session → notification persists and ticks;
   quit the game → notification clears and the service stops
-- [ ] 6.3 Kill the app mid-session → reopen → elapsed continues from the persisted start time
-- [ ] 6.4 Measure battery over a ~1h session before declaring done
-- [ ] 6.5 Confirm the `dataSync` foreground-service type against current Play policy
-- [ ] 6.6 Update `docs/ui-screens-descriptor.md`
+- [ ] 7.3 Kill the app mid-session → reopen → elapsed continues from the persisted start time
+- [ ] 7.4 Measure battery over a ~1h session before declaring done
+- [ ] 7.5 Confirm the `dataSync` foreground-service type against current Play policy
+- [ ] 7.6 Verify the dot appears for a running game in both sections, and not at all for a game absent
+  from the library
+- [ ] 7.7 Verify the card renders statically with animations disabled in developer options
+- [ ] 7.8 Update `docs/ui-screens-descriptor.md`

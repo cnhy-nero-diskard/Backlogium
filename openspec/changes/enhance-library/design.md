@@ -1,4 +1,4 @@
-# Design — Library navigation, universal completion progress, and targeted HLTB refresh
+# Design — Library navigation, sorting, universal completion progress, and targeted HLTB refresh
 
 ## Context
 
@@ -39,15 +39,15 @@ which is precisely what `GamificationUpdater.recompute` sums across the library.
 ## Goals / Non-Goals
 
 **Goals:**
-- Find a specific game.
+- Find a specific game, and order each list by what matters.
 - Show every game's progress toward completion, since the data exists for every game.
-- Make the tagged section's label match what it now means.
+- Make both section labels match what they now mean.
 - Show what a game contributed to XP, consistently with the engine.
 - Make the batch sweep legible and targetable.
 
 **Non-Goals:**
-- Pinning, retiring the tag, renaming internal fields, dropping `targetMinutes`, sort controls,
-  non-name filters, persisted batch logs, bulk tagging, redefining XP.
+- Pinning, retiring the tag, renaming internal fields, dropping `targetMinutes`, completion-percentage
+  sorting, non-name filters, persisted batch logs, bulk tagging, redefining XP.
 
 ## Decisions
 
@@ -69,14 +69,36 @@ which is precisely what `GamificationUpdater.recompute` sums across the library.
   either lose its section heading or appear twice. Collapsing to one concept removes the problem
   rather than managing it.
 
-- **"Focus" replaces "Goal games" in user-facing copy; internal names are untouched.** The Library
-  heading, the tag/untag dialog copy, and History's "on goals" line all move to Focus wording.
-  `isGoal`, `goalMinutesPlayed`, `QuestMode.GOAL_ONLY`, and `observeGoalGames()` keep their names.
-  *Why:* "goal" implied a target the user set, which no longer exists; "Focus" describes a curated
-  set being actively tracked, which is what it is. Renaming the schema and engine surface would need
-  a migration and an engine change for zero functional gain — and `GOAL_ONLY` is an engine concept
-  that predates this UI question. *Risk accepted:* a lasting label/identifier mismatch, mitigated by
-  saying so in one place (this document) rather than leaving future readers to guess.
+- **"Focus" replaces "Goal games" and "Your games" replaces "Backlog" in user-facing copy; internal
+  names are untouched.** The Library headings, the tag/untag dialog copy, and History's "on goals"
+  line all move to the new wording. `isGoal`, `goalMinutesPlayed`, `QuestMode.GOAL_ONLY`,
+  `observeGoalGames()`, and `observeBacklog()` keep their names.
+  *Why (Focus):* "goal" implied a target the user set, which no longer exists; "Focus" describes a
+  curated set being actively tracked, which is what it is.
+  *Why (Your games):* "backlog" means games awaiting play. That was defensible when the section was
+  everything-except-the-goals and only goals showed progress — but with completion progress on every
+  row, a 200-hour finished game filed under "Backlog" is actively wrong. "Your games" claims nothing
+  about intent, which is right for a list that is simply the rest of the library.
+  *Why not rename the code:* renaming the schema and engine surface would need a migration and an
+  engine change for zero functional gain, and `GOAL_ONLY` is an engine concept predating this UI
+  question. *Risk accepted:* a lasting label/identifier mismatch, mitigated by saying so in one place
+  (this document) rather than leaving future readers to guess.
+
+- **Each list gets its own sort control, and the selection persists.** Options: playtime, name,
+  recently played (`Game.playtime2Weeks`), and XP contributed. Two independent selections, stored as
+  two Preferences DataStore keys in `SettingsDataStore`.
+  *Why independent:* the two lists answer different questions — a short curated Focus list is most
+  useful alphabetically or by recent activity, while a 300-game library is most useful by playtime. One
+  shared control would force a compromise on both.
+  *Why persisted, unlike the achievement sort:* the achievement sort is a lens applied within one
+  game's detail screen, discarded on the way out. The Library is the screen you return to constantly,
+  and re-picking your ordering on every visit is friction. Preferences DataStore means no migration.
+  *Sorting happens in the ViewModel, not the DAO.* The XP-contributed key is a read-side derivation
+  that SQL cannot express, and the lists are already fully in memory — so all four keys sort in one
+  place rather than two of them living in Room queries and two in Kotlin.
+  *Defined tie-breaks:* every key falls back to name ascending, so ordering is stable and never
+  depends on Room's return order. Games with zero recent playtime sort last under "recently played";
+  zero-XP games sort last under "XP contributed".
 
 - **The tagged section stays a separate section.** With progress universal, its remaining purpose is
   to be a short, curated list at the top, whose minutes are accounted separately and which
@@ -130,27 +152,33 @@ which is precisely what `GamificationUpdater.recompute` sums across the library.
 
 ## Risks / Trade-offs
 
-- **Label/identifier mismatch** — the UI says Focus, the code says `isGoal`. A deliberate trade
-  against a migration; recorded here so it reads as a decision, not an oversight.
+- **Label/identifier mismatch** — the UI says Focus and Your games, the code says `isGoal` and
+  `observeBacklog()`. A deliberate trade against a migration; recorded here so it reads as a decision,
+  not an oversight.
+- **Sort keys that can disagree with what a row displays** — "recently played" uses
+  `playtime2Weeks` (Steam's own rolling figure), while the XP key uses tracked + backfill minutes. A
+  game can sort high on recent activity while badging little XP. Both are correct; the sort labels need
+  to name what they order by.
 - **Row density** — icon, playtime, HLTB status, achievement badge, XP badge, and now a progress bar
   on every row with a length. Watch this in practice; demote the XP badge first if needed.
 - **XP badge confusion** — "0 XP on a 120-hour game" will look wrong to anyone who never imported
   history. Mitigated by copy and called out in the spec deliberately.
 - **Search + selection interaction** — a filter that hides a selected game must not silently drop it
   from the pending selection. Keep the selection keyed by `appId` and keep the count visible.
-- **"Backlog" is now a weaker name** — with progress on every row, a 200-hour untagged game sitting
-  under "Backlog" reads oddly. Out of scope here, but worth revisiting.
-
 ## Migration Plan
 
-**None.** Nothing new is persisted: universal progress and the XP badge are read-side derivations
-from data already stored, the relabel is copy, and search/selection are transient view state. No
-schema version bump, no new columns, no `SteamSyncWorker.persistPoll` changes.
+**No Room migration.** Universal progress and the XP badge are read-side derivations from data already
+stored, the relabels are copy, and search/selection are transient view state. The only persisted
+additions are two Preferences DataStore keys for the per-list sort selections, which default to the
+current DAO ordering — name for Focus, playtime for Your games — so a fresh install and an upgrade both
+render exactly as today until the user changes a sort. No schema version bump, no new columns, no
+`SteamSyncWorker.persistPoll` changes.
 
 ## Open Questions
 
 - Should `QuestMode.GOAL_ONLY` get a settings control, now that the Focus section has a clear
   meaning? It is implemented but unreachable. Out of scope, but this change makes it coherent enough
   to be worth exposing.
-- Is "Focus" the right word, versus "Tracking" or "Playing now"? Picked for being short, honest, and
-  free of any implied target.
+- Should sort direction be togglable per key (playtime ascending to find quick wins), or is one
+  sensible direction per key enough? Assuming the latter: descending for playtime, recent, and XP;
+  ascending for name.
