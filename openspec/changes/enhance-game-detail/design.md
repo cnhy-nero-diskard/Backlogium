@@ -53,6 +53,17 @@ So a rarity sort cannot use `snapshotPercent` alone: locked achievements would a
   disagrees with the XP shown on the same row. The fallback is explicitly a *display* concern and
   does not touch the rarity-drift policy, which governs XP only.
 
+- **The displayed unlock rate is the percent that produced the row's tier.** Unlocked rows show
+  `snapshotPercent`; locked rows, which have none, show `globalPercent`. This is the same
+  `snapshotPercent ?: globalPercent` rule the rarity sort uses, so what is displayed, what is sorted
+  on, and what earned the XP are all one number.
+  *Why:* showing the live percent on unlocked rows would routinely contradict the tier beside it — a
+  0.8%-at-unlock achievement now sitting at 6% would read "6% of players · Legendary", which looks
+  like a bug and invites someone to "correct" the tier. *Alternative deferred:* showing both when
+  they diverge ("6.0% now · 0.8% when you unlocked it") is the most informative option and makes the
+  rarity-drift policy visible, but it adds a second line to rows that are simultaneously gaining a
+  description. Worth revisiting once the row's density is known in practice.
+
 - **Locked achievements group last in both sort modes.** In date order they have no date; in rarity
   order their percent is a different kind of signal (how rare it *is* vs how rare *yours* was).
   *Why:* interleaving null-dated rows into a date sort produces an arbitrary result that looks like

@@ -7,11 +7,14 @@ about the game itself, despite the app holding plenty: playtime, tracked-vs-impo
 four HowLongToBeat lengths, completion percentage, XP contributed, session history. A player
 arriving from the Library sees achievements and nothing else.
 
-The achievement list has two gaps of its own. It is unordered — whatever order Room returns — so
-neither "what did I just unlock" nor "what are my rarest" is answerable. And each row shows only a
+The achievement list has three gaps of its own. It is unordered — whatever order Room returns — so
+neither "what did I just unlock" nor "what are my rarest" is answerable. Each row shows only a
 name plus a status line, omitting the achievement's description, which is often the only thing that
-explains what an achievement *is*. Steam's `GetSchemaForGame` already returns that description
-alongside the `displayName` and `icon` the app does store; it is simply dropped when mapping.
+explains what an achievement *is*. And a row can say "Legendary · +250 XP" without ever saying *how
+rare* that is — the tier name is the app's own vocabulary, while the underlying unlock rate is the
+fact behind it. Both the description and the rate are already available: `GetSchemaForGame` returns
+the description alongside the `displayName` and `icon` the app stores, and the unlock rate is already
+persisted on every achievement row.
 
 ## What Changes
 
@@ -19,6 +22,8 @@ alongside the `displayName` and `icon` the app does store; it is simply dropped 
   lengths, completion percentage, and the game's XP contribution.
 - **Sorting** for the achievement list: by date achieved or by rarity.
 - **Achievement descriptions** shown beneath each achievement's name.
+- **The unlock rate on each row** — "0.8% of players have this" — so the rarity tier is backed by
+  the number that produced it.
 
 ## Capabilities
 
@@ -33,7 +38,9 @@ alongside the `displayName` and `icon` the app does store; it is simply dropped 
 - **Affected code (modified):** `AchievementSchemaDto` gains `description`; `Achievement` entity
   gains a `description` column (additive migration); `AchievementMerge` carries it through;
   `GameDetailViewModel`/`GameDetailScreen`.
-- **No new network calls.** `GetSchemaForGame` already returns descriptions.
+- **No new network calls.** `GetSchemaForGame` already returns descriptions, and the unlock rate is
+  already stored on every achievement row (`snapshotPercent` / `globalPercent`) — the row simply
+  never displays it.
 - **Existing rows are not backfilled.** Descriptions populate as games are naturally re-synced;
   rows without one render name-only until then.
 

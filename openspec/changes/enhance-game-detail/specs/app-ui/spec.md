@@ -46,6 +46,27 @@ group locked achievements after unlocked ones in both orders.
 - **WHEN** the user leaves the screen and returns
 - **THEN** the default order is applied again
 
+### Requirement: Achievement unlock rate
+The game detail screen SHALL show, on each achievement, the share of players who have unlocked it,
+using the same percentage that determined that achievement's rarity tier so the two never disagree.
+
+#### Scenario: Rate shown for an unlocked achievement
+- **WHEN** an unlocked achievement has a stored rarity snapshot
+- **THEN** its row displays that snapshot as the share of players who have unlocked it, consistent
+  with the rarity tier shown on the same row
+
+#### Scenario: Rate shown for a locked achievement
+- **WHEN** a locked achievement has a known global unlock percentage
+- **THEN** its row displays that percentage as the share of players who have unlocked it
+
+#### Scenario: Rate unknown
+- **WHEN** an achievement has neither a rarity snapshot nor a known global unlock percentage
+- **THEN** its row displays no unlock rate rather than showing a zero or placeholder value
+
+#### Scenario: Rate agrees with the rarity sort
+- **WHEN** achievements are sorted by rarity
+- **THEN** the order follows the same percentages the rows display
+
 ### Requirement: Achievement descriptions
 The game detail screen SHALL show each achievement's description beneath its name when one is
 known, and SHALL indicate when an achievement is hidden by Steam rather than showing empty space.

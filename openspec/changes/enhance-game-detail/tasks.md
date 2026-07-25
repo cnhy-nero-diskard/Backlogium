@@ -33,13 +33,21 @@
 - [ ] 3.4 Sort control as a compact row above the list; transient state, not persisted
 - [ ] 3.5 Unit-test the comparator: nulls, all-locked, all-unlocked, mixed
 
-## 4. Descriptions
-- [ ] 4.1 `AchievementUi`: add `description` and `hidden`
-- [ ] 4.2 Render the description beneath the name; render nothing when absent
-- [ ] 4.3 Hidden + locked → "Hidden achievement" label
-- [ ] 4.4 Hidden + unlocked with a description → render normally
-- [ ] 4.5 Confirm the existing locked-row alpha treatment still reads well with two text lines
+## 4. Unlock rate on each row
+- [ ] 4.1 `AchievementUi`: add the display percent, resolved as `snapshotPercent ?: globalPercent`
+  (the same key the rarity sort uses — reuse one function so they cannot diverge)
+- [ ] 4.2 Render as "0.8% of players have this" beside or beneath the tier/XP line
+- [ ] 4.3 Render nothing when both percentages are null (no zero, no placeholder)
+- [ ] 4.4 Verify a Legendary row never displays a percentage that contradicts its tier
 
-## 5. Docs & specs
-- [ ] 5.1 Update `docs/ui-screens-descriptor.md`
-- [ ] 5.2 Verify the `app-ui` and `steam-achievements` spec deltas match the built behavior
+## 5. Descriptions
+- [ ] 5.1 `AchievementUi`: add `description` and `hidden`
+- [ ] 5.2 Render the description beneath the name; render nothing when absent
+- [ ] 5.3 Hidden + locked → "Hidden achievement" label
+- [ ] 5.4 Hidden + unlocked with a description → render normally
+- [ ] 5.5 Confirm the existing locked-row alpha treatment still reads well once the row carries a
+  description and an unlock rate as well
+
+## 6. Docs & specs
+- [ ] 6.1 Update `docs/ui-screens-descriptor.md`
+- [ ] 6.2 Verify the `app-ui` and `steam-achievements` spec deltas match the built behavior
