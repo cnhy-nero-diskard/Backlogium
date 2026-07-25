@@ -1,0 +1,67 @@
+# Tasks — Grouped playtime history
+
+> **No migration, no new network calls.** This is a read-side regrouping plus one new DAO query.
+>
+> **Two things that will bite:** Compose cannot nest a vertically-scrolling `LazyColumn` inside
+> another, so the day → game → session tree must be flattened into one lazy list driven by expansion
+> state. And `SessionRepository.recentSessions` is capped at 100 rows, which cannot cover 30 days for
+> an active player — that is a correctness bug for this screen, not a tuning question.
+
+## 1. Date-ranged session reads
+- [ ] 1.1 `SessionDao`: add `observeSince(cutoff: Long)` ordered by `startAt` descending
+- [ ] 1.2 `SessionRepository`: expose a windowed observation; keep `recentSessions` if any other caller
+  needs it, otherwise retire it
+- [ ] 1.3 The window is expressed in days and converted to a cutoff at the local day boundary, not
+  "now minus N×24h" — otherwise the oldest day in the window is partial
+
+## 2. Grouping in the ViewModel
+- [ ] 2.1 Restructure `HistoryUiState` from two flat lists into an ordered list of day groups, each
+  holding game groups, each holding sessions
+- [ ] 2.2 Group sessions by the **local date of `startAt`** (midnight crossers belong to the day they
+  began)
+- [ ] 2.3 Within a day, group by `appId`; join names and art from `gameRepository.library`, keeping the
+  existing "App {appId}" fallback
+- [ ] 2.4 Day header total = **sum of that day's sessions**; goal minutes and `questMet` come from
+  `DailyProgress`
+- [ ] 2.5 Sort days descending, games within a day by their day total descending, sessions within a game
+  by `startAt` ascending (chronological within the day)
+- [ ] 2.6 Include days that have `DailyProgress` but no sessions
+- [ ] 2.7 Window state: 30 day-groups initially, with an action that widens the cutoff
+- [ ] 2.8 Unit-test the grouping: midnight crosser lands on its start day; day total equals the sum of
+  its sessions; a day with progress and no sessions still appears; unknown game falls back
+
+## 3. Presentation helpers
+- [ ] 3.1 `UiFormat`: add a time-of-day formatter (locale-aware, no date part) for range endpoints
+- [ ] 3.2 `UiFormat`: add a session-range formatter producing an approximate range, with an open-ended
+  form for sessions still in progress
+- [ ] 3.3 Unit-test both, including the open-session form and a range crossing midnight
+- [ ] 3.4 Keep the approximation marker and the "played" wording in one place, with a comment on why
+  they exist — dropping either makes the screen look arithmetically broken
+
+## 4. Screen
+- [ ] 4.1 Extract the game-art composable out of `LibraryScreen` (currently private) into
+  `ui/components`, preserving its themed loading/error fallbacks
+- [ ] 4.2 Rebuild `HistoryScreen` as **one flat `LazyColumn`** emitting day headers, then game rows and
+  session rows for expanded branches — no nested lazy lists
+- [ ] 4.3 Expansion state keyed by date and by (date, appId), transient; today expanded by default
+- [ ] 4.4 Day header: date, total played, goal minutes when non-zero, quest indicator (reuse the
+  existing icon treatment from `DayStatRow`)
+- [ ] 4.5 Game row: art, name, that day's total for the game
+- [ ] 4.6 Session row: approximate range · tracked minutes, single line
+- [ ] 4.7 Keep the "Daily stats" divider above the past days, with today's group above it
+- [ ] 4.8 A day with nothing to expand shows no expand affordance
+- [ ] 4.9 "Load older" at the end of the list; expansion state survives loading more
+- [ ] 4.10 Preserve the existing unconfigured and empty states verbatim
+- [ ] 4.11 If `enhance-library` has landed, the day header's goal-minutes copy uses its Focus wording
+  (that change edits the same "on goals" string this one rewrites — whichever lands second carries the
+  other's wording forward)
+
+## 5. Verification
+- [ ] 5.1 Verify expansion state stays attached to the right day when a sync inserts new sessions
+- [ ] 5.2 Check a day containing an open session: range reads as open-ended, minutes counted in the total
+- [ ] 5.3 Check a 30-day window on a heavy library for scroll performance
+- [ ] 5.4 Confirm the quest indicator still reflects `DailyProgress`, not the presented sum
+
+## 6. Docs & specs
+- [ ] 6.1 Update `docs/ui-screens-descriptor.md`
+- [ ] 6.2 Verify the `app-ui` spec delta matches the built behavior
