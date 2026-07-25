@@ -104,8 +104,8 @@ ALTER TABLE achievements ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
 No backfill. Existing rows render name-only until re-fetched. `hidden` defaults to 0 (not hidden),
 which is the correct assumption for already-visible achievements.
 
-> Combine with the other pending column additions into one version bump if these changes ship
-> together.
+> Combine with `add-steam-profile-header`'s columns into one version bump if both changes ship
+> together — those are the only other pending column additions.
 
 ## Open Questions
 

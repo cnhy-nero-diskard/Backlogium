@@ -1,29 +1,43 @@
+## MODIFIED Requirements
+
+### Requirement: Library screen
+The system SHALL provide a Library screen separating a curated, actively-tracked set of games from
+the rest of the library, and SHALL allow adding a game to that set and removing it. Any game SHALL
+display progress against a HowLongToBeat-sourced completion length when one is available, whether or
+not it belongs to the curated set, and SHALL display no completion-based progress when none is
+available. The curated set SHALL be labelled in terms of active tracking rather than in terms of a
+user-entered target, since no such target is collected.
+
+#### Scenario: Game with an HLTB length shows progress
+- **WHEN** the Library is shown and a game has a HowLongToBeat-sourced completion length
+- **THEN** the game displays its name, icon, and playtime, and a progress indicator measuring its
+  playtime against that completion length, regardless of whether it belongs to the curated set
+
+#### Scenario: Game without an HLTB length shows no progress
+- **WHEN** the Library is shown and a game has no HowLongToBeat-sourced completion length yet
+- **THEN** the game displays its name, icon, and playtime, and does not display completion-based
+  progress
+
+#### Scenario: Adding a game to the tracked set
+- **WHEN** the user adds a game to the tracked set, or removes one from it
+- **THEN** the game moves between the tracked section and the rest of the library and the change
+  persists, without prompting for a typed target
+
+#### Scenario: Tracked games appear once
+- **WHEN** a game belongs to the tracked set
+- **THEN** it appears only in the tracked section and not also among the remaining games
+
+#### Scenario: Labelling free of an implied target
+- **WHEN** the tracked section and its actions are presented
+- **THEN** their labels describe active tracking, and no label implies a completion target set by the
+  user
+
+#### Scenario: Tracked minutes still accounted separately
+- **WHEN** playtime is recorded for a game in the tracked set
+- **THEN** it continues to be accounted separately in per-day progress and reflected in History, as
+  it is today
+
 ## ADDED Requirements
-
-### Requirement: Pinned games
-The system SHALL let the user pin and unpin any game in the Library, and SHALL present pinned games
-in their own section above all other sections. A pinned game SHALL appear in exactly one section.
-
-#### Scenario: Pinning a game
-- **WHEN** the user pins a game
-- **THEN** it appears in a pinned section above the other Library sections
-
-#### Scenario: Pinned goal game appears once
-- **WHEN** a game that is tagged as a goal is pinned
-- **THEN** it appears only in the pinned section, and its row still presents its goal information
-  and goal actions
-
-#### Scenario: Unpinning
-- **WHEN** the user unpins a game
-- **THEN** it returns to the section it would otherwise occupy
-
-#### Scenario: No games pinned
-- **WHEN** no games are pinned
-- **THEN** no pinned section is shown and the Library appears as it does today
-
-#### Scenario: Pins survive a sync
-- **WHEN** a library sync completes
-- **THEN** previously pinned games remain pinned
 
 ### Requirement: Library search
 The system SHALL provide a name search that filters the Library, preserving the section structure

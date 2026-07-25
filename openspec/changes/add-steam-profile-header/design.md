@@ -90,8 +90,8 @@ ALTER TABLE player_profile ADD COLUMN avatarUrl TEXT;
 Both nullable with no backfill. The next sync (or live poll) populates them; until then the
 header shows the fallback avatar and the SteamID-derived label.
 
-> If `enhance-game-detail` and `enhance-library` land in the same release, fold their columns
-> into a single v5 migration rather than shipping three consecutive versions.
+> If `enhance-game-detail` lands in the same release, fold its columns into a single v5 migration
+> rather than shipping two consecutive versions. (`enhance-library` needs no migration.)
 
 ## Open Questions
 

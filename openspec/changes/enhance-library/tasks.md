@@ -1,30 +1,33 @@
-# Tasks — Library navigation, pinning, and targeted HLTB refresh
+# Tasks — Library navigation, universal completion progress, and targeted HLTB refresh
 
-> **Invariant to preserve:** each `appId` must appear in exactly one Library section. A duplicate
-> key across `LazyColumn` items crashes Compose — see the existing defensive filter in
-> `LibraryViewModel` that removes goal ids from the backlog list. The new Pinned section must be
-> excluded from both other lists the same way.
+> **No Room migration.** Nothing new is persisted — every addition is a read-side derivation or
+> transient view state.
+>
+> **Invariant to preserve:** each `appId` appears in exactly one Library section. A duplicate key
+> across `LazyColumn` items crashes Compose — see the existing defensive filter in `LibraryViewModel`
+> that removes tracked ids from the other list.
 
-## 1. Pinning — persistence
-- [ ] 1.1 `Game`: add `pinned: Boolean = false`
-- [ ] 1.2 Bump `BacklogiumDatabase`; additive migration
-  (`ALTER TABLE games ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`)
-- [ ] 1.3 Register the migration in `DatabaseModule`
-- [ ] 1.4 `GameDao`: `observePinned()` query and a pin/unpin update
-- [ ] 1.5 `GameRepository`: `pin(appId)` / `unpin(appId)`
-- [ ] 1.6 **`SteamSyncWorker.persistPoll`: preserve `pinned` when rebuilding `Game` rows** (same
-  treatment as `isGoal` and `backfillMinutes`) — add a regression test; this is the likeliest bug
+## 1. Universal completion progress
+- [ ] 1.1 `BacklogGameUi`: add `completionistMinutes: Int?`, populated from the cached HLTB row the
+  same way `GoalGameUi` already is
+- [ ] 1.2 `BacklogGameRow`: render the same progress presentation `GoalGameRow` has, conditional on a
+  non-null completion length
+- [ ] 1.3 Extract the shared progress block so both rows use one composable rather than two copies
+- [ ] 1.4 Verify a game with no HLTB data renders exactly as today (no bar, no placeholder)
 
-## 2. Pinning — UI
-- [ ] 2.1 `LibraryViewModel`: a `pinned` list; exclude pinned ids from `goalGames` and `backlog`
-- [ ] 2.2 `LibraryScreen`: Pinned section rendered first, hidden when empty
-- [ ] 2.3 A pinned goal game keeps its goal presentation (completion progress bar) and goal actions
-- [ ] 2.4 Pin/unpin action in the 3-dot dialog
-- [ ] 2.5 Verify no `appId` can appear in two sections (test the just-pinned-just-tagged race)
+## 2. Relabel the tracked section
+- [ ] 2.1 `LibraryScreen`: section heading "Goal games" → "Focus"
+- [ ] 2.2 `GoalDialog`: title and body copy → focus wording ("Add to Focus" / "Remove from Focus"),
+  keeping the no-typed-target behavior
+- [ ] 2.3 `LibraryScreen`: the 3-dot content description ("Manage goal") → focus wording
+- [ ] 2.4 `HistoryScreen.kt:131`: "· 40m on goals" → focus wording, so the two screens agree
+- [ ] 2.5 Leave `isGoal`, `goalMinutesPlayed`, `observeGoalGames()`, `QuestMode.GOAL_ONLY`, and
+  `Game.targetMinutes` untouched — user-facing copy only, no migration, no engine change
+- [ ] 2.6 Grep for any remaining user-visible "goal" string and reconcile
 
 ## 3. Search
 - [ ] 3.1 `LibraryUiState`: a `query` field; ViewModel-side case-insensitive `contains` filter over
-  all three lists
+  both lists
 - [ ] 3.2 `LibraryScreen`: search field as the first item, above the HLTB controls
 - [ ] 3.3 Section headings retained only for sections with matches
 - [ ] 3.4 Empty state when the filter matches nothing
@@ -39,6 +42,8 @@
 - [ ] 4.4 Sanity check: the sum of all badges equals the profile's `totalXp` (the correctness test
   for this feature)
 - [ ] 4.5 No changes to `:gamification` or `GamificationUpdater`
+- [ ] 4.6 Re-check row density now that every row can also carry a progress bar; demote the XP badge
+  if the row no longer reads cleanly
 
 ## 5. Batch progress + log
 - [ ] 5.1 `HltbRepository.refreshBatch`: widen `onProgress` to `(done, total, name, status?)` with a
@@ -65,5 +70,7 @@
 - [ ] 6.7 Tap outside selection mode still opens game detail
 
 ## 7. Docs & specs
-- [ ] 7.1 Update `docs/ui-screens-descriptor.md`
+- [ ] 7.1 Update `docs/ui-screens-descriptor.md` — including the Focus relabel and universal progress
 - [ ] 7.2 Verify the `app-ui` and `hltb-data` spec deltas match the built behavior
+- [ ] 7.3 Note the deliberate label/identifier mismatch (UI "Focus" vs `isGoal`) where a future reader
+  will hit it
