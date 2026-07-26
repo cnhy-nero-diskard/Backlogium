@@ -23,6 +23,10 @@ data class PlayerStats(
     val lastSyncError: String?,
     /** True once the player has opted in to importing historical Steam playtime (one-time). */
     val playtimeBackfilled: Boolean,
+    /** Steam persona name, or null before the first sync observed one. */
+    val personaName: String?,
+    /** Full-size Steam avatar URL, or null before the first sync observed one. */
+    val avatarUrl: String?,
 )
 
 /** Per-day play totals keyed by local calendar date (ISO-8601 "yyyy-MM-dd"). */
@@ -75,6 +79,8 @@ private fun PlayerProfile.toDomain() = PlayerStats(
     lastSyncAt = lastSyncAt,
     lastSyncError = lastSyncError,
     playtimeBackfilled = playtimeBackfilled,
+    personaName = personaName,
+    avatarUrl = avatarUrl,
 )
 
 private fun DailyProgress.toDomain() = DayProgress(

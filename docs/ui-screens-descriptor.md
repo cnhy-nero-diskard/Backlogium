@@ -46,8 +46,23 @@ review** (from Library). Every screen renders from local state only (offline-fir
 
 ## App shell
 
-Material 3 `Scaffold` with a bottom `NavigationBar`, 3 items, icon (Tabler) + label, one
-selected at a time:
+Material 3 `Scaffold` with a **profile header** in `topBar` and a bottom `NavigationBar`.
+
+**Profile header** — a slim, always-present identity strip above every top-level screen, on the
+plain surface color, 16dp horizontal / 10dp vertical padding, status-bar inset consumed:
+
+- 36dp circular Steam avatar; a themed `User` glyph on `surfaceVariant` stands in while loading,
+  on a load failure, or before any avatar has been synced.
+- Persona name (title, bold, single line, ellipsized). Falls back to the neutral "Steam player"
+  when nothing has been synced yet — never the raw SteamID.
+- Presence label beneath it (label style, muted): "In game" / "Online" / "Offline". Omitted
+  entirely until the first live poll returns, so no state is claimed before it is known.
+- Carries **no level number** — the app's XP level belongs to Home's Level/XP card, and a second
+  unrelated number here would read as a contradiction.
+- Renders **nothing** while credentials are unconfigured or still loading, so the onboarding
+  takeover keeps the full screen.
+
+Bottom navigation: 3 items, icon (Tabler) + label, one selected at a time:
 
 | Destination | Icon (Tabler) | Label |
 |---|---|---|

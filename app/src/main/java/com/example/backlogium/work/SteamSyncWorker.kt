@@ -18,7 +18,9 @@ import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.PlayerIdentity
 import com.example.backlogium.domain.SessionDiffer
+import com.example.backlogium.domain.mergePlayerIdentity
 import com.example.backlogium.domain.TimeProvider
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -69,7 +71,13 @@ class SteamSyncWorker @AssistedInject constructor(
                 steamApi.getSteamLevel(apiKey, steamId).response.playerLevel
             }.getOrDefault(profileDao.get()?.steamLevel ?: 0)
 
-            persistPoll(games, apiKey, steamId, steamLevel)
+            // Identity for the profile header — best-effort, exactly like the level above. A
+            // failure yields null here and mergePlayerIdentity keeps the stored values.
+            val summary = runCatching {
+                steamApi.getPlayerSummaries(apiKey, steamId).response.players.firstOrNull()
+            }.getOrNull()
+
+            persistPoll(games, apiKey, steamId, steamLevel, summary)
             Result.success()
         } catch (e: Exception) {
             // Network / transient error: surface it, keep data, let WorkManager back off.
@@ -83,6 +91,7 @@ class SteamSyncWorker @AssistedInject constructor(
         apiKey: String,
         steamId: String,
         steamLevel: Int,
+        summary: com.example.backlogium.data.remote.dto.PlayerSummaryDto?,
     ) {
         val now = time.nowMillis()
         val today = time.today()
@@ -153,12 +162,18 @@ class SteamSyncWorker @AssistedInject constructor(
 
         // Update sync status, then fetch in-scope achievements (freshness-gated, best-effort —
         // never fails the poll) before recomputing derived gamification values.
+        val identity = mergePlayerIdentity(
+            summary,
+            PlayerIdentity(profile.personaName, profile.avatarUrl),
+        )
         profileDao.upsert(
             profile.copy(
                 steamId = steamId,
                 steamLevel = steamLevel,
                 lastSyncAt = now,
                 lastSyncError = null,
+                personaName = identity.personaName,
+                avatarUrl = identity.avatarUrl,
             ),
         )
         runCatching { achievementRepository.syncInScopeGames(apiKey, steamId) }

@@ -18,6 +18,10 @@ data class PlayerSummariesResult(
  * A single player's summary. [gameId] and [gameExtraInfo] are present only while the
  * player is in-game (and only when the profile is public enough to expose them); Steam
  * serializes `gameid` as a string, so it is kept as a nullable [String] here.
+ *
+ * [personaName] and [avatarFull] are the player's identity fields, always returned for a
+ * public profile. They cost no extra request — this endpoint is already polled — and are
+ * persisted onto the profile so the header renders offline.
  */
 @Serializable
 data class PlayerSummaryDto(
@@ -25,4 +29,6 @@ data class PlayerSummaryDto(
     @SerialName("gameid") val gameId: String? = null,
     @SerialName("gameextrainfo") val gameExtraInfo: String? = null,
     @SerialName("personastate") val personaState: Int = 0,
+    @SerialName("personaname") val personaName: String = "",
+    @SerialName("avatarfull") val avatarFull: String? = null,
 )
