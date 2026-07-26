@@ -35,10 +35,10 @@
 
 ## 4. Verification
 
-- [ ] 4.1 Manual check: open the app the morning after an unbroken streak, before playing anything —
+- [x] 4.1 Manual check: open the app the morning after an unbroken streak, before playing anything —
   Streak card shows the intact count, not 0
-- [ ] 4.2 Manual check: meet today's quest mid-session — Streak card increments live
-- [ ] 4.3 Manual check: let a day lapse unmet — Streak card reads 0 starting the following day, not
+- [x] 4.2 Manual check: meet today's quest mid-session — Streak card increments live
+- [x] 4.3 Manual check: let a day lapse unmet — Streak card reads 0 starting the following day, not
   mid-way through the missed day
 
 ## 5. Docs & specs
