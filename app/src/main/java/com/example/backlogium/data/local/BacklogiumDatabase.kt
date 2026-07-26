@@ -27,7 +27,7 @@ import com.example.backlogium.data.local.entity.Session
         HltbData::class,
         Achievement::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -105,6 +105,18 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                     "ALTER TABLE `player_profile` " +
                         "ADD COLUMN `playtimeBackfilled` INTEGER NOT NULL DEFAULT 0",
                 )
+            }
+        }
+
+        /**
+         * v4 → v5: additive only — `player_profile` gains the Steam identity columns backing the
+         * profile header. Both nullable with no backfill, so existing installs render the
+         * fallback presentation until the next sync populates them (add-steam-profile-header).
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `player_profile` ADD COLUMN `personaName` TEXT")
+                db.execSQL("ALTER TABLE `player_profile` ADD COLUMN `avatarUrl` TEXT")
             }
         }
     }

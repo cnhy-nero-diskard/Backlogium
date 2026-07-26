@@ -16,6 +16,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.backlogium.ui.components.ProfileHeader
 import com.example.backlogium.ui.gamedetail.GameDetailScreen
 import com.example.backlogium.ui.history.HistoryScreen
 import com.example.backlogium.ui.home.HomeScreen
@@ -41,6 +42,9 @@ fun BacklogiumAppRoot() {
     val destinations = Destination.entries
 
     Scaffold(
+        // Shell-level, so the identity strip survives navigation without each screen
+        // re-declaring it. `innerPadding` below already offsets the NavHost for it.
+        topBar = { ProfileHeader() },
         bottomBar = {
             val backStackEntry by navController.currentBackStackEntryAsState()
             val currentDestination = backStackEntry?.destination

@@ -20,6 +20,13 @@ data class PlayerProfile(
     val lastSyncError: String? = null,
     /** True once the player has opted in to importing historical Steam playtime (one-time). */
     val playtimeBackfilled: Boolean = false,
+    /**
+     * Steam persona name, persisted so the profile header renders on a cold offline launch.
+     * Null until the first sync (or live poll) observes it.
+     */
+    val personaName: String? = null,
+    /** Full-size Steam avatar URL, persisted for the same reason as [personaName]. */
+    val avatarUrl: String? = null,
 ) {
     companion object {
         const val SINGLETON_ID = 0
