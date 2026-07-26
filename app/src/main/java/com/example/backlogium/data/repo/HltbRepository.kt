@@ -9,10 +9,21 @@ import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/**
+ * A game awaiting manual match selection, with its retained candidates already deserialized.
+ * [HltbCandidate] crosses the boundary as-is: it is a plain serializable class in `data.hltb`,
+ * not a Room entity, and is exactly the shape the review surface needs.
+ */
+data class HltbReviewGame(
+    val appId: Long,
+    val candidates: List<HltbCandidate>,
+)
 
 /**
  * Owns HowLongToBeat lookups, name-match classification, and the local cache. All consumers
@@ -28,10 +39,14 @@ class HltbRepository @Inject constructor(
     private val json: Json,
     private val time: TimeProvider,
 ) {
-    /** Games flagged for manual match review. */
-    val needsReview: Flow<List<HltbData>> = hltbDataDao.observeNeedsReview()
+    /** Games flagged for manual match review, with their candidates. */
+    val reviewQueue: Flow<List<HltbReviewGame>> = hltbDataDao.observeNeedsReview()
+        .map { rows -> rows.map { HltbReviewGame(it.appId, candidatesOf(it)) } }
 
-    /** All cached HLTB rows (consumed by the Library for goal progress). */
+    /** How many games await manual review — the Library's review badge. */
+    val reviewCount: Flow<Int> = hltbDataDao.observeNeedsReview().map { it.size }
+
+    /** All cached HLTB rows. Consumed inside `data/` only: joined into `LibraryGame`. */
     val allData: Flow<List<HltbData>> = hltbDataDao.observeAll()
 
     suspend fun getForGame(appId: Long): HltbData? = hltbDataDao.getByAppId(appId)
@@ -68,7 +83,7 @@ class HltbRepository @Inject constructor(
     }
 
     /** Deserialize the retained review candidates for a flagged game. */
-    fun candidatesOf(data: HltbData): List<HltbCandidate> =
+    private fun candidatesOf(data: HltbData): List<HltbCandidate> =
         data.candidatesJson?.let {
             runCatching { json.decodeFromString(CANDIDATE_LIST_SERIALIZER, it) }.getOrNull()
         } ?: emptyList()

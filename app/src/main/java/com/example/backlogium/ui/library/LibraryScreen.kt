@@ -42,7 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.SubcomposeAsyncImage
-import com.example.backlogium.data.local.entity.HltbMatchStatus
+import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.util.UiFormat
@@ -308,7 +308,7 @@ private fun BacklogGameRow(game: BacklogGameUi, onClick: () -> Unit, onManageGoa
 /** Compact, live HLTB state for a game: in-flight, failed, or the persisted match status. */
 @Composable
 private fun HltbStatusLabel(
-    status: HltbMatchStatus?,
+    status: HltbMatchState?,
     op: HltbFetchOp?,
     modifier: Modifier = Modifier,
 ) {
@@ -336,21 +336,21 @@ private fun HltbStatusLabel(
             modifier = modifier,
         )
 
-        status == HltbMatchStatus.RESOLVED -> Text(
+        status == HltbMatchState.RESOLVED -> Text(
             text = "HowLongToBeat matched",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.primary,
             modifier = modifier,
         )
 
-        status == HltbMatchStatus.NEEDS_REVIEW -> Text(
+        status == HltbMatchState.NEEDS_REVIEW -> Text(
             text = "Needs match review",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.tertiary,
             modifier = modifier,
         )
 
-        status == HltbMatchStatus.UNMATCHED -> Text(
+        status == HltbMatchState.UNMATCHED -> Text(
             text = "No HowLongToBeat match",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -471,7 +471,7 @@ private fun GameIcon(iconUrl: String) {
 @Composable
 private fun GoalDialog(
     target: GoalDialogTarget,
-    hltbStatus: HltbMatchStatus?,
+    hltbStatus: HltbMatchState?,
     fetchOp: HltbFetchOp?,
     onDismiss: () -> Unit,
     onTag: () -> Unit,

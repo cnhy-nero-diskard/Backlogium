@@ -3,12 +3,12 @@ package com.example.backlogium.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.credentials.maskApiKey
-import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.ProfileRepository
+import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -58,14 +58,14 @@ class HomeViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
     private val liveStatusRepository: LiveStatusRepository,
     private val credentials: CredentialsRepository,
-    private val settings: SettingsDataStore,
+    private val settings: SettingsRepository,
     private val time: TimeProvider,
 ) : ViewModel() {
 
     private val baseState: Flow<HomeUiState> = combine(
         profileRepository.profile,
         profileRepository.dailyProgress,
-        settings.ruleConfigFlow,
+        settings.ruleConfig,
         credentials.credentialsStateFlow,
         profileRepository.syncInProgress,
     ) { profile, days, config, credState, isSyncing ->

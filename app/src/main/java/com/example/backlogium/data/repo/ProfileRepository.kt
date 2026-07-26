@@ -7,8 +7,31 @@ import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.domain.PlaytimeBackfillUseCase
 import com.example.backlogium.work.SyncScheduler
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** The engine's persisted outputs plus sync status, as consumers see them. */
+data class PlayerStats(
+    val steamId: String,
+    val steamLevel: Int,
+    val totalXp: Int,
+    val level: Int,
+    val currentStreak: Int,
+    val longestStreak: Int,
+    val lastSyncAt: Long,
+    val lastSyncError: String?,
+    /** True once the player has opted in to importing historical Steam playtime (one-time). */
+    val playtimeBackfilled: Boolean,
+)
+
+/** Per-day play totals keyed by local calendar date (ISO-8601 "yyyy-MM-dd"). */
+data class DayProgress(
+    val date: String,
+    val minutesPlayed: Int,
+    val goalMinutesPlayed: Int,
+    val questMet: Boolean,
+)
 
 /** Profile aggregates, per-day stats, the manual "Sync now" trigger, and history import. */
 @Singleton
@@ -18,8 +41,9 @@ class ProfileRepository @Inject constructor(
     private val syncScheduler: SyncScheduler,
     private val playtimeBackfill: PlaytimeBackfillUseCase,
 ) {
-    val profile: Flow<PlayerProfile?> = profileDao.observe()
-    val dailyProgress: Flow<List<DailyProgress>> = dailyProgressDao.observeAll()
+    val profile: Flow<PlayerStats?> = profileDao.observe().map { it?.toDomain() }
+    val dailyProgress: Flow<List<DayProgress>> = dailyProgressDao.observeAll()
+        .map { rows -> rows.map(DailyProgress::toDomain) }
 
     /** True while a manual "Sync now" poll is enqueued or running (WorkManager-backed). */
     val syncInProgress: Flow<Boolean> = syncScheduler.syncInProgress
@@ -40,3 +64,22 @@ class ProfileRepository @Inject constructor(
      */
     suspend fun resetSteamHistoryImport() = playtimeBackfill.reset()
 }
+
+private fun PlayerProfile.toDomain() = PlayerStats(
+    steamId = steamId,
+    steamLevel = steamLevel,
+    totalXp = totalXp,
+    level = level,
+    currentStreak = currentStreak,
+    longestStreak = longestStreak,
+    lastSyncAt = lastSyncAt,
+    lastSyncError = lastSyncError,
+    playtimeBackfilled = playtimeBackfilled,
+)
+
+private fun DailyProgress.toDomain() = DayProgress(
+    date = date,
+    minutesPlayed = minutesPlayed,
+    goalMinutesPlayed = goalMinutesPlayed,
+    questMet = questMet,
+)

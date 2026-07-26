@@ -36,17 +36,17 @@ class HltbReviewViewModel @Inject constructor(
 ) : ViewModel() {
 
     val uiState: StateFlow<HltbReviewUiState> = combine(
-        hltbRepository.needsReview,
+        hltbRepository.reviewQueue,
         gameRepository.library,
     ) { review, games ->
         val namesByAppId = games.associate { it.appId to it.name }
         HltbReviewUiState(
             loading = false,
-            games = review.map { data ->
+            games = review.map { flagged ->
                 ReviewGameUi(
-                    appId = data.appId,
-                    name = namesByAppId[data.appId] ?: "Unknown game",
-                    candidates = hltbRepository.candidatesOf(data),
+                    appId = flagged.appId,
+                    name = namesByAppId[flagged.appId] ?: "Unknown game",
+                    candidates = flagged.candidates,
                 )
             },
         )

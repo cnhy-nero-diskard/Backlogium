@@ -2,11 +2,11 @@ package com.example.backlogium.ui.library
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.GameRepository
+import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.data.repo.HltbRepository
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -30,7 +30,7 @@ data class GoalGameUi(
     /** HowLongToBeat Completionist length, if resolved. Null → no completion-based progress. */
     val completionistMinutes: Int? = null,
     /** Persisted match status from the cache, or null when no lookup has been stored yet. */
-    val hltbStatus: HltbMatchStatus? = null,
+    val hltbStatus: HltbMatchState? = null,
     /** In-flight/failed state of a manual lookup, layered over [hltbStatus]. */
     val fetchOp: HltbFetchOp? = null,
     /** Unlocked/total achievement counts, null when no achievement data is stored yet. */
@@ -43,7 +43,7 @@ data class BacklogGameUi(
     val name: String,
     val iconUrl: String,
     val playtimeForever: Int,
-    val hltbStatus: HltbMatchStatus? = null,
+    val hltbStatus: HltbMatchState? = null,
     val fetchOp: HltbFetchOp? = null,
     val achievementUnlocked: Int? = null,
     val achievementTotal: Int? = null,
@@ -73,24 +73,21 @@ class LibraryViewModel @Inject constructor(
     private val content = combine(
         gameRepository.goalGames,
         gameRepository.backlog,
-        hltbRepository.allData,
-        hltbRepository.needsReview,
+        hltbRepository.reviewCount,
         credentials.credentialsStateFlow,
-    ) { goals, backlog, hltb, review, credState ->
-        val rowByAppId = hltb.associateBy { it.appId }
+    ) { goals, backlog, reviewCount, credState ->
         val goalIds = goals.mapTo(HashSet()) { it.appId }
         LibraryUiState(
             loading = false,
             configured = credState is CredentialsState.Configured,
             goalGames = goals.map { game ->
-                val row = rowByAppId[game.appId]
                 GoalGameUi(
                     appId = game.appId,
                     name = game.name,
                     iconUrl = game.iconUrl,
                     playtimeForever = game.playtimeForever,
-                    completionistMinutes = row?.completionistMinutes,
-                    hltbStatus = row?.matchStatus,
+                    completionistMinutes = game.completionistMinutes,
+                    hltbStatus = game.hltbMatchState,
                 )
             },
             // Drop any game already shown as a goal: goalGames and backlog come from two
@@ -102,10 +99,10 @@ class LibraryViewModel @Inject constructor(
                     name = game.name,
                     iconUrl = game.iconUrl,
                     playtimeForever = game.playtimeForever,
-                    hltbStatus = rowByAppId[game.appId]?.matchStatus,
+                    hltbStatus = game.hltbMatchState,
                 )
             },
-            reviewCount = review.size,
+            reviewCount = reviewCount,
         )
     }
 
