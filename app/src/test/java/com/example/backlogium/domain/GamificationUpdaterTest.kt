@@ -130,6 +130,141 @@ class GamificationUpdaterTest {
         assertEquals(400, profileDao.get()!!.totalXp)
     }
 
+    @Test
+    fun recompute_streakIntactTodayUnmet_currentStreakEqualsYesterdaysValue() = runTest {
+        // Yesterday and the day before both met (past streak = 2); today's row exists but is
+        // still in progress (10 < 30 min threshold). The engine must never see today's row as
+        // a completed, unmet day, so the persisted streak stays at 2, not 0.
+        val dailyDao = FakeDailyProgressDao(
+            listOf(
+                DailyProgress("2026-07-14", minutesPlayed = 45),
+                DailyProgress("2026-07-15", minutesPlayed = 60),
+                DailyProgress("2026-07-16", minutesPlayed = 10),
+            ),
+        )
+        val (updater, profileDao) = updaterWith(dailyDao)
+        updater.recompute(today = LocalDate.parse("2026-07-16"), config = RuleConfig())
+
+        assertEquals(2, profileDao.get()!!.currentStreak)
+    }
+
+    @Test
+    fun recompute_streakIntactTodayMet_currentStreakExtendsByOne() = runTest {
+        // Same past streak of 2, but today's quest has now been met (40 >= 30) -> extends
+        // immediately to 3, exactly as any other met day would.
+        val dailyDao = FakeDailyProgressDao(
+            listOf(
+                DailyProgress("2026-07-14", minutesPlayed = 45),
+                DailyProgress("2026-07-15", minutesPlayed = 60),
+                DailyProgress("2026-07-16", minutesPlayed = 40),
+            ),
+        )
+        val (updater, profileDao) = updaterWith(dailyDao)
+        updater.recompute(today = LocalDate.parse("2026-07-16"), config = RuleConfig())
+
+        assertEquals(3, profileDao.get()!!.currentStreak)
+    }
+
+    @Test
+    fun recompute_streakAlreadyBrokenBeforeToday_currentStreakIsZero() = runTest {
+        // Yesterday broke the streak (unmet, no grace configured) before today even started.
+        // Whether today's row is unmet-so-far or hasn't been created yet, the persisted streak
+        // is 0 either way -- there's nothing intact left for today to carry forward.
+        val config = RuleConfig()
+        val brokenPastDays = listOf(
+            DailyProgress("2026-07-14", minutesPlayed = 45),
+            DailyProgress("2026-07-15", minutesPlayed = 10), // unmet, breaks the streak
+        )
+
+        val todayUnmetDao = FakeDailyProgressDao(
+            brokenPastDays + DailyProgress("2026-07-16", minutesPlayed = 5),
+        )
+        val (updaterUnmet, profileDaoUnmet) = updaterWith(todayUnmetDao)
+        updaterUnmet.recompute(today = LocalDate.parse("2026-07-16"), config = config)
+        assertEquals(0, profileDaoUnmet.get()!!.currentStreak)
+
+        val todayMissingDao = FakeDailyProgressDao(brokenPastDays)
+        val (updaterMissing, profileDaoMissing) = updaterWith(todayMissingDao)
+        updaterMissing.recompute(today = LocalDate.parse("2026-07-16"), config = config)
+        assertEquals(0, profileDaoMissing.get()!!.currentStreak)
+    }
+
+    @Test
+    fun recompute_longestStreak_reflectsHistoricalMaxAndUpdatesWhenTodayExtendsPastIt() = runTest {
+        // Historical longest run is 2 (07-10..07-11), broken on 07-12, then a fresh 2-day run
+        // through yesterday (07-13..07-14). Today (07-15) meets its quest, extending the fresh
+        // run to 3 -- past the old historical max of 2 -- so longest must update to 3.
+        val dailyDao = FakeDailyProgressDao(
+            listOf(
+                DailyProgress("2026-07-10", minutesPlayed = 45),
+                DailyProgress("2026-07-11", minutesPlayed = 45),
+                DailyProgress("2026-07-12", minutesPlayed = 5),
+                DailyProgress("2026-07-13", minutesPlayed = 45),
+                DailyProgress("2026-07-14", minutesPlayed = 45),
+                DailyProgress("2026-07-15", minutesPlayed = 45),
+            ),
+        )
+        val (updater, profileDao) = updaterWith(dailyDao)
+        updater.recompute(today = LocalDate.parse("2026-07-15"), config = RuleConfig())
+
+        val profile = profileDao.get()!!
+        assertEquals(3, profile.currentStreak)
+        assertEquals(3, profile.longestStreak)
+    }
+
+    @Test
+    fun recompute_graceAllowance_stillAppliesAcrossPastDays() = runTest {
+        // One grace day configured. Yesterday's miss (07-11) is forgiven -- the streak survives
+        // without growing -- then 07-12 extends it back to 2. Today (07-13) is still in
+        // progress (unmet so far), so the partition must not disturb the grace bookkeeping:
+        // the persisted streak stays at 2, the value carried in from the completed days.
+        val config = RuleConfig(streakGraceDays = 1)
+        val dailyDao = FakeDailyProgressDao(
+            listOf(
+                DailyProgress("2026-07-10", minutesPlayed = 45),
+                DailyProgress("2026-07-11", minutesPlayed = 5), // forgiven within grace
+                DailyProgress("2026-07-12", minutesPlayed = 45),
+                DailyProgress("2026-07-13", minutesPlayed = 5), // today, still in progress
+            ),
+        )
+        val (updater, profileDao) = updaterWith(dailyDao)
+        updater.recompute(today = LocalDate.parse("2026-07-13"), config = config)
+
+        assertEquals(2, profileDao.get()!!.currentStreak)
+    }
+
+    @Test
+    fun recompute_noRowYetForToday_treatedSameAsTodayUnmet() = runTest {
+        // First sync of the day, before any `DailyProgress` row exists for today: the day list
+        // has no entry at all for `today`, which must fold the same way an unmet-so-far row
+        // would -- carrying the intact past streak forward, not zeroing it.
+        val dailyDao = FakeDailyProgressDao(
+            listOf(
+                DailyProgress("2026-07-14", minutesPlayed = 45),
+                DailyProgress("2026-07-15", minutesPlayed = 60),
+            ),
+        )
+        val (updater, profileDao) = updaterWith(dailyDao)
+        updater.recompute(today = LocalDate.parse("2026-07-16"), config = RuleConfig())
+
+        assertEquals(2, profileDao.get()!!.currentStreak)
+    }
+
+    /** Wires a [GamificationUpdater] with a fresh, empty profile/session/game/achievement setup
+     * around the given daily-progress dao, so streak-focused tests only need to seed days. */
+    private fun updaterWith(dailyDao: FakeDailyProgressDao): Pair<GamificationUpdater, FakePlayerProfileDao> {
+        val profileDao = FakePlayerProfileDao()
+        val updater = GamificationUpdater(
+            FakeSessionDao(emptyList()),
+            dailyDao,
+            profileDao,
+            FakeHltbDataDao(),
+            FakeAchievementDao(emptyList()),
+            FakeGameDao(emptyList()),
+        )
+        return updater to profileDao
+    }
+
     private fun session(minutes: Int) = Session(
         appId = 1L,
         startAt = 0L,

@@ -89,8 +89,14 @@ class GamificationUpdater @Inject constructor(
             result
         }
 
-        // Streak over the ordered day list.
-        val streak = Gamification.streak(questResults, config)
+        // Split at today: the engine only ever sees completed days, never one still in
+        // progress. Assumes at most one `DailyProgress` row per date (true today: one row
+        // per date, upserted), so at most one entry can match `date == today`.
+        val pastDays = questResults.filter { it.date < today }
+        val todayResult = questResults.firstOrNull { it.date == today }
+        val pastStreak = Gamification.streak(pastDays, config)
+        val currentStreak = if (todayResult?.met == true) pastStreak.current + 1 else pastStreak.current
+        val longestStreak = maxOf(pastStreak.longest, currentStreak)
 
         // Persist profile aggregates, preserving sync/status fields.
         val profile = playerProfileDao.get() ?: PlayerProfile()
@@ -98,8 +104,8 @@ class GamificationUpdater @Inject constructor(
             profile.copy(
                 totalXp = xpState.totalXp,
                 level = xpState.level,
-                currentStreak = streak.current,
-                longestStreak = streak.longest,
+                currentStreak = currentStreak,
+                longestStreak = longestStreak,
             ),
         )
     }
