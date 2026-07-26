@@ -206,7 +206,15 @@ fun HomeScreen(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = "${state.currentStreak} day${if (state.currentStreak == 1) "" else "s"}",
+                            // While today's quest is still unmet, "N days" would read as if
+                            // today already counts. "N-day streak" carries the same intact
+                            // count without that implication; once met, the plain "days"
+                            // phrasing applies exactly as it would for any other completed day.
+                            text = if (state.questMet) {
+                                "${state.currentStreak} day${if (state.currentStreak == 1) "" else "s"}"
+                            } else {
+                                "${state.currentStreak}-day streak"
+                            },
                             style = MaterialTheme.typography.headlineSmall,
                         )
                     }
