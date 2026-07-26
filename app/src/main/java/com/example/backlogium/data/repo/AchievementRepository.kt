@@ -16,6 +16,20 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
+ * One achievement as consumers see it. [rarityPercent] is the frozen rarity snapshot — the
+ * global unlock percent captured the first sync that observed the achievement unlocked, never
+ * the live percent — so tier/XP derived from it cannot drift (add-steam-achievements design).
+ * Null when the achievement is still locked or no percent was ever captured.
+ */
+data class GameAchievement(
+    val apiName: String,
+    val displayName: String,
+    val iconUrl: String?,
+    val unlocked: Boolean,
+    val rarityPercent: Double?,
+)
+
+/**
  * Owns fetching, merging, and caching Steam achievement data. Scoped and freshness-gated
  * (add-steam-achievements design): only games the player engages with — those with tracked
  * sessions plus goal-tagged games — are fetched, and only when stale or missing, bounding
@@ -33,7 +47,8 @@ class AchievementRepository @Inject constructor(
     private val time: TimeProvider,
 ) {
 
-    fun observeForGame(appId: Long): Flow<List<Achievement>> = achievementDao.observeForGame(appId)
+    fun observeForGame(appId: Long): Flow<List<GameAchievement>> =
+        achievementDao.observeForGame(appId).map { rows -> rows.map(Achievement::toDomain) }
 
     /** Unlocked/total achievement counts, keyed by appId — feeds the Library row badge. */
     val counts: Flow<Map<Long, AchievementCounts>> = achievementDao.observeCounts()
@@ -110,3 +125,12 @@ class AchievementRepository @Inject constructor(
         const val FRESHNESS_WINDOW_MILLIS = 60L * 60 * 1000
     }
 }
+
+private fun Achievement.toDomain() = GameAchievement(
+    apiName = apiName,
+    displayName = displayName?.takeIf { it.isNotBlank() } ?: apiName,
+    iconUrl = iconUrl,
+    unlocked = unlocked,
+    // The snapshot, never globalPercent: the rarity-drift policy pins tier/XP to first unlock.
+    rarityPercent = snapshotPercent,
+)

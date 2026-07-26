@@ -3,10 +3,10 @@ package com.example.backlogium.ui.gamedetail
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.backlogium.data.local.SettingsDataStore
-import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.repo.AchievementRepository
+import com.example.backlogium.data.repo.GameAchievement
 import com.example.backlogium.data.repo.GameRepository
+import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.gamification.AchievementInput
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RarityTier
@@ -48,7 +48,7 @@ class GameDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     achievementRepository: AchievementRepository,
     gameRepository: GameRepository,
-    settings: SettingsDataStore,
+    settings: SettingsRepository,
 ) : ViewModel() {
 
     private val appId: Long = checkNotNull(savedStateHandle["appId"])
@@ -56,7 +56,7 @@ class GameDetailViewModel @Inject constructor(
     val uiState: StateFlow<GameDetailUiState> = combine(
         gameRepository.library,
         achievementRepository.observeForGame(appId),
-        settings.ruleConfigFlow,
+        settings.ruleConfig,
     ) { games, achievements, config ->
         GameDetailUiState(
             loading = false,
@@ -70,12 +70,16 @@ class GameDetailViewModel @Inject constructor(
     )
 }
 
-private fun Achievement.toUi(config: RuleConfig): AchievementUi {
-    val percent = snapshotPercent
+/**
+ * Resolves the engine's tier/XP for one achievement. Presentation only — the rarity percent it
+ * reads is the repository's frozen snapshot, so tier and XP never follow the live global percent.
+ */
+private fun GameAchievement.toUi(config: RuleConfig): AchievementUi {
+    val percent = rarityPercent
     val tierable = unlocked && percent != null
     return AchievementUi(
         apiName = apiName,
-        displayName = displayName?.takeIf { it.isNotBlank() } ?: apiName,
+        displayName = displayName,
         iconUrl = iconUrl,
         unlocked = unlocked,
         tier = if (tierable) Gamification.tierFor(percent!!) else null,

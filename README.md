@@ -27,6 +27,39 @@ HowLongToBeat for completionist times), stores everything locally, and computes 
 locally. The cloud-sync layer and the browser-source overlay below are the remaining
 roadmap items — the phone does not yet talk to any backend.
 
+### The data-source boundary (rule)
+
+**Repositories expose domain models. Room entities stay inside `data/`. Nothing under `ui/`
+imports a storage type** — no `data.local.entity.*`, and no `SettingsDataStore` in a ViewModel
+(settings go through `SettingsRepository`).
+
+The reason is one sentence: a second data source can satisfy a contract made of plain Kotlin
+types, and cannot satisfy one made of `@Entity` classes without pretending to be Room.
+
+Checkable without a test:
+
+```bash
+grep -rn "data.local.entity\|SettingsDataStore" app/src/main/java/com/example/backlogium/ui/
+```
+
+One deliberate exception: `HltbCandidate` (`data.hltb`) crosses the boundary as-is. It is a
+plain serializable class, not a Room entity, and is exactly the shape the review surface needs
+— so the rule as stated already permits it.
+
+Decisions deferred until cloud sync actually starts, recorded so they are not rediscovered:
+
+- **Product flavors, not long-lived branches**, for a `local`/`cloud` split — one `LibraryScreen`,
+  two Hilt bindings, both built in CI. Adding a flavor around today's single implementation
+  would be ceremony.
+- **Mirror raw data, don't compute XP server-side.** The backend would write games/sessions/
+  achievements; the existing on-device engine still computes XP. Two implementations of the XP
+  rules that must agree forever is the expensive mistake available here.
+- **Backend polling moves the Steam API key server-side.** `EncryptedCredentialStore` keeps it
+  on-device today and it never leaves — that property is given up if the backend does the polling,
+  which is a reason to prefer app-pushes-up if the overlay is all that's needed.
+- **No repository interfaces yet.** Concrete classes returning domain models are enough;
+  extracting an interface later is mechanical.
+
 ## Roadmap
 
 Phases 1–4 are **done** — there is a working, offline-first Android app that tracks
