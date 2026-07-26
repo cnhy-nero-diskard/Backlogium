@@ -5,7 +5,8 @@ The system SHALL provide a History screen presenting play history grouped by day
 expands into the games played that day and each game expands into its individual sessions. Each day
 SHALL show its total played time, its goal-game time, and whether that day's quest was met. Session
 times SHALL be presented as approximate, and a session's tracked playtime SHALL be presented
-distinctly from the clock range it spans.
+distinctly from the clock range it spans. Each day SHALL also show thumbnails for achievements
+unlocked that day, capped at 5 with any excess collapsed into a count badge.
 
 #### Scenario: Day-grouped history
 - **WHEN** the History screen is shown and play history exists
@@ -55,6 +56,18 @@ distinctly from the clock range it spans.
 #### Scenario: Session still in progress
 - **WHEN** a session is still open
 - **THEN** its range is presented as open-ended and its playtime is included in its day's total
+
+#### Scenario: Day with achievements unlocked
+- **WHEN** a day has 5 or fewer achievements unlocked across the games played that day
+- **THEN** its header shows a thumbnail for each unlocked achievement and no overflow badge
+
+#### Scenario: Day with more than 5 achievements unlocked
+- **WHEN** a day has more than 5 achievements unlocked
+- **THEN** its header shows 5 thumbnails followed by a badge stating the remaining count
+
+#### Scenario: Day with no achievements unlocked
+- **WHEN** a day has no achievements unlocked
+- **THEN** its header shows no achievement thumbnail row
 
 #### Scenario: Day with progress but no sessions
 - **WHEN** a day has recorded progress but no individual sessions

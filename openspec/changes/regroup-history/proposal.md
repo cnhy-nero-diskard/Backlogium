@@ -25,6 +25,9 @@ joined into the day → game → session hierarchy the data naturally forms.
   range and the tracked minutes**, distinguished so the two are not read as the same measurement.
 - Session reads become **date-ranged** rather than capped at a fixed row count, since 30 days of
   history exceeds the current 100-row limit.
+- Each day header also shows a **horizontal row of thumbnails for achievements unlocked that day**,
+  joined across every game played, capped at 5 icons with any excess collapsed into a `+N` badge (e.g.
+  five icons then `4+`). Days with no unlocks show no row.
 
 ## Capabilities
 
@@ -39,7 +42,8 @@ joined into the day → game → session hierarchy the data naturally forms.
 - **Affected code (modified):** `SessionDao` gains a date-ranged observation (the fixed
   `observeRecent(100)` cannot serve 30 days); `SessionRepository`; `HistoryUiState` restructured from
   two flat lists into grouped days; the shared game-art composable extracted out of `LibraryScreen`
-  for reuse.
+  for reuse; `AchievementDao` gains a query for achievements unlocked within a date range, joined
+  across games, for the day header's thumbnail row.
 - **No new network calls, no new persistence, no migration.** Every input is already stored; this is
   a read-side regrouping.
 - **No engine change.** Day totals shown here are presentation sums; `DailyProgress` remains the
@@ -64,3 +68,5 @@ joined into the day → game → session hierarchy the data naturally forms.
 - **Per-game history on the game detail screen.** That screen's summary shows totals; a per-game
   session list belongs to this screen's concerns.
 - **Editing or deleting sessions.**
+- **Tapping an achievement thumbnail for detail.** The row is a glance, not a navigation surface;
+  achievement detail already lives on the game detail screen.

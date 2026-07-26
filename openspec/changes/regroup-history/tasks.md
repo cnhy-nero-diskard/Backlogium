@@ -30,38 +30,52 @@
 - [ ] 2.8 Unit-test the grouping: midnight crosser lands on its start day; day total equals the sum of
   its sessions; a day with progress and no sessions still appears; unknown game falls back
 
-## 3. Presentation helpers
-- [ ] 3.1 `UiFormat`: add a time-of-day formatter (locale-aware, no date part) for range endpoints
-- [ ] 3.2 `UiFormat`: add a session-range formatter producing an approximate range, with an open-ended
+## 3. Day achievement thumbnails
+- [ ] 3.1 `AchievementDao`: add a query returning unlocked achievements (`appId`, `iconUrl`,
+  `unlockedAt`) whose `unlockedAt` falls within a given date range, ordered by `unlockedAt`
+- [ ] 3.2 `HistoryViewModel`: join that query into each day group by the local date of `unlockedAt`,
+  across all games, not just the day's played games (an achievement can unlock retroactively or from
+  idle progress)
+- [ ] 3.3 Cap each day's thumbnail list at 5; if more exist, show 5 icons plus a `+N` badge for the
+  remainder
+- [ ] 3.4 Days with zero unlocked achievements render no thumbnail row
+- [ ] 3.5 Unit-test: exactly 5 unlocks shows 5 icons and no badge; 6+ shows 5 icons and the correct
+  `+N`; 0 unlocks omits the row entirely; unlocks from a game not otherwise played that day still
+  appear
+
+## 4. Presentation helpers
+- [ ] 4.1 `UiFormat`: add a time-of-day formatter (locale-aware, no date part) for range endpoints
+- [ ] 4.2 `UiFormat`: add a session-range formatter producing an approximate range, with an open-ended
   form for sessions still in progress
-- [ ] 3.3 Unit-test both, including the open-session form and a range crossing midnight
-- [ ] 3.4 Keep the approximation marker and the "played" wording in one place, with a comment on why
+- [ ] 4.3 Unit-test both, including the open-session form and a range crossing midnight
+- [ ] 4.4 Keep the approximation marker and the "played" wording in one place, with a comment on why
   they exist — dropping either makes the screen look arithmetically broken
 
-## 4. Screen
-- [ ] 4.1 Extract the game-art composable out of `LibraryScreen` (currently private) into
+## 5. Screen
+- [ ] 5.1 Extract the game-art composable out of `LibraryScreen` (currently private) into
   `ui/components`, preserving its themed loading/error fallbacks
-- [ ] 4.2 Rebuild `HistoryScreen` as **one flat `LazyColumn`** emitting day headers, then game rows and
+- [ ] 5.2 Rebuild `HistoryScreen` as **one flat `LazyColumn`** emitting day headers, then game rows and
   session rows for expanded branches — no nested lazy lists
-- [ ] 4.3 Expansion state keyed by date and by (date, appId), transient; today expanded by default
-- [ ] 4.4 Day header: date, total played, goal minutes when non-zero, quest indicator (reuse the
-  existing icon treatment from `DayStatRow`)
-- [ ] 4.5 Game row: art, name, that day's total for the game
-- [ ] 4.6 Session row: approximate range · tracked minutes, single line
-- [ ] 4.7 Keep the "Daily stats" divider above the past days, with today's group above it
-- [ ] 4.8 A day with nothing to expand shows no expand affordance
-- [ ] 4.9 "Load older" at the end of the list; expansion state survives loading more
-- [ ] 4.10 Preserve the existing unconfigured and empty states verbatim
-- [ ] 4.11 If `enhance-library` has landed, the day header's goal-minutes copy uses its Focus wording
+- [ ] 5.3 Expansion state keyed by date and by (date, appId), transient; today expanded by default
+- [ ] 5.4 Day header: date, total played, goal minutes when non-zero, quest indicator (reuse the
+  existing icon treatment from `DayStatRow`), and the achievement thumbnail row from section 3
+- [ ] 5.5 Game row: art, name, that day's total for the game
+- [ ] 5.6 Session row: approximate range · tracked minutes, single line
+- [ ] 5.7 Keep the "Daily stats" divider above the past days, with today's group above it
+- [ ] 5.8 A day with nothing to expand shows no expand affordance
+- [ ] 5.9 "Load older" at the end of the list; expansion state survives loading more
+- [ ] 5.10 Preserve the existing unconfigured and empty states verbatim
+- [ ] 5.11 If `enhance-library` has landed, the day header's goal-minutes copy uses its Focus wording
   (that change edits the same "on goals" string this one rewrites — whichever lands second carries the
   other's wording forward)
 
-## 5. Verification
-- [ ] 5.1 Verify expansion state stays attached to the right day when a sync inserts new sessions
-- [ ] 5.2 Check a day containing an open session: range reads as open-ended, minutes counted in the total
-- [ ] 5.3 Check a 30-day window on a heavy library for scroll performance
-- [ ] 5.4 Confirm the quest indicator still reflects `DailyProgress`, not the presented sum
+## 6. Verification
+- [ ] 6.1 Verify expansion state stays attached to the right day when a sync inserts new sessions
+- [ ] 6.2 Check a day containing an open session: range reads as open-ended, minutes counted in the total
+- [ ] 6.3 Check a 30-day window on a heavy library for scroll performance
+- [ ] 6.4 Confirm the quest indicator still reflects `DailyProgress`, not the presented sum
+- [ ] 6.5 Check a day with 5 achievements (no badge) and a day with 6+ (badge shows correct count)
 
-## 6. Docs & specs
-- [ ] 6.1 Update `docs/ui-screens-descriptor.md`
-- [ ] 6.2 Verify the `app-ui` spec delta matches the built behavior
+## 7. Docs & specs
+- [ ] 7.1 Update `docs/ui-screens-descriptor.md`
+- [ ] 7.2 Verify the `app-ui` spec delta matches the built behavior

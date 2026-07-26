@@ -110,6 +110,20 @@ Current structure, and where it's going:
   the same sync) but possible.
   *Why:* an expand affordance that opens onto nothing is worse than no affordance.
 
+- **A day header shows a capped, unclickable row of achievement thumbnails: up to 5 icons, then a
+  `+N` badge for the rest.** Achievements are matched to a day by the local date of `unlockedAt`,
+  joined across every game played that day, ordered by unlock time.
+  *Why:* the day header already answers "what did I play and for how long"; unlocks are the other
+  thing that happened that day, and `Achievement.iconUrl`/`unlockedAt` already carry everything
+  needed — no new fetch, no new persistence. Capping at 5 keeps the header a single row regardless of
+  how many achievements a heavy day produced (a HowLongToBeat-length game finished in one sitting can
+  unlock dozens). *Alternative rejected:* wrapping onto a second line — breaks the single-row header
+  rhythm the day/game/session rows already establish, and a big unlock day is exactly the case where
+  keeping the header compact matters most.
+  *Consequence:* the row can only ever show icons, never names — no space for a label per icon.
+  A day with zero unlocks shows no row at all, matching the existing "no expand affordance when there
+  is nothing to expand" rule for empty days.
+
 ## Risks / Trade-offs
 
 - **Day total vs. quest total divergence** — bounded by the post-midnight portion of a crossing session,
