@@ -145,6 +145,17 @@ class UpdateRuleConfigUseCaseTest {
         override suspend fun setRuleConfig(config: RuleConfig) {
             state.value = config
         }
+
+        // The Library sort selections share this store but are irrelevant to a rule change.
+        private val sort = MutableStateFlow(LibrarySortPrefs())
+        override val librarySort: Flow<LibrarySortPrefs> = sort
+        override suspend fun setFocusSort(key: LibrarySortKey) {
+            sort.value = sort.value.copy(focus = key)
+        }
+
+        override suspend fun setLibrarySort(key: LibrarySortKey) {
+            sort.value = sort.value.copy(library = key)
+        }
     }
 
     private class FixedTimeProvider(private val date: LocalDate) : TimeProvider {

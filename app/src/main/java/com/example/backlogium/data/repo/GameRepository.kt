@@ -30,12 +30,21 @@ enum class HltbMatchState {
  *
  * [completionistMinutes] is null until a match resolves; [hltbMatchState] is null when no
  * lookup has been stored for this game yet.
+ *
+ * [playtime2Weeks] and [backfillMinutes] exist on the `Game` entity and were previously dropped
+ * here; they are carried through because the Library sorts by recent activity and derives each
+ * game's XP contribution from the engine's own inputs (backfill + tracked minutes), neither of
+ * which `playtimeForever` can stand in for.
  */
 data class LibraryGame(
     val appId: Long,
     val name: String,
     val iconUrl: String,
     val playtimeForever: Int,
+    /** Steam's rolling two-week playtime — the "recently played" ordering. */
+    val playtime2Weeks: Int = 0,
+    /** Frozen historical playtime from the opt-in Steam-history import; 0 when not imported. */
+    val backfillMinutes: Int = 0,
     val completionistMinutes: Int? = null,
     val mainStoryMinutes: Int? = null,
     val hltbMatchState: HltbMatchState? = null,
@@ -82,12 +91,15 @@ private fun Game.toDomain(hltb: HltbData?) = LibraryGame(
     name = name,
     iconUrl = iconUrl,
     playtimeForever = playtimeForever,
+    playtime2Weeks = playtime2Weeks,
+    backfillMinutes = backfillMinutes,
     completionistMinutes = hltb?.completionistMinutes,
     mainStoryMinutes = hltb?.mainStoryMinutes,
     hltbMatchState = hltb?.matchStatus?.toDomain(),
 )
 
-private fun HltbMatchStatus.toDomain() = when (this) {
+/** Storage → domain status mapping; internal so [HltbRepository] can report batch outcomes. */
+internal fun HltbMatchStatus.toDomain() = when (this) {
     HltbMatchStatus.RESOLVED -> HltbMatchState.RESOLVED
     HltbMatchStatus.NEEDS_REVIEW -> HltbMatchState.NEEDS_REVIEW
     HltbMatchStatus.UNMATCHED -> HltbMatchState.UNMATCHED

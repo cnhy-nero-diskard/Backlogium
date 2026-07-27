@@ -126,38 +126,80 @@ the configured state automatically, no explicit navigation. (This replaced the o
 
 ## Screen 2 — Library
 
-**Purpose:** goal games (with progress) separated from the rest of the owned-games backlog;
-tap any game to tag/edit/untag it as a goal.
+**Purpose:** a searchable, independently sortable list of every owned game, with the curated
+**Focus** set (playtime accounted separately, and what `Focus games only` quests scope to) split
+above **Your games** — the rest of the library. Every game with a known HowLongToBeat length shows
+its completion progress and its XP contribution; a 3-dot menu adds/removes Focus, and long-press
+starts a multi-select for a targeted HowLongToBeat lookup.
 
-**Layout:** single scrollable list (LazyColumn), 16dp outer padding, sections rendered only
-if non-empty:
+> **Label vs. identifier:** the UI says Focus / Your games while the schema and engine say
+> `isGoal`, `goalMinutesPlayed`, `observeBacklog()`, and `QuestMode.GOAL_ONLY`. Deliberate — a
+> relabel needs no migration, renaming columns would (see the `enhance-library` design). Expect the
+> two vocabularies side by side in this screen's code.
 
-1. **Section header** "Goal games" (bold, titleMedium) — shown only if goal games exist.
-2. **Goal game row** (repeated, one per goal game), each a full-width `Card`, 12dp padding,
+**Layout:** an optional selection bar above a single scrollable list (LazyColumn), 16dp outer
+padding, sections rendered only if they have rows:
+
+0. **Selection bar** (only while at least one game is selected), a `secondaryContainer` strip:
+   `"{n} selected"` + a "HowLongToBeat lookup (n)" `TextButton` (disabled while a refresh runs) +
+   an X `IconButton` that clears the selection.
+1. **Search field** (`OutlinedTextField`, first item): label "Search games", leading `Search` icon,
+   trailing X `IconButton` once non-empty. Filters both lists by case-insensitive name substring.
+2. **HowLongToBeat controls:** "Refresh HLTB library" `FilledTonalButton` (becomes a spinner +
+   "Refreshing…" while running) + "Force all" `OutlinedButton`, both disabled while a refresh runs,
+   over a "Review HLTB matches ({n})" `TextButton`.
+3. **Batch progress card** (only while a refresh runs): `"{done} / {total}"` (bold) over a
+   determinate `LinearProgressIndicator`, then a fixed-height (96dp) scrolling log, newest first, of
+   `"{game} — matched | needs review | no match | lookup failed"`. Before the first game reports —
+   and when the sweep's target set turns out empty — it reads "Starting HowLongToBeat refresh…"
+   with an indeterminate bar rather than a stalled `0 / 0`. The log covers only the period the
+   screen has been observed: returning mid-run shows correct progress with a log resuming from that
+   point.
+4. **Section header** "Focus" (bold, titleMedium) — only if the section has rows — with that list's
+   own **sort control** on the right: an `ArrowsSort` icon + the active key's name, opening a
+   `DropdownMenu` of Playtime / Name / Recently played / XP contributed (the active one check-marked).
+5. **Focus game row** (repeated), a full-width `Card` carrying `combinedClickable`, 12dp padding,
    horizontal layout:
    - 40dp square game icon (remote image, left; 8dp rounded, themed loading placeholder and
      controller fallback on error)
    - 12dp gap
-   - Column: game name (bodyLarge) → linear progress bar (full width) → caption
-     `"{playtime} / {target} ({percent}%)"`
-   - Entire row is tappable → opens the Goal dialog (see below) pre-filled for editing/untag.
-3. **Section header** "Backlog" (always shown).
-4. **Backlog game row** (repeated, one per non-goal game), full-width `Card`, 12dp padding:
-   - 40dp square game icon (left, same loading/error states as above) + 12dp gap
-   - Column: game name (bodyLarge), caption `"{playtime} played"`
-   - Tappable → opens Goal dialog to tag it as a new goal.
+   - Column: game name (bodyLarge) → caption `"{playtime} played"` → **completion progress** when a
+     HowLongToBeat Completionist length exists (full-width `LinearProgressIndicator` + caption
+     `"{playtime} / {completionist} to 100%"`; nothing at all when no length is known) → HLTB status
+     label → a badge line: the achievement badge (`"{unlocked} / {total} achievements"`, or a gold
+     "100% COMPLETED" pill) next to `"{n} XP contributed"`
+   - Trailing: a `DotsVertical` `IconButton` ("Manage focus") → the Focus dialog. While selecting,
+     it is replaced by a `Check` / `Checkbox` state icon.
+   - Tap → **Game detail** (or toggles selection while selecting); long-press → toggles selection.
+   - A fully-completed game keeps its gold outline; a selected row takes a `secondary` outline and
+     `secondaryContainer` fill.
+6. **Section header** "Your games" — only if the section has rows, with its own independent sort
+   control (same four keys; defaults differ: Focus defaults to Name, Your games to Playtime,
+   matching the DAO ordering they replaced). Each selection persists across visits.
+7. **Your games row** (repeated): identical to a Focus row, except the HLTB status label appears
+   only once there is something to report.
+8. **No-matches row** (only when a filter matched nothing): `"No games match \"{query}\""` + a
+   "Clear search" `TextButton`, rendered *inside* the list beneath the search field — never as a
+   full-screen takeover, which would unmount the field that produced the query.
 
-**Goal dialog** (Material 3 `AlertDialog`, shown on row tap):
-   - Title: "Set as goal" (new) or "Edit goal" (existing goal)
-   - Body: game name (bodyMedium) + an outlined numeric text field labeled
-     "Target (minutes)", digits only
-   - Confirm button: "Save" (disabled until a valid positive number is entered)
-   - Dismiss button: "Untag" (if editing an existing goal) or "Cancel" (if new)
+**Focus dialog** (Material 3 `AlertDialog`, from the 3-dot menu):
+   - Title: "Add to Focus" (new) or "Remove from Focus" (existing)
+   - Body: the game name in a sentence — no typed target is collected, completion lengths come from
+     HowLongToBeat — plus this game's live HLTB status and a "Refresh HowLongToBeat" `TextButton`
+     that forces a single-game lookup (disabled while one is in flight)
+   - Confirm button: "Add" / "Remove"; dismiss button: "Cancel"
 
 **Empty / alt states:**
 - Not configured → centered Empty State, title "Steam not configured".
 - No games at all yet → centered Empty State, title "No games yet", explaining sync is
-  pending or the profile may be private.
+  pending or the profile may be private. Keyed to the **unfiltered** library, so a search that
+  matches nothing never reaches it.
+
+**Note on the XP badge:** it reports the same inputs the gamification engine uses — frozen
+backfill + tracked session minutes, tapered against the game's completion length, plus its unlocked
+achievements' rarity XP — so every row's badge sums to the player's real total XP. It is therefore
+*not* proportional to the "{playtime} played" text above it, and `0 XP contributed` on a
+long-owned game is correct for anyone who never imported their Steam history.
 
 ---
 
@@ -176,7 +218,8 @@ if non-empty:
 3. **Section header** "Daily stats" (shown if any daily rows exist).
 4. **Day stat row** (repeated), full-width `Card`, 12dp padding, horizontal, space-between:
    - Left column: date (bodyLarge) over caption `"{minutes played} played"`, appending
-     `" · {goal minutes} on goals"` only when goal minutes > 0
+     `" · {focus minutes} on Focus games"` only when those minutes > 0 (the value is the stored
+     `goalMinutesPlayed` — same label/identifier split as the Library)
    - Right: a `CircleCheck` icon (accent-tinted) if that day's quest was met, otherwise a
      muted `CircleMinus` icon
 
