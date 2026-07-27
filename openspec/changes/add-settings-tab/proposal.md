@@ -55,9 +55,17 @@ destination is what makes tunable rules actually tunable.
 ### Modified Capabilities
 - `app-ui`: the shell gains a fourth navigation destination; the Home screen requirement narrows
   to the dashboard (account card, history import, and sync controls removed; error card gains
-  Retry); the profile header gains a sync indicator.
-- `gamification`: `longestStreak` becomes a monotonic high-water mark rather than a value derived
-  fresh on each recompute.
+  Retry); "Sync-in-progress feedback on Home" is replaced by shell-level sync feedback covering
+  scheduled syncs too.
+
+The `longestStreak` high-water mark is deliberately **not** a `gamification` delta. That
+capability states it "performs no I/O, no networking, and no persistence — callers supply inputs
+and persist outputs," and the engine's `streak()` correctly returns the longest streak for the
+days it is given. The defect is in how `GamificationUpdater` *persists* that result — it
+overwrites the stored value instead of taking a maximum against it. Since no existing capability
+owns the recompute-and-persist step, the requirement lives in `app-settings`, which is where the
+guardrail matters. Worth noting as a spec gap: recompute-and-persist is referenced by
+`playtime-backfill` and `steam-achievements` but owned by neither.
 
 ## Impact
 
@@ -66,8 +74,11 @@ destination is what makes tunable rules actually tunable.
 - **Affected code (modified):** `Destination.kt`; `BacklogiumAppRoot` (route + nav item);
   `HomeScreen`/`HomeViewModel` (three blocks removed, Retry added); `ProfileHeader` /
   `ProfileHeaderViewModel` (3-flow → 4-flow combine); `SyncScheduler.syncInProgress` (widened to
-  cover the periodic work); `GamificationUpdater` (high-water streak); `PlayerProfile` semantics
-  for `longestStreak`.
+  cover the periodic work); `GamificationUpdater.kt:99` (high-water streak); `PlayerProfile`
+  semantics for `longestStreak`.
+- **Unchanged by design:** the `Import Steam history control` requirement in `app-ui` is written
+  without reference to a screen, so relocating the control to Settings does not invalidate it.
+  `app-settings` re-homes it by reference rather than restating its behavior.
 - **Open design question, deferred to design.md:** where the post-save `recompute()` call is
   owned. `SettingsRepository` is deliberately storage-only and has no path to the domain layer;
   a `SettingsViewModel` calling `GamificationUpdater` directly may be the cleaner seam.
