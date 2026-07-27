@@ -1,24 +1,9 @@
 package com.example.backlogium.domain
 
-import com.example.backlogium.data.local.dao.AchievementCounts
-import com.example.backlogium.data.local.dao.AchievementDao
-import com.example.backlogium.data.local.dao.AchievementFetchedAt
-import com.example.backlogium.data.local.dao.DailyProgressDao
-import com.example.backlogium.data.local.dao.GameDao
-import com.example.backlogium.data.local.dao.GameTrackedMinutes
-import com.example.backlogium.data.local.dao.HltbDataDao
-import com.example.backlogium.data.local.dao.PlayerProfileDao
-import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.DailyProgress
-import com.example.backlogium.data.local.entity.Game
-import com.example.backlogium.data.local.entity.HltbData
-import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
-import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.gamification.RuleConfig
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -37,8 +22,8 @@ class GamificationUpdaterTest {
         // exactly level 3. This guards the null-completionist path in the migrated engine.
         val sessionDao = FakeSessionDao(
             listOf(
-                session(minutes = 200),
-                session(minutes = 100),
+                testSession(minutes = 200),
+                testSession(minutes = 100),
             ),
         )
         val hltbDao = FakeHltbDataDao() // no rows -> completionistMinutes resolves to null
@@ -55,7 +40,7 @@ class GamificationUpdaterTest {
         val achievementDao = FakeAchievementDao(emptyList()) // empty set -> playtime-only totals
         // Zero-backfill game: regression guard that pre-import installs compute exactly as
         // before (backfillMinutes = 0 adds nothing to the tracked total).
-        val gameDao = FakeGameDao(listOf(game(appId = 1L, backfillMinutes = 0)))
+        val gameDao = FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 0)))
 
         val updater =
             GamificationUpdater(sessionDao, dailyDao, profileDao, hltbDao, achievementDao, gameDao)
@@ -78,7 +63,7 @@ class GamificationUpdaterTest {
     fun recompute_addsAchievementXpOnTopOfPlaytimeXp() = runTest {
         // Same 300 playtime-XP setup as above, plus one unlocked, snapshotted (rare, 5% ->
         // 40 XP) achievement and one locked achievement (contributes nothing) -> 340 total.
-        val sessionDao = FakeSessionDao(listOf(session(minutes = 200), session(minutes = 100)))
+        val sessionDao = FakeSessionDao(listOf(testSession(minutes = 200), testSession(minutes = 100)))
         val hltbDao = FakeHltbDataDao()
         val dailyDao = FakeDailyProgressDao(listOf(DailyProgress("2026-07-17", minutesPlayed = 40)))
         val profileDao = FakePlayerProfileDao()
@@ -100,7 +85,7 @@ class GamificationUpdaterTest {
             ),
         )
 
-        val gameDao = FakeGameDao(listOf(game(appId = 1L, backfillMinutes = 0)))
+        val gameDao = FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 0)))
 
         val updater =
             GamificationUpdater(sessionDao, dailyDao, profileDao, hltbDao, achievementDao, gameDao)
@@ -116,12 +101,12 @@ class GamificationUpdaterTest {
         // far beyond Z, so the taper caps its XP at Z/(k+1) = 2000/5 = 400 regardless of the
         // raw historical hours. Tracked-only (100 min) would yield just 90 XP, so the 400
         // proves the frozen offset is folded into one cumulative, tapered total.
-        val sessionDao = FakeSessionDao(listOf(session(minutes = 100)))
+        val sessionDao = FakeSessionDao(listOf(testSession(minutes = 100)))
         val hltbDao = FakeHltbDataDao(completionistByAppId = mapOf(1L to 1000))
         val dailyDao = FakeDailyProgressDao(listOf(DailyProgress("2026-07-17", minutesPlayed = 40)))
         val profileDao = FakePlayerProfileDao()
         val achievementDao = FakeAchievementDao(emptyList())
-        val gameDao = FakeGameDao(listOf(game(appId = 1L, backfillMinutes = 5000)))
+        val gameDao = FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 5000)))
 
         val updater =
             GamificationUpdater(sessionDao, dailyDao, profileDao, hltbDao, achievementDao, gameDao)
@@ -250,6 +235,110 @@ class GamificationUpdaterTest {
         assertEquals(2, profileDao.get()!!.currentStreak)
     }
 
+    @Test
+    fun compute_writesNothing() = runTest {
+        // Days whose stored `questMet` all disagree with the config, and no profile row yet:
+        // a recompute would write five times over. `compute()` must write none of them.
+        val dailyDao = FakeDailyProgressDao(
+            listOf(
+                DailyProgress("2026-07-14", minutesPlayed = 45, questMet = false),
+                DailyProgress("2026-07-15", minutesPlayed = 60, questMet = false),
+                DailyProgress("2026-07-16", minutesPlayed = 5, questMet = true),
+            ),
+        )
+        val profileDao = FakePlayerProfileDao()
+        val updater = GamificationUpdater(
+            FakeSessionDao(listOf(testSession(minutes = 300))),
+            dailyDao,
+            profileDao,
+            FakeHltbDataDao(),
+            FakeAchievementDao(emptyList()),
+            FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 0))),
+        )
+
+        val result = updater.compute(today = LocalDate.parse("2026-07-16"), config = RuleConfig())
+
+        // The result carries the recomputed values...
+        assertEquals(300, result.xpState.totalXp)
+        assertEquals(3, result.xpState.level)
+        assertEquals(2, result.currentStreak)
+        // ...while every store is untouched.
+        assertEquals(0, dailyDao.upsertCount)
+        assertEquals(0, profileDao.upsertCount)
+        assertEquals(null, profileDao.get())
+        assertEquals(false, dailyDao.getByDate("2026-07-14")!!.questMet)
+    }
+
+    @Test
+    fun persist_ofComputedResult_matchesRecompute() = runTest {
+        // `recompute()` is defined as `persist(compute(...))`; spelling the two steps out by
+        // hand must land the identical stored state.
+        val days = listOf(
+            DailyProgress("2026-07-14", minutesPlayed = 45),
+            DailyProgress("2026-07-15", minutesPlayed = 60),
+            DailyProgress("2026-07-16", minutesPlayed = 40),
+        )
+        val (viaRecompute, recomputeProfileDao) = updaterWith(FakeDailyProgressDao(days))
+        viaRecompute.recompute(today = LocalDate.parse("2026-07-16"), config = RuleConfig())
+
+        val splitDailyDao = FakeDailyProgressDao(days)
+        val (viaSplit, splitProfileDao) = updaterWith(splitDailyDao)
+        viaSplit.persist(viaSplit.compute(LocalDate.parse("2026-07-16"), RuleConfig()))
+
+        assertEquals(recomputeProfileDao.get(), splitProfileDao.get())
+        assertTrue(splitDailyDao.getByDate("2026-07-16")!!.questMet)
+    }
+
+    @Test
+    fun recompute_stricterQuestGoal_keepsLongestStreakButLowersCurrent() = runTest {
+        // A 4-day run at 40 min/day earns a longest streak of 4 under the default 30-min goal.
+        val days = listOf(
+            DailyProgress("2026-07-13", minutesPlayed = 40),
+            DailyProgress("2026-07-14", minutesPlayed = 40),
+            DailyProgress("2026-07-15", minutesPlayed = 40),
+            DailyProgress("2026-07-16", minutesPlayed = 40),
+        )
+        val dailyDao = FakeDailyProgressDao(days)
+        val (updater, profileDao) = updaterWith(dailyDao)
+        updater.recompute(today = LocalDate.parse("2026-07-16"), config = RuleConfig())
+        assertEquals(4, profileDao.get()!!.longestStreak)
+
+        // Raising the goal to 60 min disqualifies every one of those days. The current streak
+        // must follow the new rule down to 0; the record must survive it.
+        updater.recompute(
+            today = LocalDate.parse("2026-07-16"),
+            config = RuleConfig(questThresholdMin = 60),
+        )
+
+        val profile = profileDao.get()!!
+        assertEquals(0, profile.currentStreak)
+        assertEquals(4, profile.longestStreak)
+    }
+
+    @Test
+    fun recompute_longerStreakThanStored_stillRaisesLongest() = runTest {
+        // The high-water floor is one-directional: a genuinely longer run still moves the record.
+        val dailyDao = FakeDailyProgressDao(
+            listOf(
+                DailyProgress("2026-07-15", minutesPlayed = 40),
+                DailyProgress("2026-07-16", minutesPlayed = 40),
+            ),
+        )
+        val profileDao = FakePlayerProfileDao()
+        profileDao.upsert(PlayerProfile(longestStreak = 1))
+        val updater = GamificationUpdater(
+            FakeSessionDao(emptyList()),
+            dailyDao,
+            profileDao,
+            FakeHltbDataDao(),
+            FakeAchievementDao(emptyList()),
+            FakeGameDao(emptyList()),
+        )
+        updater.recompute(today = LocalDate.parse("2026-07-16"), config = RuleConfig())
+
+        assertEquals(2, profileDao.get()!!.longestStreak)
+    }
+
     /** Wires a [GamificationUpdater] with a fresh, empty profile/session/game/achievement setup
      * around the given daily-progress dao, so streak-focused tests only need to seed days. */
     private fun updaterWith(dailyDao: FakeDailyProgressDao): Pair<GamificationUpdater, FakePlayerProfileDao> {
@@ -263,127 +352,5 @@ class GamificationUpdaterTest {
             FakeGameDao(emptyList()),
         )
         return updater to profileDao
-    }
-
-    private fun session(minutes: Int) = Session(
-        appId = 1L,
-        startAt = 0L,
-        endAt = 0L,
-        minutes = minutes,
-        open = false,
-    )
-
-    private fun game(appId: Long, backfillMinutes: Int) = Game(
-        appId = appId,
-        name = "Game $appId",
-        iconUrl = "",
-        playtimeForever = 0,
-        playtime2Weeks = 0,
-        lastPlaytime = 0,
-        backfillMinutes = backfillMinutes,
-    )
-
-    // --- Fakes ---------------------------------------------------------------
-
-    private class FakeSessionDao(private val sessions: List<Session>) : SessionDao {
-        override suspend fun insert(session: Session): Long = 0L
-        override suspend fun update(session: Session) = Unit
-        override suspend fun getOpenSession(appId: Long): Session? = null
-        override fun observeRecent(limit: Int): Flow<List<Session>> = flowOf(sessions)
-        override suspend fun getAll(): List<Session> = sessions
-        override suspend fun trackedMinutesByGame(): List<GameTrackedMinutes> =
-            sessions.groupBy { it.appId }
-                .map { (appId, group) -> GameTrackedMinutes(appId, group.sumOf { it.minutes }) }
-    }
-
-    /**
-     * HLTB stand-in. With no configured rows every lookup returns null, exercising the
-     * engine's flat-rate fallback; [completionistByAppId] supplies a resolved completionist
-     * length for specific games so the diminishing-returns taper can be exercised.
-     */
-    private class FakeHltbDataDao(
-        private val completionistByAppId: Map<Long, Int> = emptyMap(),
-    ) : HltbDataDao {
-        override suspend fun upsert(data: HltbData) = Unit
-        override suspend fun getByAppId(appId: Long): HltbData? =
-            completionistByAppId[appId]?.let { minutes ->
-                HltbData(
-                    appId = appId,
-                    completionistMinutes = minutes,
-                    fetchedAt = 0L,
-                    matchStatus = HltbMatchStatus.RESOLVED,
-                )
-            }
-
-        override fun observeAll(): Flow<List<HltbData>> = flowOf(emptyList())
-        override suspend fun getAll(): List<HltbData> = emptyList()
-        override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(emptyList())
-        override suspend fun appIdsStaleOrMissing(cutoff: Long): List<Long> = emptyList()
-    }
-
-    /** Seeded game store; only [getAll] is exercised by the updater. */
-    private class FakeGameDao(games: List<Game>) : GameDao {
-        private val store = games.associateBy { it.appId }.toMutableMap()
-
-        override suspend fun upsertAll(games: List<Game>) {
-            games.forEach { store[it.appId] = it }
-        }
-
-        override suspend fun upsert(game: Game) {
-            store[game.appId] = game
-        }
-
-        override fun observeLibrary(): Flow<List<Game>> = flowOf(store.values.toList())
-        override fun observeGoalGames(): Flow<List<Game>> = flowOf(emptyList())
-        override fun observeBacklog(): Flow<List<Game>> = flowOf(emptyList())
-        override suspend fun goalAppIds(): List<Long> = emptyList()
-        override suspend fun getAll(): List<Game> = store.values.toList()
-        override suspend fun getById(appId: Long): Game? = store[appId]
-        override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = Unit
-        override suspend fun setGoalFlag(appId: Long, isGoal: Boolean) = Unit
-        override suspend fun count(): Int = store.size
-        override suspend fun setBackfillMinutes(appId: Long, minutes: Int) {
-            store[appId]?.let { store[appId] = it.copy(backfillMinutes = minutes) }
-        }
-    }
-
-    private class FakeDailyProgressDao(initial: List<DailyProgress>) : DailyProgressDao {
-        private val store = linkedMapOf<String, DailyProgress>()
-
-        init {
-            initial.forEach { store[it.date] = it }
-        }
-
-        override suspend fun upsert(day: DailyProgress) {
-            store[day.date] = day
-        }
-
-        override suspend fun getByDate(date: String): DailyProgress? = store[date]
-        override fun observeAll(): Flow<List<DailyProgress>> =
-            flowOf(store.values.sortedByDescending { it.date })
-
-        override suspend fun getAllOrdered(): List<DailyProgress> =
-            store.values.sortedBy { it.date }
-    }
-
-    private class FakePlayerProfileDao : PlayerProfileDao {
-        private var profile: PlayerProfile? = null
-        override suspend fun upsert(profile: PlayerProfile) {
-            this.profile = profile
-        }
-
-        override fun observe(): Flow<PlayerProfile?> = flowOf(profile)
-        override suspend fun get(): PlayerProfile? = profile
-    }
-
-    /** Seeded, read-only stand-in: only [getAllUnlocked] is exercised by the updater. */
-    private class FakeAchievementDao(private val achievements: List<Achievement>) : AchievementDao {
-        override suspend fun upsertAll(achievements: List<Achievement>) = Unit
-        override fun observeForGame(appId: Long): Flow<List<Achievement>> = flowOf(emptyList())
-        override suspend fun getForGame(appId: Long): List<Achievement> = emptyList()
-        override fun observeCounts(): Flow<List<AchievementCounts>> = flowOf(emptyList())
-        override suspend fun fetchedAtByApp(): List<AchievementFetchedAt> = emptyList()
-        override suspend fun deleteMarker(appId: Long) = Unit
-        override suspend fun getAllUnlocked(): List<Achievement> = achievements.filter { it.unlocked }
     }
 }

@@ -2,7 +2,6 @@ package com.example.backlogium.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.backlogium.data.credentials.maskApiKey
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.LiveStatusRepository
@@ -13,22 +12,15 @@ import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class HomeUiState(
     val loading: Boolean = true,
     val configured: Boolean = true,
-    /** Active SteamID64, shown on the Steam account card when configured. */
-    val steamId: String = "",
-    /** Masked form of the API key for display; the raw key is never surfaced to the UI. */
-    val apiKeyMasked: String = "",
     val level: Int = 1,
     val xpIntoLevel: Int = 0,
     val xpForNext: Int = 0,
@@ -38,16 +30,12 @@ data class HomeUiState(
     val questThreshold: Int = 30,
     val currentStreak: Int = 0,
     val longestStreak: Int = 0,
-    val lastSyncAt: Long = 0L,
     val lastSyncError: String? = null,
+    /** True while any sync is in flight; disables the error card's retry. */
     val isSyncing: Boolean = false,
     val isInGame: Boolean = false,
     val nowPlayingName: String? = null,
     val nowPlayingIconUrl: String? = null,
-    /** True once historical Steam playtime has been imported (one-time). */
-    val historyImported: Boolean = false,
-    /** True while the one-time history import runs. */
-    val isImportingHistory: Boolean = false,
 ) {
     val xpFraction: Float
         get() = if (xpForNext > 0) (xpIntoLevel.toFloat() / xpForNext).coerceIn(0f, 1f) else 0f
@@ -76,8 +64,6 @@ class HomeViewModel @Inject constructor(
         HomeUiState(
             loading = false,
             configured = configured != null,
-            steamId = configured?.steamId ?: "",
-            apiKeyMasked = configured?.let { maskApiKey(it.apiKey) } ?: "",
             level = xpState.level,
             xpIntoLevel = xpState.xpIntoLevel,
             xpForNext = xpState.xpForNext,
@@ -87,16 +73,10 @@ class HomeViewModel @Inject constructor(
             questThreshold = config.questThresholdMin,
             currentStreak = profile?.currentStreak ?: 0,
             longestStreak = profile?.longestStreak ?: 0,
-            lastSyncAt = profile?.lastSyncAt ?: 0L,
             lastSyncError = profile?.lastSyncError,
             isSyncing = isSyncing,
-            historyImported = profile?.playtimeBackfilled ?: false,
         )
     }
-
-    // Local, view-scoped flag for the in-flight import (the persisted result lands via the
-    // profile flow); kept out of baseState so the button can show progress immediately.
-    private val isImportingHistory = MutableStateFlow(false)
 
     // Folding the live poll in here (rather than a separate collector) makes the 30s poll
     // observation-scoped: WhileSubscribed keeps LiveStatusRepository.nowPlaying collected only
@@ -104,16 +84,14 @@ class HomeViewModel @Inject constructor(
     val uiState: StateFlow<HomeUiState> = combine(
         baseState,
         liveStatusRepository.nowPlaying,
-        isImportingHistory,
-    ) { state, nowPlaying, importing ->
-        val withImport = state.copy(isImportingHistory = importing)
+    ) { state, nowPlaying ->
         when (nowPlaying) {
-            is NowPlaying.InGame -> withImport.copy(
+            is NowPlaying.InGame -> state.copy(
                 isInGame = true,
                 nowPlayingName = nowPlaying.name,
                 nowPlayingIconUrl = nowPlaying.iconUrl,
             )
-            NowPlaying.NotPlaying -> withImport
+            NowPlaying.NotPlaying -> state
         }
     }.stateIn(
         scope = viewModelScope,
@@ -121,31 +99,6 @@ class HomeViewModel @Inject constructor(
         initialValue = HomeUiState(),
     )
 
+    /** Retry a failed sync from the Home error card; the manual trigger lives in Settings. */
     fun syncNow() = profileRepository.syncNow()
-
-    /**
-     * Run the one-time historical-playtime import. Idempotent in the use-case; the resulting
-     * XP/level change flows back through the observed profile. Guards against concurrent taps.
-     */
-    fun importSteamHistory() = runHistoryOp { profileRepository.importSteamHistory() }
-
-    /**
-     * Undo a prior import so it can be run again (recovery / opt-out). Clears the frozen
-     * offsets and flag; the XP/level change flows back through the observed profile.
-     */
-    fun resetHistoryImport() = runHistoryOp { profileRepository.resetSteamHistoryImport() }
-
-    // Serialize import/reset behind one in-flight flag so the buttons show progress and
-    // concurrent taps can't overlap.
-    private fun runHistoryOp(op: suspend () -> Unit) {
-        if (isImportingHistory.value) return
-        viewModelScope.launch {
-            isImportingHistory.update { true }
-            try {
-                op()
-            } finally {
-                isImportingHistory.update { false }
-            }
-        }
-    }
 }

@@ -15,6 +15,7 @@ import androidx.work.WorkRequest
 import androidx.work.workDataOf
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -37,14 +38,20 @@ class SyncScheduler @Inject constructor(
             .build()
 
     /**
-     * Emits true while a manual "Sync now" poll is enqueued or running. WorkManager is the single
-     * source of truth here — no separate in-memory flag that could desync from the actual work.
+     * Emits true while *any* Steam poll is in flight — the manual "Sync now" and the periodic
+     * background sync alike, so the shell's indicator reflects real activity rather than only
+     * button presses. WorkManager is the single source of truth here — no separate in-memory
+     * flag that could desync from the actual work.
+     *
+     * The two works are read with different predicates ([isSyncInProgress]) and the result is
+     * held briefly past its falling edge ([holdTrue]) so a sub-second sync stays perceptible.
      */
-    val syncInProgress: Flow<Boolean> = workManager
-        .getWorkInfosForUniqueWorkFlow(SteamSyncWorker.ONE_TIME_NAME)
-        .map { infos ->
-            infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
-        }
+    val syncInProgress: Flow<Boolean> = combine(
+        workManager.getWorkInfosForUniqueWorkFlow(SteamSyncWorker.ONE_TIME_NAME),
+        workManager.getWorkInfosForUniqueWorkFlow(SteamSyncWorker.UNIQUE_PERIODIC_NAME),
+    ) { oneTime, periodic ->
+        isSyncInProgress(oneTime.map { it.state }, periodic.map { it.state })
+    }.holdTrue()
 
     /** Enqueue the periodic poll, keeping any already-scheduled work. Idempotent. */
     fun ensurePeriodicSync() {

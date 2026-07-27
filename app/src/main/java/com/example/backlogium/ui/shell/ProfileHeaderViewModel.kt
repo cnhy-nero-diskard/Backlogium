@@ -25,6 +25,11 @@ data class ProfileHeaderUiState(
     val personaName: String? = null,
     val avatarUrl: String? = null,
     val presence: LivePresence = LivePresence.UNKNOWN,
+    /**
+     * True while a Steam poll is in flight — periodic as well as manual. Already latched to a
+     * perceptible minimum upstream, so the header can render it directly.
+     */
+    val syncing: Boolean = false,
 ) {
     /** True when the header should be rendered at all. */
     val visible: Boolean get() = !loading && configured
@@ -43,13 +48,15 @@ class ProfileHeaderViewModel @Inject constructor(
         profileRepository.profile,
         credentials.credentialsStateFlow,
         liveStatusRepository.liveStatus,
-    ) { profile, credState, live ->
+        profileRepository.syncInProgress,
+    ) { profile, credState, live, syncing ->
         ProfileHeaderUiState(
             loading = false,
             configured = credState is CredentialsState.Configured,
             personaName = profile?.personaName,
             avatarUrl = profile?.avatarUrl,
             presence = live.presence,
+            syncing = syncing,
         )
     }.stateIn(
         scope = viewModelScope,

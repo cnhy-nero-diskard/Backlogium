@@ -1,5 +1,10 @@
 package com.example.backlogium.ui.components
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -31,13 +37,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.SubcomposeAsyncImage
 import com.example.backlogium.data.repo.LivePresence
 import com.example.backlogium.ui.shell.ProfileHeaderViewModel
+import com.example.backlogium.ui.util.rememberReducedMotion
 import compose.icons.TablerIcons
+import compose.icons.tablericons.Refresh
 import compose.icons.tablericons.User
 
 /** Label shown when no persona name has been synced yet — neutral, never the raw SteamID. */
 private const val FALLBACK_NAME = "Steam player"
 
 private val AVATAR_SIZE = 36.dp
+
+/** One full turn of the sync glyph; slow enough to read as "working", not as "urgent". */
+private const val SYNC_SPIN_MILLIS = 1200
 
 /**
  * The app shell's persistent identity strip: avatar, persona name, and live presence. Identity
@@ -66,7 +77,9 @@ fun ProfileHeader(viewModel: ProfileHeaderViewModel = hiltViewModel()) {
         ) {
             Avatar(state.avatarUrl)
             Spacer(Modifier.width(12.dp))
-            Column {
+            // The identity column takes the slack so a long persona name still ellipsizes
+            // rather than pushing the trailing indicator off the row.
+            Column(Modifier.weight(1f)) {
                 Text(
                     text = state.personaName?.takeIf { it.isNotBlank() } ?: FALLBACK_NAME,
                     style = MaterialTheme.typography.titleMedium,
@@ -82,8 +95,47 @@ fun ProfileHeader(viewModel: ProfileHeaderViewModel = hiltViewModel()) {
                     )
                 }
             }
+            // Composed only while syncing, so idle costs no layout at all.
+            if (state.syncing) {
+                Spacer(Modifier.width(12.dp))
+                SyncIndicator()
+            }
         }
     }
+}
+
+/**
+ * The shell's "talking to Steam" cue, shown on the trailing edge of the header for every sync —
+ * scheduled or manual. Under a reduced-motion preference the same glyph is drawn static rather
+ * than dropped: motion is the emphasis here, never the only thing carrying the state (the
+ * content description says so regardless).
+ */
+@Composable
+private fun SyncIndicator() {
+    val reducedMotion = rememberReducedMotion()
+    val rotation = if (reducedMotion) {
+        0f
+    } else {
+        val transition = rememberInfiniteTransition(label = "sync")
+        val angle by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(SYNC_SPIN_MILLIS, easing = LinearEasing),
+            ),
+            label = "syncRotation",
+        )
+        angle
+    }
+
+    Icon(
+        imageVector = TablerIcons.Refresh,
+        contentDescription = "Syncing",
+        tint = MaterialTheme.colorScheme.primary,
+        modifier = Modifier
+            .size(20.dp)
+            .rotate(rotation),
+    )
 }
 
 /**

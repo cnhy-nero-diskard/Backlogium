@@ -24,18 +24,19 @@ import com.example.backlogium.ui.library.LibraryScreen
 import com.example.backlogium.ui.navigation.Destination
 import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.review.HltbReviewScreen
+import com.example.backlogium.ui.settings.SettingsScreen
 
 /** Route for the HLTB match-review surface — a sub-destination reached from the Library. */
 private const val ROUTE_HLTB_REVIEW = "hltb_review"
 
-/** Route for the credentials onboarding flow — reached from the Home "Edit" action. */
+/** Route for the credentials onboarding flow — reached from the Settings account section. */
 private const val ROUTE_ONBOARDING = "onboarding"
 
 /** Route for the per-game detail screen — a sub-destination reached from the Library. */
 private const val ROUTE_GAME_DETAIL = "game_detail/{appId}"
 private fun gameDetailRoute(appId: Long) = "game_detail/$appId"
 
-/** App shell: bottom navigation between Home, Library, and History. */
+/** App shell: bottom navigation between Home, Library, History, and Settings. */
 @Composable
 fun BacklogiumAppRoot() {
     val navController = rememberNavController()
@@ -79,9 +80,7 @@ fun BacklogiumAppRoot() {
             startDestination = Destination.HOME.route,
             modifier = Modifier.padding(innerPadding),
         ) {
-            composable(Destination.HOME.route) {
-                HomeScreen(onEditCredentials = { navController.navigate(ROUTE_ONBOARDING) })
-            }
+            composable(Destination.HOME.route) { HomeScreen() }
             composable(Destination.LIBRARY.route) {
                 LibraryScreen(
                     onOpenReview = { navController.navigate(ROUTE_HLTB_REVIEW) },
@@ -89,6 +88,9 @@ fun BacklogiumAppRoot() {
                 )
             }
             composable(Destination.HISTORY.route) { HistoryScreen() }
+            composable(Destination.SETTINGS.route) {
+                SettingsScreen(onEditCredentials = { navController.navigate(ROUTE_ONBOARDING) })
+            }
             composable(ROUTE_ONBOARDING) {
                 OnboardingScreen(onCompleted = { navController.popBackStack() })
             }

@@ -6,14 +6,39 @@ import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.gamification.AchievementInput
 import com.example.backlogium.gamification.DayInput
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.GamePlaytimeInput
+import com.example.backlogium.gamification.QuestResult
 import com.example.backlogium.gamification.RuleConfig
+import com.example.backlogium.gamification.XpState
 import java.time.LocalDate
 import javax.inject.Inject
+
+/**
+ * Everything one recompute pass derives, before any of it is written back.
+ *
+ * Exists so a candidate [RuleConfig] can be evaluated without committing it — the settings
+ * confirmation dialog states the concrete before/after, which requires running the real
+ * computation rather than approximating it. [GamificationUpdater.persist] writes exactly what
+ * this holds, so a previewed result and an applied one can never disagree.
+ */
+data class GamificationResult(
+    val xpState: XpState,
+    /** Per-day quest outcomes for every stored day, oldest first. */
+    val questResults: List<QuestResult>,
+    val currentStreak: Int,
+    /**
+     * The high-water longest streak: already floored at the stored value, so this is the
+     * number [GamificationUpdater.persist] will write, not the raw per-day computation.
+     */
+    val longestStreak: Int,
+    /** Stored days whose `questMet` differs from the recomputed value; the only rows to write. */
+    val changedDays: List<DailyProgress>,
+)
 
 /**
  * Consumes the pure `:gamification` engine: builds its inputs from Room, then persists the
@@ -44,6 +69,15 @@ class GamificationUpdater @Inject constructor(
      * tunable rules.
      */
     suspend fun recompute(today: LocalDate, config: RuleConfig = RuleConfig()) {
+        persist(compute(today, config))
+    }
+
+    /**
+     * Run the full recompute and return the result **without writing anything**. Callers that
+     * want the values stored hand the result to [persist]; callers previewing a candidate
+     * [config] simply discard it.
+     */
+    suspend fun compute(today: LocalDate, config: RuleConfig = RuleConfig()): GamificationResult {
         // XP/level from each game's cumulative minutes = frozen backfill offset (0 unless the
         // player opted in to importing Steam history) + tracked session minutes, tapered
         // against that game's HLTB completionist average. Games with no HLTB row resolve to
@@ -72,8 +106,9 @@ class GamificationUpdater @Inject constructor(
         }
         val xpState = Gamification.xp(games, achievements, cfg = config)
 
-        // Recompute each stored day's quest status and persist any change.
+        // Recompute each stored day's quest status; collect (don't write) the rows that changed.
         val days = dailyProgressDao.getAllOrdered()
+        val changedDays = mutableListOf<DailyProgress>()
         val questResults = days.map { day ->
             val result = Gamification.quest(
                 DayInput(
@@ -84,7 +119,7 @@ class GamificationUpdater @Inject constructor(
                 config,
             )
             if (result.met != day.questMet) {
-                dailyProgressDao.upsert(day.copy(questMet = result.met))
+                changedDays += day.copy(questMet = result.met)
             }
             result
         }
@@ -96,16 +131,37 @@ class GamificationUpdater @Inject constructor(
         val todayResult = questResults.firstOrNull { it.date == today }
         val pastStreak = Gamification.streak(pastDays, config)
         val currentStreak = if (todayResult?.met == true) pastStreak.current + 1 else pastStreak.current
-        val longestStreak = maxOf(pastStreak.longest, currentStreak)
+        val computedLongest = maxOf(pastStreak.longest, currentStreak)
 
-        // Persist profile aggregates, preserving sync/status fields.
+        // Longest streak is a high-water mark, not a derivation: a record is a historical fact,
+        // and recomputing under a stricter config must not be able to erase one. Flooring here
+        // (as well as in `persist`) means a preview reports the number that will actually land.
+        val storedLongest = playerProfileDao.get()?.longestStreak ?: 0
+
+        return GamificationResult(
+            xpState = xpState,
+            questResults = questResults,
+            currentStreak = currentStreak,
+            longestStreak = maxOf(storedLongest, computedLongest),
+            changedDays = changedDays,
+        )
+    }
+
+    /** Write a [compute] result back: the changed quest days, then the profile aggregates. */
+    suspend fun persist(result: GamificationResult) {
+        result.changedDays.forEach { dailyProgressDao.upsert(it) }
+
+        // Persist profile aggregates, preserving sync/status fields. `currentStreak` is written
+        // as computed — only the record is protected — while `longestStreak` takes the maximum
+        // against whatever is stored now, so a concurrent write between compute and persist
+        // still cannot lower it.
         val profile = playerProfileDao.get() ?: PlayerProfile()
         playerProfileDao.upsert(
             profile.copy(
-                totalXp = xpState.totalXp,
-                level = xpState.level,
-                currentStreak = currentStreak,
-                longestStreak = longestStreak,
+                totalXp = result.xpState.totalXp,
+                level = result.xpState.level,
+                currentStreak = result.currentStreak,
+                longestStreak = maxOf(profile.longestStreak, result.longestStreak),
             ),
         )
     }
