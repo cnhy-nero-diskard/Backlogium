@@ -121,8 +121,8 @@
 ## 11. Verification
 
 - [x] 11.1 `./gradlew test` green
-- [ ] 11.2 Manual: change the daily quest goal upward, confirm the dialog names the real streak
+- [x] 11.2 Manual: change the daily quest goal upward, confirm the dialog names the real streak
   change, confirm Home reflects it immediately without a sync
-- [ ] 11.3 Manual: confirm the header indicator is idle while sitting on any screen with only
+- [x] 11.3 Manual: confirm the header indicator is idle while sitting on any screen with only
   periodic sync scheduled, and animates during a manual sync
 - [x] 11.4 `openspec validate add-settings-tab --strict`

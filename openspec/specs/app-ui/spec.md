@@ -5,13 +5,13 @@
 Defines the Android app's UI behavior: the app shell and navigation, the Steam profile
 header, the Home screen,
 visual theming, typography, iconography, game art states, celebratory animations, the
-Library screen, the History screen, and sync feedback on Home.
+Library screen, the History screen, and sync feedback in the app shell.
 
 ## Requirements
 
 ### Requirement: App shell and navigation
-The system SHALL present a Compose UI with navigation between Home, Library, and
-History screens, and all screens SHALL render from locally stored state so the app
+The system SHALL present a Compose UI with navigation between Home, Library, History, and
+Settings screens, and all screens SHALL render from locally stored state so the app
 is fully usable offline.
 
 #### Scenario: Offline launch
@@ -20,7 +20,7 @@ is fully usable offline.
 
 #### Scenario: Navigating between screens
 - **WHEN** the user selects a destination from the app's navigation
-- **THEN** the corresponding screen (Home, Library, or History) is shown
+- **THEN** the corresponding screen (Home, Library, History, or Settings) is shown
 
 ### Requirement: Steam profile header
 The system SHALL present a persistent profile header at the top of the app shell showing the
@@ -62,26 +62,68 @@ from locally stored identity so it is populated on an offline launch.
 - **THEN** it does not present a level number, so the player's Steam level is never confused
   with the app's own XP level
 
+### Requirement: Sync-in-progress feedback in the app shell
+The system SHALL indicate an in-flight sync in the app shell's profile header, so the cue is
+visible from every top-level destination rather than only from the screen carrying the sync
+trigger. The indicator SHALL reflect both scheduled and manually triggered syncs. Because a
+sync can complete in well under a second, the indicator SHALL remain visible long enough to be
+perceptible rather than flickering. The indicator SHALL respect the platform's reduced-motion
+preference and SHALL NOT rely on motion as its only cue.
+
+#### Scenario: Manual sync reflected in the header
+- **WHEN** the user triggers a manual sync from Settings
+- **THEN** the profile header shows the sync indicator until that sync completes
+
+#### Scenario: Scheduled sync reflected in the header
+- **WHEN** a periodic background sync runs while the app is in the foreground
+- **THEN** the profile header shows the sync indicator for that sync as well
+
+#### Scenario: Indicator visible across destinations
+- **WHEN** a sync is in flight and the user navigates between top-level destinations
+- **THEN** the indicator remains visible, because it belongs to the shell rather than to a screen
+
+#### Scenario: Very fast sync remains perceptible
+- **WHEN** a sync completes almost immediately after being enqueued
+- **THEN** the indicator is still displayed for a perceptible minimum duration rather than
+  appearing and vanishing within a frame or two
+
+#### Scenario: Idle state
+- **WHEN** no sync is in flight
+- **THEN** the header shows no sync indicator and the header's identity content is unaffected
+
+#### Scenario: Reduced motion honored
+- **WHEN** the platform reports a reduced-motion preference
+- **THEN** the indicator conveys the in-flight state without continuous animation
+
 ### Requirement: Home screen
 The system SHALL provide a Home screen showing the player's level and XP progress, today's daily
 quest status, the current streak, and a "Now playing" indicator reflecting the player's current
-in-game state. When credentials are configured, the Home screen SHALL also show a Steam account
-card exposing the active SteamID and a masked API key with an action that reopens the onboarding
-flow. When credentials are not configured, the Home screen SHALL present the onboarding flow as a
-full-screen takeover rather than a static "Steam not configured" message. The streak count SHALL
-reflect the streak through the last completed day, extended only once today's quest is actually
-met, and SHALL NOT read as broken solely because today's quest has not yet been met while the day
-is still in progress.
+in-game state. Home SHALL present progress content only: account, sync, and data-management
+controls belong to the Settings screen and SHALL NOT appear on Home. When a sync has failed,
+Home SHALL surface the error together with an action that retries the sync, so a failure is
+recoverable without leaving the screen. When credentials are not configured, the Home screen
+SHALL present the onboarding flow as a full-screen takeover rather than a static "Steam not
+configured" message. The streak count SHALL reflect the streak through the last completed day,
+extended only once today's quest is actually met, and SHALL NOT read as broken solely because
+today's quest has not yet been met while the day is still in progress.
 
 #### Scenario: Viewing progress
 - **WHEN** the Home screen is shown while configured
 - **THEN** it displays current level with progress toward the next level, whether today's quest is
   met, and the current streak count
 
-#### Scenario: Sync now from Home
-- **WHEN** the user triggers "Sync now" from Home
-- **THEN** a manual poll is enqueued and the screen reflects updated state and any sync error when
-  it completes
+#### Scenario: Administration controls absent from Home
+- **WHEN** the Home screen is shown while configured
+- **THEN** it does not display the Steam account card, the manual sync trigger, the last-sync
+  time, or the Steam history import
+
+#### Scenario: Retrying a failed sync from Home
+- **WHEN** the last sync failed and the Home screen displays the resulting error
+- **THEN** the error presentation offers a retry action that enqueues a new sync
+
+#### Scenario: Error cleared after a successful retry
+- **WHEN** a retry triggered from Home completes successfully
+- **THEN** the error presentation is no longer shown
 
 #### Scenario: Now playing shown while in-game
 - **WHEN** the live status reports the player is in a game
@@ -91,10 +133,6 @@ is still in progress.
 #### Scenario: Now playing hidden when not in-game
 - **WHEN** the live status reports the player is not in a game
 - **THEN** the Home screen does not show a "Now playing" indicator
-
-#### Scenario: Editing credentials from Home
-- **WHEN** credentials are configured and the user activates the Steam account card's edit action
-- **THEN** the onboarding flow opens so the user can change and re-save credentials
 
 #### Scenario: Onboarding takeover when not configured
 - **WHEN** no credentials are configured
@@ -302,21 +340,6 @@ that is merely in progress, both on its Library row and on its detail screen.
 #### Scenario: In-progress game shows no completion signal
 - **WHEN** a game has stored achievement data but its unlocked count is less than its total
 - **THEN** neither the Library row nor the detail screen displays the completion indicator
-
-### Requirement: Sync-in-progress feedback on Home
-The system SHALL reflect an in-flight manual sync on the Home screen: while a "Sync now"
-poll is running, the trigger control SHALL show a progress indicator and be disabled,
-and SHALL return to its idle state when the poll completes.
-
-#### Scenario: Sync in progress
-- **WHEN** the user triggers "Sync now" and the poll has not yet completed
-- **THEN** the sync control shows a progress indicator and is disabled so it cannot be
-  triggered again
-
-#### Scenario: Sync completes
-- **WHEN** an in-flight sync completes (successfully or with an error)
-- **THEN** the sync control returns to its enabled idle state and the screen reflects the
-  updated last-sync time or any sync error
 
 ### Requirement: History screen
 The system SHALL provide a History screen listing recently synthesized sessions and
