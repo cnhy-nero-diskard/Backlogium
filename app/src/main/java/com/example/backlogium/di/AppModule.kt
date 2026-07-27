@@ -1,5 +1,7 @@
 package com.example.backlogium.di
 
+import com.example.backlogium.data.repo.DataStoreSettingsRepository
+import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.SystemTimeProvider
 import com.example.backlogium.domain.TimeProvider
 import dagger.Binds
@@ -19,6 +21,10 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindTimeProvider(impl: SystemTimeProvider): TimeProvider
+
+    @Binds
+    @Singleton
+    abstract fun bindSettingsRepository(impl: DataStoreSettingsRepository): SettingsRepository
 
     companion object {
         /**

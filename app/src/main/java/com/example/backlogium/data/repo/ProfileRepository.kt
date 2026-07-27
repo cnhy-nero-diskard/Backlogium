@@ -49,8 +49,18 @@ class ProfileRepository @Inject constructor(
     val dailyProgress: Flow<List<DayProgress>> = dailyProgressDao.observeAll()
         .map { rows -> rows.map(DailyProgress::toDomain) }
 
-    /** True while a manual "Sync now" poll is enqueued or running (WorkManager-backed). */
+    /**
+     * True while any Steam poll — scheduled or manual — is in flight (WorkManager-backed), held
+     * briefly past completion so a fast sync stays perceptible.
+     */
     val syncInProgress: Flow<Boolean> = syncScheduler.syncInProgress
+
+    /**
+     * One-shot read of the current aggregates. Callers comparing a *before* against a computed
+     * *after* need a value, not a stream — sampling the flow would race the recompute they are
+     * about to describe.
+     */
+    suspend fun currentStats(): PlayerStats? = profileDao.get()?.toDomain()
 
     /** Enqueue an immediate one-time poll. */
     fun syncNow() = syncScheduler.syncNow()
