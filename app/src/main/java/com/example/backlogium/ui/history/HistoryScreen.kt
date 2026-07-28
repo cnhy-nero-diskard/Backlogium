@@ -129,7 +129,7 @@ private fun DayStatRow(day: DayStatUi) {
                 Text(
                     text = "${UiFormat.minutes(day.minutesPlayed)} played" +
                         if (day.goalMinutesPlayed > 0) {
-                            " · ${UiFormat.minutes(day.goalMinutesPlayed)} on goals"
+                            " · ${UiFormat.minutes(day.goalMinutesPlayed)} on Focus games"
                         } else {
                             ""
                         },

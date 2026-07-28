@@ -58,8 +58,11 @@ three specific games, the only option is to sweep all 300.
 - **Affected code (modified):** `HltbRepository.refreshBatch` widens its progress callback to carry
   the per-game outcome; `HltbRefreshWorker` accepts an appId subset and reports the current game +
   outcome via `setProgress`; `SyncScheduler` exposes the progress data instead of discarding it;
-  `LibraryViewModel`/`LibraryScreen`; user-facing "goal" and "backlog" copy in `LibraryScreen` and
-  `HistoryScreen`; `SettingsDataStore` gains the two persisted sort keys.
+  `LibraryViewModel`/`LibraryScreen`; `LibraryGame` widens with the inputs the new sort keys need
+  (`playtime2Weeks`, per-game XP); `LibraryViewModel` gains a `SettingsRepository` dependency so the
+  XP badge uses the *persisted* `RuleConfig` rather than the engine defaults; user-facing "goal" and
+  "backlog" copy in `LibraryScreen`, `HistoryScreen`, and the Settings quest-mode chip;
+  `SettingsDataStore` gains the two persisted sort keys.
 - **No Room migration.** The only persisted additions are two Preferences DataStore keys for the sort
   selections; everything else is a read-side derivation or transient view state.
 - **No engine change.** `Gamification.gameXp` and `achievementXp` are called as-is; the badge uses

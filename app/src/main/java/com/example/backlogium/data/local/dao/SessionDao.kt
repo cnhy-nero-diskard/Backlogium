@@ -32,6 +32,14 @@ interface SessionDao {
      */
     @Query("SELECT appId, COALESCE(SUM(minutes), 0) AS minutes FROM sessions GROUP BY appId")
     suspend fun trackedMinutesByGame(): List<GameTrackedMinutes>
+
+    /**
+     * The same per-game breakdown, observed. The Library's XP badge is derived from the engine's
+     * own inputs (tracked + backfill minutes), so it has to follow tracked minutes live rather
+     * than read them once.
+     */
+    @Query("SELECT appId, COALESCE(SUM(minutes), 0) AS minutes FROM sessions GROUP BY appId")
+    fun observeTrackedMinutesByGame(): Flow<List<GameTrackedMinutes>>
 }
 
 /** Per-game tracked-minutes projection for [SessionDao.trackedMinutesByGame]. */

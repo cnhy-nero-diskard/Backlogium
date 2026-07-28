@@ -2,12 +2,15 @@ package com.example.backlogium.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 
 // Dark-first "Steam-native dark + gold accent" scheme (restyle-visual-identity).
@@ -41,6 +44,18 @@ private val LightColorScheme = lightColorScheme(
     surfaceVariant = LightSurfaceVariant,
     onSurfaceVariant = OnLightVariant,
 )
+
+/**
+ * Fill for the portion of a completion bar beyond the HowLongToBeat length.
+ *
+ * An extension rather than a scheme slot: Material has no role for "the accent, darker and
+ * redder", and the nearest candidates lie about the meaning — `error` reads as a fault, `tertiary`
+ * is the unrelated steel-blue. Keyed off surface luminance rather than `isSystemInDarkTheme()` so
+ * it follows the scheme actually in force, including a caller that pins [BacklogiumTheme]'s
+ * `darkTheme` or turns dynamic color on.
+ */
+val ColorScheme.overrunExcess: Color
+    get() = if (surface.luminance() < 0.5f) GoldOverrun else GoldOverrunLight
 
 @Composable
 fun BacklogiumTheme(

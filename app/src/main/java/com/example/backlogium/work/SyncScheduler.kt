@@ -3,6 +3,7 @@ package com.example.backlogium.work
 import android.content.Context
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
+import androidx.work.Data
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
@@ -93,14 +94,62 @@ class SyncScheduler @Inject constructor(
         }
 
     /**
+     * The running sweep's own progress, or null when nothing is reporting — kept alongside
+     * [hltbRefreshInProgress] rather than replacing it, since existing callers only need the
+     * boolean.
+     *
+     * Null covers three real states that the UI must not render as a stalled `0 / 0`: no sweep at
+     * all, a sweep enqueued but not yet past its first game, and a *finished* sweep (WorkManager
+     * clears progress on completion).
+     */
+    val hltbRefreshProgress: Flow<HltbBatchProgress?> = workManager
+        .getWorkInfosForUniqueWorkFlow(HltbRefreshWorker.ONE_TIME_NAME)
+        .map { infos ->
+            infos.firstOrNull { it.state == WorkInfo.State.RUNNING }
+                ?.let { hltbBatchProgressFrom(it.progress) }
+        }
+
+    /**
      * Enqueue the one-shot HowLongToBeat batch refresh. [force] re-fetches every game,
      * ignoring the freshness window (the manual/testing case). Not expedited: the throttled
      * sweep can run long. Keeps any in-flight refresh rather than stacking duplicates.
      */
     fun refreshHltbNow(force: Boolean) {
+        enqueueHltbRefresh(workDataOf(HltbRefreshWorker.KEY_FORCE to force))
+    }
+
+    /**
+     * Enqueue a refresh over just [appIds], always forced (the worker treats a selection as
+     * intent, freshness window included).
+     *
+     * Shares the one unique work name with the whole-library sweep under
+     * [ExistingWorkPolicy.KEEP], so a selection tapped *during* a sweep is dropped with no error.
+     * Callers must gate the action on [hltbRefreshInProgress] — the alternatives are worse:
+     * `REPLACE` would kill a multi-minute sweep unannounced, and a second work name would mean two
+     * progress streams to observe and merge.
+     */
+    fun refreshHltbNow(appIds: Collection<Long>) {
+        if (appIds.isEmpty()) return
+        enqueueHltbRefresh(workDataOf(HltbRefreshWorker.KEY_APP_IDS to appIds.toLongArray()))
+    }
+
+    /**
+     * Stop a running sweep. WorkManager cancels the worker's coroutine, which unwinds at the
+     * repository's inter-request delay — so at most one in-flight lookup is abandoned, and every
+     * game already written keeps its data.
+     *
+     * There is no separate "pause": a plain (unforced) refresh started afterwards *is* the resume,
+     * because everything the stopped run already fetched now sits inside the freshness window and
+     * is skipped. Only "Force all" would start over from the beginning.
+     */
+    fun cancelHltbRefresh() {
+        workManager.cancelUniqueWork(HltbRefreshWorker.ONE_TIME_NAME)
+    }
+
+    private fun enqueueHltbRefresh(input: Data) {
         val request = OneTimeWorkRequestBuilder<HltbRefreshWorker>()
             .setConstraints(networkConstraints)
-            .setInputData(workDataOf(HltbRefreshWorker.KEY_FORCE to force))
+            .setInputData(input)
             .build()
 
         workManager.enqueueUniqueWork(

@@ -95,13 +95,22 @@ class HltbRepository @Inject constructor(
     /**
      * Refresh HLTB data across [games] (appId → name). Without [force], only stale/missing
      * games are queried; with it, every game. Requests are spaced by a fixed delay and reuse a
-     * single resolved endpoint/token (held in the data source for the run). [onProgress] is
-     * invoked with (completed, total) after each query.
+     * single resolved endpoint/token (held in the data source for the run).
+     *
+     * [onProgress] is invoked after each query with the running count, the game just processed,
+     * and its outcome — a `null` outcome meaning the lookup itself failed (transport error), which
+     * [refresh] already distinguishes from a successful search that matched nothing. The outcome
+     * crosses as the domain [HltbMatchState], not the storage enum, so no consumer above `data/`
+     * has to learn about `HltbMatchStatus`.
+     *
+     * Note it is only called from inside the loop: an empty target set reports nothing at all, so
+     * a caller rendering progress must not read "no emissions yet" as a stalled run.
      */
     suspend fun refreshBatch(
         games: List<Pair<Long, String>>,
         force: Boolean,
-        onProgress: suspend (done: Int, total: Int) -> Unit = { _, _ -> },
+        onProgress: suspend (done: Int, total: Int, name: String, outcome: HltbMatchState?) -> Unit =
+            { _, _, _, _ -> },
     ) {
         val targets = if (force) {
             games
@@ -111,8 +120,8 @@ class HltbRepository @Inject constructor(
         }
         targets.forEachIndexed { index, (appId, name) ->
             if (index > 0) delay(INTER_REQUEST_DELAY_MS)
-            refresh(appId, name)
-            onProgress(index + 1, targets.size)
+            val outcome = refresh(appId, name)?.matchStatus?.toDomain()
+            onProgress(index + 1, targets.size, name, outcome)
         }
     }
 

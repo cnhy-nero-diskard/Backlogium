@@ -568,7 +568,12 @@ private fun HistoryImportCard(
     }
 }
 
+/**
+ * User-facing names for the quest scope. `GOAL_ONLY` keeps its engine name while its label follows
+ * the Library's "Focus" wording — this chip is the one place where that section's name has a
+ * functional consequence, so leaving it as "Goal games only" would leave the relabel half-done.
+ */
 private fun questModeLabel(mode: QuestMode) = when (mode) {
     QuestMode.ANY -> "Any game"
-    QuestMode.GOAL_ONLY -> "Goal games only"
+    QuestMode.GOAL_ONLY -> "Focus games only"
 }

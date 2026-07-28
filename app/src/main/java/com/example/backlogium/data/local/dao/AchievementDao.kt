@@ -50,7 +50,26 @@ interface AchievementDao {
         "SELECT * FROM achievements WHERE apiName != '$NO_ACHIEVEMENTS_MARKER' AND unlocked = 1",
     )
     suspend fun getAllUnlocked(): List<Achievement>
+
+    /**
+     * Rarity snapshot of every unlocked achievement, per game — the Library XP badge's
+     * achievement input. Distinct from [observeCounts], which gives unlocked/total counts the
+     * engine's `achievementXp` cannot tier from: XP depends on each achievement's own rarity,
+     * so the percents themselves have to cross the boundary.
+     */
+    @Query(
+        "SELECT appId, snapshotPercent FROM achievements " +
+            "WHERE apiName != '$NO_ACHIEVEMENTS_MARKER' AND unlocked = 1",
+    )
+    fun observeUnlockedRarity(): Flow<List<AchievementRarity>>
 }
 
 data class AchievementCounts(val appId: Long, val total: Int, val unlocked: Int)
 data class AchievementFetchedAt(val appId: Long, val fetchedAt: Long)
+
+/**
+ * One unlocked achievement's frozen rarity snapshot. A null [snapshotPercent] is un-tierable
+ * (Steam reported no global stat) and worth zero XP — preserved rather than filtered out so the
+ * count of unlocked achievements stays honest.
+ */
+data class AchievementRarity(val appId: Long, val snapshotPercent: Double?)

@@ -27,6 +27,13 @@ class SessionRepository @Inject constructor(
     val recentSessions: Flow<List<PlaySession>> = sessionDao.observeRecent(RECENT_LIMIT)
         .map { rows -> rows.map(Session::toDomain) }
 
+    /**
+     * Tracked minutes summed per game, keyed by appId. Games with no tracked session are absent
+     * rather than zero — a caller deriving XP treats a missing entry as zero tracked minutes.
+     */
+    val trackedMinutesByGame: Flow<Map<Long, Int>> = sessionDao.observeTrackedMinutesByGame()
+        .map { rows -> rows.associate { it.appId to it.minutes } }
+
     private companion object {
         const val RECENT_LIMIT = 100
     }

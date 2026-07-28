@@ -4,6 +4,7 @@ import com.example.backlogium.data.achievement.AchievementFreshness
 import com.example.backlogium.data.achievement.AchievementMerge
 import com.example.backlogium.data.local.dao.AchievementCounts
 import com.example.backlogium.data.local.dao.AchievementDao
+import com.example.backlogium.data.local.dao.AchievementRarity
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Achievement
@@ -53,6 +54,14 @@ class AchievementRepository @Inject constructor(
     /** Unlocked/total achievement counts, keyed by appId — feeds the Library row badge. */
     val counts: Flow<Map<Long, AchievementCounts>> = achievementDao.observeCounts()
         .map { it.associateBy(AchievementCounts::appId) }
+
+    /**
+     * Per-game rarity snapshots of unlocked achievements, keyed by appId — the achievement half of
+     * the Library's XP badge. [counts] cannot serve here: a count of unlocked achievements is not
+     * tierable, and XP is awarded per rarity tier.
+     */
+    val unlockedRarityByGame: Flow<Map<Long, List<Double?>>> = achievementDao.observeUnlockedRarity()
+        .map { rows -> rows.groupBy(AchievementRarity::appId) { it.snapshotPercent } }
 
     /**
      * Fetches achievements for every in-scope game whose data is stale or missing. [apiKey]/

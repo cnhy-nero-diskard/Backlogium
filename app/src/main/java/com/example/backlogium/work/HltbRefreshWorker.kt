@@ -25,6 +25,14 @@ import dagger.assisted.AssistedInject
  * Without the [KEY_FORCE] flag it refreshes only stale/missing games (the freshness gate lives
  * in [HltbRepository]); with it, every game. Endpoint/token are reused across the run and
  * requests are throttled by the repository. Last-good cached data is never discarded on error.
+ *
+ * [KEY_APP_IDS] narrows the sweep to an explicit selection, which is always refreshed with
+ * `force = true`: choosing three games is an unambiguous statement of intent, so silently
+ * skipping them for being inside the freshness window would make the action look broken.
+ *
+ * Progress is published per game — count, total, the game's name, and its outcome — since that is
+ * the only channel that survives the screen closing. The outcome travels as a name string because
+ * `Data` holds no enums; its absence means the lookup itself failed.
  */
 @HiltWorker
 class HltbRefreshWorker @AssistedInject constructor(
@@ -35,8 +43,12 @@ class HltbRefreshWorker @AssistedInject constructor(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
-        val force = inputData.getBoolean(KEY_FORCE, false)
-        val games = gameDao.getAll().map { it.appId to it.name }
+        // An explicit selection overrides the freshness gate; a whole-library sweep honors it.
+        val selection = inputData.getLongArray(KEY_APP_IDS)?.toSet()
+        val force = selection != null || inputData.getBoolean(KEY_FORCE, false)
+        val games = gameDao.getAll()
+            .filter { selection == null || it.appId in selection }
+            .map { it.appId to it.name }
 
         if (games.isEmpty()) {
             notifyComplete(0)
@@ -45,9 +57,17 @@ class HltbRefreshWorker @AssistedInject constructor(
 
         return try {
             var completed = 0
-            hltbRepository.refreshBatch(games, force) { done, total ->
+            hltbRepository.refreshBatch(games, force) { done, total, name, outcome ->
                 completed = done
-                setProgress(workDataOf(KEY_PROGRESS to done, KEY_TOTAL to total))
+                setProgress(
+                    workDataOf(
+                        KEY_PROGRESS to done,
+                        KEY_TOTAL to total,
+                        KEY_CURRENT_GAME to name,
+                        // Absent = the lookup failed; a match state means it completed.
+                        KEY_OUTCOME to outcome?.name,
+                    ),
+                )
             }
             notifyComplete(completed)
             Result.success()
@@ -95,8 +115,13 @@ class HltbRefreshWorker @AssistedInject constructor(
     companion object {
         const val ONE_TIME_NAME = "hltb_refresh_now"
         const val KEY_FORCE = "force"
+
+        /** Optional appId subset; absent = sweep the whole library. */
+        const val KEY_APP_IDS = "app_ids"
         const val KEY_PROGRESS = "progress"
         const val KEY_TOTAL = "total"
+        const val KEY_CURRENT_GAME = "current_game"
+        const val KEY_OUTCOME = "outcome"
 
         private const val CHANNEL_ID = "hltb_refresh"
         private const val NOTIFICATION_ID = 4201
