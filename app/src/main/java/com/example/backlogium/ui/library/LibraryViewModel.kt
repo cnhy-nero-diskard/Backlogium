@@ -38,6 +38,8 @@ data class GoalGameUi(
     override val appId: Long,
     override val name: String,
     val iconUrl: String,
+    /** Store header art, drawn as a faint backdrop behind the row. */
+    val headerUrl: String = "",
     override val playtimeForever: Int,
     /** Steam's rolling two-week playtime — the "recently played" sort key, not displayed. */
     override val playtime2Weeks: Int = 0,
@@ -58,6 +60,7 @@ data class BacklogGameUi(
     override val appId: Long,
     override val name: String,
     val iconUrl: String,
+    val headerUrl: String = "",
     override val playtimeForever: Int,
     override val playtime2Weeks: Int = 0,
     override val xpContributed: Int = 0,
@@ -278,6 +281,12 @@ class LibraryViewModel @Inject constructor(
 
     /** Enqueue the batch HLTB refresh. [force] re-fetches every game regardless of freshness. */
     fun refreshHltb(force: Boolean) = syncScheduler.refreshHltbNow(force)
+
+    /**
+     * Stop a running sweep. Games already fetched keep their data, so a later plain refresh picks
+     * up where this left off — the freshness window skips everything the stopped run completed.
+     */
+    fun stopHltbRefresh() = syncScheduler.cancelHltbRefresh()
 }
 
 /** The two Room-backed lists plus the two screen-wide facts, before any per-row derivation. */
@@ -340,6 +349,7 @@ private fun LibraryGame.toGoalUi(
     appId = appId,
     name = name,
     iconUrl = iconUrl,
+    headerUrl = headerUrl,
     playtimeForever = playtimeForever,
     playtime2Weeks = playtime2Weeks,
     xpContributed = xpContribution(xp),
@@ -358,6 +368,7 @@ private fun LibraryGame.toBacklogUi(
     appId = appId,
     name = name,
     iconUrl = iconUrl,
+    headerUrl = headerUrl,
     playtimeForever = playtimeForever,
     playtime2Weeks = playtime2Weeks,
     xpContributed = xpContribution(xp),

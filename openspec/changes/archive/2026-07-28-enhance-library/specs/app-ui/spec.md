@@ -14,6 +14,12 @@ without implying that they are unplayed or awaiting play.
 - **THEN** the game displays its name, icon, and playtime, and a progress indicator measuring its
   playtime against that completion length, regardless of whether it belongs to the curated set
 
+#### Scenario: Game played past its completion length
+- **WHEN** a game's playtime exceeds its HowLongToBeat-sourced completion length
+- **THEN** its progress indicator represents the whole playtime, showing the completion length and
+  the excess beyond it as visually distinct portions of one full indicator, rather than resting at
+  full with the excess unrepresented
+
 #### Scenario: Game without an HLTB length shows no progress
 - **WHEN** the Library is shown and a game has no HowLongToBeat-sourced completion length yet
 - **THEN** the game displays its name, icon, and playtime, and does not display completion-based
@@ -139,6 +145,25 @@ games have been processed out of the total, and a log of each processed game wit
 #### Scenario: Refresh completes
 - **WHEN** the batch refresh finishes
 - **THEN** the progress indicator resolves and the controls become available again
+
+### Requirement: Stopping a batch HowLongToBeat refresh
+The system SHALL let the user stop a running batch refresh, SHALL keep the data already fetched by
+the stopped run, and SHALL NOT re-fetch that data on a subsequent ordinary refresh.
+
+#### Scenario: Stopping a running refresh
+- **WHEN** the user stops a running batch refresh
+- **THEN** the refresh ends, the controls become available again, and every game already processed
+  keeps the data it received
+
+#### Scenario: Resuming after a stop
+- **WHEN** the user starts an ordinary batch refresh after stopping one
+- **THEN** the games the stopped run already fetched are not queried again, so the new run
+  continues from where the stopped one ended
+
+#### Scenario: Forced refresh still starts over
+- **WHEN** the user starts a forced refresh after stopping one
+- **THEN** every game is queried again, since a forced refresh deliberately ignores how recently
+  data was fetched
 
 ### Requirement: Targeted HowLongToBeat refresh
 The system SHALL let the user select multiple games in the Library and run a HowLongToBeat refresh

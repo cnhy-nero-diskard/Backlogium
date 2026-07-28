@@ -34,6 +34,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -45,15 +46,27 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.ui.components.EmptyState
+import com.example.backlogium.ui.theme.overrunExcess
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.work.HltbBatchProgress
 import compose.icons.TablerIcons
@@ -62,6 +75,7 @@ import compose.icons.tablericons.Check
 import compose.icons.tablericons.Checkbox
 import compose.icons.tablericons.DeviceGamepad
 import compose.icons.tablericons.DotsVertical
+import compose.icons.tablericons.PlayerStop
 import compose.icons.tablericons.Search
 import compose.icons.tablericons.Trophy
 import compose.icons.tablericons.X
@@ -149,7 +163,11 @@ fun LibraryScreen(
 
             if (state.refreshing) {
                 item {
-                    BatchProgressPanel(progress = state.batchProgress, log = state.batchLog)
+                    BatchProgressPanel(
+                        progress = state.batchProgress,
+                        log = state.batchLog,
+                        onStop = viewModel::stopHltbRefresh,
+                    )
                 }
             }
 
@@ -344,24 +362,36 @@ private fun HltbControls(
  * reports from inside its loop) — so it renders as indeterminate rather than as `0 / 0`.
  */
 @Composable
-private fun BatchProgressPanel(progress: HltbBatchProgress?, log: List<HltbLogEntry>) {
+private fun BatchProgressPanel(
+    progress: HltbBatchProgress?,
+    log: List<HltbLogEntry>,
+    onStop: () -> Unit,
+) {
     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
         Column(modifier = Modifier.padding(12.dp)) {
             if (progress == null || progress.total <= 0) {
-                Text(
-                    text = "Starting HowLongToBeat refresh…",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Starting HowLongToBeat refresh…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    StopScanButton(onStop)
+                }
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
                 return@Column
             }
 
-            Text(
-                text = "${progress.done} / ${progress.total}",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Bold,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "${progress.done} / ${progress.total}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                StopScanButton(onStop)
+            }
             Spacer(Modifier.height(6.dp))
             LinearProgressIndicator(
                 progress = { progress.done.toFloat() / progress.total.toFloat() },
@@ -387,6 +417,24 @@ private fun BatchProgressPanel(progress: HltbBatchProgress?, log: List<HltbLogEn
                 }
             }
         }
+    }
+}
+
+/**
+ * Stops the sweep where it stands. Not a pause, but it behaves like one: every game already
+ * fetched is now inside the freshness window, so tapping "Refresh HLTB library" again resumes from
+ * roughly where this left off instead of starting over. ("Force all" deliberately does start over.)
+ */
+@Composable
+private fun StopScanButton(onStop: () -> Unit) {
+    TextButton(onClick = onStop) {
+        Icon(
+            imageVector = TablerIcons.PlayerStop,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Text("Stop")
     }
 }
 
@@ -516,10 +564,9 @@ private fun GoalGameRow(
     onLongClick: () -> Unit,
     onManageGoal: () -> Unit,
 ) {
-    val completed = isGameCompleted(game.achievementUnlocked, game.achievementTotal)
     GameCard(
+        headerUrl = game.headerUrl,
         selected = selected,
-        completed = completed,
         onClick = onClick,
         onLongClick = onLongClick,
     ) {
@@ -561,10 +608,9 @@ private fun BacklogGameRow(
     onLongClick: () -> Unit,
     onManageGoal: () -> Unit,
 ) {
-    val completed = isGameCompleted(game.achievementUnlocked, game.achievementTotal)
     GameCard(
+        headerUrl = game.headerUrl,
         selected = selected,
-        completed = completed,
         onClick = onClick,
         onLongClick = onLongClick,
     ) {
@@ -604,12 +650,16 @@ private fun BacklogGameRow(
  * The shared row shell. Material 3's `Card(onClick = …)` has no long-press, so the card is
  * non-clickable and carries [combinedClickable] instead — long-press enters selection mode while
  * tap keeps its existing meaning.
+ *
+ * A completed game is marked by its gold "100% COMPLETED" pill only. The row used to also take a
+ * gold outline, which read as loud rather than celebratory once several completed games sat next
+ * to each other in the list.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GameCard(
+    headerUrl: String,
     selected: Boolean,
-    completed: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     content: @Composable RowScope.() -> Unit,
@@ -619,7 +669,7 @@ private fun GameCard(
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        border = selectionBorder(selected) ?: completedBorder(completed),
+        border = selectionBorder(selected),
         colors = if (selected) {
             CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -628,14 +678,61 @@ private fun GameCard(
             CardDefaults.cardColors()
         },
     ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            content()
+        Box(modifier = Modifier.fillMaxWidth()) {
+            GameBackdrop(headerUrl = headerUrl, modifier = Modifier.matchParentSize())
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                content()
+            }
         }
     }
 }
+
+/**
+ * The game's store header art, anchored to the right edge of the card and dissolving to nothing
+ * before it reaches the text on the left.
+ *
+ * The fade is a real alpha mask (`DstIn` against a horizontal gradient) drawn inside an offscreen
+ * layer, not a colored scrim over the top — a scrim would have to match the card's fill, and would
+ * break the moment a row is selected and its container turns `secondaryContainer`.
+ *
+ * Games with no header on the CDN simply render nothing; the row is designed to look right without
+ * it, so no placeholder is drawn.
+ */
+@Composable
+private fun GameBackdrop(headerUrl: String, modifier: Modifier = Modifier) {
+    if (headerUrl.isEmpty()) return
+    AsyncImage(
+        model = headerUrl,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        alignment = Alignment.CenterEnd,
+        modifier = modifier
+            .graphicsLayer {
+                alpha = BACKDROP_ALPHA
+                // Required for DstIn: the mask has to composite against this layer, not the screen.
+                compositingStrategy = CompositingStrategy.Offscreen
+            }
+            .drawWithContent {
+                drawContent()
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        0f to Color.Transparent,
+                        BACKDROP_FADE_END to Color.Black,
+                    ),
+                    blendMode = BlendMode.DstIn,
+                )
+            },
+    )
+}
+
+/** Faint enough that body text keeps its contrast over the brightest header art. */
+private const val BACKDROP_ALPHA = 0.22f
+
+/** Fraction of the card width at which the art reaches full opacity, fading out left of it. */
+private const val BACKDROP_FADE_END = 0.95f
 
 /** While selecting, the 3-dot menu gives way to the row's selected state. */
 @Composable
@@ -662,19 +759,43 @@ private fun RowTrailing(selected: Boolean, selectionMode: Boolean, onManageGoal:
  * Progress toward the HowLongToBeat Completionist length, for **any** game that has one — the
  * batch refresh fetches a length for the whole library, so this is not a tracked-games privilege.
  * A game with no length yet renders nothing at all: no bar, no placeholder.
+ *
+ * Past the completion length the bar **rescales** rather than sitting pinned at 100%, which said
+ * nothing about how far past you were. The whole bar becomes your playtime: the HowLongToBeat
+ * length keeps the accent gold, and the excess beyond it fills the rest in a darker, redder shade
+ * of that same gold. So the bar stays full — no empty track — and the gold segment shrinking is
+ * exactly the "how far past am I" signal.
  */
 @Composable
 private fun CompletionProgress(playtimeMinutes: Int, completionistMinutes: Int?) {
     val completionist = completionistMinutes ?: return
-    val fraction = Gamification.goalProgress(playtimeMinutes, completionist).fraction.toFloat()
+    val overrun = playtimeMinutes > completionist && completionist > 0
+    val fraction = if (overrun) {
+        // Bar spans the playtime; the gold portion is the completion length's share of it.
+        completionist.toFloat() / playtimeMinutes.toFloat()
+    } else {
+        Gamification.goalProgress(playtimeMinutes, completionist).fraction.toFloat()
+    }
     Spacer(Modifier.height(6.dp))
     LinearProgressIndicator(
         progress = { fraction },
         modifier = Modifier.fillMaxWidth(),
+        // Under the length, the track is "still to play" and keeps its default treatment. Past it,
+        // the track *is* the excess, so it takes the overrun color instead.
+        trackColor = if (overrun) {
+            MaterialTheme.colorScheme.overrunExcess
+        } else {
+            ProgressIndicatorDefaults.linearTrackColor
+        },
     )
     Spacer(Modifier.height(2.dp))
     Text(
-        text = "${UiFormat.minutes(playtimeMinutes)} / ${UiFormat.minutes(completionist)} to 100%",
+        text = if (overrun) {
+            val percent = (playtimeMinutes.toLong() * 100 / completionist).toInt()
+            "${UiFormat.minutes(completionist)} to 100% · played $percent%"
+        } else {
+            "${UiFormat.minutes(playtimeMinutes)} / ${UiFormat.minutes(completionist)} to 100%"
+        },
         style = MaterialTheme.typography.bodySmall,
     )
 }
@@ -744,30 +865,36 @@ private fun HltbStatusLabel(
 private fun isGameCompleted(unlocked: Int?, total: Int?): Boolean =
     total != null && total > 0 && unlocked == total
 
-/** Gold outline reserved for a fully-completed game's row; null (no border) otherwise. */
-@Composable
-private fun completedBorder(completed: Boolean): BorderStroke? =
-    if (completed) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
-
-/** Selection outline, which takes precedence over the completion one while selecting. */
+/** The only row outline left: the selection one. */
 @Composable
 private fun selectionBorder(selected: Boolean): BorderStroke? =
     if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.secondary) else null
 
 /**
- * The row's badge line: achievement counts and contributed XP together.
+ * The row's badge line: achievement counts and contributed XP on **one** line, always.
  *
- * The XP badge is deliberately the quietest thing on the row — plain muted text, no pill or icon
- * — because every row can now also carry a progress bar. If the row still reads as crowded, this
- * is the first element to drop.
+ * Both halves are pinned to a single line and the achievement side yields first (it ellipsizes,
+ * the XP figure does not), because the two together are wide enough to wrap a narrow row into
+ * three lines — which is what pushed the card taller than its own icon.
+ *
+ * The XP badge is deliberately the quietest thing here — plain muted text, no pill or icon — since
+ * every row can now also carry a progress bar.
  */
 @Composable
 private fun GameBadges(unlocked: Int?, total: Int?, xpContributed: Int) {
     Row(
-        modifier = Modifier.padding(top = 2.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AchievementCountLabel(unlocked = unlocked, total = total)
+        // fill = false: the achievement badge takes only what it needs, so a game with no
+        // achievement data leaves the XP figure at the left rather than pushed to the far edge.
+        AchievementCountLabel(
+            unlocked = unlocked,
+            total = total,
+            modifier = Modifier.weight(1f, fill = false),
+        )
         if (unlocked != null && total != null) Spacer(Modifier.width(8.dp))
         XpContributionLabel(xpContributed)
     }
@@ -781,13 +908,21 @@ private fun GameBadges(unlocked: Int?, total: Int?, xpContributed: Int) {
  * Deliberately *not* proportional to the "120h played" text above it: lifetime Steam playtime
  * includes pre-install hours that only earn XP if the player imported their history, and playtime
  * XP tapers toward zero past a game's completion length. `0 XP` on a long-owned game is correct.
+ *
+ * Shown as a bare "N XP" to keep the badge line to one row; the full "contributed" wording lives
+ * in the accessibility label, where length costs nothing.
  */
 @Composable
 private fun XpContributionLabel(xpContributed: Int) {
     Text(
-        text = "$xpContributed XP contributed",
+        text = "$xpContributed XP",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        softWrap = false,
+        modifier = Modifier.semantics {
+            contentDescription = "$xpContributed XP contributed"
+        },
     )
 }
 
@@ -797,11 +932,11 @@ private fun XpContributionLabel(xpContributed: Int) {
  * the plain count, so a fully-completed game is unmistakable at a glance in the list.
  */
 @Composable
-private fun AchievementCountLabel(unlocked: Int?, total: Int?) {
+private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifier = Modifier) {
     if (unlocked == null || total == null) return
     if (isGameCompleted(unlocked, total)) {
         Row(
-            modifier = Modifier
+            modifier = modifier
                 .clip(RoundedCornerShape(6.dp))
                 .background(MaterialTheme.colorScheme.primary)
                 .padding(horizontal = 8.dp, vertical = 3.dp),
@@ -819,11 +954,13 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?) {
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onPrimary,
+                maxLines = 1,
+                softWrap = false,
             )
         }
         return
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Icon(
             imageVector = TablerIcons.Trophy,
             contentDescription = null,
@@ -835,6 +972,8 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?) {
             text = "$unlocked / $total achievements",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

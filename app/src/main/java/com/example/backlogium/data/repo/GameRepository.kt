@@ -4,6 +4,7 @@ import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
+import com.example.backlogium.data.remote.SteamIconMapper
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
@@ -40,6 +41,8 @@ data class LibraryGame(
     val appId: Long,
     val name: String,
     val iconUrl: String,
+    /** Store header art, derived from the appId — the Library's faint card backdrop. */
+    val headerUrl: String = "",
     val playtimeForever: Int,
     /** Steam's rolling two-week playtime — the "recently played" ordering. */
     val playtime2Weeks: Int = 0,
@@ -90,6 +93,7 @@ private fun Game.toDomain(hltb: HltbData?) = LibraryGame(
     appId = appId,
     name = name,
     iconUrl = iconUrl,
+    headerUrl = SteamIconMapper.headerUrl(appId),
     playtimeForever = playtimeForever,
     playtime2Weeks = playtime2Weeks,
     backfillMinutes = backfillMinutes,

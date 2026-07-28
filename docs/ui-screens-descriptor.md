@@ -148,9 +148,13 @@ padding, sections rendered only if they have rows:
 2. **HowLongToBeat controls:** "Refresh HLTB library" `FilledTonalButton` (becomes a spinner +
    "Refreshing…" while running) + "Force all" `OutlinedButton`, both disabled while a refresh runs,
    over a "Review HLTB matches ({n})" `TextButton`.
-3. **Batch progress card** (only while a refresh runs): `"{done} / {total}"` (bold) over a
-   determinate `LinearProgressIndicator`, then a fixed-height (96dp) scrolling log, newest first, of
-   `"{game} — matched | needs review | no match | lookup failed"`. Before the first game reports —
+3. **Batch progress card** (only while a refresh runs): `"{done} / {total}"` (bold) beside a
+   "Stop" `TextButton` (`PlayerStop` icon), over a determinate `LinearProgressIndicator`, then a
+   fixed-height (96dp) scrolling log, newest first, of
+   `"{game} — matched | needs review | no match | lookup failed"`. **Stop** cancels the sweep;
+   there is no separate pause because a plain "Refresh HLTB library" afterwards resumes by itself —
+   everything already fetched now falls inside the freshness window. ("Force all" restarts from
+   scratch by design.) Before the first game reports —
    and when the sweep's target set turns out empty — it reads "Starting HowLongToBeat refresh…"
    with an indeterminate bar rather than a stalled `0 / 0`. The log covers only the period the
    screen has been observed: returning mid-run shows correct progress with a log resuming from that
@@ -159,20 +163,32 @@ padding, sections rendered only if they have rows:
    own **sort control** on the right: an `ArrowsSort` icon + the active key's name, opening a
    `DropdownMenu` of Playtime / Name / Recently played / XP contributed (the active one check-marked).
 5. **Focus game row** (repeated), a full-width `Card` carrying `combinedClickable`, 12dp padding,
-   horizontal layout:
+   horizontal layout over a **faint backdrop**: the game's Steam store header art
+   (`.../steam/apps/{appId}/header.jpg`, derived from the appId — nothing stored), anchored to the
+   right edge at 22% alpha and alpha-masked (`DstIn` horizontal gradient) so it dissolves before it
+   reaches the text. Games whose header 404s render no backdrop and no placeholder.
    - 40dp square game icon (remote image, left; 8dp rounded, themed loading placeholder and
      controller fallback on error)
    - 12dp gap
    - Column: game name (bodyLarge) → caption `"{playtime} played"` → **completion progress** when a
-     HowLongToBeat Completionist length exists (full-width `LinearProgressIndicator` + caption
-     `"{playtime} / {completionist} to 100%"`; nothing at all when no length is known) → HLTB status
-     label → a badge line: the achievement badge (`"{unlocked} / {total} achievements"`, or a gold
-     "100% COMPLETED" pill) next to `"{n} XP contributed"`
+     HowLongToBeat Completionist length exists (nothing at all when no length is known):
+     - *under* the completionist length — `LinearProgressIndicator` filled to
+       `playtime / completionist` in the gold accent over the default track ("still to play"),
+       caption `"{playtime} / {completionist} to 100%"`
+     - *past* it — the bar **rescales to the playtime**: the gold fill shrinks to
+       `completionist / playtime` and the remainder — the excess hours — fills the track in
+       `GoldOverrun` (`#8A431C`, the accent pushed darker and redder; `GoldOverrunLight`
+       `#B4571F` in light mode). The bar is never empty, and the gold segment shrinking *is* the
+       "how far past" signal. Caption `"{completionist} to 100% · played {n}%"`.
+     - → HLTB status label → a **single-line** badge row: the achievement badge
+       (`"{unlocked} / {total} achievements"`, ellipsized first if space runs out, or a gold
+       "100% COMPLETED" pill) next to a bare `"{n} XP"` (never wrapped; the full "XP contributed"
+       wording is the accessibility label)
    - Trailing: a `DotsVertical` `IconButton` ("Manage focus") → the Focus dialog. While selecting,
      it is replaced by a `Check` / `Checkbox` state icon.
    - Tap → **Game detail** (or toggles selection while selecting); long-press → toggles selection.
-   - A fully-completed game keeps its gold outline; a selected row takes a `secondary` outline and
-     `secondaryContainer` fill.
+   - A selected row takes a `secondary` outline and `secondaryContainer` fill. Completion is marked
+     by the gold pill alone — the row-level gold outline was dropped as too loud in a long list.
 6. **Section header** "Your games" — only if the section has rows, with its own independent sort
    control (same four keys; defaults differ: Focus defaults to Name, Your games to Playtime,
    matching the DAO ordering they replaced). Each selection persists across visits.
@@ -195,7 +211,8 @@ padding, sections rendered only if they have rows:
   pending or the profile may be private. Keyed to the **unfiltered** library, so a search that
   matches nothing never reaches it.
 
-**Note on the XP badge:** it reports the same inputs the gamification engine uses — frozen
+**Note on the XP badge:** the row shows a bare `"{n} XP"`, but it reports the same inputs the
+gamification engine uses — frozen
 backfill + tracked session minutes, tapered against the game's completion length, plus its unlocked
 achievements' rarity XP — so every row's badge sums to the player's real total XP. It is therefore
 *not* proportional to the "{playtime} played" text above it, and `0 XP contributed` on a

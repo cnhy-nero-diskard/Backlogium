@@ -16,6 +16,16 @@ val OnGold = Color(0xFF241A00)
 val GoldContainer = Color(0xFF4A3A12)
 val OnGoldContainer = Color(0xFFF5DFA6)
 
+/**
+ * The same accent pushed darker and redder — the "played past it" portion of a completion bar,
+ * drawn as the track beneath the gold fill so the bar stays full width.
+ *
+ * Deliberately not `error`: overshooting a completion estimate is a surplus, not a fault, and a
+ * pure red would say the opposite. Staying inside the gold hue family keeps it legible as *more of
+ * the same bar* rather than a second, unrelated measurement.
+ */
+val GoldOverrun = Color(0xFF8A431C)
+
 // --- Dark surface family (charcoal/navy) ----------------------------------------
 val NavyBackground = Color(0xFF10141C)   // app background — deep charcoal-navy
 val NavySurface = Color(0xFF171C26)      // cards / elevated surfaces
@@ -39,3 +49,6 @@ val LightSurfaceVariant = Color(0xFFEDE6D6)
 val OnLight = Color(0xFF1B1B17)
 val OnLightVariant = Color(0xFF4C4738)
 val SteelBlueDark = Color(0xFF2F5B7C)
+
+/** Light-scheme counterpart to [GoldOverrun]: burnt amber, legible on the cream surfaces. */
+val GoldOverrunLight = Color(0xFFB4571F)

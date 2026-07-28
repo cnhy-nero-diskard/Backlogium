@@ -133,6 +133,19 @@ class SyncScheduler @Inject constructor(
         enqueueHltbRefresh(workDataOf(HltbRefreshWorker.KEY_APP_IDS to appIds.toLongArray()))
     }
 
+    /**
+     * Stop a running sweep. WorkManager cancels the worker's coroutine, which unwinds at the
+     * repository's inter-request delay — so at most one in-flight lookup is abandoned, and every
+     * game already written keeps its data.
+     *
+     * There is no separate "pause": a plain (unforced) refresh started afterwards *is* the resume,
+     * because everything the stopped run already fetched now sits inside the freshness window and
+     * is skipped. Only "Force all" would start over from the beginning.
+     */
+    fun cancelHltbRefresh() {
+        workManager.cancelUniqueWork(HltbRefreshWorker.ONE_TIME_NAME)
+    }
+
     private fun enqueueHltbRefresh(input: Data) {
         val request = OneTimeWorkRequestBuilder<HltbRefreshWorker>()
             .setConstraints(networkConstraints)
