@@ -21,6 +21,22 @@ val localProperties = Properties().apply {
 val steamApiKey: String = localProperties.getProperty("steam.apiKey", "").trim()
 val steamId: String = localProperties.getProperty("steam.steamId", "").trim()
 
+// Release signing: env vars take precedence (CI), falling back to local.properties
+// (git-ignored) for local release builds. Left unconfigured, `release` builds stay
+// unsigned and will fail to install on-device — see keystore/README.md.
+val releaseStoreFile: String = (System.getenv("RELEASE_KEYSTORE_PATH")
+    ?: localProperties.getProperty("release.storeFile", "")).trim()
+val releaseStorePassword: String = (System.getenv("RELEASE_KEYSTORE_PASSWORD")
+    ?: localProperties.getProperty("release.storePassword", "")).trim()
+val releaseKeyAlias: String = (System.getenv("RELEASE_KEY_ALIAS")
+    ?: localProperties.getProperty("release.keyAlias", "")).trim()
+val releaseKeyPassword: String = (System.getenv("RELEASE_KEY_PASSWORD")
+    ?: localProperties.getProperty("release.keyPassword", "")).trim()
+val hasReleaseSigningConfig = releaseStoreFile.isNotBlank() &&
+    releaseStorePassword.isNotBlank() &&
+    releaseKeyAlias.isNotBlank() &&
+    releaseKeyPassword.isNotBlank()
+
 android {
     namespace = "com.example.backlogium"
     compileSdk = 36
@@ -38,6 +54,17 @@ android {
         buildConfigField("String", "STEAM_ID", "\"$steamId\"")
     }
 
+    signingConfigs {
+        if (hasReleaseSigningConfig) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -45,6 +72,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (hasReleaseSigningConfig) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
