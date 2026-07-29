@@ -27,7 +27,7 @@ import com.example.backlogium.data.local.entity.Session
         HltbData::class,
         Achievement::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -117,6 +117,19 @@ abstract class BacklogiumDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `player_profile` ADD COLUMN `personaName` TEXT")
                 db.execSQL("ALTER TABLE `player_profile` ADD COLUMN `avatarUrl` TEXT")
+            }
+        }
+
+        /**
+         * v5 → v6: additive only — index `sessions(appId, startAt, endAt)` for the backup/restore
+         * merge engine's natural-key lookup (add-backup-restore). No existing data is altered.
+         */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_sessions_appId_startAt_endAt` " +
+                        "ON `sessions` (`appId`, `startAt`, `endAt`)",
+                )
             }
         }
     }

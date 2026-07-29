@@ -26,6 +26,18 @@ interface SessionDao {
     suspend fun getAll(): List<Session>
 
     /**
+     * Natural-key lookup for the backup/restore merge engine (add-backup-restore): [Session.id]
+     * is a surrogate autoincrement that does not survive an export/import round trip, so a
+     * merge must find a session by `(appId, startAt, endAt)` instead. `endAt IS :endAt` (not
+     * `=`) so a null [endAt] matches other open sessions rather than matching nothing.
+     */
+    @Query(
+        "SELECT * FROM sessions WHERE appId = :appId AND startAt = :startAt AND endAt IS :endAt " +
+            "LIMIT 1",
+    )
+    suspend fun findByNaturalKey(appId: Long, startAt: Long, endAt: Long?): Session?
+
+    /**
      * Tracked minutes summed per game. The gamification engine tapers XP against each game's
      * own completionist length, so it needs the per-`appId` breakdown rather than a single
      * library-wide total.

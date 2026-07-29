@@ -1,6 +1,7 @@
 package com.example.backlogium.data.local
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -45,6 +46,9 @@ class SettingsDataStore @Inject constructor(
         val LEGENDARY_ACHIEVEMENT_XP = intPreferencesKey("legendary_achievement_xp")
         val LIBRARY_FOCUS_SORT = stringPreferencesKey("library_focus_sort")
         val LIBRARY_ALL_SORT = stringPreferencesKey("library_all_sort")
+        val AUTO_SNAPSHOT_ENABLED = booleanPreferencesKey("auto_snapshot_enabled")
+        val SNAPSHOT_RETENTION_COUNT = intPreferencesKey("snapshot_retention_count")
+        val SNAPSHOT_INTERVAL_HOURS = intPreferencesKey("snapshot_interval_hours")
     }
 
     val ruleConfigFlow: Flow<RuleConfig> = context.dataStore.data.map { prefs ->
@@ -100,4 +104,35 @@ class SettingsDataStore @Inject constructor(
     suspend fun setLibrarySort(key: LibrarySortKey) {
         context.dataStore.edit { it[Keys.LIBRARY_ALL_SORT] = key.name }
     }
+
+    /**
+     * Automatic rolling snapshot configuration (add-backup-restore): on by default, retaining 7
+     * snapshots at a minimum 24-hour interval between writes.
+     */
+    val autoSnapshotSettingsFlow: Flow<AutoSnapshotSettings> = context.dataStore.data.map { prefs ->
+        AutoSnapshotSettings(
+            enabled = prefs[Keys.AUTO_SNAPSHOT_ENABLED] ?: true,
+            retentionCount = prefs[Keys.SNAPSHOT_RETENTION_COUNT] ?: 7,
+            intervalHours = prefs[Keys.SNAPSHOT_INTERVAL_HOURS] ?: 24,
+        )
+    }
+
+    suspend fun setAutoSnapshotEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.AUTO_SNAPSHOT_ENABLED] = enabled }
+    }
+
+    suspend fun setSnapshotRetentionCount(count: Int) {
+        context.dataStore.edit { it[Keys.SNAPSHOT_RETENTION_COUNT] = count }
+    }
+
+    suspend fun setSnapshotIntervalHours(hours: Int) {
+        context.dataStore.edit { it[Keys.SNAPSHOT_INTERVAL_HOURS] = hours }
+    }
 }
+
+/** Auto-snapshot toggle, retention count, and minimum interval between writes (in hours). */
+data class AutoSnapshotSettings(
+    val enabled: Boolean = true,
+    val retentionCount: Int = 7,
+    val intervalHours: Int = 24,
+)

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
@@ -45,6 +46,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private val differ: SessionDiffer,
     private val gamificationUpdater: GamificationUpdater,
     private val achievementRepository: AchievementRepository,
+    private val backupRepository: BackupRepository,
     private val time: TimeProvider,
 ) : CoroutineWorker(appContext, params) {
 
@@ -178,6 +180,8 @@ class SteamSyncWorker @AssistedInject constructor(
         )
         runCatching { achievementRepository.syncInScopeGames(apiKey, steamId) }
         gamificationUpdater.recompute(today, config)
+        // Best-effort: a snapshot-write failure must never fail an otherwise-successful poll.
+        runCatching { backupRepository.writeAutoSnapshotIfDue() }
     }
 
     private suspend fun applySessionActions(actions: List<SessionDiffer.SessionAction>) {

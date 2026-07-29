@@ -1,5 +1,6 @@
 package com.example.backlogium.data.repo
 
+import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
@@ -40,6 +41,15 @@ interface SettingsRepository {
     suspend fun setFocusSort(key: LibrarySortKey)
 
     suspend fun setLibrarySort(key: LibrarySortKey)
+
+    /** Automatic rolling snapshot configuration (add-backup-restore): see the Data & Backup section. */
+    val autoSnapshotSettings: Flow<AutoSnapshotSettings>
+
+    suspend fun setAutoSnapshotEnabled(enabled: Boolean)
+
+    suspend fun setSnapshotRetentionCount(count: Int)
+
+    suspend fun setSnapshotIntervalHours(hours: Int)
 }
 
 /** The only production implementation: a thin pass-through to Preferences DataStore. */
@@ -56,4 +66,15 @@ class DataStoreSettingsRepository @Inject constructor(
     override suspend fun setFocusSort(key: LibrarySortKey) = settings.setFocusSort(key)
 
     override suspend fun setLibrarySort(key: LibrarySortKey) = settings.setLibrarySort(key)
+
+    override val autoSnapshotSettings: Flow<AutoSnapshotSettings> = settings.autoSnapshotSettingsFlow
+
+    override suspend fun setAutoSnapshotEnabled(enabled: Boolean) =
+        settings.setAutoSnapshotEnabled(enabled)
+
+    override suspend fun setSnapshotRetentionCount(count: Int) =
+        settings.setSnapshotRetentionCount(count)
+
+    override suspend fun setSnapshotIntervalHours(hours: Int) =
+        settings.setSnapshotIntervalHours(hours)
 }

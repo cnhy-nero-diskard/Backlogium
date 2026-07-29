@@ -9,6 +9,11 @@ import androidx.room.PrimaryKey
  * A synthesized play session. Timestamps are epoch milliseconds. [endAt] is null and
  * [open] is true while the session is still being extended by successive polls; when a
  * poll shows no playtime increase the session is closed (end = last-increase time).
+ *
+ * The `(appId, startAt, endAt)` index backs the backup/restore merge engine's natural-key
+ * lookup (add-backup-restore) — [id] is a surrogate autoincrement that does not survive an
+ * export/import round trip. Deliberately non-unique: a stray real-world collision must never
+ * crash a sync or import, only cost that lookup a linear scan among the (rare) duplicates.
  */
 @Entity(
     tableName = "sessions",
@@ -20,7 +25,7 @@ import androidx.room.PrimaryKey
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("appId")],
+    indices = [Index("appId"), Index("appId", "startAt", "endAt")],
 )
 data class Session(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,

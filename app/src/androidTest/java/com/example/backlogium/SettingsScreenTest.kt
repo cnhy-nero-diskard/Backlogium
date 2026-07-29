@@ -93,5 +93,14 @@ class SettingsScreenTest {
         onDismissConfirmation = {},
         onImportHistory = {},
         onResetHistoryImport = {},
+        onAutoSnapshotEnabledChanged = {},
+        onSnapshotRetentionCountChanged = {},
+        onSnapshotIntervalHoursChanged = {},
+        onExportBackup = {},
+        onImportBackup = {},
+        onRestoreSnapshot = {},
+        onConfirmMismatchImport = {},
+        onDismissMismatchImport = {},
+        onDismissBackupMessage = {},
     )
 }

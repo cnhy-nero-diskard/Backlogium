@@ -1,5 +1,8 @@
 package com.example.backlogium.ui.settings
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,10 +23,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -38,6 +43,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.backlogium.data.backup.SnapshotMeta
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
@@ -47,6 +53,7 @@ import compose.icons.tablericons.ChevronUp
 import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.Download
 import compose.icons.tablericons.Pencil
+import compose.icons.tablericons.Upload
 
 /**
  * The app's administration surface: the Steam account, sync, data, and rule-configuration
@@ -64,6 +71,14 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri -> uri?.let(viewModel::onExportBackup) }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(viewModel::onImportBackupPicked) }
+
     SettingsScreen(
         state = state,
         onEditCredentials = onEditCredentials,
@@ -79,6 +94,15 @@ fun SettingsScreen(
                 onDismissConfirmation = viewModel::dismissConfirmation,
                 onImportHistory = viewModel::importSteamHistory,
                 onResetHistoryImport = viewModel::resetHistoryImport,
+                onAutoSnapshotEnabledChanged = viewModel::onAutoSnapshotEnabledChanged,
+                onSnapshotRetentionCountChanged = viewModel::onSnapshotRetentionCountChanged,
+                onSnapshotIntervalHoursChanged = viewModel::onSnapshotIntervalHoursChanged,
+                onExportBackup = { exportLauncher.launch("backlogium-backup-${System.currentTimeMillis()}.json") },
+                onImportBackup = { importLauncher.launch(arrayOf("application/json")) },
+                onRestoreSnapshot = viewModel::onRestoreSnapshot,
+                onConfirmMismatchImport = viewModel::onConfirmMismatchImport,
+                onDismissMismatchImport = viewModel::onDismissMismatchImport,
+                onDismissBackupMessage = viewModel::onDismissBackupMessage,
             )
         },
     )
@@ -96,6 +120,15 @@ data class SettingsActions(
     val onDismissConfirmation: () -> Unit,
     val onImportHistory: () -> Unit,
     val onResetHistoryImport: () -> Unit,
+    val onAutoSnapshotEnabledChanged: (Boolean) -> Unit,
+    val onSnapshotRetentionCountChanged: (Int) -> Unit,
+    val onSnapshotIntervalHoursChanged: (Int) -> Unit,
+    val onExportBackup: () -> Unit,
+    val onImportBackup: () -> Unit,
+    val onRestoreSnapshot: (SnapshotMeta) -> Unit,
+    val onConfirmMismatchImport: () -> Unit,
+    val onDismissMismatchImport: () -> Unit,
+    val onDismissBackupMessage: () -> Unit,
 )
 
 /** The stateless half: renders [state] and raises [actions]. */
@@ -140,6 +173,9 @@ fun SettingsScreen(
             onReset = actions.onResetHistoryImport,
         )
 
+        SectionHeader("Data & Backup")
+        DataBackupCard(state = state, actions = actions)
+
         SectionHeader("Advanced")
         AdvancedCard(state = state, actions = actions)
 
@@ -151,6 +187,26 @@ fun SettingsScreen(
             confirmation = confirmation,
             onConfirm = actions.onConfirmSave,
             onDismiss = actions.onDismissConfirmation,
+        )
+    }
+
+    if (state.mismatchImportPending) {
+        MismatchImportDialog(
+            currentSteamId = state.steamId,
+            backupSteamId = state.mismatchImportSteamId,
+            onConfirm = actions.onConfirmMismatchImport,
+            onDismiss = actions.onDismissMismatchImport,
+        )
+    }
+
+    state.backupMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = actions.onDismissBackupMessage,
+            title = { Text("Backup") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = actions.onDismissBackupMessage) { Text("OK") }
+            },
         )
     }
 }
@@ -424,6 +480,150 @@ private fun RuleChangeDialog(
             }
         },
         confirmButton = { TextButton(onClick = onConfirm) { Text("Apply") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/**
+ * The "Data & Backup" section (add-backup-restore): automatic-snapshot configuration, the
+ * current snapshot list with per-entry restore, and the manual export/import actions — always
+ * enabled regardless of the auto-snapshot toggle.
+ */
+@Composable
+private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Automatic snapshots", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = "Every ${state.snapshotIntervalHours}h after a sync, keeping the " +
+                            "${state.snapshotRetentionCount} most recent.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = state.autoSnapshotEnabled,
+                    onCheckedChange = actions.onAutoSnapshotEnabledChanged,
+                )
+            }
+
+            OutlinedTextField(
+                value = state.snapshotRetentionCount.toString(),
+                onValueChange = { text ->
+                    text.trim().toIntOrNull()?.takeIf { it > 0 }
+                        ?.let(actions.onSnapshotRetentionCountChanged)
+                },
+                label = { Text("Snapshots to keep") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = state.snapshotIntervalHours.toString(),
+                onValueChange = { text ->
+                    text.trim().toIntOrNull()?.takeIf { it > 0 }
+                        ?.let(actions.onSnapshotIntervalHoursChanged)
+                },
+                label = { Text("Interval between snapshots (hours)") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            if (state.snapshots.isNotEmpty()) {
+                HorizontalDivider()
+                Text("Snapshots", style = MaterialTheme.typography.bodyMedium)
+                state.snapshots.forEach { snapshot ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = UiFormat.dateTime(snapshot.writtenAtMillis),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        TextButton(
+                            onClick = { actions.onRestoreSnapshot(snapshot) },
+                            enabled = !state.backupBusy,
+                        ) {
+                            Text("Restore")
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(
+                    onClick = actions.onExportBackup,
+                    enabled = !state.backupBusy,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        imageVector = TablerIcons.Upload,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Export Backup...")
+                }
+                OutlinedButton(
+                    onClick = actions.onImportBackup,
+                    enabled = !state.backupBusy,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        imageVector = TablerIcons.Download,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Import Backup...")
+                }
+            }
+            if (state.backupBusy) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            }
+        }
+    }
+}
+
+/**
+ * Cross-account warning shown before an import/restore proceeds when the backup's recorded
+ * SteamID64 differs from the signed-in account (warn, don't block — the SteamID is public and
+ * carries no credential).
+ */
+@Composable
+private fun MismatchImportDialog(
+    currentSteamId: String,
+    backupSteamId: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Different Steam account") },
+        text = {
+            Text(
+                "This backup was created for SteamID $backupSteamId, but you're signed in as " +
+                    "$currentSteamId. Importing will merge its history, XP, and streaks into " +
+                    "your current account. Continue?",
+            )
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Import anyway") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
