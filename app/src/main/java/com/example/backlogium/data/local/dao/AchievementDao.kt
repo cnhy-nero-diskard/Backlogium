@@ -25,6 +25,10 @@ interface AchievementDao {
     )
     suspend fun getForGame(appId: Long): List<Achievement>
 
+    /** Single achievement lookup for the backup/restore merge engine (add-backup-restore). */
+    @Query("SELECT * FROM achievements WHERE appId = :appId AND apiName = :apiName LIMIT 1")
+    suspend fun getOne(appId: Long, apiName: String): Achievement?
+
     /** Unlocked/total achievement counts per game, for the Library row badge. */
     @Query(
         "SELECT appId, COUNT(*) AS total, SUM(CASE WHEN unlocked THEN 1 ELSE 0 END) AS unlocked " +

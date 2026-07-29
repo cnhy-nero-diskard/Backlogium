@@ -1,5 +1,6 @@
 package com.example.backlogium.domain
 
+import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.repo.SettingsRepository
@@ -155,6 +156,21 @@ class UpdateRuleConfigUseCaseTest {
 
         override suspend fun setLibrarySort(key: LibrarySortKey) {
             sort.value = sort.value.copy(library = key)
+        }
+
+        // Auto-snapshot configuration (add-backup-restore) is irrelevant to a rule change.
+        private val autoSnapshot = MutableStateFlow(AutoSnapshotSettings())
+        override val autoSnapshotSettings: Flow<AutoSnapshotSettings> = autoSnapshot
+        override suspend fun setAutoSnapshotEnabled(enabled: Boolean) {
+            autoSnapshot.value = autoSnapshot.value.copy(enabled = enabled)
+        }
+
+        override suspend fun setSnapshotRetentionCount(count: Int) {
+            autoSnapshot.value = autoSnapshot.value.copy(retentionCount = count)
+        }
+
+        override suspend fun setSnapshotIntervalHours(hours: Int) {
+            autoSnapshot.value = autoSnapshot.value.copy(intervalHours = hours)
         }
     }
 

@@ -1,7 +1,12 @@
 package com.example.backlogium.ui.settings
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.backlogium.data.backup.BackupFile
+import com.example.backlogium.data.backup.BackupRepository
+import com.example.backlogium.data.backup.ParsedBackup
+import com.example.backlogium.data.backup.SnapshotMeta
 import com.example.backlogium.data.credentials.maskApiKey
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
@@ -57,6 +62,20 @@ data class SettingsUiState(
     /** True while a preview recompute runs, so the save affordance can show progress. */
     val previewing: Boolean = false,
     val confirmation: RuleChangeConfirmation? = null,
+    // --- Data & Backup (add-backup-restore) ---
+    val autoSnapshotEnabled: Boolean = true,
+    val snapshotRetentionCount: Int = 7,
+    val snapshotIntervalHours: Int = 24,
+    /** Retained automatic snapshots, most recent first. */
+    val snapshots: List<SnapshotMeta> = emptyList(),
+    /** True while an export/import/restore is in flight. */
+    val backupBusy: Boolean = false,
+    /** One-shot status text (export/import success, or a rejected-file reason). */
+    val backupMessage: String? = null,
+    /** True while a cross-account mismatch warning awaits the user's confirm/cancel. */
+    val mismatchImportPending: Boolean = false,
+    /** The mismatched backup's recorded SteamID64, for the warning dialog's text. */
+    val mismatchImportSteamId: String = "",
 ) {
     /** The candidate config, or null while any field is invalid. */
     val candidate: RuleConfig? get() = draft.toConfig(savedConfig)
@@ -81,8 +100,9 @@ data class SettingsUiState(
 class SettingsViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
     private val updateRuleConfig: UpdateRuleConfigUseCase,
-    credentials: CredentialsRepository,
-    settings: SettingsRepository,
+    private val credentials: CredentialsRepository,
+    private val settings: SettingsRepository,
+    private val backupRepository: BackupRepository,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -94,12 +114,22 @@ class SettingsViewModel @Inject constructor(
     private val confirmation = MutableStateFlow<RuleChangeConfirmation?>(null)
     private val isImportingHistory = MutableStateFlow(false)
 
+    private val backupBusy = MutableStateFlow(false)
+    private val backupMessage = MutableStateFlow<String?>(null)
+    private val pendingMismatchImport = MutableStateFlow<BackupFile?>(null)
+    private val snapshots = MutableStateFlow<List<SnapshotMeta>>(emptyList())
+
+    init {
+        refreshSnapshots()
+    }
+
     private val storedState = combine(
         profileRepository.profile,
         credentials.credentialsStateFlow,
         settings.ruleConfig,
         profileRepository.syncInProgress,
-    ) { profile, credState, config, syncing ->
+        settings.autoSnapshotSettings,
+    ) { profile, credState, config, syncing, autoSnapshot ->
         val configured = credState as? CredentialsState.Configured
         SettingsUiState(
             loading = false,
@@ -111,26 +141,47 @@ class SettingsViewModel @Inject constructor(
             historyImported = profile?.playtimeBackfilled ?: false,
             savedConfig = config,
             draft = RuleDraft.from(config),
+            autoSnapshotEnabled = autoSnapshot.enabled,
+            snapshotRetentionCount = autoSnapshot.retentionCount,
+            snapshotIntervalHours = autoSnapshot.intervalHours,
         )
     }
 
-    private val localState = combine(
+    private val ruleLocalState = combine(
         draftEdit,
         advancedExpanded,
         previewing,
         confirmation,
         isImportingHistory,
     ) { edit, expanded, isPreviewing, pending, importing ->
-        Local(edit, expanded, isPreviewing, pending, importing)
+        RuleLocal(edit, expanded, isPreviewing, pending, importing)
+    }
+
+    private val backupLocalState = combine(
+        backupBusy,
+        backupMessage,
+        pendingMismatchImport,
+        snapshots,
+    ) { busy, message, mismatch, list ->
+        BackupLocal(busy, message, mismatch, list)
+    }
+
+    private val localState = combine(ruleLocalState, backupLocalState) { rule, backup ->
+        Local(rule, backup)
     }
 
     val uiState: StateFlow<SettingsUiState> = combine(storedState, localState) { stored, local ->
         stored.copy(
-            draft = local.draft ?: stored.draft,
-            advancedExpanded = local.advancedExpanded,
-            previewing = local.previewing,
-            confirmation = local.confirmation,
-            isImportingHistory = local.importing,
+            draft = local.rule.draft ?: stored.draft,
+            advancedExpanded = local.rule.advancedExpanded,
+            previewing = local.rule.previewing,
+            confirmation = local.rule.confirmation,
+            isImportingHistory = local.rule.importing,
+            backupBusy = local.backup.busy,
+            backupMessage = local.backup.message,
+            snapshots = local.backup.snapshots,
+            mismatchImportPending = local.backup.pendingMismatch != null,
+            mismatchImportSteamId = local.backup.pendingMismatch?.identity?.steamId64 ?: "",
         )
     }.stateIn(
         scope = viewModelScope,
@@ -225,11 +276,103 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    private data class Local(
+    fun onAutoSnapshotEnabledChanged(enabled: Boolean) = viewModelScope.launch {
+        settings.setAutoSnapshotEnabled(enabled)
+    }
+
+    fun onSnapshotRetentionCountChanged(count: Int) = viewModelScope.launch {
+        settings.setSnapshotRetentionCount(count)
+    }
+
+    fun onSnapshotIntervalHoursChanged(hours: Int) = viewModelScope.launch {
+        settings.setSnapshotIntervalHours(hours)
+    }
+
+    /** Export a backup to a user-chosen SAF destination. Always available. */
+    fun onExportBackup(destination: Uri) = runBackupOp {
+        backupRepository.exportTo(destination)
+        backupMessage.value = "Backup exported."
+    }
+
+    /** A file was picked via SAF's OpenDocument — validate, then import or warn on mismatch. */
+    fun onImportBackupPicked(source: Uri) = runBackupOp {
+        when (val parsed = backupRepository.parseFrom(source)) {
+            ParsedBackup.InvalidFormat ->
+                backupMessage.value = "That file isn't a valid Backlogium backup."
+            is ParsedBackup.Valid -> proceedOrWarn(parsed.file)
+        }
+    }
+
+    /** Restore a listed automatic snapshot through the same merge path as a manual import. */
+    fun onRestoreSnapshot(snapshot: SnapshotMeta) = runBackupOp {
+        when (val parsed = backupRepository.parseSnapshot(snapshot.fileName)) {
+            ParsedBackup.InvalidFormat -> backupMessage.value = "That snapshot could not be read."
+            is ParsedBackup.Valid -> proceedOrWarn(parsed.file)
+        }
+    }
+
+    private suspend fun proceedOrWarn(file: BackupFile) {
+        if (backupRepository.isMismatched(file)) {
+            pendingMismatchImport.value = file
+        } else {
+            backupRepository.importBackup(file)
+            backupMessage.value = "Backup imported."
+            refreshSnapshots()
+        }
+    }
+
+    /** The user confirmed the import despite the cross-account warning. */
+    fun onConfirmMismatchImport() {
+        val file = pendingMismatchImport.value ?: return
+        pendingMismatchImport.value = null
+        runBackupOp {
+            backupRepository.importBackup(file)
+            backupMessage.value = "Backup imported."
+            refreshSnapshots()
+        }
+    }
+
+    fun onDismissMismatchImport() {
+        pendingMismatchImport.value = null
+    }
+
+    fun onDismissBackupMessage() {
+        backupMessage.value = null
+    }
+
+    private fun refreshSnapshots() {
+        snapshots.value = backupRepository.listSnapshots()
+    }
+
+    // Serialize export/import/restore behind one in-flight flag, mirroring runHistoryOp.
+    private fun runBackupOp(op: suspend () -> Unit) {
+        if (backupBusy.value) return
+        viewModelScope.launch {
+            backupBusy.update { true }
+            try {
+                op()
+            } catch (e: Exception) {
+                backupMessage.value = "Backup operation failed: ${e.message}"
+            } finally {
+                backupBusy.update { false }
+            }
+        }
+    }
+
+    private data class RuleLocal(
         val draft: RuleDraft?,
         val advancedExpanded: Boolean,
         val previewing: Boolean,
         val confirmation: RuleChangeConfirmation?,
         val importing: Boolean,
     )
+
+    private data class BackupLocal(
+        val busy: Boolean,
+        val message: String?,
+        val pendingMismatch: BackupFile?,
+        val snapshots: List<SnapshotMeta>,
+    )
+
+    private data class Local(val rule: RuleLocal, val backup: BackupLocal)
 }

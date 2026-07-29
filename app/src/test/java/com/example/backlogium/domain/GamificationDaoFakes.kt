@@ -33,6 +33,9 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
     override suspend fun getOpenSession(appId: Long): Session? = null
     override fun observeRecent(limit: Int): Flow<List<Session>> = flowOf(sessions)
     override suspend fun getAll(): List<Session> = sessions
+    override suspend fun findByNaturalKey(appId: Long, startAt: Long, endAt: Long?): Session? =
+        sessions.firstOrNull { it.appId == appId && it.startAt == startAt && it.endAt == endAt }
+
     override suspend fun trackedMinutesByGame(): List<GameTrackedMinutes> =
         sessions.groupBy { it.appId }
             .map { (appId, group) -> GameTrackedMinutes(appId, group.sumOf { it.minutes }) }
@@ -138,6 +141,8 @@ internal class FakeAchievementDao(private val achievements: List<Achievement>) :
     override suspend fun upsertAll(achievements: List<Achievement>) = Unit
     override fun observeForGame(appId: Long): Flow<List<Achievement>> = flowOf(emptyList())
     override suspend fun getForGame(appId: Long): List<Achievement> = emptyList()
+    override suspend fun getOne(appId: Long, apiName: String): Achievement? =
+        achievements.firstOrNull { it.appId == appId && it.apiName == apiName }
     override fun observeCounts(): Flow<List<AchievementCounts>> = flowOf(emptyList())
     override suspend fun fetchedAtByApp(): List<AchievementFetchedAt> = emptyList()
     override suspend fun deleteMarker(appId: Long) = Unit
