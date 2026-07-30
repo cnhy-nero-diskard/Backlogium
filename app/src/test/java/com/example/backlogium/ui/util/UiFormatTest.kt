@@ -10,9 +10,13 @@ import java.time.ZonedDateTime
 import java.util.Locale
 
 /**
- * [UiFormat.timeOfDay] and [UiFormat.sessionRange] (regroup-history tasks 4.1-4.3): the
- * open-session form and a range crossing midnight, which is where an off-by-one in the
- * open/closed branch would show up first.
+ * [UiFormat.timeOfDay] and [UiFormat.approxTime] (regroup-history tasks 4.1-4.3).
+ *
+ * `approxTime` deliberately formats a single instant, not a start–end range: an earlier version
+ * showed both a session's start and end time, which real users read as "subtract these for the
+ * duration" — and that duration can legitimately disagree with the session's tracked minutes once
+ * Steam's own playtime counter lags, making the screen look arithmetically wrong. Anchoring on one
+ * approximate instant removes the two-endpoint shape that invites that reflex.
  *
  * Locale is pinned to US for the run — [UiFormat] takes no locale parameter, so leaving the JVM
  * default unset would make the exact "AM"/"PM" text CI-machine-dependent.
@@ -34,43 +38,27 @@ class UiFormatTest {
     }
 
     @Test
-    fun closedSession_rangeShowsBothEndpointsWithApproximationMarker() {
-        val start = at(2026, 7, 25, 15, 0)
-        val end = at(2026, 7, 25, 17, 55)
+    fun approxTime_marksAnInstantAsApproximate() {
+        val formatted = UiFormat.approxTime(at(2026, 7, 25, 15, 0), zone)
 
-        val range = UiFormat.sessionRange(startAt = start, endAt = end, open = false, zone = zone)
-
-        assertEquals("~3:00 PM – 5:55 PM", range.normalizeSpaces())
+        assertEquals("~3:00 PM", formatted.normalizeSpaces())
     }
 
     @Test
-    fun openSession_rangeIsOpenEnded() {
-        val start = at(2026, 7, 25, 15, 0)
+    fun approxTime_carriesNoEndpoint_justOneInstant() {
+        // No "–", no second clock time — nothing here for a reader to subtract into a duration.
+        val formatted = UiFormat.approxTime(at(2026, 7, 25, 15, 0), zone)
 
-        val range = UiFormat.sessionRange(startAt = start, endAt = null, open = true, zone = zone)
-
-        assertEquals("~3:00 PM – now", range.normalizeSpaces())
+        assertTrue(!formatted.contains("–"))
     }
 
     @Test
-    fun openSession_ignoresAStaleEndAt() {
-        // open=true is the authority; a lingering endAt from a prior extend must not surface.
-        val start = at(2026, 7, 25, 15, 0)
-        val staleEnd = at(2026, 7, 25, 15, 10)
+    fun approxTime_acrossMidnight_formatsOnItsOwnClockFace() {
+        val justBeforeMidnight = UiFormat.approxTime(at(2026, 7, 25, 23, 50), zone)
+        val justAfterMidnight = UiFormat.approxTime(at(2026, 7, 26, 0, 20), zone)
 
-        val range = UiFormat.sessionRange(startAt = start, endAt = staleEnd, open = true, zone = zone)
-
-        assertEquals("~3:00 PM – now", range.normalizeSpaces())
-    }
-
-    @Test
-    fun rangeCrossingMidnight_formatsBothEndpointsOnTheirOwnClockFace() {
-        val start = at(2026, 7, 25, 23, 50)
-        val end = at(2026, 7, 26, 0, 20)
-
-        val range = UiFormat.sessionRange(startAt = start, endAt = end, open = false, zone = zone)
-
-        assertEquals("~11:50 PM – 12:20 AM", range.normalizeSpaces())
+        assertEquals("~11:50 PM", justBeforeMidnight.normalizeSpaces())
+        assertEquals("~12:20 AM", justAfterMidnight.normalizeSpaces())
     }
 
     @Test

@@ -15,7 +15,6 @@ data class PlaySession(
     val id: Long,
     val appId: Long,
     val startAt: Long,
-    val endAt: Long?,
     val minutes: Int,
     val open: Boolean,
 )
@@ -45,7 +44,6 @@ private fun Session.toDomain() = PlaySession(
     id = id,
     appId = appId,
     startAt = startAt,
-    endAt = endAt,
     minutes = minutes,
     open = open,
 )

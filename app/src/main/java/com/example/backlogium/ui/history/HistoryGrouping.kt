@@ -15,7 +15,6 @@ const val HISTORY_ACHIEVEMENT_CAP = 5
 data class HistorySessionUi(
     val id: Long,
     val startAt: Long,
-    val endAt: Long?,
     val minutes: Int,
     val open: Boolean,
 )
@@ -95,7 +94,6 @@ fun groupHistory(
                         HistorySessionUi(
                             id = it.id,
                             startAt = it.startAt,
-                            endAt = it.endAt,
                             minutes = it.minutes,
                             open = it.open,
                         )

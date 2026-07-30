@@ -21,8 +21,10 @@ joined into the day → game → session hierarchy the data naturally forms.
   each other.
 - **Today is expanded by default; past days are collapsed.** At most 30 day-groups load initially,
   with an action to load older ones.
-- Game rows show **art and the day's total for that game**; session rows show an **approximate clock
-  range and the tracked minutes**, distinguished so the two are not read as the same measurement.
+- Game rows show **art and the day's total for that game**; session rows show an **approximate start
+  instant and the tracked minutes**, distinguished so the two are not read as the same measurement.
+  Deliberately not a start–end range — that shape invites subtracting the two into a duration, which
+  can disagree with the tracked minutes once Steam's own counter lags.
 - Session reads become **date-ranged** rather than capped at a fixed row count, since 30 days of
   history exceeds the current 100-row limit.
 - Each day header also shows a **horizontal row of thumbnails for achievements unlocked that day**,
@@ -51,13 +53,14 @@ joined into the day → game → session hierarchy the data naturally forms.
 
 ## Non-goals
 
-- **Presenting session clock ranges as exact.** `SessionDiffer` documents `startAt` as "the previous
-  poll's time (best estimate of when play began)", so ranges are quantized to the 15-minute poll
-  cadence and must be shown as approximate.
-- **Deriving a session's duration from its clock range.** `minutes` comes from Steam's cumulative
-  playtime counter and is what XP and day totals are built on; the span between poll timestamps is a
-  different measurement and can be larger (a deferred poll, offline play synced later). Both are
-  shown, labelled distinctly.
+- **Presenting a session's start instant as exact.** `SessionDiffer` documents `startAt` as "the
+  previous poll's time (best estimate of when play began)", so it is quantized to the poll cadence
+  and must be shown as approximate.
+- **Showing a session's end time or deriving its duration from a clock span.** `minutes` comes from
+  Steam's cumulative playtime counter and is what XP and day totals are built on; the time between
+  poll timestamps is a different measurement that can be larger (a deferred poll, offline play synced
+  later) and, shown alongside minutes as a range, reads as an arithmetic error when the two diverge.
+  The session row shows only the approximate start plus the tracked minutes, never a range.
 - **Splitting midnight-crossing sessions across two days.** Minutes are not distributed evenly across
   a session's span, so splitting would mean prorating — inventing a distribution the data does not
   contain. Sessions group by the day they started.

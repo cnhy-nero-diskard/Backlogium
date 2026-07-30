@@ -44,10 +44,14 @@
   appear
 
 ## 4. Presentation helpers
-- [x] 4.1 `UiFormat`: add a time-of-day formatter (locale-aware, no date part) for range endpoints
-- [x] 4.2 `UiFormat`: add a session-range formatter producing an approximate range, with an open-ended
-  form for sessions still in progress
-- [x] 4.3 Unit-test both, including the open-session form and a range crossing midnight
+- [x] 4.1 `UiFormat`: add a time-of-day formatter (locale-aware, no date part)
+- [x] 4.2 `UiFormat`: add an approximate-instant formatter (`approxTime`) for a session's start.
+  **Revised after real-user feedback:** the original plan was a start–end range formatter with an
+  open-ended form; that shape reads as "subtract these for the duration," which can legitimately
+  disagree with the tracked minutes once Steam's counter lags and looked like a miscounting bug on
+  first contact with a real user. Dropped the end time entirely rather than better-wording the range.
+- [x] 4.3 Unit-test `approxTime`, including formatting across a midnight boundary and confirming the
+  output carries no second endpoint to subtract against
 - [x] 4.4 Keep the approximation marker and the "played" wording in one place, with a comment on why
   they exist — dropping either makes the screen look arithmetically broken
 
@@ -60,17 +64,26 @@
 - [x] 5.4 Day header: date, total played, goal minutes when non-zero, quest indicator (reuse the
   existing icon treatment from `DayStatRow`), and the achievement thumbnail row from section 3
 - [x] 5.5 Game row: art, name, that day's total for the game
-- [x] 5.6 Session row: approximate range · tracked minutes, single line
+- [x] 5.6 Session row: approximate start · tracked minutes, single line (no end time — see 4.2)
 - [x] 5.7 Keep the "Daily stats" divider above the past days, with today's group above it
 - [x] 5.8 A day with nothing to expand shows no expand affordance
 - [x] 5.9 "Load older" at the end of the list; expansion state survives loading more
 - [x] 5.10 Preserve the existing unconfigured and empty states verbatim
 - [x] 5.11 Day header's goal-minutes copy reuses the existing Focus wording (`HistoryScreen.kt:132`,
   landed via `enhance-library`) rather than reintroducing "goal"
+- [x] 5.12 (found in review) A long game title had no `weight`/`maxLines` on the name `Text`, so it
+  claimed unbounded width and squeezed the trailing minutes text into an unreadable one-char-per-line
+  column. Fixed by weighting the icon+name `Row` and ellipsizing the name.
+- [x] 5.13 (found in review) A game's sessions rendered as bare floating `Text` rows below its card,
+  reading as unrelated to the game rather than that card's own expanded content. Replaced with a
+  single `SessionsPanel` card sharing the game row's horizontal margin and corner radius (flat where
+  they meet), so the pair reads as one header + its dropdown content.
+- [x] 5.14 (found in review) Tightened card padding (12dp → 10dp) and widened the screen's horizontal
+  inset (16dp → 20dp) for slightly shorter, slightly narrower cards, per feedback.
 
 ## 6. Verification
 - [x] 6.1 Verify expansion state stays attached to the right day when a sync inserts new sessions
-- [x] 6.2 Check a day containing an open session: range reads as open-ended, minutes counted in the total
+- [x] 6.2 Check a day containing an open session: marked as in progress, minutes counted in the total
 - [ ] 6.3 Check a 30-day window on a heavy library for scroll performance (needs a device/emulator
   run — not verifiable from this environment; no emulator was available)
 - [x] 6.4 Confirm the quest indicator still reflects `DailyProgress`, not the presented sum

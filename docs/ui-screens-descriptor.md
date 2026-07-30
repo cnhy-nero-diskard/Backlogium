@@ -225,15 +225,15 @@ long-owned game is correct for anyone who never imported their Steam history.
 **Purpose:** play history as a day → game → session breakdown, replacing the old flat
 "recent sessions" list and separate "daily stats" list with one structure (regroup-history).
 
-**Layout:** single flat `LazyColumn` (no nested lazy lists — Compose can't nest one), 16dp outer
-padding, day groups sorted most-recent-first:
+**Layout:** single flat `LazyColumn` (no nested lazy lists — Compose can't nest one), 20dp horizontal /
+16dp vertical outer padding, day groups sorted most-recent-first:
 
 1. **Today's day group**, expanded by default, sits above everything else.
 2. **Section header** "Daily stats" divider.
 3. **Past day groups** (repeated), collapsed by default; at most 30 day-groups load initially.
 4. **"Load older"** row at the end, widening the window by another 30 days.
 
-**Day header row**, full-width `Card`, 12dp padding:
+**Day header row**, full-width `Card`, 10dp padding:
 - Left: date (bodyLarge) over caption `"{minutes played} played"`, appending
   `" · {focus minutes} on Focus games"` only when those minutes > 0. This total is **the sum of
   the sessions listed beneath it**, not the stored `DailyProgress` total (the two can differ by a
@@ -246,15 +246,22 @@ padding, day groups sorted most-recent-first:
   achievement unlocked that day across every game, up to 5, followed by a `"+N"` badge for any
   remainder. Omitted entirely on a day with no unlocks.
 
-**Game row** (shown when its day is expanded), full-width `Card`, indented, 12dp padding:
-- Left: game icon (shared `GameIcon` composable, also used by the Library) + name.
+**Game row** (shown when its day is expanded), full-width `Card`, indented, 10dp padding:
+- Left: game icon (shared `GameIcon` composable, also used by the Library) + name, weighted and
+  ellipsized (a long title must not squeeze the trailing minutes text into an unreadable column).
 - Right: that game's total minutes for the day, and an expand affordance.
+- Rounded on every corner while collapsed; flat on the bottom while expanded, so the sessions panel
+  below reads as this row's own dropdown content rather than a disconnected block.
 
-**Session row** (shown when its game is expanded), single line, further indented:
-- `"~3:00 PM – 5:55 PM · 2h 35m played"`, or `"· live"` appended while still open and
-  open-ended (`"– now"`) instead of a closed end time. The tilde and "played" wording are
-  deliberate — they mark the range as poll-quantized and the minutes as Steam's tracked count,
-  two different measurements that can legitimately disagree.
+**Sessions panel** (shown when a game is expanded): one `Card` directly beneath that game's row —
+same horizontal margin, flat top meeting the game row's flat bottom, a distinct tonal
+(`surfaceVariant`) background — containing one line per session:
+- `"~3:00 PM · 2h 35m played"`, or `"· live"` appended while still open. Deliberately an
+  approximate *start*, not a start–end range: showing two clock times invites subtracting them into
+  a duration, which can disagree with the tracked minutes once Steam's own counter lags and reads as
+  an arithmetic error rather than two honest, different measurements. The tilde and "played" wording
+  are still deliberate — they mark the start as poll-quantized and the minutes as Steam's tracked
+  count.
 
 **Empty / alt states:**
 - Not configured → centered Empty State, title "Steam not configured".

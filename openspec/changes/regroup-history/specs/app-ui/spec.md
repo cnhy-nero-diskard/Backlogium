@@ -3,9 +3,11 @@
 ### Requirement: History screen
 The system SHALL provide a History screen presenting play history grouped by day, where each day
 expands into the games played that day and each game expands into its individual sessions. Each day
-SHALL show its total played time, its goal-game time, and whether that day's quest was met. Session
-times SHALL be presented as approximate, and a session's tracked playtime SHALL be presented
-distinctly from the clock range it spans. Each day SHALL also show thumbnails for achievements
+SHALL show its total played time, its goal-game time, and whether that day's quest was met. A
+session's start time SHALL be presented as approximate, and its tracked playtime SHALL be presented
+distinctly from that start time — never as a start–end range, since subtracting the two into a
+duration can be misled by a difference that reflects how the tracked-minutes counter updates, not a
+measurement error. Each day SHALL also show thumbnails for achievements
 unlocked that day, capped at 5 with any excess collapsed into a count badge.
 
 #### Scenario: Day-grouped history
@@ -20,8 +22,8 @@ unlocked that day, capped at 5 with any excess collapsed into a count badge.
 
 #### Scenario: Expanding a game within a day
 - **WHEN** the user expands a game within a day
-- **THEN** that game's individual sessions for that day are listed, each with its approximate clock
-  range and its tracked playtime
+- **THEN** that game's individual sessions for that day are listed, each with its approximate start
+  time and its tracked playtime
 
 #### Scenario: Today expanded by default
 - **WHEN** the History screen is opened
@@ -44,18 +46,19 @@ unlocked that day, capped at 5 with any excess collapsed into a count badge.
 - **THEN** it is listed once, under the day it began, and is not divided between the two days
 
 #### Scenario: Session times not presented as exact
-- **WHEN** a session's clock range is shown
+- **WHEN** a session's start time is shown
 - **THEN** it is presented as approximate, reflecting that session boundaries are derived from
   periodic polling rather than observed directly
 
-#### Scenario: Tracked playtime distinguished from elapsed range
-- **WHEN** a session's tracked playtime differs from the time between its range endpoints
-- **THEN** both are presented such that the tracked playtime is identifiable as playtime and the range
-  is identifiable as an approximate span, so neither is read as the other
+#### Scenario: Tracked playtime never paired with an end time
+- **WHEN** a session's tracked playtime is shown
+- **THEN** it is shown alongside only the session's approximate start, never a start–end range, so a
+  reader cannot subtract two displayed clock times into a duration that may disagree with the tracked
+  minutes
 
 #### Scenario: Session still in progress
 - **WHEN** a session is still open
-- **THEN** its range is presented as open-ended and its playtime is included in its day's total
+- **THEN** it is marked as in progress and its playtime is included in its day's total
 
 #### Scenario: Day with achievements unlocked
 - **WHEN** a day has 5 or fewer achievements unlocked across the games played that day

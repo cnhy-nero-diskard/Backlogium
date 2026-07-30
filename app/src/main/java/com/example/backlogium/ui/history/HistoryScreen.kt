@@ -28,7 +28,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.material3.CardDefaults
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -89,7 +91,7 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
         todayGroup?.let { day ->
             dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame)
@@ -144,8 +146,8 @@ private fun LazyListScope.dayItems(
         }
 
         if (gameExpanded) {
-            items(game.sessions, key = { "session-${it.id}" }) { session ->
-                SessionRow(session)
+            item(key = "sessions-${day.date}-${game.appId}") {
+                SessionsPanel(game.sessions)
             }
         }
     }
@@ -174,14 +176,19 @@ private fun DayHeaderRow(
             .padding(vertical = 4.dp)
             .let { if (expandable) it.clickable(onClick = onClick) else it },
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column {
-                    Text(day.date, style = MaterialTheme.typography.bodyLarge)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        day.date,
+                        style = MaterialTheme.typography.bodyLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     Text(
                         text = "${UiFormat.minutes(day.minutesPlayed)} played" +
                             if (day.goalMinutesPlayed > 0) {
@@ -249,6 +256,19 @@ private fun AchievementThumbnail(iconUrl: String?, modifier: Modifier = Modifier
     )
 }
 
+/** Rounded on every corner while collapsed; flat on the bottom while expanded, so [SessionsPanel] reads as this card's own dropdown content rather than a separate, disconnected row. */
+private val gameCardCornerRadius = 12.dp
+private fun gameCardShape(expanded: Boolean): RoundedCornerShape = if (expanded) {
+    RoundedCornerShape(
+        topStart = gameCardCornerRadius,
+        topEnd = gameCardCornerRadius,
+        bottomStart = 0.dp,
+        bottomEnd = 0.dp,
+    )
+} else {
+    RoundedCornerShape(gameCardCornerRadius)
+}
+
 @Composable
 private fun GameGroupRow(
     game: HistoryGameGroup,
@@ -256,30 +276,37 @@ private fun GameGroupRow(
     onClick: () -> Unit,
 ) {
     Card(
+        shape = gameCardShape(expanded),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, top = 4.dp, bottom = 4.dp)
+            .padding(start = 16.dp, top = 4.dp, bottom = if (expanded) 0.dp else 4.dp)
             .clickable(onClick = onClick),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(10.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f),
+            ) {
                 GameIcon(game.iconUrl)
                 Text(
                     text = game.name,
                     style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(start = 12.dp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 12.dp, end = 8.dp),
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = UiFormat.minutes(game.minutesPlayed),
                     style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
                     modifier = Modifier.padding(end = 8.dp),
                 )
                 Icon(
@@ -291,29 +318,47 @@ private fun GameGroupRow(
     }
 }
 
+/**
+ * A game's sessions for the day, rendered as one card directly beneath [GameGroupRow] — same
+ * horizontal margin, flat top meeting the game row's flat bottom, and a distinct tonal surface —
+ * so the block reads as that row's own expanded content rather than an unrelated floating list.
+ */
 @Composable
-private fun SessionRow(session: HistorySessionUi) {
-    Text(
-        text = sessionLabel(session),
-        style = MaterialTheme.typography.bodySmall,
+private fun SessionsPanel(sessions: List<HistorySessionUi>) {
+    Card(
+        shape = RoundedCornerShape(
+            topStart = 0.dp,
+            topEnd = 0.dp,
+            bottomStart = gameCardCornerRadius,
+            bottomEnd = gameCardCornerRadius,
+        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 32.dp, top = 4.dp, bottom = 4.dp, end = 12.dp),
-    )
+            .padding(start = 16.dp, bottom = 4.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(start = 22.dp, end = 10.dp, top = 6.dp, bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            sessions.forEach { session ->
+                Text(
+                    text = sessionLabel(session),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
 }
 
 /**
- * "~3:00 PM – 5:55 PM · 2h 35m played" (plus "· live" while open). The tilde and the word
- * "played" are load-bearing (regroup-history design): dropping either makes the screen look
- * arithmetically broken, since the range and the tracked minutes are different measurements that
- * can legitimately disagree (see `SessionDiffer`).
+ * "~12:43 AM · 23m played" (plus "· live" while open). Deliberately an approximate *start*, not a
+ * start–end range: a two-endpoint range invites subtracting them into a "duration" that can
+ * legitimately disagree with the tracked minutes once Steam's own counter lags, which reads as an
+ * arithmetic error rather than two honest, different measurements (see `SessionDiffer`).
  */
 private fun sessionLabel(session: HistorySessionUi): String {
-    val range = UiFormat.sessionRange(
-        startAt = session.startAt,
-        endAt = session.endAt,
-        open = session.open,
-    )
+    val start = UiFormat.approxTime(session.startAt)
     val minutes = "${UiFormat.minutes(session.minutes)} played"
-    return if (session.open) "$range · $minutes · live" else "$range · $minutes"
+    return if (session.open) "$start · $minutes · live" else "$start · $minutes"
 }

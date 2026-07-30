@@ -208,9 +208,8 @@ class HistoryGroupingTest {
         appId: Long,
         startAt: Long,
         minutes: Int,
-        endAt: Long? = null,
         open: Boolean = false,
-    ) = PlaySession(id = id, appId = appId, startAt = startAt, endAt = endAt, minutes = minutes, open = open)
+    ) = PlaySession(id = id, appId = appId, startAt = startAt, minutes = minutes, open = open)
 
     private fun game(appId: Long, name: String) =
         LibraryGame(appId = appId, name = name, iconUrl = "icon-$appId", playtimeForever = 0)

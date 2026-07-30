@@ -39,19 +39,13 @@ object UiFormat {
         Instant.ofEpochMilli(epochMillis).atZone(zone).format(timeOfDayFormatter)
 
     /**
-     * An approximate session range, e.g. `"~3:00 PM – 5:55 PM"`, or `"~3:00 PM – now"` while the
-     * session is still open. The leading tilde marks both endpoints as poll-quantized estimates
-     * (see `SessionDiffer`), not observed instants — dropping it would misrepresent a range as
-     * exact.
+     * An approximate instant, e.g. `"~3:00 PM"` — not a range. A session's start and its tracked
+     * minutes are two different measurements (see `SessionDiffer`) that can legitimately disagree
+     * once Steam's own playtime counter lags; showing them as a start–end range invites subtracting
+     * the two into a "duration" that then looks arithmetically wrong the moment they diverge.
+     * Anchoring on a single approximate instant sidesteps that reflex instead of trying to caveat
+     * it away with wording.
      */
-    fun sessionRange(
-        startAt: Long,
-        endAt: Long?,
-        open: Boolean,
-        zone: ZoneId = ZoneId.systemDefault(),
-    ): String {
-        val start = timeOfDay(startAt, zone)
-        val end = if (open || endAt == null) "now" else timeOfDay(endAt, zone)
-        return "~$start – $end"
-    }
+    fun approxTime(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
+        "~${timeOfDay(epochMillis, zone)}"
 }
