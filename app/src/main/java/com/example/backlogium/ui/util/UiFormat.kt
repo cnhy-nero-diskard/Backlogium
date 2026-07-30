@@ -11,6 +11,9 @@ object UiFormat {
     private val dateTimeFormatter: DateTimeFormatter =
         DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
 
+    private val timeOfDayFormatter: DateTimeFormatter =
+        DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
+
     /** "1h 20m", "45m", or "0m". */
     fun minutes(minutes: Int): String {
         val safe = minutes.coerceAtLeast(0)
@@ -30,4 +33,19 @@ object UiFormat {
             .atZone(zone)
             .format(dateTimeFormatter)
     }
+
+    /** Locale-aware time of day with no date part, e.g. "3:00 PM". */
+    fun timeOfDay(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
+        Instant.ofEpochMilli(epochMillis).atZone(zone).format(timeOfDayFormatter)
+
+    /**
+     * An approximate instant, e.g. `"~3:00 PM"` — not a range. A session's start and its tracked
+     * minutes are two different measurements (see `SessionDiffer`) that can legitimately disagree
+     * once Steam's own playtime counter lags; showing them as a start–end range invites subtracting
+     * the two into a "duration" that then looks arithmetically wrong the moment they diverge.
+     * Anchoring on a single approximate instant sidesteps that reflex instead of trying to caveat
+     * it away with wording.
+     */
+    fun approxTime(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
+        "~${timeOfDay(epochMillis, zone)}"
 }

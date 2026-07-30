@@ -24,8 +24,13 @@ data class PlaySession(
 class SessionRepository @Inject constructor(
     private val sessionDao: SessionDao,
 ) {
-    val recentSessions: Flow<List<PlaySession>> = sessionDao.observeRecent(RECENT_LIMIT)
-        .map { rows -> rows.map(Session::toDomain) }
+    /**
+     * Sessions starting at or after [cutoffMillis]. Backs the History screen's day-grouped view
+     * (regroup-history), which needs every session in a window of calendar days rather than a
+     * fixed row count.
+     */
+    fun sessionsSince(cutoffMillis: Long): Flow<List<PlaySession>> =
+        sessionDao.observeSince(cutoffMillis).map { rows -> rows.map(Session::toDomain) }
 
     /**
      * Tracked minutes summed per game, keyed by appId. Games with no tracked session are absent
@@ -33,10 +38,6 @@ class SessionRepository @Inject constructor(
      */
     val trackedMinutesByGame: Flow<Map<Long, Int>> = sessionDao.observeTrackedMinutesByGame()
         .map { rows -> rows.associate { it.appId to it.minutes } }
-
-    private companion object {
-        const val RECENT_LIMIT = 100
-    }
 }
 
 private fun Session.toDomain() = PlaySession(

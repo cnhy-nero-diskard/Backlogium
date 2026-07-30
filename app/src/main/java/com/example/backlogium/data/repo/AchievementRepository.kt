@@ -5,6 +5,7 @@ import com.example.backlogium.data.achievement.AchievementMerge
 import com.example.backlogium.data.local.dao.AchievementCounts
 import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.AchievementRarity
+import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Achievement
@@ -62,6 +63,13 @@ class AchievementRepository @Inject constructor(
      */
     val unlockedRarityByGame: Flow<Map<Long, List<Double?>>> = achievementDao.observeUnlockedRarity()
         .map { rows -> rows.groupBy(AchievementRarity::appId) { it.snapshotPercent } }
+
+    /**
+     * Achievements unlocked at or after [cutoffMillis], across every game — feeds the History
+     * screen's per-day thumbnail row (regroup-history).
+     */
+    fun unlockedSince(cutoffMillis: Long): Flow<List<AchievementUnlock>> =
+        achievementDao.observeUnlockedSince(cutoffMillis)
 
     /**
      * Fetches achievements for every in-scope game whose data is stale or missing. [apiKey]/

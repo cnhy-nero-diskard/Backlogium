@@ -222,27 +222,50 @@ long-owned game is correct for anyone who never imported their Steam history.
 
 ## Screen 3 — History
 
-**Purpose:** recent synthesized play sessions + per-day play totals and quest results.
+**Purpose:** play history as a day → game → session breakdown, replacing the old flat
+"recent sessions" list and separate "daily stats" list with one structure (regroup-history).
 
-**Layout:** single scrollable list (LazyColumn), 16dp outer padding, two sections:
+**Layout:** single flat `LazyColumn` (no nested lazy lists — Compose can't nest one), 20dp horizontal /
+16dp vertical outer padding, day groups sorted most-recent-first:
 
-1. **Section header** "Recent sessions" (shown if any sessions exist).
-2. **Session row** (repeated), full-width `Card`, 12dp padding, horizontal, space-between:
-   - Left column: game name (bodyLarge) over a caption with formatted date/time of session
-     start
-   - Right: duration text, e.g. `"1h 20m"`, or `"{duration} · live"` if the session is still
-     open/ongoing
-3. **Section header** "Daily stats" (shown if any daily rows exist).
-4. **Day stat row** (repeated), full-width `Card`, 12dp padding, horizontal, space-between:
-   - Left column: date (bodyLarge) over caption `"{minutes played} played"`, appending
-     `" · {focus minutes} on Focus games"` only when those minutes > 0 (the value is the stored
-     `goalMinutesPlayed` — same label/identifier split as the Library)
-   - Right: a `CircleCheck` icon (accent-tinted) if that day's quest was met, otherwise a
-     muted `CircleMinus` icon
+1. **Today's day group**, expanded by default, sits above everything else.
+2. **Section header** "Daily stats" divider.
+3. **Past day groups** (repeated), collapsed by default; at most 30 day-groups load initially.
+4. **"Load older"** row at the end, widening the window by another 30 days.
+
+**Day header row**, full-width `Card`, 10dp padding:
+- Left: date (bodyLarge) over caption `"{minutes played} played"`, appending
+  `" · {focus minutes} on Focus games"` only when those minutes > 0. This total is **the sum of
+  the sessions listed beneath it**, not the stored `DailyProgress` total (the two can differ by a
+  midnight-crossing session's post-midnight portion).
+- Right: a `ChevronUp`/`ChevronDown` expand affordance (omitted for a day with nothing to
+  expand), and a `CircleCheck` icon (accent-tinted) if that day's quest was met, otherwise a muted
+  `CircleMinus` icon — the quest indicator is always the stored `DailyProgress` value, never the
+  presented sum.
+- Below, when the day has any: a row of achievement thumbnails (20dp, rounded) for every
+  achievement unlocked that day across every game, up to 5, followed by a `"+N"` badge for any
+  remainder. Omitted entirely on a day with no unlocks.
+
+**Game row** (shown when its day is expanded), full-width `Card`, indented, 10dp padding:
+- Left: game icon (shared `GameIcon` composable, also used by the Library) + name, weighted and
+  ellipsized (a long title must not squeeze the trailing minutes text into an unreadable column).
+- Right: that game's total minutes for the day, and an expand affordance.
+- Rounded on every corner while collapsed; flat on the bottom while expanded, so the sessions panel
+  below reads as this row's own dropdown content rather than a disconnected block.
+
+**Sessions panel** (shown when a game is expanded): one `Card` directly beneath that game's row —
+same horizontal margin, flat top meeting the game row's flat bottom, a distinct tonal
+(`surfaceVariant`) background — containing one line per session:
+- `"~3:00 PM · 2h 35m played"`, or `"· live"` appended while still open. Deliberately an
+  approximate *start*, not a start–end range: showing two clock times invites subtracting them into
+  a duration, which can disagree with the tracked minutes once Steam's own counter lags and reads as
+  an arithmetic error rather than two honest, different measurements. The tilde and "played" wording
+  are still deliberate — they mark the start as poll-quantized and the minutes as Steam's tracked
+  count.
 
 **Empty / alt states:**
 - Not configured → centered Empty State, title "Steam not configured".
-- No sessions AND no daily rows yet → centered Empty State, title "No history yet".
+- No day groups at all yet → centered Empty State, title "No history yet".
 
 ---
 

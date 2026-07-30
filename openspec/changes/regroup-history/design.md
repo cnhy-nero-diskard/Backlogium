@@ -29,8 +29,8 @@ Current structure, and where it's going:
 ```
   today                              →   ▼ July 25, 2026 · 3h 12m · quest met
   ── Recent sessions (flat, 100) ──         ▼ (art) Game X · 3h 12m
-     Game X   Jul 25, 3:00 pm  2h 35m           ~12:00 am – 12:37 am · 37m played
-     Game Y   Jul 25, 8:00 pm  40m              ~3:00 pm – 5:55 pm · 2h 35m played
+     Game X   Jul 25, 3:00 pm  2h 35m           ~12:00 am · 37m played
+     Game Y   Jul 25, 8:00 pm  40m              ~3:00 pm · 2h 35m played
      Game X   Jul 24, 9:15 pm  1h 05m         ▶ (art) Game Y · 40m
      …                                     ─ Daily stats ─
   ── Daily stats (flat) ──               ▶ July 24, 2026 · 1h 05m · quest met
@@ -68,14 +68,23 @@ Current structure, and where it's going:
   met. *Alternative rejected:* showing the `DailyProgress` total keeps History and Home in lockstep but
   guarantees the expanded list won't sum to its own header.
 
-- **Session rows show an approximate range plus tracked minutes, visibly distinguished.**
-  `~3:00 pm – 5:55 pm · 2h 35m played`. The tilde marks the range as poll-quantized; "played" marks
-  the minutes as what Steam counted.
-  *Why:* both numbers are true and they measure different things, so the only dishonest option is to
-  present them as one. *Alternative rejected:* deriving duration from the span (always internally
-  consistent, but overstates playtime and would disagree with the XP those minutes earned).
-  *Copy is load-bearing here* — dropping the tilde or the word "played" turns a careful distinction
-  back into an apparent arithmetic error.
+- **Session rows show an approximate start instant plus tracked minutes, not a start–end range.**
+  `~3:00 pm · 2h 35m played`.
+  *Why:* an earlier version showed `~3:00 pm – 5:55 pm · 2h 35m played` — a start and an end time,
+  which every reader's first instinct is to subtract into a duration. That duration can legitimately
+  disagree with the tracked minutes once Steam's own `playtime_forever` counter lags (a burst of
+  already-accumulated minutes can land in a poll gap far shorter than the minutes themselves), and
+  when it does, the screen reads as an arithmetic error rather than two honest, different
+  measurements — confirmed by a real user flagging exactly this as "the app miscounted time" during
+  review. Dropping the end time removes the two-endpoint shape that invites subtraction, rather than
+  trying to caveat it away with wording (the tilde + "played" wording alone was tried first and
+  didn't hold up).
+  *Alternative rejected:* deriving duration from the span (always internally consistent, but
+  overstates playtime and would disagree with the XP those minutes earned). *Alternative rejected:*
+  keeping the range but styling the end time as muted/secondary — still two clock times joined
+  visually, still reads as subtractable regardless of emphasis.
+  *Copy is still load-bearing* — dropping the tilde or the word "played" turns the single approximate
+  instant back into something that reads as exact.
 
 - **"Daily stats" collapses into the day headers rather than remaining a separate section.** Total,
   goal minutes, and quest state move onto each day's header row.

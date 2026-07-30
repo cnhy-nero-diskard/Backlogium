@@ -61,11 +61,11 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
-import coil.compose.SubcomposeAsyncImage
 import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.ui.components.EmptyState
+import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.theme.overrunExcess
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.work.HltbBatchProgress
@@ -73,7 +73,6 @@ import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.Check
 import compose.icons.tablericons.Checkbox
-import compose.icons.tablericons.DeviceGamepad
 import compose.icons.tablericons.DotsVertical
 import compose.icons.tablericons.PlayerStop
 import compose.icons.tablericons.Search
@@ -976,42 +975,6 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifie
             overflow = TextOverflow.Ellipsis,
         )
     }
-}
-
-@Composable
-private fun GameIcon(iconUrl: String) {
-    val shape = RoundedCornerShape(8.dp)
-    SubcomposeAsyncImage(
-        model = iconUrl,
-        contentDescription = null,
-        modifier = Modifier
-            .size(40.dp)
-            .clip(shape),
-        // Themed placeholder while the Steam CDN thumbnail loads.
-        loading = {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
-        },
-        // Themed fallback (generic controller glyph) when the image fails to load.
-        error = {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = TablerIcons.DeviceGamepad,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(24.dp),
-                )
-            }
-        },
-    )
 }
 
 /**

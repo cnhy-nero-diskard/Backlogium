@@ -66,10 +66,26 @@ interface AchievementDao {
             "WHERE apiName != '$NO_ACHIEVEMENTS_MARKER' AND unlocked = 1",
     )
     fun observeUnlockedRarity(): Flow<List<AchievementRarity>>
+
+    /**
+     * Achievements unlocked at or after [cutoff] (epoch millis), across every game — feeds the
+     * History screen's per-day thumbnail row (regroup-history). Deliberately not scoped to a
+     * game played that day: an achievement can unlock retroactively or from idle progress, so the
+     * caller joins these to a day by [Achievement.unlockedAt]'s local date, not by [Achievement.appId].
+     */
+    @Query(
+        "SELECT appId, iconUrl, unlockedAt FROM achievements " +
+            "WHERE apiName != '$NO_ACHIEVEMENTS_MARKER' AND unlocked = 1 AND unlockedAt >= :cutoff " +
+            "ORDER BY unlockedAt ASC",
+    )
+    fun observeUnlockedSince(cutoff: Long): Flow<List<AchievementUnlock>>
 }
 
 data class AchievementCounts(val appId: Long, val total: Int, val unlocked: Int)
 data class AchievementFetchedAt(val appId: Long, val fetchedAt: Long)
+
+/** One unlock event for the History screen's day thumbnail row. */
+data class AchievementUnlock(val appId: Long, val iconUrl: String?, val unlockedAt: Long)
 
 /**
  * One unlocked achievement's frozen rarity snapshot. A null [snapshotPercent] is un-tierable
