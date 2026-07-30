@@ -4,6 +4,7 @@ import com.example.backlogium.data.local.dao.AchievementCounts
 import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.AchievementFetchedAt
 import com.example.backlogium.data.local.dao.AchievementRarity
+import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameTrackedMinutes
@@ -347,6 +348,8 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
         store.firstOrNull { it.appId == appId && it.open }
 
     override fun observeRecent(limit: Int): Flow<List<Session>> = flowOf(store.toList())
+    override fun observeSince(cutoff: Long): Flow<List<Session>> =
+        flowOf(store.filter { it.startAt >= cutoff })
     override suspend fun getAll(): List<Session> = store.sortedBy { it.startAt }
     override suspend fun findByNaturalKey(appId: Long, startAt: Long, endAt: Long?): Session? =
         store.firstOrNull { it.appId == appId && it.startAt == startAt && it.endAt == endAt }
@@ -400,6 +403,10 @@ private class FakeAchievementDao(private val store: MutableList<Achievement>) : 
     override suspend fun getAllUnlocked(): List<Achievement> = store.filter { it.unlocked }
     override fun observeUnlockedRarity(): Flow<List<AchievementRarity>> = flowOf(
         store.filter { it.unlocked }.map { AchievementRarity(it.appId, it.snapshotPercent) },
+    )
+    override fun observeUnlockedSince(cutoff: Long): Flow<List<AchievementUnlock>> = flowOf(
+        store.filter { it.unlocked && (it.unlockedAt ?: 0L) >= cutoff }
+            .map { AchievementUnlock(it.appId, it.iconUrl, it.unlockedAt ?: 0L) },
     )
 }
 

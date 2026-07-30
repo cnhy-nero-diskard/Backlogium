@@ -22,6 +22,14 @@ interface SessionDao {
     @Query("SELECT * FROM sessions ORDER BY startAt DESC LIMIT :limit")
     fun observeRecent(limit: Int = 50): Flow<List<Session>>
 
+    /**
+     * Sessions starting at or after [cutoff] (epoch millis), for a date-ranged window rather than
+     * a fixed row count — the History screen's day-grouped view (regroup-history) needs every
+     * session in a window of calendar days, which a row cap cannot guarantee.
+     */
+    @Query("SELECT * FROM sessions WHERE startAt >= :cutoff ORDER BY startAt DESC")
+    fun observeSince(cutoff: Long): Flow<List<Session>>
+
     @Query("SELECT * FROM sessions ORDER BY startAt ASC")
     suspend fun getAll(): List<Session>
 
