@@ -19,9 +19,6 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE appId = :appId AND open = 1 LIMIT 1")
     suspend fun getOpenSession(appId: Long): Session?
 
-    @Query("SELECT * FROM sessions ORDER BY startAt DESC LIMIT :limit")
-    fun observeRecent(limit: Int = 50): Flow<List<Session>>
-
     /**
      * Sessions starting at or after [cutoff] (epoch millis), for a date-ranged window rather than
      * a fixed row count — the History screen's day-grouped view (regroup-history) needs every

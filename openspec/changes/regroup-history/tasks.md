@@ -9,8 +9,8 @@
 
 ## 1. Date-ranged session reads
 - [x] 1.1 `SessionDao`: add `observeSince(cutoff: Long)` ordered by `startAt` descending
-- [x] 1.2 `SessionRepository`: expose a windowed observation; keep `recentSessions` if any other caller
-  needs it, otherwise retire it
+- [x] 1.2 `SessionRepository`: expose a windowed observation (`sessionsSince`). No other caller used
+  `recentSessions`, so it and the now-unused `SessionDao.observeRecent` were both retired.
 - [x] 1.3 The window is expressed in days and converted to a cutoff at the local day boundary, not
   "now minus N×24h" — otherwise the oldest day in the window is partial
 

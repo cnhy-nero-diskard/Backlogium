@@ -32,7 +32,6 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
     override suspend fun insert(session: Session): Long = 0L
     override suspend fun update(session: Session) = Unit
     override suspend fun getOpenSession(appId: Long): Session? = null
-    override fun observeRecent(limit: Int): Flow<List<Session>> = flowOf(sessions)
     override fun observeSince(cutoff: Long): Flow<List<Session>> =
         flowOf(sessions.filter { it.startAt >= cutoff })
     override suspend fun getAll(): List<Session> = sessions
