@@ -71,13 +71,14 @@ class HistoryGroupingTest {
             session(1, appId = 10, startAt = atUtc(2026, 7, 25, 15, 0), minutes = 30),
             session(2, appId = 20, startAt = atUtc(2026, 7, 25, 20, 0), minutes = 45),
         )
-        // The stored total (100) deliberately disagrees with the sessions (75) — a midnight
-        // crosser elsewhere could cause this; the header must reflect the sessions shown.
-        val progress = DayProgress(date = day, minutesPlayed = 100, goalMinutesPlayed = 45, questMet = true)
+        // The stored totals (100 / 999) deliberately disagree with the sessions (75 / 45) — a
+        // sync that lands just after local midnight can cause this; the header must reflect the
+        // sessions shown, not the poll-time-bucketed DayProgress counters.
+        val progress = DayProgress(date = day, minutesPlayed = 100, goalMinutesPlayed = 999, questMet = true)
 
         val result = groupHistory(
             sessions = sessions,
-            games = listOf(game(10, "Game X"), game(20, "Game Y")),
+            games = listOf(game(10, "Game X"), game(20, "Game Y", isGoal = true)),
             dailyProgress = listOf(progress),
             achievementUnlocks = emptyList(),
             zone = zone,
@@ -86,6 +87,28 @@ class HistoryGroupingTest {
         assertEquals(75, result.minutesPlayed)
         assertEquals(45, result.goalMinutesPlayed)
         assertTrue(result.questMet)
+    }
+
+    @Test
+    fun goalMinutes_neverExceedsTotalMinutes_evenWhenStoredProgressDisagrees() {
+        // Regression for the History bug where "Focus games" minutes exceeded the day's total:
+        // DailyProgress.goalMinutesPlayed was bucketed by sync poll-time, not session start-day.
+        val day = "2026-07-29"
+        val sessions = listOf(
+            session(1, appId = 10, startAt = atUtc(2026, 7, 29, 10, 0), minutes = 153),
+        )
+        val progress = DayProgress(date = day, minutesPlayed = 153, goalMinutesPlayed = 255, questMet = true)
+
+        val result = groupHistory(
+            sessions = sessions,
+            games = listOf(game(10, "Focus Game", isGoal = true)),
+            dailyProgress = listOf(progress),
+            achievementUnlocks = emptyList(),
+            zone = zone,
+        ).single()
+
+        assertEquals(153, result.minutesPlayed)
+        assertEquals(153, result.goalMinutesPlayed)
     }
 
     @Test
@@ -211,8 +234,8 @@ class HistoryGroupingTest {
         open: Boolean = false,
     ) = PlaySession(id = id, appId = appId, startAt = startAt, minutes = minutes, open = open)
 
-    private fun game(appId: Long, name: String) =
-        LibraryGame(appId = appId, name = name, iconUrl = "icon-$appId", playtimeForever = 0)
+    private fun game(appId: Long, name: String, isGoal: Boolean = false) =
+        LibraryGame(appId = appId, name = name, iconUrl = "icon-$appId", playtimeForever = 0, isGoal = isGoal)
 
     private fun unlock(appId: Long, icon: String, day: String) =
         AchievementUnlock(appId = appId, iconUrl = icon, unlockedAt = atUtcDate(day))

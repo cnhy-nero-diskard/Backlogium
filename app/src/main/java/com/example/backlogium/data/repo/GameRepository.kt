@@ -51,6 +51,8 @@ data class LibraryGame(
     val completionistMinutes: Int? = null,
     val mainStoryMinutes: Int? = null,
     val hltbMatchState: HltbMatchState? = null,
+    /** Tagged as a "Focus" game — drives History's per-day Focus-minutes breakdown. */
+    val isGoal: Boolean = false,
 )
 
 /** Read/write access to the game library, exposing domain models as observable [Flow]s. */
@@ -100,6 +102,7 @@ private fun Game.toDomain(hltb: HltbData?) = LibraryGame(
     completionistMinutes = hltb?.completionistMinutes,
     mainStoryMinutes = hltb?.mainStoryMinutes,
     hltbMatchState = hltb?.matchStatus?.toDomain(),
+    isGoal = isGoal,
 )
 
 /** Storage → domain status mapping; internal so [HltbRepository] can report batch outcomes. */
