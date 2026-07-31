@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -57,6 +58,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -570,7 +572,11 @@ private fun GoalGameRow(
         onClick = onClick,
         onLongClick = onLongClick,
     ) {
-        GameIcon(game.iconUrl)
+        GameIconWithHltbBadge(
+            iconUrl = game.iconUrl,
+            status = game.hltbStatus,
+            op = game.fetchOp,
+        )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(game.name, style = MaterialTheme.typography.bodyLarge)
@@ -586,8 +592,6 @@ private fun GoalGameRow(
                 unlocked = game.achievementUnlocked,
                 total = game.achievementTotal,
                 xpContributed = game.xpContributed,
-                hltbStatus = game.hltbStatus,
-                hltbOp = game.fetchOp,
             )
         }
         RowTrailing(
@@ -614,7 +618,11 @@ private fun BacklogGameRow(
         onClick = onClick,
         onLongClick = onLongClick,
     ) {
-        GameIcon(game.iconUrl)
+        GameIconWithHltbBadge(
+            iconUrl = game.iconUrl,
+            status = game.hltbStatus,
+            op = game.fetchOp,
+        )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(game.name, style = MaterialTheme.typography.bodyLarge)
@@ -630,8 +638,6 @@ private fun BacklogGameRow(
                 unlocked = game.achievementUnlocked,
                 total = game.achievementTotal,
                 xpContributed = game.xpContributed,
-                hltbStatus = game.hltbStatus,
-                hltbOp = game.fetchOp,
             )
         }
         RowTrailing(
@@ -868,11 +874,12 @@ private fun HltbIndicator(
     status: HltbMatchState?,
     op: HltbFetchOp?,
     modifier: Modifier = Modifier,
+    size: Dp = 14.dp,
 ) {
     if (op == HltbFetchOp.IN_PROGRESS) {
         CircularProgressIndicator(
             modifier = modifier
-                .size(14.dp)
+                .size(size)
                 .semantics { contentDescription = "Looking up HowLongToBeat…" },
             strokeWidth = 1.5.dp,
         )
@@ -895,8 +902,30 @@ private fun HltbIndicator(
         imageVector = TablerIcons.Clock,
         contentDescription = description,
         tint = tint,
-        modifier = modifier.size(14.dp),
+        modifier = modifier.size(size),
     )
+}
+
+/**
+ * The row's leading game icon with a small HLTB status badge pinned to its corner — a persistent
+ * per-game marker that doesn't compete with the title or badge line for width, since the old
+ * inline text label squeezed the "100% COMPLETED" pill down to a truncated "100% C".
+ */
+@Composable
+private fun GameIconWithHltbBadge(iconUrl: String, status: HltbMatchState?, op: HltbFetchOp?) {
+    Box {
+        GameIcon(iconUrl)
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .size(16.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surface),
+            contentAlignment = Alignment.Center,
+        ) {
+            HltbIndicator(status = status, op = op, size = 10.dp)
+        }
+    }
 }
 
 /** True once a game's achievement counts show every known achievement unlocked. */
@@ -909,22 +938,17 @@ private fun selectionBorder(selected: Boolean): BorderStroke? =
     if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.secondary) else null
 
 /**
- * The row's badge line: achievement counts, contributed XP, and the HLTB match indicator on
- * **one** line, always. Both halves are pinned to a single line and the achievement side yields
- * first (it ellipsizes, the XP figure does not), because the two together are wide enough to wrap
- * a narrow row into three lines — which is what pushed the card taller than its own icon.
+ * The row's badge line: achievement counts and contributed XP on **one** line, always.
+ *
+ * Both halves are pinned to a single line and the achievement side yields first (it ellipsizes,
+ * the XP figure does not), because the two together are wide enough to wrap a narrow row into
+ * three lines — which is what pushed the card taller than its own icon.
  *
  * The XP badge is deliberately the quietest thing here — plain muted text, no pill or icon — since
  * every row can now also carry a progress bar.
  */
 @Composable
-private fun GameBadges(
-    unlocked: Int?,
-    total: Int?,
-    xpContributed: Int,
-    hltbStatus: HltbMatchState?,
-    hltbOp: HltbFetchOp?,
-) {
+private fun GameBadges(unlocked: Int?, total: Int?, xpContributed: Int) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -940,8 +964,6 @@ private fun GameBadges(
         )
         if (unlocked != null && total != null) Spacer(Modifier.width(8.dp))
         XpContributionLabel(xpContributed)
-        Spacer(Modifier.weight(1f))
-        HltbIndicator(status = hltbStatus, op = hltbOp)
     }
 }
 
