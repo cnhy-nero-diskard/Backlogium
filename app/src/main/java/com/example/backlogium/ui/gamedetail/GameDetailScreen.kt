@@ -1,5 +1,11 @@
 package com.example.backlogium.ui.gamedetail
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,11 +31,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -340,7 +352,7 @@ private fun AchievementRow(achievement: AchievementUi) {
                 .alpha(if (achievement.unlocked) 1f else 0.5f),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AchievementIcon(achievement.iconUrl, achievement.tier)
+            AchievementIcon(achievement.apiName, achievement.iconUrl, achievement.tier)
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(achievement.displayName, style = MaterialTheme.typography.bodyLarge)
@@ -406,37 +418,123 @@ private fun formatPercent(percent: Double): String =
  * The achievement icon, haloed in its rarity tier's color when unlocked and tierable — Steam's own
  * "shiny" achievement treatment, reimagined per tier here rather than one fixed shine. No halo for
  * locked achievements: a halo signals an earned tier, and a locked row has none to show.
+ *
+ * Three layers, largest first: an unclipped ambient [HaloBleed] that spills past the icon into the
+ * row itself (a halo *surrounds* something; a glow confined to the icon's own footprint doesn't), a
+ * [RarityPlate] just past the icon's edge carrying the actual tier color plus the animated shimmer,
+ * then the icon glyph on top. Earlier attempts put the color gradient's bright center directly
+ * behind the icon — which hid it completely, since the icon is opaque — leaving only the gradient's
+ * darkest, near-black outer stop visible as a dim ring indistinguishable between tiers. The fix is
+ * ordering: put the vivid color in the ring that is actually visible, not the part the icon covers.
  */
 @Composable
-private fun AchievementIcon(iconUrl: String?, tier: RarityTier?) {
-    Box(modifier = Modifier.size(ICON_HALO_SIZE), contentAlignment = Alignment.Center) {
-        if (tier != null) RarityHalo(tier)
+private fun AchievementIcon(apiName: String, iconUrl: String?, tier: RarityTier?) {
+    Box(modifier = Modifier.size(HALO_BLEED_SIZE), contentAlignment = Alignment.Center) {
+        if (tier != null) {
+            val color = MaterialTheme.colorScheme.rarityHalo(tier)
+            HaloBleed(color)
+            Box(modifier = Modifier.size(RARITY_PLATE_SIZE), contentAlignment = Alignment.Center) {
+                RarityPlate(color, phaseSeed = apiName.hashCode())
+            }
+        }
         AchievementIconGlyph(iconUrl)
     }
 }
 
 /**
- * A soft radial glow behind the icon, in the tier's color. Layered stops (solid core → fading
- * ring → transparent) rather than a hard-edged fill, so it reads as a glow rather than a flat
- * colored disc — the gradient itself supplies the softness without a real blur.
+ * Ambient glow that bleeds past the plate's own edge into the row around it — soft, low-alpha,
+ * fading fully to transparent well before this box's own bounds so it needs no clip.
  */
 @Composable
-private fun BoxScope.RarityHalo(tier: RarityTier) {
-    val color = MaterialTheme.colorScheme.rarityHalo(tier)
+private fun BoxScope.HaloBleed(color: Color) {
+    val brush = remember(color) {
+        Brush.radialGradient(
+            colorStops = arrayOf(
+                0f to color.copy(alpha = 0.55f),
+                0.55f to color.copy(alpha = 0.25f),
+                1f to color.copy(alpha = 0f),
+            ),
+        )
+    }
+    Box(modifier = Modifier.matchParentSize().drawBehind { drawRect(brush = brush) })
+}
+
+/**
+ * The colored ring actually visible around the icon (the plate's center sits behind the opaque
+ * icon and is never seen), plus a diagonal shine sweeping across it on a loop — the animation is
+ * what actually reads as "shiny" the way Steam's own showcase does; a static ring alone is just a
+ * colored border.
+ *
+ * [phaseSeed] staggers each row's shimmer against every other row's — without it, every achievement
+ * on screen sweeps in perfect unison, which looks like a strobing wall rather than individual icons
+ * catching the light.
+ */
+@Composable
+private fun BoxScope.RarityPlate(color: Color, phaseSeed: Int) {
+    val plateBrush = remember(color) { rarityPlateBrush(color) }
+    val shimmerProgress by rememberInfiniteTransition(label = "achievementHalo").animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = SHIMMER_DURATION_MS, easing = LinearEasing),
+            initialStartOffset = StartOffset(phaseSeed.mod(SHIMMER_DURATION_MS)),
+        ),
+        label = "shimmerProgress",
+    )
     Box(
         modifier = Modifier
             .matchParentSize()
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(
-                        color.copy(alpha = 0.65f),
-                        color.copy(alpha = 0.35f),
-                        color.copy(alpha = 0f),
-                    ),
-                ),
-            ),
+            .clip(RoundedCornerShape(12.dp))
+            .drawBehind {
+                drawRect(brush = plateBrush)
+                drawShimmerSweep(shimmerProgress)
+            },
     )
 }
+
+/**
+ * Full tier color across the whole plate, lit by a brighter band partway to the edge — deliberately
+ * never darkens toward black. Only the outer ~30% of this radius (past the icon's own edge) is ever
+ * seen, so that ring has to *be* the tier color at full strength, not fade away from it.
+ */
+private fun rarityPlateBrush(base: Color): Brush {
+    val bright = lerp(base, Color.White, 0.5f)
+    return Brush.radialGradient(
+        colorStops = arrayOf(
+            0f to base,
+            0.72f to base,
+            0.88f to bright,
+            1f to base,
+        ),
+    )
+}
+
+/** A diagonal light band traveling across the plate once per [progress] cycle (0f..1f). */
+private fun DrawScope.drawShimmerSweep(progress: Float) {
+    val band = size.maxDimension * 0.6f
+    val travel = size.width + size.height + band * 2f
+    val lead = -band + progress * travel
+    drawRect(
+        brush = Brush.linearGradient(
+            colorStops = arrayOf(
+                0f to Color.Transparent,
+                0.5f to Color.White.copy(alpha = 0.6f),
+                1f to Color.Transparent,
+            ),
+            start = Offset(lead, 0f),
+            end = Offset(lead + band, size.height),
+        ),
+    )
+}
+
+/** How long one shimmer sweep takes to cross the plate. */
+private const val SHIMMER_DURATION_MS = 2400
+
+/** The ring around the icon: bigger than the 40dp icon so its outer band is actually visible. */
+private val RARITY_PLATE_SIZE = 54.dp
+
+/** The outermost ambient glow, bigger again so it visibly spills past the ring into the row. */
+private val HALO_BLEED_SIZE = 68.dp
 
 @Composable
 private fun AchievementIconGlyph(iconUrl: String?) {
@@ -488,6 +586,3 @@ private fun AchievementIconGlyph(iconUrl: String?) {
         },
     )
 }
-
-/** Halo box size: bigger than the 40dp icon so the glow has room to extend beyond its edges. */
-private val ICON_HALO_SIZE = 56.dp
