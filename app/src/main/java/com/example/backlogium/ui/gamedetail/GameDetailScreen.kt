@@ -3,6 +3,7 @@ package com.example.backlogium.ui.gamedetail
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -28,13 +29,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.SubcomposeAsyncImage
+import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.theme.rarityHalo
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowsSort
@@ -336,7 +340,7 @@ private fun AchievementRow(achievement: AchievementUi) {
                 .alpha(if (achievement.unlocked) 1f else 0.5f),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AchievementIcon(achievement.iconUrl)
+            AchievementIcon(achievement.iconUrl, achievement.tier)
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(achievement.displayName, style = MaterialTheme.typography.bodyLarge)
@@ -398,8 +402,44 @@ private fun achievementStatusLabel(achievement: AchievementUi): String {
 private fun formatPercent(percent: Double): String =
     String.format(Locale.getDefault(), "%.1f", percent)
 
+/**
+ * The achievement icon, haloed in its rarity tier's color when unlocked and tierable — Steam's own
+ * "shiny" achievement treatment, reimagined per tier here rather than one fixed shine. No halo for
+ * locked achievements: a halo signals an earned tier, and a locked row has none to show.
+ */
 @Composable
-private fun AchievementIcon(iconUrl: String?) {
+private fun AchievementIcon(iconUrl: String?, tier: RarityTier?) {
+    Box(modifier = Modifier.size(ICON_HALO_SIZE), contentAlignment = Alignment.Center) {
+        if (tier != null) RarityHalo(tier)
+        AchievementIconGlyph(iconUrl)
+    }
+}
+
+/**
+ * A soft radial glow behind the icon, in the tier's color. Layered stops (solid core → fading
+ * ring → transparent) rather than a hard-edged fill, so it reads as a glow rather than a flat
+ * colored disc — the gradient itself supplies the softness without a real blur.
+ */
+@Composable
+private fun BoxScope.RarityHalo(tier: RarityTier) {
+    val color = MaterialTheme.colorScheme.rarityHalo(tier)
+    Box(
+        modifier = Modifier
+            .matchParentSize()
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(
+                        color.copy(alpha = 0.65f),
+                        color.copy(alpha = 0.35f),
+                        color.copy(alpha = 0f),
+                    ),
+                ),
+            ),
+    )
+}
+
+@Composable
+private fun AchievementIconGlyph(iconUrl: String?) {
     val shape = RoundedCornerShape(8.dp)
     if (iconUrl.isNullOrBlank()) {
         Box(
@@ -448,3 +488,6 @@ private fun AchievementIcon(iconUrl: String?) {
         },
     )
 }
+
+/** Halo box size: bigger than the 40dp icon so the glow has room to extend beyond its edges. */
+private val ICON_HALO_SIZE = 56.dp

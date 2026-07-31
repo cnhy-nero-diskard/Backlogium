@@ -61,6 +61,17 @@
   colouring, so "locked" stays one signal instead of three competing greys (not visually verified
   on device)
 
+## 5a. Rarity halo (addendum — requested after the above shipped)
+- [x] 5a.1 Icon glow keyed to `RarityTier`, not fixed: `ColorScheme.rarityHalo(tier)`
+  (`ui/theme/Theme.kt`), a dull→vivid ramp (grey → green → steel-blue → violet → gold), reusing
+  `SteelBlue`/`Gold` for RARE/LEGENDARY rather than adding two more tokens
+- [x] 5a.2 `AchievementIcon` renders the halo (`Brush.radialGradient` behind the icon, in a 56dp
+  box so the glow has room past the 40dp icon) only when `tier != null` — locked achievements have
+  no earned tier, so no halo
+- [x] 5a.3 New rarity color tokens added to `Color.kt` with light-scheme counterparts, following
+  the existing `overrunExcess`-style pattern (a `ColorScheme` extension keyed off surface
+  luminance, not `isSystemInDarkTheme()`)
+
 ## 6. Docs & specs
 - [x] 6.1 Update `docs/ui-screens-descriptor.md`
 - [x] 6.2 Verify the `app-ui` and `steam-achievements` spec deltas match the built behavior —
