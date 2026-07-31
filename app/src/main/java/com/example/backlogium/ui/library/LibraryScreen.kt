@@ -73,6 +73,7 @@ import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.Check
 import compose.icons.tablericons.Checkbox
+import compose.icons.tablericons.Clock
 import compose.icons.tablericons.DotsVertical
 import compose.icons.tablericons.PlayerStop
 import compose.icons.tablericons.Search
@@ -581,12 +582,12 @@ private fun GoalGameRow(
                 playtimeMinutes = game.playtimeForever,
                 completionistMinutes = game.completionistMinutes,
             )
-            Spacer(Modifier.height(4.dp))
-            HltbStatusLabel(status = game.hltbStatus, op = game.fetchOp)
             GameBadges(
                 unlocked = game.achievementUnlocked,
                 total = game.achievementTotal,
                 xpContributed = game.xpContributed,
+                hltbStatus = game.hltbStatus,
+                hltbOp = game.fetchOp,
             )
         }
         RowTrailing(
@@ -625,16 +626,12 @@ private fun BacklogGameRow(
                 playtimeMinutes = game.playtimeForever,
                 completionistMinutes = game.completionistMinutes,
             )
-            // Only surface HLTB state for untracked games once there is something to report,
-            // so the common "no data" case stays uncluttered.
-            if (game.hltbStatus != null || game.fetchOp != null) {
-                Spacer(Modifier.height(4.dp))
-                HltbStatusLabel(status = game.hltbStatus, op = game.fetchOp)
-            }
             GameBadges(
                 unlocked = game.achievementUnlocked,
                 total = game.achievementTotal,
                 xpContributed = game.xpContributed,
+                hltbStatus = game.hltbStatus,
+                hltbOp = game.fetchOp,
             )
         }
         RowTrailing(
@@ -860,6 +857,48 @@ private fun HltbStatusLabel(
     }
 }
 
+/**
+ * A single clock glyph standing in for the HowLongToBeat brand mark (no licensed asset to draw
+ * on), tinted by match status: full color once a length is matched, greyed out otherwise. Row
+ * real estate is scarce and every game gets one of these, so the full sentence [HltbStatusLabel]
+ * spells out lives only in this icon's content description and in the focus-management dialog.
+ */
+@Composable
+private fun HltbIndicator(
+    status: HltbMatchState?,
+    op: HltbFetchOp?,
+    modifier: Modifier = Modifier,
+) {
+    if (op == HltbFetchOp.IN_PROGRESS) {
+        CircularProgressIndicator(
+            modifier = modifier
+                .size(14.dp)
+                .semantics { contentDescription = "Looking up HowLongToBeat…" },
+            strokeWidth = 1.5.dp,
+        )
+        return
+    }
+    val greyedOut = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+    val (tint, description) = when {
+        op == HltbFetchOp.FAILED ->
+            MaterialTheme.colorScheme.error to "HowLongToBeat lookup failed"
+        status == HltbMatchState.RESOLVED ->
+            MaterialTheme.colorScheme.primary to "HowLongToBeat matched"
+        status == HltbMatchState.NEEDS_REVIEW ->
+            MaterialTheme.colorScheme.tertiary to "Needs HowLongToBeat match review"
+        status == HltbMatchState.UNMATCHED ->
+            greyedOut to "No HowLongToBeat match"
+        else ->
+            greyedOut to "No HowLongToBeat data yet"
+    }
+    Icon(
+        imageVector = TablerIcons.Clock,
+        contentDescription = description,
+        tint = tint,
+        modifier = modifier.size(14.dp),
+    )
+}
+
 /** True once a game's achievement counts show every known achievement unlocked. */
 private fun isGameCompleted(unlocked: Int?, total: Int?): Boolean =
     total != null && total > 0 && unlocked == total
@@ -870,17 +909,22 @@ private fun selectionBorder(selected: Boolean): BorderStroke? =
     if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.secondary) else null
 
 /**
- * The row's badge line: achievement counts and contributed XP on **one** line, always.
- *
- * Both halves are pinned to a single line and the achievement side yields first (it ellipsizes,
- * the XP figure does not), because the two together are wide enough to wrap a narrow row into
- * three lines — which is what pushed the card taller than its own icon.
+ * The row's badge line: achievement counts, contributed XP, and the HLTB match indicator on
+ * **one** line, always. Both halves are pinned to a single line and the achievement side yields
+ * first (it ellipsizes, the XP figure does not), because the two together are wide enough to wrap
+ * a narrow row into three lines — which is what pushed the card taller than its own icon.
  *
  * The XP badge is deliberately the quietest thing here — plain muted text, no pill or icon — since
  * every row can now also carry a progress bar.
  */
 @Composable
-private fun GameBadges(unlocked: Int?, total: Int?, xpContributed: Int) {
+private fun GameBadges(
+    unlocked: Int?,
+    total: Int?,
+    xpContributed: Int,
+    hltbStatus: HltbMatchState?,
+    hltbOp: HltbFetchOp?,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -896,6 +940,8 @@ private fun GameBadges(unlocked: Int?, total: Int?, xpContributed: Int) {
         )
         if (unlocked != null && total != null) Spacer(Modifier.width(8.dp))
         XpContributionLabel(xpContributed)
+        Spacer(Modifier.weight(1f))
+        HltbIndicator(status = hltbStatus, op = hltbOp)
     }
 }
 
