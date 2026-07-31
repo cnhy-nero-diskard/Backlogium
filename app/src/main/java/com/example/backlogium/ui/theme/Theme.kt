@@ -12,7 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
-import com.example.backlogium.gamification.RarityTier
 
 // Dark-first "Steam-native dark + gold accent" scheme (restyle-visual-identity).
 private val DarkColorScheme = darkColorScheme(
@@ -57,26 +56,6 @@ private val LightColorScheme = lightColorScheme(
  */
 val ColorScheme.overrunExcess: Color
     get() = if (surface.luminance() < 0.5f) GoldOverrun else GoldOverrunLight
-
-/**
- * The glow color for an achievement icon's rarity halo (enhance-game-detail) — Steam's own
- * "shiny" achievement treatment, color-coded per tier here rather than one fixed shine. LEGENDARY
- * reuses [Gold] and RARE reuses [SteelBlue] rather than introducing separate tokens, so gold keeps
- * meaning the same thing (a milestone) everywhere it appears.
- *
- * Keyed off surface luminance like [overrunExcess], not `isSystemInDarkTheme()`, so it follows
- * whichever scheme is actually in force.
- */
-fun ColorScheme.rarityHalo(tier: RarityTier): Color {
-    val dark = surface.luminance() < 0.5f
-    return when (tier) {
-        RarityTier.COMMON -> if (dark) RarityCommon else RarityCommonLight
-        RarityTier.UNCOMMON -> if (dark) RarityUncommon else RarityUncommonLight
-        RarityTier.RARE -> if (dark) SteelBlue else SteelBlueDark
-        RarityTier.EPIC -> if (dark) RarityEpic else RarityEpicLight
-        RarityTier.LEGENDARY -> if (dark) Gold else GoldLight
-    }
-}
 
 @Composable
 fun BacklogiumTheme(

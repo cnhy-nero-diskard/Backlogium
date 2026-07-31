@@ -21,11 +21,6 @@ object AchievementMerge {
      * [globalPercent] (which may itself still be null, leaving the snapshot null until a sync
      * observes both "unlocked" and a known percent together). [globalPercent] (the live value,
      * for display) is refreshed on every merge regardless.
-     *
-     * Description and hidden flag (enhance-game-detail) follow the same last-known-good rule as
-     * `displayName`/`iconUrl`: a blank incoming description never overwrites a stored one, so a
-     * hidden achievement that Steam describes only once unlocked keeps its description on later
-     * syncs, and a schema fetch that failed entirely leaves prior text intact.
      */
     fun merge(
         appId: Long,
@@ -46,8 +41,6 @@ object AchievementMerge {
             unlockedAt = dto.unlocktime.takeIf { it > 0L },
             globalPercent = globalPercent ?: prior?.globalPercent,
             snapshotPercent = snapshotPercent,
-            description = schema?.description?.takeIf { it.isNotBlank() } ?: prior?.description,
-            hidden = schema?.let { it.hidden != 0 } ?: prior?.hidden ?: false,
             fetchedAt = now,
         )
     }

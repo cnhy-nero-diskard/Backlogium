@@ -27,7 +27,7 @@ import com.example.backlogium.data.local.entity.Session
         HltbData::class,
         Achievement::class,
     ],
-    version = 7,
+    version = 6,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -129,22 +129,6 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_sessions_appId_startAt_endAt` " +
                         "ON `sessions` (`appId`, `startAt`, `endAt`)",
-                )
-            }
-        }
-
-        /**
-         * v6 → v7: additive only — `achievements` gains the schema's description and hidden flag
-         * (enhance-game-detail). Deliberately not backfilled: populating descriptions eagerly would
-         * cost one `GetSchemaForGame` call per owned game with achievements, so existing rows keep
-         * a null `description` until their game's next natural fetch. `hidden` defaults to 0, the
-         * correct assumption for achievements already visible to the player.
-         */
-        val MIGRATION_6_7 = object : Migration(6, 7) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE `achievements` ADD COLUMN `description` TEXT")
-                db.execSQL(
-                    "ALTER TABLE `achievements` ADD COLUMN `hidden` INTEGER NOT NULL DEFAULT 0",
                 )
             }
         }
