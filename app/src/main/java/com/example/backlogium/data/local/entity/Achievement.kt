@@ -16,6 +16,11 @@ const val NO_ACHIEVEMENTS_MARKER = "__no_achievements__"
  * captured the first sync that observed the achievement unlocked, and is never overwritten
  * afterward — it, not the live [globalPercent], drives the engine's rarity/XP (see the
  * add-steam-achievements design's rarity-drift policy).
+ *
+ * [description] and [hidden] come from the achievement schema (enhance-game-detail). [description]
+ * is nullable and not backfilled: rows stored before it was retained keep null until their game's
+ * next natural schema fetch, and Steam withholds descriptions for [hidden] achievements the player
+ * has not unlocked yet.
  */
 @Entity(
     tableName = "achievements",
@@ -38,5 +43,7 @@ data class Achievement(
     val unlockedAt: Long? = null,
     val globalPercent: Double? = null,
     val snapshotPercent: Double? = null,
+    val description: String? = null,
+    val hidden: Boolean = false,
     val fetchedAt: Long,
 )

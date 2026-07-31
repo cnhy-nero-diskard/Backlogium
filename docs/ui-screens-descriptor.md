@@ -293,19 +293,52 @@ account" + a "Step {1|2} of 2" label (accent). Two steps:
 
 ## Screen 5 — Game detail (pushed from Library)
 
-**Purpose:** per-game achievement list — unlock state, rarity tier, and contributed XP per
+**Purpose:** the game itself — a summary of what the app knows about it — above its achievement
+list, with unlock state, rarity tier, contributed XP, description, and unlock rate per
 achievement. Reached by tapping a game in the Library.
 
-**Layout:** LazyColumn, 16dp padding. Bold `headlineSmall` game name header. When every
-achievement is unlocked, a striking **"GAME COMPLETED"** banner `Card` in the gold accent
-color (`Trophy` icon + "Every achievement unlocked"), reading as a level-up-tier milestone.
+**Layout:** LazyColumn, 16dp horizontal padding, 16dp vertical content padding.
+
+**Summary section** (header `Card`, always present — a game with no achievement data still shows
+its own information):
+- 120dp store header art banner, cropped (absent rather than glyph-filled when it fails to load).
+- 40dp game icon + bold `titleMedium` name, over `"{playtime} played"`. When history was
+  imported, a second caption splits it: `"{tracked} tracked · {imported} imported"` (omitted
+  otherwise, where it would only restate the total).
+- Completion/XP caption: `"{unlocked}/{total} achievements · {xp} XP"` (the achievement half
+  omitted when the game has none). The XP figure is the Library's own `LibraryXp` derivation,
+  so the two screens cannot disagree.
+- **HowLongToBeat** block when at least one length resolved: a bold `labelMedium` heading, then
+  a label/value row per known length (Main Story, Main + Extra, Completionist, All Styles). Each
+  is omitted individually when unknown and the whole block is gated on at least one being
+  present — no zeros, no dashes, no placeholders.
+
+When every achievement is unlocked, a striking **"GAME COMPLETED"** banner `Card` in the gold
+accent color (`Trophy` icon + "Every achievement unlocked"), reading as a level-up-tier milestone.
+
+**Sort control:** compact row above the list — an `ArrowsSort` icon plus two `FilterChip`s,
+**Recent** (default, most recently unlocked first) and **Rarest**. Transient: a lens, not a
+preference, so it resets to Recent on the next visit. Locked achievements group *after* unlocked
+ones in both orders.
+
 Then one `Card` per achievement:
 - 40dp rounded achievement icon (remote, `Trophy` fallback / themed placeholder).
-- Name (bodyLarge) + status caption: `"Locked"` (row dimmed to 50% alpha) or, when unlocked,
-  `"{Tier} · +{xp} XP"` (accent-tinted), tier being COMMON/UNCOMMON/RARE/EPIC/LEGENDARY.
+- Name (bodyLarge).
+- Description (bodySmall, muted) beneath the name. When Steam withholds it for a hidden,
+  not-yet-unlocked achievement → `"Hidden achievement"` instead; once unlocked and described, it
+  renders normally. A row with neither (stored before descriptions were retained, not yet
+  re-fetched) shows nothing rather than an empty bubble.
+- Status caption: `"Locked"` or, when unlocked, `"{Tier} · +{xp} XP"` (accent-tinted), tier being
+  COMMON/UNCOMMON/RARE/EPIC/LEGENDARY — plus the unlock rate, `"0.8% of players have this"`.
+  The percent shown is the one that produced the tier beside it (the frozen snapshot), falling
+  back to the live global percent only for locked rows, which have no snapshot; so a Legendary row
+  can never read "6.0% of players". Omitted entirely when neither percent is known.
+- Locked rows dim to 50% alpha as a whole row, keeping "locked" one signal rather than three
+  competing muted greys now that the row also carries a description and a rate.
 
-**Empty state:** if the game has no stored achievement data → centered Empty State titled with
-the game name, body "No achievements to show for this game yet."
+**Empty state:** a game with no stored achievements keeps its summary and replaces the list with
+the caption "No achievements to show for this game yet." — no whole-screen takeover, since the
+screen has the game's own information to show regardless.
 
 ---
 
