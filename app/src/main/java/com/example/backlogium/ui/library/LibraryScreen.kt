@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -57,6 +58,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -73,6 +75,7 @@ import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.Check
 import compose.icons.tablericons.Checkbox
+import compose.icons.tablericons.Clock
 import compose.icons.tablericons.DotsVertical
 import compose.icons.tablericons.PlayerStop
 import compose.icons.tablericons.Search
@@ -569,7 +572,11 @@ private fun GoalGameRow(
         onClick = onClick,
         onLongClick = onLongClick,
     ) {
-        GameIcon(game.iconUrl)
+        GameIconWithHltbBadge(
+            iconUrl = game.iconUrl,
+            status = game.hltbStatus,
+            op = game.fetchOp,
+        )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(game.name, style = MaterialTheme.typography.bodyLarge)
@@ -581,8 +588,6 @@ private fun GoalGameRow(
                 playtimeMinutes = game.playtimeForever,
                 completionistMinutes = game.completionistMinutes,
             )
-            Spacer(Modifier.height(4.dp))
-            HltbStatusLabel(status = game.hltbStatus, op = game.fetchOp)
             GameBadges(
                 unlocked = game.achievementUnlocked,
                 total = game.achievementTotal,
@@ -613,7 +618,11 @@ private fun BacklogGameRow(
         onClick = onClick,
         onLongClick = onLongClick,
     ) {
-        GameIcon(game.iconUrl)
+        GameIconWithHltbBadge(
+            iconUrl = game.iconUrl,
+            status = game.hltbStatus,
+            op = game.fetchOp,
+        )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(game.name, style = MaterialTheme.typography.bodyLarge)
@@ -625,12 +634,6 @@ private fun BacklogGameRow(
                 playtimeMinutes = game.playtimeForever,
                 completionistMinutes = game.completionistMinutes,
             )
-            // Only surface HLTB state for untracked games once there is something to report,
-            // so the common "no data" case stays uncluttered.
-            if (game.hltbStatus != null || game.fetchOp != null) {
-                Spacer(Modifier.height(4.dp))
-                HltbStatusLabel(status = game.hltbStatus, op = game.fetchOp)
-            }
             GameBadges(
                 unlocked = game.achievementUnlocked,
                 total = game.achievementTotal,
@@ -857,6 +860,71 @@ private fun HltbStatusLabel(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = modifier,
         )
+    }
+}
+
+/**
+ * A single clock glyph standing in for the HowLongToBeat brand mark (no licensed asset to draw
+ * on), tinted by match status: full color once a length is matched, greyed out otherwise. Row
+ * real estate is scarce and every game gets one of these, so the full sentence [HltbStatusLabel]
+ * spells out lives only in this icon's content description and in the focus-management dialog.
+ */
+@Composable
+private fun HltbIndicator(
+    status: HltbMatchState?,
+    op: HltbFetchOp?,
+    modifier: Modifier = Modifier,
+    size: Dp = 14.dp,
+) {
+    if (op == HltbFetchOp.IN_PROGRESS) {
+        CircularProgressIndicator(
+            modifier = modifier
+                .size(size)
+                .semantics { contentDescription = "Looking up HowLongToBeat…" },
+            strokeWidth = 1.5.dp,
+        )
+        return
+    }
+    val greyedOut = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+    val (tint, description) = when {
+        op == HltbFetchOp.FAILED ->
+            MaterialTheme.colorScheme.error to "HowLongToBeat lookup failed"
+        status == HltbMatchState.RESOLVED ->
+            MaterialTheme.colorScheme.primary to "HowLongToBeat matched"
+        status == HltbMatchState.NEEDS_REVIEW ->
+            MaterialTheme.colorScheme.tertiary to "Needs HowLongToBeat match review"
+        status == HltbMatchState.UNMATCHED ->
+            greyedOut to "No HowLongToBeat match"
+        else ->
+            greyedOut to "No HowLongToBeat data yet"
+    }
+    Icon(
+        imageVector = TablerIcons.Clock,
+        contentDescription = description,
+        tint = tint,
+        modifier = modifier.size(size),
+    )
+}
+
+/**
+ * The row's leading game icon with a small HLTB status badge pinned to its corner — a persistent
+ * per-game marker that doesn't compete with the title or badge line for width, since the old
+ * inline text label squeezed the "100% COMPLETED" pill down to a truncated "100% C".
+ */
+@Composable
+private fun GameIconWithHltbBadge(iconUrl: String, status: HltbMatchState?, op: HltbFetchOp?) {
+    Box {
+        GameIcon(iconUrl)
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .size(16.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surface),
+            contentAlignment = Alignment.Center,
+        ) {
+            HltbIndicator(status = status, op = op, size = 10.dp)
+        }
     }
 }
 
