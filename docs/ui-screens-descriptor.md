@@ -308,6 +308,10 @@ its own information):
 - Completion/XP caption: `"{unlocked}/{total} achievements · {xp} XP"` (the achievement half
   omitted when the game has none). The XP figure is the Library's own `LibraryXp` derivation,
   so the two screens cannot disagree.
+- Current player count caption, `"{count} playing now"` (locale-grouped, e.g. "1,206,380"): a
+  one-shot fetch from Steam's `GetNumberOfCurrentPlayers` issued when the screen opens, no API key
+  required. Omitted entirely — no zero, no dash, no spinner — while the fetch is in flight, if it
+  fails, or if Steam has no count for the app; never persisted, so it's re-fetched on every visit.
 - **HowLongToBeat** block when at least one length resolved: a bold `labelMedium` heading, then
   a label/value row per known length (Main Story, Main + Extra, Completionist, All Styles). Each
   is omitted individually when unknown and the whole block is gated on at least one being

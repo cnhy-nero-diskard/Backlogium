@@ -58,9 +58,10 @@ import compose.icons.tablericons.Trophy
 import java.util.Locale
 
 /**
- * One game: its own summary — art, playtime, HowLongToBeat lengths, achievement completion, XP —
- * above its achievement list, which is sortable by date achieved or rarity and shows each
- * achievement's description and unlock rate (enhance-game-detail).
+ * One game: its own summary — art, playtime, HowLongToBeat lengths, achievement completion, XP,
+ * and its current Steam concurrent-player count when available (add-active-player-count) — above
+ * its achievement list, which is sortable by date achieved or rarity and shows each achievement's
+ * description and unlock rate (enhance-game-detail).
  *
  * The summary is a header section on this same scrolling list rather than a tab, so the achievement
  * list stays one glance away, and it renders even for a game with no achievement data at all —
@@ -126,6 +127,7 @@ private fun GameSummarySection(name: String, summary: GameSummaryUi) {
                     }
                 }
                 CompletionLine(summary)
+                ActivePlayersLine(summary)
                 if (summary.hasHltb) {
                     Spacer(Modifier.height(8.dp))
                     HltbLengths(summary)
@@ -194,6 +196,21 @@ private fun CompletionLine(summary: GameSummaryUi) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 8.dp),
+    )
+}
+
+/**
+ * The game's current Steam concurrent-player count, fetched once when the screen opens. Renders
+ * nothing while the fetch is in flight or if it fails — no zero, no dash, no spinner — the same
+ * omit-rather-than-placeholder treatment [HltbLengths] gives an unresolved length.
+ */
+@Composable
+private fun ActivePlayersLine(summary: GameSummaryUi) {
+    val count = summary.activePlayers ?: return
+    Text(
+        text = "${UiFormat.count(count)} playing now",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 

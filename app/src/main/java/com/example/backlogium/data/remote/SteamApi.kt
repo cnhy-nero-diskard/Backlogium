@@ -1,5 +1,6 @@
 package com.example.backlogium.data.remote
 
+import com.example.backlogium.data.remote.dto.CurrentPlayersResponse
 import com.example.backlogium.data.remote.dto.GameSchemaResponse
 import com.example.backlogium.data.remote.dto.GlobalAchievementPercentagesResponse
 import com.example.backlogium.data.remote.dto.OwnedGamesResponse
@@ -73,4 +74,14 @@ interface SteamApi {
         @Query("key") key: String,
         @Query("vanityurl") vanityUrl: String,
     ): ResolveVanityResponse
+
+    /**
+     * Current concurrent-player count for one app — a fact about the game, not the player, so
+     * unlike every other call on this interface it takes no `key` or steamid. `result != 1`
+     * (an invalid or delisted app id) means no player count is returned, rather than zero.
+     */
+    @GET("ISteamUserStats/GetNumberOfCurrentPlayers/v1/")
+    suspend fun getNumberOfCurrentPlayers(
+        @Query("appid") appId: Long,
+    ): CurrentPlayersResponse
 }

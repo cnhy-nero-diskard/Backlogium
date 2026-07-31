@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /** How the achievement list is ordered. Transient view state — deliberately not persisted. */
@@ -75,6 +76,12 @@ data class GameSummaryUi(
     val achievementsTotal: Int = 0,
     /** XP this game contributed to the player's total, from `LibraryXp` — same value the Library shows. */
     val xpContributed: Int = 0,
+    /**
+     * The game's current Steam concurrent-player count, fetched once when the screen opens.
+     * Null until that fetch resolves, and null forever on failure — never persisted, never a
+     * placeholder zero.
+     */
+    val activePlayers: Int? = null,
 ) {
     /** True when any HLTB length resolved. Gates the whole block: no zeros, no placeholders. */
     val hasHltb: Boolean
@@ -119,6 +126,13 @@ class GameDetailViewModel @Inject constructor(
     /** Transient: a lens on the list, reset every visit rather than persisted as a preference. */
     private val sort = MutableStateFlow(AchievementSort.DATE_ACHIEVED)
 
+    /**
+     * Fetched once per screen visit, not part of [content] — [content] combines only local,
+     * offline-safe flows, and a slow or failed network call must never hold up the rest of the
+     * summary or the achievement list.
+     */
+    private val activePlayers = MutableStateFlow<Int?>(null)
+
     private val content = combine(
         gameRepository.library,
         achievementRepository.observeForGame(appId),
@@ -128,12 +142,12 @@ class GameDetailViewModel @Inject constructor(
         Content(games.firstOrNull { it.appId == appId }, achievements, trackedByGame[appId] ?: 0, config)
     }
 
-    val uiState: StateFlow<GameDetailUiState> = combine(content, sort) { content, sort ->
+    val uiState: StateFlow<GameDetailUiState> = combine(content, sort, activePlayers) { content, sort, activePlayers ->
         val rows = content.achievements.map { it.toUi(content.config) }
         GameDetailUiState(
             loading = false,
             gameName = content.game?.name ?: "",
-            summary = content.toSummary(rows),
+            summary = content.toSummary(rows, activePlayers),
             achievements = rows.sortedWith(sort.comparator()),
             sort = sort,
         )
@@ -142,6 +156,12 @@ class GameDetailViewModel @Inject constructor(
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = GameDetailUiState(),
     )
+
+    init {
+        viewModelScope.launch {
+            activePlayers.value = gameRepository.currentPlayerCount(appId)
+        }
+    }
 
     fun setSort(value: AchievementSort) {
         sort.value = value
@@ -156,7 +176,7 @@ private data class Content(
     val config: RuleConfig,
 )
 
-private fun Content.toSummary(rows: List<AchievementUi>): GameSummaryUi {
+private fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): GameSummaryUi {
     val game = game ?: return GameSummaryUi()
     return GameSummaryUi(
         headerUrl = game.headerUrl,
@@ -181,6 +201,7 @@ private fun Content.toSummary(rows: List<AchievementUi>): GameSummaryUi {
             ),
             config,
         ),
+        activePlayers = activePlayers,
     )
 }
 
