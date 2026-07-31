@@ -22,11 +22,6 @@ import javax.inject.Singleton
  * global unlock percent captured the first sync that observed the achievement unlocked, never
  * the live percent — so tier/XP derived from it cannot drift (add-steam-achievements design).
  * Null when the achievement is still locked or no percent was ever captured.
- *
- * [globalPercent] is the live percent, refreshed every sync and present regardless of unlock
- * state. It is **not** an alternative input to tier/XP — those stay pinned to [rarityPercent] —
- * but it is the only rarity signal a *locked* achievement has, so display and sorting fall back
- * to it for those rows (enhance-game-detail). [unlockedAt] is null while locked.
  */
 data class GameAchievement(
     val apiName: String,
@@ -34,10 +29,6 @@ data class GameAchievement(
     val iconUrl: String?,
     val unlocked: Boolean,
     val rarityPercent: Double?,
-    val globalPercent: Double? = null,
-    val unlockedAt: Long? = null,
-    val description: String? = null,
-    val hidden: Boolean = false,
 )
 
 /**
@@ -159,9 +150,4 @@ private fun Achievement.toDomain() = GameAchievement(
     unlocked = unlocked,
     // The snapshot, never globalPercent: the rarity-drift policy pins tier/XP to first unlock.
     rarityPercent = snapshotPercent,
-    // Carried alongside for display/sorting only — locked rows have no snapshot to show or sort by.
-    globalPercent = globalPercent,
-    unlockedAt = unlockedAt,
-    description = description?.takeIf { it.isNotBlank() },
-    hidden = hidden,
 )

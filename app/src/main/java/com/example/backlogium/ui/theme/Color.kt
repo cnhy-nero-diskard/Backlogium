@@ -52,21 +52,3 @@ val SteelBlueDark = Color(0xFF2F5B7C)
 
 /** Light-scheme counterpart to [GoldOverrun]: burnt amber, legible on the cream surfaces. */
 val GoldOverrunLight = Color(0xFFB4571F)
-
-// --- Achievement rarity halo (enhance-game-detail) -------------------------------
-// A dull-to-vivid ramp for the glow behind an unlocked achievement's icon, evoking Steam's own
-// "shiny" treatment but color-coded per tier. COMMON and UNCOMMON get new, deliberately muted
-// hues; RARE and LEGENDARY reuse [SteelBlue] and [Gold] rather than adding two more tokens, which
-// also keeps gold reserved for the same "milestone" role it already has (streaks, the completed
-// banner) instead of splitting that meaning across two shades of gold.
-/** COMMON halo: a dim slate — barely a glow, so it doesn't compete with rarer tiers nearby. */
-val RarityCommon = Color(0xFF8A93A3)
-val RarityCommonLight = Color(0xFF5B6472)
-
-/** UNCOMMON halo: a soft sage — a step up from COMMON without reaching for a saturated hue. */
-val RarityUncommon = Color(0xFF6FAE7A)
-val RarityUncommonLight = Color(0xFF3F7A4C)
-
-/** EPIC halo: violet — between RARE's cool steel-blue and LEGENDARY's gold on the ramp. */
-val RarityEpic = Color(0xFFA579D6)
-val RarityEpicLight = Color(0xFF6B3FA0)

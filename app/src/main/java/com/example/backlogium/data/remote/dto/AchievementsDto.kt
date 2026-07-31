@@ -63,17 +63,9 @@ data class AvailableGameStatsDto(
     val achievements: List<AchievementSchemaDto> = emptyList(),
 )
 
-/**
- * One achievement's schema entry. [description] is what the achievement asks of the player;
- * Steam withholds it for achievements flagged [hidden] until the player unlocks them, so a blank
- * description on a hidden achievement is expected rather than missing data (enhance-game-detail).
- */
 @Serializable
 data class AchievementSchemaDto(
     val name: String,
     val displayName: String = "",
     val icon: String = "",
-    val description: String = "",
-    /** Steam sends 0/1, not a bool. */
-    val hidden: Int = 0,
 )
