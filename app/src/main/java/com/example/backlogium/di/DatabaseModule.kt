@@ -30,7 +30,6 @@ object DatabaseModule {
                 BacklogiumDatabase.MIGRATION_3_4,
                 BacklogiumDatabase.MIGRATION_4_5,
                 BacklogiumDatabase.MIGRATION_5_6,
-                BacklogiumDatabase.MIGRATION_6_7,
             )
             .fallbackToDestructiveMigration()
             .build()

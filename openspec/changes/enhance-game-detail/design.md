@@ -19,14 +19,6 @@ So a rarity sort cannot use `snapshotPercent` alone: locked achievements would a
 `AchievementSchemaDto` maps `name`, `displayName`, `icon` from a response that also carries
 `description` and a `hidden` flag. Adding fields is additive (unknown keys are ignored).
 
-The three fields above live on the `Achievement` entity, but the ViewModel doesn't read that entity —
-it reads `AchievementRepository.observeForGame`, which returns `GameAchievement`, a collapsed DTO
-exposing only `apiName`, `displayName`, `iconUrl`, `unlocked`, and `rarityPercent` (deliberately just
-the frozen `snapshotPercent`, per the rarity-drift policy). It has no `unlockedAt` and no
-`globalPercent`. Both are needed here — `unlockedAt` for the date sort, `globalPercent` as the
-fallback for locked rows' rarity sort/display — so `GameAchievement` and its mapper need widening
-before sorting/display logic can be written; this is not just a ViewModel-side join.
-
 ## Goals / Non-Goals
 
 **Goals:**
@@ -48,26 +40,11 @@ before sorting/display logic can be written; this is not just a ViewModel-side j
 
 - **Summary content is limited to what the app already holds, joined read-side.** Game art,
   `playtimeForever`, the tracked-vs-imported split (`backfillMinutes` vs summed session minutes), all
-  four HLTB lengths, achievement completion (`unlocked / total`), and the game's XP contribution
-  (same derivation as the Library badge).
-  *Why:* no new network calls and no new persistence.
-
-- **`LibraryGame` gains the two HLTB lengths it currently drops.** `Game.toDomain()`
-  (`GameRepository.kt`) maps only `completionistMinutes` and `mainStoryMinutes` from `HltbData` into
-  `LibraryGame`; `mainExtraMinutes` and `allStylesMinutes` are dropped even though the cached
-  `HltbData` row already carries all four. Extend `LibraryGame` with both fields and carry them
-  through `toDomain()`, rather than having `GameDetailViewModel` read `HltbRepository`/`HltbData`
-  directly.
-  *Why:* `gameRepository.library` is already the one join every screen reads for HLTB data; adding a
-  second, game-detail-only read path for two of the four lengths would leave two places that can
-  drift. `LibraryScreen` doesn't need the extra two fields today but carrying them costs nothing.
-
-- **The XP contribution reuses `LibraryXp.contribution(input: GameXpInput, cfg: RuleConfig): Int`
-  (`domain/LibraryXp.kt`) directly — it already exists from `enhance-library`, nothing to extract.**
-  `GameDetailViewModel` builds one `GameXpInput` (tracked + backfill minutes, completionist minutes,
-  unlocked rarity snapshots) for the current game and calls it, the same way `LibraryViewModel` does.
-  *Why:* `enhance-library` already shipped the shared derivation; the risk this change originally
-  flagged (writing the formula twice) doesn't apply — importing is the whole task.
+  four HLTB lengths from the cached row, achievement completion (`unlocked / total`), and the game's
+  XP contribution (same derivation as the Library badge).
+  *Why:* no new network calls and no new persistence. *Note:* the XP contribution here must use the
+  identical formula as `enhance-library`'s badge — if both changes ship, extract one shared
+  derivation rather than writing it twice.
 
 - **Rarity sort uses `snapshotPercent` when present, falling back to `globalPercent`.** Unlocked
   achievements sort by the percent that actually determined their XP; locked ones sort by the live
@@ -138,10 +115,8 @@ ALTER TABLE achievements ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
 No backfill. Existing rows render name-only until re-fetched. `hidden` defaults to 0 (not hidden),
 which is the correct assumption for already-visible achievements.
 
-Current schema version is 6 (`MIGRATION_5_6`, `add-backup-restore`). `add-steam-profile-header`
-already shipped at v4→5 — there is nothing pending to combine with. No other open proposal has a
-schema change (`add-rarity-standing` and `hltb-inline-picker` both say explicitly they don't). This
-change is `MIGRATION_6_7`, targeting version 7, on its own.
+> Combine with `add-steam-profile-header`'s columns into one version bump if both changes ship
+> together — those are the only other pending column additions.
 
 ## Open Questions
 

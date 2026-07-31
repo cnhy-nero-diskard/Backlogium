@@ -29,10 +29,8 @@ enum class HltbMatchState {
  * A library game as consumers see it: the Steam facts they render plus the resolved
  * HowLongToBeat state, joined here so no consumer has to read the HLTB cache itself.
  *
- * The four HLTB lengths are null until a match resolves; [hltbMatchState] is null when no
- * lookup has been stored for this game yet. All four are carried (not just the two the Library
- * itself renders) so the game detail screen can present the full set from this one join rather
- * than opening a second read path into the HLTB cache — see enhance-game-detail.
+ * [completionistMinutes] is null until a match resolves; [hltbMatchState] is null when no
+ * lookup has been stored for this game yet.
  *
  * [playtime2Weeks] and [backfillMinutes] exist on the `Game` entity and were previously dropped
  * here; they are carried through because the Library sorts by recent activity and derives each
@@ -52,8 +50,6 @@ data class LibraryGame(
     val backfillMinutes: Int = 0,
     val completionistMinutes: Int? = null,
     val mainStoryMinutes: Int? = null,
-    val mainExtraMinutes: Int? = null,
-    val allStylesMinutes: Int? = null,
     val hltbMatchState: HltbMatchState? = null,
     /** Tagged as a "Focus" game — drives History's per-day Focus-minutes breakdown. */
     val isGoal: Boolean = false,
@@ -105,8 +101,6 @@ private fun Game.toDomain(hltb: HltbData?) = LibraryGame(
     backfillMinutes = backfillMinutes,
     completionistMinutes = hltb?.completionistMinutes,
     mainStoryMinutes = hltb?.mainStoryMinutes,
-    mainExtraMinutes = hltb?.mainExtraMinutes,
-    allStylesMinutes = hltb?.allStylesMinutes,
     hltbMatchState = hltb?.matchStatus?.toDomain(),
     isGoal = isGoal,
 )
