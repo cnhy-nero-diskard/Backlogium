@@ -4,11 +4,15 @@ import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
+import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamIconMapper
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** Steam's success code for `GetNumberOfCurrentPlayers`; any other value means no count. */
+private const val CURRENT_PLAYERS_SUCCESS = 1
 
 /**
  * Outcome of matching a game to HowLongToBeat, as consumers above `data/` see it. Mirrors the
@@ -64,10 +68,24 @@ data class LibraryGame(
 class GameRepository @Inject constructor(
     private val gameDao: GameDao,
     private val hltbRepository: HltbRepository,
+    private val steamApi: SteamApi,
 ) {
     val library: Flow<List<LibraryGame>> = gameDao.observeLibrary().withHltb()
     val goalGames: Flow<List<LibraryGame>> = gameDao.observeGoalGames().withHltb()
     val backlog: Flow<List<LibraryGame>> = gameDao.observeBacklog().withHltb()
+
+    /**
+     * The game's current Steam concurrent-player count, or `null` on any failure — network error,
+     * a non-success `result` (an invalid or delisted app id), or a missing count in an otherwise
+     * successful response. Never persisted: this is a live fact, fetched fresh by the caller each
+     * time it's needed, the same posture [LiveStatusRepository] takes with the player's own
+     * presence.
+     */
+    suspend fun currentPlayerCount(appId: Long): Int? = runCatching {
+        steamApi.getNumberOfCurrentPlayers(appId).response
+    }.getOrNull()
+        ?.takeIf { it.result == CURRENT_PLAYERS_SUCCESS }
+        ?.playerCount
 
     /**
      * Mark a game as a goal. No user-entered target is required (restyle-fixes): the manual

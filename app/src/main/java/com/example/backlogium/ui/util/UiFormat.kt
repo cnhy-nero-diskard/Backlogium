@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.util
 
+import java.text.NumberFormat
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -48,4 +49,7 @@ object UiFormat {
      */
     fun approxTime(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
         "~${timeOfDay(epochMillis, zone)}"
+
+    /** Locale-grouped integer, e.g. "1,206,380" — for counts large enough that digit-grouping matters. */
+    fun count(value: Int): String = NumberFormat.getIntegerInstance().format(value)
 }
