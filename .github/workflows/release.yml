@@ -8,7 +8,9 @@ on:
 jobs:
   # Decide whether this tag qualifies for a release:
   #   1. the tagged commit must be contained in the master branch, and
-  #   2. the tag must be a minor or major release (patch component == 0).
+  #   2. the tag must be a minor or major release (patch component == 0),
+  #      UNLESS the tag message carries a "[force-release]" marker
+  #      (set by `bump-tag.ps1 -Force` / `bump-tag.sh --force`).
   # A tag push carries no branch, so we resolve branch membership from history.
   gate:
     runs-on: ubuntu-latest
@@ -33,7 +35,15 @@ jobs:
           fi
           PATCH="${BASH_REMATCH[3]}"
 
-          if [[ "$PATCH" != "0" ]]; then
+          TAG_MESSAGE="$(git for-each-ref "refs/tags/$TAG" --format='%(contents)')"
+          if [[ "$TAG_MESSAGE" == *"[force-release]"* ]]; then
+            echo "::notice::'$TAG' carries a [force-release] marker — bypassing the patch-release gate."
+            FORCED=true
+          else
+            FORCED=false
+          fi
+
+          if [[ "$PATCH" != "0" && "$FORCED" != "true" ]]; then
             echo "::notice::'$TAG' is a patch release (patch=$PATCH) — skipping release."
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             exit 0

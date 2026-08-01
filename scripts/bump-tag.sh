@@ -9,12 +9,19 @@
 #   ./scripts/bump-tag.sh --major          # v1.2.3 -> v2.0.0
 #   ./scripts/bump-tag.sh --dry-run        # show the next tag without creating/pushing
 #   ./scripts/bump-tag.sh -m "Custom note"
+#   ./scripts/bump-tag.sh --force          # patch bump that also triggers a release build
+#
+# --force embeds a "[force-release]" marker in the annotated tag message.
+# release.yml's gate normally skips patch releases (patch != 0); it checks
+# for this marker and builds anyway when present. No effect on major/minor
+# bumps, which already trigger a release.
 
 set -euo pipefail
 
 bump="patch"
 message=""
 dry_run=false
+force=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -23,6 +30,7 @@ while [[ $# -gt 0 ]]; do
         --patch) bump="patch"; shift ;;
         -m|--message) message="$2"; shift 2 ;;
         --dry-run) dry_run=true; shift ;;
+        --force) force=true; shift ;;
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -95,6 +103,10 @@ fi
 
 if [[ -z "$message" ]]; then
     message="Release $new_tag"
+fi
+
+if $force && [[ "$message" != *"[force-release]"* ]]; then
+    message="$message [force-release]"
 fi
 
 git tag -a "$new_tag" -m "$message"
