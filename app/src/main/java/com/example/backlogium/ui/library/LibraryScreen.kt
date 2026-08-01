@@ -285,8 +285,10 @@ private fun SearchField(
         value = query,
         onValueChange = onQueryChange,
         modifier = modifier
+            .height(52.dp)
             .padding(bottom = 8.dp),
         singleLine = true,
+        shape = RoundedCornerShape(20.dp),
         label = { Text("Search games") },
         leadingIcon = {
             Icon(
