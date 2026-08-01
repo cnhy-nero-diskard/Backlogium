@@ -43,18 +43,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import com.airbnb.lottie.compose.LottieAnimation
 import com.airbnb.lottie.compose.LottieCompositionSpec
@@ -145,6 +148,7 @@ fun HomeScreen(
             NowPlayingPanel(
                 name = nowPlayingName,
                 iconUrl = state.nowPlayingIconUrl,
+                headerUrl = state.nowPlayingHeaderUrl,
                 sessionStartedAt = state.nowPlayingSessionStartedAt,
             )
         }
@@ -348,7 +352,12 @@ private fun InnerHomeContent(
  * the panel's presence still carry that meaning when reduced-motion renders the sheen statically.
  */
 @Composable
-private fun NowPlayingPanel(name: String, iconUrl: String?, sessionStartedAt: Long?) {
+private fun NowPlayingPanel(
+    name: String,
+    iconUrl: String?,
+    headerUrl: String?,
+    sessionStartedAt: Long?,
+) {
     val elapsedMillis by rememberElapsedMillis(sessionStartedAt)
     val sheenCenter = rememberNowPlayingSheenCenter()
     val base = MaterialTheme.colorScheme.tertiaryContainer
@@ -417,6 +426,15 @@ private fun NowPlayingPanel(name: String, iconUrl: String?, sessionStartedAt: Lo
                 contentDescription = "Now playing $name, playing for $elapsedLabel"
             },
     ) {
+        // The running game's own store art, filling the space to the right of the text. Reuses the
+        // Library row's backdrop treatment (faint, right-anchored, alpha-masked) rather than a
+        // Steam logo: Valve's branding guidelines require the logo to stand alone and not be
+        // combined with other graphics or text, and a large brand watermark would also imply an
+        // affiliation the Web API terms forbid. The game's art says more here anyway.
+        if (headerUrl != null) {
+            NowPlayingArtBackdrop(headerUrl = headerUrl, modifier = Modifier.matchParentSize())
+        }
+
         Row(
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -462,6 +480,61 @@ private fun NowPlayingPanel(name: String, iconUrl: String?, sessionStartedAt: Lo
         }
     }
 }
+
+/**
+ * The running game's store header art as a faint panel backdrop, anchored to the right edge.
+ *
+ * Masked on **both** axes inside one offscreen layer (`DstIn` twice, so the two alpha ramps
+ * multiply), which is what makes it usable here: the horizontal ramp dissolves the art before it
+ * reaches the game name on the left, and the vertical ramp keeps it clear of the panel's top edge —
+ * without that second ramp the art would start abruptly against the transparent profile header and
+ * put the crease straight back. The same `DstIn` idiom as the Library row's `GameBackdrop`, which
+ * needs only the horizontal ramp since its card has no shared edge to protect.
+ *
+ * Games with no art on the CDN render nothing at all; the panel is designed to look right without
+ * it, so no placeholder is drawn.
+ */
+@Composable
+private fun NowPlayingArtBackdrop(headerUrl: String, modifier: Modifier = Modifier) {
+    AsyncImage(
+        model = headerUrl,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        alignment = Alignment.CenterEnd,
+        modifier = modifier
+            .graphicsLayer {
+                alpha = ART_BACKDROP_ALPHA
+                // Required for DstIn: the masks composite against this layer, not the screen.
+                compositingStrategy = CompositingStrategy.Offscreen
+            }
+            .drawWithContent {
+                drawContent()
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        0f to Color.Transparent,
+                        ART_BACKDROP_FADE_END to Color.Black,
+                    ),
+                    blendMode = BlendMode.DstIn,
+                )
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        ART_BACKDROP_TOP_FADE_END to Color.Black,
+                    ),
+                    blendMode = BlendMode.DstIn,
+                )
+            },
+    )
+}
+
+/** Faint enough that the game name and timer keep their contrast over the brightest header art. */
+private const val ART_BACKDROP_ALPHA = 0.20f
+
+/** Fraction of the panel width at which the art reaches full opacity, fading out left of it. */
+private const val ART_BACKDROP_FADE_END = 0.95f
+
+/** Fraction of the panel height over which the art fades in, keeping its top edge seamless. */
+private const val ART_BACKDROP_TOP_FADE_END = 0.5f
 
 /** Elapsed time since [startedAt], ticking every second with no network involved. Zero when null. */
 @Composable

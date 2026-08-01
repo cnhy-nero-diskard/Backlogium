@@ -112,7 +112,21 @@ full width.
 
    The steel-blue lane is deliberately not the gold "primary container" — gold stays reserved for
    milestone moments. Over that, a slow flowing sheen sweeps horizontally so the panel reads as
-   *live* rather than merely colored. Contents: a 64dp game icon (themed controller fallback), the
+   *live* rather than merely colored, and the running game's **store header art** fills the space
+   right of the text as a faint (20% alpha) backdrop — the Library row's `GameBackdrop` treatment,
+   but alpha-masked on *both* axes (two multiplied `DstIn` ramps): horizontally so it dissolves
+   before the game name, vertically so it stays clear of the panel's top edge, which a hard-starting
+   image would otherwise turn back into a crease. Derived from the appId
+   (`SteamIconMapper.headerUrl`), so nothing extra is fetched or stored; a game whose art 404s — or
+   whose running-game id didn't parse — simply renders no backdrop and no placeholder.
+
+   > **Not a Steam logo, deliberately.** A faint Steam brand mark was considered for this backdrop
+   > and rejected: Valve's [branding guidelines](https://partner.steamgames.com/doc/marketing/branding)
+   > require the logo to "stand alone" and not be combined with other graphics, words, or design
+   > features, and the [Web API Terms of Use](https://steamcommunity.com/dev/apiterms) forbid
+   > presenting Steam data so the app appears endorsed by or affiliated with Valve — which a large
+   > decorative watermark would imply. The small `BrandSteam` glyph labelling the Settings "Steam
+   > account" row is a different, functional use and stays. Contents: a 64dp game icon (themed controller fallback), the
    running game's name (bold, headline style), and a "Playing for {N}" caption ticking every second
    from a persisted session-start timestamp (client-side, no network) — formatted by
    `UiFormat.liveElapsed` (`"23s"` / `"5m 23s"` / `"2h 35m"`: seconds below the hour mark, since a

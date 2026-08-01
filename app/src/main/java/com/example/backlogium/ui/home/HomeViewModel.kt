@@ -2,6 +2,7 @@ package com.example.backlogium.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.LiveStatusRepository
@@ -38,6 +39,12 @@ data class HomeUiState(
     val isInGame: Boolean = false,
     val nowPlayingName: String? = null,
     val nowPlayingIconUrl: String? = null,
+    /**
+     * Store header art for the running game, drawn as a faint backdrop in the now-playing panel.
+     * Null when Steam's running-game id didn't parse — the panel then renders without a backdrop,
+     * exactly as a Library row does for a game whose header art 404s.
+     */
+    val nowPlayingHeaderUrl: String? = null,
     /** When the current session was first observed, for the card's elapsed-time ticker. */
     val nowPlayingSessionStartedAt: Long? = null,
 ) {
@@ -106,6 +113,7 @@ class HomeViewModel @Inject constructor(
                 isInGame = true,
                 nowPlayingName = nowPlaying.name,
                 nowPlayingIconUrl = nowPlaying.iconUrl,
+                nowPlayingHeaderUrl = nowPlaying.gameId?.let(SteamIconMapper::headerUrl),
                 nowPlayingSessionStartedAt = live.sessionStartedAt,
             )
             NowPlaying.NotPlaying -> state
