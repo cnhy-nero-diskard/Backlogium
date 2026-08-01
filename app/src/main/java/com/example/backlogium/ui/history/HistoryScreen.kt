@@ -10,11 +10,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -28,7 +31,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.material3.CardDefaults
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -111,7 +116,7 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
     }
 }
 
-/** One day's rows: its header, then (if expanded) its games and — per expanded game — its sessions. */
+/** One day's rows: its header, then (if expanded) a single connected block of its games. */
 private fun LazyListScope.dayItems(
     day: HistoryDayGroup,
     expandedDays: Set<String>,
@@ -131,25 +136,15 @@ private fun LazyListScope.dayItems(
         )
     }
 
-    if (!dayExpanded) return
+    if (!dayExpanded || !expandable) return
 
-    day.games.forEach { game ->
-        val gameKey = day.date to game.appId
-        val gameExpanded = gameKey in expandedGames
-
-        item(key = "game-${day.date}-${game.appId}") {
-            GameGroupRow(
-                game = game,
-                expanded = gameExpanded,
-                onClick = { onToggleGame(day.date, game.appId) },
-            )
-        }
-
-        if (gameExpanded) {
-            item(key = "sessions-${day.date}-${game.appId}") {
-                SessionsPanel(game.sessions)
-            }
-        }
+    item(key = "games-${day.date}") {
+        DayGamesBlock(
+            date = day.date,
+            games = day.games,
+            expandedGames = expandedGames,
+            onToggleGame = onToggleGame,
+        )
     }
 }
 
@@ -170,10 +165,12 @@ private fun DayHeaderRow(
     expandable: Boolean,
     onClick: () -> Unit,
 ) {
+    val connected = expanded && expandable
     Card(
+        shape = dayCardShape(topOnly = connected),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
+            .padding(top = 4.dp, bottom = if (connected) 0.dp else 4.dp)
             .let { if (expandable) it.clickable(onClick = onClick) else it },
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
@@ -256,97 +253,152 @@ private fun AchievementThumbnail(iconUrl: String?, modifier: Modifier = Modifier
     )
 }
 
-/** Rounded on every corner while collapsed; flat on the bottom while expanded, so [SessionsPanel] reads as this card's own dropdown content rather than a separate, disconnected row. */
-private val gameCardCornerRadius = 12.dp
-private fun gameCardShape(expanded: Boolean): RoundedCornerShape = if (expanded) {
-    RoundedCornerShape(
-        topStart = gameCardCornerRadius,
-        topEnd = gameCardCornerRadius,
-        bottomStart = 0.dp,
-        bottomEnd = 0.dp,
-    )
-} else {
-    RoundedCornerShape(gameCardCornerRadius)
-}
+/** Shared corner radius for [DayHeaderRow] and [DayGamesBlock]. */
+private val dayCardCornerRadius = 12.dp
 
+/**
+ * Rounded on every corner by default. Pass `topOnly = true` for the header when its games block is
+ * showing beneath it (flat bottom), and `bottomOnly = true` for the games block itself (flat top),
+ * so the header and the block read as one continuous card rather than two stacked ones.
+ */
+private fun dayCardShape(topOnly: Boolean = false, bottomOnly: Boolean = false): RoundedCornerShape =
+    RoundedCornerShape(
+        topStart = if (bottomOnly) 0.dp else dayCardCornerRadius,
+        topEnd = if (bottomOnly) 0.dp else dayCardCornerRadius,
+        bottomStart = if (topOnly) 0.dp else dayCardCornerRadius,
+        bottomEnd = if (topOnly) 0.dp else dayCardCornerRadius,
+    )
+
+/** Width of the left-hand gutter that holds the timeline line and each game's dot. */
+private val historyTimelineGutterWidth = 32.dp
+
+/**
+ * All of a day's games as one continuous card, directly beneath [DayHeaderRow] (flat top meeting
+ * the header's flat bottom). A single vertical line runs down the left gutter behind every game
+ * row — and past a game's sessions when it's expanded — so the whole block visibly reads as "all
+ * of this belongs to this one day," rather than a stack of separate, only-slightly-indented cards.
+ */
 @Composable
-private fun GameGroupRow(
-    game: HistoryGameGroup,
-    expanded: Boolean,
-    onClick: () -> Unit,
+private fun DayGamesBlock(
+    date: String,
+    games: List<HistoryGameGroup>,
+    expandedGames: Set<Pair<String, Long>>,
+    onToggleGame: (String, Long) -> Unit,
 ) {
+    val lineColor = MaterialTheme.colorScheme.outlineVariant
     Card(
-        shape = gameCardShape(expanded),
+        shape = dayCardShape(bottomOnly = true),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, top = 4.dp, bottom = if (expanded) 0.dp else 4.dp)
-            .clickable(onClick = onClick),
+            .padding(bottom = 4.dp),
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+                .drawBehind {
+                    val lineX = historyTimelineGutterWidth.toPx() / 2f
+                    drawLine(
+                        color = lineColor,
+                        start = Offset(lineX, 0f),
+                        end = Offset(lineX, size.height),
+                        strokeWidth = 2.dp.toPx(),
+                    )
+                }
+                .padding(vertical = 6.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f),
-            ) {
-                GameIcon(game.iconUrl)
-                Text(
-                    text = game.name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(start = 12.dp, end = 8.dp),
+            games.forEachIndexed { index, game ->
+                val gameKey = date to game.appId
+                val gameExpanded = gameKey in expandedGames
+
+                if (index > 0) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = historyTimelineGutterWidth),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                    )
+                }
+
+                GameRow(
+                    game = game,
+                    expanded = gameExpanded,
+                    dotColor = lineColor,
+                    onClick = { onToggleGame(date, game.appId) },
                 )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = UiFormat.minutes(game.minutesPlayed),
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    modifier = Modifier.padding(end = 8.dp),
-                )
-                Icon(
-                    imageVector = if (expanded) TablerIcons.ChevronUp else TablerIcons.ChevronDown,
-                    contentDescription = if (expanded) "Collapse" else "Expand",
-                )
+
+                if (gameExpanded) {
+                    Column(
+                        modifier = Modifier
+                            .padding(
+                                start = historyTimelineGutterWidth + 8.dp,
+                                end = 12.dp,
+                                bottom = 10.dp,
+                            ),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        game.sessions.forEach { session ->
+                            Text(
+                                text = sessionLabel(session),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
             }
         }
     }
 }
 
-/**
- * A game's sessions for the day, rendered as one card directly beneath [GameGroupRow] — same
- * horizontal margin, flat top meeting the game row's flat bottom, and a distinct tonal surface —
- * so the block reads as that row's own expanded content rather than an unrelated floating list.
- */
+/** One game's row inside [DayGamesBlock]: a dot on the timeline, its icon, name, playtime, and chevron. */
 @Composable
-private fun SessionsPanel(sessions: List<HistorySessionUi>) {
-    Card(
-        shape = RoundedCornerShape(
-            topStart = 0.dp,
-            topEnd = 0.dp,
-            bottomStart = gameCardCornerRadius,
-            bottomEnd = gameCardCornerRadius,
-        ),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+private fun GameRow(
+    game: HistoryGameGroup,
+    expanded: Boolean,
+    dotColor: Color,
+    onClick: () -> Unit,
+) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, bottom = 4.dp),
+            .clickable(onClick = onClick)
+            .padding(top = 10.dp, bottom = 10.dp, end = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(
-            modifier = Modifier.padding(start = 22.dp, end = 10.dp, top = 6.dp, bottom = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f),
         ) {
-            sessions.forEach { session ->
-                Text(
-                    text = sessionLabel(session),
-                    style = MaterialTheme.typography.bodySmall,
+            Box(
+                modifier = Modifier.width(historyTimelineGutterWidth),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(dotColor),
                 )
             }
+            GameIcon(game.iconUrl)
+            Text(
+                text = game.name,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 12.dp, end = 8.dp),
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = UiFormat.minutes(game.minutesPlayed),
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                modifier = Modifier.padding(end = 8.dp),
+            )
+            Icon(
+                imageVector = if (expanded) TablerIcons.ChevronUp else TablerIcons.ChevronDown,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+            )
         }
     }
 }
