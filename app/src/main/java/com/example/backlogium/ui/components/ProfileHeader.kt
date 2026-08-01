@@ -70,7 +70,13 @@ fun ProfileHeader(viewModel: ProfileHeaderViewModel = hiltViewModel(), transpare
 
     if (!state.visible) return
 
-    Surface(color = if (transparent) Color.Transparent else MaterialTheme.colorScheme.surface) {
+    // contentColor is spelled out rather than left to Surface's default: Surface only infers it
+    // for known scheme colors, and Color.Transparent isn't one — left implicit, every text/icon
+    // in the strip would silently fall back to plain black instead of the theme's onSurface.
+    Surface(
+        color = if (transparent) Color.Transparent else MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
