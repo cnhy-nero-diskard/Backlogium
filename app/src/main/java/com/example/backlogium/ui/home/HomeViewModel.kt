@@ -11,14 +11,12 @@ import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
-import com.example.backlogium.work.PresenceServiceStarter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class HomeUiState(
@@ -58,20 +56,8 @@ class HomeViewModel @Inject constructor(
     private val liveStatusRepository: LiveStatusRepository,
     private val credentials: CredentialsRepository,
     private val settings: SettingsRepository,
-    private val presenceServiceStarter: PresenceServiceStarter,
     private val time: TimeProvider,
 ) : ViewModel() {
-
-    init {
-        // Start-on-open detection path: if the player is already in a game when Home is first
-        // observed, start the service now rather than waiting for the next periodic sync (up to
-        // 15 minutes away). A one-off check — PresenceService owns the recurring poll from here.
-        viewModelScope.launch {
-            if (liveStatusRepository.checkNow().nowPlaying is NowPlaying.InGame) {
-                presenceServiceStarter.start()
-            }
-        }
-    }
 
     private val baseState: Flow<HomeUiState> = combine(
         profileRepository.profile,
@@ -101,9 +87,10 @@ class HomeViewModel @Inject constructor(
         )
     }
 
-    // A plain observer: PresenceService (or the start-on-open check above) owns the poll now, so
-    // collecting liveStatus here never starts or extends it — Home just reflects whatever the
-    // last poll found, degraded (no live card) but not broken while nothing is polling.
+    // A plain observer: PresenceService owns the poll, and BacklogiumApp's foreground observer owns
+    // the one-off re-check, so collecting liveStatus here never starts or extends anything — Home
+    // just reflects whatever the last poll found, degraded (no live card) but not broken while
+    // nothing is polling.
     val uiState: StateFlow<HomeUiState> = combine(
         baseState,
         liveStatusRepository.liveStatus,

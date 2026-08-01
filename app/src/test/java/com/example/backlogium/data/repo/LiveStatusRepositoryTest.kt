@@ -39,9 +39,10 @@ import java.time.ZoneId
 
 /**
  * Covers the behavior this rework adds on top of the plain poll-and-emit: that presence
- * transitions (none -> in game -> same game -> different game -> not in game) drive the
- * persisted session-start writes correctly, that a failed fetch retains the last emitted value
- * rather than clearing it, and that stopping the poll clears both in-memory and persisted state.
+ * transitions (none -> in game -> same game -> different game -> not in game) drive the persisted
+ * session-start writes correctly, that a failed fetch retains the last emitted value rather than
+ * clearing it, that stopping the poll leaves both in-memory and persisted state alone, and that a
+ * recorded session is rehydrated at construction and reconciled by the first observation.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class LiveStatusRepositoryTest {
@@ -103,7 +104,7 @@ class LiveStatusRepositoryTest {
     }
 
     @Test
-    fun stopPolling_clearsInMemoryAndPersistedSession() = runTest {
+    fun stopPolling_retainsInMemoryAndPersistedSession() = runTest {
         val steamApi = FakeSteamApi()
         val settings = FakeSettingsRepository()
         val repo = repository(
@@ -114,17 +115,163 @@ class LiveStatusRepositoryTest {
         )
 
         steamApi.setInGame(gameId = 10L, name = "Portal")
-        repo.checkNow()
+        val observed = repo.checkNow()
         assertEquals(10L, settings.session.value.appId)
 
         repo.stopPolling()
-        // The write is launched on the application scope, not awaited by stopPolling() itself.
         advanceUntilIdle()
-        assertEquals(LiveStatus(), repo.liveStatus.value)
-        assertEquals(LiveSessionState(), settings.session.value)
+
+        // stopPolling runs from PresenceService.onDestroy — process death and Android 15's
+        // onTimeout as much as the game ending — so it must say nothing about whether the player
+        // is still playing. Clearing here would reset a live elapsed timer to zero.
+        assertFalse(repo.isPolling)
+        assertEquals(observed, repo.liveStatus.value)
+        assertEquals(LiveSessionState(appId = 10L, startedAt = 1_000L), settings.session.value)
 
         // Safe to call again once already stopped.
         repo.stopPolling()
+    }
+
+    @Test
+    fun construction_withARecordedSession_seedsInGameBeforeAnyFetch() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        settings.session.value = LiveSessionState(appId = 10L, startedAt = 1_000L)
+        val games = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal"))
+
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = FakeTimeProvider(31_000L),
+            scope = this,
+            gameDao = games,
+        )
+        runCurrent()
+
+        // The panel is populated from the recorded session alone — no round-trip has happened.
+        assertEquals(0, steamApi.callCount)
+        val status = repo.liveStatus.value
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            status.nowPlaying,
+        )
+        assertEquals(LivePresence.IN_GAME, status.presence)
+        assertEquals(1_000L, status.sessionStartedAt)
+    }
+
+    @Test
+    fun construction_withNoRecordedSession_seedsNothing() = runTest {
+        val repo = repository(
+            steamApi = FakeSteamApi(),
+            settings = FakeSettingsRepository(),
+            time = FakeTimeProvider(1_000L),
+            scope = this,
+        )
+        runCurrent()
+
+        assertEquals(LiveStatus(), repo.liveStatus.value)
+    }
+
+    @Test
+    fun construction_withAnUnresolvedRecordedAppId_seedsNothing() = runTest {
+        val settings = FakeSettingsRepository()
+        // Steam's gameid didn't parse when this session was recorded, so there is no game to name.
+        settings.session.value = LiveSessionState(appId = null, startedAt = 1_000L)
+
+        val repo = repository(
+            steamApi = FakeSteamApi(),
+            settings = settings,
+            time = FakeTimeProvider(31_000L),
+            scope = this,
+        )
+        runCurrent()
+
+        assertEquals(LiveStatus(), repo.liveStatus.value)
+    }
+
+    @Test
+    fun firstCheckNowAfterRehydration_sameGame_keepsTheRecordedStart() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        settings.session.value = LiveSessionState(appId = 10L, startedAt = 1_000L)
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = FakeTimeProvider(31_000L),
+            scope = this,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal")),
+        )
+        runCurrent()
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        val status = repo.checkNow()
+
+        assertEquals(10L, (status.nowPlaying as NowPlaying.InGame).gameId)
+        assertEquals(1_000L, status.sessionStartedAt)
+        assertEquals(LiveSessionState(appId = 10L, startedAt = 1_000L), settings.session.value)
+    }
+
+    @Test
+    fun firstCheckNowAfterRehydration_differentGame_restartsTheSession() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        settings.session.value = LiveSessionState(appId = 10L, startedAt = 1_000L)
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = FakeTimeProvider(31_000L),
+            scope = this,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal")),
+        )
+        runCurrent()
+
+        steamApi.setInGame(gameId = 20L, name = "Hades")
+        val status = repo.checkNow()
+
+        assertEquals(20L, (status.nowPlaying as NowPlaying.InGame).gameId)
+        assertEquals(31_000L, status.sessionStartedAt)
+        assertEquals(LiveSessionState(appId = 20L, startedAt = 31_000L), settings.session.value)
+    }
+
+    @Test
+    fun firstCheckNowAfterRehydration_notPlaying_clearsTheSession() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        settings.session.value = LiveSessionState(appId = 10L, startedAt = 1_000L)
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = FakeTimeProvider(31_000L),
+            scope = this,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal")),
+        )
+        runCurrent()
+
+        steamApi.setNotInGame()
+        val status = repo.checkNow()
+
+        assertEquals(NowPlaying.NotPlaying, status.nowPlaying)
+        assertNull(status.sessionStartedAt)
+        assertEquals(LiveSessionState(), settings.session.value)
+    }
+
+    @Test
+    fun failedFetchOnColdStart_doesNotClearTheRecordedSession() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        settings.session.value = LiveSessionState(appId = 10L, startedAt = 1_000L)
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = FakeTimeProvider(31_000L),
+            scope = this,
+        )
+        // Deliberately no runCurrent(): rehydration hasn't landed, so there is no last emitted
+        // state to fall back on. A failure here must still not read as "the game ended".
+        steamApi.throwOnNextCall = true
+        repo.checkNow()
+
+        assertEquals(LiveSessionState(appId = 10L, startedAt = 1_000L), settings.session.value)
     }
 
     @Test
@@ -154,14 +301,25 @@ class LiveStatusRepositoryTest {
         assertFalse(repo.isPolling)
     }
 
+    /** Only the three fields the live path reads matter; the playtime columns are filler. */
+    private fun game(appId: Long, name: String, iconUrl: String) = Game(
+        appId = appId,
+        name = name,
+        iconUrl = iconUrl,
+        playtimeForever = 0,
+        playtime2Weeks = 0,
+        lastPlaytime = 0,
+    )
+
     private fun repository(
         steamApi: FakeSteamApi,
         settings: FakeSettingsRepository,
         time: FakeTimeProvider,
         scope: CoroutineScope,
+        gameDao: GameDao = FakeGameDao(),
     ) = LiveStatusRepository(
         steamApi = steamApi,
-        gameDao = FakeGameDao(),
+        gameDao = gameDao,
         profileDao = FakePlayerProfileDao(),
         credentials = FakeCredentialsProvider(),
         settings = settings,
@@ -174,8 +332,11 @@ class LiveStatusRepositoryTest {
             CredentialsState.Configured(apiKey = "key", steamId = "1")
     }
 
-    /** Only [getById] is exercised (icon lookup); every other member is unused by this test. */
-    private class FakeGameDao : GameDao {
+    /**
+     * Only [getById] is exercised — the icon lookup on a live poll, and the name/icon lookup when
+     * a recorded session is rehydrated. Every other member is unused by this test.
+     */
+    private class FakeGameDao(private vararg val games: Game) : GameDao {
         override suspend fun upsertAll(games: List<Game>) = error("not used")
         override suspend fun upsert(game: Game) = error("not used")
         override fun observeLibrary(): Flow<List<Game>> = error("not used")
@@ -183,7 +344,7 @@ class LiveStatusRepositoryTest {
         override fun observeBacklog(): Flow<List<Game>> = error("not used")
         override suspend fun allAppIds(): List<Long> = error("not used")
         override suspend fun getAll(): List<Game> = error("not used")
-        override suspend fun getById(appId: Long): Game? = null
+        override suspend fun getById(appId: Long): Game? = games.firstOrNull { it.appId == appId }
         override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = error("not used")
         override suspend fun setGoalFlag(appId: Long, isGoal: Boolean) = error("not used")
         override suspend fun count(): Int = error("not used")
@@ -264,6 +425,9 @@ class LiveStatusRepositoryTest {
         override suspend fun clearLiveSession() {
             session.value = LiveSessionState()
         }
+
+        override val notificationPermissionRequested: Flow<Boolean> = MutableStateFlow(true)
+        override suspend fun setNotificationPermissionRequested() = Unit
 
         override val ruleConfig: Flow<RuleConfig> = MutableStateFlow(RuleConfig())
         override suspend fun setRuleConfig(config: RuleConfig) = error("not used")

@@ -9,7 +9,8 @@ import javax.inject.Singleton
 
 /**
  * Starts [PresenceService]. A thin wrapper so the two detection paths — [SteamSyncWorker]'s
- * periodic poll, and Home on open — don't each construct the service [Intent] themselves.
+ * periodic poll, and the app-foreground re-check in
+ * [com.example.backlogium.BacklogiumApp] — don't each construct the service [Intent] themselves.
  *
  * Safe to call while the service is already running: Android re-delivers to the same instance
  * (`onStartCommand`) rather than creating another, so this never stacks instances.

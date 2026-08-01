@@ -70,10 +70,12 @@ data class LiveStatus(
  * ends) rather than to whoever happens to be observing — merely collecting [liveStatus] never
  * starts or extends polling, so Home and the Library remain plain, side-effect-free observers.
  *
- * Presence and [NowPlaying] are never persisted. The one exception is the current session's start
- * timestamp (see [LiveSessionTracker]), needed so an elapsed-time display survives an app restart.
- * This repository also opportunistically writes the player's identity when a poll observes a
- * newer persona name or avatar than the last sync stored.
+ * Presence and [NowPlaying] are never persisted. The one exception is the current session's
+ * (appId, startedAt) pair (see [LiveSessionTracker]), needed so an elapsed-time display survives an
+ * app restart — and from which an in-game state is reconstructed at construction, so a cold start
+ * mid-session shows the panel immediately rather than after a network round-trip. This repository
+ * also opportunistically writes the player's identity when a poll observes a newer persona name or
+ * avatar than the last sync stored.
  */
 @Singleton
 class LiveStatusRepository @Inject constructor(
@@ -95,6 +97,43 @@ class LiveStatusRepository @Inject constructor(
     /** True while the recurring 30s poll loop is running. */
     val isPolling: Boolean get() = pollingJob?.isActive == true
 
+    init {
+        rehydrateRecordedSession()
+    }
+
+    /**
+     * Cold start with a session already recorded: present it immediately instead of leaving the
+     * panel blank until the first network round-trip lands. The recorded start timestamp already
+     * survives process death (that is what it is for) — this is what makes it *visible* again.
+     *
+     * Only seeds when the recorded `appId` parsed: an unresolved id can't be told apart from a
+     * different unresolved game, so rehydrating one would be a guess. Name and icon come from the
+     * owned-games table, the same source [fetch] uses, so this adds no data dependency.
+     *
+     * The first [checkNow] then reconciles — [LiveSessionTracker] already handles same-game
+     * (keep the start), different-game (restart), and not-playing (clear).
+     */
+    private fun rehydrateRecordedSession() {
+        scope.launch {
+            val session = settings.liveSession.first()
+            val appId = session.appId ?: return@launch
+            val startedAt = session.startedAt ?: return@launch
+            val game = gameDao.getById(appId)
+            val seeded = LiveStatus(
+                nowPlaying = NowPlaying.InGame(
+                    gameId = appId,
+                    name = game?.name?.takeIf { it.isNotBlank() } ?: "App $appId",
+                    iconUrl = game?.iconUrl?.takeIf { it.isNotBlank() },
+                ),
+                presence = LivePresence.IN_GAME,
+                sessionStartedAt = startedAt,
+            )
+            // Only if nothing real has landed yet: a checkNow() triggered at startup can easily
+            // win this race, and an observation always outranks a recollection.
+            _liveStatus.compareAndSet(LiveStatus(), seeded)
+        }
+    }
+
     /** Start the poll loop. Idempotent: a call while already polling is a no-op. */
     fun startPolling() {
         if (isPolling) return
@@ -107,28 +146,37 @@ class LiveStatusRepository @Inject constructor(
     }
 
     /**
-     * Stop the poll loop and clear both the in-memory and persisted session, so nothing (e.g. the
-     * Library's live dot) keeps showing a game as running once presence is no longer observed.
-     * Safe to call when already stopped.
+     * Stop the poll loop, and *only* that. Safe to call when already stopped.
+     *
+     * Deliberately leaves both the in-memory and the persisted session alone: the callers are
+     * [com.example.backlogium.work.PresenceService.onDestroy], which fires on process death, a
+     * low-memory kill, and Android 15's `onTimeout` just as much as on the game ending. Clearing
+     * here would erase a two-hour session's start time on a lifecycle event that says nothing about
+     * whether the player is still playing. Only [checkNow] can legitimately know a game ended, and
+     * it already clears the session on that path.
+     *
+     * The trade: a killed observer leaves a stale in-game state visible until the next trigger.
+     * A re-check is guaranteed on the next app foreground, and showing a session that ended a
+     * minute ago beats resetting a live timer to zero.
      */
     fun stopPolling() {
         pollingJob?.cancel()
         pollingJob = null
-        _liveStatus.value = LiveStatus()
-        scope.launch { settings.clearLiveSession() }
     }
 
     /**
-     * One fetch-and-emit cycle, callable both from the poll loop and as a one-off check (Home on
-     * open, [com.example.backlogium.work.SteamSyncWorker] after its own poll) — those callers use
-     * the result to decide whether to start the service, without owning a recurring loop
-     * themselves. A failed fetch retains the last emitted presence rather than throwing, so a
+     * One fetch-and-emit cycle, callable both from the poll loop and as a one-off check (the app
+     * on foreground, [com.example.backlogium.work.SteamSyncWorker] before its own poll) — those
+     * callers use the result to decide whether to start the service, without owning a recurring
+     * loop themselves. A failed fetch retains the last emitted presence rather than throwing, so a
      * transient error doesn't clear the Home card or Library dot abruptly.
      */
     suspend fun checkNow(): LiveStatus {
-        val last = _liveStatus.value
-        val fetched = runCatching { fetch() }
-            .getOrDefault(LiveStatus(last.nowPlaying, last.presence))
+        // A failed fetch is not an observation. It says nothing about whether the game ended, so it
+        // neither overwrites the last emitted state nor touches the persisted session — treating it
+        // as "not playing" would clear a live session on any transient network blip, and on a cold
+        // start (where there is no last emitted state to fall back on) it would do exactly that.
+        val fetched = runCatching { fetch() }.getOrNull() ?: return _liveStatus.value
 
         val previousSession = settings.liveSession.first()
         val nextSession = LiveSessionTracker.next(previousSession, fetched.nowPlaying, time.nowMillis())

@@ -74,6 +74,10 @@ fun BacklogiumAppRoot() {
         if (!onGameDetail && !onHome) accentColor = null
     }
 
+    // Shell-level and once per install: the ongoing now-playing notification is otherwise silently
+    // dead on a fresh install, and no screen is a natural owner of an app-wide permission.
+    NotificationPermissionRequest()
+
     Box(modifier = Modifier.fillMaxSize()) {
         ScreenBackdrop(accentColor = accentColor)
         Scaffold(

@@ -19,8 +19,16 @@ object LiveSessionTracker {
             NowPlaying.NotPlaying -> LiveSessionState()
 
             is NowPlaying.InGame ->
-                if (previous.startedAt != null && previous.appId == nowPlaying.gameId) {
-                    // Same game still running: keep the original start time.
+                if (previous.startedAt != null &&
+                    previous.appId != null &&
+                    previous.appId == nowPlaying.gameId
+                ) {
+                    // Same game still running: keep the original start time. Both ids must be
+                    // resolved to count as a match — `null == null` would otherwise read two
+                    // unidentifiable games as one continuous session, which is a claim neither
+                    // observation supports. The cost is that a session whose id never parses
+                    // restarts its timer each poll; the benefit is that it is never wrong about
+                    // *which* game it is timing.
                     previous
                 } else {
                     // First observation, or a different game than the one last recorded.

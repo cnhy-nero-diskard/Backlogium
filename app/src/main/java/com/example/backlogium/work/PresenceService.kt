@@ -23,8 +23,8 @@ import javax.inject.Inject
 /**
  * Foreground service that owns the 30s live-presence poll while the player is in a game
  * (enhance-now-playing). Started when a game is detected — [SteamSyncWorker]'s periodic poll, or
- * Home on open, via [PresenceServiceStarter] — and stops itself the moment a poll reports
- * not-in-game. Not resident: this service exists only for the duration of one play session.
+ * the app-foreground re-check, via [PresenceServiceStarter] — and stops itself the moment a poll
+ * reports not-in-game. Not resident: this service exists only for the duration of one play session.
  *
  * Home and the Library remain plain observers of [LiveStatusRepository.liveStatus] whether or not
  * this service happens to be running — degraded (no live updates) but not broken when it is not.

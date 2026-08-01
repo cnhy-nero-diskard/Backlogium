@@ -64,4 +64,29 @@ class LiveSessionTrackerTest {
         )
         assertEquals(LiveSessionState(appId = null, startedAt = 5_000L), next)
     }
+
+    @Test
+    fun unresolvableGameId_doesNotContinueAPriorUnresolvableSession() {
+        // Two unidentifiable observations are not evidence of one continuous session: `null ==
+        // null` would silently chain a different game onto the previous one's start time, which is
+        // a claim neither observation supports. Restarting is the honest answer.
+        val previous = LiveSessionState(appId = null, startedAt = 5_000L)
+        val next = LiveSessionTracker.next(
+            previous = previous,
+            nowPlaying = NowPlaying.InGame(gameId = null, name = "In game", iconUrl = null),
+            now = 35_000L,
+        )
+        assertEquals(LiveSessionState(appId = null, startedAt = 35_000L), next)
+    }
+
+    @Test
+    fun unresolvableGameId_doesNotContinueAPriorIdentifiedSession() {
+        val previous = LiveSessionState(appId = 10L, startedAt = 1_000L)
+        val next = LiveSessionTracker.next(
+            previous = previous,
+            nowPlaying = NowPlaying.InGame(gameId = null, name = "In game", iconUrl = null),
+            now = 35_000L,
+        )
+        assertEquals(LiveSessionState(appId = null, startedAt = 35_000L), next)
+    }
 }

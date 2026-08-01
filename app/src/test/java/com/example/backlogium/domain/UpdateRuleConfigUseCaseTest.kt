@@ -181,6 +181,8 @@ class UpdateRuleConfigUseCaseTest {
             session.value = LiveSessionState(appId, startedAt)
         }
 
+        override val notificationPermissionRequested: Flow<Boolean> = MutableStateFlow(true)
+        override suspend fun setNotificationPermissionRequested() = Unit
         override suspend fun clearLiveSession() {
             session.value = LiveSessionState()
         }

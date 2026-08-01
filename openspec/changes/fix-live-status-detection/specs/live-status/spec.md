@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Live polling cadence and ownership
 The system SHALL refresh the current in-game state on a short cadence (approximately every 30
@@ -19,8 +19,6 @@ sync, whose cadence is unchanged.
 - **WHEN** the live refresh is running or stopped
 - **THEN** the periodic background playtime sync continues on its own 15-minute schedule,
   unchanged
-
-## ADDED Requirements
 
 ### Requirement: Presence resolved before library work
 A sync SHALL resolve and act on the player's current in-game state before performing any
@@ -94,3 +92,19 @@ SHALL reconcile it with the first successful observation.
 #### Scenario: No recorded session
 - **WHEN** the app starts with no recorded live session
 - **THEN** no in-game state is presented until an observation reports one
+
+## REMOVED Requirements
+
+### Requirement: Foreground live polling cadence
+**Reason**: Superseded by "Live polling cadence and ownership" above. This requirement mandated a
+cadence that runs "only while the app is foregrounded and the consuming screen is active" —
+observation-scoped polling that `enhance-now-playing` deliberately replaced with an app-scoped
+flow owned by the background presence observer, precisely so tracking survives backgrounding. The
+requirement has described behaviour the code does not have since that change shipped; renaming it
+rather than editing in place is what removes the "foreground-only" framing from the name too.
+
+**Migration**: No user-facing capability is lost — the 30s cadence and its independence from the
+periodic sync carry over verbatim. What changes is who owns the cadence: the "Polling stops when
+unobserved" scenario is intentionally *not* carried over, because the poll continuing while
+backgrounded is the feature, and its replacement ("Screens do not own the cadence") states the
+opposite guarantee.

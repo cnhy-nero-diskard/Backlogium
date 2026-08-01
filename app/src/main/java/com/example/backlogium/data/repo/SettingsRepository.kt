@@ -58,6 +58,14 @@ interface SettingsRepository {
     suspend fun setLiveSession(appId: Long?, startedAt: Long)
 
     suspend fun clearLiveSession()
+
+    /**
+     * Whether the runtime notification permission has already been requested once
+     * (fix-live-status-detection), so the app asks at most once rather than on every launch.
+     */
+    val notificationPermissionRequested: Flow<Boolean>
+
+    suspend fun setNotificationPermissionRequested()
 }
 
 /** The only production implementation: a thin pass-through to Preferences DataStore. */
@@ -92,4 +100,10 @@ class DataStoreSettingsRepository @Inject constructor(
         settings.setLiveSession(appId, startedAt)
 
     override suspend fun clearLiveSession() = settings.clearLiveSession()
+
+    override val notificationPermissionRequested: Flow<Boolean> =
+        settings.notificationPermissionRequestedFlow
+
+    override suspend fun setNotificationPermissionRequested() =
+        settings.setNotificationPermissionRequested()
 }
