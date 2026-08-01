@@ -73,12 +73,15 @@ import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.work.HltbBatchProgress
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowsSort
+import compose.icons.tablericons.Bolt
 import compose.icons.tablericons.Check
 import compose.icons.tablericons.Checkbox
 import compose.icons.tablericons.Clock
 import compose.icons.tablericons.DotsVertical
+import compose.icons.tablericons.PlayerPlay
 import compose.icons.tablericons.PlayerStop
 import compose.icons.tablericons.Search
+import compose.icons.tablericons.TrendingUp
 import compose.icons.tablericons.Trophy
 import compose.icons.tablericons.X
 
@@ -593,10 +596,7 @@ private fun GoalGameRow(
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(game.name, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                text = UiFormat.minutes(game.playtimeForever) + " played",
-                style = MaterialTheme.typography.bodySmall,
-            )
+            PlaytimeLabel(game.playtimeForever)
             CompletionProgress(
                 playtimeMinutes = game.playtimeForever,
                 completionistMinutes = game.completionistMinutes,
@@ -639,10 +639,7 @@ private fun BacklogGameRow(
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(game.name, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                text = UiFormat.minutes(game.playtimeForever) + " played",
-                style = MaterialTheme.typography.bodySmall,
-            )
+            PlaytimeLabel(game.playtimeForever)
             CompletionProgress(
                 playtimeMinutes = game.playtimeForever,
                 completionistMinutes = game.completionistMinutes,
@@ -661,12 +658,34 @@ private fun BacklogGameRow(
     }
 }
 
+/** A play icon plus the raw duration — "played" is implied by the row it sits in. */
+@Composable
+private fun PlaytimeLabel(minutes: Int) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            imageVector = TablerIcons.PlayerPlay,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(12.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = UiFormat.minutes(minutes),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.semantics {
+                contentDescription = "${UiFormat.minutes(minutes)} played"
+            },
+        )
+    }
+}
+
 /**
  * The shared row shell. Material 3's `Card(onClick = …)` has no long-press, so the card is
  * non-clickable and carries [combinedClickable] instead — long-press enters selection mode while
  * tap keeps its existing meaning.
  *
- * A completed game is marked by its gold "100% COMPLETED" pill only. The row used to also take a
+ * A completed game is marked by its gold trophy "100%" pill only. The row used to also take a
  * gold outline, which read as loud rather than celebratory once several completed games sat next
  * to each other in the list.
  */
@@ -804,15 +823,35 @@ private fun CompletionProgress(playtimeMinutes: Int, completionistMinutes: Int?)
         },
     )
     Spacer(Modifier.height(2.dp))
-    Text(
-        text = if (overrun) {
-            val percent = (playtimeMinutes.toLong() * 100 / completionist).toInt()
-            "${UiFormat.minutes(completionist)} to 100% · played $percent%"
-        } else {
-            "${UiFormat.minutes(playtimeMinutes)} / ${UiFormat.minutes(completionist)} to 100%"
-        },
-        style = MaterialTheme.typography.bodySmall,
-    )
+    val percent = (playtimeMinutes.toLong() * 100 / completionist).toInt()
+    val fullDescription = if (overrun) {
+        "${UiFormat.minutes(completionist)} to 100% · played $percent%"
+    } else {
+        "${UiFormat.minutes(playtimeMinutes)} / ${UiFormat.minutes(completionist)} to 100%"
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = fullDescription },
+    ) {
+        if (overrun) {
+            Icon(
+                imageVector = TablerIcons.TrendingUp,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.overrunExcess,
+                modifier = Modifier.size(12.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+        }
+        Text(
+            text = "$percent%",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (overrun) {
+                MaterialTheme.colorScheme.overrunExcess
+            } else {
+                Color.Unspecified
+            },
+        )
+    }
 }
 
 /** Compact, live HLTB state for a game: in-flight, failed, or the persisted match status. */
@@ -989,21 +1028,32 @@ private fun GameBadges(unlocked: Int?, total: Int?, xpContributed: Int) {
  * includes pre-install hours that only earn XP if the player imported their history, and playtime
  * XP tapers toward zero past a game's completion length. `0 XP` on a long-owned game is correct.
  *
- * Shown as a bare "N XP" to keep the badge line to one row; the full "contributed" wording lives
- * in the accessibility label, where length costs nothing.
+ * Shown as a bolt icon plus the bare number to keep the badge line to one row; the full
+ * "N XP contributed" wording lives in the accessibility label, where length costs nothing.
  */
 @Composable
 private fun XpContributionLabel(xpContributed: Int) {
-    Text(
-        text = "$xpContributed XP",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        softWrap = false,
-        modifier = Modifier.semantics {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.semantics(mergeDescendants = true) {
             contentDescription = "$xpContributed XP contributed"
         },
-    )
+    ) {
+        Icon(
+            imageVector = TablerIcons.Bolt,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(12.dp),
+        )
+        Spacer(Modifier.width(2.dp))
+        Text(
+            text = "$xpContributed",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            softWrap = false,
+        )
+    }
 }
 
 /**
@@ -1019,7 +1069,8 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifie
             modifier = modifier
                 .clip(RoundedCornerShape(6.dp))
                 .background(MaterialTheme.colorScheme.primary)
-                .padding(horizontal = 8.dp, vertical = 3.dp),
+                .padding(horizontal = 8.dp, vertical = 3.dp)
+                .semantics(mergeDescendants = true) { contentDescription = "100% completed" },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
@@ -1030,7 +1081,7 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifie
             )
             Spacer(Modifier.width(4.dp))
             Text(
-                text = "100% COMPLETED",
+                text = "100%",
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onPrimary,
@@ -1040,7 +1091,12 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifie
         }
         return
     }
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        modifier = modifier.semantics(mergeDescendants = true) {
+            contentDescription = "$unlocked of $total achievements unlocked"
+        },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Icon(
             imageVector = TablerIcons.Trophy,
             contentDescription = null,
@@ -1049,7 +1105,7 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifie
         )
         Spacer(Modifier.width(4.dp))
         Text(
-            text = "$unlocked / $total achievements",
+            text = "$unlocked/$total",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
