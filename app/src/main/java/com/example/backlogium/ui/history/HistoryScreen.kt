@@ -34,6 +34,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -286,6 +288,12 @@ private fun DayGamesBlock(
     onToggleGame: (String, Long) -> Unit,
 ) {
     val lineColor = MaterialTheme.colorScheme.outlineVariant
+    // Tracked so the line can stop exactly at the last game's dot instead of running past it to the
+    // bottom of the card — recomputed on layout since an earlier game expanding shifts the last
+    // dot's position down.
+    var columnCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var lastDotCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+
     Card(
         shape = dayCardShape(bottomOnly = true),
         modifier = Modifier
@@ -295,12 +303,20 @@ private fun DayGamesBlock(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .onGloballyPositioned { columnCoordinates = it }
                 .drawBehind {
+                    val column = columnCoordinates
+                    val dot = lastDotCoordinates
+                    val lineEndY = if (column != null && dot != null) {
+                        column.localPositionOf(dot, Offset(dot.size.width / 2f, dot.size.height / 2f)).y
+                    } else {
+                        size.height
+                    }
                     val lineX = historyTimelineGutterWidth.toPx() / 2f
                     drawLine(
                         color = lineColor,
                         start = Offset(lineX, 0f),
-                        end = Offset(lineX, size.height),
+                        end = Offset(lineX, lineEndY),
                         strokeWidth = 2.dp.toPx(),
                     )
                 }
@@ -322,6 +338,11 @@ private fun DayGamesBlock(
                     expanded = gameExpanded,
                     dotColor = lineColor,
                     onClick = { onToggleGame(date, game.appId) },
+                    onDotPositioned = if (index == games.lastIndex) {
+                        { lastDotCoordinates = it }
+                    } else {
+                        null
+                    },
                 )
 
                 if (gameExpanded) {
@@ -355,6 +376,7 @@ private fun GameRow(
     expanded: Boolean,
     dotColor: Color,
     onClick: () -> Unit,
+    onDotPositioned: ((LayoutCoordinates) -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -376,7 +398,8 @@ private fun GameRow(
                     modifier = Modifier
                         .size(8.dp)
                         .clip(CircleShape)
-                        .background(dotColor),
+                        .background(dotColor)
+                        .let { m -> onDotPositioned?.let { m.onGloballyPositioned(it) } ?: m },
                 )
             }
             GameIcon(game.iconUrl)
