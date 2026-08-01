@@ -49,7 +49,7 @@ sealed interface SteamIdResolution {
 class CredentialsRepository @Inject constructor(
     private val store: EncryptedCredentialStore,
     private val steamApi: SteamApi,
-) {
+) : CredentialsProvider {
     private val state = MutableStateFlow<CredentialsState>(CredentialsState.Unconfigured)
     private val seedMutex = Mutex()
     @Volatile private var seeded = false
@@ -96,7 +96,7 @@ class CredentialsRepository @Inject constructor(
     }
 
     /** Read the current API key + SteamID, loading/seeding first if not yet configured. */
-    suspend fun currentCredentials(): CredentialsState.Configured? {
+    override suspend fun currentCredentials(): CredentialsState.Configured? {
         val current = state.value
         if (current is CredentialsState.Configured) return current
         return refresh() as? CredentialsState.Configured

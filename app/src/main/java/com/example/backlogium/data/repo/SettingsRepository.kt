@@ -1,6 +1,7 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.AutoSnapshotSettings
+import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
@@ -50,6 +51,13 @@ interface SettingsRepository {
     suspend fun setSnapshotRetentionCount(count: Int)
 
     suspend fun setSnapshotIntervalHours(hours: Int)
+
+    /** The persisted live now-playing session (enhance-now-playing) — see [LiveSessionState]. */
+    val liveSession: Flow<LiveSessionState>
+
+    suspend fun setLiveSession(appId: Long?, startedAt: Long)
+
+    suspend fun clearLiveSession()
 }
 
 /** The only production implementation: a thin pass-through to Preferences DataStore. */
@@ -77,4 +85,11 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun setSnapshotIntervalHours(hours: Int) =
         settings.setSnapshotIntervalHours(hours)
+
+    override val liveSession: Flow<LiveSessionState> = settings.liveSessionFlow
+
+    override suspend fun setLiveSession(appId: Long?, startedAt: Long) =
+        settings.setLiveSession(appId, startedAt)
+
+    override suspend fun clearLiveSession() = settings.clearLiveSession()
 }

@@ -1,6 +1,13 @@
 package com.example.backlogium.ui.home
 
+import android.animation.ValueAnimator
 import androidx.annotation.RawRes
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,12 +34,18 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -51,6 +64,8 @@ import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.Clock
 import compose.icons.tablericons.DeviceGamepad
 import compose.icons.tablericons.Flame
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 @Composable
 fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
@@ -95,12 +110,14 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        // "Now playing" banner: conditionally composed so it adds no layout when not in-game.
+        // "Now playing" card: conditionally composed so it adds no layout (and runs no
+        // animation) when not in-game — the card is Home's most prominent element while it is.
         val nowPlayingName = state.nowPlayingName
         if (state.isInGame && nowPlayingName != null) {
-            NowPlayingBanner(
+            NowPlayingCard(
                 name = nowPlayingName,
                 iconUrl = state.nowPlayingIconUrl,
+                sessionStartedAt = state.nowPlayingSessionStartedAt,
             )
         }
 
@@ -257,29 +274,52 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
 }
 
 /**
- * Compact "Now playing" banner shown only while the player is in-game. Displays the running
- * game's name, plus its icon when one is resolvable (name-only otherwise, with a themed
- * controller glyph in place of the missing art).
+ * The most visually prominent element on Home while the player is in-game: large game art, the
+ * game's name, and a live elapsed-session timer, in the tertiary steel-blue lane — deliberately
+ * not [MaterialTheme.colorScheme.primaryContainer] (gold), which stays reserved for milestone
+ * moments (level-up, streak milestones, 100% completion). A slow, flowing gradient marks the
+ * card as live rather than merely colored; the timer and the card's presence still carry that
+ * meaning on their own when reduced-motion is on and the gradient renders statically.
  */
 @Composable
-private fun NowPlayingBanner(name: String, iconUrl: String?) {
+private fun NowPlayingCard(name: String, iconUrl: String?, sessionStartedAt: Long?) {
+    val elapsedMillis by rememberElapsedMillis(sessionStartedAt)
+    val gradientOffset = rememberNowPlayingGradientOffset()
+    val base = MaterialTheme.colorScheme.tertiaryContainer
+    val sheen = MaterialTheme.colorScheme.tertiary
+    val onContainer = MaterialTheme.colorScheme.onTertiaryContainer
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                val bandWidth = size.width * 0.7f
+                val center = gradientOffset * size.width
+                drawRect(
+                    brush = Brush.linearGradient(
+                        colorStops = arrayOf(
+                            0f to base,
+                            0.5f to sheen.copy(alpha = 0.35f),
+                            1f to base,
+                        ),
+                        start = Offset(center - bandWidth, 0f),
+                        end = Offset(center + bandWidth, size.height),
+                    ),
+                )
+            },
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val shape = RoundedCornerShape(8.dp)
+            val shape = RoundedCornerShape(12.dp)
             if (iconUrl != null) {
                 SubcomposeAsyncImage(
                     model = iconUrl,
                     contentDescription = null,
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(64.dp)
                         .clip(shape),
                     error = { NowPlayingIconFallback() },
                     loading = { NowPlayingIconFallback() },
@@ -287,26 +327,72 @@ private fun NowPlayingBanner(name: String, iconUrl: String?) {
             } else {
                 Box(
                     Modifier
-                        .size(32.dp)
+                        .size(64.dp)
                         .clip(shape),
                 ) { NowPlayingIconFallback() }
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(16.dp))
             Column {
                 Text(
                     text = "Now playing",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = onContainer,
                 )
                 Text(
                     text = name,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = onContainer,
+                )
+                Spacer(Modifier.height(2.dp))
+                // "Playing for" reads as accumulated time since detection, not an exact launch
+                // time — detection can lag the true start by up to the periodic sync's interval.
+                Text(
+                    text = "Playing for ${UiFormat.minutes((elapsedMillis / 60_000L).toInt())}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = onContainer,
                 )
             }
         }
     }
+}
+
+/** Elapsed time since [startedAt], ticking every second with no network involved. Zero when null. */
+@Composable
+private fun rememberElapsedMillis(startedAt: Long?): State<Long> {
+    val elapsed = remember(startedAt) { mutableLongStateOf(0L) }
+    LaunchedEffect(startedAt) {
+        if (startedAt == null) return@LaunchedEffect
+        while (isActive) {
+            elapsed.longValue = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
+            delay(1_000L)
+        }
+    }
+    return elapsed
+}
+
+/**
+ * A slow, ambient sweep for the now-playing card's background — driven by an infinite transition
+ * so it stops the moment the card leaves composition (i.e. the moment the player is no longer
+ * in-game), and never runs at all otherwise. Honors the system's reduced-motion setting: with
+ * animations disabled, the sweep holds at a fixed midpoint and the gradient renders statically.
+ */
+@Composable
+private fun rememberNowPlayingGradientOffset(): Float {
+    val animatorsEnabled = remember { ValueAnimator.areAnimatorsEnabled() }
+    if (!animatorsEnabled) return 0.5f
+
+    val transition = rememberInfiniteTransition(label = "nowPlayingGradient")
+    val offset by transition.animateFloat(
+        initialValue = -0.3f,
+        targetValue = 1.3f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 6_000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "offset",
+    )
+    return offset
 }
 
 @Composable

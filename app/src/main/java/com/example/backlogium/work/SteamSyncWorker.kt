@@ -47,6 +47,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private val gamificationUpdater: GamificationUpdater,
     private val achievementRepository: AchievementRepository,
     private val backupRepository: BackupRepository,
+    private val presenceServiceStarter: PresenceServiceStarter,
     private val time: TimeProvider,
 ) : CoroutineWorker(appContext, params) {
 
@@ -80,6 +81,11 @@ class SteamSyncWorker @AssistedInject constructor(
             }.getOrNull()
 
             persistPoll(games, apiKey, steamId, steamLevel, summary)
+            // The detection path for a game that started while the app was never opened: the
+            // service then owns the 30s poll and stops itself once the game ends.
+            if (!summary?.gameId.isNullOrBlank()) {
+                presenceServiceStarter.start()
+            }
             Result.success()
         } catch (e: Exception) {
             // Network / transient error: surface it, keep data, let WorkManager back off.

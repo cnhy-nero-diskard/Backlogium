@@ -1,6 +1,7 @@
 package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.AutoSnapshotSettings
+import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.repo.SettingsRepository
@@ -171,6 +172,17 @@ class UpdateRuleConfigUseCaseTest {
 
         override suspend fun setSnapshotIntervalHours(hours: Int) {
             autoSnapshot.value = autoSnapshot.value.copy(intervalHours = hours)
+        }
+
+        // Live now-playing session (enhance-now-playing) is irrelevant to a rule change.
+        private val session = MutableStateFlow(LiveSessionState())
+        override val liveSession: Flow<LiveSessionState> = session
+        override suspend fun setLiveSession(appId: Long?, startedAt: Long) {
+            session.value = LiveSessionState(appId, startedAt)
+        }
+
+        override suspend fun clearLiveSession() {
+            session.value = LiveSessionState()
         }
     }
 

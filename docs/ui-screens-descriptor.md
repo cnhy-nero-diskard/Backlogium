@@ -20,6 +20,13 @@ review** (from Library). Every screen renders from local state only (offline-fir
     (steel-blue) `#2F5B7C`.
   - The single gold accent is a deliberate, forward-compatible hook (a possible future
     LEGENDARY rarity color) — the full rarity ramp is intentionally out of scope.
+  - **Tertiary container (enhance-now-playing)** — a hand-tuned steel-blue container/on-container
+    pair for the Home now-playing card, since Material 3's auto-derived default would otherwise be
+    an unrelated baseline purple: dark `#243B4C` on-container `#CFE4F0`; light `#D3E4F0`
+    on-container `#12283A`.
+  - **Live/active green (`playingIndicator`)** — the Library's "currently playing" row dot: dark
+    `#4ADE80`, light `#15803D`. Distinct from both the gold milestone accent and the steel-blue
+    in-game lane, so it can't be mistaken for either.
 - **Typography:** Material 3 type scale, with a bundled **display font (Orbitron, SIL OFL,
   `res/font/orbitron.ttf`)** applied to the large numeral moments only — `headlineMedium`
   (Home "Level N") and `headlineSmall` (Home streak count). All other styles stay on
@@ -82,9 +89,19 @@ switching tabs (standard save/restoreState nav behavior). Home is the start dest
 **Layout:** single scrollable column, 16dp outer padding, 16dp vertical gaps between cards,
 full width.
 
-1. **"Now playing" banner** (conditional, only while the player is in-game) — a `Card` tinted
-   with the M3 "primary container" color: a 32dp game icon (themed controller fallback) + a
-   "Now playing" label over the running game's name (bold). Adds no layout when not in-game.
+1. **"Now playing" card** (conditional, only while the player is in-game; enhance-now-playing) —
+   Home's most visually prominent element while shown: a `Card` tinted with the M3 **tertiary
+   container** color (steel-blue lane, deliberately not the gold "primary container" — gold stays
+   reserved for milestone moments), carrying a slow, flowing gradient sheen so it reads as *live*
+   rather than merely colored. Contents: a 64dp game icon (themed controller fallback), a "Now
+   playing" label over the running game's name (bold, headline style), and a "Playing for {N}"
+   caption ticking every second from a persisted session-start timestamp (client-side, no
+   network) — worded as time *since detection*, not an exact launch time, since detection can lag
+   by up to the periodic sync's interval. The gradient honors the system's reduced-motion setting
+   (animator duration scale zero → renders statically; the ticking timer and the card's presence
+   still carry the "live" meaning on their own). Adds no layout, and runs no animation, when not
+   in-game. A foreground service keeps this state current in the background and posts a matching
+   ongoing "Playing X · Nm" notification while in-game (cleared when the game ends).
 2. **Error banner** (conditional, only when a sync error exists) — a `Card` tinted with the
    M3 "error container" color, containing just the error message text, 16dp padding.
 3. **Level / XP card** — surface card, 16dp padding:
@@ -168,7 +185,11 @@ padding, sections rendered only if they have rows:
    right edge at 22% alpha and alpha-masked (`DstIn` horizontal gradient) so it dissolves before it
    reaches the text. Games whose header 404s render no backdrop and no placeholder.
    - 40dp square game icon (remote image, left; 8dp rounded, themed loading placeholder and
-     controller fallback on error)
+     controller fallback on error), with a small **live indicator dot** (`playingIndicator` green,
+     top-end corner; enhance-now-playing) overlaid whenever Steam's live presence reports this
+     exact game as the one currently running — in whichever section it appears in, without
+     reordering the list. No dot at all when no game is running or the running game can't be
+     matched to one in the library.
    - 12dp gap
    - Column: game name (bodyLarge) → caption `"{playtime} played"` → **completion progress** when a
      HowLongToBeat Completionist length exists (nothing at all when no length is known):

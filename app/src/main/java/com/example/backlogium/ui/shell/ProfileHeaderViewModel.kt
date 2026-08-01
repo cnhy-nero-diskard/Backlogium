@@ -42,8 +42,9 @@ class ProfileHeaderViewModel @Inject constructor(
     credentials: CredentialsRepository,
 ) : ViewModel() {
 
-    // WhileSubscribed keeps the shared live poll ticking only while the shell is on screen; the
-    // poll is shared, so observing it here costs no extra request alongside Home.
+    // A plain observer: LiveStatusRepository's poll is now owned by PresenceService
+    // (enhance-now-playing), so collecting liveStatus here never starts or extends polling —
+    // this just reflects whatever the service (or Home's start-on-open check) last found.
     val uiState: StateFlow<ProfileHeaderUiState> = combine(
         profileRepository.profile,
         credentials.credentialsStateFlow,
