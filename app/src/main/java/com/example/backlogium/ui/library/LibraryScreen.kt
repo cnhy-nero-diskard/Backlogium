@@ -845,11 +845,7 @@ private fun CompletionProgress(playtimeMinutes: Int, completionistMinutes: Int?)
         Text(
             text = "$percent%",
             style = MaterialTheme.typography.bodySmall,
-            color = if (overrun) {
-                MaterialTheme.colorScheme.overrunExcess
-            } else {
-                Color.Unspecified
-            },
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
