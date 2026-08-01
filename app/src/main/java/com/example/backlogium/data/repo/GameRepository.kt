@@ -78,8 +78,8 @@ class GameRepository @Inject constructor(
      * The game's current Steam concurrent-player count, or `null` on any failure — network error,
      * a non-success `result` (an invalid or delisted app id), or a missing count in an otherwise
      * successful response. Never persisted: this is a live fact, fetched fresh by the caller each
-     * time it's needed, the same posture [LiveStatusRepository] takes with the player's own
-     * presence.
+     * time it's needed — the game detail screen polls it every 30 seconds while open — the same
+     * posture [LiveStatusRepository] takes with the player's own presence.
      */
     suspend fun currentPlayerCount(appId: Long): Int? = runCatching {
         steamApi.getNumberOfCurrentPlayers(appId).response

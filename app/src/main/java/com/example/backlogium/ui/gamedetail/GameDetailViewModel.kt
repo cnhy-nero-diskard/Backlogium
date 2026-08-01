@@ -16,6 +16,7 @@ import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.gamification.RuleConfig
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -77,9 +78,9 @@ data class GameSummaryUi(
     /** XP this game contributed to the player's total, from `LibraryXp` — same value the Library shows. */
     val xpContributed: Int = 0,
     /**
-     * The game's current Steam concurrent-player count, fetched once when the screen opens.
-     * Null until that fetch resolves, and null forever on failure — never persisted, never a
-     * placeholder zero.
+     * The game's current Steam concurrent-player count, polled every 30 seconds while this
+     * screen is open. Null until the first fetch resolves, and null again after any failed
+     * poll — never persisted, never a placeholder zero.
      */
     val activePlayers: Int? = null,
 ) {
@@ -127,9 +128,9 @@ class GameDetailViewModel @Inject constructor(
     private val sort = MutableStateFlow(AchievementSort.DATE_ACHIEVED)
 
     /**
-     * Fetched once per screen visit, not part of [content] — [content] combines only local,
-     * offline-safe flows, and a slow or failed network call must never hold up the rest of the
-     * summary or the achievement list.
+     * Polled every 30 seconds while this screen is open, not part of [content] — [content]
+     * combines only local, offline-safe flows, and a slow or failed network call must never
+     * hold up the rest of the summary or the achievement list.
      */
     private val activePlayers = MutableStateFlow<Int?>(null)
 
@@ -158,13 +159,22 @@ class GameDetailViewModel @Inject constructor(
     )
 
     init {
+        // Polls only for as long as this ViewModel (and thus this screen) is alive — leaving
+        // the screen clears viewModelScope, which stops the loop with no extra lifecycle wiring.
         viewModelScope.launch {
-            activePlayers.value = gameRepository.currentPlayerCount(appId)
+            while (true) {
+                activePlayers.value = gameRepository.currentPlayerCount(appId)
+                delay(ACTIVE_PLAYERS_POLL_INTERVAL_MS)
+            }
         }
     }
 
     fun setSort(value: AchievementSort) {
         sort.value = value
+    }
+
+    private companion object {
+        const val ACTIVE_PLAYERS_POLL_INTERVAL_MS = 30_000L
     }
 }
 

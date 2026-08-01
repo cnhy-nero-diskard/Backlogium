@@ -7,7 +7,6 @@ import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.AchievementRarity
 import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.GameDao
-import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.NO_ACHIEVEMENTS_MARKER
 import com.example.backlogium.data.remote.SteamApi
@@ -41,10 +40,10 @@ data class GameAchievement(
 )
 
 /**
- * Owns fetching, merging, and caching Steam achievement data. Scoped and freshness-gated
- * (add-steam-achievements design): only games the player engages with — those with tracked
- * sessions plus goal-tagged games — are fetched, and only when stale or missing, bounding
- * per-sync API volume the same way [HltbRepository] bounds its batch sweep.
+ * Owns fetching, merging, and caching Steam achievement data. Covers every game in the
+ * library — not just games the player is actively engaged with — but stays freshness-gated:
+ * only stale-or-missing games are fetched, bounding per-sync API volume the same way
+ * [HltbRepository] bounds its batch sweep.
  *
  * A per-game failure (private profile, no stats, transport error) never fails the caller —
  * it is skipped and any previously stored rows for that game are left intact.
@@ -54,7 +53,6 @@ class AchievementRepository @Inject constructor(
     private val steamApi: SteamApi,
     private val achievementDao: AchievementDao,
     private val gameDao: GameDao,
-    private val sessionDao: SessionDao,
     private val time: TimeProvider,
 ) {
 
@@ -81,21 +79,19 @@ class AchievementRepository @Inject constructor(
         achievementDao.observeUnlockedSince(cutoffMillis)
 
     /**
-     * Fetches achievements for every in-scope game whose data is stale or missing. [apiKey]/
+     * Fetches achievements for every library game whose data is stale or missing. [apiKey]/
      * [steamId] are passed in by the caller (the sync worker), matching [SteamApi]'s pattern.
      */
-    suspend fun syncInScopeGames(apiKey: String, steamId: String) {
-        val playedIds = sessionDao.trackedMinutesByGame().map { it.appId }
-        val goalIds = gameDao.goalAppIds()
-        val inScope = (playedIds + goalIds).distinct()
-        if (inScope.isEmpty()) return
+    suspend fun syncLibraryGames(apiKey: String, steamId: String) {
+        val appIds = gameDao.allAppIds()
+        if (appIds.isEmpty()) return
 
         val fetchedAtByAppId = achievementDao.fetchedAtByApp()
             .associate { it.appId to it.fetchedAt }
         val stale = AchievementFreshness.selectStaleOrMissing(
             now = time.nowMillis(),
             window = FRESHNESS_WINDOW_MILLIS,
-            appIds = inScope,
+            appIds = appIds,
             fetchedAtByAppId = fetchedAtByAppId,
         )
 
@@ -147,7 +143,7 @@ class AchievementRepository @Inject constructor(
     }
 
     companion object {
-        /** Bounds achievement-fetch volume: refreshed roughly hourly per in-scope game. */
+        /** Bounds achievement-fetch volume: refreshed roughly hourly per library game. */
         const val FRESHNESS_WINDOW_MILLIS = 60L * 60 * 1000
     }
 }

@@ -25,9 +25,9 @@ interface GameDao {
     @Query("SELECT * FROM games WHERE isGoal = 0 ORDER BY playtimeForever DESC, name ASC")
     fun observeBacklog(): Flow<List<Game>>
 
-    /** Goal-tagged app ids — part of the achievement sync's in-scope selection. */
-    @Query("SELECT appId FROM games WHERE isGoal = 1")
-    suspend fun goalAppIds(): List<Long>
+    /** Every owned game's app id — the achievement sync's full-library scope. */
+    @Query("SELECT appId FROM games")
+    suspend fun allAppIds(): List<Long>
 
     @Query("SELECT * FROM games")
     suspend fun getAll(): List<Game>

@@ -10,6 +10,8 @@ import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.data.repo.HltbRepository
 import com.example.backlogium.data.repo.LibraryGame
+import com.example.backlogium.data.repo.LiveStatusRepository
+import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.GameXpInput
@@ -54,6 +56,8 @@ data class GoalGameUi(
     /** Unlocked/total achievement counts, null when no achievement data is stored yet. */
     val achievementUnlocked: Int? = null,
     val achievementTotal: Int? = null,
+    /** True while Steam's live presence reports this exact game as the one running right now. */
+    val isCurrentlyPlaying: Boolean = false,
 ) : LibraryRow
 
 data class BacklogGameUi(
@@ -74,6 +78,8 @@ data class BacklogGameUi(
     val fetchOp: HltbFetchOp? = null,
     val achievementUnlocked: Int? = null,
     val achievementTotal: Int? = null,
+    /** True while Steam's live presence reports this exact game as the one running right now. */
+    val isCurrentlyPlaying: Boolean = false,
 ) : LibraryRow
 
 /** One processed game in a running batch sweep. A null [outcome] means the lookup failed. */
@@ -121,6 +127,7 @@ class LibraryViewModel @Inject constructor(
     private val settings: SettingsRepository,
     private val syncScheduler: SyncScheduler,
     private val credentials: CredentialsRepository,
+    private val liveStatusRepository: LiveStatusRepository,
 ) : ViewModel() {
 
     /** Per-game manual-lookup state, keyed by appId. Not persisted — cleared on success. */
@@ -137,7 +144,8 @@ class LibraryViewModel @Inject constructor(
         gameRepository.backlog,
         hltbRepository.reviewCount,
         credentials.credentialsStateFlow,
-    ) { goals, backlog, reviewCount, credState ->
+        liveStatusRepository.nowPlaying,
+    ) { goals, backlog, reviewCount, credState, nowPlaying ->
         val goalIds = goals.mapTo(HashSet()) { it.appId }
         LibraryContent(
             configured = credState is CredentialsState.Configured,
@@ -147,6 +155,7 @@ class LibraryViewModel @Inject constructor(
             // and a duplicate appId across LazyColumn items crashes Compose.
             backlog = backlog.filterNot { it.appId in goalIds },
             reviewCount = reviewCount,
+            playingAppId = (nowPlaying as? NowPlaying.InGame)?.gameId,
         )
     }
 
@@ -192,11 +201,11 @@ class LibraryViewModel @Inject constructor(
         batchState,
     ) { content, xp, counts, view, batch ->
         val goals = content.goals
-            .map { it.toGoalUi(xp, counts, view.ops) }
+            .map { it.toGoalUi(xp, counts, view.ops, content.playingAppId) }
             .matching(view.query)
             .sortedFor(view.sort.focus)
         val backlog = content.backlog
-            .map { it.toBacklogUi(xp, counts, view.ops) }
+            .map { it.toBacklogUi(xp, counts, view.ops, content.playingAppId) }
             .matching(view.query)
             .sortedFor(view.sort.library)
         LibraryUiState(
@@ -295,6 +304,8 @@ private data class LibraryContent(
     val goals: List<LibraryGame>,
     val backlog: List<LibraryGame>,
     val reviewCount: Int,
+    /** appId of the game Steam's live presence reports as running right now, if any. */
+    val playingAppId: Long?,
 )
 
 /** Everything the XP badge needs, gathered once per change rather than per row. */
@@ -345,6 +356,7 @@ private fun LibraryGame.toGoalUi(
     xp: XpInputs,
     counts: Map<Long, AchievementCounts>,
     ops: Map<Long, HltbFetchOp>,
+    playingAppId: Long?,
 ) = GoalGameUi(
     appId = appId,
     name = name,
@@ -358,12 +370,14 @@ private fun LibraryGame.toGoalUi(
     fetchOp = ops[appId],
     achievementUnlocked = counts[appId]?.unlocked,
     achievementTotal = counts[appId]?.total,
+    isCurrentlyPlaying = appId == playingAppId,
 )
 
 private fun LibraryGame.toBacklogUi(
     xp: XpInputs,
     counts: Map<Long, AchievementCounts>,
     ops: Map<Long, HltbFetchOp>,
+    playingAppId: Long?,
 ) = BacklogGameUi(
     appId = appId,
     name = name,
@@ -377,6 +391,7 @@ private fun LibraryGame.toBacklogUi(
     fetchOp = ops[appId],
     achievementUnlocked = counts[appId]?.unlocked,
     achievementTotal = counts[appId]?.total,
+    isCurrentlyPlaying = appId == playingAppId,
 )
 
 /**

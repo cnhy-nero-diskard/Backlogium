@@ -23,17 +23,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Text
@@ -69,16 +69,20 @@ import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.theme.overrunExcess
+import com.example.backlogium.ui.theme.playingIndicator
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.work.HltbBatchProgress
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowsSort
+import compose.icons.tablericons.Bolt
 import compose.icons.tablericons.Check
 import compose.icons.tablericons.Checkbox
 import compose.icons.tablericons.Clock
 import compose.icons.tablericons.DotsVertical
+import compose.icons.tablericons.PlayerPlay
 import compose.icons.tablericons.PlayerStop
 import compose.icons.tablericons.Search
+import compose.icons.tablericons.TrendingUp
 import compose.icons.tablericons.Trophy
 import compose.icons.tablericons.X
 
@@ -146,21 +150,21 @@ fun LibraryScreen(
                 .padding(16.dp),
         ) {
             item {
-                SearchField(
-                    query = state.query,
-                    onQueryChange = viewModel::setQuery,
-                    onClear = viewModel::clearQuery,
-                )
-            }
-
-            item {
-                HltbControls(
-                    refreshing = state.refreshing,
-                    reviewCount = state.reviewCount,
-                    onRefresh = { viewModel.refreshHltb(force = false) },
-                    onForceRefresh = { viewModel.refreshHltb(force = true) },
-                    onOpenReview = onOpenReview,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SearchField(
+                        query = state.query,
+                        onQueryChange = viewModel::setQuery,
+                        onClear = viewModel::clearQuery,
+                        modifier = Modifier.weight(1f),
+                    )
+                    HltbMenuButton(
+                        refreshing = state.refreshing,
+                        reviewCount = state.reviewCount,
+                        onRefresh = { viewModel.refreshHltb(force = false) },
+                        onForceRefresh = { viewModel.refreshHltb(force = true) },
+                        onOpenReview = onOpenReview,
+                    )
+                }
             }
 
             if (state.refreshing) {
@@ -275,14 +279,16 @@ private fun SearchField(
     query: String,
     onQueryChange: (String) -> Unit,
     onClear: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
+            .height(52.dp)
             .padding(bottom = 8.dp),
         singleLine = true,
+        shape = RoundedCornerShape(20.dp),
         label = { Text("Search games") },
         leadingIcon = {
             Icon(
@@ -306,51 +312,64 @@ private fun SearchField(
 }
 
 /**
- * Batch HLTB refresh control (with a force-all option) plus the match-review entry point.
- * Reflects the running state via [refreshing]; surfaces the pending [reviewCount].
+ * Batch HLTB refresh (with a force-all option) plus the match-review entry point, tucked behind a
+ * single icon button next to the search field. These are a one-time-setup action a player taps
+ * heavily on first run and rarely afterward, so they no longer earn permanent top-of-screen real
+ * estate — the pending [reviewCount] surfaces as a badge instead so it stays noticeable without a
+ * standing button.
  */
 @Composable
-private fun HltbControls(
+private fun HltbMenuButton(
     refreshing: Boolean,
     reviewCount: Int,
     onRefresh: () -> Unit,
     onForceRefresh: () -> Unit,
     onOpenReview: () -> Unit,
 ) {
-    Column(modifier = Modifier.padding(bottom = 8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            FilledTonalButton(
-                onClick = onRefresh,
-                enabled = !refreshing,
-            ) {
-                if (refreshing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Refreshing…")
-                } else {
-                    Text("Refresh HLTB library")
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            if (refreshing) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            } else {
+                BadgedBox(
+                    badge = {
+                        if (reviewCount > 0) {
+                            Badge { Text(reviewCount.toString()) }
+                        }
+                    },
+                ) {
+                    Icon(imageVector = TablerIcons.Clock, contentDescription = "HowLongToBeat options")
                 }
             }
-            OutlinedButton(
-                onClick = onForceRefresh,
-                enabled = !refreshing,
-            ) {
-                Text("Force all")
-            }
         }
-        TextButton(
-            onClick = onOpenReview,
-            modifier = Modifier.padding(top = 4.dp),
-        ) {
-            Text(
-                if (reviewCount > 0) "Review HLTB matches ($reviewCount)" else "Review HLTB matches",
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(if (refreshing) "Refreshing…" else "Refresh HLTB library") },
+                enabled = !refreshing,
+                onClick = {
+                    expanded = false
+                    onRefresh()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Force refresh all") },
+                enabled = !refreshing,
+                onClick = {
+                    expanded = false
+                    onForceRefresh()
+                },
+            )
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        if (reviewCount > 0) "Review HLTB matches ($reviewCount)" else "Review HLTB matches",
+                    )
+                },
+                onClick = {
+                    expanded = false
+                    onOpenReview()
+                },
             )
         }
     }
@@ -576,14 +595,12 @@ private fun GoalGameRow(
             iconUrl = game.iconUrl,
             status = game.hltbStatus,
             op = game.fetchOp,
+            isCurrentlyPlaying = game.isCurrentlyPlaying,
         )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(game.name, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                text = UiFormat.minutes(game.playtimeForever) + " played",
-                style = MaterialTheme.typography.bodySmall,
-            )
+            PlaytimeLabel(game.playtimeForever)
             CompletionProgress(
                 playtimeMinutes = game.playtimeForever,
                 completionistMinutes = game.completionistMinutes,
@@ -622,14 +639,12 @@ private fun BacklogGameRow(
             iconUrl = game.iconUrl,
             status = game.hltbStatus,
             op = game.fetchOp,
+            isCurrentlyPlaying = game.isCurrentlyPlaying,
         )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(game.name, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                text = UiFormat.minutes(game.playtimeForever) + " played",
-                style = MaterialTheme.typography.bodySmall,
-            )
+            PlaytimeLabel(game.playtimeForever)
             CompletionProgress(
                 playtimeMinutes = game.playtimeForever,
                 completionistMinutes = game.completionistMinutes,
@@ -648,12 +663,34 @@ private fun BacklogGameRow(
     }
 }
 
+/** A play icon plus the raw duration — "played" is implied by the row it sits in. */
+@Composable
+private fun PlaytimeLabel(minutes: Int) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            imageVector = TablerIcons.PlayerPlay,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(12.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = UiFormat.minutes(minutes),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.semantics {
+                contentDescription = "${UiFormat.minutes(minutes)} played"
+            },
+        )
+    }
+}
+
 /**
  * The shared row shell. Material 3's `Card(onClick = …)` has no long-press, so the card is
  * non-clickable and carries [combinedClickable] instead — long-press enters selection mode while
  * tap keeps its existing meaning.
  *
- * A completed game is marked by its gold "100% COMPLETED" pill only. The row used to also take a
+ * A completed game is marked by its gold trophy "100%" pill only. The row used to also take a
  * gold outline, which read as loud rather than celebratory once several completed games sat next
  * to each other in the list.
  */
@@ -791,15 +828,31 @@ private fun CompletionProgress(playtimeMinutes: Int, completionistMinutes: Int?)
         },
     )
     Spacer(Modifier.height(2.dp))
-    Text(
-        text = if (overrun) {
-            val percent = (playtimeMinutes.toLong() * 100 / completionist).toInt()
-            "${UiFormat.minutes(completionist)} to 100% · played $percent%"
-        } else {
-            "${UiFormat.minutes(playtimeMinutes)} / ${UiFormat.minutes(completionist)} to 100%"
-        },
-        style = MaterialTheme.typography.bodySmall,
-    )
+    val percent = (playtimeMinutes.toLong() * 100 / completionist).toInt()
+    val fullDescription = if (overrun) {
+        "${UiFormat.minutes(completionist)} to 100% · played $percent%"
+    } else {
+        "${UiFormat.minutes(playtimeMinutes)} / ${UiFormat.minutes(completionist)} to 100%"
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = fullDescription },
+    ) {
+        if (overrun) {
+            Icon(
+                imageVector = TablerIcons.TrendingUp,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.overrunExcess,
+                modifier = Modifier.size(12.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+        }
+        Text(
+            text = "$percent%",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 /** Compact, live HLTB state for a game: in-flight, failed, or the persisted match status. */
@@ -910,9 +963,17 @@ private fun HltbIndicator(
  * The row's leading game icon with a small HLTB status badge pinned to its corner — a persistent
  * per-game marker that doesn't compete with the title or badge line for width, since the old
  * inline text label squeezed the "100% COMPLETED" pill down to a truncated "100% C".
+ *
+ * A "currently playing" dot pins to the opposite (top-end) corner when Steam's live presence
+ * reports this exact game as running — the bottom-end corner is already the HLTB badge's spot.
  */
 @Composable
-private fun GameIconWithHltbBadge(iconUrl: String, status: HltbMatchState?, op: HltbFetchOp?) {
+private fun GameIconWithHltbBadge(
+    iconUrl: String,
+    status: HltbMatchState?,
+    op: HltbFetchOp?,
+    isCurrentlyPlaying: Boolean,
+) {
     Box {
         GameIcon(iconUrl)
         Box(
@@ -924,6 +985,24 @@ private fun GameIconWithHltbBadge(iconUrl: String, status: HltbMatchState?, op: 
             contentAlignment = Alignment.Center,
         ) {
             HltbIndicator(status = status, op = op, size = 10.dp)
+        }
+        if (isCurrentlyPlaying) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surface),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.playingIndicator)
+                        .semantics { contentDescription = "Currently playing" },
+                )
+            }
         }
     }
 }
@@ -976,21 +1055,32 @@ private fun GameBadges(unlocked: Int?, total: Int?, xpContributed: Int) {
  * includes pre-install hours that only earn XP if the player imported their history, and playtime
  * XP tapers toward zero past a game's completion length. `0 XP` on a long-owned game is correct.
  *
- * Shown as a bare "N XP" to keep the badge line to one row; the full "contributed" wording lives
- * in the accessibility label, where length costs nothing.
+ * Shown as a bolt icon plus the bare number to keep the badge line to one row; the full
+ * "N XP contributed" wording lives in the accessibility label, where length costs nothing.
  */
 @Composable
 private fun XpContributionLabel(xpContributed: Int) {
-    Text(
-        text = "$xpContributed XP",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        softWrap = false,
-        modifier = Modifier.semantics {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.semantics(mergeDescendants = true) {
             contentDescription = "$xpContributed XP contributed"
         },
-    )
+    ) {
+        Icon(
+            imageVector = TablerIcons.Bolt,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(12.dp),
+        )
+        Spacer(Modifier.width(2.dp))
+        Text(
+            text = "$xpContributed",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            softWrap = false,
+        )
+    }
 }
 
 /**
@@ -1006,7 +1096,8 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifie
             modifier = modifier
                 .clip(RoundedCornerShape(6.dp))
                 .background(MaterialTheme.colorScheme.primary)
-                .padding(horizontal = 8.dp, vertical = 3.dp),
+                .padding(horizontal = 8.dp, vertical = 3.dp)
+                .semantics(mergeDescendants = true) { contentDescription = "100% completed" },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
@@ -1017,7 +1108,7 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifie
             )
             Spacer(Modifier.width(4.dp))
             Text(
-                text = "100% COMPLETED",
+                text = "100%",
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onPrimary,
@@ -1027,7 +1118,12 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifie
         }
         return
     }
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        modifier = modifier.semantics(mergeDescendants = true) {
+            contentDescription = "$unlocked of $total achievements unlocked"
+        },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Icon(
             imageVector = TablerIcons.Trophy,
             contentDescription = null,
@@ -1036,7 +1132,7 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifie
         )
         Spacer(Modifier.width(4.dp))
         Text(
-            text = "$unlocked / $total achievements",
+            text = "$unlocked/$total",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,

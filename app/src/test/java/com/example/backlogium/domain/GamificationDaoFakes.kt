@@ -88,7 +88,7 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
     override fun observeLibrary(): Flow<List<Game>> = flowOf(store.values.toList())
     override fun observeGoalGames(): Flow<List<Game>> = flowOf(emptyList())
     override fun observeBacklog(): Flow<List<Game>> = flowOf(emptyList())
-    override suspend fun goalAppIds(): List<Long> = emptyList()
+    override suspend fun allAppIds(): List<Long> = store.keys.toList()
     override suspend fun getAll(): List<Game> = store.values.toList()
     override suspend fun getById(appId: Long): Game? = store[appId]
     override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = Unit

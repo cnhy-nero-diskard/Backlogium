@@ -70,3 +70,9 @@ val RarityUncommonLight = Color(0xFF3F7A4C)
 /** EPIC halo: violet — between RARE's cool steel-blue and LEGENDARY's gold on the ramp. */
 val RarityEpic = Color(0xFFA579D6)
 val RarityEpicLight = Color(0xFF6B3FA0)
+
+// --- Live status (currently-playing indicator) -----------------------------------
+/** "Currently playing" dot on a library row. A vivid, unambiguous green — distinct from the
+ *  muted sage used for [RarityUncommon] so the two don't get read as the same signal. */
+val PlayingIndicator = Color(0xFF4ADE80)
+val PlayingIndicatorLight = Color(0xFF15803D)
