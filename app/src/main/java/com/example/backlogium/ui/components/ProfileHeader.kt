@@ -28,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,14 +59,18 @@ private const val SYNC_SPIN_MILLIS = 1200
  * the onboarding takeover in that state, and a skeleton avatar above it would just be noise.
  * Deliberately carries no level number: the app's own XP level is Home's, and a second unrelated
  * number here would read as a contradiction.
+ *
+ * [transparent] drops the strip's own surface color so a backdrop painted behind the whole shell
+ * (the game detail screen's header-art wash) shows through it rather than being cut off at its
+ * bottom edge — the header stays laid out identically either way.
  */
 @Composable
-fun ProfileHeader(viewModel: ProfileHeaderViewModel = hiltViewModel()) {
+fun ProfileHeader(viewModel: ProfileHeaderViewModel = hiltViewModel(), transparent: Boolean = false) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     if (!state.visible) return
 
-    Surface(color = MaterialTheme.colorScheme.surface) {
+    Surface(color = if (transparent) Color.Transparent else MaterialTheme.colorScheme.surface) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()

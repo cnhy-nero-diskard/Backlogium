@@ -33,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -77,60 +78,42 @@ import java.util.Locale
  * a game screen showing nothing but an empty state was the gap this closed.
  */
 @Composable
-fun GameDetailScreen(viewModel: GameDetailViewModel = hiltViewModel()) {
+fun GameDetailScreen(
+    viewModel: GameDetailViewModel = hiltViewModel(),
+    onAccentColorChanged: (Color?) -> Unit = {},
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val accentColor by rememberHeaderAccentColor(state.summary.headerUrl)
+    // The wash itself is painted by the app shell, behind the top bar as well as this screen's own
+    // content — reported up rather than drawn here so it can bleed past this screen's own bounds.
+    LaunchedEffect(accentColor) { onAccentColorChanged(accentColor) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        DetailBackdrop(accentColor)
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(vertical = 16.dp),
-        ) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(vertical = 16.dp),
+    ) {
+        item {
+            GameSummarySection(name = state.gameName, summary = state.summary)
+        }
+        if (state.allUnlocked) {
+            item { GameCompletedBanner() }
+        }
+        if (!state.loading && state.achievements.isEmpty()) {
+            item { NoAchievementsNotice() }
+        } else if (state.achievements.isNotEmpty()) {
             item {
-                GameSummarySection(name = state.gameName, summary = state.summary)
+                AchievementSortControl(
+                    selected = state.sort,
+                    onSelect = viewModel::setSort,
+                )
             }
-            if (state.allUnlocked) {
-                item { GameCompletedBanner() }
-            }
-            if (!state.loading && state.achievements.isEmpty()) {
-                item { NoAchievementsNotice() }
-            } else if (state.achievements.isNotEmpty()) {
-                item {
-                    AchievementSortControl(
-                        selected = state.sort,
-                        onSelect = viewModel::setSort,
-                    )
-                }
-                items(state.achievements, key = { it.apiName }) { achievement ->
-                    AchievementRow(achievement)
-                }
+            items(state.achievements, key = { it.apiName }) { achievement ->
+                AchievementRow(achievement)
             }
         }
     }
-}
-
-/**
- * A soft color wash behind the whole screen, derived from the header art's own average color —
- * a glow the artwork casts on the page rather than a literal blur of it. Deliberately muted (see
- * [mutedForBackdrop]) so it never gets bright enough to fight the app's dark navy/gold theme, and
- * absent entirely until a color has actually resolved rather than flashing a neutral one first.
- */
-@Composable
-private fun DetailBackdrop(accentColor: Color?) {
-    val color = accentColor ?: return
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(320.dp)
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(color.copy(alpha = 0.5f), Color.Transparent),
-                ),
-            ),
-    )
 }
 
 /**
