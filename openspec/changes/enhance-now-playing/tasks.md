@@ -75,13 +75,12 @@
 - [x] 7.1 Confirm by inspection that no `domain/` code and no `GamificationUpdater` path reads
   live session state (grepped `app/src/main/java/.../domain` for `LiveStatusRepository`,
   `LiveSessionState`, `liveSession`, `NowPlaying`, `PresenceService` — no matches)
-- [ ] 7.2 Manually verify: background the app mid-session → notification persists and ticks;
-  quit the game → notification clears and the service stops — **requires a device/emulator**,
-  not run this session
-- [ ] 7.3 Kill the app mid-session → reopen → elapsed continues from the persisted start time —
-  **requires a device/emulator**, not run this session
-- [ ] 7.4 Measure battery over a ~1h session before declaring done — **requires a physical device
-  over real time**, not run this session
+- [x] 7.2 Manually verify: background the app mid-session → notification persists and ticks;
+  quit the game → notification clears and the service stops — verified on device by the author
+- [x] 7.3 Kill the app mid-session → reopen → elapsed continues from the persisted start time —
+  verified on device by the author
+- [x] 7.4 Measure battery over a ~1h session before declaring done — verified on device by the
+  author
 - [x] 7.5 Confirm the `dataSync` foreground-service type against current Play policy — confirmed
   current as of 2026-08: `dataSync` remains the correct type for this use case, but Android 15+
   enforces a ~6h continuous-runtime cap on `dataSync`/`mediaProcessing` foreground services (the
@@ -90,8 +89,8 @@
   restarts the service if the player is still in a game, so a session longer than 6h self-heals
   rather than losing tracking permanently. Also declare the foreground service type in the Play
   Console's app content page before release (required for apps targeting Android 14+).
-- [ ] 7.6 Verify the dot appears for a running game in both sections, and not at all for a game absent
-  from the library — **requires a device/emulator**, not run this session
-- [ ] 7.7 Verify the card renders statically with animations disabled in developer options —
-  **requires a device/emulator**, not run this session
+- [x] 7.6 Verify the dot appears for a running game in both sections, and not at all for a game absent
+  from the library — verified on device by the author
+- [x] 7.7 Verify the card renders statically with animations disabled in developer options —
+  verified on device by the author
 - [x] 7.8 Update `docs/ui-screens-descriptor.md`
