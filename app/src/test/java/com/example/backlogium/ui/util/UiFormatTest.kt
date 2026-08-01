@@ -69,6 +69,33 @@ class UiFormatTest {
         assertTrue("no year/month/day in a time-of-day string", !formatted.contains("2026"))
     }
 
+    @Test
+    fun liveElapsed_underAMinute_countsSeconds() {
+        // The case `minutes()` got wrong: a just-detected session must not read as a static "0m".
+        assertEquals("0s", UiFormat.liveElapsed(0L))
+        assertEquals("7s", UiFormat.liveElapsed(7_000L))
+        assertEquals("59s", UiFormat.liveElapsed(59_999L))
+    }
+
+    @Test
+    fun liveElapsed_underAnHour_showsMinutesAndSeconds() {
+        assertEquals("1m 0s", UiFormat.liveElapsed(60_000L))
+        assertEquals("5m 23s", UiFormat.liveElapsed(323_000L))
+    }
+
+    @Test
+    fun liveElapsed_pastAnHour_dropsSeconds() {
+        // Past an hour a ticking seconds digit is noise, not liveness.
+        assertEquals("1h 0m", UiFormat.liveElapsed(3_600_000L))
+        assertEquals("2h 35m", UiFormat.liveElapsed(9_300_000L))
+    }
+
+    @Test
+    fun liveElapsed_negativeElapsed_clampsToZero() {
+        // A clock adjustment can put the persisted start time in the future; never render "-1s".
+        assertEquals("0s", UiFormat.liveElapsed(-5_000L))
+    }
+
     private fun at(year: Int, month: Int, day: Int, hour: Int, minute: Int): Long =
         ZonedDateTime.of(year, month, day, hour, minute, 0, 0, zone).toInstant().toEpochMilli()
 

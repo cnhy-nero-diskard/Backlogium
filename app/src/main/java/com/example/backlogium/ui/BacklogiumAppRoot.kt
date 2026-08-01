@@ -62,11 +62,17 @@ fun BacklogiumAppRoot() {
     // selected — hide it there instead of leaving a misleading state.
     val onGameDetail = currentDestination?.route == ROUTE_GAME_DETAIL
 
-    // Hoisted above the Scaffold so the game detail screen's header-art wash can paint behind the
-    // top bar too, not just its own content area. Cleared once the screen isn't game detail so a
-    // color never lingers into another tab or flashes stale on the next game opened.
+    // Hoisted above the Scaffold so a screen-reported wash can paint behind the top bar too, not
+    // just its own content area — the game detail screen's header-art wash, and Home's now-playing
+    // tint, which is what lets the profile header and the now-playing panel read as one block.
+    // Cleared when the screen is neither of those, so a color never lingers into another tab or
+    // flashes stale on the next game opened. (Home clears its own on leaving composition too, but
+    // game detail reports once on load and never retracts it.)
     var accentColor by remember { mutableStateOf<Color?>(null) }
-    LaunchedEffect(onGameDetail) { if (!onGameDetail) accentColor = null }
+    val onHome = currentDestination?.route == Destination.HOME.route
+    LaunchedEffect(onGameDetail, onHome) {
+        if (!onGameDetail && !onHome) accentColor = null
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         ScreenBackdrop(accentColor = accentColor)
@@ -79,7 +85,14 @@ fun BacklogiumAppRoot() {
             contentColor = MaterialTheme.colorScheme.onBackground,
             // Shell-level, so the identity strip survives navigation without each screen
             // re-declaring it. `innerPadding` below already offsets the NavHost for it.
-            topBar = { ProfileHeader(transparent = onGameDetail) },
+            // Transparent on Home *unconditionally*, and on any screen painting a backdrop wash.
+            //
+            // The unconditional part matters: with its own `surface` fill the header ended at a
+            // hard color step against Home's now-playing panel (whose top edge is transparent),
+            // and that step read as a crease. Dropping the fill puts header and panel on the same
+            // pixels — the shell backdrop — so the boundary cannot draw a line whether or not the
+            // in-game wash happens to be active.
+            topBar = { ProfileHeader(transparent = onHome || accentColor != null) },
             bottomBar = {
                 AnimatedVisibility(
                     visible = !onGameDetail,
@@ -118,7 +131,9 @@ fun BacklogiumAppRoot() {
                 startDestination = Destination.HOME.route,
                 modifier = Modifier.padding(innerPadding),
             ) {
-                composable(Destination.HOME.route) { HomeScreen() }
+                composable(Destination.HOME.route) {
+                    HomeScreen(onAccentColorChanged = { accentColor = it })
+                }
                 composable(Destination.LIBRARY.route) {
                     LibraryScreen(
                         onOpenReview = { navController.navigate(ROUTE_HLTB_REVIEW) },
