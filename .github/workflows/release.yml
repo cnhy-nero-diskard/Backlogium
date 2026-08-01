@@ -23,6 +23,8 @@ jobs:
 
       - name: Evaluate release gates
         id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
@@ -35,7 +37,20 @@ jobs:
           fi
           PATCH="${BASH_REMATCH[3]}"
 
-          TAG_MESSAGE="$(git for-each-ref "refs/tags/$TAG" --format='%(contents)')"
+          # actions/checkout re-pins refs/tags/$TAG straight to the commit SHA
+          # (a lightweight ref), discarding the annotated tag object — so the
+          # marker can't be read from the local git checkout. Read it from the
+          # GitHub API instead, which still has the real tag object.
+          REF_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/$TAG")"
+          OBJECT_SHA="$(echo "$REF_JSON" | jq -r .object.sha)"
+          OBJECT_TYPE="$(echo "$REF_JSON" | jq -r .object.type)"
+
+          if [[ "$OBJECT_TYPE" == "tag" ]]; then
+            TAG_MESSAGE="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/$OBJECT_SHA" --jq .message)"
+          else
+            TAG_MESSAGE=""
+          fi
+
           if [[ "$TAG_MESSAGE" == *"[force-release]"* ]]; then
             echo "::notice::'$TAG' carries a [force-release] marker — bypassing the patch-release gate."
             FORCED=true
