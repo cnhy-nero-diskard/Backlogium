@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.backlogium.domain.LibrarySortKey
@@ -49,6 +50,8 @@ class SettingsDataStore @Inject constructor(
         val AUTO_SNAPSHOT_ENABLED = booleanPreferencesKey("auto_snapshot_enabled")
         val SNAPSHOT_RETENTION_COUNT = intPreferencesKey("snapshot_retention_count")
         val SNAPSHOT_INTERVAL_HOURS = intPreferencesKey("snapshot_interval_hours")
+        val LIVE_SESSION_APP_ID = longPreferencesKey("live_session_app_id")
+        val LIVE_SESSION_STARTED_AT = longPreferencesKey("live_session_started_at")
     }
 
     val ruleConfigFlow: Flow<RuleConfig> = context.dataStore.data.map { prefs ->
@@ -128,6 +131,34 @@ class SettingsDataStore @Inject constructor(
     suspend fun setSnapshotIntervalHours(hours: Int) {
         context.dataStore.edit { it[Keys.SNAPSHOT_INTERVAL_HOURS] = hours }
     }
+
+    /**
+     * The live now-playing session's (appId, startedAt) pair (enhance-now-playing) — the one
+     * exception to `live-status`'s no-persistence rule, since an elapsed-time display must survive
+     * app restart. Absent by default, so a fresh install (or a player not currently in a game)
+     * behaves exactly as before this existed.
+     */
+    val liveSessionFlow: Flow<LiveSessionState> = context.dataStore.data.map { prefs ->
+        LiveSessionState(
+            appId = prefs[Keys.LIVE_SESSION_APP_ID],
+            startedAt = prefs[Keys.LIVE_SESSION_STARTED_AT],
+        )
+    }
+
+    /** [appId] is nullable: Steam's running-game id can fail to parse while still in a game. */
+    suspend fun setLiveSession(appId: Long?, startedAt: Long) {
+        context.dataStore.edit { prefs ->
+            if (appId != null) prefs[Keys.LIVE_SESSION_APP_ID] = appId else prefs.remove(Keys.LIVE_SESSION_APP_ID)
+            prefs[Keys.LIVE_SESSION_STARTED_AT] = startedAt
+        }
+    }
+
+    suspend fun clearLiveSession() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.LIVE_SESSION_APP_ID)
+            prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
+        }
+    }
 }
 
 /** Auto-snapshot toggle, retention count, and minimum interval between writes (in hours). */
@@ -135,4 +166,13 @@ data class AutoSnapshotSettings(
     val enabled: Boolean = true,
     val retentionCount: Int = 7,
     val intervalHours: Int = 24,
+)
+
+/**
+ * The persisted live now-playing session: which game (Steam appId, possibly unresolved) and when
+ * it was first observed running. Both null means no session is currently tracked.
+ */
+data class LiveSessionState(
+    val appId: Long? = null,
+    val startedAt: Long? = null,
 )

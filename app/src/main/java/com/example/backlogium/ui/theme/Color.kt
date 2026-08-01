@@ -38,6 +38,15 @@ val SteelBlue = Color(0xFF7FA6C9)
 val OnSteelBlue = Color(0xFF0B1722)
 val SteelBlueLight = Color(0xFF9DBBD8)
 
+/**
+ * Tertiary container pair for the now-playing card (enhance-now-playing) — Material 3's
+ * `darkColorScheme()` default tertiary container is an unrelated baseline purple when left
+ * unset, so this is hand-tuned from [SteelBlue] the same way [GoldContainer] is tuned from
+ * [Gold], keeping the card's "in game right now" lane visually distinct from gold's milestones.
+ */
+val SteelBlueContainer = Color(0xFF243B4C)
+val OnSteelBlueContainer = Color(0xFFCFE4F0)
+
 // --- Light scheme (kept for system light-mode users; dark-first design) ----------
 val GoldLight = Color(0xFF7A5A00)
 val OnGoldLight = Color(0xFFFFFFFF)
@@ -52,6 +61,10 @@ val SteelBlueDark = Color(0xFF2F5B7C)
 
 /** Light-scheme counterpart to [GoldOverrun]: burnt amber, legible on the cream surfaces. */
 val GoldOverrunLight = Color(0xFFB4571F)
+
+/** Light-scheme counterpart to [SteelBlueContainer]/[OnSteelBlueContainer]. */
+val SteelBlueContainerLight = Color(0xFFD3E4F0)
+val OnSteelBlueContainerLight = Color(0xFF12283A)
 
 // --- Achievement rarity halo (enhance-game-detail) -------------------------------
 // A dull-to-vivid ramp for the glow behind an unlocked achievement's icon, evoking Steam's own

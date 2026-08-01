@@ -5,14 +5,19 @@ import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.domain.PlayerIdentity
+import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.mergePlayerIdentity
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -47,48 +52,98 @@ enum class LivePresence {
     IN_GAME,
 }
 
-/** One poll's worth of live signal: what's running, and how the player reads as present. */
+/**
+ * One poll's worth of live signal: what's running, how the player reads as present, and — the one
+ * piece of this that is persisted — when the current session was first observed.
+ */
 data class LiveStatus(
     val nowPlaying: NowPlaying = NowPlaying.NotPlaying,
     val presence: LivePresence = LivePresence.UNKNOWN,
+    /** When [nowPlaying]'s session began, for the elapsed-time display. Null while not in a game. */
+    val sessionStartedAt: Long? = null,
 )
 
 /**
- * Exposes the player's live Steam status as a [Flow] that polls `GetPlayerSummaries` roughly
- * every 30 seconds. The flow is foreground-scoped by construction: it only ticks while something
- * collects it (the Home screen and the shell's profile header, via `stateIn`/`WhileSubscribed`),
- * and stops shortly after collection stops — no Service, no manual lifecycle wiring, no leak.
- * `shareIn` means several observers still cost exactly one poll.
+ * Exposes the player's live Steam status as an application-scoped [StateFlow], polled roughly
+ * every 30 seconds while [startPolling] is active. Ownership of *when* to poll belongs to
+ * [com.example.backlogium.work.PresenceService] (started when a game is detected, stopped when it
+ * ends) rather than to whoever happens to be observing — merely collecting [liveStatus] never
+ * starts or extends polling, so Home and the Library remain plain, side-effect-free observers.
  *
- * Presence and [NowPlaying] are never persisted. The one thing this repository does write is the
- * player's identity, opportunistically, when a poll observes a newer persona name or avatar than
- * the sync last stored.
+ * Presence and [NowPlaying] are never persisted. The one exception is the current session's start
+ * timestamp (see [LiveSessionTracker]), needed so an elapsed-time display survives an app restart.
+ * This repository also opportunistically writes the player's identity when a poll observes a
+ * newer persona name or avatar than the last sync stored.
  */
 @Singleton
 class LiveStatusRepository @Inject constructor(
     private val steamApi: SteamApi,
     private val gameDao: GameDao,
     private val profileDao: PlayerProfileDao,
-    private val credentials: CredentialsRepository,
-    @ApplicationScope scope: CoroutineScope,
+    private val credentials: CredentialsProvider,
+    private val settings: SettingsRepository,
+    private val time: TimeProvider,
+    @ApplicationScope private val scope: CoroutineScope,
 ) {
-    /**
-     * Emits an immediate [LiveStatus] default so consumers never block on the first network
-     * round-trip, then polls: fetch → emit → wait. A failed fetch retains the last emitted value
-     * rather than throwing out of the flow, so a transient error doesn't clear the banner
-     * abruptly. Each fetch is awaited before the next delay, so slow requests can't stack.
-     */
-    val liveStatus: Flow<LiveStatus> = flow {
-        var last = LiveStatus()
-        emit(last)
-        while (true) {
-            last = runCatching { fetch() }.getOrDefault(last)
-            emit(last)
-            delay(POLL_INTERVAL_MS)
-        }
-    }.shareIn(scope, SharingStarted.WhileSubscribed(SHARE_TIMEOUT_MS), replay = 1)
+    private val _liveStatus = MutableStateFlow(LiveStatus())
+    val liveStatus: StateFlow<LiveStatus> = _liveStatus.asStateFlow()
 
     val nowPlaying: Flow<NowPlaying> = liveStatus.map { it.nowPlaying }
+
+    private var pollingJob: Job? = null
+
+    /** True while the recurring 30s poll loop is running. */
+    val isPolling: Boolean get() = pollingJob?.isActive == true
+
+    /** Start the poll loop. Idempotent: a call while already polling is a no-op. */
+    fun startPolling() {
+        if (isPolling) return
+        pollingJob = scope.launch {
+            while (isActive) {
+                checkNow()
+                delay(POLL_INTERVAL_MS)
+            }
+        }
+    }
+
+    /**
+     * Stop the poll loop and clear both the in-memory and persisted session, so nothing (e.g. the
+     * Library's live dot) keeps showing a game as running once presence is no longer observed.
+     * Safe to call when already stopped.
+     */
+    fun stopPolling() {
+        pollingJob?.cancel()
+        pollingJob = null
+        _liveStatus.value = LiveStatus()
+        scope.launch { settings.clearLiveSession() }
+    }
+
+    /**
+     * One fetch-and-emit cycle, callable both from the poll loop and as a one-off check (Home on
+     * open, [com.example.backlogium.work.SteamSyncWorker] after its own poll) — those callers use
+     * the result to decide whether to start the service, without owning a recurring loop
+     * themselves. A failed fetch retains the last emitted presence rather than throwing, so a
+     * transient error doesn't clear the Home card or Library dot abruptly.
+     */
+    suspend fun checkNow(): LiveStatus {
+        val last = _liveStatus.value
+        val fetched = runCatching { fetch() }
+            .getOrDefault(LiveStatus(last.nowPlaying, last.presence))
+
+        val previousSession = settings.liveSession.first()
+        val nextSession = LiveSessionTracker.next(previousSession, fetched.nowPlaying, time.nowMillis())
+        if (nextSession != previousSession) {
+            if (nextSession.startedAt == null) {
+                settings.clearLiveSession()
+            } else {
+                settings.setLiveSession(nextSession.appId, nextSession.startedAt)
+            }
+        }
+
+        val next = fetched.copy(sessionStartedAt = nextSession.startedAt)
+        _liveStatus.value = next
+        return next
+    }
 
     private suspend fun fetch(): LiveStatus {
         // Unconfigured (or private) profiles simply report not-in-game — no error surfaced.
@@ -147,9 +202,6 @@ class LiveStatusRepository @Inject constructor(
 
     companion object {
         const val POLL_INTERVAL_MS = 30_000L
-
-        /** Keep polling briefly across a recomposition/navigation gap, matching `stateIn` above. */
-        private const val SHARE_TIMEOUT_MS = 5_000L
 
         /** Steam's `personastate` value for an offline player; every other value is "around". */
         private const val PERSONA_STATE_OFFLINE = 0

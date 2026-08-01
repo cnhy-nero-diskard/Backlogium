@@ -27,6 +27,26 @@ object UiFormat {
         }
     }
 
+    /**
+     * A *live*, second-ticking duration for the Home now-playing card — distinct from [minutes],
+     * which formats a settled total and would render a just-started session as a static "0m".
+     *
+     * Seconds are shown below the hour mark precisely because this value updates every second:
+     * a visibly advancing number is what makes the card read as live. Past an hour they are
+     * dropped — by then the minute is the meaningful unit and a ticking seconds digit is noise.
+     */
+    fun liveElapsed(millis: Long): String {
+        val totalSeconds = (millis / 1_000L).coerceAtLeast(0L)
+        val hours = totalSeconds / 3_600L
+        val minutes = (totalSeconds % 3_600L) / 60L
+        val seconds = totalSeconds % 60L
+        return when {
+            hours > 0 -> "${hours}h ${minutes}m"
+            minutes > 0 -> "${minutes}m ${seconds}s"
+            else -> "${seconds}s"
+        }
+    }
+
     /** Format an epoch-millis timestamp in the device's local zone, or "—" when unset. */
     fun dateTime(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String {
         if (epochMillis <= 0L) return "—"
