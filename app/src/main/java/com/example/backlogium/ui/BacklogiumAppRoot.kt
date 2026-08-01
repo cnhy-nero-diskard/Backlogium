@@ -72,6 +72,11 @@ fun BacklogiumAppRoot() {
         ScreenBackdrop(accentColor = accentColor)
         Scaffold(
             containerColor = Color.Transparent,
+            // Spelled out for the same reason as ProfileHeader's Surface: Scaffold only infers
+            // contentColor for known scheme colors, and a transparent container isn't one — left
+            // implicit, every screen's text/icons that rely on the inherited color (not just game
+            // detail's) would silently fall back to plain black.
+            contentColor = MaterialTheme.colorScheme.onBackground,
             // Shell-level, so the identity strip survives navigation without each screen
             // re-declaring it. `innerPadding` below already offsets the NavHost for it.
             topBar = { ProfileHeader(transparent = onGameDetail) },
