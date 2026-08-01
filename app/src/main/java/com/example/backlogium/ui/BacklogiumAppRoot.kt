@@ -162,8 +162,8 @@ private fun ScreenBackdrop(accentColor: Color?) {
                     .background(
                         Brush.verticalGradient(
                             colorStops = arrayOf(
-                                0f to accentColor.copy(alpha = 0.55f),
-                                0.45f to accentColor.copy(alpha = 0.2f),
+                                0f to accentColor.copy(alpha = 0.75f),
+                                0.45f to accentColor.copy(alpha = 0.32f),
                                 1f to Color.Transparent,
                             ),
                         ),

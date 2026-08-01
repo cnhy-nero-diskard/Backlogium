@@ -161,15 +161,15 @@ private fun averageColor(bitmap: Bitmap): Color {
 }
 
 /**
- * Caps saturation and lightness so the backdrop always reads as a dim tint, never a bright wash —
- * a vivid box-art color (a red logo, a white sky) would otherwise fight the dark navy/gold theme
- * the rest of the app commits to.
+ * Caps lightness so the backdrop always reads as a tint rather than a bright wash, but otherwise
+ * leaves saturation mostly alone — a vivid box-art color should still read as that color, just
+ * dimmed enough to sit behind the dark navy/gold theme the rest of the app commits to.
  */
 private fun Color.mutedForBackdrop(): Color {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(toArgb(), hsv)
-    hsv[1] = hsv[1].coerceAtMost(0.6f)
-    hsv[2] = hsv[2].coerceIn(0.16f, 0.36f)
+    hsv[1] = hsv[1].coerceAtLeast(0.45f)
+    hsv[2] = hsv[2].coerceIn(0.22f, 0.48f)
     return Color(android.graphics.Color.HSVToColor(hsv))
 }
 

@@ -78,6 +78,14 @@ fun ColorScheme.rarityHalo(tier: RarityTier): Color {
     }
 }
 
+/**
+ * The "currently playing" dot drawn on a library row's game icon. Keyed off surface luminance
+ * like [overrunExcess] and [rarityHalo], not `isSystemInDarkTheme()`, so it follows whichever
+ * scheme is actually in force.
+ */
+val ColorScheme.playingIndicator: Color
+    get() = if (surface.luminance() < 0.5f) PlayingIndicator else PlayingIndicatorLight
+
 @Composable
 fun BacklogiumTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),

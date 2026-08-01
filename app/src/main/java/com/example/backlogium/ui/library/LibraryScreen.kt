@@ -69,6 +69,7 @@ import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.theme.overrunExcess
+import com.example.backlogium.ui.theme.playingIndicator
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.work.HltbBatchProgress
 import compose.icons.TablerIcons
@@ -592,6 +593,7 @@ private fun GoalGameRow(
             iconUrl = game.iconUrl,
             status = game.hltbStatus,
             op = game.fetchOp,
+            isCurrentlyPlaying = game.isCurrentlyPlaying,
         )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -635,6 +637,7 @@ private fun BacklogGameRow(
             iconUrl = game.iconUrl,
             status = game.hltbStatus,
             op = game.fetchOp,
+            isCurrentlyPlaying = game.isCurrentlyPlaying,
         )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -958,9 +961,17 @@ private fun HltbIndicator(
  * The row's leading game icon with a small HLTB status badge pinned to its corner — a persistent
  * per-game marker that doesn't compete with the title or badge line for width, since the old
  * inline text label squeezed the "100% COMPLETED" pill down to a truncated "100% C".
+ *
+ * A "currently playing" dot pins to the opposite (top-end) corner when Steam's live presence
+ * reports this exact game as running — the bottom-end corner is already the HLTB badge's spot.
  */
 @Composable
-private fun GameIconWithHltbBadge(iconUrl: String, status: HltbMatchState?, op: HltbFetchOp?) {
+private fun GameIconWithHltbBadge(
+    iconUrl: String,
+    status: HltbMatchState?,
+    op: HltbFetchOp?,
+    isCurrentlyPlaying: Boolean,
+) {
     Box {
         GameIcon(iconUrl)
         Box(
@@ -972,6 +983,24 @@ private fun GameIconWithHltbBadge(iconUrl: String, status: HltbMatchState?, op: 
             contentAlignment = Alignment.Center,
         ) {
             HltbIndicator(status = status, op = op, size = 10.dp)
+        }
+        if (isCurrentlyPlaying) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surface),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.playingIndicator)
+                        .semantics { contentDescription = "Currently playing" },
+                )
+            }
         }
     }
 }
