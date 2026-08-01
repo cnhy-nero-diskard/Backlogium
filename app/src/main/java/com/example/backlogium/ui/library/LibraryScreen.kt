@@ -23,17 +23,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Text
@@ -146,21 +146,21 @@ fun LibraryScreen(
                 .padding(16.dp),
         ) {
             item {
-                SearchField(
-                    query = state.query,
-                    onQueryChange = viewModel::setQuery,
-                    onClear = viewModel::clearQuery,
-                )
-            }
-
-            item {
-                HltbControls(
-                    refreshing = state.refreshing,
-                    reviewCount = state.reviewCount,
-                    onRefresh = { viewModel.refreshHltb(force = false) },
-                    onForceRefresh = { viewModel.refreshHltb(force = true) },
-                    onOpenReview = onOpenReview,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SearchField(
+                        query = state.query,
+                        onQueryChange = viewModel::setQuery,
+                        onClear = viewModel::clearQuery,
+                        modifier = Modifier.weight(1f),
+                    )
+                    HltbMenuButton(
+                        refreshing = state.refreshing,
+                        reviewCount = state.reviewCount,
+                        onRefresh = { viewModel.refreshHltb(force = false) },
+                        onForceRefresh = { viewModel.refreshHltb(force = true) },
+                        onOpenReview = onOpenReview,
+                    )
+                }
             }
 
             if (state.refreshing) {
@@ -275,12 +275,12 @@ private fun SearchField(
     query: String,
     onQueryChange: (String) -> Unit,
     onClear: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .padding(bottom = 8.dp),
         singleLine = true,
         label = { Text("Search games") },
@@ -306,51 +306,64 @@ private fun SearchField(
 }
 
 /**
- * Batch HLTB refresh control (with a force-all option) plus the match-review entry point.
- * Reflects the running state via [refreshing]; surfaces the pending [reviewCount].
+ * Batch HLTB refresh (with a force-all option) plus the match-review entry point, tucked behind a
+ * single icon button next to the search field. These are a one-time-setup action a player taps
+ * heavily on first run and rarely afterward, so they no longer earn permanent top-of-screen real
+ * estate — the pending [reviewCount] surfaces as a badge instead so it stays noticeable without a
+ * standing button.
  */
 @Composable
-private fun HltbControls(
+private fun HltbMenuButton(
     refreshing: Boolean,
     reviewCount: Int,
     onRefresh: () -> Unit,
     onForceRefresh: () -> Unit,
     onOpenReview: () -> Unit,
 ) {
-    Column(modifier = Modifier.padding(bottom = 8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            FilledTonalButton(
-                onClick = onRefresh,
-                enabled = !refreshing,
-            ) {
-                if (refreshing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Refreshing…")
-                } else {
-                    Text("Refresh HLTB library")
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            if (refreshing) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            } else {
+                BadgedBox(
+                    badge = {
+                        if (reviewCount > 0) {
+                            Badge { Text(reviewCount.toString()) }
+                        }
+                    },
+                ) {
+                    Icon(imageVector = TablerIcons.Clock, contentDescription = "HowLongToBeat options")
                 }
             }
-            OutlinedButton(
-                onClick = onForceRefresh,
-                enabled = !refreshing,
-            ) {
-                Text("Force all")
-            }
         }
-        TextButton(
-            onClick = onOpenReview,
-            modifier = Modifier.padding(top = 4.dp),
-        ) {
-            Text(
-                if (reviewCount > 0) "Review HLTB matches ($reviewCount)" else "Review HLTB matches",
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(if (refreshing) "Refreshing…" else "Refresh HLTB library") },
+                enabled = !refreshing,
+                onClick = {
+                    expanded = false
+                    onRefresh()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Force refresh all") },
+                enabled = !refreshing,
+                onClick = {
+                    expanded = false
+                    onForceRefresh()
+                },
+            )
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        if (reviewCount > 0) "Review HLTB matches ($reviewCount)" else "Review HLTB matches",
+                    )
+                },
+                onClick = {
+                    expanded = false
+                    onOpenReview()
+                },
             )
         }
     }
