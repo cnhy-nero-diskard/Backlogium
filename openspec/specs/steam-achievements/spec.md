@@ -1,21 +1,21 @@
 ## Purpose
 
-Fetches each in-scope game's per-player Steam achievement unlock data and global unlock
-percentages, limiting and gating that fetch by play/goal scope and data freshness so
-routine syncs stay cheap. Persists achievements keyed by game and achievement id, capturing
-a first-unlock rarity snapshot that never drifts on later syncs even as the live global
-percentage changes. Feeds unlocked achievements — using each one's rarity snapshot — into
-the gamification engine's XP recompute so they contribute tiered XP to the player's total.
+Fetches every library game's per-player Steam achievement unlock data and global unlock
+percentages, gating that fetch by data freshness so routine syncs stay cheap. Persists
+achievements keyed by game and achievement id, capturing a first-unlock rarity snapshot
+that never drifts on later syncs even as the live global percentage changes. Feeds
+unlocked achievements — using each one's rarity snapshot — into the gamification engine's
+XP recompute so they contribute tiered XP to the player's total.
 
 ## Requirements
 
 ### Requirement: Fetch Steam achievement data
-The system SHALL fetch, from Steam, each in-scope game's per-player achievement unlock
+The system SHALL fetch, from Steam, each library game's per-player achievement unlock
 state and the global unlock percentage for each of that game's achievements, and MAY fetch
 the game's achievement schema for display names and icons.
 
 #### Scenario: Fetching a game's achievements
-- **WHEN** an in-scope game's achievement data is stale or missing
+- **WHEN** a library game's achievement data is stale or missing
 - **THEN** the system requests that game's per-player unlock state and global unlock
   percentages from Steam and stores the results
 
@@ -28,21 +28,17 @@ the game's achievement schema for display names and icons.
 - **THEN** that game's achievement fetch is skipped without failing the overall sync, and any
   previously stored achievement data for that game is left intact
 
-### Requirement: Scoped and freshness-gated achievement sync
-The system SHALL limit achievement fetching to games the player engages with — those with
-tracked play sessions and goal-tagged games — and SHALL refetch a game's achievements only
-when its stored data is older than a freshness threshold or absent.
+### Requirement: Freshness-gated achievement sync
+The system SHALL fetch achievements for every game in the library, regardless of play
+history or goal tagging, and SHALL refetch a game's achievements only when its stored data
+is older than a freshness threshold or absent.
 
-#### Scenario: In-scope game is refreshed when stale
-- **WHEN** a played or goal game's stored achievement data is older than the freshness threshold
+#### Scenario: Stale game is refreshed
+- **WHEN** a library game's stored achievement data is older than the freshness threshold
 - **THEN** its achievements are refetched on the next sync
 
-#### Scenario: Out-of-scope game is not fetched
-- **WHEN** a game has no tracked sessions and is not a goal game
-- **THEN** its achievements are not fetched during a routine sync
-
-#### Scenario: Fresh in-scope game is not refetched
-- **WHEN** an in-scope game's stored achievement data is within the freshness threshold
+#### Scenario: Fresh game is not refetched
+- **WHEN** a library game's stored achievement data is within the freshness threshold
 - **THEN** it is not refetched on that sync
 
 ### Requirement: Persist achievements with a first-unlock rarity snapshot

@@ -162,8 +162,8 @@ class SteamSyncWorker @AssistedInject constructor(
             ),
         )
 
-        // Update sync status, then fetch in-scope achievements (freshness-gated, best-effort —
-        // never fails the poll) before recomputing derived gamification values.
+        // Update sync status, then fetch achievements for the whole library (freshness-gated,
+        // best-effort — never fails the poll) before recomputing derived gamification values.
         val identity = mergePlayerIdentity(
             summary,
             PlayerIdentity(profile.personaName, profile.avatarUrl),
@@ -178,7 +178,7 @@ class SteamSyncWorker @AssistedInject constructor(
                 avatarUrl = identity.avatarUrl,
             ),
         )
-        runCatching { achievementRepository.syncInScopeGames(apiKey, steamId) }
+        runCatching { achievementRepository.syncLibraryGames(apiKey, steamId) }
         gamificationUpdater.recompute(today, config)
         // Best-effort: a snapshot-write failure must never fail an otherwise-successful poll.
         runCatching { backupRepository.writeAutoSnapshotIfDue() }
