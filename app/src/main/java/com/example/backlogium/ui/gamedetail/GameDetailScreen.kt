@@ -1,5 +1,8 @@
 package com.example.backlogium.ui.gamedetail
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.drawable.BitmapDrawable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
@@ -30,7 +33,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,12 +47,16 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.SubcomposeAsyncImage
+import coil.imageLoader
+import coil.request.ImageRequest
 import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.theme.rarityHalo
@@ -70,33 +79,115 @@ import java.util.Locale
 @Composable
 fun GameDetailScreen(viewModel: GameDetailViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val accentColor by rememberHeaderAccentColor(state.summary.headerUrl)
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(vertical = 16.dp),
-    ) {
-        item {
-            GameSummarySection(name = state.gameName, summary = state.summary)
-        }
-        if (state.allUnlocked) {
-            item { GameCompletedBanner() }
-        }
-        if (!state.loading && state.achievements.isEmpty()) {
-            item { NoAchievementsNotice() }
-        } else if (state.achievements.isNotEmpty()) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        DetailBackdrop(accentColor)
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(vertical = 16.dp),
+        ) {
             item {
-                AchievementSortControl(
-                    selected = state.sort,
-                    onSelect = viewModel::setSort,
-                )
+                GameSummarySection(name = state.gameName, summary = state.summary)
             }
-            items(state.achievements, key = { it.apiName }) { achievement ->
-                AchievementRow(achievement)
+            if (state.allUnlocked) {
+                item { GameCompletedBanner() }
+            }
+            if (!state.loading && state.achievements.isEmpty()) {
+                item { NoAchievementsNotice() }
+            } else if (state.achievements.isNotEmpty()) {
+                item {
+                    AchievementSortControl(
+                        selected = state.sort,
+                        onSelect = viewModel::setSort,
+                    )
+                }
+                items(state.achievements, key = { it.apiName }) { achievement ->
+                    AchievementRow(achievement)
+                }
             }
         }
     }
+}
+
+/**
+ * A soft color wash behind the whole screen, derived from the header art's own average color —
+ * a glow the artwork casts on the page rather than a literal blur of it. Deliberately muted (see
+ * [mutedForBackdrop]) so it never gets bright enough to fight the app's dark navy/gold theme, and
+ * absent entirely until a color has actually resolved rather than flashing a neutral one first.
+ */
+@Composable
+private fun DetailBackdrop(accentColor: Color?) {
+    val color = accentColor ?: return
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(320.dp)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(color.copy(alpha = 0.5f), Color.Transparent),
+                ),
+            ),
+    )
+}
+
+/**
+ * The header art's muted average color, re-derived whenever the art itself changes. Coil already
+ * holds the image in its memory cache from [HeaderArt]'s own load, so this is a decode, not a
+ * second network fetch in practice.
+ */
+@Composable
+private fun rememberHeaderAccentColor(headerUrl: String): State<Color?> {
+    val context = LocalContext.current
+    return produceState<Color?>(initialValue = null, headerUrl) {
+        value = if (headerUrl.isBlank()) null else loadAverageColor(context, headerUrl)
+    }
+}
+
+private suspend fun loadAverageColor(context: Context, url: String): Color? {
+    val request = ImageRequest.Builder(context)
+        .data(url)
+        // Palette math needs readable pixels; hardware bitmaps don't allow that.
+        .allowHardware(false)
+        .build()
+    val bitmap = (context.imageLoader.execute(request).drawable as? BitmapDrawable)?.bitmap
+        ?: return null
+    return averageColor(bitmap).mutedForBackdrop()
+}
+
+/**
+ * Downsamples to a handful of pixels and averages them — a dominant-color estimate good enough
+ * for a background wash, without pulling in a palette library for one number.
+ */
+private fun averageColor(bitmap: Bitmap): Color {
+    val sample = Bitmap.createScaledBitmap(bitmap, 12, 12, true)
+    val pixels = IntArray(sample.width * sample.height)
+    sample.getPixels(pixels, 0, sample.width, 0, 0, sample.width, sample.height)
+    var r = 0L
+    var g = 0L
+    var b = 0L
+    pixels.forEach { pixel ->
+        r += android.graphics.Color.red(pixel)
+        g += android.graphics.Color.green(pixel)
+        b += android.graphics.Color.blue(pixel)
+    }
+    val n = pixels.size
+    return Color(red = (r / n) / 255f, green = (g / n) / 255f, blue = (b / n) / 255f)
+}
+
+/**
+ * Caps saturation and lightness so the backdrop always reads as a dim tint, never a bright wash —
+ * a vivid box-art color (a red logo, a white sky) would otherwise fight the dark navy/gold theme
+ * the rest of the app commits to.
+ */
+private fun Color.mutedForBackdrop(): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(toArgb(), hsv)
+    hsv[1] = hsv[1].coerceAtMost(0.6f)
+    hsv[2] = hsv[2].coerceIn(0.16f, 0.36f)
+    return Color(android.graphics.Color.HSVToColor(hsv))
 }
 
 /**
