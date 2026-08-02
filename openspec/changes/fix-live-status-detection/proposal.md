@@ -85,8 +85,10 @@ discovers the system settings toggle unaided. The feature works only for users w
   `LiveStatusRepository` (`stopPolling` semantics, cold-start rehydration);
   `HomeViewModel` (drop the `init` check); a lifecycle-scoped foreground observer at the app
   shell; a runtime permission request.
-- **No new network calls.** Items 1 and 3 are reorderings of requests the sync already makes.
-  Item 2 replaces one check-per-ViewModel with one check-per-foreground.
+- **Bounded foreground retry calls.** Items 1 and 3 are reorderings of requests the sync already
+  makes. Item 2 performs an immediate check and, while the app remains foregrounded and no game is
+  visible yet, up to three retries five seconds apart. This covers Steam's observed presence
+  propagation delay without creating an unbounded not-in-game poll.
 - **Relationship to `optimize-steam-sync`:** independent and complementary. This change stops
   presence from *waiting on* the sweep; `optimize-steam-sync` makes the sweep small. Either alone
   is a real improvement; neither blocks the other. Landing this one first is preferable — it is
@@ -99,8 +101,8 @@ discovers the system settings toggle unaided. The feature works only for users w
 - **Changing how presence is detected.** `GetPlayerSummaries`/`gameid` is correct and verified
   working; only trigger timing and state lifetime change.
 - **Reducing achievement sweep cost.** That is `optimize-steam-sync`.
-- **Polling while not in game.** Unchanged: a foreground re-check is a single request, not a
-  standing loop.
+- **Standing polling while not in game.** Unchanged: foreground detection has a short bounded retry
+  window, not a persistent loop.
 - **Surfacing privacy diagnostics.** Presence still degrades silently to "not in game". Worth
   doing, but it is a distinct observability concern and the device evidence shows privacy is not
   the active problem here.

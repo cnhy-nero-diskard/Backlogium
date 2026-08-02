@@ -41,10 +41,13 @@ Compose `LifecycleEventEffect`:
   and back does nothing; binding the trigger to the app rather than a screen removes that class of
   bug rather than relocating it.
 
-An `ON_START` observer registered in `BacklogiumApp` calling `checkNow()`, then starting
-`PresenceService` if the result is `InGame` — the same two-step `HomeViewModel.init` performs
-today, hoisted to the process. `HomeViewModel`'s `init` block and its `PresenceServiceStarter`
-dependency are then removed; it becomes a pure observer of `liveStatus`, like
+An `ON_START` observer registered in `BacklogiumApp` calls `checkNow()`, then starts
+`PresenceService` if the result is `InGame`. On-device verification showed that one check is not
+enough: returning immediately after launching a game can beat Steam's presence propagation, and a
+concurrent achievement sweep then leaves no later detection trigger. The observer therefore makes
+one immediate attempt plus up to three retries five seconds apart. The retry job is cancelled when
+the app backgrounds, so this is a bounded foreground detection window rather than standing polling
+while not in a game. `HomeViewModel` remains a pure observer of `liveStatus`, like
 `ProfileHeaderViewModel` already is.
 
 Rejected: making `liveStatus` a `WhileSubscribed` flow again. That is what `enhance-now-playing`

@@ -20,6 +20,8 @@
       dependency, leaving it a pure observer of `liveStatus`
 - [x] 2.4 Confirm `startPolling()` idempotence covers repeat foregrounding while already in game
       (`LiveStatusRepository.kt:100`) — no duplicate loops, no session-start reset
+- [x] 2.5 Retry foreground detection for a short bounded window and cancel remaining attempts when
+      the app backgrounds, covering delayed Steam presence while a library sync is running
 
 ## 3. Separate poll lifetime from session lifetime
 
@@ -71,12 +73,16 @@
       from `doWork` — both larger than this change's "statement ordering only" scope. Coverage for
       the ordering rests on the code (the presence block now precedes `getOwnedGames`) and on the
       on-device check 8.2 below.
+- [x] 7.6 Unit-test foreground detection's immediate success, delayed success, bounded give-up,
+      and cancellation before acting on a late result
 
 ## 8. On-device verification
 
 - [ ] 8.1 App open, launch a game, return to app → panel appears *(the reported bug)*
 - [ ] 8.2 With achievement data stale, launch a game during a sync → panel appears in seconds
+      *(failed before the bounded foreground retry fix; patched build needs re-verification)*
 - [ ] 8.3 Kill `PresenceService`, re-foreground → elapsed time continues, does not reset to zero
-- [ ] 8.4 Cold start with a game running → panel present immediately, no blank window
+- [x] 8.4 Cold start with a game running → panel present immediately, no blank window
+      *(verified on device by the user)*
 - [ ] 8.5 Fresh install → notification permission requested; ongoing notification appears without
       visiting system settings

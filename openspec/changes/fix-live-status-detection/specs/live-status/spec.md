@@ -40,8 +40,9 @@ the duration of the surrounding sync.
 
 ### Requirement: Presence re-checked on app foreground
 The system SHALL re-check the player's current in-game state each time the app enters the
-foreground, so a game started while the app was open or backgrounded is detected on return
-without requiring a restart.
+foreground. If the first result does not report a running game, the system SHALL retry for a short,
+bounded window while the app remains foregrounded, so Steam presence propagation does not require
+an app restart or completion of an unrelated library sync.
 
 #### Scenario: Game started while the app is backgrounded
 - **WHEN** the player launches a game while the app is backgrounded, then returns to the app
@@ -54,6 +55,15 @@ without requiring a restart.
 #### Scenario: Repeated foregrounding
 - **WHEN** the app is foregrounded again while already observing a running game
 - **THEN** the re-check is harmless and does not restart the recorded session start time
+
+#### Scenario: Presence propagation is delayed
+- **WHEN** the first foreground check reports no running game but a retry within the bounded window
+  reports one
+- **THEN** the running game is reflected and presence observation begins immediately
+
+#### Scenario: App backgrounds during the retry window
+- **WHEN** the app leaves the foreground before the bounded retry window completes
+- **THEN** the remaining foreground detection attempts are cancelled
 
 ### Requirement: Session state outlives the observer
 Stopping presence observation for lifecycle reasons SHALL NOT clear the recorded live session.
