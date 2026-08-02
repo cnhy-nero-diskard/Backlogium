@@ -21,7 +21,7 @@
 
 ## 4. Tests and verification
 
-- [ ] 4.1 Unit-test monitor preference storage/repository forwarding
+- [x] 4.1 Unit-test monitor preference storage/repository forwarding
 - [x] 4.2 Unit-test the service state decision: monitor on retains idle state, monitor off stops it, active session survives toggle-off
 - [x] 4.3 Run the Debug unit-test suite
-- [ ] 4.4 Verify the six device scenarios in the design
+- [x] 4.4 Verify the six device scenarios in the design *(verified on device by the user)*
