@@ -429,6 +429,9 @@ class LiveStatusRepositoryTest {
         override val notificationPermissionRequested: Flow<Boolean> = MutableStateFlow(true)
         override suspend fun setNotificationPermissionRequested() = Unit
 
+        override val liveMonitorEnabled: Flow<Boolean> = MutableStateFlow(false)
+        override suspend fun setLiveMonitorEnabled(enabled: Boolean) = Unit
+
         override val ruleConfig: Flow<RuleConfig> = MutableStateFlow(RuleConfig())
         override suspend fun setRuleConfig(config: RuleConfig) = error("not used")
         override val librarySort: Flow<LibrarySortPrefs> = MutableStateFlow(LibrarySortPrefs())

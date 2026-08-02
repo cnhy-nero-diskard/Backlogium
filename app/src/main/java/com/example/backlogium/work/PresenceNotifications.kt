@@ -35,7 +35,16 @@ class PresenceNotifications @Inject constructor(
     /** The notification the service must post immediately on start. */
     fun initial(): Notification {
         ensureChannel()
-        return build(title = "Tracking your session", text = "")
+        return build(title = "Monitoring Steam", text = "")
+    }
+
+    /** Keep the required foreground-service notification visible while waiting for a game. */
+    fun monitoring() {
+        if (!hasPostPermission()) return
+        NotificationManagerCompat.from(context).notify(
+            NOTIFICATION_ID,
+            build(title = "Monitoring Steam", text = "Checking every 30 seconds"),
+        )
     }
 
     /** Refresh the ongoing notification's game name and elapsed time. */

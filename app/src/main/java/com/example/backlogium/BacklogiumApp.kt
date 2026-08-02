@@ -9,6 +9,7 @@ import androidx.work.Configuration
 import com.example.backlogium.data.repo.LiveStatus
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
+import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.work.PresenceServiceStarter
 import com.example.backlogium.work.SyncScheduler
@@ -18,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -73,6 +75,9 @@ class BacklogiumApp : Application(), Configuration.Provider {
     lateinit var presenceServiceStarter: PresenceServiceStarter
 
     @Inject
+    lateinit var settings: SettingsRepository
+
+    @Inject
     @ApplicationScope
     lateinit var scope: CoroutineScope
 
@@ -104,6 +109,11 @@ class BacklogiumApp : Application(), Configuration.Provider {
         override fun onStart(owner: LifecycleOwner) {
             detectionJob?.cancel()
             detectionJob = scope.launch {
+                // Android may stop a long-running monitor. Re-start it only from this visible
+                // foreground interaction, never from a worker or boot receiver.
+                if (settings.liveMonitorEnabled.first()) {
+                    presenceServiceStarter.start()
+                }
                 detectForegroundPresence(
                     checkNow = liveStatusRepository::checkNow,
                     startPresence = presenceServiceStarter::start,

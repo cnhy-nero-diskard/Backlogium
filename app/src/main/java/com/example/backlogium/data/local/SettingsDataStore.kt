@@ -54,6 +54,7 @@ class SettingsDataStore @Inject constructor(
         val LIVE_SESSION_STARTED_AT = longPreferencesKey("live_session_started_at")
         val NOTIFICATION_PERMISSION_REQUESTED =
             booleanPreferencesKey("notification_permission_requested")
+        val LIVE_MONITOR_ENABLED = booleanPreferencesKey("live_monitor_enabled")
     }
 
     val ruleConfigFlow: Flow<RuleConfig> = context.dataStore.data.map { prefs ->
@@ -174,6 +175,18 @@ class SettingsDataStore @Inject constructor(
 
     suspend fun setNotificationPermissionRequested() {
         context.dataStore.edit { it[Keys.NOTIFICATION_PERMISSION_REQUESTED] = true }
+    }
+
+    /**
+     * Explicit opt-in for the foreground service to poll while no game is running. Off by default:
+     * this mode has an ongoing notification and consumes network/battery while armed.
+     */
+    val liveMonitorEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.LIVE_MONITOR_ENABLED] ?: false
+    }
+
+    suspend fun setLiveMonitorEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.LIVE_MONITOR_ENABLED] = enabled }
     }
 }
 

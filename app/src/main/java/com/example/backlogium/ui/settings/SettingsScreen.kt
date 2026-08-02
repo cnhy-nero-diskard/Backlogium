@@ -85,6 +85,7 @@ fun SettingsScreen(
         actions = remember(viewModel) {
             SettingsActions(
                 onSyncNow = viewModel::syncNow,
+                onLiveMonitorEnabledChanged = viewModel::onLiveMonitorEnabledChanged,
                 onFieldChanged = viewModel::onFieldChanged,
                 onQuestModeChanged = viewModel::onQuestModeChanged,
                 onAdvancedExpandedChanged = viewModel::setAdvancedExpanded,
@@ -111,6 +112,7 @@ fun SettingsScreen(
 /** Every action the screen can raise, so the rendering half stays free of the view model. */
 data class SettingsActions(
     val onSyncNow: () -> Unit,
+    val onLiveMonitorEnabledChanged: (Boolean) -> Unit,
     val onFieldChanged: (RuleField, String) -> Unit,
     val onQuestModeChanged: (QuestMode) -> Unit,
     val onAdvancedExpandedChanged: (Boolean) -> Unit,
@@ -160,6 +162,13 @@ fun SettingsScreen(
             lastSyncAt = state.lastSyncAt,
             syncing = state.isSyncing,
             onSyncNow = actions.onSyncNow,
+        )
+
+        SectionHeader("Live monitor")
+        LiveMonitorCard(
+            enabled = state.liveMonitorEnabled,
+            configured = state.configured,
+            onEnabledChanged = actions.onLiveMonitorEnabledChanged,
         )
 
         SectionHeader("Daily quest")
@@ -301,6 +310,45 @@ private fun SyncCard(lastSyncAt: Long, syncing: Boolean, onSyncNow: () -> Unit) 
                 style = MaterialTheme.typography.bodySmall,
             )
             Button(onClick = onSyncNow, enabled = !syncing) { Text("Sync now") }
+        }
+    }
+}
+
+/** Explicitly armed background presence polling, separate from the periodic full Steam sync. */
+@Composable
+private fun LiveMonitorCard(
+    enabled: Boolean,
+    configured: Boolean,
+    onEnabledChanged: (Boolean) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Monitor Steam activity", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = if (configured) {
+                        "Checks Steam every 30 seconds while armed, even before you start a game. " +
+                            "Uses an ongoing notification, battery, and data; Android may stop it " +
+                            "after about 6 hours in the background."
+                    } else {
+                        "Connect a Steam account to enable live monitoring."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(16.dp))
+            Switch(
+                checked = enabled,
+                onCheckedChange = onEnabledChanged,
+                enabled = configured,
+            )
         }
     }
 }

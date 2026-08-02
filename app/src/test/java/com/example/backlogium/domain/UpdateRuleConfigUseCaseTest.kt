@@ -183,6 +183,13 @@ class UpdateRuleConfigUseCaseTest {
 
         override val notificationPermissionRequested: Flow<Boolean> = MutableStateFlow(true)
         override suspend fun setNotificationPermissionRequested() = Unit
+
+        private val liveMonitor = MutableStateFlow(false)
+        override val liveMonitorEnabled: Flow<Boolean> = liveMonitor
+        override suspend fun setLiveMonitorEnabled(enabled: Boolean) {
+            liveMonitor.value = enabled
+        }
+
         override suspend fun clearLiveSession() {
             session.value = LiveSessionState()
         }

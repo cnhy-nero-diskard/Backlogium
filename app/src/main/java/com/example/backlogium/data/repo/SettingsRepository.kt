@@ -66,6 +66,11 @@ interface SettingsRepository {
     val notificationPermissionRequested: Flow<Boolean>
 
     suspend fun setNotificationPermissionRequested()
+
+    /** Explicit opt-in to keep the foreground presence service polling before a game is detected. */
+    val liveMonitorEnabled: Flow<Boolean>
+
+    suspend fun setLiveMonitorEnabled(enabled: Boolean)
 }
 
 /** The only production implementation: a thin pass-through to Preferences DataStore. */
@@ -106,4 +111,9 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun setNotificationPermissionRequested() =
         settings.setNotificationPermissionRequested()
+
+    override val liveMonitorEnabled: Flow<Boolean> = settings.liveMonitorEnabledFlow
+
+    override suspend fun setLiveMonitorEnabled(enabled: Boolean) =
+        settings.setLiveMonitorEnabled(enabled)
 }
