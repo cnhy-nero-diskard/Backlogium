@@ -15,6 +15,7 @@ import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.UpdateRuleConfigUseCase
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
+import com.example.backlogium.work.PresenceServiceStarter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -52,6 +53,8 @@ data class SettingsUiState(
     val apiKeyMasked: String = "",
     val lastSyncAt: Long = 0L,
     val isSyncing: Boolean = false,
+    /** Explicit opt-in to poll Steam every 30 seconds before a game is detected. */
+    val liveMonitorEnabled: Boolean = false,
     /** True once historical Steam playtime has been imported (one-time). */
     val historyImported: Boolean = false,
     val isImportingHistory: Boolean = false,
@@ -103,6 +106,7 @@ class SettingsViewModel @Inject constructor(
     private val credentials: CredentialsRepository,
     private val settings: SettingsRepository,
     private val backupRepository: BackupRepository,
+    private val presenceServiceStarter: PresenceServiceStarter,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -145,6 +149,8 @@ class SettingsViewModel @Inject constructor(
             snapshotRetentionCount = autoSnapshot.retentionCount,
             snapshotIntervalHours = autoSnapshot.intervalHours,
         )
+    }.combine(settings.liveMonitorEnabled) { state, monitorEnabled ->
+        state.copy(liveMonitorEnabled = monitorEnabled)
     }
 
     private val ruleLocalState = combine(
@@ -190,6 +196,12 @@ class SettingsViewModel @Inject constructor(
     )
 
     fun syncNow() = profileRepository.syncNow()
+
+    /** Start only from this visible Settings interaction; disabling is observed by the service. */
+    fun onLiveMonitorEnabledChanged(enabled: Boolean) = viewModelScope.launch {
+        settings.setLiveMonitorEnabled(enabled)
+        if (enabled) presenceServiceStarter.start()
+    }
 
     fun setAdvancedExpanded(expanded: Boolean) = advancedExpanded.update { expanded }
 

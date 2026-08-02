@@ -8,6 +8,7 @@ import androidx.core.app.ServiceCompat
 import com.example.backlogium.data.repo.LiveStatus
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
+import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.TimeProvider
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -16,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -23,8 +25,8 @@ import javax.inject.Inject
 /**
  * Foreground service that owns the 30s live-presence poll while the player is in a game
  * (enhance-now-playing). Started when a game is detected — [SteamSyncWorker]'s periodic poll, or
- * Home on open, via [PresenceServiceStarter] — and stops itself the moment a poll reports
- * not-in-game. Not resident: this service exists only for the duration of one play session.
+ * the app-foreground re-check, via [PresenceServiceStarter] — and stops itself the moment a poll
+ * reports not-in-game. Not resident: this service exists only for the duration of one play session.
  *
  * Home and the Library remain plain observers of [LiveStatusRepository.liveStatus] whether or not
  * this service happens to be running — degraded (no live updates) but not broken when it is not.
@@ -36,6 +38,7 @@ import javax.inject.Inject
 class PresenceService : Service() {
 
     @Inject lateinit var liveStatusRepository: LiveStatusRepository
+    @Inject lateinit var settings: SettingsRepository
     @Inject lateinit var notifications: PresenceNotifications
     @Inject lateinit var time: TimeProvider
 
@@ -44,6 +47,7 @@ class PresenceService : Service() {
 
     private var current: NowPlaying.InGame? = null
     private var sessionStartedAt: Long? = null
+    private var liveMonitorEnabled = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -57,10 +61,27 @@ class PresenceService : Service() {
         )
 
         serviceScope.launch {
+            // Read the persisted preference before the first observation: a monitor started from
+            // Settings must not see its initial NotPlaying result and stop before the preference
+            // collector gets its first emission.
+            liveMonitorEnabled = settings.liveMonitorEnabled.first()
+            var observationStarted = false
+            launch {
+                settings.liveMonitorEnabled.collect { enabled ->
+                    val changed = enabled != liveMonitorEnabled
+                    liveMonitorEnabled = enabled
+                    // Turning monitoring off only stops an idle service. An already observed game
+                    // remains tracked until Steam reports that it has ended.
+                    if (changed && observationStarted) {
+                        handle(liveStatusRepository.liveStatus.value)
+                    }
+                }
+            }
             // The repository's shared state may still hold its pre-poll default until a real
             // fetch runs — checked here explicitly (and awaited) so the very first thing this
             // service reacts to is real data, never that default's NotPlaying.
             handle(liveStatusRepository.checkNow())
+            observationStarted = true
             liveStatusRepository.startPolling()
             liveStatusRepository.liveStatus.collect { handle(it) }
         }
@@ -95,14 +116,23 @@ class PresenceService : Service() {
     }
 
     private fun handle(status: LiveStatus) {
-        when (val nowPlaying = status.nowPlaying) {
-            is NowPlaying.InGame -> {
+        when (presenceServiceMode(liveMonitorEnabled, status.nowPlaying)) {
+            PresenceServiceMode.PLAYING -> {
+                val nowPlaying = status.nowPlaying as NowPlaying.InGame
                 current = nowPlaying
                 sessionStartedAt = status.sessionStartedAt
                 notifications.update(nowPlaying.name, elapsedMinutes())
             }
 
-            NowPlaying.NotPlaying -> {
+            PresenceServiceMode.MONITORING -> {
+                current = null
+                sessionStartedAt = null
+                notifications.monitoring()
+            }
+
+            PresenceServiceMode.STOP -> {
+                current = null
+                sessionStartedAt = null
                 notifications.clear()
                 stopSelf()
             }

@@ -61,6 +61,21 @@ class SteamSyncWorker @AssistedInject constructor(
         val steamId = creds.steamId
 
         return try {
+            // Presence first, before any library-scale work. This one request carries both the
+            // running game and the profile header identity; best-effort, so a failure yields null
+            // and mergePlayerIdentity below keeps the stored values.
+            val summary = runCatching {
+                steamApi.getPlayerSummaries(apiKey, steamId).response.players.firstOrNull()
+            }.getOrNull()
+
+            // The detection path for a game that started while the app was never opened: the
+            // service then owns the 30s poll and stops itself once the game ends. Deliberately
+            // ahead of getOwnedGames — presence doesn't depend on the owned-games list, so neither
+            // a private library nor a failure later in this run may cost the player detection.
+            if (!summary?.gameId.isNullOrBlank()) {
+                presenceServiceStarter.start()
+            }
+
             val owned = steamApi.getOwnedGames(apiKey, steamId)
             val games = owned.response.games
 
@@ -74,18 +89,7 @@ class SteamSyncWorker @AssistedInject constructor(
                 steamApi.getSteamLevel(apiKey, steamId).response.playerLevel
             }.getOrDefault(profileDao.get()?.steamLevel ?: 0)
 
-            // Identity for the profile header — best-effort, exactly like the level above. A
-            // failure yields null here and mergePlayerIdentity keeps the stored values.
-            val summary = runCatching {
-                steamApi.getPlayerSummaries(apiKey, steamId).response.players.firstOrNull()
-            }.getOrNull()
-
             persistPoll(games, apiKey, steamId, steamLevel, summary)
-            // The detection path for a game that started while the app was never opened: the
-            // service then owns the 30s poll and stops itself once the game ends.
-            if (!summary?.gameId.isNullOrBlank()) {
-                presenceServiceStarter.start()
-            }
             Result.success()
         } catch (e: Exception) {
             // Network / transient error: surface it, keep data, let WorkManager back off.

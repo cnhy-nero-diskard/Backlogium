@@ -52,6 +52,9 @@ class SettingsDataStore @Inject constructor(
         val SNAPSHOT_INTERVAL_HOURS = intPreferencesKey("snapshot_interval_hours")
         val LIVE_SESSION_APP_ID = longPreferencesKey("live_session_app_id")
         val LIVE_SESSION_STARTED_AT = longPreferencesKey("live_session_started_at")
+        val NOTIFICATION_PERMISSION_REQUESTED =
+            booleanPreferencesKey("notification_permission_requested")
+        val LIVE_MONITOR_ENABLED = booleanPreferencesKey("live_monitor_enabled")
     }
 
     val ruleConfigFlow: Flow<RuleConfig> = context.dataStore.data.map { prefs ->
@@ -158,6 +161,32 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.LIVE_SESSION_APP_ID)
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
         }
+    }
+
+    /**
+     * Whether the runtime notification permission has already been put to the user. Recorded rather
+     * than inferred: a plain "not granted" check can't tell never-asked from declined, and Android
+     * only stops showing the dialog after the *second* refusal — so without this the user gets
+     * prompted twice before the system takes the hint.
+     */
+    val notificationPermissionRequestedFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.NOTIFICATION_PERMISSION_REQUESTED] ?: false
+    }
+
+    suspend fun setNotificationPermissionRequested() {
+        context.dataStore.edit { it[Keys.NOTIFICATION_PERMISSION_REQUESTED] = true }
+    }
+
+    /**
+     * Explicit opt-in for the foreground service to poll while no game is running. Off by default:
+     * this mode has an ongoing notification and consumes network/battery while armed.
+     */
+    val liveMonitorEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.LIVE_MONITOR_ENABLED] ?: false
+    }
+
+    suspend fun setLiveMonitorEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.LIVE_MONITOR_ENABLED] = enabled }
     }
 }
 
