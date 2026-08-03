@@ -552,8 +552,8 @@ private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
                 Column(Modifier.weight(1f)) {
                     Text("Automatic snapshots", style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        text = "Every ${state.snapshotIntervalHours}h after a sync, keeping the " +
-                            "${state.snapshotRetentionCount} most recent.",
+                        text = "Every ${state.snapshotIntervalHours} hours after a sync, keeping the " +
+                            "${state.snapshotRetentionCount} most recent snapshots.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -626,7 +626,7 @@ private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("Export Backup...")
+                    Text("Export backup")
                 }
                 OutlinedButton(
                     onClick = actions.onImportBackup,
@@ -639,7 +639,7 @@ private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("Import Backup...")
+                    Text("Import backup")
                 }
             }
             if (state.backupBusy) {
