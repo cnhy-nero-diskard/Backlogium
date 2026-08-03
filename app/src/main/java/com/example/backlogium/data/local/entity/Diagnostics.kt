@@ -1,0 +1,15 @@
+package com.example.backlogium.data.local.entity
+
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
+
+@Entity(tableName = "sync_runs", indices = [Index("startedAt")])
+data class SyncRun(@PrimaryKey(autoGenerate = true) val id: Long = 0, val startedAt: Long, val durationMs: Long, val trigger: String, val requestCount: Int, val requestMillis: Long, val gamesExamined: Int, val gamesUpdated: Int, val outcome: String, val errorMessage: String?)
+
+@Entity(tableName = "request_breakdowns", foreignKeys = [ForeignKey(entity = SyncRun::class, parentColumns = ["id"], childColumns = ["runId"], onDelete = ForeignKey.CASCADE)], indices = [Index("runId")])
+data class RequestBreakdown(@PrimaryKey(autoGenerate = true) val id: Long = 0, val runId: Long, val endpoint: String, val status: Int?, val requestCount: Int, val durationMs: Long)
+
+@Entity(tableName = "presence_decisions", indices = [Index("at")])
+data class PresenceDecision(@PrimaryKey(autoGenerate = true) val id: Long = 0, val at: Long, val trigger: String, val outcome: String, val appId: Long?, val retainedPriorState: Boolean)
