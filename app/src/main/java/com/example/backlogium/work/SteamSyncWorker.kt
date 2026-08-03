@@ -5,6 +5,7 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.backlogium.data.backup.BackupRepository
+import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
@@ -26,6 +27,7 @@ import com.example.backlogium.domain.TimeProvider
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
 
 /**
  * Runs one Steam poll: fetch -> diff into sessions -> persist -> recompute gamification.
@@ -48,19 +50,25 @@ class SteamSyncWorker @AssistedInject constructor(
     private val achievementRepository: AchievementRepository,
     private val backupRepository: BackupRepository,
     private val presenceServiceStarter: PresenceServiceStarter,
+    private val diagnostics: SyncRunRecorder,
     private val time: TimeProvider,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
-        val creds = credentials.currentCredentials()
-        if (creds == null) {
-            recordError("Steam not configured")
-            return Result.success() // config issue: retrying won't help
-        }
-        val apiKey = creds.apiKey
-        val steamId = creds.steamId
-
+        val scope = diagnostics.begin(if (runAttemptCount > 0) "retry" else "scheduled")
+        var outcome = "failed"
+        var error: String? = null
+        var examined = 0
+        var updated = 0
         return try {
+            val creds = credentials.currentCredentials()
+            if (creds == null) {
+                recordError("Steam not configured")
+                outcome = "skipped:no_credentials"
+                return Result.success()
+            }
+            val apiKey = creds.apiKey
+            val steamId = creds.steamId
             // Presence first, before any library-scale work. This one request carries both the
             // running game and the profile header identity; best-effort, so a failure yields null
             // and mergePlayerIdentity below keeps the stored values.
@@ -82,6 +90,7 @@ class SteamSyncWorker @AssistedInject constructor(
             if (games.isEmpty()) {
                 // Empty response usually means a private profile. Keep last-good data.
                 recordError("No games returned — your Steam profile may be private")
+                outcome = "skipped:empty_owned_games"
                 return Result.success()
             }
 
@@ -90,11 +99,20 @@ class SteamSyncWorker @AssistedInject constructor(
             }.getOrDefault(profileDao.get()?.steamLevel ?: 0)
 
             persistPoll(games, apiKey, steamId, steamLevel, summary)
+            examined = games.size
+            updated = games.size
+            outcome = "success"
             Result.success()
+        } catch (e: CancellationException) {
+            outcome = "incomplete"
+            throw e
         } catch (e: Exception) {
             // Network / transient error: surface it, keep data, let WorkManager back off.
             recordError(e.message ?: "Sync failed")
+            error = e.message ?: "Sync failed"
             Result.retry()
+        } finally {
+            runCatching { diagnostics.finish(scope, outcome, error, examined, updated) }
         }
     }
 
