@@ -78,11 +78,14 @@
 
 ## 8. On-device verification
 
-- [ ] 8.1 App open, launch a game, return to app → panel appears *(the reported bug)*
-- [ ] 8.2 With achievement data stale, launch a game during a sync → panel appears in seconds
-      *(failed before the bounded foreground retry fix; patched build needs re-verification)*
-- [ ] 8.3 Kill `PresenceService`, re-foreground → elapsed time continues, does not reset to zero
+- [x] 8.1 App open, launch a game, return to app → panel appears *(the reported bug)*
+      *(verified on device by the user)*
+- [x] 8.2 With achievement data stale, launch a game during a sync → panel appears in seconds
+      *(verified on device by the user — previously failed before the bounded foreground retry fix)*
+- [x] 8.3 Kill `PresenceService`, re-foreground → elapsed time continues, does not reset to zero
+      *(verified on device by the user)*
 - [x] 8.4 Cold start with a game running → panel present immediately, no blank window
       *(verified on device by the user)*
-- [ ] 8.5 Fresh install → notification permission requested; ongoing notification appears without
+- [x] 8.5 Fresh install → notification permission requested; ongoing notification appears without
       visiting system settings
+      *(verified on device by the user)*
