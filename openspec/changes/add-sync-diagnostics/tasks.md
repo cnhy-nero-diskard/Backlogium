@@ -10,7 +10,7 @@
       interceptor that applies redaction before emitting anything
 - [ ] 1.4 Decide whether the HLTB client's `HttpLoggingInterceptor` (`NetworkModule.kt:71-77`) needs
       the same treatment — it carries no Steam credentials, but confirm rather than assume
-- [ ] 1.5 Verify with logcat attached on a debug build that the API key appears nowhere during a sync
+- [x] 1.5 Verify with logcat attached on a debug build that the API key appears nowhere during a sync
 
 ## 2. Request timing
 
@@ -34,7 +34,7 @@
 
 - [x] 4.1 Add a run-scoped recorder opened at the start of `doWork` and finalised in a `finally`, so
       no exit path can skip it
-- [ ] 4.2 Verify each path records a distinct outcome: success, network failure, absent credentials
+- [x] 4.2 Verify each path records a distinct outcome: success, network failure, absent credentials
       (`SteamSyncWorker.kt:56-59`), empty owned-games (`:67-71`), cancellation
 - [x] 4.3 Make every recorder call best-effort so it can never fail a sync
 - [ ] 4.4 Confirm `doWork`'s body remains readable — bookkeeping in the wrapper, not inline
@@ -50,7 +50,7 @@
 - [x] 5.4 Identify the trigger: foreground, poll, or sync
 - [ ] 5.5 Set retention for these separately — the 30s in-game cadence makes them far more frequent
       than runs
-- [ ] 5.6 Confirm the three currently-indistinguishable not-playing branches produce distinct records
+- [x] 5.6 Confirm the three currently-indistinguishable not-playing branches produce distinct records
 
 ## 6. Diagnostics surface
 
@@ -66,7 +66,7 @@
 
 - [x] 7.1 Ensure record writing and the diagnostics view are active in release builds
 - [x] 7.2 Restrict only freeform platform logging to debug builds
-- [ ] 7.3 Verify on a signed release build that records are written and readable
+- [x] 7.3 Verify on a signed release build that records are written and readable
 
 ## 8. Freeform logging facade
 
@@ -76,20 +76,20 @@
 
 ## 9. Verification
 
-- [ ] 9.1 API key absent from logcat across a full sync on a debug build
+- [x] 9.1 API key absent from logcat across a full sync on a debug build
 - [x] 9.2 Redacted records still identify endpoint and `appid`
-- [ ] 9.3 Five forced exit paths produce five records with five distinct outcomes
-- [ ] 9.4 Each presence branch produces a distinguishable record
-- [ ] 9.5 Retention cap holds; table stops growing once exceeded
+- [x] 9.3 Five forced exit paths produce five records with five distinct outcomes
+- [x] 9.4 Each presence branch produces a distinguishable record
+- [x] 9.5 Retention cap holds; table stops growing once exceeded
 - [ ] 9.6 Sync results and presence state are identical with recording active — no behaviour change
 
 ## 10. Validate the optimize-steam-sync premise
 
-- [ ] 10.1 Capture a real sweep run and compare its duration and request count against that
+- [x] 10.1 Capture a real sweep run and compare its duration and request count against that
       proposal's estimate of ~780 requests / ~4 minutes
-- [ ] 10.2 Record the per-endpoint breakdown to confirm `GetSchemaForGame` and
+- [x] 10.2 Record the per-endpoint breakdown to confirm `GetSchemaForGame` and
       `GetGlobalAchievementPercentages` are the predicted two thirds of request volume
-- [ ] 10.3 Confirm the alternating fast/slow sync pattern caused by clustered staleness is visible in
+- [x] 10.3 Confirm the alternating fast/slow sync pattern caused by clustered staleness is visible in
       the run history
-- [ ] 10.4 If measurements disagree materially with the estimate, revisit `optimize-steam-sync`'s
+- [x] 10.4 If measurements disagree materially with the estimate, revisit `optimize-steam-sync`'s
       premise before implementing it
