@@ -40,12 +40,14 @@ import com.example.backlogium.ui.navigation.Destination
 import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.review.HltbReviewScreen
 import com.example.backlogium.ui.settings.SettingsScreen
+import com.example.backlogium.ui.diagnostics.DiagnosticsScreen
 
 /** Route for the HLTB match-review surface — a sub-destination reached from the Library. */
 private const val ROUTE_HLTB_REVIEW = "hltb_review"
 
 /** Route for the credentials onboarding flow — reached from the Settings account section. */
 private const val ROUTE_ONBOARDING = "onboarding"
+private const val ROUTE_DIAGNOSTICS = "diagnostics"
 
 /** Route for the per-game detail screen — a sub-destination reached from the Library. */
 private const val ROUTE_GAME_DETAIL = "game_detail/{appId}"
@@ -146,8 +148,12 @@ fun BacklogiumAppRoot() {
                 }
                 composable(Destination.HISTORY.route) { HistoryScreen() }
                 composable(Destination.SETTINGS.route) {
-                    SettingsScreen(onEditCredentials = { navController.navigate(ROUTE_ONBOARDING) })
+                    SettingsScreen(
+                        onEditCredentials = { navController.navigate(ROUTE_ONBOARDING) },
+                        onOpenDiagnostics = { navController.navigate(ROUTE_DIAGNOSTICS) },
+                    )
                 }
+                composable(ROUTE_DIAGNOSTICS) { DiagnosticsScreen() }
                 composable(ROUTE_ONBOARDING) {
                     OnboardingScreen(onCompleted = { navController.popBackStack() })
                 }
