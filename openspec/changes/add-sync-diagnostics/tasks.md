@@ -2,11 +2,11 @@
 
 ## 1. Close the API key leak
 
-- [ ] 1.1 Write a redaction helper that strips `key` and `steamids` from a request URL's query,
+- [x] 1.1 Write a redaction helper that strips `key` and `steamids` from a request URL's query,
       preserving all other parameters (notably `appid`)
-- [ ] 1.2 Unit-test it: credentials removed, `appid` retained, endpoint still legible, no-query and
+- [x] 1.2 Unit-test it: credentials removed, `appid` retained, endpoint still legible, no-query and
       credentials-absent cases
-- [ ] 1.3 Replace `HttpLoggingInterceptor` in `NetworkModule.provideOkHttpClient` with a custom
+- [x] 1.3 Replace `HttpLoggingInterceptor` in `NetworkModule.provideOkHttpClient` with a custom
       interceptor that applies redaction before emitting anything
 - [ ] 1.4 Decide whether the HLTB client's `HttpLoggingInterceptor` (`NetworkModule.kt:71-77`) needs
       the same treatment — it carries no Steam credentials, but confirm rather than assume
@@ -14,58 +14,58 @@
 
 ## 2. Request timing
 
-- [ ] 2.1 Record endpoint, status, and elapsed duration per request in the interceptor
-- [ ] 2.2 Record failures and timeouts with the elapsed time before them
-- [ ] 2.3 Expose per-run aggregation (count and summed duration, grouped by endpoint) without
+- [x] 2.1 Record endpoint, status, and elapsed duration per request in the interceptor
+- [x] 2.2 Record failures and timeouts with the elapsed time before them
+- [x] 2.3 Expose per-run aggregation (count and summed duration, grouped by endpoint) without
       persisting individual requests
-- [ ] 2.4 Confirm requests issued during a run are attributable to that run
+- [x] 2.4 Confirm requests issued during a run are attributable to that run
 
 ## 3. Sync run records
 
-- [ ] 3.1 Add a `sync_run` entity: trigger, `startedAt`, `durationMs`, `requestCount`,
+- [x] 3.1 Add a `sync_run` entity: trigger, `startedAt`, `durationMs`, `requestCount`,
       `requestMillis`, `gamesExamined`, `gamesUpdated`, `outcome`, `errorMessage`
 - [ ] 3.2 Model `outcome` as success / failed / incomplete / skipped-with-reason — never a boolean
-- [ ] 3.3 Add the DAO: insert, recent-runs query ordered by `startedAt` descending, prune
-- [ ] 3.4 Add the Room migration
+- [x] 3.3 Add the DAO: insert, recent-runs query ordered by `startedAt` descending, prune
+- [x] 3.4 Add the Room migration
 - [ ] 3.5 Prune on insert to a fixed retention cap (~200 runs); ensure a pruning failure cannot fail
       a sync
 
 ## 4. Record runs on every exit path
 
-- [ ] 4.1 Add a run-scoped recorder opened at the start of `doWork` and finalised in a `finally`, so
+- [x] 4.1 Add a run-scoped recorder opened at the start of `doWork` and finalised in a `finally`, so
       no exit path can skip it
 - [ ] 4.2 Verify each path records a distinct outcome: success, network failure, absent credentials
       (`SteamSyncWorker.kt:56-59`), empty owned-games (`:67-71`), cancellation
-- [ ] 4.3 Make every recorder call best-effort so it can never fail a sync
+- [x] 4.3 Make every recorder call best-effort so it can never fail a sync
 - [ ] 4.4 Confirm `doWork`'s body remains readable — bookkeeping in the wrapper, not inline
 - [ ] 4.5 Distinguish cancellation from failure; this depends on the `CancellationException` fix at
       `SteamSyncWorker.kt:90` (shared with `optimize-steam-sync` — whichever lands first makes it)
 
 ## 5. Presence decision records
 
-- [ ] 5.1 Add a `presence_decision` entity: `at`, trigger, outcome, `appId`, `retainedPriorState`
+- [x] 5.1 Add a `presence_decision` entity: `at`, trigger, outcome, `appId`, `retainedPriorState`
 - [ ] 5.2 Model outcomes to mirror the branches one-to-one: in_game, not_playing, no_credentials
       (`LiveStatusRepository.kt:150`), no_player (`:154`), failed (`:130-131`)
-- [ ] 5.3 Emit a record from `checkNow` without altering its control flow
-- [ ] 5.4 Identify the trigger: foreground, poll, or sync
+- [x] 5.3 Emit a record from `checkNow` without altering its control flow
+- [x] 5.4 Identify the trigger: foreground, poll, or sync
 - [ ] 5.5 Set retention for these separately — the 30s in-game cadence makes them far more frequent
       than runs
 - [ ] 5.6 Confirm the three currently-indistinguishable not-playing branches produce distinct records
 
 ## 6. Diagnostics surface
 
-- [ ] 6.1 Add a diagnostics sub-destination reachable from Settings
-- [ ] 6.2 List recent runs, newest first: relative time, duration, request count, outcome
-- [ ] 6.3 Add a detail view showing a run's full record including per-endpoint request breakdown
-- [ ] 6.4 Add a presence-decisions section
-- [ ] 6.5 Add an empty state for before any record exists
-- [ ] 6.6 Confirm it renders entirely from stored records with no network call
-- [ ] 6.7 Confirm no credential value appears anywhere in the view, masked or otherwise
+- [x] 6.1 Add a diagnostics sub-destination reachable from Settings
+- [x] 6.2 List recent runs, newest first: relative time, duration, request count, outcome
+- [x] 6.3 Add a detail view showing a run's full record including per-endpoint request breakdown
+- [x] 6.4 Add a presence-decisions section
+- [x] 6.5 Add an empty state for before any record exists
+- [x] 6.6 Confirm it renders entirely from stored records with no network call
+- [x] 6.7 Confirm no credential value appears anywhere in the view, masked or otherwise
 
 ## 7. Release-build availability
 
-- [ ] 7.1 Ensure record writing and the diagnostics view are active in release builds
-- [ ] 7.2 Restrict only freeform platform logging to debug builds
+- [x] 7.1 Ensure record writing and the diagnostics view are active in release builds
+- [x] 7.2 Restrict only freeform platform logging to debug builds
 - [ ] 7.3 Verify on a signed release build that records are written and readable
 
 ## 8. Freeform logging facade
@@ -77,7 +77,7 @@
 ## 9. Verification
 
 - [ ] 9.1 API key absent from logcat across a full sync on a debug build
-- [ ] 9.2 Redacted records still identify endpoint and `appid`
+- [x] 9.2 Redacted records still identify endpoint and `appid`
 - [ ] 9.3 Five forced exit paths produce five records with five distinct outcomes
 - [ ] 9.4 Each presence branch produces a distinguishable record
 - [ ] 9.5 Retention cap holds; table stops growing once exceeded
