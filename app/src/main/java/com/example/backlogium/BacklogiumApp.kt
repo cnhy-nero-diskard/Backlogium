@@ -21,6 +21,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
 
 internal const val FOREGROUND_PRESENCE_ATTEMPTS = 4
@@ -88,6 +89,12 @@ class BacklogiumApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        // Narrative debugging only — structured records (SyncRunRecorder, PresenceDecisionRecorder)
+        // are the durable diagnostic surface and are active in release builds regardless. No tree
+        // is planted here in release, so Timber calls are no-ops and nothing reaches logcat.
+        if (BuildConfig.DEBUG) {
+            Timber.plant(Timber.DebugTree())
+        }
         syncScheduler.ensurePeriodicSync()
         ProcessLifecycleOwner.get().lifecycle.addObserver(ForegroundPresenceCheck())
     }

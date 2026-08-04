@@ -5,6 +5,7 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.backlogium.data.backup.BackupRepository
+import com.example.backlogium.data.diagnostics.SyncOutcome
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.DailyProgressDao
@@ -56,7 +57,7 @@ class SteamSyncWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         val scope = diagnostics.begin(if (runAttemptCount > 0) "retry" else "scheduled")
-        var outcome = "failed"
+        var outcome = SyncOutcome.FAILED
         var error: String? = null
         var examined = 0
         var updated = 0
@@ -64,7 +65,7 @@ class SteamSyncWorker @AssistedInject constructor(
             val creds = credentials.currentCredentials()
             if (creds == null) {
                 recordError("Steam not configured")
-                outcome = "skipped:no_credentials"
+                outcome = SyncOutcome.SKIPPED_NO_CREDENTIALS
                 return Result.success()
             }
             val apiKey = creds.apiKey
@@ -90,7 +91,7 @@ class SteamSyncWorker @AssistedInject constructor(
             if (games.isEmpty()) {
                 // Empty response usually means a private profile. Keep last-good data.
                 recordError("No games returned — your Steam profile may be private")
-                outcome = "skipped:empty_owned_games"
+                outcome = SyncOutcome.SKIPPED_EMPTY_OWNED_GAMES
                 return Result.success()
             }
 
@@ -101,10 +102,10 @@ class SteamSyncWorker @AssistedInject constructor(
             persistPoll(games, apiKey, steamId, steamLevel, summary)
             examined = games.size
             updated = games.size
-            outcome = "success"
+            outcome = SyncOutcome.SUCCESS
             Result.success()
         } catch (e: CancellationException) {
-            outcome = "incomplete"
+            outcome = SyncOutcome.INCOMPLETE
             throw e
         } catch (e: Exception) {
             // Network / transient error: surface it, keep data, let WorkManager back off.

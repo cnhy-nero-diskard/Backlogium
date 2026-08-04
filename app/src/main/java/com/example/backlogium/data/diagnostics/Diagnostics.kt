@@ -24,6 +24,20 @@ object DiagnosticRedaction {
 
 data class RequestMetrics(val count: Int = 0, val durationMs: Long = 0)
 
+/**
+ * The fixed set of ways a sync run can end. A `String` in [SyncRun.outcome] would let any call
+ * site invent a new, unlisted value; this enum is where the fixed set is enforced. The column
+ * itself stays a plain `String` ([value]) so introducing this needed no Room migration — see
+ * design.md's "Outcome is enforced in code, not in the schema".
+ */
+enum class SyncOutcome(val value: String) {
+    SUCCESS("success"),
+    FAILED("failed"),
+    INCOMPLETE("incomplete"),
+    SKIPPED_NO_CREDENTIALS("skipped:no_credentials"),
+    SKIPPED_EMPTY_OWNED_GAMES("skipped:empty_owned_games"),
+}
+
 @Singleton
 class SyncRunRecorder @Inject constructor(
     private val dao: DiagnosticsDao,
@@ -37,7 +51,7 @@ class SyncRunRecorder @Inject constructor(
         active.get()?.recordRequest(endpoint, status, durationMs)
     }
 
-    suspend fun finish(scope: RunScope, outcome: String, errorMessage: String?, gamesExamined: Int, gamesUpdated: Int) {
+    suspend fun finish(scope: RunScope, outcome: SyncOutcome, errorMessage: String?, gamesExamined: Int, gamesUpdated: Int) {
         if (active.get() !== scope) return
         try {
             val endedAt = time.nowMillis()
@@ -50,7 +64,7 @@ class SyncRunRecorder @Inject constructor(
                     requestMillis = scope.metrics.values.sumOf { it.durationMs },
                     gamesExamined = gamesExamined,
                     gamesUpdated = gamesUpdated,
-                    outcome = outcome,
+                    outcome = outcome.value,
                     errorMessage = errorMessage,
                 ),
                 scope.metrics.map { (key, value) ->
@@ -76,14 +90,28 @@ class SyncRunRecorder @Inject constructor(
     companion object { const val RETAINED_RUNS = 200 }
 }
 
+/**
+ * The fixed set of branches presence detection can take, mirroring [LiveStatusRepository.fetch]'s
+ * branches one-to-one — the six-way ambiguity that motivated this change in the first place. As
+ * with [SyncOutcome], the enum is the enforcement point; [PresenceDecision.outcome] stays a plain
+ * `String` ([value]) to avoid a schema migration.
+ */
+enum class PresenceOutcome(val value: String) {
+    IN_GAME("in_game"),
+    NOT_PLAYING("not_playing"),
+    NO_CREDENTIALS("no_credentials"),
+    NO_PLAYER("no_player"),
+    FAILED("failed"),
+}
+
 @Singleton
 class PresenceDecisionRecorder @Inject constructor(
     private val dao: DiagnosticsDao,
     private val time: TimeProvider,
 ) {
-    suspend fun record(trigger: String, outcome: String, appId: Long? = null, retainedPriorState: Boolean = false) {
+    suspend fun record(trigger: String, outcome: PresenceOutcome, appId: Long? = null, retainedPriorState: Boolean = false) {
         runCatching {
-            dao.insertPresenceDecision(PresenceDecision(0, time.nowMillis(), trigger, outcome, appId, retainedPriorState))
+            dao.insertPresenceDecision(PresenceDecision(0, time.nowMillis(), trigger, outcome.value, appId, retainedPriorState))
             dao.prunePresenceDecisions(RETAINED_DECISIONS)
         }
     }

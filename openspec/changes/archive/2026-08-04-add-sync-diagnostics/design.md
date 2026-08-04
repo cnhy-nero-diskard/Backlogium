@@ -78,6 +78,19 @@ ambiguity this change exists to remove.
 The presence outcomes deliberately mirror those three branches one-to-one, because they are the
 six-way ambiguity that made the original investigation slow.
 
+### Outcome is enforced in code, not in the schema
+
+`outcome` stays a `String` column in Room rather than becoming a typed enum with a migration.
+`optimize-steam-sync` is in flight against the same tables concurrently; a schema-changing migration
+here would be one more thing for that branch to rebase across, for a benefit — compile-time
+exhaustiveness — that a code-layer sealed type gives for free.
+
+Each recorder site constructs its outcome string from a Kotlin sealed class / enum (one for
+`SyncRun`, one for `PresenceDecision`) whose `toString()`/`name` is what gets persisted. The fixed
+set of values lives in one place in code; the column itself remains an untyped string, so no
+migration is required to introduce or retire this constraint. If `optimize-steam-sync` lands changes
+to the same tables first, this stays a pure Kotlin-side addition with no schema conflict to resolve.
+
 ## Redaction has to be structural
 
 `SteamApi` passes credentials as query parameters, so the API key is in the URL of every request.

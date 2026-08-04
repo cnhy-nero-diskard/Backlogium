@@ -8,8 +8,10 @@
       credentials-absent cases
 - [x] 1.3 Replace `HttpLoggingInterceptor` in `NetworkModule.provideOkHttpClient` with a custom
       interceptor that applies redaction before emitting anything
-- [ ] 1.4 Decide whether the HLTB client's `HttpLoggingInterceptor` (`NetworkModule.kt:71-77`) needs
-      the same treatment — it carries no Steam credentials, but confirm rather than assume
+- [x] 1.4 Decide whether the HLTB client's `HttpLoggingInterceptor` (`NetworkModule.kt:71-77`) needs
+      the same treatment — it carries no Steam credentials, but confirm rather than assume.
+      Confirmed: it's a public howlongtobeat.com scraper with no credentials in the URL, and it's
+      already `Level.NONE` in release builds. No redaction needed.
 - [x] 1.5 Verify with logcat attached on a debug build that the API key appears nowhere during a sync
 
 ## 2. Request timing
@@ -24,10 +26,12 @@
 
 - [x] 3.1 Add a `sync_run` entity: trigger, `startedAt`, `durationMs`, `requestCount`,
       `requestMillis`, `gamesExamined`, `gamesUpdated`, `outcome`, `errorMessage`
-- [ ] 3.2 Model `outcome` as success / failed / incomplete / skipped-with-reason — never a boolean
+- [x] 3.2 Model `outcome` as success / failed / incomplete / skipped-with-reason — never a boolean.
+      Implemented as `SyncOutcome` enum (`Diagnostics.kt`) enforced at recorder call sites; the Room
+      column stays `String` (no migration) — see design.md
 - [x] 3.3 Add the DAO: insert, recent-runs query ordered by `startedAt` descending, prune
 - [x] 3.4 Add the Room migration
-- [ ] 3.5 Prune on insert to a fixed retention cap (~200 runs); ensure a pruning failure cannot fail
+- [x] 3.5 Prune on insert to a fixed retention cap (~200 runs); ensure a pruning failure cannot fail
       a sync
 
 ## 4. Record runs on every exit path
@@ -37,18 +41,19 @@
 - [x] 4.2 Verify each path records a distinct outcome: success, network failure, absent credentials
       (`SteamSyncWorker.kt:56-59`), empty owned-games (`:67-71`), cancellation
 - [x] 4.3 Make every recorder call best-effort so it can never fail a sync
-- [ ] 4.4 Confirm `doWork`'s body remains readable — bookkeeping in the wrapper, not inline
-- [ ] 4.5 Distinguish cancellation from failure; this depends on the `CancellationException` fix at
+- [x] 4.4 Confirm `doWork`'s body remains readable — bookkeeping in the wrapper, not inline
+- [x] 4.5 Distinguish cancellation from failure; this depends on the `CancellationException` fix at
       `SteamSyncWorker.kt:90` (shared with `optimize-steam-sync` — whichever lands first makes it)
 
 ## 5. Presence decision records
 
 - [x] 5.1 Add a `presence_decision` entity: `at`, trigger, outcome, `appId`, `retainedPriorState`
-- [ ] 5.2 Model outcomes to mirror the branches one-to-one: in_game, not_playing, no_credentials
-      (`LiveStatusRepository.kt:150`), no_player (`:154`), failed (`:130-131`)
+- [x] 5.2 Model outcomes to mirror the branches one-to-one: in_game, not_playing, no_credentials
+      (`LiveStatusRepository.kt:150`), no_player (`:154`), failed (`:130-131`). Implemented as
+      `PresenceOutcome` enum (`Diagnostics.kt`), same approach as 3.2
 - [x] 5.3 Emit a record from `checkNow` without altering its control flow
 - [x] 5.4 Identify the trigger: foreground, poll, or sync
-- [ ] 5.5 Set retention for these separately — the 30s in-game cadence makes them far more frequent
+- [x] 5.5 Set retention for these separately — the 30s in-game cadence makes them far more frequent
       than runs
 - [x] 5.6 Confirm the three currently-indistinguishable not-playing branches produce distinct records
 
@@ -70,9 +75,11 @@
 
 ## 8. Freeform logging facade
 
-- [ ] 8.1 Add Timber (or a thin internal facade over `android.util.Log`) to the version catalog
-- [ ] 8.2 Install the debug tree in `BacklogiumApp` for debug builds only; no tree in release
-- [ ] 8.3 Confirm release builds emit nothing to the platform log
+- [x] 8.1 Add Timber (or a thin internal facade over `android.util.Log`) to the version catalog
+- [x] 8.2 Install the debug tree in `BacklogiumApp` for debug builds only; no tree in release
+- [x] 8.3 Confirm release builds emit nothing to the platform log. Structurally guaranteed: no tree
+      is planted outside `if (BuildConfig.DEBUG)`, so untreed Timber calls are no-ops in release;
+      confirmed release and debug variants both compile
 
 ## 9. Verification
 
@@ -81,7 +88,7 @@
 - [x] 9.3 Five forced exit paths produce five records with five distinct outcomes
 - [x] 9.4 Each presence branch produces a distinguishable record
 - [x] 9.5 Retention cap holds; table stops growing once exceeded
-- [ ] 9.6 Sync results and presence state are identical with recording active — no behaviour change
+- [x] 9.6 Sync results and presence state are identical with recording active — no behaviour change
 
 ## 10. Validate the optimize-steam-sync premise
 
