@@ -32,6 +32,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.backlogium.ui.components.ProfileHeader
+import com.example.backlogium.ui.collections.CollectionScreen
 import com.example.backlogium.ui.gamedetail.GameDetailScreen
 import com.example.backlogium.ui.history.HistoryScreen
 import com.example.backlogium.ui.home.HomeScreen
@@ -53,6 +54,15 @@ private const val ROUTE_DIAGNOSTICS = "diagnostics"
 private const val ROUTE_GAME_DETAIL = "game_detail/{appId}"
 private fun gameDetailRoute(appId: Long) = "game_detail/$appId"
 
+/**
+ * Route for the collection management screen — a pushed sub-destination reached from a Home
+ * collection card (or the Home create entry point). `collectionId` is 0 when creating; any
+ * other value opens that collection for editing. Deliberately a sub-destination like
+ * GameDetail, not a fifth tab: the four-tab nav contract is unchanged (design.md decision).
+ */
+private const val ROUTE_COLLECTION = "collection/{collectionId}"
+private fun collectionRoute(collectionId: Long) = "collection/$collectionId"
+
 /** App shell: bottom navigation between Home, Library, History, and Settings. */
 @Composable
 fun BacklogiumAppRoot() {
@@ -61,8 +71,10 @@ fun BacklogiumAppRoot() {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
     // Game detail isn't one of the top-level tabs, so the bottom bar would show with nothing
-    // selected — hide it there instead of leaving a misleading state.
+    // selected — hide it there instead of leaving a misleading state. Same for the collection
+    // management screen, another pushed sub-destination.
     val onGameDetail = currentDestination?.route == ROUTE_GAME_DETAIL
+    val onCollectionScreen = currentDestination?.route == ROUTE_COLLECTION
 
     // Hoisted above the Scaffold so a screen-reported wash can paint behind the top bar too, not
     // just its own content area — the game detail screen's header-art wash, and Home's now-playing
@@ -101,7 +113,7 @@ fun BacklogiumAppRoot() {
             topBar = { ProfileHeader(transparent = onHome || accentColor != null) },
             bottomBar = {
                 AnimatedVisibility(
-                    visible = !onGameDetail,
+                    visible = !onGameDetail && !onCollectionScreen,
                     enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                     exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                 ) {
@@ -138,7 +150,11 @@ fun BacklogiumAppRoot() {
                 modifier = Modifier.padding(innerPadding),
             ) {
                 composable(Destination.HOME.route) {
-                    HomeScreen(onAccentColorChanged = { accentColor = it })
+                    HomeScreen(
+                        onAccentColorChanged = { accentColor = it },
+                        onOpenCollection = { id -> navController.navigate(collectionRoute(id)) },
+                        onCreateCollection = { navController.navigate(collectionRoute(0L)) },
+                    )
                 }
                 composable(Destination.LIBRARY.route) {
                     LibraryScreen(
@@ -162,6 +178,12 @@ fun BacklogiumAppRoot() {
                     route = ROUTE_GAME_DETAIL,
                     arguments = listOf(navArgument("appId") { type = NavType.LongType }),
                 ) { GameDetailScreen(onAccentColorChanged = { accentColor = it }) }
+                composable(
+                    route = ROUTE_COLLECTION,
+                    arguments = listOf(navArgument("collectionId") { type = NavType.LongType }),
+                ) {
+                    CollectionScreen(onDone = { navController.popBackStack() })
+                }
             }
         }
     }
