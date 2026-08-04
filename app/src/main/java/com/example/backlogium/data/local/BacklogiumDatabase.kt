@@ -7,6 +7,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
+import com.example.backlogium.data.local.dao.DiagnosticsDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -17,6 +18,9 @@ import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.PresenceDecision
+import com.example.backlogium.data.local.entity.RequestBreakdown
+import com.example.backlogium.data.local.entity.SyncRun
 
 @Database(
     entities = [
@@ -26,8 +30,11 @@ import com.example.backlogium.data.local.entity.Session
         PlayerProfile::class,
         HltbData::class,
         Achievement::class,
+        SyncRun::class,
+        RequestBreakdown::class,
+        PresenceDecision::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -38,6 +45,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun playerProfileDao(): PlayerProfileDao
     abstract fun hltbDataDao(): HltbDataDao
     abstract fun achievementDao(): AchievementDao
+    abstract fun diagnosticsDao(): DiagnosticsDao
 
     companion object {
         const val NAME = "backlogium.db"
@@ -146,6 +154,17 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE `achievements` ADD COLUMN `hidden` INTEGER NOT NULL DEFAULT 0",
                 )
+            }
+        }
+
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `sync_runs` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startedAt` INTEGER NOT NULL, `durationMs` INTEGER NOT NULL, `trigger` TEXT NOT NULL, `requestCount` INTEGER NOT NULL, `requestMillis` INTEGER NOT NULL, `gamesExamined` INTEGER NOT NULL, `gamesUpdated` INTEGER NOT NULL, `outcome` TEXT NOT NULL, `errorMessage` TEXT)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_sync_runs_startedAt` ON `sync_runs` (`startedAt`)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `request_breakdowns` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `runId` INTEGER NOT NULL, `endpoint` TEXT NOT NULL, `status` INTEGER, `requestCount` INTEGER NOT NULL, `durationMs` INTEGER NOT NULL, FOREIGN KEY(`runId`) REFERENCES `sync_runs`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_request_breakdowns_runId` ON `request_breakdowns` (`runId`)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `presence_decisions` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `at` INTEGER NOT NULL, `trigger` TEXT NOT NULL, `outcome` TEXT NOT NULL, `appId` INTEGER, `retainedPriorState` INTEGER NOT NULL)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_presence_decisions_at` ON `presence_decisions` (`at`)")
             }
         }
     }

@@ -1,6 +1,8 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.diagnostics.PresenceDecisionRecorder
+import com.example.backlogium.data.diagnostics.PresenceOutcome
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.di.ApplicationScope
@@ -63,6 +65,8 @@ data class LiveStatus(
     val sessionStartedAt: Long? = null,
 )
 
+private data class PresenceFetch(val status: LiveStatus, val outcome: PresenceOutcome, val appId: Long? = null)
+
 /**
  * Exposes the player's live Steam status as an application-scoped [StateFlow], polled roughly
  * every 30 seconds while [startPolling] is active. Ownership of *when* to poll belongs to
@@ -85,6 +89,7 @@ class LiveStatusRepository @Inject constructor(
     private val credentials: CredentialsProvider,
     private val settings: SettingsRepository,
     private val time: TimeProvider,
+    private val diagnostics: PresenceDecisionRecorder? = null,
     @ApplicationScope private val scope: CoroutineScope,
 ) {
     private val _liveStatus = MutableStateFlow(LiveStatus())
@@ -139,7 +144,7 @@ class LiveStatusRepository @Inject constructor(
         if (isPolling) return
         pollingJob = scope.launch {
             while (isActive) {
-                checkNow()
+                checkNow("poll")
                 delay(POLL_INTERVAL_MS)
             }
         }
@@ -171,15 +176,19 @@ class LiveStatusRepository @Inject constructor(
      * loop themselves. A failed fetch retains the last emitted presence rather than throwing, so a
      * transient error doesn't clear the Home card or Library dot abruptly.
      */
-    suspend fun checkNow(): LiveStatus {
+    suspend fun checkNow(trigger: String = "foreground"): LiveStatus {
         // A failed fetch is not an observation. It says nothing about whether the game ended, so it
         // neither overwrites the last emitted state nor touches the persisted session — treating it
         // as "not playing" would clear a live session on any transient network blip, and on a cold
         // start (where there is no last emitted state to fall back on) it would do exactly that.
-        val fetched = runCatching { fetch() }.getOrNull() ?: return _liveStatus.value
+        val fetched = runCatching { fetch() }.getOrNull()
+        if (fetched == null) {
+            diagnostics?.record(trigger, PresenceOutcome.FAILED, retainedPriorState = true)
+            return _liveStatus.value
+        }
 
         val previousSession = settings.liveSession.first()
-        val nextSession = LiveSessionTracker.next(previousSession, fetched.nowPlaying, time.nowMillis())
+        val nextSession = LiveSessionTracker.next(previousSession, fetched.status.nowPlaying, time.nowMillis())
         if (nextSession != previousSession) {
             if (nextSession.startedAt == null) {
                 settings.clearLiveSession()
@@ -188,20 +197,21 @@ class LiveStatusRepository @Inject constructor(
             }
         }
 
-        val next = fetched.copy(sessionStartedAt = nextSession.startedAt)
+        val next = fetched.status.copy(sessionStartedAt = nextSession.startedAt)
         _liveStatus.value = next
+        diagnostics?.record(trigger, fetched.outcome, fetched.appId)
         return next
     }
 
-    private suspend fun fetch(): LiveStatus {
+    private suspend fun fetch(): PresenceFetch {
         // Unconfigured (or private) profiles simply report not-in-game — no error surfaced.
-        val creds = credentials.currentCredentials() ?: return LiveStatus()
+        val creds = credentials.currentCredentials() ?: return PresenceFetch(LiveStatus(), PresenceOutcome.NO_CREDENTIALS)
         val apiKey = creds.apiKey
         val steamId = creds.steamId
 
         val player = steamApi.getPlayerSummaries(apiKey, steamId)
             .response.players.firstOrNull()
-            ?: return LiveStatus()
+            ?: return PresenceFetch(LiveStatus(), PresenceOutcome.NO_PLAYER)
 
         refreshStoredIdentity(player)
 
@@ -212,7 +222,7 @@ class LiveStatusRepository @Inject constructor(
             } else {
                 LivePresence.ONLINE
             }
-            return LiveStatus(NowPlaying.NotPlaying, presence)
+            return PresenceFetch(LiveStatus(NowPlaying.NotPlaying, presence), PresenceOutcome.NOT_PLAYING)
         }
 
         val gameId = player.gameId.toLongOrNull()
@@ -224,9 +234,13 @@ class LiveStatusRepository @Inject constructor(
             ?.let { gameDao.getById(it)?.iconUrl }
             ?.takeIf { it.isNotBlank() }
 
-        return LiveStatus(
-            nowPlaying = NowPlaying.InGame(gameId = gameId, name = name, iconUrl = iconUrl),
-            presence = LivePresence.IN_GAME,
+        return PresenceFetch(
+            LiveStatus(
+                nowPlaying = NowPlaying.InGame(gameId = gameId, name = name, iconUrl = iconUrl),
+                presence = LivePresence.IN_GAME,
+            ),
+            PresenceOutcome.IN_GAME,
+            gameId,
         )
     }
 

@@ -1,6 +1,7 @@
 package com.example.backlogium.di
 
 import com.example.backlogium.BuildConfig
+import com.example.backlogium.data.diagnostics.RedactingTimingInterceptor
 import com.example.backlogium.data.hltb.HltbHttpClient
 import com.example.backlogium.data.remote.SteamApi
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -31,16 +32,9 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(): OkHttpClient {
-        val logging = HttpLoggingInterceptor().apply {
-            level = if (BuildConfig.DEBUG) {
-                HttpLoggingInterceptor.Level.BASIC
-            } else {
-                HttpLoggingInterceptor.Level.NONE
-            }
-        }
+    fun provideOkHttpClient(timingInterceptor: RedactingTimingInterceptor): OkHttpClient {
         return OkHttpClient.Builder()
-            .addInterceptor(logging)
+            .addInterceptor(timingInterceptor)
             .build()
     }
 

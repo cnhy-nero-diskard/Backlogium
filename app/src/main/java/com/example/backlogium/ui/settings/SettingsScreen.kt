@@ -68,6 +68,7 @@ import compose.icons.tablericons.Upload
 @Composable
 fun SettingsScreen(
     onEditCredentials: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -82,6 +83,7 @@ fun SettingsScreen(
     SettingsScreen(
         state = state,
         onEditCredentials = onEditCredentials,
+        onOpenDiagnostics = onOpenDiagnostics,
         actions = remember(viewModel) {
             SettingsActions(
                 onSyncNow = viewModel::syncNow,
@@ -138,6 +140,7 @@ data class SettingsActions(
 fun SettingsScreen(
     state: SettingsUiState,
     onEditCredentials: () -> Unit,
+    onOpenDiagnostics: () -> Unit = {},
     actions: SettingsActions,
 ) {
     if (state.loading) return
@@ -184,6 +187,14 @@ fun SettingsScreen(
 
         SectionHeader("Data & Backup")
         DataBackupCard(state = state, actions = actions)
+
+        SectionHeader("Diagnostics")
+        Card(modifier = Modifier.fillMaxWidth().clickable { onOpenDiagnostics() }) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Sync diagnostics", style = MaterialTheme.typography.titleMedium)
+                Text("Recent sync runs and presence decisions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
 
         SectionHeader("Advanced")
         AdvancedCard(state = state, actions = actions)

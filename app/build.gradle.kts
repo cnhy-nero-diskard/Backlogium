@@ -142,6 +142,9 @@ dependencies {
     implementation(libs.lottie.compose)
     implementation(libs.compose.icons.tabler)
 
+    // Freeform logging facade (add-sync-diagnostics)
+    implementation(libs.timber)
+
     // Tests
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
