@@ -24,7 +24,10 @@
 
 - [x] 3.1 Add a `sync_run` entity: trigger, `startedAt`, `durationMs`, `requestCount`,
       `requestMillis`, `gamesExamined`, `gamesUpdated`, `outcome`, `errorMessage`
-- [ ] 3.2 Model `outcome` as success / failed / incomplete / skipped-with-reason — never a boolean
+- [ ] 3.2 Model `outcome` as success / failed / incomplete / skipped-with-reason — never a boolean.
+      Decision: enforce via a Kotlin sealed class/enum at the recorder call sites; the Room column
+      stays `String` (no migration) to avoid schema conflicts with the concurrent
+      `optimize-steam-sync` branch — see design.md
 - [x] 3.3 Add the DAO: insert, recent-runs query ordered by `startedAt` descending, prune
 - [x] 3.4 Add the Room migration
 - [ ] 3.5 Prune on insert to a fixed retention cap (~200 runs); ensure a pruning failure cannot fail
@@ -45,7 +48,8 @@
 
 - [x] 5.1 Add a `presence_decision` entity: `at`, trigger, outcome, `appId`, `retainedPriorState`
 - [ ] 5.2 Model outcomes to mirror the branches one-to-one: in_game, not_playing, no_credentials
-      (`LiveStatusRepository.kt:150`), no_player (`:154`), failed (`:130-131`)
+      (`LiveStatusRepository.kt:150`), no_player (`:154`), failed (`:130-131`). Decision: same
+      approach as 3.2 — sealed class/enum in code, `String` column, no migration
 - [x] 5.3 Emit a record from `checkNow` without altering its control flow
 - [x] 5.4 Identify the trigger: foreground, poll, or sync
 - [ ] 5.5 Set retention for these separately — the 30s in-game cadence makes them far more frequent
