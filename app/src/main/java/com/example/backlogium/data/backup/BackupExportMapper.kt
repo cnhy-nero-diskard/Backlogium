@@ -2,12 +2,15 @@ package com.example.backlogium.data.backup
 
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.AchievementDao
+import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Achievement
+import com.example.backlogium.data.local.entity.Collection
+import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.PlayerProfile
@@ -36,6 +39,7 @@ class BackupExportMapper @Inject constructor(
     private val dailyProgressDao: DailyProgressDao,
     private val hltbDataDao: HltbDataDao,
     private val playerProfileDao: PlayerProfileDao,
+    private val collectionDao: CollectionDao,
     private val settings: SettingsDataStore,
     private val credentials: CredentialsRepository,
     private val time: TimeProvider,
@@ -49,6 +53,8 @@ class BackupExportMapper @Inject constructor(
         val days = dailyProgressDao.getAllOrdered()
         val hltb = hltbDataDao.getAll()
         val profile = playerProfileDao.get() ?: PlayerProfile()
+        val collections = collectionDao.getAll()
+        val collectionMembers = collections.flatMap { collectionDao.getMembers(it.id) }
 
         val steamId64 = (credentials.currentCredentials() as? CredentialsState.Configured)?.steamId
             ?: profile.steamId
@@ -84,6 +90,8 @@ class BackupExportMapper @Inject constructor(
                 playtimeBackfilled = profile.playtimeBackfilled,
             ),
             computed = buildComputed(games, achievements, sessions, days, hltb, config),
+            collections = collections.map { it.toBackup() },
+            collectionMembers = collectionMembers.map { it.toBackup() },
         )
     }
 
@@ -189,4 +197,19 @@ private fun DailyProgress.toBackup() = BackupDailyProgress(
     minutesPlayed = minutesPlayed,
     goalMinutesPlayed = goalMinutesPlayed,
     questMet = questMet,
+)
+
+private fun Collection.toBackup() = BackupCollection(
+    id = id,
+    name = name,
+    mode = mode.name,
+    sort = sort.name,
+    targetDate = targetDate,
+    createdAt = createdAt,
+)
+
+private fun CollectionMember.toBackup() = BackupCollectionMember(
+    collectionId = collectionId,
+    appId = appId,
+    orderIndex = orderIndex,
 )

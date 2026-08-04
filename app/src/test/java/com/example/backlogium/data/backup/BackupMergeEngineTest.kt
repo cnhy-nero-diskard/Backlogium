@@ -5,6 +5,7 @@ import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.AchievementFetchedAt
 import com.example.backlogium.data.local.dao.AchievementRarity
 import com.example.backlogium.data.local.dao.AchievementUnlock
+import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameTrackedMinutes
@@ -12,11 +13,15 @@ import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Achievement
+import com.example.backlogium.data.local.entity.Collection
+import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.domain.CollectionMode
+import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.AchievementInput
@@ -44,6 +49,7 @@ class BackupMergeEngineTest {
         val gameDao: FakeGameDao,
         val sessionDao: FakeSessionDao,
         val profileDao: FakePlayerProfileDao,
+        val collectionDao: FakeCollectionDao,
     )
 
     private fun newEngine(
@@ -53,6 +59,7 @@ class BackupMergeEngineTest {
         hltb: MutableMap<Long, HltbData> = mutableMapOf(),
         achievements: MutableList<Achievement> = mutableListOf(),
         profile: PlayerProfile? = null,
+        collections: MutableMap<Long, Collection> = mutableMapOf(),
         today: LocalDate = LocalDate.parse("2026-07-17"),
         nowMillis: Long = 0L,
     ): Harness {
@@ -62,15 +69,16 @@ class BackupMergeEngineTest {
         val hltbDataDao = FakeHltbDataDao(hltb)
         val achievementDao = FakeAchievementDao(achievements)
         val profileDao = FakePlayerProfileDao(profile)
+        val collectionDao = FakeCollectionDao(collections)
         val time = FixedTimeProvider(today, nowMillis)
         val gamificationUpdater = GamificationUpdater(
             sessionDao, dailyProgressDao, profileDao, hltbDataDao, achievementDao, gameDao,
         )
         val engine = BackupMergeEngine(
             gameDao, sessionDao, dailyProgressDao, hltbDataDao, achievementDao, profileDao,
-            gamificationUpdater, time,
+            collectionDao, gamificationUpdater, time,
         )
-        return Harness(engine, gameDao, sessionDao, profileDao)
+        return Harness(engine, gameDao, sessionDao, profileDao, collectionDao)
     }
 
     private fun baseFile(
@@ -81,6 +89,8 @@ class BackupMergeEngineTest {
         totalXp: Int = 999_999, // deliberately implausible, to prove it's never trusted
         currentStreak: Int = 999,
         playtimeBackfilled: Boolean = false,
+        collections: List<BackupCollection> = emptyList(),
+        collectionMembers: List<BackupCollectionMember> = emptyList(),
     ) = BackupFile(
         exportedAt = "2026-07-01T00:00:00Z",
         identity = BackupIdentity(steamId64 = "1"),
@@ -99,6 +109,8 @@ class BackupMergeEngineTest {
             playtimeBackfilled = playtimeBackfilled,
         ),
         computed = BackupComputed(emptyList(), emptyList()),
+        collections = collections,
+        collectionMembers = collectionMembers,
     )
 
     @Test
@@ -140,6 +152,48 @@ class BackupMergeEngineTest {
         assertEquals(2, all.size)
         assertTrue(all.any { it.startAt == 1_000L && it.minutes == 10 })
         assertTrue(all.any { it.startAt == 5_000L && it.minutes == 15 })
+    }
+
+    @Test
+    fun collectionsAndMembers_mergeIntoLocalStore() = runTest {
+        val harness = newEngine()
+        val file = baseFile(
+            collections = listOf(
+                BackupCollection(id = 1L, name = "Queue", mode = "ORDERED_QUEUE", sort = "MANUAL_SEQUENCE", targetDate = null, createdAt = 5L),
+            ),
+            collectionMembers = listOf(
+                BackupCollectionMember(collectionId = 1L, appId = 10L, orderIndex = 0),
+                BackupCollectionMember(collectionId = 1L, appId = 11L, orderIndex = 1),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        val stored = harness.collectionDao.getAll()
+        assertEquals(1, stored.size)
+        assertEquals("Queue", stored.single().name)
+        assertEquals(CollectionMode.ORDERED_QUEUE, stored.single().mode)
+        assertEquals(CollectionSort.MANUAL_SEQUENCE, stored.single().sort)
+        assertEquals(listOf(10L, 11L), harness.collectionDao.getMembers(1L).map { it.appId })
+    }
+
+    @Test
+    fun collectionMerge_isIdempotentByCollectionId() = runTest {
+        val harness = newEngine(
+            collections = mutableMapOf(1L to Collection(id = 1L, name = "Before", mode = CollectionMode.BASIC, sort = CollectionSort.NAME, createdAt = 3L)),
+        )
+        val file = baseFile(
+            collections = listOf(
+                BackupCollection(id = 1L, name = "After", mode = "COMPLETION_GOAL", sort = "COMPLETION_FRACTION", targetDate = null, createdAt = 3L),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        val stored = harness.collectionDao.getAll()
+        assertEquals(1, stored.size) // id 1 updated in place, not duplicated
+        assertEquals("After", stored.single().name)
+        assertEquals(CollectionMode.COMPLETION_GOAL, stored.single().mode)
     }
 
     @Test
@@ -272,7 +326,6 @@ class BackupMergeEngineTest {
         assertEquals(500, merged.playtimeForever)
     }
 }
-
 private fun RuleConfig.toBackupForTest() = BackupRuleConfig(
     xpPerMinute = xpPerMinute,
     levelBase = levelBase,
@@ -418,4 +471,75 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
 
     override fun observe(): Flow<PlayerProfile?> = flowOf(profile)
     override suspend fun get(): PlayerProfile? = profile
+}
+
+private class FakeCollectionDao(
+    private val store: MutableMap<Long, Collection> = mutableMapOf(),
+) : CollectionDao {
+    private val membersByCollection: MutableMap<Long, MutableList<CollectionMember>> = mutableMapOf()
+
+    private fun members(collectionId: Long): List<CollectionMember> =
+        membersByCollection[collectionId]?.sortedBy { it.orderIndex } ?: emptyList()
+
+    override fun observeCollections(): Flow<List<Collection>> = flowOf(store.values.toList())
+
+    override suspend fun getAll(): List<Collection> = store.values.toList()
+
+    override suspend fun getById(id: Long): Collection? = store[id]
+
+    override suspend fun insert(collection: Collection): Long {
+        val id = collection.id.takeIf { it != 0L } ?: ((store.keys.maxOrNull() ?: 0L) + 1)
+        store[id] = collection.copy(id = id)
+        return id
+    }
+
+    override suspend fun update(collection: Collection) {
+        store[collection.id] = collection
+    }
+
+    override suspend fun upsert(collection: Collection) {
+        store[collection.id] = collection
+    }
+
+    override suspend fun upsertMember(member: CollectionMember) {
+        val list = membersByCollection.getOrPut(member.collectionId) { mutableListOf() }
+        list.removeAll { it.appId == member.appId }
+        list += member
+    }
+
+    override suspend fun updateDetails(
+        id: Long,
+        name: String,
+        mode: CollectionMode,
+        sort: CollectionSort,
+        targetDate: String?,
+    ) {
+        store[id]?.let { store[id] = it.copy(name = name, mode = mode, sort = sort, targetDate = targetDate) }
+    }
+
+    override suspend fun delete(id: Long) {
+        store.remove(id)
+        membersByCollection.remove(id)
+    }
+
+    override fun observeMembers(collectionId: Long): Flow<List<CollectionMember>> =
+        flowOf(members(collectionId))
+
+    override suspend fun getMembers(collectionId: Long): List<CollectionMember> = members(collectionId)
+
+    override suspend fun insertMember(member: CollectionMember) {
+        val list = membersByCollection.getOrPut(member.collectionId) { mutableListOf() }
+        list.removeAll { it.appId == member.appId }
+        list += member
+    }
+
+    override suspend fun removeMember(collectionId: Long, appId: Long) {
+        membersByCollection[collectionId]?.removeAll { it.appId == appId }
+    }
+
+    override suspend fun setOrderIndex(collectionId: Long, appId: Long, orderIndex: Int) {
+        val list = membersByCollection[collectionId] ?: return
+        val idx = list.indexOfFirst { it.appId == appId }
+        if (idx >= 0) list[idx] = list[idx].copy(orderIndex = orderIndex)
+    }
 }

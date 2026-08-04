@@ -64,6 +64,8 @@ import com.airbnb.lottie.compose.LottieCompositionSpec
 import com.airbnb.lottie.compose.animateLottieCompositionAsState
 import com.airbnb.lottie.compose.rememberLottieComposition
 import com.example.backlogium.R
+import com.example.backlogium.domain.CollectionBanner
+import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.isStreakMilestone
 import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.util.UiFormat
@@ -85,6 +87,8 @@ import kotlinx.coroutines.isActive
 @Composable
 fun HomeScreen(
     onAccentColorChanged: (Color?) -> Unit = {},
+    onOpenCollection: (Long) -> Unit = {},
+    onCreateCollection: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -162,6 +166,8 @@ fun HomeScreen(
             playStreakMilestone = playStreakMilestone,
             onStreakMilestoneFinished = { playStreakMilestone = false },
             onSyncNow = viewModel::syncNow,
+            onOpenCollection = onOpenCollection,
+            onCreateCollection = onCreateCollection,
         )
     }
 }
@@ -175,6 +181,8 @@ private fun InnerHomeContent(
     playStreakMilestone: Boolean,
     onStreakMilestoneFinished: () -> Unit,
     onSyncNow: () -> Unit,
+    onOpenCollection: (Long) -> Unit,
+    onCreateCollection: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -332,9 +340,113 @@ private fun InnerHomeContent(
             }
         }
 
+        // Custom collections: one mission card per collection, plus a create entry point. Kept
+        // after the streak card — always beneath the level/XP/quest/streak surfaces and the
+        // now-playing panel, so it can never demote the now-playing card's visual priority.
+        CollectionsSection(
+            cards = state.collections,
+            onOpenCollection = onOpenCollection,
+            onCreateCollection = onCreateCollection,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
         Spacer(Modifier.height(16.dp))
     }
 }
+
+/**
+ * The Home collections section: one mission card per collection plus a create entry point.
+ * Renders purely from locally stored state (offline-first), with a dedicated empty state.
+ * Cards are deliberately compact and sit at the very bottom of Home so they never displace or
+ * demote the level, XP, quest, streak, or now-playing surfaces (app-ui spec).
+ */
+@Composable
+private fun CollectionsSection(
+    cards: List<HomeCollectionCard>,
+    onOpenCollection: (Long) -> Unit,
+    onCreateCollection: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Collections", style = MaterialTheme.typography.titleMedium)
+            TextButton(onClick = onCreateCollection) { Text("New") }
+        }
+        if (cards.isEmpty()) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("No collections yet", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Group the games that matter right now — a completion goal, a " +
+                            "deadline, or a play order.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        } else {
+            cards.forEach { card ->
+                CollectionCard(
+                    card = card,
+                    onClick = { onOpenCollection(card.collectionId) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
+}
+
+/** One collection's mission card: its name plus its mode-specific banner. */
+@Composable
+private fun CollectionCard(
+    card: HomeCollectionCard,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(onClick = onClick, modifier = modifier) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                text = card.name,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            bannerText(card.banner)?.let { copy ->
+                Text(text = copy, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+/** A collection's mode-specific banner copy; a basic list shows its member count. */
+private fun bannerText(banner: CollectionBanner): String = when (banner.mode) {
+    CollectionMode.BASIC -> banner.memberCountLabel
+    CollectionMode.COMPLETION_GOAL -> {
+        val progress = banner.completionFraction?.let { percent(it) } ?: "—"
+        "$progress complete · ${banner.achievementsRemaining} achievements to go"
+    }
+    CollectionMode.DEADLINE_GOAL -> {
+        val progress = banner.completionFraction?.let { percent(it) } ?: "—"
+        val countdown = when {
+            banner.deadlinePassed -> "Deadline passed"
+            banner.daysRemaining != null -> "${banner.daysRemaining}d left"
+            else -> "No deadline set"
+        }
+        "$countdown · $progress complete"
+    }
+    CollectionMode.ORDERED_QUEUE -> when {
+        banner.queueCompleted -> "Queue complete — no next game"
+        banner.nextUp != null -> "Next: ${banner.nextUp.name} (#${banner.nextUpPosition})"
+        else -> banner.memberCountLabel
+    }
+}
+
+/** Format a 0..1 completion fraction as a whole percent, e.g. 0.7 → "70%". */
+private fun percent(fraction: Double): String = "${kotlin.math.round(fraction * 100)}%"
 
 /**
  * The most visually prominent element on Home while the player is in-game: large game art, the

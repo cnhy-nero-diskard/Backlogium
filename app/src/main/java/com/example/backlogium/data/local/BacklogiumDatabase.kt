@@ -6,6 +6,7 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.backlogium.data.local.dao.AchievementDao
+import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.DiagnosticsDao
 import com.example.backlogium.data.local.dao.GameDao
@@ -13,6 +14,8 @@ import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Achievement
+import com.example.backlogium.data.local.entity.Collection
+import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HltbData
@@ -33,8 +36,10 @@ import com.example.backlogium.data.local.entity.SyncRun
         SyncRun::class,
         RequestBreakdown::class,
         PresenceDecision::class,
+        Collection::class,
+        CollectionMember::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -46,6 +51,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun hltbDataDao(): HltbDataDao
     abstract fun achievementDao(): AchievementDao
     abstract fun diagnosticsDao(): DiagnosticsDao
+    abstract fun collectionDao(): CollectionDao
 
     companion object {
         const val NAME = "backlogium.db"
@@ -165,6 +171,43 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_request_breakdowns_runId` ON `request_breakdowns` (`runId`)")
                 db.execSQL("CREATE TABLE IF NOT EXISTS `presence_decisions` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `at` INTEGER NOT NULL, `trigger` TEXT NOT NULL, `outcome` TEXT NOT NULL, `appId` INTEGER, `retainedPriorState` INTEGER NOT NULL)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_presence_decisions_at` ON `presence_decisions` (`at`)")
+            }
+        }
+
+        /**
+         * v8 → v9: additive only — create the `collections` and `collection_members` tables
+         * (add-custom-collections). No existing table is altered; `isGoal`, `targetMinutes`,
+         * and all existing columns are untouched. A fresh install and an upgrade both start with
+         * zero collections, so Home renders its empty state until the user creates one.
+         *
+         * `mode`/`sort` are stored as their enum names (TEXT). The members FK to `collections`
+         * with CASCADE drops memberships when a collection is deleted; there is deliberately no
+         * FK to `games` (soft app-id reference).
+         */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `collections` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, " +
+                        "`mode` TEXT NOT NULL, " +
+                        "`sort` TEXT NOT NULL, " +
+                        "`targetDate` TEXT, " +
+                        "`createdAt` INTEGER NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `collection_members` (" +
+                        "`collectionId` INTEGER NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`orderIndex` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`collectionId`, `appId`), " +
+                        "FOREIGN KEY(`collectionId`) REFERENCES `collections`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_collection_members_collectionId` " +
+                        "ON `collection_members` (`collectionId`)",
+                )
             }
         }
     }

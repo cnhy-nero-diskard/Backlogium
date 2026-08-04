@@ -28,6 +28,9 @@ data class BackupFile(
     val librarySortPrefs: BackupLibrarySortPrefs,
     val playerProfile: BackupPlayerProfile,
     val computed: BackupComputed,
+    /** Custom collections and their memberships (add-custom-collections) — app-owned state. */
+    val collections: List<BackupCollection> = emptyList(),
+    val collectionMembers: List<BackupCollectionMember> = emptyList(),
 ) {
     companion object {
         const val CURRENT_FORMAT_VERSION = 1
@@ -137,3 +140,26 @@ data class BackupGameXp(val appId: Long, val name: String, val xp: Int)
 
 @Serializable
 data class BackupDayXp(val date: String, val cumulativeXp: Int)
+
+/**
+ * One custom collection (add-custom-collections), carried in the backup so a restore keeps the
+ * player's groups. [mode]/[sort] are stored as their enum names (matching the Room converters);
+ * [targetDate] is the ISO deadline, null outside deadline mode.
+ */
+@Serializable
+data class BackupCollection(
+    val id: Long,
+    val name: String,
+    val mode: String,
+    val sort: String,
+    val targetDate: String?,
+    val createdAt: Long,
+)
+
+/** One collection membership, keyed by collection id + app id with its sequence order. */
+@Serializable
+data class BackupCollectionMember(
+    val collectionId: Long,
+    val appId: Long,
+    val orderIndex: Int,
+)

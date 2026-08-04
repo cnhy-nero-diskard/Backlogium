@@ -1,20 +1,26 @@
 package com.example.backlogium.data.backup
 
 import com.example.backlogium.data.local.dao.AchievementDao
+import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Achievement
+import com.example.backlogium.data.local.entity.Collection
+import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.domain.CollectionMode
+import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.domain.defaultSort
 import com.example.backlogium.gamification.RuleConfig
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -37,6 +43,7 @@ class BackupMergeEngine @Inject constructor(
     private val hltbDataDao: HltbDataDao,
     private val achievementDao: AchievementDao,
     private val playerProfileDao: PlayerProfileDao,
+    private val collectionDao: CollectionDao,
     private val gamificationUpdater: GamificationUpdater,
     private val time: TimeProvider,
 ) {
@@ -53,6 +60,8 @@ class BackupMergeEngine @Inject constructor(
         file.dailyProgress.forEach { mergeDailyProgress(it) }
         file.hltbData.forEach { mergeHltbData(it) }
         file.achievements.forEach { mergeAchievement(it) }
+        file.collections.forEach { mergeCollection(it) }
+        file.collectionMembers.forEach { mergeCollectionMember(it) }
 
         val importedLongestStreak = file.playerProfile.longestStreak
         val importedBackfilled = file.playerProfile.playtimeBackfilled
@@ -165,6 +174,38 @@ class BackupMergeEngine @Inject constructor(
                     snapshotPercent = backupAchievement.snapshotPercent,
                     fetchedAt = existing?.fetchedAt ?: time.nowMillis(),
                 ),
+            ),
+        )
+    }
+
+    /**
+     * Merge one collection by its id (PK upsert): a row with the same id is overwritten, a new
+     * one is inserted — never a blind replace, never double-adding a member. Mode/sort parse
+     * tolerantly, falling back to the parse-able mode's default sort.
+     */
+    private suspend fun mergeCollection(backupCollection: BackupCollection) {
+        val mode = runCatching { CollectionMode.valueOf(backupCollection.mode) }
+            .getOrDefault(CollectionMode.BASIC)
+        val sort = runCatching { CollectionSort.valueOf(backupCollection.sort) }
+            .getOrDefault(mode.defaultSort())
+        collectionDao.upsert(
+            Collection(
+                id = backupCollection.id,
+                name = backupCollection.name,
+                mode = mode,
+                sort = sort,
+                targetDate = backupCollection.targetDate,
+                createdAt = backupCollection.createdAt,
+            ),
+        )
+    }
+
+    private suspend fun mergeCollectionMember(backupMember: BackupCollectionMember) {
+        collectionDao.upsertMember(
+            CollectionMember(
+                collectionId = backupMember.collectionId,
+                appId = backupMember.appId,
+                orderIndex = backupMember.orderIndex,
             ),
         )
     }
