@@ -1,9 +1,12 @@
 # gamification
 
+## Purpose
+
 The gamification engine is pure, platform-agnostic logic: it takes tracked playtime
 plus configuration and returns XP/level, goal progress, daily-quest status, and
 streaks. It performs no I/O, no networking, and no persistence — callers supply
-inputs and persist outputs.
+inputs and persist outputs. It also computes achievement-derived XP from rarity
+tiers and combines it with playtime XP.
 
 ## Requirements
 
