@@ -75,9 +75,11 @@
 
 ## 8. Freeform logging facade
 
-- [ ] 8.1 Add Timber (or a thin internal facade over `android.util.Log`) to the version catalog
-- [ ] 8.2 Install the debug tree in `BacklogiumApp` for debug builds only; no tree in release
-- [ ] 8.3 Confirm release builds emit nothing to the platform log
+- [x] 8.1 Add Timber (or a thin internal facade over `android.util.Log`) to the version catalog
+- [x] 8.2 Install the debug tree in `BacklogiumApp` for debug builds only; no tree in release
+- [x] 8.3 Confirm release builds emit nothing to the platform log. Structurally guaranteed: no tree
+      is planted outside `if (BuildConfig.DEBUG)`, so untreed Timber calls are no-ops in release;
+      confirmed release and debug variants both compile
 
 ## 9. Verification
 
