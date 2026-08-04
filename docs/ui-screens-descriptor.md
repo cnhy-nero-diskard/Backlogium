@@ -2,10 +2,10 @@
 
 Source: `app/src/main/java/com/example/backlogium/ui/**`. Android app, Material 3 (Compose),
 using a custom "Steam-native dark" identity with dynamic (wallpaper-derived) color turned
-off, so the look is identical across devices. Bottom navigation with 3 destinations (Home /
-Library / History), plus three pushed sub-destinations reached from them: **Onboarding**
-(from Home, or as a first-run takeover), **Game detail** (from Library), and **HowLongToBeat
-review** (from Library). Every screen renders from local state only (offline-first) and has an
+off, so the look is identical across devices. Bottom navigation with 4 destinations (Home /
+Library / History / Settings), plus three pushed sub-destinations reached from them:
+**Onboarding** (from Settings, or as a first-run takeover), **Game detail** (from Library),
+and **HowLongToBeat review** (from Library). Every screen renders from local state only (offline-first) and has an
 "empty" / "nothing to show" variant.
 
 ## Design tokens
@@ -34,7 +34,7 @@ review** (from Library). Every screen renders from local state only (offline-fir
 - **Shape:** Material 3 `Card` everywhere (rounded rect, default M3 elevation/shape); game-art
   thumbnails are clipped to an 8dp rounded square.
 - **Icons:** a single icon library — **Tabler Icons** (Compose port,
-  `br.com.devsrsouza.compose.icons:tabler-icons`). Nav bar: Home / DeviceGamepad / History;
+  `br.com.devsrsouza.compose.icons:tabler-icons`). Nav bar: Home / DeviceGamepad / History / Settings;
   status glyphs: Flame (streak), CircleCheck / Clock (quest complete / in progress),
   CircleCheck / CircleMinus (History daily quest met / not met), Trophy (achievements /
   game-completed), BrandSteam + Pencil (Steam-account card), Download (history import),
@@ -75,15 +75,16 @@ and that step read as a crease. Layout is identical either way.
 - Renders **nothing** while credentials are unconfigured or still loading, so the onboarding
   takeover keeps the full screen.
 
-Bottom navigation: 3 items, icon (Tabler) + label, one selected at a time:
+Bottom navigation: 4 items, icon (Tabler) + label, one selected at a time:
 
 | Destination | Icon (Tabler) | Label |
 |---|---|---|
 | Home | `Home` | Home |
 | Library | `DeviceGamepad` | Library |
 | History | `History` | History |
+| Settings | `Settings` | Settings |
 
-Content area is a `NavHost` that swaps between the 3 screens below; state is preserved when
+Content area is a `NavHost` that swaps between the 4 top-level screens below; state is preserved when
 switching tabs (standard save/restoreState nav behavior). Home is the start destination.
 
 ---
@@ -405,7 +406,30 @@ screen has the game's own information to show regardless.
 
 ---
 
-## Screen 6 — HowLongToBeat review (pushed from Library)
+## Screen 6 — Settings
+
+**Purpose:** the app's administration surface: Steam account, manual sync, live monitor, data
+import, backup/restore, and local rule configuration. Everything renders from locally stored state,
+so the screen remains usable offline; when credentials are unconfigured, the account card becomes
+the route into onboarding.
+
+**Layout:** single scrollable column, 16dp padding, section headers over cards:
+
+1. **Account** — "Steam account" card with masked API key and SteamID when configured, or a connect
+   prompt when not configured. The action opens Onboarding.
+2. **Sync** — last sync state plus a "Sync now" action.
+3. **Live monitor** — toggle for foreground now-playing monitoring; disabled until Steam is
+   configured.
+4. **Daily quest** — editable quest target and Focus-game scoping.
+5. **Data** — one-time Steam history import and reset controls.
+6. **Data & Backup** — backup export/import, automatic snapshot controls, retention/interval
+   settings, and snapshot restore actions.
+7. **Advanced** — editable gamification rule constants, guarded by a confirmation dialog before
+   saving.
+
+---
+
+## Screen 7 — HowLongToBeat review (pushed from Library)
 
 **Purpose:** resolve ambiguous HowLongToBeat matches. Games whose match was uncertain after a
 refresh are listed with their candidate entries so the user can pick the right one.
