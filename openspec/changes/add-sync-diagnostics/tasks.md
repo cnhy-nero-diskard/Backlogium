@@ -8,8 +8,10 @@
       credentials-absent cases
 - [x] 1.3 Replace `HttpLoggingInterceptor` in `NetworkModule.provideOkHttpClient` with a custom
       interceptor that applies redaction before emitting anything
-- [ ] 1.4 Decide whether the HLTB client's `HttpLoggingInterceptor` (`NetworkModule.kt:71-77`) needs
-      the same treatment — it carries no Steam credentials, but confirm rather than assume
+- [x] 1.4 Decide whether the HLTB client's `HttpLoggingInterceptor` (`NetworkModule.kt:71-77`) needs
+      the same treatment — it carries no Steam credentials, but confirm rather than assume.
+      Confirmed: it's a public howlongtobeat.com scraper with no credentials in the URL, and it's
+      already `Level.NONE` in release builds. No redaction needed.
 - [x] 1.5 Verify with logcat attached on a debug build that the API key appears nowhere during a sync
 
 ## 2. Request timing
