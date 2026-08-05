@@ -54,6 +54,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
+import com.example.backlogium.domain.CollectionSummary
+import com.example.backlogium.domain.CollectionMemberSignals
+import com.example.backlogium.domain.CollectionTimeBasis
+import com.example.backlogium.domain.label
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.theme.collectionAccentColor
 import com.example.backlogium.ui.util.UiFormat
@@ -74,6 +78,7 @@ import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import kotlin.math.abs
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.text.style.TextDecoration
@@ -171,6 +176,7 @@ fun CollectionScreen(
                 CollectionOverview(
                     state = state,
                     onCustomize = { showEditor = true },
+                    onDeadlineChanged = viewModel::changeDeadline,
                 )
             } else {
                 CollectionForm(state = state, viewModel = viewModel)
@@ -180,10 +186,12 @@ fun CollectionScreen(
 }
 
 /** Read-only collection surface: members and their useful local metrics come before editing. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CollectionOverview(
     state: CollectionUiState,
     onCustomize: () -> Unit,
+    onDeadlineChanged: (LocalDate) -> Unit,
 ) {
     val accentColor = state.accent?.let {
         MaterialTheme.colorScheme.collectionAccentColor(it)
@@ -191,6 +199,15 @@ private fun CollectionOverview(
     val summarySurface = accentColor.copy(alpha = 0.12f)
         .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
     val trophyProgress = trophyProgress(state.members)
+    val banner = CollectionSummary.derive(
+        mode = state.mode,
+        sort = state.sort,
+        targetDate = state.targetDate,
+        members = state.members.map { it.toSignals() },
+        today = state.today,
+        timeBasis = state.timeBasis,
+    )
+    var showDeadlinePicker by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -213,6 +230,15 @@ private fun CollectionOverview(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+        }
+
+        if (state.mode == CollectionMode.DEADLINE_GOAL) {
+            item {
+                DeadlinePlanCard(
+                    banner = banner,
+                    onChangeDeadline = { showDeadlinePicker = true },
+                )
             }
         }
 
@@ -307,7 +333,116 @@ private fun CollectionOverview(
 
         item { Spacer(Modifier.height(16.dp)) }
     }
+
+    if (showDeadlinePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = state.targetDate
+                ?.atStartOfDay(ZoneOffset.UTC)
+                ?.toInstant()
+                ?.toEpochMilli(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDeadlinePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeadlinePicker = false
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            // The overview is read-only except for this explicit deadline action.
+                            onDeadlineChanged(
+                                Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate(),
+                            )
+                        }
+                    },
+                ) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeadlinePicker = false }) { Text("Cancel") }
+            },
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 }
+
+@Composable
+private fun DeadlinePlanCard(
+    banner: com.example.backlogium.domain.CollectionBanner,
+    onChangeDeadline: () -> Unit,
+) {
+    val differential = banner.timeDifferentialMinutes
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Deadline plan", style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = "Basis: ${banner.timeBasis.label()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = when {
+                    banner.daysRemaining == null -> "Set a deadline to see whether this collection fits."
+                    banner.daysRemaining < 0 -> "You are ${abs(banner.daysRemaining)} days past your deadline."
+                    banner.daysRemaining == 0L -> "Your deadline is today."
+                    else -> "You still have ${banner.daysRemaining} days until your deadline."
+                },
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            if (banner.remainingMinutes != null) {
+                Text(
+                    text = "${UiFormat.minutes(banner.remainingMinutes)} estimated remaining" +
+                        if (banner.unknownDurationCount > 0) {
+                            " · ${banner.unknownDurationCount} without ${banner.timeBasis.label()} data"
+                        } else {
+                            ""
+                        },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(
+                    text = "No ${banner.timeBasis.label()} estimates are available, so fit cannot be assessed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            differential?.let { value ->
+                Text(
+                    text = if (value >= 0) {
+                        "You have ${UiFormat.minutes(value)} of buffer."
+                    } else {
+                        "You are ${UiFormat.minutes(abs(value))} short — consider changing your deadline."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (value >= 0) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                )
+            }
+            OutlinedButton(onClick = onChangeDeadline) {
+                Text("Change deadline")
+            }
+        }
+    }
+}
+
+private fun CollectionMemberUi.toSignals() = CollectionMemberSignals(
+    appId = appId,
+    name = name,
+    playtimeMinutes = playtimeMinutes,
+    completionistMinutes = completionistMinutes,
+    mainStoryMinutes = mainStoryMinutes,
+    mainExtraMinutes = mainExtraMinutes,
+    allStylesMinutes = allStylesMinutes,
+    achievementsUnlocked = achievementsUnlocked,
+    achievementsTotal = achievementsTotal,
+    manualDone = done,
+)
 
 @Composable
 private fun CollectionMetric(
@@ -496,6 +631,29 @@ private fun CollectionForm(
                             if (state.targetDate != null) {
                                 TextButton(onClick = { viewModel.setTargetDate(null) }) { Text("Clear") }
                             }
+                        }
+                    }
+                }
+
+                item {
+                    SectionLabel("Time estimate basis")
+                    Text(
+                        text = "Choose which HowLongToBeat length Backlogium uses to check the deadline.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CollectionTimeBasis.entries.forEach { basis ->
+                            FilterChip(
+                                selected = state.timeBasis == basis,
+                                onClick = { viewModel.setTimeBasis(basis) },
+                                label = { Text(basis.label()) },
+                                enabled = !state.saving,
+                            )
                         }
                     }
                 }

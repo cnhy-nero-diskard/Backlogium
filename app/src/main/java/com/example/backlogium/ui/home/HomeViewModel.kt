@@ -144,6 +144,9 @@ class HomeViewModel @Inject constructor(
                     name = game?.name,
                     playtimeMinutes = game?.playtimeForever ?: 0,
                     completionistMinutes = game?.completionistMinutes,
+                    mainStoryMinutes = game?.mainStoryMinutes,
+                    mainExtraMinutes = game?.mainExtraMinutes,
+                    allStylesMinutes = game?.allStylesMinutes,
                     achievementsUnlocked = counts[member.appId]?.unlocked,
                     achievementsTotal = counts[member.appId]?.total,
                     manualDone = member.done,
@@ -155,6 +158,7 @@ class HomeViewModel @Inject constructor(
                 targetDate = collection.targetDate?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
                 members = signals,
                 today = time.today(),
+                timeBasis = collection.timeBasis,
             )
             HomeCollectionCard(
                 collectionId = collection.id,

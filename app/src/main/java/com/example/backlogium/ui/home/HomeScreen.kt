@@ -68,6 +68,7 @@ import com.airbnb.lottie.compose.rememberLottieComposition
 import com.example.backlogium.R
 import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionMode
+import com.example.backlogium.domain.label
 import com.example.backlogium.domain.isStreakMilestone
 import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.theme.collectionAccentColor
@@ -491,11 +492,21 @@ private fun bannerText(banner: CollectionBanner): String = when (banner.mode) {
     CollectionMode.DEADLINE_GOAL -> {
         val progress = banner.completionFraction?.let { percent(it) } ?: "—"
         val countdown = when {
-            banner.deadlinePassed -> "Deadline passed"
+            banner.daysRemaining != null && banner.daysRemaining < 0 ->
+                "${kotlin.math.abs(banner.daysRemaining)}d past deadline"
+            banner.daysRemaining == 0L -> "Deadline today"
             banner.daysRemaining != null -> "${banner.daysRemaining}d left"
             else -> "No deadline set"
         }
-        "$countdown · $progress complete"
+        val fit = when {
+            banner.unknownDurationCount > 0 ->
+                "${banner.unknownDurationCount} missing ${banner.timeBasis.label()} data"
+            banner.timeDifferentialMinutes == null -> "No ${banner.timeBasis.label()} estimate"
+            banner.timeDifferentialMinutes >= 0 ->
+                "${UiFormat.minutes(banner.timeDifferentialMinutes)} buffer"
+            else -> "${UiFormat.minutes(kotlin.math.abs(banner.timeDifferentialMinutes))} short"
+        }
+        "$countdown · $progress complete · $fit"
     }
     CollectionMode.ORDERED_QUEUE -> when {
         banner.queueCompleted -> "Queue complete — no next game"

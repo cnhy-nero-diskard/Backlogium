@@ -5,6 +5,7 @@ import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
+import com.example.backlogium.domain.CollectionTimeBasis
 
 /**
  * Room type converters. Stores the [HltbMatchStatus], [CollectionMode], [CollectionSort], and
@@ -39,4 +40,12 @@ class Converters {
     @TypeConverter
     fun toCollectionAccent(value: String?): CollectionAccent? =
         CollectionAccent.parse(value)
+
+    @TypeConverter
+    fun fromCollectionTimeBasis(basis: CollectionTimeBasis): String = basis.name
+
+    @TypeConverter
+    fun toCollectionTimeBasis(value: String): CollectionTimeBasis =
+        runCatching { CollectionTimeBasis.valueOf(value) }
+            .getOrDefault(CollectionTimeBasis.COMPLETIONIST)
 }

@@ -12,6 +12,8 @@ import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
+import com.example.backlogium.domain.CollectionTimeBasis
+import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.defaultSort
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +36,10 @@ data class CollectionMemberUi(
     val achievementsUnlocked: Int? = null,
     val achievementsTotal: Int? = null,
     val sessionCount: Int = 0,
+    val mainStoryMinutes: Int? = null,
+    val mainExtraMinutes: Int? = null,
+    val completionistMinutes: Int? = null,
+    val allStylesMinutes: Int? = null,
 )
 
 /** Full management-screen state for one collection (create or edit), all local/offline-first. */
@@ -46,6 +52,8 @@ data class CollectionUiState(
     val sort: CollectionSort = CollectionSort.NAME,
     val targetDate: LocalDate? = null,
     val accent: CollectionAccent? = null,
+    val timeBasis: CollectionTimeBasis = CollectionTimeBasis.COMPLETIONIST,
+    val today: LocalDate = LocalDate.now(),
     /** Current members in their editing sequence (queue order for ordered-queue collections). */
     val members: List<CollectionMemberUi> = emptyList(),
     /** Every library game, so the add-games control can offer them without a second source. */
@@ -78,6 +86,7 @@ class CollectionViewModel @Inject constructor(
     private val gameRepository: GameRepository,
     private val achievementRepository: AchievementRepository,
     private val sessionRepository: SessionRepository,
+    private val time: TimeProvider,
 ) : ViewModel() {
 
     /** 0 when creating a new collection; otherwise the collection being edited. */
@@ -88,6 +97,7 @@ class CollectionViewModel @Inject constructor(
     private val _sort = MutableStateFlow(CollectionSort.NAME)
     private val _targetDate = MutableStateFlow<LocalDate?>(null)
     private val _accent = MutableStateFlow<CollectionAccent?>(null)
+    private val _timeBasis = MutableStateFlow(CollectionTimeBasis.COMPLETIONIST)
     /** The editing session's member sequence (app ids, in queue order). */
     private val _memberAppIds = MutableStateFlow<List<Long>>(emptyList())
     /** Manual done marks buffered during the edit session, keyed by app id. */
@@ -107,6 +117,7 @@ class CollectionViewModel @Inject constructor(
                     _targetDate.value = collection.targetDate
                         ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
                     _accent.value = collection.accent
+                    _timeBasis.value = collection.timeBasis
                 }
                 val members = collectionRepository.getMembers(collectionId)
                     .sortedBy { it.orderIndex }
@@ -124,6 +135,13 @@ class CollectionViewModel @Inject constructor(
         val sort: CollectionSort,
         val targetDate: LocalDate?,
         val accent: CollectionAccent?,
+        val timeBasis: CollectionTimeBasis,
+    )
+
+    private data class DraftDetails(
+        val targetDate: LocalDate?,
+        val accent: CollectionAccent?,
+        val timeBasis: CollectionTimeBasis,
     )
 
     private data class Session(
@@ -158,21 +176,20 @@ class CollectionViewModel @Inject constructor(
     )
 
     private val draft: StateFlow<Draft> = combine(
-        _name,
-        _mode,
-        _sort,
-        _targetDate,
-        _accent,
-    ) { name, mode, sort, targetDate, accent ->
-        Draft(name, mode, sort, targetDate, accent)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, Draft("", CollectionMode.BASIC, CollectionSort.NAME, null, null))
+        combine(_name, _mode, _sort) { name, mode, sort -> Triple(name, mode, sort) },
+        combine(_targetDate, _accent, _timeBasis) { targetDate, accent, timeBasis ->
+            DraftDetails(targetDate, accent, timeBasis)
+        },
+    ) { core, details ->
+        Draft(core.first, core.second, core.third, details.targetDate, details.accent, details.timeBasis)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, Draft("", CollectionMode.BASIC, CollectionSort.NAME, null, null, CollectionTimeBasis.COMPLETIONIST))
 
     private val session: StateFlow<Session> = combine(draft, sessionFields) { d, fields ->
         Session(d, fields.memberAppIds, fields.doneMarks, fields.loaded, fields.done, fields.saving)
     }.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,
-        Session(Draft("", CollectionMode.BASIC, CollectionSort.NAME, null, null), emptyList(), emptySet(), collectionId == 0L, false, false),
+        Session(Draft("", CollectionMode.BASIC, CollectionSort.NAME, null, null, CollectionTimeBasis.COMPLETIONIST), emptyList(), emptySet(), collectionId == 0L, false, false),
     )
 
     private data class LibraryMetrics(
@@ -207,6 +224,8 @@ class CollectionViewModel @Inject constructor(
             sort = s.draft.sort,
             targetDate = s.draft.targetDate,
             accent = s.draft.accent,
+            timeBasis = s.draft.timeBasis,
+            today = time.today(),
             members = s.memberAppIds.map { appId ->
                 val game = gamesById[appId]
                 CollectionMemberUi(
@@ -220,6 +239,10 @@ class CollectionViewModel @Inject constructor(
                     achievementsUnlocked = metrics.achievementsByGame[appId]?.unlocked,
                     achievementsTotal = metrics.achievementsByGame[appId]?.total,
                     sessionCount = metrics.sessionCountByGame[appId] ?: 0,
+                    mainStoryMinutes = game?.mainStoryMinutes,
+                    mainExtraMinutes = game?.mainExtraMinutes,
+                    completionistMinutes = game?.completionistMinutes,
+                    allStylesMinutes = game?.allStylesMinutes,
                 )
             },
             libraryGames = metrics.games,
@@ -252,6 +275,28 @@ class CollectionViewModel @Inject constructor(
 
     fun setTargetDate(date: LocalDate?) {
         _targetDate.value = date
+    }
+
+    fun setTimeBasis(basis: CollectionTimeBasis) {
+        _timeBasis.value = basis
+    }
+
+    /** Update an existing collection's deadline from the overview without opening the editor. */
+    fun changeDeadline(date: LocalDate?) {
+        _targetDate.value = date
+        if (collectionId == 0L) return
+        viewModelScope.launch {
+            val collection = collectionRepository.getById(collectionId) ?: return@launch
+            collectionRepository.updateDetails(
+                id = collection.id,
+                name = collection.name,
+                mode = collection.mode,
+                sort = collection.sort,
+                targetDate = date?.toString(),
+                accent = collection.accent,
+                timeBasis = collection.timeBasis,
+            )
+        }
     }
 
     fun setAccent(accent: CollectionAccent?) {
@@ -297,8 +342,9 @@ class CollectionViewModel @Inject constructor(
         viewModelScope.launch {
             val target = _targetDate.value?.toString()
             val accent = _accent.value
+            val timeBasis = _timeBasis.value
             val id = if (collectionId == 0L) {
-                collectionRepository.create(_name.value, _mode.value, _sort.value, target, accent)
+                collectionRepository.create(_name.value, _mode.value, _sort.value, target, accent, timeBasis)
             } else {
                 collectionRepository.updateDetails(
                     collectionId,
@@ -307,6 +353,7 @@ class CollectionViewModel @Inject constructor(
                     _sort.value,
                     target,
                     accent,
+                    timeBasis,
                 )
                 collectionId
             }

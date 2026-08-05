@@ -12,6 +12,7 @@ import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
+import com.example.backlogium.domain.CollectionTimeBasis
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -45,7 +46,7 @@ interface CollectionDao {
     suspend fun upsertMember(member: CollectionMember)
 
     @Query(
-        "UPDATE collections SET name = :name, mode = :mode, sort = :sort, targetDate = :targetDate, accent = :accent " +
+        "UPDATE collections SET name = :name, mode = :mode, sort = :sort, targetDate = :targetDate, accent = :accent, timeBasis = :timeBasis " +
             "WHERE id = :id",
     )
     suspend fun updateDetails(
@@ -55,6 +56,7 @@ interface CollectionDao {
         sort: CollectionSort,
         targetDate: String?,
         accent: CollectionAccent?,
+        timeBasis: CollectionTimeBasis,
     )
 
     /** Deleting a collection cascades to its memberships via the FK. */

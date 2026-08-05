@@ -21,6 +21,9 @@ class CollectionSummaryTest {
         name: String? = "Game $appId",
         playtimeMinutes: Int = 0,
         completionistMinutes: Int? = null,
+        mainStoryMinutes: Int? = null,
+        mainExtraMinutes: Int? = null,
+        allStylesMinutes: Int? = null,
         achievementsUnlocked: Int? = null,
         achievementsTotal: Int? = null,
         manualDone: Boolean = false,
@@ -29,6 +32,9 @@ class CollectionSummaryTest {
         name = name,
         playtimeMinutes = playtimeMinutes,
         completionistMinutes = completionistMinutes,
+        mainStoryMinutes = mainStoryMinutes,
+        mainExtraMinutes = mainExtraMinutes,
+        allStylesMinutes = allStylesMinutes,
         achievementsUnlocked = achievementsUnlocked,
         achievementsTotal = achievementsTotal,
         manualDone = manualDone,
@@ -156,6 +162,59 @@ class CollectionSummaryTest {
         )
         assertEquals(12L, banner.daysRemaining)
         assertFalse(banner.deadlinePassed)
+    }
+
+    @Test
+    fun deadlinePlan_usesSelectedBasisAndSubtractsPlaytime() {
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.DEADLINE_GOAL,
+            sort = CollectionMode.DEADLINE_GOAL.defaultSort(),
+            targetDate = LocalDate.parse("2026-08-16"),
+            members = listOf(
+                member(
+                    playtimeMinutes = 120,
+                    mainStoryMinutes = 600,
+                    mainExtraMinutes = 900,
+                    completionistMinutes = 1_500,
+                ),
+            ),
+            today = today,
+            timeBasis = CollectionTimeBasis.MAIN_EXTRA,
+        )
+
+        assertEquals(900, banner.plannedMinutes)
+        assertEquals(780, banner.remainingMinutes)
+        assertEquals(16_500, banner.timeDifferentialMinutes)
+        assertEquals(CollectionTimeBasis.MAIN_EXTRA, banner.timeBasis)
+    }
+
+    @Test
+    fun deadlinePlan_canBeNegativeWhenEstimateDoesNotFit() {
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.DEADLINE_GOAL,
+            sort = CollectionMode.DEADLINE_GOAL.defaultSort(),
+            targetDate = LocalDate.parse("2026-08-05"),
+            members = listOf(member(mainStoryMinutes = 3_000)),
+            today = today,
+            timeBasis = CollectionTimeBasis.MAIN_STORY,
+        )
+
+        assertEquals(-1_560, banner.timeDifferentialMinutes)
+    }
+
+    @Test
+    fun deadlinePlan_doesNotClaimFitWhenASelectedEstimateIsUnknown() {
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.DEADLINE_GOAL,
+            sort = CollectionMode.DEADLINE_GOAL.defaultSort(),
+            targetDate = LocalDate.parse("2026-08-16"),
+            members = listOf(member(mainStoryMinutes = null)),
+            today = today,
+            timeBasis = CollectionTimeBasis.MAIN_STORY,
+        )
+
+        assertEquals(1, banner.unknownDurationCount)
+        assertNull(banner.timeDifferentialMinutes)
     }
 
     @Test

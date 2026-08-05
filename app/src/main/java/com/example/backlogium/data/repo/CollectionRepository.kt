@@ -6,6 +6,7 @@ import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
+import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.defaultSort
 import kotlinx.coroutines.flow.Flow
@@ -41,6 +42,7 @@ class CollectionRepository @Inject constructor(
         sort: CollectionSort? = null,
         targetDate: String? = null,
         accent: CollectionAccent? = null,
+        timeBasis: CollectionTimeBasis = CollectionTimeBasis.COMPLETIONIST,
     ): Long =
         collectionDao.insert(
             Collection(
@@ -49,6 +51,7 @@ class CollectionRepository @Inject constructor(
                 sort = sort ?: mode.defaultSort(),
                 targetDate = targetDate.takeIf { mode == CollectionMode.DEADLINE_GOAL },
                 accent = accent,
+                timeBasis = timeBasis,
                 createdAt = time.nowMillis(),
             ),
         )
@@ -60,6 +63,7 @@ class CollectionRepository @Inject constructor(
         sort: CollectionSort,
         targetDate: String?,
         accent: CollectionAccent?,
+        timeBasis: CollectionTimeBasis,
     ) = collectionDao.updateDetails(
         id,
         name,
@@ -67,6 +71,7 @@ class CollectionRepository @Inject constructor(
         sort,
         targetDate.takeIf { mode == CollectionMode.DEADLINE_GOAL },
         accent,
+        timeBasis,
     )
 
     /** Deleting a collection cascades to its memberships via the FK. */

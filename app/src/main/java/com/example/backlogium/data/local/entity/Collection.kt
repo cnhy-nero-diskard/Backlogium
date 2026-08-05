@@ -5,6 +5,7 @@ import androidx.room.PrimaryKey
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
+import com.example.backlogium.domain.CollectionTimeBasis
 
 /**
  * A user-defined named game group (add-custom-collections). App-owned state: absent from the
@@ -25,5 +26,6 @@ data class Collection(
     val sort: CollectionSort,
     val targetDate: String? = null,
     val accent: CollectionAccent? = null,
+    val timeBasis: CollectionTimeBasis = CollectionTimeBasis.COMPLETIONIST,
     val createdAt: Long,
 )

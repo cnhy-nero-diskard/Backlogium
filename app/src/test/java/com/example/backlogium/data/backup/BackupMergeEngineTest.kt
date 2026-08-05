@@ -569,8 +569,9 @@ private class FakeCollectionDao(
         sort: CollectionSort,
         targetDate: String?,
         accent: com.example.backlogium.domain.CollectionAccent?,
+        timeBasis: com.example.backlogium.domain.CollectionTimeBasis,
     ) {
-        store[id]?.let { store[id] = it.copy(name = name, mode = mode, sort = sort, targetDate = targetDate, accent = accent) }
+        store[id]?.let { store[id] = it.copy(name = name, mode = mode, sort = sort, targetDate = targetDate, accent = accent, timeBasis = timeBasis) }
     }
 
     override fun observeAllMembers(): kotlinx.coroutines.flow.Flow<List<CollectionMember>> =

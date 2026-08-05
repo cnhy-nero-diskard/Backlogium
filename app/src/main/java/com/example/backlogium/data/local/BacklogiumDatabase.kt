@@ -39,7 +39,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         Collection::class,
         CollectionMember::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -221,6 +221,15 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `collections` ADD COLUMN `accent` TEXT")
                 db.execSQL(
                     "ALTER TABLE `collection_members` ADD COLUMN `done` INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        /** v10 -> v11: add the selected HLTB basis used for deadline planning. */
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `collections` ADD COLUMN `timeBasis` TEXT NOT NULL DEFAULT 'COMPLETIONIST'",
                 )
             }
         }

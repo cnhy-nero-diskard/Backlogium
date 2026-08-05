@@ -20,6 +20,9 @@ data class CollectionMemberSignals(
     val playtimeMinutes: Int,
     /** Cached HowLongToBeat completionist length; null = no HLTB data for this game. */
     val completionistMinutes: Int?,
+    val mainStoryMinutes: Int? = null,
+    val mainExtraMinutes: Int? = null,
+    val allStylesMinutes: Int? = null,
     val achievementsUnlocked: Int?,
     val achievementsTotal: Int?,
     /** User's manual done mark for ordered-queue collections; ignored for every other mode. */
@@ -45,6 +48,14 @@ data class CollectionMemberSignals(
     /** Fully complete = the engine's goalProgress reached 1.0 (no HLTB length → not complete). */
     val fullyComplete: Boolean
         get() = completionFraction?.let { it >= 1.0 } ?: false
+
+    /** The HLTB estimate selected by a deadline collection, or null when it is unavailable. */
+    fun estimateMinutes(basis: CollectionTimeBasis): Int? = when (basis) {
+        CollectionTimeBasis.MAIN_STORY -> mainStoryMinutes
+        CollectionTimeBasis.MAIN_EXTRA -> mainExtraMinutes
+        CollectionTimeBasis.COMPLETIONIST -> completionistMinutes
+        CollectionTimeBasis.ALL_STYLES -> allStylesMinutes
+    }
 }
 
 /**
@@ -70,6 +81,16 @@ data class CollectionBanner(
     val daysRemaining: Long?,
     /** True when a deadline target date is on or before the injected today — "passed", not a negative countdown. */
     val deadlinePassed: Boolean,
+    /** Selected HLTB basis used by deadline planning. */
+    val timeBasis: CollectionTimeBasis,
+    /** Total selected HLTB minutes for members with a known estimate. */
+    val plannedMinutes: Int?,
+    /** Remaining selected HLTB minutes after subtracting stored playtime. */
+    val remainingMinutes: Int?,
+    /** Available deadline minutes minus [remainingMinutes], positive when there is buffer. */
+    val timeDifferentialMinutes: Int?,
+    /** Members with no estimate for the selected basis. */
+    val unknownDurationCount: Int,
     /** Ordered-queue: the first member in sequence; null when empty. */
     val nextUp: CollectionMemberSignals?,
     /** Ordered-queue: 1-based position of [nextUp] in the sequence; null when empty. */
@@ -137,6 +158,7 @@ object CollectionSummary {
         targetDate: LocalDate?,
         members: List<CollectionMemberSignals>,
         today: LocalDate,
+        timeBasis: CollectionTimeBasis = CollectionTimeBasis.COMPLETIONIST,
     ): CollectionBanner {
         val present = members.filter { it.name != null }
         val ordered = order(mode, sort, present)
@@ -162,7 +184,27 @@ object CollectionSummary {
             null
         }
         val deadlinePassed = daysRemaining != null && daysRemaining <= 0
-
+        val estimatedMembers = ordered.mapNotNull { member ->
+            member.estimateMinutes(timeBasis)?.takeIf { it > 0 }?.let { estimate ->
+                estimate to member.playtimeMinutes
+            }
+        }
+        val plannedMinutes = estimatedMembers.takeIf { it.isNotEmpty() }?.sumOf { it.first }
+        val remainingMinutes = estimatedMembers.takeIf { it.isNotEmpty() }
+            ?.sumOf { (estimate, played) -> (estimate - played).coerceAtLeast(0) }
+        val availableMinutes = daysRemaining?.takeIf {
+            mode == CollectionMode.DEADLINE_GOAL && targetDate != null
+        }?.let { it * MINUTES_PER_DAY }
+        val unknownDurationCount = ordered.count { member ->
+            member.estimateMinutes(timeBasis)?.takeIf { it > 0 } == null
+        }
+        val timeDifferentialMinutes = if (
+            availableMinutes != null && remainingMinutes != null && unknownDurationCount == 0
+        ) {
+            availableMinutes.toInt() - remainingMinutes
+        } else {
+            null
+        }
         val nextUpIndex = if (mode == CollectionMode.ORDERED_QUEUE) {
             ordered.indexOfFirst { !it.manualDone && !it.fullyComplete }
         } else -1
@@ -179,10 +221,17 @@ object CollectionSummary {
             achievementsTotal = achievementsTotal,
             daysRemaining = daysRemaining,
             deadlinePassed = deadlinePassed,
+            timeBasis = timeBasis,
+            plannedMinutes = plannedMinutes,
+            remainingMinutes = remainingMinutes,
+            timeDifferentialMinutes = timeDifferentialMinutes,
+            unknownDurationCount = unknownDurationCount,
             nextUp = nextUp,
             nextUpPosition = nextUp?.let { nextUpIndex + 1 },
             queueCompleted = queueCompleted,
             empty = ordered.isEmpty(),
         )
     }
+
+    private const val MINUTES_PER_DAY = 24L * 60L
 }
