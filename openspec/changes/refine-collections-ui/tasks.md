@@ -96,6 +96,8 @@
 - [x] 6.5 Make collection cards visually pop from the Home background with an elevated base
       surface and low-opacity accent wash; add 10dp inter-card spacing and compact internal
       padding so the cards remain easy to scan
+- [x] 6.6 Add a right-aligned bounded game preview to Home collection cards: up to five member
+      thumbnails followed by an `N+` overflow marker
 
 ## 7. HomeViewModel consolidation
 
@@ -119,4 +121,6 @@
 - [ ] 8.4 Manual pass: each deadline basis changes the estimate, overview shows time remaining and
       shortfall warning only when negative, missing basis data is explicit, and Change deadline
       updates the card
+- [ ] 8.5 Manual pass: Home collection cards show member thumbnails on the right and abbreviate
+      collections larger than five games as `N+`
 

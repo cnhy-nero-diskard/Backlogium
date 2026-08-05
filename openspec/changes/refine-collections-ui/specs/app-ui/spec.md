@@ -39,6 +39,15 @@ NOT displace or demote the existing level, XP, quest, streak, or now-playing sur
 - **THEN** each card uses compact internal padding and consecutive cards have visible spacing without
   excessive vertical gaps
 
+#### Scenario: Collection member thumbnail preview
+- **WHEN** a Home collection card has one or more members
+- **THEN** the card shows up to five small member-game thumbnails in a row on the right
+
+#### Scenario: Collection member thumbnail overflow
+- **WHEN** a Home collection card has more than five members
+- **THEN** the card shows five thumbnails followed by the number of remaining members with a `+`
+  suffix, such as `6+` for an eleven-game collection
+
 #### Scenario: Default styling without accent
 - **WHEN** a collection has no stored accent
 - **THEN** its card presents the default neutral styling

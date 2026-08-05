@@ -51,6 +51,9 @@ so the selected games and their useful progress signals are not the primary expe
   time remaining to the deadline, the selected estimate still outstanding after playtime, and
   and, only when the differential is negative, warns about the shortfall, recommends changing the
   deadline, and exposes a direct date-picker shortcut.
+- **Home collection game thumbnails**: collection cards show a compact right-aligned row of up to
+  five member-game thumbnails; additional members collapse into an `N+` count (for example,
+  eleven games render as five thumbnails and `6+`).
 
 Completion-goal trophy copy is explicit and aggregate: unlocked out of total plus the remaining
 count, with a no-data fallback rather than implying that missing achievement data means zero.
@@ -66,7 +69,7 @@ None — this refines shipped behavior.
 - `custom-collections`: manual queue-completion state (persistence, next-up skipping, and
   queue-complete semantics), a persisted per-collection accent color drawn from the app palette,
   an overview-first read surface with per-member local metrics, and deadline planning based on a
-  persisted HLTB completion-length choice
+  persisted HLTB completion-length choice, and a compact member thumbnail strip on Home cards
 - `app-ui`: Home collection cards render separated, mode-styled, and accent-tinted; the
   management screen gains an always-reachable floating save, a header delete action, an
   add-games-pool search filter, an accent picker, and the queue checkmark control; existing

@@ -28,6 +28,8 @@ edit model of the management screen (cancel discards, save persists atomically).
 - Management screen stays responsive with hundreds of library games.
 - Home cards separated, mode-styled (structured surfaces), and tinted by a user-chosen accent
   drawn only from Backlogium palette tokens.
+- Home collection cards show up to five member-game thumbnails on the right, with an `N+` overflow
+  marker for remaining members.
 - Existing collections open to a read-only overview that foregrounds selected games and collection
   metrics; creation remains a direct setup form and customization is a secondary action.
 - Overview member tiles are larger and show playtime, session count, and stored trophy progress
@@ -137,6 +139,11 @@ edit model of the management screen (cancel discards, save persists atomically).
     differential is shown as a shortfall and paired with a direct date-picker action. Games without
     the selected HLTB value remain visible and are counted as unknown rather than silently treated
     as zero.
+
+13. **Home thumbnails are a bounded preview** — `HomeCollectionCard` carries members in stored
+    collection order, while the card renders only the first five as 30dp thumbnails on the right.
+    When more members exist, the card renders the remaining count as `N+`; this keeps the card
+    compact and avoids making collection size dictate card height.
 
 ## Risks / Trade-offs
 
