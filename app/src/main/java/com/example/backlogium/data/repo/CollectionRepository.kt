@@ -3,6 +3,7 @@ package com.example.backlogium.data.repo
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
+import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.TimeProvider
@@ -23,6 +24,8 @@ class CollectionRepository @Inject constructor(
 ) {
     val collections: Flow<List<Collection>> = collectionDao.observeCollections()
 
+    val allMembers: Flow<List<CollectionMember>> = collectionDao.observeAllMembers()
+
     fun members(collectionId: Long): Flow<List<CollectionMember>> =
         collectionDao.observeMembers(collectionId)
 
@@ -32,13 +35,20 @@ class CollectionRepository @Inject constructor(
         collectionDao.getMembers(collectionId)
 
     /** Create a collection and return its new id; a fresh collection defaults its sort per mode. */
-    suspend fun create(name: String, mode: CollectionMode, sort: CollectionSort? = null, targetDate: String? = null): Long =
+    suspend fun create(
+        name: String,
+        mode: CollectionMode,
+        sort: CollectionSort? = null,
+        targetDate: String? = null,
+        accent: CollectionAccent? = null,
+    ): Long =
         collectionDao.insert(
             Collection(
                 name = name,
                 mode = mode,
                 sort = sort ?: mode.defaultSort(),
                 targetDate = targetDate.takeIf { mode == CollectionMode.DEADLINE_GOAL },
+                accent = accent,
                 createdAt = time.nowMillis(),
             ),
         )
@@ -49,12 +59,14 @@ class CollectionRepository @Inject constructor(
         mode: CollectionMode,
         sort: CollectionSort,
         targetDate: String?,
+        accent: CollectionAccent?,
     ) = collectionDao.updateDetails(
         id,
         name,
         mode,
         sort,
         targetDate.takeIf { mode == CollectionMode.DEADLINE_GOAL },
+        accent,
     )
 
     /** Deleting a collection cascades to its memberships via the FK. */
@@ -65,6 +77,10 @@ class CollectionRepository @Inject constructor(
 
     suspend fun removeMember(collectionId: Long, appId: Long) =
         collectionDao.removeMember(collectionId, appId)
+
+    /** Persist or clear one member's manual done mark (ordered-queue collections). */
+    suspend fun setMemberDone(collectionId: Long, appId: Long, done: Boolean) =
+        collectionDao.setMemberDone(collectionId, appId, done)
 
     /** Persist a new full sequence (ordered-queue reorder), atomically. */
     suspend fun reorderMembers(collectionId: Long, orderedAppIds: List<Long>) =

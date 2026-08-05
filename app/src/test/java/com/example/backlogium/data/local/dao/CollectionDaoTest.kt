@@ -66,7 +66,7 @@ class CollectionDaoTest {
     @Test
     fun renameAndUpdateDetails_persistsChanges() = runBlocking {
         val id = dao.insert(collection(name = "Old"))
-        dao.updateDetails(id, "New", CollectionMode.COMPLETION_GOAL, CollectionSort.COMPLETION_FRACTION, null)
+        dao.updateDetails(id, "New", CollectionMode.COMPLETION_GOAL, CollectionSort.COMPLETION_FRACTION, null, null)
         val stored = dao.getById(id)
         assertEquals("New", stored?.name)
         assertEquals(CollectionMode.COMPLETION_GOAL, stored?.mode)

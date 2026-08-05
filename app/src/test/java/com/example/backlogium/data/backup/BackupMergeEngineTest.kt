@@ -194,6 +194,58 @@ class BackupMergeEngineTest {
         assertEquals(1, stored.size) // id 1 updated in place, not duplicated
         assertEquals("After", stored.single().name)
         assertEquals(CollectionMode.COMPLETION_GOAL, stored.single().mode)
+
+    @Test
+    fun collectionMerge_legacyFileWithoutAccentAndDone_restoresWithDefaults() = runTest {
+        val harness = newEngine()
+        val file = baseFile(
+            collections = listOf(
+                BackupCollection(id = 1L, name = "Legacy", mode = "BASIC", sort = "NAME", targetDate = null, createdAt = 1L),
+            ),
+            collectionMembers = listOf(
+                BackupCollectionMember(collectionId = 1L, appId = 10L, orderIndex = 0),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        val stored = harness.collectionDao.getAll().single()
+        assertEquals(null, stored.accent)
+        val member = harness.collectionDao.getMembers(1L).single()
+        assertEquals(false, member.done)
+    }
+
+    @Test
+    fun collectionMerge_unknownAccentString_fallsBackToNull() = runTest {
+        val harness = newEngine()
+        val file = baseFile(
+            collections = listOf(
+                BackupCollection(id = 1L, name = "Weird", mode = "BASIC", sort = "NAME", targetDate = null, createdAt = 1L, accent = "NOT_A_COLOR"),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        assertEquals(null, harness.collectionDao.getAll().single().accent)
+    }
+
+    @Test
+    fun collectionMemberMerge_doneFlagRoundTrips() = runTest {
+        val harness = newEngine()
+        val file = baseFile(
+            collections = listOf(
+                BackupCollection(id = 1L, name = "Queue", mode = "ORDERED_QUEUE", sort = "MANUAL_SEQUENCE", targetDate = null, createdAt = 1L),
+            ),
+            collectionMembers = listOf(
+                BackupCollectionMember(collectionId = 1L, appId = 10L, orderIndex = 0, done = true),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        assertEquals(true, harness.collectionDao.getMembers(1L).single().done)
+    }
+
     }
 
     @Test
@@ -513,8 +565,21 @@ private class FakeCollectionDao(
         mode: CollectionMode,
         sort: CollectionSort,
         targetDate: String?,
+        accent: com.example.backlogium.domain.CollectionAccent?,
     ) {
-        store[id]?.let { store[id] = it.copy(name = name, mode = mode, sort = sort, targetDate = targetDate) }
+        store[id]?.let { store[id] = it.copy(name = name, mode = mode, sort = sort, targetDate = targetDate, accent = accent) }
+    }
+
+    override fun observeAllMembers(): kotlinx.coroutines.flow.Flow<List<CollectionMember>> =
+        flowOf(membersByCollection.values.flatten().sortedWith(compareBy({ it.collectionId }, { it.orderIndex })))
+
+    override suspend fun getAllMembers(): List<CollectionMember> =
+        membersByCollection.values.flatten().sortedWith(compareBy({ it.collectionId }, { it.orderIndex }))
+
+    override suspend fun setMemberDone(collectionId: Long, appId: Long, done: Boolean) {
+        val list = membersByCollection[collectionId] ?: return
+        val idx = list.indexOfFirst { it.appId == appId }
+        if (idx >= 0) list[idx] = list[idx].copy(done = done)
     }
 
     override suspend fun delete(id: Long) {

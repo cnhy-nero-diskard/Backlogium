@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.repo.CollectionRepository
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
+import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.defaultSort
@@ -25,6 +26,7 @@ data class CollectionMemberUi(
     val appId: Long,
     val name: String,
     val iconUrl: String?,
+    val done: Boolean = false,
 )
 
 /** Full management-screen state for one collection (create or edit), all local/offline-first. */
@@ -36,12 +38,15 @@ data class CollectionUiState(
     val mode: CollectionMode = CollectionMode.BASIC,
     val sort: CollectionSort = CollectionSort.NAME,
     val targetDate: LocalDate? = null,
+    val accent: CollectionAccent? = null,
     /** Current members in their editing sequence (queue order for ordered-queue collections). */
     val members: List<CollectionMemberUi> = emptyList(),
     /** Every library game, so the add-games control can offer them without a second source. */
     val libraryGames: List<LibraryGame> = emptyList(),
     /** Set true after save/delete to trigger navigation back to Home. */
     val done: Boolean = false,
+    /** True while save is in flight; guards against double taps and disables controls. */
+    val saving: Boolean = false,
 ) {
     /** Library games not already members — the add-games control's pool. */
     val addableGames: List<LibraryGame>
@@ -54,10 +59,10 @@ data class CollectionUiState(
 
 /**
  * Owns the collection management screen (tasks 4.2–4.6): create/edit of a collection's name,
- * mode, sort, and deadline; add/remove of games; move up/down reordering for ordered-queue
- * collections; and delete. Renders purely from local state (Room + cached library) — no
- * network. Membership edits are buffered and persisted atomically on save, so cancelling
- * (popping back) discards them.
+ * mode, sort, accent, and deadline; add/remove of games; move up/down reordering and manual
+ * done toggles for ordered-queue collections; and delete. Renders purely from local state
+ * (Room + cached library) — no network. Membership edits are buffered and persisted atomically
+ * on save, so cancelling (popping back) discards them.
  */
 @HiltViewModel
 class CollectionViewModel @Inject constructor(
@@ -73,10 +78,14 @@ class CollectionViewModel @Inject constructor(
     private val _mode = MutableStateFlow(CollectionMode.BASIC)
     private val _sort = MutableStateFlow(CollectionSort.NAME)
     private val _targetDate = MutableStateFlow<LocalDate?>(null)
+    private val _accent = MutableStateFlow<CollectionAccent?>(null)
     /** The editing session's member sequence (app ids, in queue order). */
     private val _memberAppIds = MutableStateFlow<List<Long>>(emptyList())
+    /** Manual done marks buffered during the edit session, keyed by app id. */
+    private val _doneMarks = MutableStateFlow<Set<Long>>(emptySet())
     private val _loaded = MutableStateFlow(collectionId == 0L)
     private val _done = MutableStateFlow(false)
+    private val _saving = MutableStateFlow(false)
 
     init {
         if (collectionId != 0L) {
@@ -88,10 +97,12 @@ class CollectionViewModel @Inject constructor(
                     _sort.value = collection.sort
                     _targetDate.value = collection.targetDate
                         ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+                    _accent.value = collection.accent
                 }
-                _memberAppIds.value = collectionRepository.getMembers(collectionId)
+                val members = collectionRepository.getMembers(collectionId)
                     .sortedBy { it.orderIndex }
-                    .map { it.appId }
+                _memberAppIds.value = members.map { it.appId }
+                _doneMarks.value = members.filter { it.done }.map { it.appId }.toSet()
                 _loaded.value = true
             }
         }
@@ -103,13 +114,16 @@ class CollectionViewModel @Inject constructor(
         val mode: CollectionMode,
         val sort: CollectionSort,
         val targetDate: LocalDate?,
+        val accent: CollectionAccent?,
     )
 
     private data class Session(
         val draft: Draft,
         val memberAppIds: List<Long>,
+        val doneMarks: Set<Long>,
         val loaded: Boolean,
         val done: Boolean,
+        val saving: Boolean,
     )
 
     private val draft: StateFlow<Draft> = combine(
@@ -117,21 +131,24 @@ class CollectionViewModel @Inject constructor(
         _mode,
         _sort,
         _targetDate,
-    ) { name, mode, sort, targetDate ->
-        Draft(name, mode, sort, targetDate)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, Draft("", CollectionMode.BASIC, CollectionSort.NAME, null))
+        _accent,
+    ) { name, mode, sort, targetDate, accent ->
+        Draft(name, mode, sort, targetDate, accent)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, Draft("", CollectionMode.BASIC, CollectionSort.NAME, null, null))
 
     private val session: StateFlow<Session> = combine(
         draft,
         _memberAppIds,
+        _doneMarks,
         _loaded,
         _done,
-    ) { d, memberIds, loaded, done ->
-        Session(d, memberIds, loaded, done)
+        _saving,
+    ) { d, memberIds, doneMarks, loaded, done, saving ->
+        Session(d, memberIds, doneMarks, loaded, done, saving)
     }.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,
-        Session(Draft("", CollectionMode.BASIC, CollectionSort.NAME, null), emptyList(), collectionId == 0L, false),
+        Session(Draft("", CollectionMode.BASIC, CollectionSort.NAME, null, null), emptyList(), emptySet(), collectionId == 0L, false, false),
     )
 
     val uiState: StateFlow<CollectionUiState> = combine(
@@ -147,6 +164,7 @@ class CollectionViewModel @Inject constructor(
             mode = s.draft.mode,
             sort = s.draft.sort,
             targetDate = s.draft.targetDate,
+            accent = s.draft.accent,
             members = s.memberAppIds.map { appId ->
                 val game = gamesById[appId]
                 CollectionMemberUi(
@@ -155,10 +173,12 @@ class CollectionViewModel @Inject constructor(
                     // readable fallback so it can still be removed; the pure summary omits it.
                     name = game?.name ?: "Game $appId",
                     iconUrl = game?.iconUrl,
+                    done = appId in s.doneMarks,
                 )
             },
             libraryGames = games,
             done = s.done,
+            saving = s.saving,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -188,6 +208,10 @@ class CollectionViewModel @Inject constructor(
         _targetDate.value = date
     }
 
+    fun setAccent(accent: CollectionAccent?) {
+        _accent.value = accent
+    }
+
     fun addGame(appId: Long) {
         _memberAppIds.update { current ->
             if (appId in current) current else current + appId
@@ -209,16 +233,26 @@ class CollectionViewModel @Inject constructor(
         }
     }
 
+    /** Toggle the manual done mark for an ordered-queue member (buffered until save). */
+    fun toggleMemberDone(appId: Long) {
+        _doneMarks.update { current ->
+            if (appId in current) current - appId else current + appId
+        }
+    }
+
     /**
      * Persist everything atomically: the collection row (create or update) plus the reconciled
-     * member sequence — new members added, missing ones removed, and the queue order written as
-     * the new orderIndex values.
+     * member sequence — new members added, missing ones removed, the queue order written as
+     * the new orderIndex values, and the buffered done marks reconciled.
      */
     fun save() {
+        if (_saving.value) return
+        _saving.value = true
         viewModelScope.launch {
             val target = _targetDate.value?.toString()
+            val accent = _accent.value
             val id = if (collectionId == 0L) {
-                collectionRepository.create(_name.value, _mode.value, _sort.value, target)
+                collectionRepository.create(_name.value, _mode.value, _sort.value, target, accent)
             } else {
                 collectionRepository.updateDetails(
                     collectionId,
@@ -226,6 +260,7 @@ class CollectionViewModel @Inject constructor(
                     _mode.value,
                     _sort.value,
                     target,
+                    accent,
                 )
                 collectionId
             }
@@ -238,6 +273,10 @@ class CollectionViewModel @Inject constructor(
             collectionRepository.reorderMembers(id, desired)
             existing.filterNot { it in desired }.forEach { appId ->
                 collectionRepository.removeMember(id, appId)
+            }
+            val doneSet = _doneMarks.value
+            desired.forEach { appId ->
+                collectionRepository.setMemberDone(id, appId, appId in doneSet)
             }
             _done.value = true
         }

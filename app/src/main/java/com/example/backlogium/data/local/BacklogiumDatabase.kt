@@ -39,7 +39,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         Collection::class,
         CollectionMember::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -207,6 +207,20 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_collection_members_collectionId` " +
                         "ON `collection_members` (`collectionId`)",
+                )
+            }
+        }
+
+        /**
+         * v9 → v10: additive only — add an optional accent to collections and a manual done flag
+         * to collection_members (refine-collections-ui). No existing data is altered or backfilled:
+         * null accent = default styling, 0 done = not done.
+         */
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `collections` ADD COLUMN `accent` TEXT")
+                db.execSQL(
+                    "ALTER TABLE `collection_members` ADD COLUMN `done` INTEGER NOT NULL DEFAULT 0",
                 )
             }
         }

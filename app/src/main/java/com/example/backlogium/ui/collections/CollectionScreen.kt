@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.collections
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,15 +12,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -40,21 +45,32 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.theme.collectionAccentColor
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowBack
+import compose.icons.tablericons.Check
 import compose.icons.tablericons.ChevronDown
 import compose.icons.tablericons.ChevronUp
+import compose.icons.tablericons.CircleCheck
+import compose.icons.tablericons.Clock
+import compose.icons.tablericons.DeviceGamepad
 import compose.icons.tablericons.Plus
+import compose.icons.tablericons.PlayerPlay
+import compose.icons.tablericons.Search
 import compose.icons.tablericons.Trash
+import compose.icons.tablericons.Trophy
 import compose.icons.tablericons.X
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextDecoration
 
 /**
  * Collection management screen (tasks 4.2–4.6): create/edit a collection, choose its mode and
@@ -87,7 +103,17 @@ fun CollectionScreen(
             Text(
                 text = if (state.isNew) "New collection" else "Edit collection",
                 style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f),
             )
+            if (!state.isNew) {
+                IconButton(onClick = viewModel::delete) {
+                    Icon(
+                        imageVector = TablerIcons.Trash,
+                        contentDescription = "Delete collection",
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
         }
 
         if (state.loading) {
@@ -95,7 +121,7 @@ fun CollectionScreen(
                 CircularProgressIndicator()
             }
         } else {
-            CollectionForm(state = state, onDone = onDone, viewModel = viewModel)
+            CollectionForm(state = state, viewModel = viewModel)
         }
     }
 }
@@ -109,131 +135,215 @@ private fun CollectionForm(
     viewModel: CollectionViewModel,
 ) {
     var showDatePicker by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        OutlinedTextField(
-            value = state.name,
-            onValueChange = viewModel::setName,
-            label = { Text("Name") },
-            placeholder = { Text("e.g. Clear the backlog") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
+    val filteredAddables = remember(state.addableGames, query) {
+        if (query.isBlank()) {
+            state.addableGames
+        } else {
+            state.addableGames.filter { game ->
+                game.name.contains(query, ignoreCase = true)
+            }
+        }
+    }
 
-        SectionLabel("Mode")
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            CollectionMode.entries.forEach { mode ->
-                FilterChip(
-                    selected = state.mode == mode,
-                    onClick = { viewModel.setMode(mode) },
-                    label = { Text(modeLabel(mode)) },
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item {
+                OutlinedTextField(
+                    value = state.name,
+                    onValueChange = viewModel::setName,
+                    label = { Text("Name") },
+                    placeholder = { Text("e.g. Clear the backlog") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.saving,
                 )
             }
-        }
 
-        val sortOptions = sortOptions(state.mode)
-        if (sortOptions.isNotEmpty()) {
-            SectionLabel("Order")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                sortOptions.forEach { sort ->
-                    FilterChip(
-                        selected = state.sort == sort,
-                        onClick = { viewModel.setSort(sort) },
-                        label = { Text(sortLabel(sort)) },
-                    )
-                }
-            }
-        }
-
-        if (state.mode == CollectionMode.DEADLINE_GOAL) {
-            SectionLabel("Target date")
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = state.targetDate?.format(dateFormatter) ?: "No deadline set",
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    TextButton(onClick = { showDatePicker = true }) { Text("Pick") }
-                    if (state.targetDate != null) {
-                        TextButton(onClick = { viewModel.setTargetDate(null) }) { Text("Clear") }
+            item {
+                SectionLabel("Mode")
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CollectionMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = state.mode == mode,
+                            onClick = { viewModel.setMode(mode) },
+                            label = { Text(modeLabel(mode)) },
+                            enabled = !state.saving,
+                        )
                     }
                 }
             }
-        }
 
-        SectionLabel("Games")
-        if (state.members.isEmpty()) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("No games yet", style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "Add games below to build the collection's banner.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+            val sortOptions = sortOptions(state.mode)
+            if (sortOptions.isNotEmpty()) {
+                item {
+                    SectionLabel("Order")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        sortOptions.forEach { sort ->
+                            FilterChip(
+                                selected = state.sort == sort,
+                                onClick = { viewModel.setSort(sort) },
+                                label = { Text(sortLabel(sort)) },
+                                enabled = !state.saving,
+                            )
+                        }
+                    }
                 }
             }
-        } else {
-            state.members.forEachIndexed { index, member ->
+
+            if (state.mode == CollectionMode.DEADLINE_GOAL) {
+                item {
+                    SectionLabel("Target date")
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = state.targetDate?.format(dateFormatter) ?: "No deadline set",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            TextButton(onClick = { showDatePicker = true }) { Text("Pick") }
+                            if (state.targetDate != null) {
+                                TextButton(onClick = { viewModel.setTargetDate(null) }) { Text("Clear") }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                SectionLabel("Accent")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AccentChip(
+                        label = "Default",
+                        selected = state.accent == null,
+                        onClick = { viewModel.setAccent(null) },
+                    )
+                    CollectionAccent.entries.forEach { accent ->
+                        AccentChip(
+                            label = accentLabel(accent),
+                            selected = state.accent == accent,
+                            onClick = { viewModel.setAccent(accent) },
+                            accentColor = MaterialTheme.colorScheme.collectionAccentColor(accent),
+                        )
+                    }
+                }
+            }
+
+            item { SectionLabel("Games") }
+            if (state.members.isEmpty()) {
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text("No games yet", style = MaterialTheme.typography.titleSmall)
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "Add games below to build the collection's banner.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
+            itemsIndexed(
+                items = state.members,
+                key = { _, member -> member.appId },
+            ) { index, member ->
                 MemberRow(
                     member = member,
                     index = index,
                     count = state.members.size,
                     reorderable = state.mode == CollectionMode.ORDERED_QUEUE,
+                    showDoneToggle = state.mode == CollectionMode.ORDERED_QUEUE,
                     onRemove = { viewModel.removeGame(member.appId) },
                     onMoveUp = { viewModel.moveMember(index, index - 1) },
                     onMoveDown = { viewModel.moveMember(index, index + 1) },
+                    onToggleDone = { viewModel.toggleMemberDone(member.appId) },
                 )
             }
-        }
 
-        SectionLabel("Add games")
-        if (state.addableGames.isEmpty()) {
-            Text(
-                text = "Every library game is already in this collection.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            state.addableGames.forEach { game ->
-                AddGameRow(game = game, onAdd = { viewModel.addGame(game.appId) })
+            item {
+                SectionLabel("Add games")
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Search library") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = TablerIcons.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.saving,
+                )
             }
+
+            if (filteredAddables.isEmpty() && state.addableGames.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "No games match your search.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            items(
+                items = filteredAddables,
+                key = { it.appId },
+            ) { game ->
+                AddGameRow(
+                    game = game,
+                    onAdd = { viewModel.addGame(game.appId) },
+                    enabled = !state.saving,
+                )
+            }
+
+            if (state.addableGames.isEmpty()) {
+                item {
+                    Text(
+                        text = "Every library game is already in this collection.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            // Clearance for the floating save button so the last rows stay reachable.
+            item { Spacer(Modifier.height(88.dp)) }
         }
 
-        Button(
+        FloatingActionButton(
             onClick = viewModel::save,
-            enabled = state.name.isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Save") }
-
-        if (!state.isNew) {
-            OutlinedButton(
-                onClick = viewModel::delete,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(
-                    imageVector = TablerIcons.Trash,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("Delete collection")
-            }
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp),
+            containerColor = if (state.name.isBlank()) {
+                MaterialTheme.colorScheme.surfaceVariant
+            } else {
+                MaterialTheme.colorScheme.primary
+            },
+            contentColor = if (state.name.isBlank()) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onPrimary
+            },
+        ) {
+            Icon(imageVector = TablerIcons.Check, contentDescription = "Save collection")
         }
-
-        Spacer(Modifier.height(16.dp))
     }
 
     if (showDatePicker) {
@@ -273,18 +383,66 @@ private fun SectionLabel(text: String) {
     Text(text = text, style = MaterialTheme.typography.titleMedium)
 }
 
-/** One member row: game icon + name, remove, and (queue mode) move up/down. */
+@Composable
+private fun AccentChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    accentColor: Color? = null,
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                accentColor?.let { color ->
+                    Box(
+                        modifier = Modifier
+                            .padding(end = 6.dp)
+                            .size(12.dp)
+                            .background(color, CircleShape),
+                    )
+                }
+                Text(label)
+            }
+        },
+    )
+}
+
+private fun accentLabel(accent: CollectionAccent): String = when (accent) {
+    CollectionAccent.STEEL_BLUE -> "Steel blue"
+    CollectionAccent.VIOLET -> "Violet"
+    CollectionAccent.SAGE -> "Sage"
+    CollectionAccent.SLATE -> "Slate"
+}
+
+/** One member row: game icon + name, optional done toggle (queue), move up/down, and remove. */
 @Composable
 private fun MemberRow(
     member: CollectionMemberUi,
     index: Int,
     count: Int,
     reorderable: Boolean,
+    showDoneToggle: Boolean,
     onRemove: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
+    onToggleDone: () -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    val cardColor = if (member.done) {
+        MaterialTheme.colorScheme.surfaceVariant
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    val textColor = if (member.done) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = cardColor),
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -300,12 +458,27 @@ private fun MemberRow(
                     text = member.name,
                     style = MaterialTheme.typography.bodyLarge,
                     maxLines = 1,
+                    color = textColor,
+                    textDecoration = if (member.done) TextDecoration.LineThrough else null,
                 )
                 if (reorderable) {
                     Text(
                         text = "#${index + 1} in queue",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (showDoneToggle) {
+                IconButton(onClick = onToggleDone) {
+                    Icon(
+                        imageVector = TablerIcons.CircleCheck,
+                        contentDescription = if (member.done) "Mark not done" else "Mark done",
+                        tint = if (member.done) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                 }
             }
@@ -336,8 +509,16 @@ private fun MemberRow(
 
 /** One addable library game: tap to add it to the collection. */
 @Composable
-private fun AddGameRow(game: com.example.backlogium.data.repo.LibraryGame, onAdd: () -> Unit) {
-    Card(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
+private fun AddGameRow(
+    game: com.example.backlogium.data.repo.LibraryGame,
+    onAdd: () -> Unit,
+    enabled: Boolean,
+) {
+    Card(
+        onClick = onAdd,
+        modifier = Modifier.fillMaxWidth(),
+        enabled = enabled,
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()

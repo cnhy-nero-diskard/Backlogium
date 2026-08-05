@@ -22,6 +22,8 @@ data class CollectionMemberSignals(
     val completionistMinutes: Int?,
     val achievementsUnlocked: Int?,
     val achievementsTotal: Int?,
+    /** User's manual done mark for ordered-queue collections; ignored for every other mode. */
+    val manualDone: Boolean = false,
 ) {
     /** Achievements still locked; no stored achievement data contributes zero, not a failure. */
     val achievementsRemaining: Int
@@ -146,9 +148,12 @@ object CollectionSummary {
         }
         val deadlinePassed = daysRemaining != null && daysRemaining <= 0
 
-        val nextUp = if (mode == CollectionMode.ORDERED_QUEUE) ordered.firstOrNull() else null
+        val nextUpIndex = if (mode == CollectionMode.ORDERED_QUEUE) {
+            ordered.indexOfFirst { !it.manualDone && !it.fullyComplete }
+        } else -1
+        val nextUp = nextUpIndex.takeIf { it >= 0 }?.let { ordered[it] }
         val queueCompleted = mode == CollectionMode.ORDERED_QUEUE &&
-            ordered.isNotEmpty() && ordered.all { it.fullyComplete }
+            ordered.isNotEmpty() && ordered.all { it.manualDone || it.fullyComplete }
 
         return CollectionBanner(
             mode = mode,
@@ -158,7 +163,7 @@ object CollectionSummary {
             daysRemaining = daysRemaining,
             deadlinePassed = deadlinePassed,
             nextUp = nextUp,
-            nextUpPosition = nextUp?.let { 1 },
+            nextUpPosition = nextUp?.let { nextUpIndex + 1 },
             queueCompleted = queueCompleted,
             empty = ordered.isEmpty(),
         )

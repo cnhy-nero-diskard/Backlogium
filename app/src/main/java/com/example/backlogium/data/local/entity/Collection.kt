@@ -2,6 +2,7 @@ package com.example.backlogium.data.local.entity
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 
@@ -14,6 +15,7 @@ import com.example.backlogium.domain.CollectionSort
  * [targetDate] is the collection-level deadline (ISO-8601 date) used only by
  * [CollectionMode.DEADLINE_GOAL]; null for every other mode (spec: "Target date stored only
  * for deadline mode").
+ * [accent] is an optional palette token; null means the default neutral styling.
  */
 @Entity(tableName = "collections")
 data class Collection(
@@ -22,5 +24,6 @@ data class Collection(
     val mode: CollectionMode,
     val sort: CollectionSort,
     val targetDate: String? = null,
+    val accent: CollectionAccent? = null,
     val createdAt: Long,
 )

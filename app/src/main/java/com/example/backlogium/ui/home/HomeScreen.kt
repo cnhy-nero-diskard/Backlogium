@@ -68,6 +68,7 @@ import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.isStreakMilestone
 import com.example.backlogium.ui.onboarding.OnboardingScreen
+import com.example.backlogium.ui.theme.collectionAccentColor
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.ui.util.rememberReducedMotion
 import compose.icons.TablerIcons
@@ -400,26 +401,67 @@ private fun CollectionsSection(
     }
 }
 
-/** One collection's mission card: its name plus its mode-specific banner. */
+/** One collection's mission card: its name plus its mode-specific banner, accented by palette. */
 @Composable
 private fun CollectionCard(
     card: HomeCollectionCard,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Card(onClick = onClick, modifier = modifier) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                text = card.name,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
+    val accentColor = MaterialTheme.colorScheme.collectionAccentColor(card.accent)
+    Card(
+        onClick = onClick,
+        modifier = modifier,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(0.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(6.dp)
+                    .height(90.dp)
+                    .background(accentColor),
             )
-            Spacer(Modifier.height(4.dp))
-            bannerText(card.banner)?.let { copy ->
-                Text(text = copy, style = MaterialTheme.typography.bodySmall)
+            Column(Modifier.padding(16.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = modeIcon(card.mode),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = accentColor,
+                    )
+                    Text(
+                        text = card.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                bannerText(card.banner)?.let { copy ->
+                    Text(
+                        text = copy,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
+}
+
+private fun modeIcon(mode: CollectionMode) = when (mode) {
+    CollectionMode.BASIC -> TablerIcons.DeviceGamepad
+    CollectionMode.COMPLETION_GOAL -> TablerIcons.Trophy
+    CollectionMode.DEADLINE_GOAL -> TablerIcons.Clock
+    CollectionMode.ORDERED_QUEUE -> TablerIcons.PlayerPlay
 }
 
 /** A collection's mode-specific banner copy; a basic list shows its member count. */

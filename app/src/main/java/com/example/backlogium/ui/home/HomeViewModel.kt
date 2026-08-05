@@ -13,9 +13,11 @@ import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.local.entity.Collection
-import com.example.backlogium.domain.CollectionMode
-import com.example.backlogium.domain.CollectionMemberSignals
+import com.example.backlogium.data.local.entity.CollectionMember
+import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionBanner
+import com.example.backlogium.domain.CollectionMemberSignals
+import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
@@ -68,6 +70,7 @@ data class HomeCollectionCard(
     val collectionId: Long,
     val name: String,
     val mode: CollectionMode,
+    val accent: CollectionAccent?,
     val banner: CollectionBanner,
 )
 
@@ -143,6 +146,7 @@ class HomeViewModel @Inject constructor(
                     completionistMinutes = game?.completionistMinutes,
                     achievementsUnlocked = counts[member.appId]?.unlocked,
                     achievementsTotal = counts[member.appId]?.total,
+                    manualDone = member.done,
                 )
             }
             val banner = CollectionSummary.derive(
@@ -156,6 +160,7 @@ class HomeViewModel @Inject constructor(
                 collectionId = collection.id,
                 name = collection.name,
                 mode = collection.mode,
+                accent = collection.accent,
                 banner = banner,
             )
         }

@@ -23,6 +23,7 @@ class CollectionSummaryTest {
         completionistMinutes: Int? = null,
         achievementsUnlocked: Int? = null,
         achievementsTotal: Int? = null,
+        manualDone: Boolean = false,
     ) = CollectionMemberSignals(
         appId = appId,
         name = name,
@@ -30,6 +31,7 @@ class CollectionSummaryTest {
         completionistMinutes = completionistMinutes,
         achievementsUnlocked = achievementsUnlocked,
         achievementsTotal = achievementsTotal,
+        manualDone = manualDone,
     )
 
     // --- Collection summary derivation ---
@@ -275,6 +277,98 @@ class CollectionSummaryTest {
             ),
             today = today,
         )
+
+    @Test
+    fun orderedQueue_nextUpSkipsDoneMembers() {
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.ORDERED_QUEUE,
+            sort = CollectionMode.ORDERED_QUEUE.defaultSort(),
+            targetDate = null,
+            members = listOf(
+                member(1, "First", manualDone = true),
+                member(2, "Second"),
+                member(3, "Third"),
+            ),
+            today = today,
+        )
+        assertEquals("Second", banner.nextUp?.name)
+        assertEquals(2, banner.nextUpPosition)
+    }
+
+    @Test
+    fun orderedQueue_markedDoneWithoutHltbData_completesQueue() {
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.ORDERED_QUEUE,
+            sort = CollectionMode.ORDERED_QUEUE.defaultSort(),
+            targetDate = null,
+            members = listOf(
+                member(1, "NoHltbOne", manualDone = true),
+                member(2, "NoHltbTwo", manualDone = true),
+            ),
+            today = today,
+        )
+        assertTrue(banner.queueCompleted)
+        assertNull(banner.nextUp)
+    }
+
+    @Test
+    fun orderedQueue_manualDoneOrFullyComplete_completesEachMember() {
+        // One member reaches derived completion, the other is marked done.
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.ORDERED_QUEUE,
+            sort = CollectionMode.ORDERED_QUEUE.defaultSort(),
+            targetDate = null,
+            members = listOf(
+                member(1, "PlayedOut", playtimeMinutes = 60, completionistMinutes = 60),
+                member(2, "Marked", manualDone = true),
+            ),
+            today = today,
+        )
+        assertTrue(banner.queueCompleted)
+    }
+
+    @Test
+    fun orderedQueue_unmarkingRestoresNextUpEligibility() {
+        val members = listOf(
+            member(1, "First", manualDone = false),
+            member(2, "Second", manualDone = true),
+        )
+        val markedSecond = CollectionSummary.derive(
+            mode = CollectionMode.ORDERED_QUEUE,
+            sort = CollectionMode.ORDERED_QUEUE.defaultSort(),
+            targetDate = null,
+            members = members,
+            today = today,
+        )
+        assertEquals("First", markedSecond.nextUp?.name)
+
+        val unmarked = CollectionSummary.derive(
+            mode = CollectionMode.ORDERED_QUEUE,
+            sort = CollectionMode.ORDERED_QUEUE.defaultSort(),
+            targetDate = null,
+            members = members.map { if (it.appId == 2L) it.copy(manualDone = false) else it },
+            today = today,
+        )
+        assertEquals("Second", unmarked.nextUp?.name)
+    }
+
+    @Test
+    fun nonQueueModes_ignoreManualDone() {
+        val members = listOf(
+            member(1, "DoneButBasic", manualDone = true),
+            member(2, "Other"),
+        )
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.BASIC,
+            sort = CollectionMode.BASIC.defaultSort(),
+            targetDate = null,
+            members = members,
+            today = today,
+        )
+        assertEquals(2, banner.memberCount)
+        assertNull(banner.nextUp)
+    }
+
         assertFalse(banner.queueCompleted)
         assertEquals("Game 1", banner.nextUp?.name)
     }
