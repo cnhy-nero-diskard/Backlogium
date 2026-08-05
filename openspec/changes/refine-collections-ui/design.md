@@ -133,8 +133,8 @@ edit model of the management screen (cancel discards, save persists atomically).
 12. **Deadline planning uses a persisted HLTB basis** — `CollectionTimeBasis` maps to HLTB's
     `comp_main`, `comp_plus`, `comp_100`, and `comp_all` values. The pure summary subtracts stored
     playtime from each selected estimate, sums the remaining minutes, and compares that total with
-    `daysRemaining * 24h`. A positive differential is shown as available buffer; a negative
-    differential is shown as a shortfall and pairs with a direct date-picker action. Games without
+    `daysRemaining * 24h`. A positive differential is intentionally quiet; only a negative
+    differential is shown as a shortfall and paired with a direct date-picker action. Games without
     the selected HLTB value remain visible and are counted as unknown rather than silently treated
     as zero.
 

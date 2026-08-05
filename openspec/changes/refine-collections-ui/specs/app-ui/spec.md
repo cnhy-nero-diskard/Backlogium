@@ -124,7 +124,7 @@ position. The screen SHALL render from locally stored state.
 #### Scenario: Hindsight deadline guidance
 - **WHEN** the user opens an existing deadline-goal collection overview
 - **THEN** it shows the selected basis, time until or past the deadline, estimated time remaining,
-  and whether the estimate has positive buffer or a negative shortfall
+  and a shortfall warning only when the differential is negative
 
 #### Scenario: Shortcut to change an infeasible deadline
 - **WHEN** the selected estimate has a negative differential

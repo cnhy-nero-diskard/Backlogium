@@ -97,10 +97,10 @@ unknown and SHALL NOT be treated as zero minutes.
 - **WHEN** the user configures a deadline-goal collection
 - **THEN** the setup offers all four HLTB bases and persists the selected choice
 
-#### Scenario: Deadline has positive buffer
+#### Scenario: Deadline fits without warning
 - **WHEN** the selected estimates fit within the time until the target date
-- **THEN** the collection overview reports the time until the deadline, estimated time remaining,
-  and the positive buffer
+- **THEN** the collection overview reports the time until the deadline and estimated time remaining
+  without showing a buffer warning
 
 #### Scenario: Deadline has a negative differential
 - **WHEN** the selected estimates exceed the time until the target date

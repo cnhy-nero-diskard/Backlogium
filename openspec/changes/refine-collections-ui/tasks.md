@@ -36,8 +36,8 @@
       stored data exists; render completion-goal Home cards as `<unlocked>/<total> trophies ·
       <remaining> left`, with a no-data fallback, and cover the derivation in JVM tests
 - [x] 2.4 Derive deadline planning from the selected HLTB basis: subtract stored playtime from
-      each known estimate, report unknown-duration members, and expose positive buffer/negative
-      shortfall arithmetic in JVM tests
+      each known estimate, report unknown-duration members, and expose negative-shortfall
+      arithmetic in JVM tests
 
 ## 3. Backup compatibility
 
@@ -117,5 +117,6 @@
       entry opens the overview with larger metric tiles; customization and add games stay behind
       collection actions; home cards spaced and mode-styled
 - [ ] 8.4 Manual pass: each deadline basis changes the estimate, overview shows time remaining and
-      buffer/shortfall copy, missing basis data is explicit, and Change deadline updates the card
+      shortfall warning only when negative, missing basis data is explicit, and Change deadline
+      updates the card
 

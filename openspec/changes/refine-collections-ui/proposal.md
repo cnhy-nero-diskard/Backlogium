@@ -49,8 +49,8 @@ so the selected games and their useful progress signals are not the primary expe
 - **Deadline estimate basis and hindsight**: deadline setup offers Main Story, Main + Extra,
   Completionist, or All Styles as the HLTB estimate basis. The collection overview reports the
   time remaining to the deadline, the selected estimate still outstanding after playtime, and
-  the resulting buffer or shortfall; a negative differential recommends changing the deadline
-  and exposes a direct date-picker shortcut.
+  and, only when the differential is negative, warns about the shortfall, recommends changing the
+  deadline, and exposes a direct date-picker shortcut.
 
 Completion-goal trophy copy is explicit and aggregate: unlocked out of total plus the remaining
 count, with a no-data fallback rather than implying that missing achievement data means zero.
