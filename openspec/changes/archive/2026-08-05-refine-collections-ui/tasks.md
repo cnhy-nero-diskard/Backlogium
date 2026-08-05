@@ -113,14 +113,14 @@
 - [x] 8.1 JVM unit tests green (`CollectionSummaryTest`, `BackupMergeEngineTest`, plus any touched
       suites, including aggregate trophy-count coverage)
 - [x] 8.2 `assembleDebug` builds cleanly; Room schema export (if configured) reflects v10
-- [ ] 8.3 Manual pass: management screen smooth with a large library; floating save reachable at
+- [x] 8.3 Manual pass: management screen smooth with a large library; floating save reachable at
       any scroll position; search filters the add pool; accent choice persists across reopen;
       checkmark strikes through the row and advances the home banner's next-up; existing collection
       entry opens the overview with larger metric tiles; customization and add games stay behind
       collection actions; home cards spaced and mode-styled
-- [ ] 8.4 Manual pass: each deadline basis changes the estimate, overview shows time remaining and
+- [x] 8.4 Manual pass: each deadline basis changes the estimate, overview shows time remaining and
       shortfall warning only when negative, missing basis data is explicit, and Change deadline
       updates the card
-- [ ] 8.5 Manual pass: Home collection cards show member thumbnails on the right and abbreviate
+- [x] 8.5 Manual pass: Home collection cards show member thumbnails on the right and abbreviate
       collections larger than five games as `N+`
 
