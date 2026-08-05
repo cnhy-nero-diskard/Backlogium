@@ -131,7 +131,6 @@ fun CollectionScreen(
 @Composable
 private fun CollectionForm(
     state: CollectionUiState,
-    onDone: () -> Unit,
     viewModel: CollectionViewModel,
 ) {
     var showDatePicker by remember { mutableStateOf(false) }

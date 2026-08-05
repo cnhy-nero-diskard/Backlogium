@@ -76,6 +76,8 @@ import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.Clock
 import compose.icons.tablericons.DeviceGamepad
 import compose.icons.tablericons.Flame
+import compose.icons.tablericons.PlayerPlay
+import compose.icons.tablericons.Trophy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 

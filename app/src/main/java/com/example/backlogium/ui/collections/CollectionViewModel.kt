@@ -126,6 +126,28 @@ class CollectionViewModel @Inject constructor(
         val saving: Boolean,
     )
 
+    private data class SessionFields(
+        val memberAppIds: List<Long>,
+        val doneMarks: Set<Long>,
+        val loaded: Boolean,
+        val done: Boolean,
+        val saving: Boolean,
+    )
+
+    private val sessionFields: StateFlow<SessionFields> = combine(
+        _memberAppIds,
+        _doneMarks,
+        _loaded,
+        _done,
+        _saving,
+    ) { memberIds, doneMarks, loaded, done, saving ->
+        SessionFields(memberIds, doneMarks, loaded, done, saving)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        SessionFields(emptyList(), emptySet(), collectionId == 0L, false, false),
+    )
+
     private val draft: StateFlow<Draft> = combine(
         _name,
         _mode,
@@ -136,15 +158,8 @@ class CollectionViewModel @Inject constructor(
         Draft(name, mode, sort, targetDate, accent)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, Draft("", CollectionMode.BASIC, CollectionSort.NAME, null, null))
 
-    private val session: StateFlow<Session> = combine(
-        draft,
-        _memberAppIds,
-        _doneMarks,
-        _loaded,
-        _done,
-        _saving,
-    ) { d, memberIds, doneMarks, loaded, done, saving ->
-        Session(d, memberIds, doneMarks, loaded, done, saving)
+    private val session: StateFlow<Session> = combine(draft, sessionFields) { d, fields ->
+        Session(d, fields.memberAppIds, fields.doneMarks, fields.loaded, fields.done, fields.saving)
     }.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,

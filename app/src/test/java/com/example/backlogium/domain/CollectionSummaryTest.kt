@@ -277,6 +277,9 @@ class CollectionSummaryTest {
             ),
             today = today,
         )
+        assertFalse(banner.queueCompleted)
+        assertEquals("Game 1", banner.nextUp?.name)
+    }
 
     @Test
     fun orderedQueue_nextUpSkipsDoneMembers() {
@@ -330,8 +333,8 @@ class CollectionSummaryTest {
     @Test
     fun orderedQueue_unmarkingRestoresNextUpEligibility() {
         val members = listOf(
-            member(1, "First", manualDone = false),
-            member(2, "Second", manualDone = true),
+            member(1, "First", manualDone = true),
+            member(2, "Second", manualDone = false),
         )
         val markedSecond = CollectionSummary.derive(
             mode = CollectionMode.ORDERED_QUEUE,
@@ -340,16 +343,16 @@ class CollectionSummaryTest {
             members = members,
             today = today,
         )
-        assertEquals("First", markedSecond.nextUp?.name)
+        assertEquals("Second", markedSecond.nextUp?.name)
 
         val unmarked = CollectionSummary.derive(
             mode = CollectionMode.ORDERED_QUEUE,
             sort = CollectionMode.ORDERED_QUEUE.defaultSort(),
             targetDate = null,
-            members = members.map { if (it.appId == 2L) it.copy(manualDone = false) else it },
+            members = members.map { if (it.appId == 1L) it.copy(manualDone = false) else it },
             today = today,
         )
-        assertEquals("Second", unmarked.nextUp?.name)
+        assertEquals("First", unmarked.nextUp?.name)
     }
 
     @Test
@@ -367,10 +370,6 @@ class CollectionSummaryTest {
         )
         assertEquals(2, banner.memberCount)
         assertNull(banner.nextUp)
-    }
-
-        assertFalse(banner.queueCompleted)
-        assertEquals("Game 1", banner.nextUp?.name)
     }
 
     @Test
