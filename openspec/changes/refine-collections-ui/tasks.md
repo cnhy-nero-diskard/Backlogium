@@ -59,6 +59,10 @@
       in the edit session and persisted on save
 - [x] 4.6 Expand the accent picker to seven palette-safe tokens, adding teal, rose, and coral
       with dark/light theme mappings and tolerant persistence through the existing enum storage
+- [x] 4.7 Existing collections open to a read-only overview; keep creation on the setup form and
+      place customization, including add games, behind the secondary collection-actions menu
+- [x] 4.8 Add overview summary/member metrics from cached playtime, achievement counts, and
+      observed per-game session counts; render selected games as larger highlighted tiles
 
 ## 5. Ordered-queue checkmark
 
@@ -102,6 +106,7 @@
 - [x] 8.2 `assembleDebug` builds cleanly; Room schema export (if configured) reflects v10
 - [ ] 8.3 Manual pass: management screen smooth with a large library; floating save reachable at
       any scroll position; search filters the add pool; accent choice persists across reopen;
-      checkmark strikes through the row and advances the home banner's next-up; home cards spaced
-      and mode-styled
+      checkmark strikes through the row and advances the home banner's next-up; existing collection
+      entry opens the overview with larger metric tiles; customization and add games stay behind
+      collection actions; home cards spaced and mode-styled
 

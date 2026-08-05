@@ -59,6 +59,32 @@ SHALL show a no-data state rather than treating missing data as zero unlocked tr
 - **WHEN** no member in a completion-goal collection has stored achievement counts
 - **THEN** its banner shows that trophy data is unavailable
 
+### Requirement: Collection overview metrics
+An existing collection SHALL expose a read-only overview before its management form. The overview
+SHALL foreground the collection's selected members and SHALL derive local metrics from cached app
+state: library playtime, stored achievement counts, and synthesized session counts. Missing trophy
+data SHALL remain distinguishable from zero trophies. Customization, including adding members,
+SHALL remain available through an explicit secondary action rather than appearing in the overview.
+
+#### Scenario: Overview shows selected members first
+- **WHEN** the user opens an existing collection
+- **THEN** the collection's selected games are presented as the primary content before edit controls
+
+#### Scenario: Overview shows member metrics
+- **WHEN** a selected game has cached library, achievement, or session data
+- **THEN** its overview tile shows playtime and session count, plus unlocked/total trophies when
+  achievement counts are stored
+
+#### Scenario: Overview aggregates collection metrics
+- **WHEN** an existing collection overview is shown
+- **THEN** its summary reports total selected games, aggregate playtime, aggregate sessions, and
+  aggregate unlocked/total trophies when at least one member has stored achievement counts
+
+#### Scenario: Overview keeps customization secondary
+- **WHEN** the user wants to change collection settings or add games
+- **THEN** the user opens the secondary customization action and the buffered management form
+  provides those controls
+
 ## MODIFIED Requirements
 
 ### Requirement: Ordered-queue sequencing

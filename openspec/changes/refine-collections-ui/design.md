@@ -14,7 +14,8 @@ Room tables (`collections`, `collection_members`) carried by backup/restore.
 Reported pain: save sits dead last below two unbounded lists; the screen lags with hundreds
 of library games; Home cards touch edge-to-edge and are all visually identical; no search
 over the add pool; ordered queues cannot be advanced manually (a game without HowLongToBeat
-data can never be "complete", so `queueCompleted` is unreachable for most libraries).
+data can never be "complete", so `queueCompleted` is unreachable for most libraries); and tapping
+an existing collection lands in a dense edit form instead of showing the collection itself.
 
 Constraints: offline-first (no network anywhere in this feature), the documented palette's
 semantic rules (gold = milestones only, vivid green = live presence only), and the buffered
@@ -27,6 +28,10 @@ edit model of the management screen (cancel discards, save persists atomically).
 - Management screen stays responsive with hundreds of library games.
 - Home cards separated, mode-styled (structured surfaces), and tinted by a user-chosen accent
   drawn only from Backlogium palette tokens.
+- Existing collections open to a read-only overview that foregrounds selected games and collection
+  metrics; creation remains a direct setup form and customization is a secondary action.
+- Overview member tiles are larger and show playtime, session count, and stored trophy progress
+  for each selected game.
 - Search over the add-games pool; an ordered-queue checkmark that persists and advances the
   next-game surface.
 - Backup/restore keeps working across old and new file shapes.
@@ -108,6 +113,19 @@ edit model of the management screen (cancel discards, save persists atomically).
    keeps existing upsert semantics (backup row wins); unknown accent strings parse tolerantly
    to `null`.
 
+10. **Overview before editor** — the existing-collection route uses one destination with two local
+    states: an overview for persisted collections and the existing buffered editor for creation or
+    an explicit customization action. The overview has no add-games pool or collection fields;
+    those remain in the editor and are reached from a subdued header actions menu. Back from the
+    editor returns to the overview for an existing collection, while save/delete still return Home.
+
+11. **Overview metrics come from local repositories** — member playtime comes from cached library
+    values, trophy counts come from stored achievement aggregates, and session count comes from a
+    new observed `COUNT(*)` projection in `SessionDao` exposed by `SessionRepository`. Missing
+    trophy data is shown as unavailable rather than zero; playtime and sessions safely display zero.
+    The overview aggregates these values for its summary and repeats the per-game values on larger
+    member tiles.
+
 ## Risks / Trade-offs
 
 - [FAB covers the last rows] → end spacer sized for FAB clearance inside the lazy list.
@@ -120,6 +138,10 @@ edit model of the management screen (cancel discards, save persists atomically).
 - [LazyColumn + text field keyboard behavior] → same shape as Library's search field over a
   lazy list, already proven in-app.
 - [Mode switch leaves stale done marks] → deliberately kept inert, never deleted.
+- [Users cannot find add games from an empty overview] → the empty state provides a restrained
+  `Customize collection` action; the full add-games pool remains absent from the overview.
+- [Missing metrics make the overview look broken] → playtime/session values default to zero and
+  trophy values use an explicit no-data state when no stored counts exist.
 
 ## Migration Plan
 
@@ -130,6 +152,6 @@ backups ignore cleanly on older builds. Rollback path is the configured destruct
 
 ## Open Questions
 
-None — checkmark semantics (keep + strike-through + grey), trophy count copy,
-palette limits, and search scope (add pool only) were resolved with the requester during
-exploration.
+None — checkmark semantics (keep + strike-through + grey), trophy count copy, palette limits,
+search scope (add pool only), and overview-first navigation were resolved with the requester
+during exploration.

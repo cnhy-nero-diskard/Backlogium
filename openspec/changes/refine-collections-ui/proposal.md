@@ -2,13 +2,14 @@
 
 ## Why
 
-Custom collections just shipped (add-custom-collections) and real usage surfaced six issues:
+Custom collections just shipped (add-custom-collections) and real usage surfaced seven issues:
 the save action is buried below two unbounded lists on the management screen, the screen lags
 for players with hundreds of library games because every row composes eagerly, Home collection
 cards render clumped together with no visual distinction between modes, and three expected
 affordances are missing — a search over the add-games pool, a per-collection accent color, and
 a way to mark ordered-queue games as done (today a game without HowLongToBeat data can never
-complete a queue).
+complete a queue). Opening an existing collection also drops the user directly into edit controls,
+so the selected games and their useful progress signals are not the primary experience.
 
 ## What Changes
 
@@ -39,6 +40,11 @@ complete a queue).
 - **Home card separation and density**: Home collection cards are separated by consistent
   spacing, use a stronger elevated surface with accent color washes, and reduce internal padding
   so they do not read as vertically chunky.
+- **Overview-first collection flow**: opening an existing collection shows a read-only overview
+  of its selected games before any customization controls. The overview highlights each member
+  with a larger tile and relevant local metrics — playtime, session count, and stored trophy
+  progress — while customization, including add games, stays behind a secondary collection-actions
+  menu. Creating a collection still opens the setup form directly.
 
 Completion-goal trophy copy is explicit and aggregate: unlocked out of total plus the remaining
 count, with a no-data fallback rather than implying that missing achievement data means zero.
@@ -52,16 +58,19 @@ None — this refines shipped behavior.
 ### Modified Capabilities
 
 - `custom-collections`: manual queue-completion state (persistence, next-up skipping, and
-  queue-complete semantics) and a persisted per-collection accent color drawn from the app
-  palette
+  queue-complete semantics), a persisted per-collection accent color drawn from the app palette,
+  and an overview-first read surface with per-member local metrics
 - `app-ui`: Home collection cards render separated, mode-styled, and accent-tinted; the
   management screen gains an always-reachable floating save, a header delete action, an
-  add-games-pool search filter, an accent picker, and the queue checkmark control
+  add-games-pool search filter, an accent picker, and the queue checkmark control; existing
+  collection navigation opens the overview while customization is a secondary action
 
 ## Impact
 
-- **Affected code:** `ui/collections/CollectionScreen.kt` + `CollectionViewModel.kt` (lazy
-  restructure, floating save, header delete, search, accent picker, checkmark),
+- **Affected code:** `ui/collections/CollectionScreen.kt` + `CollectionViewModel.kt` (overview/editor
+  flow, larger member tiles, local metrics, lazy form restructure, floating save, header actions,
+  search, accent picker, checkmark), `data/local/dao/SessionDao.kt` + `data/repo/SessionRepository.kt`
+  (per-game session counts),
   `ui/home/HomeScreen.kt` + `HomeViewModel.kt` (card styling/spacing, accent and done
   plumbing), `domain/CollectionSummary.kt` (next-up skip semantics), `data/local`
   (`Collection` and `CollectionMember` entities, `CollectionDao`, `Converters`,

@@ -7,7 +7,7 @@ distinct from the Home background and remain visually separated from
 one another and styled by mode — goal modes present a progress surface, deadline mode additionally
 presents its countdown, ordered-queue mode presents its next game — and a collection with a stored
 accent SHALL tint both its card surface and accent affordances with that accent. Tapping a collection card SHALL open the collection's
-management screen. The collections section SHALL render from locally stored state so it is
+collection overview. The collections section SHALL render from locally stored state so it is
 usable offline, and SHALL present an empty state when no collections exist. The collections section SHALL
 NOT displace or demote the existing level, XP, quest, streak, or now-playing surfaces on Home.
 
@@ -43,9 +43,10 @@ NOT displace or demote the existing level, XP, quest, streak, or now-playing sur
 - **WHEN** a collection has no stored accent
 - **THEN** its card presents the default neutral styling
 
-#### Scenario: Opening a collection
+#### Scenario: Opening an existing collection
 - **WHEN** the user taps a collection card on Home
-- **THEN** the collection's management screen is opened
+- **THEN** a read-only overview of that collection is opened, with its selected games and local
+  collection metrics visible before customization controls
 
 #### Scenario: No collections
 - **WHEN** the Home screen is shown and no collections exist
@@ -60,8 +61,9 @@ NOT displace or demote the existing level, XP, quest, streak, or now-playing sur
 - **THEN** the level, XP, daily-quest, streak, and now-playing surfaces remain present and unchanged
 
 ### Requirement: Collection management screen
-The system SHALL provide a collection management screen, reached as a pushed sub-destination from a Home
-collection card, where the user can create a collection, choose its mode and an accent from the app's
+The system SHALL provide a collection management screen, reached as a pushed sub-destination from the
+collection create entry point or an existing collection's explicit customization action, where the user
+can create a collection, choose its mode and an accent from the app's
 palette, name it, add and remove games, filter the pool of addable games with a search, set a target
 date for deadline-goal collections, reorder members and mark them done for ordered-queue collections,
 and delete the collection. The save action SHALL remain reachable regardless of the form's scroll
@@ -70,6 +72,15 @@ position. The screen SHALL render from locally stored state.
 #### Scenario: Creating a collection
 - **WHEN** the user creates a new collection with a name and a mode
 - **THEN** the collection is persisted and appears on the Home collections section
+
+#### Scenario: Customizing an existing collection
+- **WHEN** the user chooses the collection actions control from an existing collection overview
+- **THEN** the management form opens with the collection's current settings and members
+
+#### Scenario: Add games hidden from the overview
+- **WHEN** an existing collection overview is shown
+- **THEN** the name/mode/accent fields and add-games pool are not shown until the user opens
+  customization
 
 #### Scenario: Save reachable at any scroll position
 - **WHEN** the management screen is shown
@@ -121,6 +132,16 @@ position. The screen SHALL render from locally stored state.
 #### Scenario: Empty collection on the management screen
 - **WHEN** a collection has no members
 - **THEN** the management screen presents an empty state with a control to add games
+
+#### Scenario: Collection overview highlights selected games
+- **WHEN** an existing collection has one or more members
+- **THEN** the overview presents those members as larger visually highlighted tiles, each showing
+  cached playtime and session count and showing trophy progress when stored achievement data exists
+
+#### Scenario: Collection overview summary metrics
+- **WHEN** an existing collection overview is shown
+- **THEN** it summarizes member count, aggregate playtime, aggregate session count, and aggregate
+  trophy progress when achievement data exists
 
 #### Scenario: Target date only for deadline mode
 - **WHEN** the user is editing a collection whose mode is not deadline goal
