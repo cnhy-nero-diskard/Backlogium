@@ -38,6 +38,10 @@ class SessionRepository @Inject constructor(
      */
     val trackedMinutesByGame: Flow<Map<Long, Int>> = sessionDao.observeTrackedMinutesByGame()
         .map { rows -> rows.associate { it.appId to it.minutes } }
+
+    /** Synthesized session count per game, keyed by appId. */
+    val sessionCountByGame: Flow<Map<Long, Int>> = sessionDao.observeSessionCountsByGame()
+        .map { rows -> rows.associate { it.appId to it.sessions } }
 }
 
 private fun Session.toDomain() = PlaySession(

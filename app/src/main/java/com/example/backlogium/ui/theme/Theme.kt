@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
+import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.gamification.RarityTier
 
 // Dark-first "Steam-native dark + gold accent" scheme (restyle-visual-identity).
@@ -89,6 +90,26 @@ fun ColorScheme.rarityHalo(tier: RarityTier): Color {
  */
 val ColorScheme.playingIndicator: Color
     get() = if (surface.luminance() < 0.5f) PlayingIndicator else PlayingIndicatorLight
+
+/**
+ * The accent color for a collection card or picker chip (refine-collections-ui). Returns the
+ * palette token keyed off the current surface luminance, and `surfaceVariant` for the default
+ * / no-accent state. The result tints the icon chip, progress indicator, card surface wash, and
+ * start-edge stripe.
+ */
+fun ColorScheme.collectionAccentColor(accent: CollectionAccent?): Color {
+    if (accent == null) return surfaceVariant
+    val dark = surface.luminance() < 0.5f
+    return when (accent) {
+        CollectionAccent.STEEL_BLUE -> if (dark) SteelBlue else SteelBlueDark
+        CollectionAccent.VIOLET -> if (dark) RarityEpic else RarityEpicLight
+        CollectionAccent.SAGE -> if (dark) RarityUncommon else RarityUncommonLight
+        CollectionAccent.SLATE -> if (dark) RarityCommon else RarityCommonLight
+        CollectionAccent.TEAL -> if (dark) CollectionTeal else CollectionTealLight
+        CollectionAccent.ROSE -> if (dark) CollectionRose else CollectionRoseLight
+        CollectionAccent.CORAL -> if (dark) CollectionCoral else CollectionCoralLight
+    }
+}
 
 @Composable
 fun BacklogiumTheme(

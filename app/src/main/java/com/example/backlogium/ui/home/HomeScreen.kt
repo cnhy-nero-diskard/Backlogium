@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -50,6 +51,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -66,8 +68,11 @@ import com.airbnb.lottie.compose.rememberLottieComposition
 import com.example.backlogium.R
 import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionMode
+import com.example.backlogium.domain.label
+import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.domain.isStreakMilestone
 import com.example.backlogium.ui.onboarding.OnboardingScreen
+import com.example.backlogium.ui.theme.collectionAccentColor
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.ui.util.rememberReducedMotion
 import compose.icons.TablerIcons
@@ -75,6 +80,8 @@ import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.Clock
 import compose.icons.tablericons.DeviceGamepad
 import compose.icons.tablericons.Flame
+import compose.icons.tablericons.PlayerPlay
+import compose.icons.tablericons.Trophy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
@@ -367,7 +374,10 @@ private fun CollectionsSection(
     onCreateCollection: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -400,26 +410,124 @@ private fun CollectionsSection(
     }
 }
 
-/** One collection's mission card: its name plus its mode-specific banner. */
+/** One collection's mission card: its name plus its mode-specific banner, accented by palette. */
 @Composable
 private fun CollectionCard(
     card: HomeCollectionCard,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Card(onClick = onClick, modifier = modifier) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                text = card.name,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
+    val accentColor = MaterialTheme.colorScheme.collectionAccentColor(card.accent)
+    val baseSurface = MaterialTheme.colorScheme.surfaceContainer
+    val cardSurface = card.accent?.let {
+        accentColor.copy(alpha = 0.16f).compositeOver(baseSurface)
+    } ?: baseSurface
+    Card(
+        onClick = onClick,
+        modifier = modifier,
+        colors = CardDefaults.cardColors(
+            containerColor = cardSurface,
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(0.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(6.dp)
+                    .fillMaxHeight()
+                    .background(accentColor),
             )
-            Spacer(Modifier.height(4.dp))
-            bannerText(card.banner)?.let { copy ->
-                Text(text = copy, style = MaterialTheme.typography.bodySmall)
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            imageVector = modeIcon(card.mode),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = accentColor,
+                        )
+                        Text(
+                            text = card.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    bannerText(card.banner)?.let { copy ->
+                        Text(
+                            text = copy,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                CollectionGameThumbs(
+                    games = card.games,
+                    accentColor = accentColor,
+                )
             }
         }
     }
+}
+
+@Composable
+private fun CollectionGameThumbs(
+    games: List<HomeCollectionGame>,
+    accentColor: Color,
+) {
+    if (games.isEmpty()) return
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        games.take(5).forEach { game ->
+            if (game.iconUrl != null) {
+                GameIcon(iconUrl = game.iconUrl, iconSize = 30.dp)
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .background(
+                            accentColor.copy(alpha = 0.16f),
+                            RoundedCornerShape(7.dp),
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = TablerIcons.DeviceGamepad,
+                        contentDescription = null,
+                        modifier = Modifier.size(17.dp),
+                        tint = accentColor,
+                    )
+                }
+            }
+        }
+        if (games.size > 5) {
+            Text(
+                text = "${games.size - 5}+",
+                style = MaterialTheme.typography.labelSmall,
+                color = accentColor,
+            )
+        }
+    }
+}
+
+private fun modeIcon(mode: CollectionMode) = when (mode) {
+    CollectionMode.BASIC -> TablerIcons.DeviceGamepad
+    CollectionMode.COMPLETION_GOAL -> TablerIcons.Trophy
+    CollectionMode.DEADLINE_GOAL -> TablerIcons.Clock
+    CollectionMode.ORDERED_QUEUE -> TablerIcons.PlayerPlay
 }
 
 /** A collection's mode-specific banner copy; a basic list shows its member count. */
@@ -427,16 +535,31 @@ private fun bannerText(banner: CollectionBanner): String = when (banner.mode) {
     CollectionMode.BASIC -> banner.memberCountLabel
     CollectionMode.COMPLETION_GOAL -> {
         val progress = banner.completionFraction?.let { percent(it) } ?: "—"
-        "$progress complete · ${banner.achievementsRemaining} achievements to go"
+        val trophies = if (banner.achievementsUnlocked != null && banner.achievementsTotal != null) {
+            "${banner.achievementsUnlocked}/${banner.achievementsTotal} trophies · " +
+                "${banner.achievementsRemaining} left"
+        } else {
+            "No trophy data"
+        }
+        "$progress complete · $trophies"
     }
     CollectionMode.DEADLINE_GOAL -> {
         val progress = banner.completionFraction?.let { percent(it) } ?: "—"
         val countdown = when {
-            banner.deadlinePassed -> "Deadline passed"
+            banner.daysRemaining != null && banner.daysRemaining < 0 ->
+                "${kotlin.math.abs(banner.daysRemaining)}d past deadline"
+            banner.daysRemaining == 0L -> "Deadline today"
             banner.daysRemaining != null -> "${banner.daysRemaining}d left"
             else -> "No deadline set"
         }
-        "$countdown · $progress complete"
+        val fit = when {
+            banner.unknownDurationCount > 0 ->
+                "${banner.unknownDurationCount} missing ${banner.timeBasis.label()} data"
+            banner.timeDifferentialMinutes != null && banner.timeDifferentialMinutes < 0 ->
+                "${UiFormat.minutes(kotlin.math.abs(banner.timeDifferentialMinutes))} short"
+            else -> null
+        }
+        listOfNotNull("$countdown · $progress complete", fit).joinToString(" · ")
     }
     CollectionMode.ORDERED_QUEUE -> when {
         banner.queueCompleted -> "Queue complete — no next game"

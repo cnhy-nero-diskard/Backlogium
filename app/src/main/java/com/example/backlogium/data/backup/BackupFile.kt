@@ -154,6 +154,8 @@ data class BackupCollection(
     val sort: String,
     val targetDate: String?,
     val createdAt: Long,
+    val accent: String? = null,
+    val timeBasis: String = "COMPLETIONIST",
 )
 
 /** One collection membership, keyed by collection id + app id with its sequence order. */
@@ -162,4 +164,5 @@ data class BackupCollectionMember(
     val collectionId: Long,
     val appId: Long,
     val orderIndex: Int,
+    val done: Boolean = false,
 )

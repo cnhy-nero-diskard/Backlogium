@@ -54,7 +54,7 @@ class BackupExportMapper @Inject constructor(
         val hltb = hltbDataDao.getAll()
         val profile = playerProfileDao.get() ?: PlayerProfile()
         val collections = collectionDao.getAll()
-        val collectionMembers = collections.flatMap { collectionDao.getMembers(it.id) }
+        val collectionMembers = collectionDao.getAllMembers()
 
         val steamId64 = (credentials.currentCredentials() as? CredentialsState.Configured)?.steamId
             ?: profile.steamId
@@ -206,10 +206,13 @@ private fun Collection.toBackup() = BackupCollection(
     sort = sort.name,
     targetDate = targetDate,
     createdAt = createdAt,
+    accent = accent?.name,
+    timeBasis = timeBasis.name,
 )
 
 private fun CollectionMember.toBackup() = BackupCollectionMember(
     collectionId = collectionId,
     appId = appId,
     orderIndex = orderIndex,
+    done = done,
 )

@@ -16,8 +16,10 @@ import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
+import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.defaultSort
@@ -188,6 +190,9 @@ class BackupMergeEngine @Inject constructor(
             .getOrDefault(CollectionMode.BASIC)
         val sort = runCatching { CollectionSort.valueOf(backupCollection.sort) }
             .getOrDefault(mode.defaultSort())
+        val accent = CollectionAccent.parse(backupCollection.accent)
+        val timeBasis = runCatching { CollectionTimeBasis.valueOf(backupCollection.timeBasis) }
+            .getOrDefault(CollectionTimeBasis.COMPLETIONIST)
         collectionDao.upsert(
             Collection(
                 id = backupCollection.id,
@@ -195,6 +200,8 @@ class BackupMergeEngine @Inject constructor(
                 mode = mode,
                 sort = sort,
                 targetDate = backupCollection.targetDate,
+                accent = accent,
+                timeBasis = timeBasis,
                 createdAt = backupCollection.createdAt,
             ),
         )
@@ -206,6 +213,7 @@ class BackupMergeEngine @Inject constructor(
                 collectionId = backupMember.collectionId,
                 appId = backupMember.appId,
                 orderIndex = backupMember.orderIndex,
+                done = backupMember.done,
             ),
         )
     }

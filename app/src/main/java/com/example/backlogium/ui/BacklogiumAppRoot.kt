@@ -55,9 +55,10 @@ private const val ROUTE_GAME_DETAIL = "game_detail/{appId}"
 private fun gameDetailRoute(appId: Long) = "game_detail/$appId"
 
 /**
- * Route for the collection management screen — a pushed sub-destination reached from a Home
+ * Route for the collection destination — a pushed sub-destination reached from a Home
  * collection card (or the Home create entry point). `collectionId` is 0 when creating; any
- * other value opens that collection for editing. Deliberately a sub-destination like
+ * other value opens that collection on its overview, with editing behind collection actions.
+ * Deliberately a sub-destination like
  * GameDetail, not a fifth tab: the four-tab nav contract is unchanged (design.md decision).
  */
 private const val ROUTE_COLLECTION = "collection/{collectionId}"
@@ -72,7 +73,7 @@ fun BacklogiumAppRoot() {
     val currentDestination = backStackEntry?.destination
     // Game detail isn't one of the top-level tabs, so the bottom bar would show with nothing
     // selected — hide it there instead of leaving a misleading state. Same for the collection
-    // management screen, another pushed sub-destination.
+    // collection destination, another pushed sub-destination.
     val onGameDetail = currentDestination?.route == ROUTE_GAME_DETAIL
     val onCollectionScreen = currentDestination?.route == ROUTE_COLLECTION
 

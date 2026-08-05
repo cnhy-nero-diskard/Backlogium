@@ -15,6 +15,8 @@ import androidx.room.Index
  *
  * [orderIndex] is the manual sequence position used by ordered-queue collections; non-queue
  * modes ignore it.
+ * [done] is the user's manual completion mark for ordered-queue members; non-queue modes ignore
+ * it (refine-collections-ui).
  */
 @Entity(
     tableName = "collection_members",
@@ -33,4 +35,5 @@ data class CollectionMember(
     val collectionId: Long,
     val appId: Long,
     val orderIndex: Int,
+    val done: Boolean = false,
 )

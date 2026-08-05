@@ -21,15 +21,23 @@ class CollectionSummaryTest {
         name: String? = "Game $appId",
         playtimeMinutes: Int = 0,
         completionistMinutes: Int? = null,
+        mainStoryMinutes: Int? = null,
+        mainExtraMinutes: Int? = null,
+        allStylesMinutes: Int? = null,
         achievementsUnlocked: Int? = null,
         achievementsTotal: Int? = null,
+        manualDone: Boolean = false,
     ) = CollectionMemberSignals(
         appId = appId,
         name = name,
         playtimeMinutes = playtimeMinutes,
         completionistMinutes = completionistMinutes,
+        mainStoryMinutes = mainStoryMinutes,
+        mainExtraMinutes = mainExtraMinutes,
+        allStylesMinutes = allStylesMinutes,
         achievementsUnlocked = achievementsUnlocked,
         achievementsTotal = achievementsTotal,
+        manualDone = manualDone,
     )
 
     // --- Collection summary derivation ---
@@ -109,6 +117,8 @@ class CollectionSummaryTest {
             today = today,
         )
         assertEquals(8, banner.achievementsRemaining)
+        assertEquals(7, banner.achievementsUnlocked)
+        assertEquals(15, banner.achievementsTotal)
     }
 
     @Test
@@ -124,6 +134,21 @@ class CollectionSummaryTest {
             today = today,
         )
         assertEquals(2, banner.achievementsRemaining)
+        assertEquals(2, banner.achievementsUnlocked)
+        assertEquals(4, banner.achievementsTotal)
+    }
+
+    @Test
+    fun noMemberWithAchievementData_hasNoAggregateTrophyCounts() {
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.COMPLETION_GOAL,
+            sort = CollectionMode.COMPLETION_GOAL.defaultSort(),
+            targetDate = null,
+            members = listOf(member(1), member(2)),
+            today = today,
+        )
+        assertNull(banner.achievementsUnlocked)
+        assertNull(banner.achievementsTotal)
     }
 
     @Test
@@ -137,6 +162,59 @@ class CollectionSummaryTest {
         )
         assertEquals(12L, banner.daysRemaining)
         assertFalse(banner.deadlinePassed)
+    }
+
+    @Test
+    fun deadlinePlan_usesSelectedBasisAndSubtractsPlaytime() {
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.DEADLINE_GOAL,
+            sort = CollectionMode.DEADLINE_GOAL.defaultSort(),
+            targetDate = LocalDate.parse("2026-08-16"),
+            members = listOf(
+                member(
+                    playtimeMinutes = 120,
+                    mainStoryMinutes = 600,
+                    mainExtraMinutes = 900,
+                    completionistMinutes = 1_500,
+                ),
+            ),
+            today = today,
+            timeBasis = CollectionTimeBasis.MAIN_EXTRA,
+        )
+
+        assertEquals(900, banner.plannedMinutes)
+        assertEquals(780, banner.remainingMinutes)
+        assertEquals(16_500, banner.timeDifferentialMinutes)
+        assertEquals(CollectionTimeBasis.MAIN_EXTRA, banner.timeBasis)
+    }
+
+    @Test
+    fun deadlinePlan_canBeNegativeWhenEstimateDoesNotFit() {
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.DEADLINE_GOAL,
+            sort = CollectionMode.DEADLINE_GOAL.defaultSort(),
+            targetDate = LocalDate.parse("2026-08-05"),
+            members = listOf(member(mainStoryMinutes = 3_000)),
+            today = today,
+            timeBasis = CollectionTimeBasis.MAIN_STORY,
+        )
+
+        assertEquals(-1_560, banner.timeDifferentialMinutes)
+    }
+
+    @Test
+    fun deadlinePlan_doesNotClaimFitWhenASelectedEstimateIsUnknown() {
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.DEADLINE_GOAL,
+            sort = CollectionMode.DEADLINE_GOAL.defaultSort(),
+            targetDate = LocalDate.parse("2026-08-16"),
+            members = listOf(member(mainStoryMinutes = null)),
+            today = today,
+            timeBasis = CollectionTimeBasis.MAIN_STORY,
+        )
+
+        assertEquals(1, banner.unknownDurationCount)
+        assertNull(banner.timeDifferentialMinutes)
     }
 
     @Test
@@ -277,6 +355,97 @@ class CollectionSummaryTest {
         )
         assertFalse(banner.queueCompleted)
         assertEquals("Game 1", banner.nextUp?.name)
+    }
+
+    @Test
+    fun orderedQueue_nextUpSkipsDoneMembers() {
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.ORDERED_QUEUE,
+            sort = CollectionMode.ORDERED_QUEUE.defaultSort(),
+            targetDate = null,
+            members = listOf(
+                member(1, "First", manualDone = true),
+                member(2, "Second"),
+                member(3, "Third"),
+            ),
+            today = today,
+        )
+        assertEquals("Second", banner.nextUp?.name)
+        assertEquals(2, banner.nextUpPosition)
+    }
+
+    @Test
+    fun orderedQueue_markedDoneWithoutHltbData_completesQueue() {
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.ORDERED_QUEUE,
+            sort = CollectionMode.ORDERED_QUEUE.defaultSort(),
+            targetDate = null,
+            members = listOf(
+                member(1, "NoHltbOne", manualDone = true),
+                member(2, "NoHltbTwo", manualDone = true),
+            ),
+            today = today,
+        )
+        assertTrue(banner.queueCompleted)
+        assertNull(banner.nextUp)
+    }
+
+    @Test
+    fun orderedQueue_manualDoneOrFullyComplete_completesEachMember() {
+        // One member reaches derived completion, the other is marked done.
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.ORDERED_QUEUE,
+            sort = CollectionMode.ORDERED_QUEUE.defaultSort(),
+            targetDate = null,
+            members = listOf(
+                member(1, "PlayedOut", playtimeMinutes = 60, completionistMinutes = 60),
+                member(2, "Marked", manualDone = true),
+            ),
+            today = today,
+        )
+        assertTrue(banner.queueCompleted)
+    }
+
+    @Test
+    fun orderedQueue_unmarkingRestoresNextUpEligibility() {
+        val members = listOf(
+            member(1, "First", manualDone = true),
+            member(2, "Second", manualDone = false),
+        )
+        val markedSecond = CollectionSummary.derive(
+            mode = CollectionMode.ORDERED_QUEUE,
+            sort = CollectionMode.ORDERED_QUEUE.defaultSort(),
+            targetDate = null,
+            members = members,
+            today = today,
+        )
+        assertEquals("Second", markedSecond.nextUp?.name)
+
+        val unmarked = CollectionSummary.derive(
+            mode = CollectionMode.ORDERED_QUEUE,
+            sort = CollectionMode.ORDERED_QUEUE.defaultSort(),
+            targetDate = null,
+            members = members.map { if (it.appId == 1L) it.copy(manualDone = false) else it },
+            today = today,
+        )
+        assertEquals("First", unmarked.nextUp?.name)
+    }
+
+    @Test
+    fun nonQueueModes_ignoreManualDone() {
+        val members = listOf(
+            member(1, "DoneButBasic", manualDone = true),
+            member(2, "Other"),
+        )
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.BASIC,
+            sort = CollectionMode.BASIC.defaultSort(),
+            targetDate = null,
+            members = members,
+            today = today,
+        )
+        assertEquals(2, banner.memberCount)
+        assertNull(banner.nextUp)
     }
 
     @Test

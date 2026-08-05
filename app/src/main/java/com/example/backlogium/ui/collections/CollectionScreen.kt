@@ -1,25 +1,36 @@
 package com.example.backlogium.ui.collections
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -33,21 +44,33 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.AsyncImage
+import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
+import com.example.backlogium.domain.CollectionSummary
+import com.example.backlogium.domain.CollectionMemberSignals
+import com.example.backlogium.domain.CollectionTimeBasis
+import com.example.backlogium.domain.label
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.theme.collectionAccentColor
+import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowBack
+import compose.icons.tablericons.Check
 import compose.icons.tablericons.ChevronDown
 import compose.icons.tablericons.ChevronUp
+import compose.icons.tablericons.CircleCheck
+import compose.icons.tablericons.DotsVertical
 import compose.icons.tablericons.Plus
+import compose.icons.tablericons.Search
+import compose.icons.tablericons.Settings
 import compose.icons.tablericons.Trash
 import compose.icons.tablericons.X
 import java.time.Instant
@@ -55,12 +78,15 @@ import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import kotlin.math.abs
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.text.style.TextDecoration
 
 /**
- * Collection management screen (tasks 4.2–4.6): create/edit a collection, choose its mode and
- * sort, set a deadline (deadline mode only), add/remove games, reorder ordered-queue members,
- * and delete. Renders purely from locally stored state — offline-first, no network. Reached as
- * a pushed sub-destination from Home; [onDone] pops back after save, delete, or back.
+ * Collection destination: existing collections open on a read-only overview, while creation opens
+ * the management form. Customization for an existing collection is intentionally behind the
+ * secondary actions menu so its games and metrics are the primary surface.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,6 +95,9 @@ fun CollectionScreen(
     viewModel: CollectionViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var showEditor by rememberSaveable { mutableStateOf(viewModel.collectionId == 0L) }
+    var showActions by remember { mutableStateOf(false) }
+    val showingOverview = !state.isNew && !showEditor
 
     LaunchedEffect(state.done) {
         if (state.done) onDone()
@@ -81,13 +110,61 @@ fun CollectionScreen(
                 .padding(horizontal = 4.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onDone) {
+            IconButton(
+                onClick = {
+                    if (!state.isNew && showEditor) {
+                        showEditor = false
+                    } else {
+                        onDone()
+                    }
+                },
+            ) {
                 Icon(imageVector = TablerIcons.ArrowBack, contentDescription = "Back")
             }
             Text(
-                text = if (state.isNew) "New collection" else "Edit collection",
+                text = when {
+                    state.isNew -> "New collection"
+                    showingOverview -> state.name.ifBlank { "Collection" }
+                    else -> "Edit collection"
+                },
                 style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f),
             )
+            if (!state.isNew) {
+                Box {
+                    IconButton(onClick = { showActions = true }) {
+                        Icon(
+                            imageVector = if (showingOverview) {
+                                TablerIcons.DotsVertical
+                            } else {
+                                TablerIcons.Settings
+                            },
+                            contentDescription = "Collection actions",
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = showActions,
+                        onDismissRequest = { showActions = false },
+                    ) {
+                        if (showingOverview) {
+                            DropdownMenuItem(
+                                text = { Text("Customize collection") },
+                                onClick = {
+                                    showActions = false
+                                    showEditor = true
+                                },
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Delete collection") },
+                            onClick = {
+                                showActions = false
+                                viewModel.delete()
+                            },
+                        )
+                    }
+                }
+            }
         }
 
         if (state.loading) {
@@ -95,145 +172,611 @@ fun CollectionScreen(
                 CircularProgressIndicator()
             }
         } else {
-            CollectionForm(state = state, onDone = onDone, viewModel = viewModel)
+            if (showingOverview) {
+                CollectionOverview(
+                    state = state,
+                    onCustomize = { showEditor = true },
+                    onDeadlineChanged = viewModel::changeDeadline,
+                )
+            } else {
+                CollectionForm(state = state, viewModel = viewModel)
+            }
         }
     }
 }
 
-/** The management form: name, mode, sort, deadline, members, add-games, save/delete. */
+/** Read-only collection surface: members and their useful local metrics come before editing. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CollectionForm(
+private fun CollectionOverview(
     state: CollectionUiState,
-    onDone: () -> Unit,
-    viewModel: CollectionViewModel,
+    onCustomize: () -> Unit,
+    onDeadlineChanged: (LocalDate) -> Unit,
 ) {
-    var showDatePicker by remember { mutableStateOf(false) }
+    val accentColor = state.accent?.let {
+        MaterialTheme.colorScheme.collectionAccentColor(it)
+    } ?: MaterialTheme.colorScheme.primary
+    val summarySurface = accentColor.copy(alpha = 0.12f)
+        .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
+    val trophyProgress = trophyProgress(state.members)
+    val banner = CollectionSummary.derive(
+        mode = state.mode,
+        sort = state.sort,
+        targetDate = state.targetDate,
+        members = state.members.map { it.toSignals() },
+        today = state.today,
+        timeBasis = state.timeBasis,
+    )
+    var showDeadlinePicker by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        OutlinedTextField(
-            value = state.name,
-            onValueChange = viewModel::setName,
-            label = { Text("Name") },
-            placeholder = { Text("e.g. Clear the backlog") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        SectionLabel("Mode")
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            CollectionMode.entries.forEach { mode ->
-                FilterChip(
-                    selected = state.mode == mode,
-                    onClick = { viewModel.setMode(mode) },
-                    label = { Text(modeLabel(mode)) },
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = modeLabel(state.mode),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = accentColor,
                 )
-            }
-        }
-
-        val sortOptions = sortOptions(state.mode)
-        if (sortOptions.isNotEmpty()) {
-            SectionLabel("Order")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                sortOptions.forEach { sort ->
-                    FilterChip(
-                        selected = state.sort == sort,
-                        onClick = { viewModel.setSort(sort) },
-                        label = { Text(sortLabel(sort)) },
+                if (state.mode == CollectionMode.DEADLINE_GOAL) {
+                    Text(
+                        text = state.targetDate?.format(dateFormatter)
+                            ?.let { "Target date: $it" }
+                            ?: "No deadline set",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
         }
 
         if (state.mode == CollectionMode.DEADLINE_GOAL) {
-            SectionLabel("Target date")
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+            item {
+                DeadlinePlanCard(
+                    banner = banner,
+                    onChangeDeadline = { showDeadlinePicker = true },
+                )
+            }
+        }
+
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = summarySurface),
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    Text(
-                        text = state.targetDate?.format(dateFormatter) ?: "No deadline set",
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    TextButton(onClick = { showDatePicker = true }) { Text("Pick") }
-                    if (state.targetDate != null) {
-                        TextButton(onClick = { viewModel.setTargetDate(null) }) { Text("Clear") }
+                    Row(Modifier.fillMaxWidth()) {
+                        CollectionMetric(
+                            label = "Games",
+                            value = state.members.size.toString(),
+                            modifier = Modifier.weight(1f),
+                        )
+                        CollectionMetric(
+                            label = "Played",
+                            value = UiFormat.minutes(state.members.sumOf { it.playtimeMinutes }),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth()) {
+                        CollectionMetric(
+                            label = "Sessions",
+                            value = state.members.sumOf { it.sessionCount }.toString(),
+                            modifier = Modifier.weight(1f),
+                        )
+                        CollectionMetric(
+                            label = "Trophies",
+                            value = trophyProgress?.let { (unlocked, total) -> "$unlocked/$total" }
+                                ?: "—",
+                            modifier = Modifier.weight(1f),
+                        )
                     }
                 }
             }
         }
 
-        SectionLabel("Games")
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Games in this collection",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "${state.members.size}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
         if (state.members.isEmpty()) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("No games yet", style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "Add games below to build the collection's banner.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("No games yet", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            text = "Add games and tune this collection from Customize.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        OutlinedButton(onClick = onCustomize) {
+                            Icon(
+                                imageVector = TablerIcons.Settings,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Customize collection")
+                        }
+                    }
                 }
             }
         } else {
-            state.members.forEachIndexed { index, member ->
+            items(
+                items = state.members,
+                key = { it.appId },
+            ) { member ->
+                CollectionGameCard(member = member, accentColor = accentColor)
+            }
+        }
+
+        item { Spacer(Modifier.height(16.dp)) }
+    }
+
+    if (showDeadlinePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = state.targetDate
+                ?.atStartOfDay(ZoneOffset.UTC)
+                ?.toInstant()
+                ?.toEpochMilli(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDeadlinePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeadlinePicker = false
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            // The overview is read-only except for this explicit deadline action.
+                            onDeadlineChanged(
+                                Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate(),
+                            )
+                        }
+                    },
+                ) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeadlinePicker = false }) { Text("Cancel") }
+            },
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+}
+
+@Composable
+private fun DeadlinePlanCard(
+    banner: com.example.backlogium.domain.CollectionBanner,
+    onChangeDeadline: () -> Unit,
+) {
+    val differential = banner.timeDifferentialMinutes
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Deadline plan", style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = "Basis: ${banner.timeBasis.label()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = when {
+                    banner.daysRemaining == null -> "Set a deadline to see whether this collection fits."
+                    banner.daysRemaining < 0 -> "You are ${abs(banner.daysRemaining)} days past your deadline."
+                    banner.daysRemaining == 0L -> "Your deadline is today."
+                    else -> "You still have ${banner.daysRemaining} days until your deadline."
+                },
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            if (banner.remainingMinutes != null) {
+                Text(
+                    text = "${UiFormat.minutes(banner.remainingMinutes)} estimated remaining" +
+                        if (banner.unknownDurationCount > 0) {
+                            " · ${banner.unknownDurationCount} without ${banner.timeBasis.label()} data"
+                        } else {
+                            ""
+                        },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(
+                    text = "No ${banner.timeBasis.label()} estimates are available, so fit cannot be assessed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            differential?.takeIf { it < 0 }?.let { value ->
+                Text(
+                    text = "You are ${UiFormat.minutes(abs(value))} short — consider changing your deadline.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            OutlinedButton(onClick = onChangeDeadline) {
+                Text("Change deadline")
+            }
+        }
+    }
+}
+
+private fun CollectionMemberUi.toSignals() = CollectionMemberSignals(
+    appId = appId,
+    name = name,
+    playtimeMinutes = playtimeMinutes,
+    completionistMinutes = completionistMinutes,
+    mainStoryMinutes = mainStoryMinutes,
+    mainExtraMinutes = mainExtraMinutes,
+    allStylesMinutes = allStylesMinutes,
+    achievementsUnlocked = achievementsUnlocked,
+    achievementsTotal = achievementsTotal,
+    manualDone = done,
+)
+
+@Composable
+private fun CollectionMetric(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Text(text = value, style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun CollectionGameCard(
+    member: CollectionMemberUi,
+    accentColor: Color,
+) {
+    val cardSurface = accentColor.copy(alpha = 0.08f)
+        .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 88.dp),
+        colors = CardDefaults.cardColors(containerColor = cardSurface),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(5.dp)
+                    .heightIn(min = 88.dp)
+                    .background(accentColor),
+            )
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                member.iconUrl?.let { iconUrl ->
+                    GameIcon(iconUrl = iconUrl, iconSize = 56.dp)
+                    Spacer(Modifier.width(14.dp))
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text(
+                        text = member.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = "${UiFormat.minutes(member.playtimeMinutes)} played · " +
+                            sessionLabel(member.sessionCount),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                    member.achievementsUnlocked?.let { unlocked ->
+                        member.achievementsTotal?.let { total ->
+                            Text(
+                                text = "$unlocked/$total trophies",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = accentColor,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun trophyProgress(members: List<CollectionMemberUi>): Pair<Int, Int>? {
+    val withData = members.filter {
+        it.achievementsUnlocked != null && it.achievementsTotal != null
+    }
+    if (withData.isEmpty()) return null
+    return withData.sumOf { it.achievementsUnlocked!! } to
+        withData.sumOf { it.achievementsTotal!! }
+}
+
+private fun sessionLabel(count: Int): String = when (count) {
+    1 -> "1 session"
+    else -> "$count sessions"
+}
+
+/** The management form: name, mode, sort, deadline, members, add-games, save/delete. */
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+private fun CollectionForm(
+    state: CollectionUiState,
+    viewModel: CollectionViewModel,
+) {
+    var showDatePicker by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+
+    val filteredAddables = remember(state.addableGames, query) {
+        if (query.isBlank()) {
+            state.addableGames
+        } else {
+            state.addableGames.filter { game ->
+                game.name.contains(query, ignoreCase = true)
+            }
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                OutlinedTextField(
+                    value = state.name,
+                    onValueChange = viewModel::setName,
+                    label = { Text("Name") },
+                    placeholder = { Text("e.g. Clear the backlog") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.saving,
+                )
+            }
+
+            item {
+                SectionLabel("Mode")
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CollectionMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = state.mode == mode,
+                            onClick = { viewModel.setMode(mode) },
+                            label = { Text(modeLabel(mode)) },
+                            enabled = !state.saving,
+                        )
+                    }
+                }
+            }
+
+            val sortOptions = sortOptions(state.mode)
+            if (sortOptions.isNotEmpty()) {
+                item {
+                    SectionLabel("Order")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        sortOptions.forEach { sort ->
+                            FilterChip(
+                                selected = state.sort == sort,
+                                onClick = { viewModel.setSort(sort) },
+                                label = { Text(sortLabel(sort)) },
+                                enabled = !state.saving,
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (state.mode == CollectionMode.DEADLINE_GOAL) {
+                item {
+                    SectionLabel("Target date")
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = state.targetDate?.format(dateFormatter) ?: "No deadline set",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            TextButton(onClick = { showDatePicker = true }) { Text("Pick") }
+                            if (state.targetDate != null) {
+                                TextButton(onClick = { viewModel.setTargetDate(null) }) { Text("Clear") }
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    SectionLabel("Time estimate basis")
+                    Text(
+                        text = "Choose which HowLongToBeat length Backlogium uses to check the deadline.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CollectionTimeBasis.entries.forEach { basis ->
+                            FilterChip(
+                                selected = state.timeBasis == basis,
+                                onClick = { viewModel.setTimeBasis(basis) },
+                                label = { Text(basis.label()) },
+                                enabled = !state.saving,
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                SectionLabel("Accent")
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    AccentChip(
+                        label = "Default",
+                        selected = state.accent == null,
+                        onClick = { viewModel.setAccent(null) },
+                    )
+                    CollectionAccent.entries.forEach { accent ->
+                        AccentChip(
+                            label = accentLabel(accent),
+                            selected = state.accent == accent,
+                            onClick = { viewModel.setAccent(accent) },
+                            accentColor = MaterialTheme.colorScheme.collectionAccentColor(accent),
+                        )
+                    }
+                }
+            }
+
+            item { SectionLabel("Games") }
+            if (state.members.isEmpty()) {
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text("No games yet", style = MaterialTheme.typography.titleSmall)
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "Add games below to build the collection's banner.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
+            itemsIndexed(
+                items = state.members,
+                key = { _, member -> member.appId },
+            ) { index, member ->
                 MemberRow(
                     member = member,
                     index = index,
                     count = state.members.size,
                     reorderable = state.mode == CollectionMode.ORDERED_QUEUE,
+                    showDoneToggle = state.mode == CollectionMode.ORDERED_QUEUE,
                     onRemove = { viewModel.removeGame(member.appId) },
                     onMoveUp = { viewModel.moveMember(index, index - 1) },
                     onMoveDown = { viewModel.moveMember(index, index + 1) },
+                    onToggleDone = { viewModel.toggleMemberDone(member.appId) },
                 )
             }
-        }
 
-        SectionLabel("Add games")
-        if (state.addableGames.isEmpty()) {
-            Text(
-                text = "Every library game is already in this collection.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            state.addableGames.forEach { game ->
-                AddGameRow(game = game, onAdd = { viewModel.addGame(game.appId) })
+            item {
+                SectionLabel("Add games")
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Search library") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = TablerIcons.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.saving,
+                )
             }
+
+            if (filteredAddables.isEmpty() && state.addableGames.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "No games match your search.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            items(
+                items = filteredAddables,
+                key = { it.appId },
+            ) { game ->
+                AddGameRow(
+                    game = game,
+                    onAdd = { viewModel.addGame(game.appId) },
+                    enabled = !state.saving,
+                )
+            }
+
+            if (state.addableGames.isEmpty()) {
+                item {
+                    Text(
+                        text = "Every library game is already in this collection.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            // Clearance for the floating save button so the last rows stay reachable.
+            item { Spacer(Modifier.height(88.dp)) }
         }
 
-        Button(
+        FloatingActionButton(
             onClick = viewModel::save,
-            enabled = state.name.isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Save") }
-
-        if (!state.isNew) {
-            OutlinedButton(
-                onClick = viewModel::delete,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(
-                    imageVector = TablerIcons.Trash,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("Delete collection")
-            }
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp),
+            containerColor = if (state.name.isBlank()) {
+                MaterialTheme.colorScheme.surfaceVariant
+            } else {
+                MaterialTheme.colorScheme.primary
+            },
+            contentColor = if (state.name.isBlank()) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onPrimary
+            },
+        ) {
+            Icon(imageVector = TablerIcons.Check, contentDescription = "Save collection")
         }
-
-        Spacer(Modifier.height(16.dp))
     }
 
     if (showDatePicker) {
@@ -273,18 +816,69 @@ private fun SectionLabel(text: String) {
     Text(text = text, style = MaterialTheme.typography.titleMedium)
 }
 
-/** One member row: game icon + name, remove, and (queue mode) move up/down. */
+@Composable
+private fun AccentChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    accentColor: Color? = null,
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                accentColor?.let { color ->
+                    Box(
+                        modifier = Modifier
+                            .padding(end = 6.dp)
+                            .size(12.dp)
+                            .background(color, CircleShape),
+                    )
+                }
+                Text(label)
+            }
+        },
+    )
+}
+
+private fun accentLabel(accent: CollectionAccent): String = when (accent) {
+    CollectionAccent.STEEL_BLUE -> "Steel blue"
+    CollectionAccent.VIOLET -> "Violet"
+    CollectionAccent.SAGE -> "Sage"
+    CollectionAccent.SLATE -> "Slate"
+    CollectionAccent.TEAL -> "Teal"
+    CollectionAccent.ROSE -> "Rose"
+    CollectionAccent.CORAL -> "Coral"
+}
+
+/** One member row: game icon + name, optional done toggle (queue), move up/down, and remove. */
 @Composable
 private fun MemberRow(
     member: CollectionMemberUi,
     index: Int,
     count: Int,
     reorderable: Boolean,
+    showDoneToggle: Boolean,
     onRemove: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
+    onToggleDone: () -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    val cardColor = if (member.done) {
+        MaterialTheme.colorScheme.surfaceVariant
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    val textColor = if (member.done) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = cardColor),
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -300,12 +894,27 @@ private fun MemberRow(
                     text = member.name,
                     style = MaterialTheme.typography.bodyLarge,
                     maxLines = 1,
+                    color = textColor,
+                    textDecoration = if (member.done) TextDecoration.LineThrough else null,
                 )
                 if (reorderable) {
                     Text(
                         text = "#${index + 1} in queue",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (showDoneToggle) {
+                IconButton(onClick = onToggleDone) {
+                    Icon(
+                        imageVector = TablerIcons.CircleCheck,
+                        contentDescription = if (member.done) "Mark not done" else "Mark done",
+                        tint = if (member.done) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                 }
             }
@@ -336,8 +945,16 @@ private fun MemberRow(
 
 /** One addable library game: tap to add it to the collection. */
 @Composable
-private fun AddGameRow(game: com.example.backlogium.data.repo.LibraryGame, onAdd: () -> Unit) {
-    Card(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
+private fun AddGameRow(
+    game: com.example.backlogium.data.repo.LibraryGame,
+    onAdd: () -> Unit,
+    enabled: Boolean,
+) {
+    Card(
+        onClick = onAdd,
+        modifier = Modifier.fillMaxWidth(),
+        enabled = enabled,
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()

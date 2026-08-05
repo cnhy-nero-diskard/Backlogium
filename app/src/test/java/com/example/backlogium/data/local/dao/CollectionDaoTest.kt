@@ -7,6 +7,7 @@ import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
+import com.example.backlogium.domain.CollectionTimeBasis
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -66,12 +67,13 @@ class CollectionDaoTest {
     @Test
     fun renameAndUpdateDetails_persistsChanges() = runBlocking {
         val id = dao.insert(collection(name = "Old"))
-        dao.updateDetails(id, "New", CollectionMode.COMPLETION_GOAL, CollectionSort.COMPLETION_FRACTION, null)
+        dao.updateDetails(id, "New", CollectionMode.COMPLETION_GOAL, CollectionSort.COMPLETION_FRACTION, null, null, CollectionTimeBasis.MAIN_STORY)
         val stored = dao.getById(id)
         assertEquals("New", stored?.name)
         assertEquals(CollectionMode.COMPLETION_GOAL, stored?.mode)
         assertEquals(CollectionSort.COMPLETION_FRACTION, stored?.sort)
         assertEquals(null, stored?.targetDate)
+        assertEquals(CollectionTimeBasis.MAIN_STORY, stored?.timeBasis)
     }
 
     @Test

@@ -9,8 +9,10 @@ import androidx.room.Upsert
 import androidx.room.Update
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
+import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
+import com.example.backlogium.domain.CollectionTimeBasis
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -44,7 +46,7 @@ interface CollectionDao {
     suspend fun upsertMember(member: CollectionMember)
 
     @Query(
-        "UPDATE collections SET name = :name, mode = :mode, sort = :sort, targetDate = :targetDate " +
+        "UPDATE collections SET name = :name, mode = :mode, sort = :sort, targetDate = :targetDate, accent = :accent, timeBasis = :timeBasis " +
             "WHERE id = :id",
     )
     suspend fun updateDetails(
@@ -53,6 +55,8 @@ interface CollectionDao {
         mode: CollectionMode,
         sort: CollectionSort,
         targetDate: String?,
+        accent: CollectionAccent?,
+        timeBasis: CollectionTimeBasis,
     )
 
     /** Deleting a collection cascades to its memberships via the FK. */
@@ -64,6 +68,20 @@ interface CollectionDao {
 
     @Query("SELECT * FROM collection_members WHERE collectionId = :collectionId ORDER BY orderIndex ASC")
     suspend fun getMembers(collectionId: Long): List<CollectionMember>
+
+    /** All members across every collection, ordered for stable grouping by collectionId. */
+    @Query("SELECT * FROM collection_members ORDER BY collectionId ASC, orderIndex ASC")
+    fun observeAllMembers(): Flow<List<CollectionMember>>
+
+    @Query("SELECT * FROM collection_members ORDER BY collectionId ASC, orderIndex ASC")
+    suspend fun getAllMembers(): List<CollectionMember>
+
+    /** Persist or clear a member's manual done mark (ordered-queue collections). */
+    @Query(
+        "UPDATE collection_members SET done = :done " +
+            "WHERE collectionId = :collectionId AND appId = :appId",
+    )
+    suspend fun setMemberDone(collectionId: Long, appId: Long, done: Boolean)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertMember(member: CollectionMember)

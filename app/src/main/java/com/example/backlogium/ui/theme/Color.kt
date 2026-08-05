@@ -84,6 +84,15 @@ val RarityUncommonLight = Color(0xFF3F7A4C)
 val RarityEpic = Color(0xFFA579D6)
 val RarityEpicLight = Color(0xFF6B3FA0)
 
+// Additional collection accents. These stay muted enough for card tinting and keep gold and
+// vivid green reserved for milestone and live-presence semantics respectively.
+val CollectionTeal = Color(0xFF62B8B1)
+val CollectionTealLight = Color(0xFF216F6A)
+val CollectionRose = Color(0xFFE18DA4)
+val CollectionRoseLight = Color(0xFF9B3F5D)
+val CollectionCoral = Color(0xFFE39A7C)
+val CollectionCoralLight = Color(0xFF984D38)
+
 // --- Live status (currently-playing indicator) -----------------------------------
 /** "Currently playing" dot on a library row. A vivid, unambiguous green — distinct from the
  *  muted sage used for [RarityUncommon] so the two don't get read as the same signal. */
