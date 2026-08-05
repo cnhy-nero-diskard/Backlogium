@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -50,6 +51,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -370,7 +372,10 @@ private fun CollectionsSection(
     onCreateCollection: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -411,11 +416,15 @@ private fun CollectionCard(
     modifier: Modifier = Modifier,
 ) {
     val accentColor = MaterialTheme.colorScheme.collectionAccentColor(card.accent)
+    val baseSurface = MaterialTheme.colorScheme.surfaceContainer
+    val cardSurface = card.accent?.let {
+        accentColor.copy(alpha = 0.16f).compositeOver(baseSurface)
+    } ?: baseSurface
     Card(
         onClick = onClick,
         modifier = modifier,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            containerColor = cardSurface,
         ),
     ) {
         Row(
@@ -426,10 +435,10 @@ private fun CollectionCard(
             Box(
                 modifier = Modifier
                     .width(6.dp)
-                    .height(90.dp)
+                    .fillMaxHeight()
                     .background(accentColor),
             )
-            Column(Modifier.padding(16.dp)) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -446,7 +455,7 @@ private fun CollectionCard(
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(4.dp))
                 bannerText(card.banner)?.let { copy ->
                     Text(
                         text = copy,
