@@ -23,8 +23,9 @@ when a collection's mode is not ordered queue, stored marks SHALL NOT affect its
 - **THEN** all stored done marks remain intact
 
 ### Requirement: Collection accent color
-Each collection SHALL store an optional accent color chosen from a fixed set of app-palette tokens,
-and the absence of a choice SHALL present as the default neutral styling. The offered set SHALL
+Each collection SHALL store an optional accent color chosen from an expanded set of app-palette
+tokens (steel blue, violet, sage, slate, teal, rose, and coral), and the absence of a choice SHALL
+present as the default neutral styling. The offered set SHALL
 exclude palette tokens with reserved meaning (the milestone gold and the live-presence green). An
 unrecognized stored accent value SHALL fall back to the default rather than fail.
 

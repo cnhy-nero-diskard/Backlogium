@@ -23,18 +23,20 @@ complete a queue).
 - **Add-games search**: the management screen offers a search field filtering the add-games
   pool by game name — the pool only, not current members — with the no-match state rendered
   inside the list so the field can always be cleared.
-- **Per-collection accent color**: a collection persists an accent chosen from a fixed set of
-  Backlogium palette tokens (respecting the accent rule: gold stays milestone-reserved, green
-  stays live-presence-reserved). The management screen offers a picker; Home cards are tinted
-  by the chosen accent.
+- **Per-collection accent color**: a collection persists an accent chosen from an expanded set of
+  seven Backlogium palette tokens (steel blue, violet, sage, slate, teal, rose, and coral),
+  respecting the accent rule that gold stays milestone-reserved and vivid green stays
+  live-presence-reserved. The management screen offers the larger picker; Home cards receive a
+  low-opacity wash from the chosen accent.
 - **Mode-styled Home cards**: each mode gets a distinct card treatment — structured content
   (progress bar for goal modes, countdown for deadline, next-up row for ordered queue) instead
   of one uniform text line — while the member-count surface is kept.
 - **Ordered-queue checkmark**: ordered-queue members can be manually marked done. A done member
   stays in the list with its name crossed out and the card greyed; the next-up surface skips
   done members; the queue reads as complete when every member is done or derived-complete.
-- **Home card separation**: Home collection cards are separated by consistent spacing (today
-  they render edge-to-edge with none).
+- **Home card separation and density**: Home collection cards are separated by consistent
+  spacing, use a stronger elevated surface with accent color washes, and reduce internal padding
+  so they do not read as vertically chunky.
 
 The achievements copy ("x achievements to go") is deliberately unchanged.
 

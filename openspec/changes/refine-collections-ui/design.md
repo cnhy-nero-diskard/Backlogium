@@ -60,21 +60,23 @@ edit model of the management screen (cancel discards, save persists atomically).
    an unmatched query unmounts the field and can't be cleared).
 
 4. **Accent = `CollectionAccent` enum stored as nullable TEXT** (`STEEL_BLUE`, `VIOLET`,
-   `SAGE`, `SLATE`; `null` = default neutral), via Room type converters using the same
+   `SAGE`, `SLATE`, `TEAL`, `ROSE`, `CORAL`; `null` = default neutral), via Room type converters using the same
    label/identifier trade-off as `mode`/`sort`, with the same tolerant-parse fallback.
-   Offered set excludes **gold** (accent rule: milestones only) and the **vivid live green**
+   The expanded offered set excludes **gold** (accent rule: milestones only) and the **vivid live green**
    (presence only). Sage is admissible: the palette already distinguishes the muted sage
    rarity hue from the live-presence green (`Color.kt`). Every token has a light-scheme
    counterpart (`SteelBlueDark`, `RarityEpicLight`, `RarityUncommonLight`,
-   `RarityCommonLight`), so the picker stays scheme-correct. *Alternative rejected:* free
+   `RarityCommonLight`, plus collection-specific teal, rose, and coral pairs), so the picker stays
+   scheme-correct. *Alternative rejected:* free
    color input — violates the "limit to palette" requirement and the accent rule.
 
 5. **Mode drives anatomy; accent drives tint.** Home card per mode: basic = count;
    completion goal = progress bar + trophies copy; deadline goal = countdown + progress;
    ordered queue = next-up row with position. Accent tints the mode-icon chip, progress
-   indicator, and a start-edge stripe; the card surface stays `NavySurface`/`LightSurface`
-   so contrast never depends on the accent. This keeps the two concerns independently
-   testable and lets "no accent" stay a valid default.
+   indicator, card surface wash, and a start-edge stripe. Cards use a stronger elevated base
+   surface, a low-opacity accent wash, 10dp gaps between cards, and compact internal padding so
+   they pop from the Home background without becoming vertically bulky. This keeps the two
+   concerns independently testable and lets "no accent" stay a valid default.
 
 6. **Done mark = `collection_members.done` (INTEGER NOT NULL DEFAULT 0).**
    `CollectionMemberSignals` gains `manualDone`; in `CollectionSummary.derive`, ordered-queue

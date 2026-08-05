@@ -2,10 +2,11 @@
 
 ### Requirement: Collections section on the Home screen
 The Home screen SHALL present a collections section showing one card per custom collection, each card
-rendering the collection's name and its mode-specific banner. Cards SHALL be visually separated from
+rendering the collection's name and its mode-specific banner. Cards SHALL use an elevated surface
+distinct from the Home background and remain visually separated from
 one another and styled by mode — goal modes present a progress surface, deadline mode additionally
 presents its countdown, ordered-queue mode presents its next game — and a collection with a stored
-accent SHALL tint its card with that accent. Tapping a collection card SHALL open the collection's
+accent SHALL tint both its card surface and accent affordances with that accent. Tapping a collection card SHALL open the collection's
 management screen. The collections section SHALL render from locally stored state so it is
 usable offline, and SHALL present an empty state when no collections exist. The collections section SHALL
 NOT displace or demote the existing level, XP, quest, streak, or now-playing surfaces on Home.
@@ -25,7 +26,13 @@ NOT displace or demote the existing level, XP, quest, streak, or now-playing sur
 
 #### Scenario: Accent tint applied
 - **WHEN** a collection has a stored accent
-- **THEN** its card is tinted with that accent while its text remains legible on the card surface
+- **THEN** its card surface and accent affordances use a low-opacity tint from that accent while
+  its text remains legible
+
+#### Scenario: Cards remain compact
+- **WHEN** the Home screen shows multiple collection cards
+- **THEN** each card uses compact internal padding and consecutive cards have visible spacing without
+  excessive vertical gaps
 
 #### Scenario: Default styling without accent
 - **WHEN** a collection has no stored accent
@@ -113,4 +120,3 @@ position. The screen SHALL render from locally stored state.
 #### Scenario: Target date only for deadline mode
 - **WHEN** the user is editing a collection whose mode is not deadline goal
 - **THEN** no target date field is offered
-

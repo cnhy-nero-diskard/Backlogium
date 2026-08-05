@@ -51,8 +51,10 @@
 - [x] 4.4 Add-games search: composable-local query filtering `addableGames` by case-insensitive
       name containment (pool only); the no-match state renders inside the list beneath the field so
       it can always be cleared
-- [x] 4.5 Accent picker: selectable chips for the four palette tokens plus default/none, buffered
+- [x] 4.5 Accent picker: selectable chips for the seven palette tokens plus default/none, buffered
       in the edit session and persisted on save
+- [x] 4.6 Expand the accent picker to seven palette-safe tokens, adding teal, rose, and coral
+      with dark/light theme mappings and tolerant persistence through the existing enum storage
 
 ## 5. Ordered-queue checkmark
 
@@ -70,10 +72,15 @@
       line
 - [x] 6.3 Accent tint: a theme helper mapping `CollectionAccent` to dark/light tokens
       (`SteelBlue`/`SteelBlueDark`, `RarityEpic`/`RarityEpicLight`,
-      `RarityUncommon`/`RarityUncommonLight`, `RarityCommon`/`RarityCommonLight`) applied to the
+      `RarityUncommon`/`RarityUncommonLight`, `RarityCommon`/`RarityCommonLight`,
+      `CollectionTeal`/`CollectionTealLight`, `CollectionRose`/`CollectionRoseLight`,
+      `CollectionCoral`/`CollectionCoralLight`) applied to the
       icon chip, progress indicator, and a start-edge stripe
 - [x] 6.4 `HomeCollectionCard` carries the accent and feeds member done marks into the banner
       derivation
+- [x] 6.5 Make collection cards visually pop from the Home background with an elevated base
+      surface and low-opacity accent wash; add 10dp inter-card spacing and compact internal
+      padding so the cards remain easy to scan
 
 ## 7. HomeViewModel consolidation
 
