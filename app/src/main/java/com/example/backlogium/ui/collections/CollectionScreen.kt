@@ -409,19 +409,11 @@ private fun DeadlinePlanCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            differential?.let { value ->
+            differential?.takeIf { it < 0 }?.let { value ->
                 Text(
-                    text = if (value >= 0) {
-                        "You have ${UiFormat.minutes(value)} of buffer."
-                    } else {
-                        "You are ${UiFormat.minutes(abs(value))} short — consider changing your deadline."
-                    },
+                    text = "You are ${UiFormat.minutes(abs(value))} short — consider changing your deadline.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (value >= 0) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.error
-                    },
+                    color = MaterialTheme.colorScheme.error,
                 )
             }
             OutlinedButton(onClick = onChangeDeadline) {

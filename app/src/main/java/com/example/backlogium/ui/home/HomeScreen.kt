@@ -501,12 +501,11 @@ private fun bannerText(banner: CollectionBanner): String = when (banner.mode) {
         val fit = when {
             banner.unknownDurationCount > 0 ->
                 "${banner.unknownDurationCount} missing ${banner.timeBasis.label()} data"
-            banner.timeDifferentialMinutes == null -> "No ${banner.timeBasis.label()} estimate"
-            banner.timeDifferentialMinutes >= 0 ->
-                "${UiFormat.minutes(banner.timeDifferentialMinutes)} buffer"
-            else -> "${UiFormat.minutes(kotlin.math.abs(banner.timeDifferentialMinutes))} short"
+            banner.timeDifferentialMinutes != null && banner.timeDifferentialMinutes < 0 ->
+                "${UiFormat.minutes(kotlin.math.abs(banner.timeDifferentialMinutes))} short"
+            else -> null
         }
-        "$countdown · $progress complete · $fit"
+        listOfNotNull("$countdown · $progress complete", fit).joinToString(" · ")
     }
     CollectionMode.ORDERED_QUEUE -> when {
         banner.queueCompleted -> "Queue complete — no next game"
