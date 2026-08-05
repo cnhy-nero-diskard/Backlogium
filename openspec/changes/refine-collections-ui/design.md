@@ -32,13 +32,17 @@ edit model of the management screen (cancel discards, save persists atomically).
   metrics; creation remains a direct setup form and customization is a secondary action.
 - Overview member tiles are larger and show playtime, session count, and stored trophy progress
   for each selected game.
+- Deadline collections let the user choose the HLTB basis used for planning: Main Story, Main +
+  Extra, Completionist, or All Styles. The overview explains the remaining estimate and whether
+  it fits before the deadline, including a date-picker shortcut when it does not.
 - Search over the add-games pool; an ordered-queue checkmark that persists and advances the
   next-game surface.
 - Backup/restore keeps working across old and new file shapes.
 
 **Non-Goals:**
-- Changing banner arithmetic beyond the done-mark semantics; completion-goal cards now expose
-  aggregate unlocked/total trophies and the remaining count when achievement data exists.
+- Changing completion and queue banner arithmetic beyond the done-mark semantics; completion-goal
+  cards now expose aggregate unlocked/total trophies and the remaining count when achievement
+  data exists. Deadline planning is intentionally added by this change.
 - Drag-and-drop reordering, per-member deadlines, user colors outside the palette.
 - Any sync/network change — collections stay untouched by the Steam sync worker.
 
@@ -126,6 +130,14 @@ edit model of the management screen (cancel discards, save persists atomically).
     The overview aggregates these values for its summary and repeats the per-game values on larger
     member tiles.
 
+12. **Deadline planning uses a persisted HLTB basis** — `CollectionTimeBasis` maps to HLTB's
+    `comp_main`, `comp_plus`, `comp_100`, and `comp_all` values. The pure summary subtracts stored
+    playtime from each selected estimate, sums the remaining minutes, and compares that total with
+    `daysRemaining * 24h`. A positive differential is shown as available buffer; a negative
+    differential is shown as a shortfall and pairs with a direct date-picker action. Games without
+    the selected HLTB value remain visible and are counted as unknown rather than silently treated
+    as zero.
+
 ## Risks / Trade-offs
 
 - [FAB covers the last rows] → end spacer sized for FAB clearance inside the lazy list.
@@ -142,16 +154,22 @@ edit model of the management screen (cancel discards, save persists atomically).
   `Customize collection` action; the full add-games pool remains absent from the overview.
 - [Missing metrics make the overview look broken] → playtime/session values default to zero and
   trophy values use an explicit no-data state when no stored counts exist.
+- [A deadline estimate looks falsely precise] → show the selected basis, expose how many members
+  lack that estimate, and keep unknown games out of the arithmetic instead of treating them as zero.
+- [Changing the deadline from the overview bypasses the buffered editor] → the shortcut persists
+  only the target date against the existing collection row and leaves customization behind the
+  editor.
 
 ## Migration Plan
 
-Single release: bump schema 9 → 10 with the additive migration; installs upgrade in place,
-fresh installs create v10 tables. Old backups restore with default accent/no-done; new
+Single release: bump schema 10 → 11 with an additive `timeBasis` migration; installs upgrade in
+place, fresh installs create v11 tables. Old backups restore with default accent/no-done and
+Completionist basis; new
 backups ignore cleanly on older builds. Rollback path is the configured destructive fallback
 (standard for this codebase; collections are restorable from any backup).
 
 ## Open Questions
 
-None — checkmark semantics (keep + strike-through + grey), trophy count copy, palette limits,
-search scope (add pool only), and overview-first navigation were resolved with the requester
-during exploration.
+Checkmark semantics (keep + strike-through + grey), trophy count copy, palette limits, search scope
+(add pool only), overview-first navigation, and the four HLTB deadline bases were resolved with
+the requester during exploration.

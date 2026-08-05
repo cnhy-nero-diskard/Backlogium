@@ -46,6 +46,12 @@ so the selected games and their useful progress signals are not the primary expe
   progress — while customization, including add games, stays behind a secondary collection-actions
   menu. Creating a collection still opens the setup form directly.
 
+- **Deadline estimate basis and hindsight**: deadline setup offers Main Story, Main + Extra,
+  Completionist, or All Styles as the HLTB estimate basis. The collection overview reports the
+  time remaining to the deadline, the selected estimate still outstanding after playtime, and
+  the resulting buffer or shortfall; a negative differential recommends changing the deadline
+  and exposes a direct date-picker shortcut.
+
 Completion-goal trophy copy is explicit and aggregate: unlocked out of total plus the remaining
 count, with a no-data fallback rather than implying that missing achievement data means zero.
 
@@ -59,7 +65,8 @@ None — this refines shipped behavior.
 
 - `custom-collections`: manual queue-completion state (persistence, next-up skipping, and
   queue-complete semantics), a persisted per-collection accent color drawn from the app palette,
-  and an overview-first read surface with per-member local metrics
+  an overview-first read surface with per-member local metrics, and deadline planning based on a
+  persisted HLTB completion-length choice
 - `app-ui`: Home collection cards render separated, mode-styled, and accent-tinted; the
   management screen gains an always-reachable floating save, a header delete action, an
   add-games-pool search filter, an accent picker, and the queue checkmark control; existing
@@ -72,13 +79,14 @@ None — this refines shipped behavior.
   search, accent picker, checkmark), `data/local/dao/SessionDao.kt` + `data/repo/SessionRepository.kt`
   (per-game session counts),
   `ui/home/HomeScreen.kt` + `HomeViewModel.kt` (card styling/spacing, accent and done
-  plumbing), `domain/CollectionSummary.kt` (next-up skip semantics), `data/local`
+  plumbing and deadline fit copy), `domain/CollectionSummary.kt` (next-up skip semantics and
+  deadline estimate differential), `data/local`
   (`Collection` and `CollectionMember` entities, `CollectionDao`, `Converters`,
-  `BacklogiumDatabase` version bump + additive migration registered in `DatabaseModule`),
+  `BacklogiumDatabase` version bump + additive migrations registered in `DatabaseModule`),
   `data/backup` (`BackupFile` DTOs, `BackupExportMapper`, `BackupMergeEngine` — additive
   fields only).
 - **No new dependencies, no network calls, no sync changes.** Collections remain app-owned
   state the Steam sync worker never touches.
-- **Compatibility:** one additive Room migration (version bump from the collections schema);
+- **Compatibility:** additive Room migrations (version bump from the collections schema);
   backup files gain optional fields so old backups still restore and new backups read into
   older shapes without loss of existing data.

@@ -85,6 +85,38 @@ SHALL remain available through an explicit secondary action rather than appearin
 - **THEN** the user opens the secondary customization action and the buffered management form
   provides those controls
 
+### Requirement: Deadline estimate basis and hindsight
+A deadline-goal collection SHALL let the user select one HLTB completion-length basis: Main Story
+(`comp_main`), Main + Extra (`comp_plus`), Completionist (`comp_100`), or All Styles (`comp_all`).
+The selected basis SHALL be persisted with the collection. Its deadline plan SHALL subtract stored
+playtime from each member's known selected estimate and compare the remaining minutes with the
+available time until the target date. Members without the selected estimate SHALL be identified as
+unknown and SHALL NOT be treated as zero minutes.
+
+#### Scenario: Selecting the deadline basis
+- **WHEN** the user configures a deadline-goal collection
+- **THEN** the setup offers all four HLTB bases and persists the selected choice
+
+#### Scenario: Deadline has positive buffer
+- **WHEN** the selected estimates fit within the time until the target date
+- **THEN** the collection overview reports the time until the deadline, estimated time remaining,
+  and the positive buffer
+
+#### Scenario: Deadline has a negative differential
+- **WHEN** the selected estimates exceed the time until the target date
+- **THEN** the overview reports the shortfall, recommends changing the deadline, and offers a
+  shortcut to the target-date picker
+
+#### Scenario: Deadline has passed
+- **WHEN** the current date is after the target date
+- **THEN** the overview reports how many days past the deadline the collection is and retains the
+  shortfall guidance when a selected estimate is available
+
+#### Scenario: Changing the deadline from the overview
+- **WHEN** the user confirms a new date from the overview shortcut
+- **THEN** only the collection target date changes and the deadline plan refreshes without opening
+  the full customization form
+
 ## MODIFIED Requirements
 
 ### Requirement: Ordered-queue sequencing

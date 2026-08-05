@@ -116,6 +116,20 @@ position. The screen SHALL render from locally stored state.
 - **WHEN** the user sets or changes a target date on a deadline-goal collection
 - **THEN** the collection's banner reflects the updated countdown
 
+#### Scenario: Choosing a deadline estimate basis
+- **WHEN** the user edits a deadline-goal collection
+- **THEN** the setup offers Main Story, Main + Extra, Completionist, and All Styles as the HLTB
+  time-estimate basis choices
+
+#### Scenario: Hindsight deadline guidance
+- **WHEN** the user opens an existing deadline-goal collection overview
+- **THEN** it shows the selected basis, time until or past the deadline, estimated time remaining,
+  and whether the estimate has positive buffer or a negative shortfall
+
+#### Scenario: Shortcut to change an infeasible deadline
+- **WHEN** the selected estimate has a negative differential
+- **THEN** the overview recommends changing the deadline and provides a direct target-date picker
+
 #### Scenario: Reordering an ordered queue
 - **WHEN** the user reorders members of an ordered-queue collection
 - **THEN** the sequence is persisted and the next-game surface updates

@@ -21,6 +21,8 @@
       one-shot `getAllMembers()` for backup export
 - [x] 1.5 `CollectionRepository`: plumb accent through `create`/`updateDetails`; expose
       `setMemberDone` and the all-members flow
+- [x] 1.6 Add persisted `CollectionTimeBasis` for deadline collections, with a v10 → v11 additive
+      migration, tolerant Room parsing, and backup export/restore defaults
 
 ## 2. Domain: queue done semantics
 
@@ -33,6 +35,9 @@
 - [x] 2.3 Extend `CollectionBanner` with aggregate unlocked and total achievement counts when
       stored data exists; render completion-goal Home cards as `<unlocked>/<total> trophies ·
       <remaining> left`, with a no-data fallback, and cover the derivation in JVM tests
+- [x] 2.4 Derive deadline planning from the selected HLTB basis: subtract stored playtime from
+      each known estimate, report unknown-duration members, and expose positive buffer/negative
+      shortfall arithmetic in JVM tests
 
 ## 3. Backup compatibility
 
@@ -63,6 +68,8 @@
       place customization, including add games, behind the secondary collection-actions menu
 - [x] 4.8 Add overview summary/member metrics from cached playtime, achievement counts, and
       observed per-game session counts; render selected games as larger highlighted tiles
+- [x] 4.9 Add the deadline setup basis selector and overview hindsight card, including the direct
+      date-picker shortcut when the selected estimate does not fit
 
 ## 5. Ordered-queue checkmark
 
@@ -109,4 +116,6 @@
       checkmark strikes through the row and advances the home banner's next-up; existing collection
       entry opens the overview with larger metric tiles; customization and add games stay behind
       collection actions; home cards spaced and mode-styled
+- [ ] 8.4 Manual pass: each deadline basis changes the estimate, overview shows time remaining and
+      buffer/shortfall copy, missing basis data is explicit, and Change deadline updates the card
 
