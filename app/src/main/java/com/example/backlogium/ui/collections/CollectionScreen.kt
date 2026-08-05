@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -127,7 +129,7 @@ fun CollectionScreen(
 }
 
 /** The management form: name, mode, sort, deadline, members, add-games, save/delete. */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun CollectionForm(
     state: CollectionUiState,
@@ -151,7 +153,7 @@ private fun CollectionForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
                 OutlinedTextField(
@@ -167,7 +169,10 @@ private fun CollectionForm(
 
             item {
                 SectionLabel("Mode")
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     CollectionMode.entries.forEach { mode ->
                         FilterChip(
                             selected = state.mode == mode,
@@ -222,7 +227,10 @@ private fun CollectionForm(
 
             item {
                 SectionLabel("Accent")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     AccentChip(
                         label = "Default",
                         selected = state.accent == null,
@@ -413,6 +421,9 @@ private fun accentLabel(accent: CollectionAccent): String = when (accent) {
     CollectionAccent.VIOLET -> "Violet"
     CollectionAccent.SAGE -> "Sage"
     CollectionAccent.SLATE -> "Slate"
+    CollectionAccent.TEAL -> "Teal"
+    CollectionAccent.ROSE -> "Rose"
+    CollectionAccent.CORAL -> "Coral"
 }
 
 /** One member row: game icon + name, optional done toggle (queue), move up/down, and remove. */

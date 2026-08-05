@@ -14,6 +14,9 @@ enum class CollectionAccent {
     VIOLET,
     SAGE,
     SLATE,
+    TEAL,
+    ROSE,
+    CORAL,
     ;
 
     companion object {

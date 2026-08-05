@@ -94,8 +94,8 @@ val ColorScheme.playingIndicator: Color
 /**
  * The accent color for a collection card or picker chip (refine-collections-ui). Returns the
  * palette token keyed off the current surface luminance, and `surfaceVariant` for the default
- * / no-accent state. This keeps the card surface itself neutral while the accent only tints
- * the icon chip, progress indicator, and start-edge stripe.
+ * / no-accent state. The result tints the icon chip, progress indicator, card surface wash, and
+ * start-edge stripe.
  */
 fun ColorScheme.collectionAccentColor(accent: CollectionAccent?): Color {
     if (accent == null) return surfaceVariant
@@ -105,6 +105,9 @@ fun ColorScheme.collectionAccentColor(accent: CollectionAccent?): Color {
         CollectionAccent.VIOLET -> if (dark) RarityEpic else RarityEpicLight
         CollectionAccent.SAGE -> if (dark) RarityUncommon else RarityUncommonLight
         CollectionAccent.SLATE -> if (dark) RarityCommon else RarityCommonLight
+        CollectionAccent.TEAL -> if (dark) CollectionTeal else CollectionTealLight
+        CollectionAccent.ROSE -> if (dark) CollectionRose else CollectionRoseLight
+        CollectionAccent.CORAL -> if (dark) CollectionCoral else CollectionCoralLight
     }
 }
 
