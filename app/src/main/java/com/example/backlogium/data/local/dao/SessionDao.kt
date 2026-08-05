@@ -57,7 +57,14 @@ interface SessionDao {
      */
     @Query("SELECT appId, COALESCE(SUM(minutes), 0) AS minutes FROM sessions GROUP BY appId")
     fun observeTrackedMinutesByGame(): Flow<List<GameTrackedMinutes>>
+
+    /** Number of synthesized sessions per game, used by collection overviews. */
+    @Query("SELECT appId, COUNT(*) AS sessions FROM sessions GROUP BY appId")
+    fun observeSessionCountsByGame(): Flow<List<GameSessionCounts>>
 }
 
 /** Per-game tracked-minutes projection for [SessionDao.trackedMinutesByGame]. */
 data class GameTrackedMinutes(val appId: Long, val minutes: Int)
+
+/** Per-game session-count projection for collection overview metrics. */
+data class GameSessionCounts(val appId: Long, val sessions: Int)

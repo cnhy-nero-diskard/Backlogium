@@ -6,10 +6,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -25,6 +27,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -40,31 +44,30 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.AsyncImage
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.theme.collectionAccentColor
+import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowBack
 import compose.icons.tablericons.Check
 import compose.icons.tablericons.ChevronDown
 import compose.icons.tablericons.ChevronUp
 import compose.icons.tablericons.CircleCheck
-import compose.icons.tablericons.Clock
-import compose.icons.tablericons.DeviceGamepad
+import compose.icons.tablericons.DotsVertical
 import compose.icons.tablericons.Plus
-import compose.icons.tablericons.PlayerPlay
 import compose.icons.tablericons.Search
+import compose.icons.tablericons.Settings
 import compose.icons.tablericons.Trash
-import compose.icons.tablericons.Trophy
 import compose.icons.tablericons.X
 import java.time.Instant
 import java.time.LocalDate
@@ -72,13 +75,13 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.text.style.TextDecoration
 
 /**
- * Collection management screen (tasks 4.2–4.6): create/edit a collection, choose its mode and
- * sort, set a deadline (deadline mode only), add/remove games, reorder ordered-queue members,
- * and delete. Renders purely from locally stored state — offline-first, no network. Reached as
- * a pushed sub-destination from Home; [onDone] pops back after save, delete, or back.
+ * Collection destination: existing collections open on a read-only overview, while creation opens
+ * the management form. Customization for an existing collection is intentionally behind the
+ * secondary actions menu so its games and metrics are the primary surface.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,6 +90,9 @@ fun CollectionScreen(
     viewModel: CollectionViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var showEditor by rememberSaveable { mutableStateOf(viewModel.collectionId == 0L) }
+    var showActions by remember { mutableStateOf(false) }
+    val showingOverview = !state.isNew && !showEditor
 
     LaunchedEffect(state.done) {
         if (state.done) onDone()
@@ -99,21 +105,59 @@ fun CollectionScreen(
                 .padding(horizontal = 4.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onDone) {
+            IconButton(
+                onClick = {
+                    if (!state.isNew && showEditor) {
+                        showEditor = false
+                    } else {
+                        onDone()
+                    }
+                },
+            ) {
                 Icon(imageVector = TablerIcons.ArrowBack, contentDescription = "Back")
             }
             Text(
-                text = if (state.isNew) "New collection" else "Edit collection",
+                text = when {
+                    state.isNew -> "New collection"
+                    showingOverview -> state.name.ifBlank { "Collection" }
+                    else -> "Edit collection"
+                },
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f),
             )
             if (!state.isNew) {
-                IconButton(onClick = viewModel::delete) {
-                    Icon(
-                        imageVector = TablerIcons.Trash,
-                        contentDescription = "Delete collection",
-                        tint = MaterialTheme.colorScheme.error,
-                    )
+                Box {
+                    IconButton(onClick = { showActions = true }) {
+                        Icon(
+                            imageVector = if (showingOverview) {
+                                TablerIcons.DotsVertical
+                            } else {
+                                TablerIcons.Settings
+                            },
+                            contentDescription = "Collection actions",
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = showActions,
+                        onDismissRequest = { showActions = false },
+                    ) {
+                        if (showingOverview) {
+                            DropdownMenuItem(
+                                text = { Text("Customize collection") },
+                                onClick = {
+                                    showActions = false
+                                    showEditor = true
+                                },
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Delete collection") },
+                            onClick = {
+                                showActions = false
+                                viewModel.delete()
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -123,9 +167,241 @@ fun CollectionScreen(
                 CircularProgressIndicator()
             }
         } else {
-            CollectionForm(state = state, viewModel = viewModel)
+            if (showingOverview) {
+                CollectionOverview(
+                    state = state,
+                    onCustomize = { showEditor = true },
+                )
+            } else {
+                CollectionForm(state = state, viewModel = viewModel)
+            }
         }
     }
+}
+
+/** Read-only collection surface: members and their useful local metrics come before editing. */
+@Composable
+private fun CollectionOverview(
+    state: CollectionUiState,
+    onCustomize: () -> Unit,
+) {
+    val accentColor = state.accent?.let {
+        MaterialTheme.colorScheme.collectionAccentColor(it)
+    } ?: MaterialTheme.colorScheme.primary
+    val summarySurface = accentColor.copy(alpha = 0.12f)
+        .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
+    val trophyProgress = trophyProgress(state.members)
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = modeLabel(state.mode),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = accentColor,
+                )
+                if (state.mode == CollectionMode.DEADLINE_GOAL) {
+                    Text(
+                        text = state.targetDate?.format(dateFormatter)
+                            ?.let { "Target date: $it" }
+                            ?: "No deadline set",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = summarySurface),
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Row(Modifier.fillMaxWidth()) {
+                        CollectionMetric(
+                            label = "Games",
+                            value = state.members.size.toString(),
+                            modifier = Modifier.weight(1f),
+                        )
+                        CollectionMetric(
+                            label = "Played",
+                            value = UiFormat.minutes(state.members.sumOf { it.playtimeMinutes }),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth()) {
+                        CollectionMetric(
+                            label = "Sessions",
+                            value = state.members.sumOf { it.sessionCount }.toString(),
+                            modifier = Modifier.weight(1f),
+                        )
+                        CollectionMetric(
+                            label = "Trophies",
+                            value = trophyProgress?.let { (unlocked, total) -> "$unlocked/$total" }
+                                ?: "—",
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Games in this collection",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "${state.members.size}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        if (state.members.isEmpty()) {
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("No games yet", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            text = "Add games and tune this collection from Customize.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        OutlinedButton(onClick = onCustomize) {
+                            Icon(
+                                imageVector = TablerIcons.Settings,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Customize collection")
+                        }
+                    }
+                }
+            }
+        } else {
+            items(
+                items = state.members,
+                key = { it.appId },
+            ) { member ->
+                CollectionGameCard(member = member, accentColor = accentColor)
+            }
+        }
+
+        item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+@Composable
+private fun CollectionMetric(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Text(text = value, style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun CollectionGameCard(
+    member: CollectionMemberUi,
+    accentColor: Color,
+) {
+    val cardSurface = accentColor.copy(alpha = 0.08f)
+        .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 88.dp),
+        colors = CardDefaults.cardColors(containerColor = cardSurface),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(5.dp)
+                    .heightIn(min = 88.dp)
+                    .background(accentColor),
+            )
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                member.iconUrl?.let { iconUrl ->
+                    GameIcon(iconUrl = iconUrl, iconSize = 56.dp)
+                    Spacer(Modifier.width(14.dp))
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text(
+                        text = member.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = "${UiFormat.minutes(member.playtimeMinutes)} played · " +
+                            sessionLabel(member.sessionCount),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                    member.achievementsUnlocked?.let { unlocked ->
+                        member.achievementsTotal?.let { total ->
+                            Text(
+                                text = "$unlocked/$total trophies",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = accentColor,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun trophyProgress(members: List<CollectionMemberUi>): Pair<Int, Int>? {
+    val withData = members.filter {
+        it.achievementsUnlocked != null && it.achievementsTotal != null
+    }
+    if (withData.isEmpty()) return null
+    return withData.sumOf { it.achievementsUnlocked!! } to
+        withData.sumOf { it.achievementsTotal!! }
+}
+
+private fun sessionLabel(count: Int): String = when (count) {
+    1 -> "1 session"
+    else -> "$count sessions"
 }
 
 /** The management form: name, mode, sort, deadline, members, add-games, save/delete. */

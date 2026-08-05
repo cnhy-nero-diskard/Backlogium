@@ -3,9 +3,12 @@ package com.example.backlogium.ui.collections
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.backlogium.data.local.dao.AchievementCounts
+import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CollectionRepository
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
+import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
@@ -21,12 +24,16 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import javax.inject.Inject
 
-/** One member row in the management screen: identity plus the library facts it renders. */
+/** One collection member: identity plus the local metrics shown in overview and edit surfaces. */
 data class CollectionMemberUi(
     val appId: Long,
     val name: String,
     val iconUrl: String?,
     val done: Boolean = false,
+    val playtimeMinutes: Int = 0,
+    val achievementsUnlocked: Int? = null,
+    val achievementsTotal: Int? = null,
+    val sessionCount: Int = 0,
 )
 
 /** Full management-screen state for one collection (create or edit), all local/offline-first. */
@@ -69,6 +76,8 @@ class CollectionViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val collectionRepository: CollectionRepository,
     private val gameRepository: GameRepository,
+    private val achievementRepository: AchievementRepository,
+    private val sessionRepository: SessionRepository,
 ) : ViewModel() {
 
     /** 0 when creating a new collection; otherwise the collection being edited. */
@@ -166,11 +175,29 @@ class CollectionViewModel @Inject constructor(
         Session(Draft("", CollectionMode.BASIC, CollectionSort.NAME, null, null), emptyList(), emptySet(), collectionId == 0L, false, false),
     )
 
-    val uiState: StateFlow<CollectionUiState> = combine(
+    private data class LibraryMetrics(
+        val games: List<LibraryGame>,
+        val achievementsByGame: Map<Long, AchievementCounts>,
+        val sessionCountByGame: Map<Long, Int>,
+    )
+
+    private val libraryMetrics: StateFlow<LibraryMetrics> = combine(
         gameRepository.library,
+        achievementRepository.counts,
+        sessionRepository.sessionCountByGame,
+    ) { games, achievementsByGame, sessionCountByGame ->
+        LibraryMetrics(games, achievementsByGame, sessionCountByGame)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        LibraryMetrics(emptyList(), emptyMap(), emptyMap()),
+    )
+
+    val uiState: StateFlow<CollectionUiState> = combine(
+        libraryMetrics,
         session,
-    ) { games, s ->
-        val gamesById = games.associateBy { it.appId }
+    ) { metrics, s ->
+        val gamesById = metrics.games.associateBy { it.appId }
         CollectionUiState(
             loading = !s.loaded,
             isNew = collectionId == 0L,
@@ -189,9 +216,13 @@ class CollectionViewModel @Inject constructor(
                     name = game?.name ?: "Game $appId",
                     iconUrl = game?.iconUrl,
                     done = appId in s.doneMarks,
+                    playtimeMinutes = game?.playtimeForever ?: 0,
+                    achievementsUnlocked = metrics.achievementsByGame[appId]?.unlocked,
+                    achievementsTotal = metrics.achievementsByGame[appId]?.total,
+                    sessionCount = metrics.sessionCountByGame[appId] ?: 0,
                 )
             },
-            libraryGames = games,
+            libraryGames = metrics.games,
             done = s.done,
             saving = s.saving,
         )

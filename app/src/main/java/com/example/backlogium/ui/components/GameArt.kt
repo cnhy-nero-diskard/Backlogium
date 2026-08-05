@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.SubcomposeAsyncImage
 import compose.icons.TablerIcons
@@ -22,13 +23,17 @@ import compose.icons.tablericons.DeviceGamepad
  * "icon that never looks broken" treatment for a Steam CDN thumbnail.
  */
 @Composable
-fun GameIcon(iconUrl: String) {
+fun GameIcon(
+    iconUrl: String,
+    modifier: Modifier = Modifier,
+    iconSize: Dp = 40.dp,
+) {
     val shape = RoundedCornerShape(8.dp)
     SubcomposeAsyncImage(
         model = iconUrl,
         contentDescription = null,
-        modifier = Modifier
-            .size(40.dp)
+        modifier = modifier
+            .size(iconSize)
             .clip(shape),
         // Themed placeholder while the Steam CDN thumbnail loads.
         loading = {

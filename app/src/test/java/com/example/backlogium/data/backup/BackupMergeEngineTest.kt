@@ -8,6 +8,7 @@ import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.GameSessionCounts
 import com.example.backlogium.data.local.dao.GameTrackedMinutes
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -462,6 +463,8 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
         store.groupBy { it.appId }.map { (appId, s) -> GameTrackedMinutes(appId, s.sumOf { it.minutes }) }
 
     override fun observeTrackedMinutesByGame(): Flow<List<GameTrackedMinutes>> = flowOf(emptyList())
+
+    override fun observeSessionCountsByGame(): Flow<List<GameSessionCounts>> = flowOf(emptyList())
 }
 
 private class FakeDailyProgressDao(private val store: MutableMap<String, DailyProgress>) : DailyProgressDao {
