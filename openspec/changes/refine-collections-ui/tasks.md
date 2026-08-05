@@ -7,7 +7,8 @@
 
 ## 1. Schema and persistence
 
-- [x] 1.1 New `domain/CollectionAccent.kt` enum (`STEEL_BLUE`, `VIOLET`, `SAGE`, `SLATE`) with a
+- [x] 1.1 New `domain/CollectionAccent.kt` enum (`STEEL_BLUE`, `VIOLET`, `SAGE`, `SLATE`, `TEAL`,
+      `ROSE`, `CORAL`) with a
       tolerant name parse (unknown → null); `Collection` gains `accent: CollectionAccent? = null`,
       `CollectionMember` gains `done: Boolean = false`
 - [x] 1.2 `Converters`: nullable `CollectionAccent` converters, tolerant-parse fallback, same
@@ -29,6 +30,9 @@
 - [x] 2.2 `CollectionSummaryTest`: next-up skips done members; a queue of members without HLTB data
       completes via marks alone; mark OR-composes with derived completion; marks inert in non-queue
       modes; unmarking restores next-up eligibility
+- [x] 2.3 Extend `CollectionBanner` with aggregate unlocked and total achievement counts when
+      stored data exists; render completion-goal Home cards as `<unlocked>/<total> trophies ·
+      <remaining> left`, with a no-data fallback, and cover the derivation in JVM tests
 
 ## 3. Backup compatibility
 
@@ -94,7 +98,7 @@
 ## 8. Verification
 
 - [x] 8.1 JVM unit tests green (`CollectionSummaryTest`, `BackupMergeEngineTest`, plus any touched
-      suites)
+      suites, including aggregate trophy-count coverage)
 - [x] 8.2 `assembleDebug` builds cleanly; Room schema export (if configured) reflects v10
 - [ ] 8.3 Manual pass: management screen smooth with a large library; floating save reachable at
       any scroll position; search filters the add pool; accent choice persists across reopen;

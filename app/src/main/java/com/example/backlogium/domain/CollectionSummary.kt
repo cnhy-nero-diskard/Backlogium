@@ -62,6 +62,10 @@ data class CollectionBanner(
     val completionFraction: Double?,
     /** Total locked achievements across members; 0 when no member has achievement data. */
     val achievementsRemaining: Int,
+    /** Total unlocked achievements across members with stored achievement data; null when none. */
+    val achievementsUnlocked: Int?,
+    /** Total achievements across members with stored achievement data; null when none. */
+    val achievementsTotal: Int?,
     /** Days from the injected today to the target date; null outside deadline mode or with no target. */
     val daysRemaining: Long?,
     /** True when a deadline target date is on or before the injected today — "passed", not a negative countdown. */
@@ -139,7 +143,18 @@ object CollectionSummary {
 
         val fractions = ordered.mapNotNull { it.completionFraction }
         val completionFraction = if (fractions.isEmpty()) null else fractions.average()
-        val achievementsRemaining = ordered.sumOf { it.achievementsRemaining }
+        val achievementCounts = ordered.mapNotNull { member ->
+            if (member.achievementsUnlocked != null && member.achievementsTotal != null) {
+                member.achievementsUnlocked to member.achievementsTotal
+            } else {
+                null
+            }
+        }
+        val achievementsUnlocked = achievementCounts.takeIf { it.isNotEmpty() }?.sumOf { it.first }
+        val achievementsTotal = achievementCounts.takeIf { it.isNotEmpty() }?.sumOf { it.second }
+        val achievementsRemaining = achievementCounts.sumOf { (unlocked, total) ->
+            (total - unlocked).coerceAtLeast(0)
+        }
 
         val daysRemaining = if (mode == CollectionMode.DEADLINE_GOAL && targetDate != null) {
             ChronoUnit.DAYS.between(today, targetDate)
@@ -160,6 +175,8 @@ object CollectionSummary {
             memberCount = ordered.size,
             completionFraction = completionFraction,
             achievementsRemaining = achievementsRemaining,
+            achievementsUnlocked = achievementsUnlocked,
+            achievementsTotal = achievementsTotal,
             daysRemaining = daysRemaining,
             deadlinePassed = deadlinePassed,
             nextUp = nextUp,

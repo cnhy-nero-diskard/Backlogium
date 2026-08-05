@@ -45,6 +45,20 @@ unrecognized stored accent value SHALL fall back to the default rather than fail
 - **WHEN** a collection's stored accent is not a recognized palette token
 - **THEN** the collection is presented with the default neutral styling
 
+### Requirement: Completion-goal trophy summary
+For a completion-goal collection, the system SHALL aggregate unlocked and total achievement counts
+across members with stored achievement data. The Home banner SHALL show the aggregate as
+`<unlocked>/<total> trophies · <remaining> left`; when no member has stored achievement data, it
+SHALL show a no-data state rather than treating missing data as zero unlocked trophies.
+
+#### Scenario: Trophy counts are aggregated
+- **WHEN** a completion-goal collection has members with stored achievement counts
+- **THEN** its banner shows the aggregate unlocked count, total count, and remaining count
+
+#### Scenario: Trophy counts have no data
+- **WHEN** no member in a completion-goal collection has stored achievement counts
+- **THEN** its banner shows that trophy data is unavailable
+
 ## MODIFIED Requirements
 
 ### Requirement: Ordered-queue sequencing

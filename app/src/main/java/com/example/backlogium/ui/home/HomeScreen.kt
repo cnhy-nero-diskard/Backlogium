@@ -480,7 +480,13 @@ private fun bannerText(banner: CollectionBanner): String = when (banner.mode) {
     CollectionMode.BASIC -> banner.memberCountLabel
     CollectionMode.COMPLETION_GOAL -> {
         val progress = banner.completionFraction?.let { percent(it) } ?: "—"
-        "$progress complete · ${banner.achievementsRemaining} achievements to go"
+        val trophies = if (banner.achievementsUnlocked != null && banner.achievementsTotal != null) {
+            "${banner.achievementsUnlocked}/${banner.achievementsTotal} trophies · " +
+                "${banner.achievementsRemaining} left"
+        } else {
+            "No trophy data"
+        }
+        "$progress complete · $trophies"
     }
     CollectionMode.DEADLINE_GOAL -> {
         val progress = banner.completionFraction?.let { percent(it) } ?: "—"

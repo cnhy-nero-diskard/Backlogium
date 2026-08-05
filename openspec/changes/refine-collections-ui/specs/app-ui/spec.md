@@ -24,6 +24,11 @@ NOT displace or demote the existing level, XP, quest, streak, or now-playing sur
 - **THEN** its card presents the mode's structured surface — progress for goal modes, countdown for
   deadline mode, next game for ordered queue — rather than a text line alone
 
+#### Scenario: Completion-goal trophy summary
+- **WHEN** a collection's mode is completion goal and achievement counts exist for one or more
+  members
+- **THEN** its Home card shows aggregate unlocked out of total trophies and the remaining count
+
 #### Scenario: Accent tint applied
 - **WHEN** a collection has a stored accent
 - **THEN** its card surface and accent affordances use a low-opacity tint from that accent while

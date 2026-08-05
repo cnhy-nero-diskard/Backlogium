@@ -32,7 +32,8 @@ edit model of the management screen (cancel discards, save persists atomically).
 - Backup/restore keeps working across old and new file shapes.
 
 **Non-Goals:**
-- Changing banner arithmetic beyond the done-mark semantics ("x achievements to go" stays).
+- Changing banner arithmetic beyond the done-mark semantics; completion-goal cards now expose
+  aggregate unlocked/total trophies and the remaining count when achievement data exists.
 - Drag-and-drop reordering, per-member deadlines, user colors outside the palette.
 - Any sync/network change — collections stay untouched by the Steam sync worker.
 
@@ -71,7 +72,8 @@ edit model of the management screen (cancel discards, save persists atomically).
    color input — violates the "limit to palette" requirement and the accent rule.
 
 5. **Mode drives anatomy; accent drives tint.** Home card per mode: basic = count;
-   completion goal = progress bar + trophies copy; deadline goal = countdown + progress;
+   completion goal = progress bar + `<unlocked>/<total> trophies · <remaining> left` copy;
+   deadline goal = countdown + progress;
    ordered queue = next-up row with position. Accent tints the mode-icon chip, progress
    indicator, card surface wash, and a start-edge stripe. Cards use a stronger elevated base
    surface, a low-opacity accent wash, 10dp gaps between cards, and compact internal padding so
@@ -128,6 +130,6 @@ backups ignore cleanly on older builds. Rollback path is the configured destruct
 
 ## Open Questions
 
-None — checkmark semantics (keep + strike-through + grey), achievements copy (unchanged),
+None — checkmark semantics (keep + strike-through + grey), trophy count copy,
 palette limits, and search scope (add pool only) were resolved with the requester during
 exploration.

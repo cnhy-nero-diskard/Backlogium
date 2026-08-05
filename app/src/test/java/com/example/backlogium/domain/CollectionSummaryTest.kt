@@ -111,6 +111,8 @@ class CollectionSummaryTest {
             today = today,
         )
         assertEquals(8, banner.achievementsRemaining)
+        assertEquals(7, banner.achievementsUnlocked)
+        assertEquals(15, banner.achievementsTotal)
     }
 
     @Test
@@ -126,6 +128,21 @@ class CollectionSummaryTest {
             today = today,
         )
         assertEquals(2, banner.achievementsRemaining)
+        assertEquals(2, banner.achievementsUnlocked)
+        assertEquals(4, banner.achievementsTotal)
+    }
+
+    @Test
+    fun noMemberWithAchievementData_hasNoAggregateTrophyCounts() {
+        val banner = CollectionSummary.derive(
+            mode = CollectionMode.COMPLETION_GOAL,
+            sort = CollectionMode.COMPLETION_GOAL.defaultSort(),
+            targetDate = null,
+            members = listOf(member(1), member(2)),
+            today = today,
+        )
+        assertNull(banner.achievementsUnlocked)
+        assertNull(banner.achievementsTotal)
     }
 
     @Test

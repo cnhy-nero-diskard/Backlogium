@@ -30,7 +30,9 @@ complete a queue).
   low-opacity wash from the chosen accent.
 - **Mode-styled Home cards**: each mode gets a distinct card treatment — structured content
   (progress bar for goal modes, countdown for deadline, next-up row for ordered queue) instead
-  of one uniform text line — while the member-count surface is kept.
+  of one uniform text line — while the member-count surface is kept. Completion-goal cards show
+  aggregate trophy progress as `<unlocked>/<total> trophies · <remaining> left`, or `No trophy
+  data` when no member has stored achievement counts.
 - **Ordered-queue checkmark**: ordered-queue members can be manually marked done. A done member
   stays in the list with its name crossed out and the card greyed; the next-up surface skips
   done members; the queue reads as complete when every member is done or derived-complete.
@@ -38,7 +40,8 @@ complete a queue).
   spacing, use a stronger elevated surface with accent color washes, and reduce internal padding
   so they do not read as vertically chunky.
 
-The achievements copy ("x achievements to go") is deliberately unchanged.
+Completion-goal trophy copy is explicit and aggregate: unlocked out of total plus the remaining
+count, with a no-data fallback rather than implying that missing achievement data means zero.
 
 ## Capabilities
 
