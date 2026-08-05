@@ -72,6 +72,13 @@ data class HomeCollectionCard(
     val mode: CollectionMode,
     val accent: CollectionAccent?,
     val banner: CollectionBanner,
+    val games: List<HomeCollectionGame>,
+)
+
+data class HomeCollectionGame(
+    val appId: Long,
+    val name: String,
+    val iconUrl: String?,
 )
 
 @HiltViewModel
@@ -166,6 +173,14 @@ class HomeViewModel @Inject constructor(
                 mode = collection.mode,
                 accent = collection.accent,
                 banner = banner,
+                games = members.map { member ->
+                    val game = gamesById[member.appId]
+                    HomeCollectionGame(
+                        appId = member.appId,
+                        name = game?.name ?: "Game ${member.appId}",
+                        iconUrl = game?.iconUrl,
+                    )
+                },
             )
         }
 

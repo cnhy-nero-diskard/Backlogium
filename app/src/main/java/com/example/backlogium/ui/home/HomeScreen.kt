@@ -69,6 +69,7 @@ import com.example.backlogium.R
 import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.label
+import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.domain.isStreakMilestone
 import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.theme.collectionAccentColor
@@ -439,32 +440,85 @@ private fun CollectionCard(
                     .fillMaxHeight()
                     .background(accentColor),
             )
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            imageVector = modeIcon(card.mode),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = accentColor,
+                        )
+                        Text(
+                            text = card.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    bannerText(card.banner)?.let { copy ->
+                        Text(
+                            text = copy,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                CollectionGameThumbs(
+                    games = card.games,
+                    accentColor = accentColor,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CollectionGameThumbs(
+    games: List<HomeCollectionGame>,
+    accentColor: Color,
+) {
+    if (games.isEmpty()) return
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        games.take(5).forEach { game ->
+            if (game.iconUrl != null) {
+                GameIcon(iconUrl = game.iconUrl, iconSize = 30.dp)
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .background(
+                            accentColor.copy(alpha = 0.16f),
+                            RoundedCornerShape(7.dp),
+                        ),
+                    contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        imageVector = modeIcon(card.mode),
+                        imageVector = TablerIcons.DeviceGamepad,
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(17.dp),
                         tint = accentColor,
-                    )
-                    Text(
-                        text = card.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
-                bannerText(card.banner)?.let { copy ->
-                    Text(
-                        text = copy,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
+        }
+        if (games.size > 5) {
+            Text(
+                text = "${games.size - 5}+",
+                style = MaterialTheme.typography.labelSmall,
+                color = accentColor,
+            )
         }
     }
 }
