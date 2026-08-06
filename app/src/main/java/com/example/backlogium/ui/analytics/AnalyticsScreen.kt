@@ -1,6 +1,7 @@
 package com.example.backlogium.ui.analytics
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,12 +20,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -66,10 +71,17 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(
-            text = "Last 30 days",
-            style = MaterialTheme.typography.titleMedium,
+            text = "Analytics",
+            style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
         )
+        Text(
+            text = "See how your play is building over time.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        AnalyticsOverviewCard(days = state.dailyMinutes)
 
         DailyPlaytimeChart(
             days = state.dailyMinutes,
@@ -88,11 +100,56 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
     }
 }
 
+@Composable
+private fun AnalyticsOverviewCard(days: List<AnalyticsDay>) {
+    val activeDays = days.count { it.minutes > 0 }
+    val totalMinutes = days.sumOf { it.minutes }
+    val averageMinutes = if (activeDays == 0) 0 else totalMinutes / activeDays
+    val contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+        ),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Play snapshot",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = contentColor,
+                )
+                Text(
+                    text = "30 DAYS",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = contentColor.copy(alpha = 0.7f),
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                SummaryStat(label = "Tracked", value = UiFormat.minutes(totalMinutes), valueColor = contentColor)
+                SummaryStat(label = "Active days", value = "$activeDays", valueColor = contentColor)
+                SummaryStat(label = "Daily avg", value = UiFormat.minutes(averageMinutes), valueColor = contentColor)
+            }
+        }
+    }
+}
+
 /**
  * The daily playtime bar chart, hand-rolled on [Canvas] so no charting dependency is added. One
  * bar per day in the window, a dashed horizontal reference line at the configured quest threshold,
- * and a max-value axis label. Zero-minute days render as a hairline baseline tick so the chart
- * keeps a continuous axis rather than collapsing gaps.
+ * and a max-value axis label. Tapping a bar selects that day and reveals its exact total and goal
+ * status below the plot. Zero-minute days render as a hairline baseline tick so the chart keeps a
+ * continuous axis rather than collapsing gaps.
  */
 @Composable
 private fun DailyPlaytimeChart(
@@ -111,6 +168,10 @@ private fun DailyPlaytimeChart(
     )
     val dayFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)
     val totalMinutes = days.sumOf { it.minutes }
+    var selectedIndex by remember(days) {
+        mutableIntStateOf(days.indexOfLast { it.minutes > 0 }.takeIf { it >= 0 } ?: days.lastIndex)
+    }
+    val selectedDay = days.getOrNull(selectedIndex)
 
     Card(modifier = modifier) {
         Column(Modifier.padding(16.dp)) {
@@ -121,7 +182,7 @@ private fun DailyPlaytimeChart(
             ) {
                 Text("Daily playtime", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    text = "${UiFormat.minutes(totalMinutes)} total",
+                    text = "Tap a day · ${UiFormat.minutes(totalMinutes)} total",
                     style = MaterialTheme.typography.labelSmall,
                     color = labelColor,
                 )
@@ -145,7 +206,16 @@ private fun DailyPlaytimeChart(
                     Canvas(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(chartHeight),
+                            .height(chartHeight)
+                            .pointerInput(days, maxMinutes) {
+                                detectTapGestures { offset ->
+                                    if (days.isNotEmpty()) {
+                                        selectedIndex = (offset.x / (size.width / days.size))
+                                            .toInt()
+                                            .coerceIn(0, days.lastIndex)
+                                    }
+                                }
+                            },
                     ) {
                         val w = size.width
                         val h = size.height
@@ -167,13 +237,21 @@ private fun DailyPlaytimeChart(
                         val gap = (barSlot - barWidth).coerceAtLeast(0f) / 2f
 
                         days.forEachIndexed { index, day ->
+                            val left = index * barSlot + gap
+                            if (index == selectedIndex) {
+                                drawRoundRect(
+                                    color = barColor.copy(alpha = 0.12f),
+                                    topLeft = Offset(index * barSlot + 1f, 0f),
+                                    size = Size((barSlot - 2f).coerceAtLeast(1f), h),
+                                    cornerRadius = CornerRadius(8f, 8f),
+                                )
+                            }
                             val barHeight = ((day.minutes.toFloat() / maxMinutes) * h)
                                 .coerceAtLeast(if (day.minutes > 0) 3f else 0f)
-                            val left = index * barSlot + gap
                             val top = h - barHeight
                             if (day.minutes > 0) {
                                 drawRoundRect(
-                                    color = barColor,
+                                    color = if (index == selectedIndex) barColor else barColor.copy(alpha = 0.72f),
                                     topLeft = Offset(left, top),
                                     size = Size(barWidth, barHeight),
                                     cornerRadius = CornerRadius(4f, 4f),
@@ -236,6 +314,41 @@ private fun DailyPlaytimeChart(
                     color = labelColor,
                 )
             }
+            selectedDay?.let { day ->
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column {
+                        Text(
+                            text = day.date.format(dayFormatter),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = when {
+                                questThreshold <= 0 -> "No daily goal set"
+                                day.minutes >= questThreshold -> "Daily goal met"
+                                else -> "${UiFormat.minutes(questThreshold - day.minutes)} to goal"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = labelColor,
+                        )
+                    }
+                    Text(
+                        text = UiFormat.minutes(day.minutes),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (day.minutes >= questThreshold && questThreshold > 0) {
+                            thresholdColor
+                        } else {
+                            barColor
+                        },
+                    )
+                }
+            }
         }
     }
 }
@@ -289,12 +402,17 @@ private fun StreakSummaryCard(
 }
 
 @Composable
-private fun SummaryStat(label: String, value: String) {
+private fun SummaryStat(
+    label: String,
+    value: String,
+    valueColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface,
+) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = value,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
+            color = valueColor,
         )
         Text(
             text = label,
