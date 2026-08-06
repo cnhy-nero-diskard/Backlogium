@@ -41,6 +41,8 @@
       sparse date labels, rounded bars, and a labeled quest-threshold legend
 - [x] 4.6 Make chart days tappable with selected-bar feedback and a selected-day detail row, and add
       an at-a-glance play snapshot card to improve the screen's visual hierarchy
+- [x] 4.7 Clarify the chart's zero baseline with a visible foreground axis and reduce the goal-line
+      dominance so the two references are not confused
 
 ## 5. Spec
 

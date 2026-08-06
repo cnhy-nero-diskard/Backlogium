@@ -55,6 +55,11 @@ five entries.
 - **THEN** that bar is visually selected and the chart presents the day's date, tracked minutes, and
   whether the configured daily goal was met
 
+#### Scenario: Distinguishing the chart baseline
+- **WHEN** the daily playtime chart is shown
+- **THEN** the zero-minute baseline is rendered as a visible solid axis beneath the bars and remains
+  visually distinct from the dashed daily-goal reference line
+
 #### Scenario: Streak summary
 - **WHEN** the Analytics screen is shown
 - **THEN** the streak summary shows the current streak, the longest streak, and the number of
