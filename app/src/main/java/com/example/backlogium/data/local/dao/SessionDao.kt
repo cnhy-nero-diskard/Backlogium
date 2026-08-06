@@ -61,6 +61,17 @@ interface SessionDao {
     /** Number of synthesized sessions per game, used by collection overviews. */
     @Query("SELECT appId, COUNT(*) AS sessions FROM sessions GROUP BY appId")
     fun observeSessionCountsByGame(): Flow<List<GameSessionCounts>>
+
+    /**
+     * Tracked minutes summed per game over sessions starting at or after [cutoff] (epoch millis).
+     * Feeds the Analytics screen's most-played-games-in-the-window list, which is distinct from
+     * the all-time [observeTrackedMinutesByGame] the Library's XP badge uses.
+     */
+    @Query(
+        "SELECT appId, COALESCE(SUM(minutes), 0) AS minutes FROM sessions " +
+            "WHERE startAt >= :cutoff GROUP BY appId",
+    )
+    fun observeMinutesByGameSince(cutoff: Long): Flow<List<GameTrackedMinutes>>
 }
 
 /** Per-game tracked-minutes projection for [SessionDao.trackedMinutesByGame]. */
