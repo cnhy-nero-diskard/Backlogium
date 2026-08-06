@@ -464,6 +464,12 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
 
     override fun observeTrackedMinutesByGame(): Flow<List<GameTrackedMinutes>> = flowOf(emptyList())
 
+    override fun observeMinutesByGameSince(cutoff: Long): Flow<List<GameTrackedMinutes>> = flowOf(
+        store.filter { it.startAt >= cutoff }
+            .groupBy { it.appId }
+            .map { (appId, sessions) -> GameTrackedMinutes(appId, sessions.sumOf { it.minutes }) },
+    )
+
     override fun observeSessionCountsByGame(): Flow<List<GameSessionCounts>> = flowOf(emptyList())
 }
 

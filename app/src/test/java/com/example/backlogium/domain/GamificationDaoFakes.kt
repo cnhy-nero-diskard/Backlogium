@@ -48,6 +48,12 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
             .map { (appId, group) -> GameTrackedMinutes(appId, group.sumOf { it.minutes }) },
     )
 
+    override fun observeMinutesByGameSince(cutoff: Long): Flow<List<GameTrackedMinutes>> = flowOf(
+        sessions.filter { it.startAt >= cutoff }
+            .groupBy { it.appId }
+            .map { (appId, group) -> GameTrackedMinutes(appId, group.sumOf { it.minutes }) },
+    )
+
     override fun observeSessionCountsByGame(): Flow<List<GameSessionCounts>> = flowOf(
         sessions.groupBy { it.appId }
             .map { (appId, group) -> GameSessionCounts(appId, group.size) },

@@ -21,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.PathEffect
@@ -103,106 +104,153 @@ private fun DailyPlaytimeChart(
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
     val thresholdColor = MaterialTheme.colorScheme.tertiary
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-    val chartHeight = 160.dp
+    val chartHeight = 176.dp
 
-    val maxMinutes = maxOf(days.maxOfOrNull { it.minutes } ?: 0, questThreshold, 1)
+    val maxMinutes = niceChartMax(
+        maxOf(days.maxOfOrNull { it.minutes } ?: 0, questThreshold, 1),
+    )
     val dayFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)
+    val totalMinutes = days.sumOf { it.minutes }
 
     Card(modifier = modifier) {
         Column(Modifier.padding(16.dp)) {
-            Text("Daily playtime", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.Bottom) {
-                // Left axis: the max value label, rotated-style compact.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("Daily playtime", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = "${UiFormat.minutes(totalMinutes)} total",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = labelColor,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.Top) {
+                // Keep the labels outside the canvas so they remain crisp and do not overlap bars.
                 Column(
-                    modifier = Modifier.height(chartHeight),
-                    verticalArrangement = Arrangement.Bottom,
+                    modifier = Modifier
+                        .width(44.dp)
+                        .height(chartHeight),
+                    verticalArrangement = Arrangement.SpaceBetween,
+                    horizontalAlignment = Alignment.End,
                 ) {
-                    Text(
-                        text = UiFormat.minutes(maxMinutes),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = labelColor,
-                    )
+                    Text(UiFormat.minutes(maxMinutes), style = MaterialTheme.typography.labelSmall, color = labelColor)
+                    Text(UiFormat.minutes(maxMinutes / 2), style = MaterialTheme.typography.labelSmall, color = labelColor)
+                    Text("0m", style = MaterialTheme.typography.labelSmall, color = labelColor)
                 }
                 Spacer(Modifier.width(8.dp))
-                Canvas(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(chartHeight),
-                ) {
-                    val w = size.width
-                    val h = size.height
-                    if (days.isEmpty()) return@Canvas
+                Column(modifier = Modifier.weight(1f)) {
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(chartHeight),
+                    ) {
+                        val w = size.width
+                        val h = size.height
+                        if (days.isEmpty()) return@Canvas
 
-                    // Baseline.
-                    drawLine(
-                        color = trackColor,
-                        start = Offset(0f, h - 1f),
-                        end = Offset(w, h - 1f),
-                        strokeWidth = 1f,
-                    )
-
-                    val barSlot = w / days.size
-                    val barWidth = (barSlot * 0.7f).coerceAtLeast(1f)
-                    val gap = (barSlot - barWidth) / 2f
-
-                    days.forEachIndexed { index, day ->
-                        val barHeight = if (maxMinutes <= 0) 0f else (day.minutes.toFloat() / maxMinutes) * h
-                        val left = index * barSlot + gap
-                        val top = h - barHeight
-                        if (day.minutes > 0) {
-                            drawRect(
-                                color = barColor,
-                                topLeft = Offset(left, top),
-                                size = Size(barWidth, barHeight),
-                            )
-                        } else {
-                            // Hairline tick for zero-minute days so the axis reads as continuous.
+                        // Quiet gridlines make the scale visible without competing with the data.
+                        listOf(0f, 0.5f, 1f).forEach { fraction ->
+                            val y = h * fraction
                             drawLine(
-                                color = trackColor,
-                                start = Offset(left + barWidth / 2f, h - 1f),
-                                end = Offset(left + barWidth / 2f, h - 4f),
-                                strokeWidth = 1f,
+                                color = if (fraction == 1f) trackColor else trackColor.copy(alpha = 0.55f),
+                                start = Offset(0f, y),
+                                end = Offset(w, y),
+                                strokeWidth = if (fraction == 1f) 1.5f else 1f,
+                            )
+                        }
+
+                        val barSlot = w / days.size
+                        val barWidth = (barSlot * 0.68f).coerceAtLeast(2f)
+                        val gap = (barSlot - barWidth).coerceAtLeast(0f) / 2f
+
+                        days.forEachIndexed { index, day ->
+                            val barHeight = ((day.minutes.toFloat() / maxMinutes) * h)
+                                .coerceAtLeast(if (day.minutes > 0) 3f else 0f)
+                            val left = index * barSlot + gap
+                            val top = h - barHeight
+                            if (day.minutes > 0) {
+                                drawRoundRect(
+                                    color = barColor,
+                                    topLeft = Offset(left, top),
+                                    size = Size(barWidth, barHeight),
+                                    cornerRadius = CornerRadius(4f, 4f),
+                                )
+                            } else {
+                                // A small tick preserves the position of an empty day without noise.
+                                drawLine(
+                                    color = trackColor,
+                                    start = Offset(left + barWidth / 2f, h),
+                                    end = Offset(left + barWidth / 2f, h - 4f),
+                                    strokeWidth = 1f,
+                                )
+                            }
+                        }
+
+                        // Quest threshold reference line (dashed).
+                        if (questThreshold > 0) {
+                            val y = h - (questThreshold.toFloat() / maxMinutes) * h
+                            drawLine(
+                                color = thresholdColor,
+                                start = Offset(0f, y),
+                                end = Offset(w, y),
+                                strokeWidth = 2f,
+                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f)),
                             )
                         }
                     }
-
-                    // Quest threshold reference line (dashed).
-                    if (questThreshold > 0) {
-                        val y = h - (questThreshold.toFloat() / maxMinutes) * h
-                        drawLine(
-                            color = thresholdColor,
-                            start = Offset(0f, y),
-                            end = Offset(w, y),
-                            strokeWidth = 2f,
-                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f)),
-                        )
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        days.firstOrNull()?.let {
+                            Text(it.date.format(dayFormatter), style = MaterialTheme.typography.labelSmall, color = labelColor)
+                        }
+                        days.lastOrNull()?.let {
+                            Text(it.date.format(dayFormatter), style = MaterialTheme.typography.labelSmall, color = labelColor)
+                        }
                     }
                 }
             }
             Spacer(Modifier.height(8.dp))
-            // Window endpoints as axis labels.
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                days.firstOrNull()?.let {
-                    Text(
-                        text = it.date.format(dayFormatter),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = labelColor,
+                Canvas(Modifier.size(width = 18.dp, height = 2.dp)) {
+                    drawLine(
+                        color = thresholdColor,
+                        start = Offset.Zero,
+                        end = Offset(size.width, 0f),
+                        strokeWidth = 2f,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 4f)),
                     )
                 }
-                days.lastOrNull()?.let {
-                    Text(
-                        text = it.date.format(dayFormatter),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = labelColor,
-                    )
-                }
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "Daily goal · ${UiFormat.minutes(questThreshold)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = labelColor,
+                )
             }
         }
     }
+}
+
+/** Round the chart ceiling to a small, readable scale instead of labeling an arbitrary peak. */
+private fun niceChartMax(maxMinutes: Int): Int {
+    val minimum = maxMinutes.coerceAtLeast(1)
+    val step = when {
+        minimum <= 60 -> 15
+        minimum <= 180 -> 30
+        minimum <= 360 -> 60
+        minimum <= 720 -> 120
+        else -> 240
+    }
+    return ((minimum + step - 1) / step) * step
 }
 
 @Composable
