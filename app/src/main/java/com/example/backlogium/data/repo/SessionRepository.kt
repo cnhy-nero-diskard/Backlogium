@@ -42,6 +42,15 @@ class SessionRepository @Inject constructor(
     /** Synthesized session count per game, keyed by appId. */
     val sessionCountByGame: Flow<Map<Long, Int>> = sessionDao.observeSessionCountsByGame()
         .map { rows -> rows.associate { it.appId to it.sessions } }
+
+    /**
+     * Tracked minutes summed per game over sessions starting at or after [cutoffMillis], keyed
+     * by appId. Feeds the Analytics screen's most-played-games-in-the-window list — distinct
+     * from [trackedMinutesByGame] (all-time) the Library's XP badge reads.
+     */
+    fun minutesByGameSince(cutoffMillis: Long): Flow<Map<Long, Int>> =
+        sessionDao.observeMinutesByGameSince(cutoffMillis)
+            .map { rows -> rows.associate { it.appId to it.minutes } }
 }
 
 private fun Session.toDomain() = PlaySession(

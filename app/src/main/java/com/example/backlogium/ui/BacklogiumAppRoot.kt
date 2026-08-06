@@ -32,6 +32,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.backlogium.ui.components.ProfileHeader
+import com.example.backlogium.ui.analytics.AnalyticsScreen
 import com.example.backlogium.ui.collections.CollectionScreen
 import com.example.backlogium.ui.gamedetail.GameDetailScreen
 import com.example.backlogium.ui.history.HistoryScreen
@@ -64,7 +65,7 @@ private fun gameDetailRoute(appId: Long) = "game_detail/$appId"
 private const val ROUTE_COLLECTION = "collection/{collectionId}"
 private fun collectionRoute(collectionId: Long) = "collection/$collectionId"
 
-/** App shell: bottom navigation between Home, Library, History, and Settings. */
+/** App shell: bottom navigation between Home, Library, History, Analytics, and Settings. */
 @Composable
 fun BacklogiumAppRoot() {
     val navController = rememberNavController()
@@ -164,6 +165,7 @@ fun BacklogiumAppRoot() {
                     )
                 }
                 composable(Destination.HISTORY.route) { HistoryScreen() }
+                composable(Destination.ANALYTICS.route) { AnalyticsScreen() }
                 composable(Destination.SETTINGS.route) {
                     SettingsScreen(
                         onEditCredentials = { navController.navigate(ROUTE_ONBOARDING) },

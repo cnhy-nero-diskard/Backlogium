@@ -2,6 +2,7 @@ package com.example.backlogium.ui.navigation
 
 import androidx.compose.ui.graphics.vector.ImageVector
 import compose.icons.TablerIcons
+import compose.icons.tablericons.ChartBar
 import compose.icons.tablericons.DeviceGamepad
 import compose.icons.tablericons.History
 import compose.icons.tablericons.Home
@@ -12,5 +13,6 @@ enum class Destination(val route: String, val label: String, val icon: ImageVect
     HOME("home", "Home", TablerIcons.Home),
     LIBRARY("library", "Library", TablerIcons.DeviceGamepad),
     HISTORY("history", "History", TablerIcons.History),
+    ANALYTICS("analytics", "Analytics", TablerIcons.ChartBar),
     SETTINGS("settings", "Settings", TablerIcons.Settings),
 }
