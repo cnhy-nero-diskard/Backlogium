@@ -1,11 +1,14 @@
 package com.example.backlogium.ui.analytics
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -13,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
@@ -27,21 +31,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.theme.rarityHalo
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
+import compose.icons.tablericons.Bolt
+import compose.icons.tablericons.Clock
 import compose.icons.tablericons.Flame
+import compose.icons.tablericons.Trophy
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
@@ -114,6 +126,16 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
             questMetDaysCount = state.questMetDaysCount,
             windowDays = state.dailyMinutes.size,
         )
+
+        SessionInsightsCard(
+            sessionCount = state.sessionInsights.sessionCount,
+            averageMinutes = state.sessionInsights.averageMinutes,
+            longestMinutes = state.sessionInsights.longestMinutes,
+        )
+
+        TimeOfDayCard(pattern = state.timeOfDayPattern)
+
+        RarityBreakdownCard(breakdown = state.rarityBreakdown)
 
         MostPlayedGamesCard(games = state.topGames)
     }
@@ -507,6 +529,225 @@ private fun MostPlayedGamesCard(games: List<AnalyticsGame>) {
                             text = UiFormat.minutes(game.minutes),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Session shape over the window — how many sessions were tracked, the average length, and the
+ * longest single session. Complements the daily bar chart: same underlying sessions, but the
+ * rhythm of a single sitting rather than a whole day.
+ */
+@Composable
+private fun SessionInsightsCard(
+    sessionCount: Int,
+    averageMinutes: Int,
+    longestMinutes: Int,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = TablerIcons.Bolt,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Session insights", style = MaterialTheme.typography.titleSmall)
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                SummaryStat(label = "Sessions", value = "$sessionCount")
+                SummaryStat(label = "Avg session", value = UiFormat.minutes(averageMinutes))
+                SummaryStat(label = "Longest", value = UiFormat.minutes(longestMinutes))
+            }
+        }
+    }
+}
+
+/**
+ * When the player's tracked minutes tend to land, bucketed into four parts of the day. The peak
+ * bucket is highlighted so "I'm a night owl" reads at a glance.
+ */
+@Composable
+private fun TimeOfDayCard(pattern: TimeOfDayPattern) {
+    val peak = pattern.peakBucket
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = TablerIcons.Clock,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Play time of day", style = MaterialTheme.typography.titleSmall)
+            }
+            Spacer(Modifier.height(12.dp))
+            val buckets = listOf(
+                "Morning" to pattern.morningMinutes,
+                "Afternoon" to pattern.afternoonMinutes,
+                "Evening" to pattern.eveningMinutes,
+                "Night" to pattern.nightMinutes,
+            )
+            val maxMinutes = maxOf(1, buckets.maxOf { it.second })
+            Row(modifier = Modifier.fillMaxWidth()) {
+                buckets.forEach { (label, minutes) ->
+                    TimeOfDayBar(
+                        label = label,
+                        minutes = minutes,
+                        fraction = minutes.toFloat() / maxMinutes,
+                        highlighted = label == peak,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = peak?.let { "Peak time: $it" } ?: "No tracked play in the last 30 days.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TimeOfDayBar(
+    label: String,
+    minutes: Int,
+    fraction: Float,
+    highlighted: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val barColor = MaterialTheme.colorScheme.primary
+    val mutedColor = MaterialTheme.colorScheme.secondary
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = UiFormat.minutes(minutes),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (highlighted) barColor else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(4.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.5f)
+                .height(64.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(fraction.coerceIn(0f, 1f))
+                    .background(if (highlighted) barColor else mutedColor.copy(alpha = 0.55f)),
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * The player's achievement-rarity profile — how many unlocked achievements fall in each of Steam's
+ * rarity tiers. A single stacked bar with segment widths proportional to each tier's count, plus a
+ * per-tier legend. Tier colors reuse the game-detail halo palette so "rare" means the same color
+ * everywhere in the app.
+ */
+@Composable
+private fun RarityBreakdownCard(breakdown: RarityBreakdown) {
+    val tiers = listOf(
+        RarityTier.COMMON to breakdown.common,
+        RarityTier.UNCOMMON to breakdown.uncommon,
+        RarityTier.RARE to breakdown.rare,
+        RarityTier.EPIC to breakdown.epic,
+        RarityTier.LEGENDARY to breakdown.legendary,
+    )
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = TablerIcons.Trophy,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Achievement rarity", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = "${breakdown.total} unlocked",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            if (breakdown.total == 0) {
+                Text(
+                    text = "No unlocked achievements yet.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(12.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                ) {
+                    tiers.forEach { (tier, count) ->
+                        if (count > 0) {
+                            Box(
+                                Modifier
+                                    .weight(count.toFloat())
+                                    .fillMaxHeight()
+                                    .background(MaterialTheme.colorScheme.rarityHalo(tier)),
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                tiers.forEach { (tier, count) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            Modifier
+                                .size(10.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(MaterialTheme.colorScheme.rarityHalo(tier)),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = tier.name.lowercase().replaceFirstChar { it.uppercase() },
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = if (count == 1) "1 achievement" else "$count achievements",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
