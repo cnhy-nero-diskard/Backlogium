@@ -61,8 +61,9 @@ Analytics is the screen that answers those questions with a glance.
 
 ## Non-goals
 
-- **A range picker.** The first cut is a fixed 30-day window, matching History's initial window.
-  A user-chosen range is a later iteration once the value of the trends view is confirmed.
+- **An arbitrary date picker.** The stored analytics window remains 30 days, with only three
+  presentation presets (Active days, 7 days, and 30 days) to keep the graph readable without
+  introducing calendar-range persistence or a new data query.
 - **All-time trends.** Weeks/months aggregation and all-time sparklines are out of scope for the
   first cut; the 30-day daily chart is the spine.
 - **Achievement-over-time charts.** The History screen already surfaces per-day achievement

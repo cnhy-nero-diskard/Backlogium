@@ -18,7 +18,9 @@ is fully usable offline.
 ### Requirement: Analytics screen
 The system SHALL provide an Analytics screen, reachable as a top-level destination, that
 summarizes the player's tracked play over a recent fixed window (the last 30 days) using a daily
-playtime bar chart, a streak summary, and a most-played-games list. The screen SHALL render purely
+playtime bar chart, a streak summary, and a most-played-games list. The chart SHALL provide
+selectable Active days, 7 days, and 30 days ranges, defaulting to Active days and omitting
+zero-minute dates in that default view. The screen SHALL render purely
 from locally stored state so it is usable offline, and SHALL present an empty state when no tracked
 sessions exist in the window. The daily playtime chart SHALL draw one bar per local day and SHALL
 mark the configured daily-quest threshold as a reference line, so met and unmet days are legible at
@@ -59,6 +61,11 @@ five entries.
 - **WHEN** the daily playtime chart is shown
 - **THEN** the zero-minute baseline is rendered as a visible solid axis beneath the bars and remains
   visually distinct from the dashed daily-goal reference line
+
+#### Scenario: Selecting a chart range
+- **WHEN** the user selects Active days, 7 days, or 30 days
+- **THEN** the chart updates to show the corresponding local-date range without requiring a network
+  call, and Active days omits dates with zero tracked minutes
 
 #### Scenario: Streak summary
 - **WHEN** the Analytics screen is shown

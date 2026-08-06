@@ -43,6 +43,8 @@
       an at-a-glance play snapshot card to improve the screen's visual hierarchy
 - [x] 4.7 Clarify the chart's zero baseline with a visible foreground axis and reduce the goal-line
       dominance so the two references are not confused
+- [x] 4.8 Add an Active days / 7 days / 30 days chart range selector, defaulting to Active days so
+      zero-minute dates are omitted unless the user chooses a fixed window
 
 ## 5. Spec
 
