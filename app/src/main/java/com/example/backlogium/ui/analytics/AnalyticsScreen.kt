@@ -15,12 +15,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,9 +45,16 @@ import compose.icons.tablericons.Flame
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
+private enum class ChartRange(val label: String, val dayCount: Int?) {
+    ACTIVE("Active days", null),
+    WEEK("7 days", 7),
+    MONTH("30 days", 30),
+}
+
 @Composable
 fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var chartRange by remember { mutableStateOf(ChartRange.ACTIVE) }
 
     if (!state.configured) {
         EmptyState(
@@ -61,6 +70,11 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
             message = "Play a game and, after the next sync, your trends will appear here.",
         )
         return
+    }
+
+    val chartDays = when (chartRange) {
+        ChartRange.ACTIVE -> state.dailyMinutes.filter { it.minutes > 0 }
+        else -> state.dailyMinutes.takeLast(chartRange.dayCount ?: state.dailyMinutes.size)
     }
 
     Column(
@@ -83,8 +97,13 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
 
         AnalyticsOverviewCard(days = state.dailyMinutes)
 
+        ChartRangeSelector(
+            selectedRange = chartRange,
+            onRangeSelected = { chartRange = it },
+        )
+
         DailyPlaytimeChart(
-            days = state.dailyMinutes,
+            days = chartDays,
             questThreshold = state.questThreshold,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -97,6 +116,29 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
         )
 
         MostPlayedGamesCard(games = state.topGames)
+    }
+}
+
+@Composable
+private fun ChartRangeSelector(
+    selectedRange: ChartRange,
+    onRangeSelected: (ChartRange) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Chart range",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ChartRange.entries.forEach { range ->
+                FilterChip(
+                    selected = range == selectedRange,
+                    onClick = { onRangeSelected(range) },
+                    label = { Text(range.label) },
+                )
+            }
+        }
     }
 }
 
