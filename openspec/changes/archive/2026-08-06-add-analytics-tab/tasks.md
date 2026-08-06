@@ -67,5 +67,5 @@
 ## 7. Build and verify
 
 - [x] 7.1 `./gradlew :app:assembleDebug` builds clean
-- [ ] 7.2 Confirm the Analytics tab appears in the bottom bar and the screen renders without
+- [x] 7.2 Confirm the Analytics tab appears in the bottom bar and the screen renders without
       crashing on an empty database (cold install) and on a populated database
