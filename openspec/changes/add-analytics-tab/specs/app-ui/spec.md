@@ -36,12 +36,19 @@ five entries.
 - **WHEN** the Analytics screen is shown with tracked minutes on one or more days in the window
 - **THEN** the chart draws one bar per local day in the window, with the bar height proportional to
   that day's tracked minutes, and a horizontal reference line at the configured daily-quest
-  threshold
+  threshold. The chart includes readable max, midpoint, and baseline labels, sparse date labels for
+  the window endpoints, and a legend identifying the quest threshold
 
 #### Scenario: Quest threshold reference line
 - **WHEN** the daily-quest threshold is greater than zero
 - **THEN** the chart draws a reference line at that threshold value, so days whose bar reaches or
   exceeds the line are legible as quest-met days
+
+#### Scenario: Readable chart scale
+- **WHEN** the daily playtime window contains a high-minute outlier
+- **THEN** the chart uses a rounded ceiling with visible max, midpoint, and baseline labels so the
+  remaining bars can be compared without an arbitrary peak value, while preserving proportional bar
+  heights
 
 #### Scenario: Streak summary
 - **WHEN** the Analytics screen is shown

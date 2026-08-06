@@ -37,6 +37,8 @@
       horizontal quest-threshold reference line, and a max-value axis label
 - [ ] 4.3 Add the streak summary card (current, longest, quest-met-days-in-window)
 - [ ] 4.4 Add the most-played games card (top 5 by tracked minutes, with icon + name + minutes)
+- [x] 4.5 Refine the daily playtime chart with a readable rounded scale, visible axis labels,
+      sparse date labels, rounded bars, and a labeled quest-threshold legend
 
 ## 5. Spec
 
