@@ -49,9 +49,9 @@
 
 ## 7. Verification
 
-- [ ] 7.1 Start a game and confirm exactly one `presence` document is appended and `current` reflects the game
+- [x] 7.1 Start a game and confirm exactly one `presence` document is appended and `current` reflects the game
 - [x] 7.2 Let several polls pass unchanged and confirm no new documents and an unmoved `since`
-- [ ] 7.3 Stop the game and confirm exactly one further `presence` document and a reset `since`
+- [x] 7.3 Stop the game and confirm exactly one further `presence` document and a reset `since`
 - [ ] 7.4 Simulate a Steam API failure and confirm neither path is modified
 - [x] 7.5 Confirm the app's own presence and session behaviour is unchanged, with no Android source modified in this change
 - [ ] 7.6 Check invocation count and billing after 24 hours against the expected ~1,440/day
