@@ -158,7 +158,8 @@ private fun DailyPlaytimeChart(
     modifier: Modifier = Modifier,
 ) {
     val barColor = MaterialTheme.colorScheme.primary
-    val trackColor = MaterialTheme.colorScheme.surfaceVariant
+    val gridColor = MaterialTheme.colorScheme.outlineVariant
+    val baselineColor = MaterialTheme.colorScheme.outline
     val thresholdColor = MaterialTheme.colorScheme.tertiary
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
     val chartHeight = 176.dp
@@ -222,13 +223,13 @@ private fun DailyPlaytimeChart(
                         if (days.isEmpty()) return@Canvas
 
                         // Quiet gridlines make the scale visible without competing with the data.
-                        listOf(0f, 0.5f, 1f).forEach { fraction ->
+                        listOf(0f, 0.5f).forEach { fraction ->
                             val y = h * fraction
                             drawLine(
-                                color = if (fraction == 1f) trackColor else trackColor.copy(alpha = 0.55f),
+                                color = gridColor.copy(alpha = 0.7f),
                                 start = Offset(0f, y),
                                 end = Offset(w, y),
-                                strokeWidth = if (fraction == 1f) 1.5f else 1f,
+                                strokeWidth = 1f,
                             )
                         }
 
@@ -259,7 +260,7 @@ private fun DailyPlaytimeChart(
                             } else {
                                 // A small tick preserves the position of an empty day without noise.
                                 drawLine(
-                                    color = trackColor,
+                                    color = gridColor,
                                     start = Offset(left + barWidth / 2f, h),
                                     end = Offset(left + barWidth / 2f, h - 4f),
                                     strokeWidth = 1f,
@@ -271,13 +272,21 @@ private fun DailyPlaytimeChart(
                         if (questThreshold > 0) {
                             val y = h - (questThreshold.toFloat() / maxMinutes) * h
                             drawLine(
-                                color = thresholdColor,
+                                color = thresholdColor.copy(alpha = 0.85f),
                                 start = Offset(0f, y),
                                 end = Offset(w, y),
-                                strokeWidth = 2f,
+                                strokeWidth = 1.5f,
                                 pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f)),
                             )
                         }
+
+                        // Draw the baseline last so bars visibly terminate on a firm zero axis.
+                        drawLine(
+                            color = baselineColor,
+                            start = Offset(0f, h - 1f),
+                            end = Offset(w, h - 1f),
+                            strokeWidth = 2f,
+                        )
                     }
                     Spacer(Modifier.height(8.dp))
                     Row(
