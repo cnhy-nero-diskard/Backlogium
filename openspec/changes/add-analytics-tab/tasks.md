@@ -39,6 +39,8 @@
 - [ ] 4.4 Add the most-played games card (top 5 by tracked minutes, with icon + name + minutes)
 - [x] 4.5 Refine the daily playtime chart with a readable rounded scale, visible axis labels,
       sparse date labels, rounded bars, and a labeled quest-threshold legend
+- [x] 4.6 Make chart days tappable with selected-bar feedback and a selected-day detail row, and add
+      an at-a-glance play snapshot card to improve the screen's visual hierarchy
 
 ## 5. Spec
 

@@ -50,6 +50,11 @@ five entries.
   remaining bars can be compared without an arbitrary peak value, while preserving proportional bar
   heights
 
+#### Scenario: Inspecting a chart day
+- **WHEN** the user taps a day in the daily playtime chart
+- **THEN** that bar is visually selected and the chart presents the day's date, tracked minutes, and
+  whether the configured daily goal was met
+
 #### Scenario: Streak summary
 - **WHEN** the Analytics screen is shown
 - **THEN** the streak summary shows the current streak, the longest streak, and the number of
