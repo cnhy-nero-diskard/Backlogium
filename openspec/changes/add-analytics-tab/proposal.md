@@ -26,6 +26,12 @@ Analytics is the screen that answers those questions with a glance.
   as a horizontal reference line so met/unmet days read at a glance.
 - **A streak summary card** showing current streak, longest streak, and the count of quest-met days
   over the last 30 days — the "how consistent am I" view that Home's single numbers can't carry.
+- **A session-insights card** showing session count, average session length, and longest session
+  over the window — the rhythm of a single sitting rather than a whole day.
+- **A time-of-day card** bucketing tracked minutes into morning/afternoon/evening/night with the
+  peak bucket highlighted — "when do I actually play" at a glance.
+- **An achievement-rarity card** showing the all-time tier breakdown (common→legendary) as a
+  stacked bar with a per-tier legend, reusing the game-detail `rarityHalo` palette.
 - **A most-played games card** listing the top five games by tracked minutes over the same 30-day
   window, distinct from the Library's lifetime `playtimeForever` ordering.
 - **A new `SessionDao` query** for tracked minutes summed per day over a date range, and one for
@@ -39,7 +45,8 @@ Analytics is the screen that answers those questions with a glance.
 ### Modified Capabilities
 - `app-ui`: the app shell gains a fifth top-level destination (Analytics) and the bottom-nav
   contract expands from four tabs to five; a new Analytics screen requirement covers the daily
-  playtime chart, streak summary, and most-played games.
+  playtime chart, streak summary, session insights, time-of-day pattern, rarity breakdown, and
+  most-played games.
 
 ## Impact
 
@@ -74,4 +81,4 @@ Analytics is the screen that answers those questions with a glance.
   and not grounded in a stored signal; it is not included.
 - **Exporting or sharing analytics.** Read-only reflection; no CSV/image export.
 - **Charts beyond the daily bar chart.** No pie charts, no line charts, no heat-map calendar in
-  this change. The bar chart plus the two summary cards is the whole surface.
+  this change. The daily bar chart plus the summary cards is the whole surface.

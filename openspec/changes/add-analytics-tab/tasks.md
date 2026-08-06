@@ -46,14 +46,24 @@
 - [x] 4.8 Add an Active days / 7 days / 30 days chart range selector, defaulting to Active days so
       zero-minute dates are omitted unless the user chooses a fixed window
 
-## 5. Spec
+## 5. Insights cards (session shape, time of day, rarity)
 
-- [ ] 5.1 Add the `app-ui` delta: a MODIFIED "App shell and navigation" requirement expanding the
+- [x] 5.1 Add a session insights card (session count, average session length, longest session)
+      over the 30-day window, fed by the ViewModel's already-computed `sessionInsights`
+- [x] 5.2 Add a time-of-day card bucketing tracked minutes into morning/afternoon/evening/night
+      with the peak bucket highlighted, fed by the ViewModel's already-computed `timeOfDayPattern`
+- [x] 5.3 Add an achievement-rarity card showing the all-time tier breakdown as a stacked bar
+      with a per-tier legend, reusing the game-detail `rarityHalo` palette, fed by the ViewModel's
+      already-computed `rarityBreakdown`
+
+## 6. Spec
+
+- [ ] 6.1 Add the `app-ui` delta: a MODIFIED "App shell and navigation" requirement expanding the
       four-tab contract to five, and an ADDED "Analytics screen" requirement covering the chart,
-      streak summary, and most-played games
+      streak summary, most-played games, session insights, time-of-day pattern, and rarity breakdown
 
-## 6. Build and verify
+## 7. Build and verify
 
-- [ ] 6.1 `./gradlew :app:assembleDebug` builds clean
-- [ ] 6.2 Confirm the Analytics tab appears in the bottom bar and the screen renders without
+- [ ] 7.1 `./gradlew :app:assembleDebug` builds clean
+- [ ] 7.2 Confirm the Analytics tab appears in the bottom bar and the screen renders without
       crashing on an empty database (cold install) and on a populated database
