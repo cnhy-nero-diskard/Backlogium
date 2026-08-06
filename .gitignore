@@ -15,3 +15,13 @@
 .cxx
 local.properties
 /keystore/
+
+# Firebase Cloud Functions
+/functions/node_modules/
+/functions/lib/
+/functions/.env
+/functions/*.log
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log

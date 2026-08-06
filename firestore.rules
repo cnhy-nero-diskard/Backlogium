@@ -1,0 +1,18 @@
+rules_version = '2';
+
+// Backlogium — cloud presence poller.
+//
+// Deny everything. This is intentional and costs the poller nothing:
+// it writes through the Firebase Admin SDK, which runs on service-account
+// credentials and bypasses security rules entirely.
+//
+// There is no legitimate client reader yet. When one arrives (the OBS
+// overlay, or the app backfill), add a narrowly scoped read rule for
+// exactly that path — do not open this up wholesale.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
