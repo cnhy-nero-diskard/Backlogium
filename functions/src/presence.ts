@@ -19,14 +19,21 @@ const PRESENCE = "presence";
 export type WriteOutcome = "unchanged" | "written";
 
 interface StoredState {
-  personastate?: unknown;
   gameid?: unknown;
 }
 
 /**
- * Material change means the presence state or the game changed. Anything
- * else — a display name edit, an avatar change — is not a transition and
- * must not produce a log entry.
+ * Material change means the game changed. Nothing else counts.
+ *
+ * `personastate` is deliberately excluded. Steam cycles an idle account
+ * between online (1), away (3), and snooze (4) by itself, which carries no
+ * information about what is being played. Including it filled half the log
+ * with idle churn and — worse — split a continuous session into fragments
+ * when the user idled mid-game.
+ *
+ * Excluding it guarantees something a consumer can rely on: no two adjacent
+ * entries share a game ID, so every entry is a genuine game change and no
+ * merge-contiguous-runs logic is needed downstream.
  */
 function isMaterialChange(
   previous: StoredState | undefined,
@@ -37,10 +44,7 @@ function isMaterialChange(
   const previousGameId =
     typeof previous.gameid === "string" ? previous.gameid : null;
 
-  return (
-    previous.personastate !== observation.personastate ||
-    previousGameId !== observation.gameid
-  );
+  return previousGameId !== observation.gameid;
 }
 
 /**

@@ -31,7 +31,7 @@
 
 ## 5. Presence writer
 
-- [x] 5.1 Read the `players/{steamId}` document and compare persona state and game ID against the new observation
+- [x] 5.1 Read the `players/{steamId}` document and compare the game ID against the new observation
 - [x] 5.2 On no material change, perform no write and leave `since` and `updatedAt` untouched
 - [x] 5.3 On change, update `current` with the new state and reset `since` to the observation time
 - [x] 5.4 On change, append `players/{steamId}/presence/{ISO-8601 timestamp}` keyed by observation time so retries overwrite rather than append
@@ -56,6 +56,18 @@
 - [x] 7.5 Confirm the app's own presence and session behaviour is unchanged, with no Android source modified in this change
 - [ ] 7.6 Check invocation count and billing after 24 hours against the expected ~1,440/day
 
-## 8. Resolve open questions
+## 8. Exclude persona state from change detection
 
-- [ ] 8.1 Decide whether poller staleness needs active alerting, or whether checking `current.updatedAt` by hand is enough until a consumer exists
+Amendment made after 24 hours of live data: half the log was idle churn, and an
+away/online flap at 05:29–05:30 split a continuous Wuthering Waves session into
+three fragments.
+
+- [x] 8.1 Amend the spec so only a game-ID change is material, with persona state still recorded as a field
+- [x] 8.2 Record the rationale and the rejected alternative in `design.md`
+- [x] 8.3 Narrow `isMaterialChange()` in `presence.ts` to compare game ID only
+- [ ] 8.4 Redeploy and confirm idling no longer produces entries
+- [ ] 8.5 Confirm a mid-session idle leaves `since` unmoved and appends nothing
+
+## 9. Resolve open questions
+
+- [ ] 9.1 Decide whether poller staleness needs active alerting, or whether checking `current.updatedAt` by hand is enough until a consumer exists

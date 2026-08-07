@@ -50,9 +50,17 @@ Document IDs in `presence` are the observation timestamp in ISO-8601. This makes
 
 *Alternative considered:* a single document holding a rolling array of samples. Rejected — Firestore's 1 MiB document limit turns into a hard cap on history, and every append rewrites the whole document.
 
-### Write on change only
+### Write on game change only
 
-Each invocation reads `current`, compares the fetched presence against it, and writes only if something material differs (`personastate` or `gameid`). An unchanged poll writes nothing.
+Each invocation reads `current`, compares the fetched `gameid` against the stored one, and writes only if they differ. An unchanged poll writes nothing. `personastate` is recorded as a field on every document written but takes no part in the comparison.
+
+Persona state was originally part of the comparison. Twenty-four hours of real data showed why it should not be: **half the log was idle churn**, because Steam cycles an idle account between online (1), away (3), and snooze (4) on its own. Worse, one Wuthering Waves session was split into three fragments by an away/online flap at 05:29–05:30 while the game was still running — a consumer segmenting naively on each entry would have produced three sessions where there was one.
+
+Excluding persona state buys a structural guarantee, not just a smaller log: **no two adjacent entries can share a game ID.** Every entry is by construction a genuine game change, so the merge-contiguous-runs logic a consumer would otherwise need does not have to exist. The trap is removed rather than documented.
+
+*Alternative considered:* normalising busy/away/snooze into "online" while keeping the online/offline distinction. Rejected — it removes the churn but still permits consecutive same-game entries, so the consumer still needs merge logic, and neither "online" nor "offline" means the user is playing.
+
+Note the shape this produces: a game-to-game switch with no idle gap (observed at 15:38, Wuthering Waves straight into Zenless Zone Zero) appears as a single entry with no intervening null. A consumer must therefore end a session on *any* game-ID change, not only on a transition to null.
 
 This is not primarily a cost decision — 43k writes/month would be affordable. It is what makes the `presence` subcollection a *transition log* rather than a minute-by-minute tape. A reader reconstructing sessions wants the handful of moments state changed, not 43,200 rows a month of "still playing Hades."
 

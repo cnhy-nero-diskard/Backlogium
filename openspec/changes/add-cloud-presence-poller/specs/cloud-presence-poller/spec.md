@@ -32,22 +32,41 @@ The system SHALL maintain the `players/{steamId}` document (referred to below as
 - **THEN** `since` still holds the time that game was first observed
 - **AND** `updatedAt` holds the most recent observation time
 
-### Requirement: Write on change only
+### Requirement: Write on game change only
 
-The system SHALL write to Firestore only when the observed presence differs materially from the stored current state. A poll observing no change in presence state or game SHALL perform no write.
+The system SHALL write to Firestore only when the observed game ID differs from the stored game ID. A change in persona state alone SHALL NOT constitute a material change and SHALL NOT produce a write. Persona state is still recorded as a field on every document written, so the raw value at each transition is preserved.
 
-#### Scenario: Unchanged presence performs no write
+Persona state is excluded from change detection because Steam moves an idle account between online, away, and snooze automatically. Those transitions carry no information about what is being played, and treating them as material both fills the log with idle churn and splits a single continuous play session into fragments.
 
-- **WHEN** a poll returns the same presence state and game ID as the stored `current` document
+#### Scenario: Unchanged game performs no write
+
+- **WHEN** a poll returns the same game ID as the stored current-state document
 - **THEN** no Firestore write occurs
 - **AND** `since` and `updatedAt` retain their stored values
 
-#### Scenario: Changed presence updates current and appends history
+#### Scenario: Idling during a session does not split it
 
-- **WHEN** a poll returns a presence state or game ID differing from the stored `current` document
-- **THEN** `current` is updated with the new state
+- **WHEN** the persona state changes from online to away while the same game remains in progress
+- **THEN** no Firestore write occurs
+- **AND** `since` continues to mark the time the game was first observed
+
+#### Scenario: Changed game updates current and appends history
+
+- **WHEN** a poll returns a game ID differing from the stored current-state document
+- **THEN** the current-state document is updated with the new state
 - **AND** `since` is reset to the observation time
 - **AND** one document is appended to the `presence` subcollection
+
+#### Scenario: Switching directly between games is recorded
+
+- **WHEN** a poll returns a different game ID while the stored game ID is also non-null
+- **THEN** one document is appended recording the new game
+- **AND** no intervening document representing "not playing" is fabricated
+
+#### Scenario: Consecutive entries always differ by game
+
+- **WHEN** the presence log is read in timestamp order
+- **THEN** no two adjacent documents share the same game ID
 
 ### Requirement: Append-only presence log
 
