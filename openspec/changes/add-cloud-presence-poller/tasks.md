@@ -76,8 +76,8 @@ failures (a revoked key, a Steam outage) leave invocation count untouched.
 
 - [x] 9.1 Emit a `poll ok` heartbeat after a successful fetch and Firestore interaction
 - [x] 9.2 Record in `design.md` why invocation count and `updatedAt` are insufficient signals
-- [ ] 9.3 Redeploy so the heartbeat is live
-- [ ] 9.4 Create a log-based counter metric matching the `poll ok` entries
-- [ ] 9.5 Create an alerting policy on absence of that metric for 15 minutes, with an email notification channel
+- [x] 9.3 Redeploy so the heartbeat is live
+- [x] 9.4 Create a log-based counter metric matching the `poll ok` entries
+- [x] 9.5 Create an alerting policy on absence of that metric for 15 minutes, with an email notification channel
 - [ ] 9.6 Verify the alert fires by pausing the Cloud Scheduler job, then resume it
 - [ ] 9.7 Decide whether the `Profile is not public` warning also warrants its own alert
