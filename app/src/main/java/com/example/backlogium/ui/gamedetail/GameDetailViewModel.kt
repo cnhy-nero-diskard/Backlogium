@@ -182,14 +182,14 @@ class GameDetailViewModel @Inject constructor(
 }
 
 /** The four flows the screen derives from, gathered before any per-row work. */
-private data class Content(
+internal data class Content(
     val game: LibraryGame?,
     val achievements: List<GameAchievement>,
     val trackedMinutes: Int,
     val config: RuleConfig,
 )
 
-private fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): GameSummaryUi {
+internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): GameSummaryUi {
     val game = game ?: return GameSummaryUi()
     return GameSummaryUi(
         headerUrl = game.headerUrl,
