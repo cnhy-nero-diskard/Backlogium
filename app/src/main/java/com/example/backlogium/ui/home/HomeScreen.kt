@@ -4,6 +4,7 @@ import androidx.annotation.RawRes
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -46,16 +47,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -67,12 +71,15 @@ import com.airbnb.lottie.compose.animateLottieCompositionAsState
 import com.airbnb.lottie.compose.rememberLottieComposition
 import com.example.backlogium.R
 import com.example.backlogium.domain.CollectionBanner
+import com.example.backlogium.domain.CollectionPacingState
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.label
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.domain.isStreakMilestone
 import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.theme.collectionAccentColor
+import com.example.backlogium.ui.theme.deadlineWarning
+import com.example.backlogium.ui.theme.playingIndicator
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.ui.util.rememberReducedMotion
 import compose.icons.TablerIcons
@@ -417,14 +424,55 @@ private fun CollectionCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val compactDeadlineCard = card.mode == CollectionMode.DEADLINE_GOAL
     val accentColor = MaterialTheme.colorScheme.collectionAccentColor(card.accent)
+    val deadlineSummaryColor = when {
+        card.mode != CollectionMode.DEADLINE_GOAL -> MaterialTheme.colorScheme.onSurfaceVariant
+        card.banner.daysRemaining == null || card.banner.daysRemaining > 7L ->
+            MaterialTheme.colorScheme.onSurfaceVariant
+        card.banner.daysRemaining <= 0L -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.deadlineWarning
+    }
+    val glowColor = card.accent?.let {
+        MaterialTheme.colorScheme.collectionAccentColor(it)
+    } ?: MaterialTheme.colorScheme.playingIndicator
+    val reducedMotion = rememberReducedMotion()
+    val glowVisibility by animateFloatAsState(
+        targetValue = if (card.isCurrentlyPlaying) 1f else 0f,
+        animationSpec = tween(durationMillis = 650),
+        label = "collectionGlowFade",
+    )
+    val pulse = if (card.isCurrentlyPlaying && !reducedMotion) {
+        val transition = rememberInfiniteTransition(label = "collectionGlowPulse")
+        transition.animateFloat(
+            initialValue = 0.55f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 2_400, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "collectionGlowPulseAlpha",
+        ).value
+    } else {
+        1f
+    }
+    val glowAlpha = glowVisibility * pulse
     val baseSurface = MaterialTheme.colorScheme.surfaceContainer
     val cardSurface = card.accent?.let {
         accentColor.copy(alpha = 0.16f).compositeOver(baseSurface)
     } ?: baseSurface
     Card(
         onClick = onClick,
-        modifier = modifier,
+        modifier = modifier.drawWithContent {
+            drawContent()
+            if (glowVisibility > 0f) {
+                drawRoundRect(
+                    color = glowColor.copy(alpha = 0.34f * glowAlpha),
+                    style = Stroke(width = 1.5.dp.toPx()),
+                    cornerRadius = CornerRadius(12.dp.toPx()),
+                )
+            }
+        },
         colors = CardDefaults.cardColors(
             containerColor = cardSurface,
         ),
@@ -443,7 +491,10 @@ private fun CollectionCard(
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                    .padding(
+                        horizontal = 14.dp,
+                        vertical = if (compactDeadlineCard) 10.dp else 12.dp,
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
@@ -453,7 +504,7 @@ private fun CollectionCard(
                     ) {
                         Icon(
                             imageVector = modeIcon(card.mode),
-                            contentDescription = null,
+                            contentDescription = modeAccessibilityLabel(card.mode),
                             modifier = Modifier.size(18.dp),
                             tint = accentColor,
                         )
@@ -463,13 +514,25 @@ private fun CollectionCard(
                             fontWeight = FontWeight.SemiBold,
                         )
                     }
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(if (compactDeadlineCard) 2.dp else 4.dp))
                     bannerText(card.banner)?.let { copy ->
                         Text(
                             text = copy,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = deadlineSummaryColor,
+                            maxLines = if (compactDeadlineCard) 1 else Int.MAX_VALUE,
+                            overflow = if (compactDeadlineCard) TextOverflow.Ellipsis else TextOverflow.Clip,
                         )
+                    }
+                    if (card.mode != CollectionMode.BASIC) {
+                        card.banner.completionFraction?.let { fraction ->
+                            LinearProgressIndicator(
+                                progress = { fraction.toFloat().coerceIn(0f, 1f) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = if (compactDeadlineCard) 4.dp else 6.dp),
+                            )
+                        }
                     }
                 }
                 CollectionGameThumbs(
@@ -487,35 +550,36 @@ private fun CollectionGameThumbs(
     accentColor: Color,
 ) {
     if (games.isEmpty()) return
+    val preview = homeCollectionThumbnailPreview(games)
     Row(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        games.take(5).forEach { game ->
+        preview.visibleGames.forEach { game ->
             if (game.iconUrl != null) {
-                GameIcon(iconUrl = game.iconUrl, iconSize = 30.dp)
+                GameIcon(iconUrl = game.iconUrl, iconSize = 26.dp)
             } else {
                 Box(
                     modifier = Modifier
-                        .size(30.dp)
+                        .size(26.dp)
                         .background(
                             accentColor.copy(alpha = 0.16f),
-                            RoundedCornerShape(7.dp),
+                            RoundedCornerShape(6.dp),
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = TablerIcons.DeviceGamepad,
                         contentDescription = null,
-                        modifier = Modifier.size(17.dp),
+                        modifier = Modifier.size(15.dp),
                         tint = accentColor,
                     )
                 }
             }
         }
-        if (games.size > 5) {
+        if (preview.overflowCount > 0) {
             Text(
-                text = "${games.size - 5}+",
+                text = "${preview.overflowCount}+",
                 style = MaterialTheme.typography.labelSmall,
                 color = accentColor,
             )
@@ -528,6 +592,13 @@ private fun modeIcon(mode: CollectionMode) = when (mode) {
     CollectionMode.COMPLETION_GOAL -> TablerIcons.Trophy
     CollectionMode.DEADLINE_GOAL -> TablerIcons.Clock
     CollectionMode.ORDERED_QUEUE -> TablerIcons.PlayerPlay
+}
+
+private fun modeAccessibilityLabel(mode: CollectionMode): String = when (mode) {
+    CollectionMode.BASIC -> "Basic list"
+    CollectionMode.COMPLETION_GOAL -> "Completion goal"
+    CollectionMode.DEADLINE_GOAL -> "Deadline goal"
+    CollectionMode.ORDERED_QUEUE -> "Ordered queue"
 }
 
 /** A collection's mode-specific banner copy; a basic list shows its member count. */
@@ -552,14 +623,15 @@ private fun bannerText(banner: CollectionBanner): String = when (banner.mode) {
             banner.daysRemaining != null -> "${banner.daysRemaining}d left"
             else -> "No deadline set"
         }
-        val fit = when {
-            banner.unknownDurationCount > 0 ->
-                "${banner.unknownDurationCount} missing ${banner.timeBasis.label()} data"
-            banner.timeDifferentialMinutes != null && banner.timeDifferentialMinutes < 0 ->
-                "${UiFormat.minutes(kotlin.math.abs(banner.timeDifferentialMinutes))} short"
-            else -> null
+        val status = when (banner.pacingState) {
+            CollectionPacingState.AT_RISK -> banner.requiredMinutesPerActiveDay?.let {
+                "Need ~${UiFormat.minutes(it.toInt())}/day"
+            } ?: "Attention needed"
+            CollectionPacingState.INCOMPLETE_DATA -> "Incomplete"
+            CollectionPacingState.LEARNING -> "Learning"
+            else -> progress
         }
-        listOfNotNull("$countdown · $progress complete", fit).joinToString(" · ")
+        "$countdown · $status"
     }
     CollectionMode.ORDERED_QUEUE -> when {
         banner.queueCompleted -> "Queue complete — no next game"

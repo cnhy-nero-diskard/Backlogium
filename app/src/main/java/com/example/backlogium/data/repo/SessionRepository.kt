@@ -32,6 +32,10 @@ class SessionRepository @Inject constructor(
     fun sessionsSince(cutoffMillis: Long): Flow<List<PlaySession>> =
         sessionDao.observeSince(cutoffMillis).map { rows -> rows.map(Session::toDomain) }
 
+    /** Closed synthesized sessions used by Personal Pace; open sessions are excluded in Room. */
+    fun closedSessionsSince(cutoffMillis: Long): Flow<List<PlaySession>> =
+        sessionDao.observeClosedSince(cutoffMillis).map { rows -> rows.map(Session::toDomain) }
+
     /**
      * Tracked minutes summed per game, keyed by appId. Games with no tracked session are absent
      * rather than zero — a caller deriving XP treats a missing entry as zero tracked minutes.

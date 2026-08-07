@@ -6,50 +6,34 @@ import java.time.temporal.ChronoUnit
 
 /**
  * One collection member's stored signals as the pure derivation consumes them. Mirrors the
- * `:gamification` stance: no clocks, no I/O, no persistence — callers assemble these from
- * stored rows (games, HLTB cache, achievement counts) and render the returned banner values.
- *
- * [name] is null when the member references a game absent from the library (a dangling
- * membership row kept safe by the soft app-id reference). Such a member is omitted from the
- * rendered summary without failing the derivation or dropping the membership row.
+ * gamification engine's no-I/O stance: callers assemble these from local rows and render the
+ * returned values.
  */
 data class CollectionMemberSignals(
     val appId: Long,
     val name: String?,
-    /** Lifetime Steam playtime, in minutes — the completion-fraction numerator. */
     val playtimeMinutes: Int,
-    /** Cached HowLongToBeat completionist length; null = no HLTB data for this game. */
     val completionistMinutes: Int?,
     val mainStoryMinutes: Int? = null,
     val mainExtraMinutes: Int? = null,
     val allStylesMinutes: Int? = null,
     val achievementsUnlocked: Int?,
     val achievementsTotal: Int?,
-    /** User's manual done mark for ordered-queue collections; ignored for every other mode. */
     val manualDone: Boolean = false,
 ) {
-    /** Achievements still locked; no stored achievement data contributes zero, not a failure. */
     val achievementsRemaining: Int
         get() = when {
             achievementsUnlocked == null || achievementsTotal == null -> 0
             else -> (achievementsTotal - achievementsUnlocked).coerceAtLeast(0)
         }
 
-    /**
-     * This member's completion fraction, reusing [Gamification.goalProgress] (playtime ÷
-     * completionist length, clamped 0–1) — the same definition the Library's progress bars and
-     * the engine use, so a collection banner never disagrees with a game's own bar. Null when
-     * there is no known completion length.
-     */
     val completionFraction: Double?
         get() = completionistMinutes?.takeIf { it > 0 }
             ?.let { Gamification.goalProgress(playtimeMinutes, it).fraction }
 
-    /** Fully complete = the engine's goalProgress reached 1.0 (no HLTB length → not complete). */
     val fullyComplete: Boolean
         get() = completionFraction?.let { it >= 1.0 } ?: false
 
-    /** The HLTB estimate selected by a deadline collection, or null when it is unavailable. */
     fun estimateMinutes(basis: CollectionTimeBasis): Int? = when (basis) {
         CollectionTimeBasis.MAIN_STORY -> mainStoryMinutes
         CollectionTimeBasis.MAIN_EXTRA -> mainExtraMinutes
@@ -58,65 +42,53 @@ data class CollectionMemberSignals(
     }
 }
 
-/**
- * The mode-specific banner values for one collection, derived purely from stored signals.
- * Every banner is a *rendered value the UI formats* — no formatting lives here.
- */
+enum class CollectionPacingState {
+    ON_TRACK,
+    AT_RISK,
+    LEARNING,
+    INCOMPLETE_DATA,
+}
+
+/** Purely derived collection values consumed by both Home and the collection overview. */
 data class CollectionBanner(
     val mode: CollectionMode,
-    /** Members with a present game row — the only ones counted anywhere below. */
     val memberCount: Int,
-    /**
-     * Aggregate completion progress = the mean of member completion fractions over members
-     * with a known completion length; null when no member has HLTB data (design.md decision).
-     */
     val completionFraction: Double?,
-    /** Total locked achievements across members; 0 when no member has achievement data. */
     val achievementsRemaining: Int,
-    /** Total unlocked achievements across members with stored achievement data; null when none. */
     val achievementsUnlocked: Int?,
-    /** Total achievements across members with stored achievement data; null when none. */
     val achievementsTotal: Int?,
-    /** Days from the injected today to the target date; null outside deadline mode or with no target. */
     val daysRemaining: Long?,
-    /** True when a deadline target date is on or before the injected today — "passed", not a negative countdown. */
     val deadlinePassed: Boolean,
-    /** Selected HLTB basis used by deadline planning. */
     val timeBasis: CollectionTimeBasis,
-    /** Total selected HLTB minutes for members with a known estimate. */
     val plannedMinutes: Int?,
-    /** Remaining selected HLTB minutes after subtracting stored playtime. */
     val remainingMinutes: Int?,
-    /** Available deadline minutes minus [remainingMinutes], positive when there is buffer. */
+    /** Compatibility-shaped integer view; new presentation should use [capacityMarginMinutes]. */
     val timeDifferentialMinutes: Int?,
-    /** Members with no estimate for the selected basis. */
     val unknownDurationCount: Int,
-    /** Ordered-queue: the first member in sequence; null when empty. */
     val nextUp: CollectionMemberSignals?,
-    /** Ordered-queue: 1-based position of [nextUp] in the sequence; null when empty. */
     val nextUpPosition: Int?,
-    /** Ordered-queue: every member fully complete → no next game to act on. */
     val queueCompleted: Boolean,
     val empty: Boolean,
+    val paceConfidence: PersonalPaceConfidence?,
+    val pacingState: CollectionPacingState?,
+    val projectedCapacityMinutes: Double?,
+    val projectedActiveDays: Double?,
+    val recentTrackedPaceMinutes: Double?,
+    val requiredMinutesPerActiveDay: Double?,
+    val capacityMarginMinutes: Double?,
+    val deadlineInterventionEligible: Boolean,
+    val estimatedFitDate: LocalDate?,
+    val completionHorizonDate: LocalDate?,
+    val nextGameHorizonDate: LocalDate?,
+    val queueHorizonDate: LocalDate?,
+    val pacingForecast: PersonalPaceForecast?,
 ) {
-    /** Member count surface shared by every mode; the basic-list banner is just this. */
     val memberCountLabel: String = "$memberCount ${if (memberCount == 1) "game" else "games"}"
 }
 
-
-/**
- * Pure derivation of collection banner values (tasks 2.3–2.6). No Android dependencies, no
- * clocks beyond the injected [LocalDate.today], no network — callers feed stored rows and
- * render the returned values. Plain-JVM testable, mirroring the `:gamification` stance.
- */
+/** Pure collection banner derivation. No Android dependencies, clocks, network, or persistence. */
 object CollectionSummary {
 
-    /**
-     * Order a collection's members by its stored sort selection. Ordered-queue mode keeps the
-     * stored sequence order regardless of the sort selection (spec: "Ordered-queue uses manual
-     * order"); every non-queue mode ignores the sequence order. Every ordering tie-breaks by
-     * app id so it never depends on the order Room happened to return.
-     */
     fun order(
         mode: CollectionMode,
         sort: CollectionSort,
@@ -124,20 +96,14 @@ object CollectionSummary {
     ): List<CollectionMemberSignals> {
         if (mode == CollectionMode.ORDERED_QUEUE) return members
         return when (sort) {
-            CollectionSort.NAME ->
-                members.sortedWith(
-                    compareBy<CollectionMemberSignals> { it.name?.lowercase() ?: "" }
-                        .thenBy { it.appId },
-                )
-            CollectionSort.COMPLETION_FRACTION ->
-                members.sortedWith(
-                    compareByDescending<CollectionMemberSignals> { it.completionFraction ?: -1.0 }
-                        .thenBy { it.appId },
-                )
-            // The deadline is collection-level, so every member shares the same days-remaining
-            // (per-game deadlines deferred); the sort is a no-op beyond a deterministic name
-            // tie-break. MANUAL_SEQUENCE on a non-queue mode is likewise ignored, falling back
-            // to name — spec: "Non-queue modes ignore sequence order".
+            CollectionSort.NAME -> members.sortedWith(
+                compareBy<CollectionMemberSignals> { it.name?.lowercase() ?: "" }
+                    .thenBy { it.appId },
+            )
+            CollectionSort.COMPLETION_FRACTION -> members.sortedWith(
+                compareByDescending<CollectionMemberSignals> { it.completionFraction ?: -1.0 }
+                    .thenBy { it.appId },
+            )
             CollectionSort.DAYS_REMAINING,
             CollectionSort.MANUAL_SEQUENCE,
             -> members.sortedWith(
@@ -147,11 +113,6 @@ object CollectionSummary {
         }
     }
 
-    /**
-     * Derive one collection's banner from its config, members, and the injected current date.
-     * Members without a present game row ([CollectionMemberSignals.name] == null) are omitted
-     * from the summary — they neither count nor fail the derivation.
-     */
     fun derive(
         mode: CollectionMode,
         sort: CollectionSort,
@@ -159,12 +120,46 @@ object CollectionSummary {
         members: List<CollectionMemberSignals>,
         today: LocalDate,
         timeBasis: CollectionTimeBasis = CollectionTimeBasis.COMPLETIONIST,
+        personalPace: PersonalPaceProfile? = null,
     ): CollectionBanner {
-        val present = members.filter { it.name != null }
-        val ordered = order(mode, sort, present)
+        val ordered = order(mode, sort, members.filter { it.name != null })
+        if (ordered.isEmpty()) {
+            return CollectionBanner(
+                mode = mode,
+                memberCount = 0,
+                completionFraction = null,
+                achievementsRemaining = 0,
+                achievementsUnlocked = null,
+                achievementsTotal = null,
+                daysRemaining = null,
+                deadlinePassed = false,
+                timeBasis = timeBasis,
+                plannedMinutes = null,
+                remainingMinutes = null,
+                timeDifferentialMinutes = null,
+                unknownDurationCount = 0,
+                nextUp = null,
+                nextUpPosition = null,
+                queueCompleted = false,
+                empty = true,
+                paceConfidence = null,
+                pacingState = null,
+                projectedCapacityMinutes = null,
+                projectedActiveDays = null,
+                recentTrackedPaceMinutes = null,
+                requiredMinutesPerActiveDay = null,
+                capacityMarginMinutes = null,
+                deadlineInterventionEligible = false,
+                estimatedFitDate = null,
+                completionHorizonDate = null,
+                nextGameHorizonDate = null,
+                queueHorizonDate = null,
+                pacingForecast = null,
+            )
+        }
 
         val fractions = ordered.mapNotNull { it.completionFraction }
-        val completionFraction = if (fractions.isEmpty()) null else fractions.average()
+        val completionFraction = fractions.takeIf { it.isNotEmpty() }?.average()
         val achievementCounts = ordered.mapNotNull { member ->
             if (member.achievementsUnlocked != null && member.achievementsTotal != null) {
                 member.achievementsUnlocked to member.achievementsTotal
@@ -184,33 +179,163 @@ object CollectionSummary {
             null
         }
         val deadlinePassed = daysRemaining != null && daysRemaining <= 0
-        val estimatedMembers = ordered.mapNotNull { member ->
-            member.estimateMinutes(timeBasis)?.takeIf { it > 0 }?.let { estimate ->
-                estimate to member.playtimeMinutes
-            }
-        }
-        val plannedMinutes = estimatedMembers.takeIf { it.isNotEmpty() }?.sumOf { it.first }
-        val remainingMinutes = estimatedMembers.takeIf { it.isNotEmpty() }
-            ?.sumOf { (estimate, played) -> (estimate - played).coerceAtLeast(0) }
-        val availableMinutes = daysRemaining?.takeIf {
-            mode == CollectionMode.DEADLINE_GOAL && targetDate != null
-        }?.let { it * MINUTES_PER_DAY }
-        val unknownDurationCount = ordered.count { member ->
-            member.estimateMinutes(timeBasis)?.takeIf { it > 0 } == null
-        }
-        val timeDifferentialMinutes = if (
-            availableMinutes != null && remainingMinutes != null && unknownDurationCount == 0
-        ) {
-            availableMinutes.toInt() - remainingMinutes
-        } else {
-            null
-        }
         val nextUpIndex = if (mode == CollectionMode.ORDERED_QUEUE) {
             ordered.indexOfFirst { !it.manualDone && !it.fullyComplete }
-        } else -1
-        val nextUp = nextUpIndex.takeIf { it >= 0 }?.let { ordered[it] }
+        } else {
+            -1
+        }
+        val nextUp = nextUpIndex.takeIf { it >= 0 }?.let(ordered::get)
         val queueCompleted = mode == CollectionMode.ORDERED_QUEUE &&
             ordered.isNotEmpty() && ordered.all { it.manualDone || it.fullyComplete }
+
+        val pacingMembers = when (mode) {
+            CollectionMode.BASIC -> emptyList()
+            CollectionMode.DEADLINE_GOAL -> ordered
+            CollectionMode.COMPLETION_GOAL -> ordered.filterNot { it.fullyComplete }
+            CollectionMode.ORDERED_QUEUE -> ordered.filterNot { it.manualDone || it.fullyComplete }
+        }
+        val knownEstimates = pacingMembers.mapNotNull { member ->
+            member.estimateMinutes(timeBasisFor(mode, timeBasis))
+                ?.takeIf { it > 0 }
+                ?.let { it to member.playtimeMinutes }
+        }
+        val plannedMinutes = if (mode == CollectionMode.BASIC) {
+            null
+        } else {
+            knownEstimates.takeIf { it.isNotEmpty() }?.sumOf { it.first }
+        }
+        val remainingMinutes = if (mode == CollectionMode.BASIC) {
+            null
+        } else {
+            knownEstimates.takeIf { it.isNotEmpty() }
+                ?.sumOf { (estimate, played) -> (estimate - played).coerceAtLeast(0) }
+        }
+        val unknownDurationCount = if (mode == CollectionMode.BASIC) {
+            0
+        } else {
+            pacingMembers.count {
+                it.estimateMinutes(timeBasisFor(mode, timeBasis))?.takeIf { value -> value > 0 } == null
+            }
+        }
+
+        var pacingState: CollectionPacingState? = null
+        var projectedCapacityMinutes: Double? = null
+        var projectedActiveDays: Double? = null
+        val recentTrackedPaceMinutes = personalPace
+            ?.takeIf { mode != CollectionMode.BASIC && it.activeDates > 0 }
+            ?.typicalActiveDayMinutes
+        var requiredMinutesPerActiveDay: Double? = null
+        var capacityMarginMinutes: Double? = null
+        var estimatedFitDate: LocalDate? = null
+        var completionHorizonDate: LocalDate? = null
+        var nextGameHorizonDate: LocalDate? = null
+        var queueHorizonDate: LocalDate? = null
+        var pacingForecast: PersonalPaceForecast? = null
+
+        when (mode) {
+            CollectionMode.BASIC -> Unit
+            CollectionMode.DEADLINE_GOAL -> {
+                val target = targetDate
+                if (target != null) {
+                    when {
+                        unknownDurationCount > 0 -> pacingState = CollectionPacingState.INCOMPLETE_DATA
+                        personalPace == null || personalPace.confidence != PersonalPaceConfidence.RELIABLE -> {
+                            pacingState = CollectionPacingState.LEARNING
+                        }
+                        else -> {
+                            val deadline = target ?: error("A deadline pacing state requires a target")
+                            val pace = personalPace ?: error("Reliable pacing requires a profile")
+                            val knownRemainingMinutes = remainingMinutes ?: 0
+                            pacingForecast = if (deadline.isAfter(today)) {
+                                pace.forecast(today.plusDays(1), deadline, knownRemainingMinutes)
+                            } else {
+                                null
+                            }
+                            projectedCapacityMinutes = pacingForecast?.expectedGamingMinutes
+                            projectedActiveDays = pacingForecast?.expectedActiveDays
+                            requiredMinutesPerActiveDay = pacingForecast
+                                ?.requiredMinutesPerProjectedActiveDay
+                            capacityMarginMinutes = pacingForecast?.let {
+                                it.expectedGamingMinutes - knownRemainingMinutes
+                            } ?: if (knownRemainingMinutes == 0) {
+                                0.0
+                            } else {
+                                -knownRemainingMinutes.toDouble()
+                            }
+                            pacingState = if (knownRemainingMinutes == 0 ||
+                                (capacityMarginMinutes ?: -1.0) >= 0.0
+                            ) {
+                                CollectionPacingState.ON_TRACK
+                            } else {
+                                CollectionPacingState.AT_RISK
+                            }
+                            if (
+                                pacingState == CollectionPacingState.AT_RISK &&
+                                deadline.isAfter(today) &&
+                                remainingMinutes != null &&
+                                remainingMinutes > 0
+                            ) {
+                                estimatedFitDate = pace.earliestFitDate(
+                                    startDate = today.plusDays(1),
+                                    requiredMinutes = knownRemainingMinutes,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            CollectionMode.COMPLETION_GOAL -> {
+                pacingState = when {
+                    unknownDurationCount > 0 -> CollectionPacingState.INCOMPLETE_DATA
+                    personalPace == null || personalPace.confidence != PersonalPaceConfidence.RELIABLE -> {
+                        CollectionPacingState.LEARNING
+                    }
+                    else -> CollectionPacingState.ON_TRACK
+                }
+                if (
+                    pacingState == CollectionPacingState.ON_TRACK &&
+                    remainingMinutes != null &&
+                    remainingMinutes > 0
+                ) {
+                    completionHorizonDate = personalPace?.earliestFitDate(
+                        startDate = today.plusDays(1),
+                        requiredMinutes = remainingMinutes,
+                    )
+                }
+            }
+            CollectionMode.ORDERED_QUEUE -> {
+                pacingState = when {
+                    unknownDurationCount > 0 -> CollectionPacingState.INCOMPLETE_DATA
+                    personalPace == null || personalPace.confidence != PersonalPaceConfidence.RELIABLE -> {
+                        CollectionPacingState.LEARNING
+                    }
+                    else -> CollectionPacingState.ON_TRACK
+                }
+                if (personalPace?.confidence == PersonalPaceConfidence.RELIABLE) {
+                    val nextRemaining = nextUp
+                        ?.estimateMinutes(CollectionTimeBasis.COMPLETIONIST)
+                        ?.takeIf { it > 0 }
+                        ?.let { (it - nextUp.playtimeMinutes).coerceAtLeast(0) }
+                    if (nextRemaining != null && nextRemaining > 0) {
+                        nextGameHorizonDate = personalPace?.earliestFitDate(
+                            startDate = today.plusDays(1),
+                            requiredMinutes = nextRemaining,
+                        )
+                    }
+                    if (remainingMinutes != null && remainingMinutes > 0 && unknownDurationCount == 0) {
+                        queueHorizonDate = personalPace?.earliestFitDate(
+                            startDate = today.plusDays(1),
+                            requiredMinutes = remainingMinutes,
+                        )
+                    }
+                }
+            }
+        }
+
+        val deadlineInterventionEligible = mode == CollectionMode.DEADLINE_GOAL &&
+            targetDate != null &&
+            (unknownDurationCount > 0 || (remainingMinutes ?: 0) > 0) &&
+            (deadlinePassed || pacingState == CollectionPacingState.AT_RISK)
 
         return CollectionBanner(
             mode = mode,
@@ -224,14 +349,35 @@ object CollectionSummary {
             timeBasis = timeBasis,
             plannedMinutes = plannedMinutes,
             remainingMinutes = remainingMinutes,
-            timeDifferentialMinutes = timeDifferentialMinutes,
+            timeDifferentialMinutes = capacityMarginMinutes?.toInt(),
             unknownDurationCount = unknownDurationCount,
             nextUp = nextUp,
             nextUpPosition = nextUp?.let { nextUpIndex + 1 },
             queueCompleted = queueCompleted,
-            empty = ordered.isEmpty(),
+            empty = false,
+                paceConfidence = personalPace?.confidence
+                    ?.takeUnless { mode == CollectionMode.BASIC },
+            pacingState = pacingState,
+            projectedCapacityMinutes = projectedCapacityMinutes,
+            projectedActiveDays = projectedActiveDays,
+            recentTrackedPaceMinutes = recentTrackedPaceMinutes,
+            requiredMinutesPerActiveDay = requiredMinutesPerActiveDay,
+            capacityMarginMinutes = capacityMarginMinutes,
+            deadlineInterventionEligible = deadlineInterventionEligible,
+            estimatedFitDate = estimatedFitDate,
+            completionHorizonDate = completionHorizonDate,
+            nextGameHorizonDate = nextGameHorizonDate,
+            queueHorizonDate = queueHorizonDate,
+            pacingForecast = pacingForecast,
         )
     }
 
-    private const val MINUTES_PER_DAY = 24L * 60L
+    private fun timeBasisFor(mode: CollectionMode, selected: CollectionTimeBasis): CollectionTimeBasis =
+        when (mode) {
+            CollectionMode.DEADLINE_GOAL -> selected
+            CollectionMode.COMPLETION_GOAL,
+            CollectionMode.ORDERED_QUEUE,
+            -> CollectionTimeBasis.COMPLETIONIST
+            CollectionMode.BASIC -> selected
+        }
 }

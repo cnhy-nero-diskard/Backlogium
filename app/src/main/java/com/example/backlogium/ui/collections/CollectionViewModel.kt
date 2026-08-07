@@ -8,11 +8,16 @@ import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CollectionRepository
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
+import com.example.backlogium.data.repo.PersonalPaceRepository
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.domain.CollectionAccent
+import com.example.backlogium.domain.CollectionBanner
+import com.example.backlogium.domain.CollectionMemberSignals
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
+import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CollectionTimeBasis
+import com.example.backlogium.domain.PersonalPaceProfile
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.defaultSort
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -31,6 +36,7 @@ data class CollectionMemberUi(
     val appId: Long,
     val name: String,
     val iconUrl: String?,
+    val headerUrl: String = "",
     val done: Boolean = false,
     val playtimeMinutes: Int = 0,
     val achievementsUnlocked: Int? = null,
@@ -53,6 +59,7 @@ data class CollectionUiState(
     val targetDate: LocalDate? = null,
     val accent: CollectionAccent? = null,
     val timeBasis: CollectionTimeBasis = CollectionTimeBasis.COMPLETIONIST,
+    val banner: CollectionBanner? = null,
     val today: LocalDate = LocalDate.now(),
     /** Current members in their editing sequence (queue order for ordered-queue collections). */
     val members: List<CollectionMemberUi> = emptyList(),
@@ -86,6 +93,7 @@ class CollectionViewModel @Inject constructor(
     private val gameRepository: GameRepository,
     private val achievementRepository: AchievementRepository,
     private val sessionRepository: SessionRepository,
+    private val personalPaceRepository: PersonalPaceRepository,
     private val time: TimeProvider,
 ) : ViewModel() {
 
@@ -196,18 +204,20 @@ class CollectionViewModel @Inject constructor(
         val games: List<LibraryGame>,
         val achievementsByGame: Map<Long, AchievementCounts>,
         val sessionCountByGame: Map<Long, Int>,
+        val personalPace: PersonalPaceProfile,
     )
 
     private val libraryMetrics: StateFlow<LibraryMetrics> = combine(
         gameRepository.library,
         achievementRepository.counts,
         sessionRepository.sessionCountByGame,
-    ) { games, achievementsByGame, sessionCountByGame ->
-        LibraryMetrics(games, achievementsByGame, sessionCountByGame)
+        personalPaceRepository.profile,
+    ) { games, achievementsByGame, sessionCountByGame, personalPace ->
+        LibraryMetrics(games, achievementsByGame, sessionCountByGame, personalPace)
     }.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,
-        LibraryMetrics(emptyList(), emptyMap(), emptyMap()),
+        LibraryMetrics(emptyList(), emptyMap(), emptyMap(), PersonalPaceProfile.empty()),
     )
 
     val uiState: StateFlow<CollectionUiState> = combine(
@@ -215,6 +225,30 @@ class CollectionViewModel @Inject constructor(
         session,
     ) { metrics, s ->
         val gamesById = metrics.games.associateBy { it.appId }
+        val memberSignals = s.memberAppIds.map { appId ->
+            val game = gamesById[appId]
+            CollectionMemberSignals(
+                appId = appId,
+                name = game?.name,
+                playtimeMinutes = game?.playtimeForever ?: 0,
+                completionistMinutes = game?.completionistMinutes,
+                mainStoryMinutes = game?.mainStoryMinutes,
+                mainExtraMinutes = game?.mainExtraMinutes,
+                allStylesMinutes = game?.allStylesMinutes,
+                achievementsUnlocked = metrics.achievementsByGame[appId]?.unlocked,
+                achievementsTotal = metrics.achievementsByGame[appId]?.total,
+                manualDone = appId in s.doneMarks,
+            )
+        }
+        val banner = CollectionSummary.derive(
+            mode = s.draft.mode,
+            sort = s.draft.sort,
+            targetDate = s.draft.targetDate,
+            members = memberSignals,
+            today = time.today(),
+            timeBasis = s.draft.timeBasis,
+            personalPace = metrics.personalPace,
+        )
         CollectionUiState(
             loading = !s.loaded,
             isNew = collectionId == 0L,
@@ -225,6 +259,7 @@ class CollectionViewModel @Inject constructor(
             targetDate = s.draft.targetDate,
             accent = s.draft.accent,
             timeBasis = s.draft.timeBasis,
+            banner = banner,
             today = time.today(),
             members = s.memberAppIds.map { appId ->
                 val game = gamesById[appId]
@@ -234,6 +269,7 @@ class CollectionViewModel @Inject constructor(
                     // readable fallback so it can still be removed; the pure summary omits it.
                     name = game?.name ?: "Game $appId",
                     iconUrl = game?.iconUrl,
+                    headerUrl = game?.headerUrl.orEmpty(),
                     done = appId in s.doneMarks,
                     playtimeMinutes = game?.playtimeForever ?: 0,
                     achievementsUnlocked = metrics.achievementsByGame[appId]?.unlocked,

@@ -48,18 +48,21 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.domain.CollectionAccent
+import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionMode
+import com.example.backlogium.domain.CollectionPacingState
 import com.example.backlogium.domain.CollectionSort
-import com.example.backlogium.domain.CollectionSummary
-import com.example.backlogium.domain.CollectionMemberSignals
 import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.label
+import com.example.backlogium.ui.components.GameHeaderBackdrop
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.theme.collectionAccentColor
+import com.example.backlogium.ui.theme.deadlineWarning
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowBack
@@ -67,7 +70,10 @@ import compose.icons.tablericons.Check
 import compose.icons.tablericons.ChevronDown
 import compose.icons.tablericons.ChevronUp
 import compose.icons.tablericons.CircleCheck
+import compose.icons.tablericons.Clock
+import compose.icons.tablericons.DeviceGamepad
 import compose.icons.tablericons.DotsVertical
+import compose.icons.tablericons.PlayerPlay
 import compose.icons.tablericons.Plus
 import compose.icons.tablericons.Search
 import compose.icons.tablericons.Settings
@@ -199,14 +205,7 @@ private fun CollectionOverview(
     val summarySurface = accentColor.copy(alpha = 0.12f)
         .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
     val trophyProgress = trophyProgress(state.members)
-    val banner = CollectionSummary.derive(
-        mode = state.mode,
-        sort = state.sort,
-        targetDate = state.targetDate,
-        members = state.members.map { it.toSignals() },
-        today = state.today,
-        timeBasis = state.timeBasis,
-    )
+    val banner = state.banner ?: return
     var showDeadlinePicker by remember { mutableStateOf(false) }
 
     LazyColumn(
@@ -227,7 +226,7 @@ private fun CollectionOverview(
                             ?.let { "Target date: $it" }
                             ?: "No deadline set",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = deadlineUrgencyColor(banner.daysRemaining),
                     )
                 }
             }
@@ -235,10 +234,14 @@ private fun CollectionOverview(
 
         if (state.mode == CollectionMode.DEADLINE_GOAL) {
             item {
-                DeadlinePlanCard(
+                PacingDeadlinePlanCard(
                     banner = banner,
                     onChangeDeadline = { showDeadlinePicker = true },
                 )
+            }
+        } else if (collectionModePacingSectionVisible(state.mode)) {
+            item {
+                ModePacingCard(banner = banner)
             }
         }
 
@@ -336,7 +339,7 @@ private fun CollectionOverview(
 
     if (showDeadlinePicker) {
         val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = state.targetDate
+            initialSelectedDateMillis = (banner.estimatedFitDate ?: state.targetDate)
                 ?.atStartOfDay(ZoneOffset.UTC)
                 ?.toInstant()
                 ?.toEpochMilli(),
@@ -365,76 +368,247 @@ private fun CollectionOverview(
     }
 }
 
+/** Deadline pacing detail driven entirely by the domain's confidence and action eligibility. */
 @Composable
-private fun DeadlinePlanCard(
-    banner: com.example.backlogium.domain.CollectionBanner,
+private fun PacingDeadlinePlanCard(
+    banner: CollectionBanner,
     onChangeDeadline: () -> Unit,
 ) {
-    val differential = banner.timeDifferentialMinutes
+    val deadlineColor = deadlineUrgencyColor(banner.daysRemaining)
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text("Deadline plan", style = MaterialTheme.typography.titleSmall)
-            Text(
-                text = "Basis: ${banner.timeBasis.label()}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = when {
-                    banner.daysRemaining == null -> "Set a deadline to see whether this collection fits."
-                    banner.daysRemaining < 0 -> "You are ${abs(banner.daysRemaining)} days past your deadline."
-                    banner.daysRemaining == 0L -> "Your deadline is today."
-                    else -> "You still have ${banner.daysRemaining} days until your deadline."
-                },
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            if (banner.remainingMinutes != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = TablerIcons.Clock,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = deadlineColor,
+                )
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "${UiFormat.minutes(banner.remainingMinutes)} estimated remaining" +
-                        if (banner.unknownDurationCount > 0) {
-                            " · ${banner.unknownDurationCount} without ${banner.timeBasis.label()} data"
+                    text = "Deadline",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                collectionPacingStateLabel(banner.pacingState)?.let { stateLabel ->
+                    Text(
+                        text = stateLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (banner.pacingState == CollectionPacingState.AT_RISK) {
+                            MaterialTheme.colorScheme.error
                         } else {
-                            ""
+                            MaterialTheme.colorScheme.onSurfaceVariant
                         },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            DeadlinePlanSignal(
+                icon = TablerIcons.Clock,
+                contentDescription = "Deadline status",
+                text = deadlineCountdown(banner.daysRemaining),
+                color = deadlineColor,
+                emphasized = true,
+            )
+            DeadlinePlanSignal(
+                icon = TablerIcons.DeviceGamepad,
+                contentDescription = "Remaining work",
+                text = banner.remainingMinutes?.let { remaining ->
+                    "${UiFormat.minutes(remaining)} left" +
+                        if (banner.unknownDurationCount > 0) " · +${banner.unknownDurationCount} unknown" else ""
+                } ?: "No ${banner.timeBasis.label()} estimate",
+            )
+            banner.recentTrackedPaceMinutes?.let { pace ->
+                DeadlinePlanSignal(
+                    icon = TablerIcons.PlayerPlay,
+                    contentDescription = "Recent tracked pace",
+                    text = "~${UiFormat.minutes(pace.toInt())} / active day",
                 )
+            }
+            if (banner.pacingState == CollectionPacingState.AT_RISK) {
+                banner.requiredMinutesPerActiveDay?.let { required ->
+                    DeadlinePlanSignal(
+                        icon = TablerIcons.PlayerPlay,
+                        contentDescription = "Required pace",
+                        text = "Need ~${UiFormat.minutes(required.toInt())} / active day",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                banner.capacityMarginMinutes?.takeIf { it < 0.0 }?.let { margin ->
+                    DeadlinePlanSignal(
+                        icon = TablerIcons.Clock,
+                        contentDescription = "Capacity shortfall",
+                        text = "${UiFormat.minutes(abs(margin.toInt()))} short",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             } else {
-                Text(
-                    text = "No ${banner.timeBasis.label()} estimates are available, so fit cannot be assessed.",
+                banner.projectedCapacityMinutes?.let { capacity ->
+                    DeadlinePlanSignal(
+                        icon = TablerIcons.PlayerPlay,
+                        contentDescription = "Projected capacity",
+                        text = "~${UiFormat.minutes(capacity.toInt())} capacity",
+                    )
+                }
+            }
+            when (banner.pacingState) {
+                com.example.backlogium.domain.CollectionPacingState.AT_RISK -> banner.estimatedFitDate?.let { date ->
+                    Text(
+                        text = "Suggested: ${date.format(dateFormatter)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                com.example.backlogium.domain.CollectionPacingState.LEARNING -> {
+                    val activeDaysNeeded = learningDeadlineActiveDaysNeeded(
+                        remainingMinutes = banner.remainingMinutes,
+                        recentTrackedPaceMinutes = banner.recentTrackedPaceMinutes,
+                    )
+                    Text(
+                        text = activeDaysNeeded?.let { activeDays ->
+                            "Provisional: ~$activeDays active play " +
+                                "${if (activeDays == 1) "day" else "days"}."
+                        } ?: "Track more completed play days for a pace estimate.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                com.example.backlogium.domain.CollectionPacingState.INCOMPLETE_DATA -> Text(
+                    text = "${banner.unknownDurationCount} estimate${if (banner.unknownDurationCount == 1) "" else "s"} missing.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                else -> Unit
             }
-            differential?.takeIf { it < 0 }?.let { value ->
-                Text(
-                    text = "You are ${UiFormat.minutes(abs(value))} short — consider changing your deadline.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-            OutlinedButton(onClick = onChangeDeadline) {
-                Text("Change deadline")
+            if (collectionDeadlineActionVisible(banner)) {
+                OutlinedButton(onClick = onChangeDeadline) { Text("Change deadline") }
             }
         }
     }
 }
 
-private fun CollectionMemberUi.toSignals() = CollectionMemberSignals(
-    appId = appId,
-    name = name,
-    playtimeMinutes = playtimeMinutes,
-    completionistMinutes = completionistMinutes,
-    mainStoryMinutes = mainStoryMinutes,
-    mainExtraMinutes = mainExtraMinutes,
-    allStylesMinutes = allStylesMinutes,
-    achievementsUnlocked = achievementsUnlocked,
-    achievementsTotal = achievementsTotal,
-    manualDone = done,
-)
+@Composable
+private fun DeadlinePlanSignal(
+    icon: ImageVector,
+    contentDescription: String,
+    text: String,
+    color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    emphasized: Boolean = false,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            modifier = Modifier.size(16.dp),
+            tint = color,
+        )
+        Text(
+            text = text,
+            style = if (emphasized) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodySmall,
+            color = color,
+        )
+    }
+}
+
+@Composable
+private fun deadlineUrgencyColor(daysRemaining: Long?): Color = when (deadlineUrgency(daysRemaining)) {
+    DeadlineUrgency.NORMAL -> MaterialTheme.colorScheme.onSurfaceVariant
+    DeadlineUrgency.SOON -> MaterialTheme.colorScheme.deadlineWarning
+    DeadlineUrgency.DUE_OR_PAST -> MaterialTheme.colorScheme.error
+}
+
+private fun deadlineCountdown(daysRemaining: Long?): String = when {
+    daysRemaining == null -> "No deadline"
+    daysRemaining < 0 -> "${abs(daysRemaining)}d overdue"
+    daysRemaining == 0L -> "Due today"
+    else -> "${daysRemaining}d left"
+}
+
+@Composable
+private fun ModePacingCard(banner: CollectionBanner) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Personal Pace", style = MaterialTheme.typography.titleSmall)
+            banner.recentTrackedPaceMinutes?.let { pace ->
+                Text(
+                    text = "Recent tracked pace: about ${UiFormat.minutes(pace.toInt())} per active day.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            collectionPacingStateLabel(banner.pacingState)?.let { stateLabel ->
+                Text(
+                    text = stateLabel,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (banner.pacingState == CollectionPacingState.AT_RISK) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                )
+            }
+            when (banner.pacingState) {
+                com.example.backlogium.domain.CollectionPacingState.ON_TRACK -> {
+                    if (banner.mode == CollectionMode.COMPLETION_GOAL) {
+                        Text(
+                            text = banner.completionHorizonDate?.let {
+                                "Approximate completion: ${it.format(dateFormatter)}."
+                            } ?: "All known completion work is done.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    } else {
+                        banner.nextGameHorizonDate?.let { date ->
+                            Text(
+                                text = "Next game: approximately by ${date.format(dateFormatter)}.",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        banner.queueHorizonDate?.let { date ->
+                            Text(
+                                text = "Whole queue: approximately by ${date.format(dateFormatter)}.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                com.example.backlogium.domain.CollectionPacingState.LEARNING -> Text(
+                    text = "Backlogium is learning from tracked activity; horizon is not definitive yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                com.example.backlogium.domain.CollectionPacingState.INCOMPLETE_DATA -> {
+                    Text(
+                        text = "${banner.unknownDurationCount} Completionist estimate${if (banner.unknownDurationCount == 1) "" else "s"} missing; horizon is incomplete.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (banner.mode == CollectionMode.ORDERED_QUEUE) {
+                        banner.nextGameHorizonDate?.let { date ->
+                            Text(
+                                text = "Next game: approximately by ${date.format(dateFormatter)}.",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
+                }
+                com.example.backlogium.domain.CollectionPacingState.AT_RISK -> Text(
+                    text = "The current plan needs more tracked capacity than expected.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                null -> Unit
+            }
+        }
+    }
+}
 
 @Composable
 private fun CollectionMetric(
@@ -465,10 +639,15 @@ private fun CollectionGameCard(
             .heightIn(min = 88.dp),
         colors = CardDefaults.cardColors(containerColor = cardSurface),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            GameHeaderBackdrop(
+                headerUrl = member.headerUrl,
+                modifier = Modifier.matchParentSize(),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
             Box(
                 modifier = Modifier
                     .width(5.dp)
@@ -512,6 +691,7 @@ private fun CollectionGameCard(
                         }
                     }
                 }
+            }
             }
         }
     }
@@ -879,12 +1059,17 @@ private fun MemberRow(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = cardColor),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            GameHeaderBackdrop(
+                headerUrl = member.headerUrl,
+                modifier = Modifier.matchParentSize(),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
             if (member.iconUrl != null) {
                 GameIcon(iconUrl = member.iconUrl)
                 Spacer(Modifier.width(12.dp))
@@ -939,6 +1124,7 @@ private fun MemberRow(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            }
         }
     }
 }
@@ -955,12 +1141,17 @@ private fun AddGameRow(
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled,
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            GameHeaderBackdrop(
+                headerUrl = game.headerUrl,
+                modifier = Modifier.matchParentSize(),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
             GameIcon(iconUrl = game.iconUrl)
             Spacer(Modifier.width(12.dp))
             Text(
@@ -974,6 +1165,7 @@ private fun AddGameRow(
                 contentDescription = "Add ${game.name}",
                 tint = MaterialTheme.colorScheme.primary,
             )
+            }
         }
     }
 }

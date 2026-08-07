@@ -27,6 +27,12 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE startAt >= :cutoff ORDER BY startAt DESC")
     fun observeSince(cutoff: Long): Flow<List<Session>>
 
+    /** Closed synthesized sessions starting at or after [cutoff], for Personal Pace training. */
+    @Query(
+        "SELECT * FROM sessions WHERE startAt >= :cutoff AND open = 0 ORDER BY startAt DESC",
+    )
+    fun observeClosedSince(cutoff: Long): Flow<List<Session>>
+
     @Query("SELECT * FROM sessions ORDER BY startAt ASC")
     suspend fun getAll(): List<Session>
 

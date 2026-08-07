@@ -63,6 +63,10 @@ private val LightColorScheme = lightColorScheme(
 val ColorScheme.overrunExcess: Color
     get() = if (surface.luminance() < 0.5f) GoldOverrun else GoldOverrunLight
 
+/** Orange used for a deadline that is approaching but has not arrived. */
+val ColorScheme.deadlineWarning: Color
+    get() = if (surface.luminance() < 0.5f) DeadlineWarning else DeadlineWarningLight
+
 /**
  * The glow color for an achievement icon's rarity halo (enhance-game-detail) — Steam's own
  * "shiny" achievement treatment, color-coded per tier here rather than one fixed shine. LEGENDARY

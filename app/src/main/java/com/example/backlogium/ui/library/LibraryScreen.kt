@@ -47,13 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -62,11 +56,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.AsyncImage
 import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.ui.components.EmptyState
+import com.example.backlogium.ui.components.GameHeaderBackdrop
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.theme.overrunExcess
 import com.example.backlogium.ui.theme.playingIndicator
@@ -718,7 +712,7 @@ private fun GameCard(
         },
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
-            GameBackdrop(headerUrl = headerUrl, modifier = Modifier.matchParentSize())
+            GameHeaderBackdrop(headerUrl = headerUrl, modifier = Modifier.matchParentSize())
             Row(
                 modifier = Modifier.padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -740,39 +734,6 @@ private fun GameCard(
  * Games with no header on the CDN simply render nothing; the row is designed to look right without
  * it, so no placeholder is drawn.
  */
-@Composable
-private fun GameBackdrop(headerUrl: String, modifier: Modifier = Modifier) {
-    if (headerUrl.isEmpty()) return
-    AsyncImage(
-        model = headerUrl,
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        alignment = Alignment.CenterEnd,
-        modifier = modifier
-            .graphicsLayer {
-                alpha = BACKDROP_ALPHA
-                // Required for DstIn: the mask has to composite against this layer, not the screen.
-                compositingStrategy = CompositingStrategy.Offscreen
-            }
-            .drawWithContent {
-                drawContent()
-                drawRect(
-                    brush = Brush.horizontalGradient(
-                        0f to Color.Transparent,
-                        BACKDROP_FADE_END to Color.Black,
-                    ),
-                    blendMode = BlendMode.DstIn,
-                )
-            },
-    )
-}
-
-/** Faint enough that body text keeps its contrast over the brightest header art. */
-private const val BACKDROP_ALPHA = 0.22f
-
-/** Fraction of the card width at which the art reaches full opacity, fading out left of it. */
-private const val BACKDROP_FADE_END = 0.95f
-
 /** While selecting, the 3-dot menu gives way to the row's selected state. */
 @Composable
 private fun RowTrailing(selected: Boolean, selectionMode: Boolean, onManageGoal: () -> Unit) {
