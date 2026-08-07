@@ -65,7 +65,7 @@ three fragments.
 - [x] 8.1 Amend the spec so only a game-ID change is material, with persona state still recorded as a field
 - [x] 8.2 Record the rationale and the rejected alternative in `design.md`
 - [x] 8.3 Narrow `isMaterialChange()` in `presence.ts` to compare game ID only
-- [ ] 8.4 Redeploy and confirm idling no longer produces entries
+- [x] 8.4 Redeploy and confirm idling no longer produces entries
 - [ ] 8.5 Confirm a mid-session idle leaves `since` unmoved and appends nothing
 
 ## 9. Resolve open questions
