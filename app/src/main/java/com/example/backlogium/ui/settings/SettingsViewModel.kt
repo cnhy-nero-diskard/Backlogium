@@ -16,6 +16,8 @@ import com.example.backlogium.domain.UpdateRuleConfigUseCase
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.work.PresenceServiceStarter
+import com.example.backlogium.work.GenreEnrichmentStatus
+import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -53,6 +55,7 @@ data class SettingsUiState(
     val apiKeyMasked: String = "",
     val lastSyncAt: Long = 0L,
     val isSyncing: Boolean = false,
+    val genreEnrichmentStatus: GenreEnrichmentStatus = GenreEnrichmentStatus.IDLE,
     /** Explicit opt-in to poll Steam every 30 seconds before a game is detected. */
     val liveMonitorEnabled: Boolean = false,
     /** True once historical Steam playtime has been imported (one-time). */
@@ -107,6 +110,7 @@ class SettingsViewModel @Inject constructor(
     private val settings: SettingsRepository,
     private val backupRepository: BackupRepository,
     private val presenceServiceStarter: PresenceServiceStarter,
+    private val syncScheduler: SyncScheduler,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -151,6 +155,8 @@ class SettingsViewModel @Inject constructor(
         )
     }.combine(settings.liveMonitorEnabled) { state, monitorEnabled ->
         state.copy(liveMonitorEnabled = monitorEnabled)
+    }.combine(syncScheduler.genreEnrichmentStatus) { state, genreStatus ->
+        state.copy(genreEnrichmentStatus = genreStatus)
     }
 
     private val ruleLocalState = combine(

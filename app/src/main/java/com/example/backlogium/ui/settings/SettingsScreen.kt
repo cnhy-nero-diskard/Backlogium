@@ -46,6 +46,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.data.backup.SnapshotMeta
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.ui.util.UiFormat
+import com.example.backlogium.work.GenreEnrichmentStatus
 import compose.icons.TablerIcons
 import compose.icons.tablericons.BrandSteam
 import compose.icons.tablericons.ChevronDown
@@ -164,6 +165,7 @@ fun SettingsScreen(
         SyncCard(
             lastSyncAt = state.lastSyncAt,
             syncing = state.isSyncing,
+            genreStatus = state.genreEnrichmentStatus,
             onSyncNow = actions.onSyncNow,
         )
 
@@ -307,22 +309,42 @@ private fun SteamAccountCard(
 
 /** Last successful sync plus the manual trigger, disabled while a sync is already in flight. */
 @Composable
-private fun SyncCard(lastSyncAt: Long, syncing: Boolean, onSyncNow: () -> Unit) {
+private fun SyncCard(
+    lastSyncAt: Long,
+    syncing: Boolean,
+    genreStatus: GenreEnrichmentStatus,
+    onSyncNow: () -> Unit,
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = if (syncing) "Syncing…" else "Last sync: ${UiFormat.dateTime(lastSyncAt)}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Button(onClick = onSyncNow, enabled = !syncing) { Text("Sync now") }
+            }
             Text(
-                text = if (syncing) "Syncing…" else "Last sync: ${UiFormat.dateTime(lastSyncAt)}",
-                style = MaterialTheme.typography.bodySmall,
+                text = genreStatusLabel(genreStatus),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
             )
-            Button(onClick = onSyncNow, enabled = !syncing) { Text("Sync now") }
         }
     }
+}
+
+private fun genreStatusLabel(status: GenreEnrichmentStatus): String = when (status) {
+    GenreEnrichmentStatus.IDLE -> "Genres: idle"
+    GenreEnrichmentStatus.QUEUED -> "Genres: queued"
+    GenreEnrichmentStatus.RUNNING -> "Genres: fetching…"
+    GenreEnrichmentStatus.RETRYING -> "Genres: retrying…"
 }
 
 /** Explicitly armed background presence polling, separate from the periodic full Steam sync. */
