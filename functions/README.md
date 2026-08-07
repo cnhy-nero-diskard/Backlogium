@@ -91,6 +91,15 @@ The signal is the `poll ok` log line, emitted once per minute after a successful
 Steam fetch *and* a successful Firestore interaction. A metric-absence alert on
 it is the monitoring hook.
 
+A `Metric absence` policy on the `presence_poll_ok` log-based metric, set to 15
+minutes, notifies in **roughly 23–25 minutes** in practice: the threshold, plus
+log ingestion, plus the evaluation interval. That lag is inherent to alerting on
+log-based metrics — the log must be ingested and counted before the metric can
+be observed as absent. Verified 2026-08-07 by pausing the scheduler.
+
+Shortening the threshold does not shorten the response proportionally; it mostly
+raises the odds of a false alarm during scheduler jitter.
+
 Do not substitute the cheaper signals — both are blind to the likeliest failure:
 
 - **Invocation count** stays at a perfect 1,440/day if the Steam API key is
