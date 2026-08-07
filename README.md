@@ -6,8 +6,9 @@ into one local progression system.
 
 The app is built for day-to-day personal use: connect a Steam account, sync the
 library, review HowLongToBeat matches, mark Focus games, import pre-install Steam
-history once, and keep a local backup. Cloud sync and an OBS overlay remain roadmap
-items; the phone app works without either.
+history once, and keep a local backup. A server-side presence poller records play
+history to Firestore while the phone is asleep; the app itself does not read that
+data yet, and works entirely without it. An OBS overlay remains a roadmap item.
 
 ## What Works Today
 
@@ -24,6 +25,9 @@ items; the phone app works without either.
 - Local backup and restore for the app's tracked data.
 - Fully local Room/DataStore persistence. Steam credentials are encrypted at rest
   with an Android Keystore-backed key.
+- A scheduled Cloud Function polling Steam presence every minute and appending game
+  transitions to Firestore, independent of whether the phone is running. Nothing
+  reads that log yet — see [`functions/README.md`](functions/README.md).
 
 ## Stack
 
@@ -33,7 +37,10 @@ items; the phone app works without either.
   for encrypted Steam credentials and app state
 - **Gamification:** standalone `:gamification` JVM module
 - **Extra data:** HowLongToBeat completionist times used to taper playtime XP
-- **Planned:** Firestore cloud sync and an OBS Browser Source overlay
+- **Cloud:** Firebase Cloud Functions (Node/TypeScript) on a one-minute schedule,
+  writing a presence log to Firestore in `asia-southeast1`
+- **Planned:** an OBS Browser Source overlay, and app-side backfill from the
+  presence log
 
 ## Architecture
 
@@ -41,12 +48,20 @@ items; the phone app works without either.
 Steam Web API --\
 HowLongToBeat ----> Android app (Room + DataStore + gamification engine)
                     |-> local backup / restore
-                    \-> planned Firestore sync -> OBS browser overlay
+                    \-> planned: backfill from the presence log below
+
+Steam Web API ----> Cloud Function (1/min) -> Firestore presence log
+                                              \-> planned OBS browser overlay
 ```
 
-The current app runs on-device: it pulls from the Steam Web API, gathers
-HowLongToBeat completion estimates, stores data locally, and computes XP locally.
-The cloud-sync layer and browser-source overlay are future work.
+The app runs on-device: it pulls from the Steam Web API, gathers HowLongToBeat
+completion estimates, stores data locally, and computes XP locally. It does not
+depend on the cloud for anything.
+
+The Cloud Function is a separate, independent writer. It records presence
+observations only — never sessions, playtime, or XP — so that the on-device engine
+remains the single author of derived values. Nothing consumes its output yet; the
+app-side backfill and the browser-source overlay are future work.
 
 ### Data-Source Boundary
 
@@ -160,12 +175,15 @@ device or emulator.
 The offline-first Android app is the current product. It tracks real Steam
 sessions, awards XP from playtime and achievements, shows level/quests/streaks and
 history, reviews HLTB matches, monitors live presence, and supports local
-backup/restore.
+backup/restore. A cloud presence poller runs alongside it, recording play history
+the phone cannot observe.
 
 Remaining roadmap items:
 
-- Firestore sync for selected app state.
-- Static OBS Browser Source overlay backed by the same synced state.
+- App-side backfill: read the Firestore presence log and fill in sessions missed
+  while the phone was asleep or killed. Requires deciding how the app authenticates,
+  since Firestore rules currently deny all client access.
+- Static OBS Browser Source overlay backed by the `players/{steamId}` document.
 - Overlay polish for quest completions, streak milestones, and level-ups.
 
 ## Security Notes
