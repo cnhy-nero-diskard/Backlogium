@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.BlendMode
@@ -445,7 +446,7 @@ private fun CollectionCard(
     val pulse = if (card.isCurrentlyPlaying && !reducedMotion) {
         val transition = rememberInfiniteTransition(label = "collectionGlowPulse")
         transition.animateFloat(
-            initialValue = 0.55f,
+            initialValue = 0.72f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(
                 animation = tween(durationMillis = 2_400, easing = LinearEasing),
@@ -463,16 +464,28 @@ private fun CollectionCard(
     } ?: baseSurface
     Card(
         onClick = onClick,
-        modifier = modifier.drawWithContent {
-            drawContent()
-            if (glowVisibility > 0f) {
-                drawRoundRect(
-                    color = glowColor.copy(alpha = 0.34f * glowAlpha),
-                    style = Stroke(width = 1.5.dp.toPx()),
-                    cornerRadius = CornerRadius(12.dp.toPx()),
-                )
-            }
-        },
+        modifier = modifier
+            .shadow(
+                elevation = 12.dp * glowVisibility,
+                shape = RoundedCornerShape(12.dp),
+                ambientColor = glowColor.copy(alpha = 0.65f * glowAlpha),
+                spotColor = glowColor.copy(alpha = 0.45f * glowAlpha),
+            )
+            .drawWithContent {
+                drawContent()
+                if (glowVisibility > 0f) {
+                    drawRoundRect(
+                        color = glowColor.copy(alpha = 0.22f * glowAlpha),
+                        style = Stroke(width = 6.dp.toPx()),
+                        cornerRadius = CornerRadius(12.dp.toPx()),
+                    )
+                    drawRoundRect(
+                        color = glowColor.copy(alpha = 0.86f * glowAlpha),
+                        style = Stroke(width = 2.dp.toPx()),
+                        cornerRadius = CornerRadius(12.dp.toPx()),
+                    )
+                }
+            },
         colors = CardDefaults.cardColors(
             containerColor = cardSurface,
         ),
