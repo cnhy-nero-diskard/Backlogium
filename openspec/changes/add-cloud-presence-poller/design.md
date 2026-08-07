@@ -110,6 +110,24 @@ A Node project beside the Gradle build. The Firestore document shape is a contra
 
 The poller writes via the Firebase Admin SDK, which runs on service-account credentials and bypasses security rules entirely. Locked-down rules therefore cost the poller nothing while there is no legitimate client. Test-mode rules are explicitly rejected: they expire after 30 days and fail silently long after the choice is forgotten.
 
+### Health is signalled by a log heartbeat, not by data
+
+Every poll that completes a successful Steam fetch and Firestore interaction emits a `poll ok` log line. A metric-absence alert on that line is the monitoring hook.
+
+The obvious cheaper signals do not work:
+
+| Signal | Blind to |
+|---|---|
+| Invocation count | A revoked API key. The function still runs, still returns 200, and records nothing — invocation count stays a perfect 1,440/day throughout. |
+| `current.updatedAt` | Everything. A healthy poller writes nothing while the user is idle, so staleness is indistinguishable from not having played. |
+| Error log lines | Any failure that does not log, including causes not anticipated here. |
+
+A positive heartbeat inverts the problem: rather than enumerating failures to watch for, it asserts success and alerts on its absence. It is emitted after the Firestore interaction, so a Firestore outage suppresses it too.
+
+This lives in logs rather than Firestore deliberately. It costs roughly 43k tiny log lines a month against a 50 GiB free allowance, adds no Firestore writes, and so does not disturb the write-on-game-change rule — that requirement governs the data, not the telemetry.
+
+It does not cover a profile flipped to private, where writes continue but carry no game attribution. The `Profile is not public` warning in `steam.ts` is the hook for that case.
+
 ## Risks / Trade-offs
 
 - **A private or friends-only Steam profile returns no `gameextrainfo`** → The poller records presence it cannot attribute to a game, producing a useless log. Profile visibility must be verified as public before deployment, and the function should log distinguishably when `personastate` indicates online but game fields are absent.

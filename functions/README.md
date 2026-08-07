@@ -66,6 +66,7 @@ Log lines worth recognising:
 
 | Message | Meaning |
 |---|---|
+| `poll ok` | Liveness heartbeat — one per minute. Absence means something is broken. |
 | `Recorded presence transition` | Normal. A state change was written. |
 | `Profile is not public` | Game attribution unavailable — fix profile visibility, or the log is useless. |
 | `Steam returned no player...` | Wrong Steam ID, or the profile is unreachable by this key. |
@@ -86,7 +87,13 @@ Old secret versions linger; prune them with
 ## Health
 
 Nothing consumes this data yet, so a stalled poller has no user-visible symptom.
-The signal is `players/{steamId}.updatedAt` — but note it only advances on a
-*state change*, so a long session legitimately leaves it hours old. Checking
-recent invocations in the Cloud Console is the more reliable liveness check
-until a consumer exists.
+The signal is the `poll ok` log line, emitted once per minute after a successful
+Steam fetch *and* a successful Firestore interaction. A metric-absence alert on
+it is the monitoring hook.
+
+Do not substitute the cheaper signals — both are blind to the likeliest failure:
+
+- **Invocation count** stays at a perfect 1,440/day if the Steam API key is
+  revoked, because the function still runs and still returns 200.
+- **`players/{steamId}.updatedAt`** only advances on a game change, so a healthy
+  idle poller looks identical to a dead one.

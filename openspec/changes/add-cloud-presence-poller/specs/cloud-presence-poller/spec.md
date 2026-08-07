@@ -139,6 +139,28 @@ The system SHALL stamp every document it writes with a schema version field set 
 - **WHEN** a document is appended to the `presence` subcollection
 - **THEN** it contains a schema version field set to `1`
 
+### Requirement: Liveness heartbeat
+
+The system SHALL emit a distinct log entry on every poll that completes a successful Steam fetch and a successful Firestore interaction. The entry SHALL NOT be emitted when the Steam fetch fails or the Firestore interaction fails, so that its absence indicates a broken pipeline rather than an idle user.
+
+Invocation count is not a sufficient health signal: a revoked API key leaves the function running and returning success while recording nothing. The current-state document is not sufficient either, because a healthy poller writes nothing while the user is not playing.
+
+#### Scenario: Successful poll emits the heartbeat
+
+- **WHEN** a poll fetches presence successfully and completes its Firestore interaction
+- **THEN** a heartbeat log entry is emitted
+- **AND** it is emitted whether or not the poll resulted in a write
+
+#### Scenario: Failed fetch suppresses the heartbeat
+
+- **WHEN** the Steam request fails or returns an unusable response
+- **THEN** no heartbeat log entry is emitted
+
+#### Scenario: Absence is alertable
+
+- **WHEN** no heartbeat entry has been emitted for a sustained period
+- **THEN** the condition is detectable by a monitoring policy without inspecting Firestore
+
 ### Requirement: Client access is denied
 
 The system SHALL deploy Firestore security rules denying all read and write access to client SDKs. The poller SHALL write through the Firebase Admin SDK, whose service-account credentials bypass security rules.

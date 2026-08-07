@@ -68,6 +68,16 @@ three fragments.
 - [x] 8.4 Redeploy and confirm idling no longer produces entries
 - [ ] 8.5 Confirm a mid-session idle leaves `since` unmoved and appends nothing
 
-## 9. Resolve open questions
+## 9. Liveness alerting
 
-- [ ] 9.1 Decide whether poller staleness needs active alerting, or whether checking `current.updatedAt` by hand is enough until a consumer exists
+Decision on the former open question: active alerting is warranted, because the
+history this poller accumulates cannot be backfilled, and the most likely
+failures (a revoked key, a Steam outage) leave invocation count untouched.
+
+- [x] 9.1 Emit a `poll ok` heartbeat after a successful fetch and Firestore interaction
+- [x] 9.2 Record in `design.md` why invocation count and `updatedAt` are insufficient signals
+- [ ] 9.3 Redeploy so the heartbeat is live
+- [ ] 9.4 Create a log-based counter metric matching the `poll ok` entries
+- [ ] 9.5 Create an alerting policy on absence of that metric for 15 minutes, with an email notification channel
+- [ ] 9.6 Verify the alert fires by pausing the Cloud Scheduler job, then resume it
+- [ ] 9.7 Decide whether the `Profile is not public` warning also warrants its own alert
