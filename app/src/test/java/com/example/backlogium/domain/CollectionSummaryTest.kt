@@ -184,7 +184,8 @@ class CollectionSummaryTest {
 
         assertEquals(900, banner.plannedMinutes)
         assertEquals(780, banner.remainingMinutes)
-        assertEquals(16_500, banner.timeDifferentialMinutes)
+        assertNull(banner.timeDifferentialMinutes)
+        assertEquals(CollectionPacingState.LEARNING, banner.pacingState)
         assertEquals(CollectionTimeBasis.MAIN_EXTRA, banner.timeBasis)
     }
 
@@ -199,7 +200,8 @@ class CollectionSummaryTest {
             timeBasis = CollectionTimeBasis.MAIN_STORY,
         )
 
-        assertEquals(-1_560, banner.timeDifferentialMinutes)
+        assertNull(banner.timeDifferentialMinutes)
+        assertEquals(CollectionPacingState.LEARNING, banner.pacingState)
     }
 
     @Test

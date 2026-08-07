@@ -26,6 +26,9 @@ val OnGoldContainer = Color(0xFFF5DFA6)
  */
 val GoldOverrun = Color(0xFF8A431C)
 
+/** Orange deadline-warning text for plans due soon, distinct from milestone gold and error red. */
+val DeadlineWarning = Color(0xFFFFB454)
+
 // --- Dark surface family (charcoal/navy) ----------------------------------------
 val NavyBackground = Color(0xFF10141C)   // app background — deep charcoal-navy
 val NavySurface = Color(0xFF171C26)      // cards / elevated surfaces
@@ -61,6 +64,9 @@ val SteelBlueDark = Color(0xFF2F5B7C)
 
 /** Light-scheme counterpart to [GoldOverrun]: burnt amber, legible on the cream surfaces. */
 val GoldOverrunLight = Color(0xFFB4571F)
+
+/** Dark orange deadline-warning text that remains legible on the light scheme. */
+val DeadlineWarningLight = Color(0xFFB45309)
 
 /** Light-scheme counterpart to [SteelBlueContainer]/[OnSteelBlueContainer]. */
 val SteelBlueContainerLight = Color(0xFFD3E4F0)

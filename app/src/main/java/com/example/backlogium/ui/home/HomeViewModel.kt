@@ -10,6 +10,7 @@ import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
+import com.example.backlogium.data.repo.PersonalPaceRepository
 import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.local.entity.Collection
@@ -73,6 +74,7 @@ data class HomeCollectionCard(
     val accent: CollectionAccent?,
     val banner: CollectionBanner,
     val games: List<HomeCollectionGame>,
+    val isCurrentlyPlaying: Boolean = false,
 )
 
 data class HomeCollectionGame(
@@ -91,6 +93,7 @@ class HomeViewModel @Inject constructor(
     private val collectionRepository: CollectionRepository,
     private val gameRepository: GameRepository,
     private val achievementRepository: AchievementRepository,
+    private val personalPaceRepository: PersonalPaceRepository,
 ) : ViewModel() {
 
     private val baseState: Flow<HomeUiState> = combine(
@@ -140,7 +143,8 @@ class HomeViewModel @Inject constructor(
             collectionRepository.members(collection.id),
             gameRepository.library,
             achievementRepository.counts,
-        ) { members, libraryGames, counts ->
+            personalPaceRepository.profile,
+        ) { members, libraryGames, counts, personalPace ->
             val gamesById = libraryGames.associateBy { it.appId }
             val signals = members.map { member ->
                 val game = gamesById[member.appId]
@@ -166,6 +170,7 @@ class HomeViewModel @Inject constructor(
                 members = signals,
                 today = time.today(),
                 timeBasis = collection.timeBasis,
+                personalPace = personalPace,
             )
             HomeCollectionCard(
                 collectionId = collection.id,
@@ -193,7 +198,17 @@ class HomeViewModel @Inject constructor(
         liveStatusRepository.liveStatus,
         collectionCards,
     ) { state, live, cards ->
-        val withCards = state.copy(collections = cards)
+        val playingAppId = (live.nowPlaying as? NowPlaying.InGame)?.gameId
+        val withCards = state.copy(
+            collections = cards.map { card ->
+                card.copy(
+                    isCurrentlyPlaying = homeCollectionContainsPlayingGame(
+                        games = card.games,
+                        playingAppId = playingAppId,
+                    ),
+                )
+            },
+        )
         when (val nowPlaying = live.nowPlaying) {
             is NowPlaying.InGame -> withCards.copy(
                 isInGame = true,
