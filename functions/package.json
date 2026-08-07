@@ -1,0 +1,23 @@
+{
+  "name": "backlogium-functions",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloud presence poller for Backlogium",
+  "main": "lib/index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log --only pollPresence"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.2",
+    "firebase-functions": "^6.3.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
