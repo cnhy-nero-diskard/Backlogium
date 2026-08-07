@@ -7,7 +7,7 @@ rarity, completion estimates, quests, and streaks as one local progression syste
 
 ## Source of truth for behaviour
 
-**`openspec/specs/` is normative, not the code.** Thirteen capability specs live
+**`openspec/specs/` is normative, not the code.** Fourteen capability specs live
 there — `steam-sync`, `live-status`, `gamification`, `cloud-presence-poller`, and
 others. When behaviour is in question, read the spec before inferring intent from
 an implementation.

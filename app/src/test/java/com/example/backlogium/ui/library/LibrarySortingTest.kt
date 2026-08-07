@@ -3,6 +3,7 @@ package com.example.backlogium.ui.library
 import com.example.backlogium.domain.LibrarySortKey
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import com.example.backlogium.data.repo.GameGenre
 
 /**
  * The four Library sort keys: each one's direction, its name tie-break, and where games with no
@@ -107,5 +108,6 @@ class LibrarySortingTest {
         override val playtimeForever: Int,
         override val playtime2Weeks: Int,
         override val xpContributed: Int,
+        override val genres: List<GameGenre> = emptyList(),
     ) : LibraryRow
 }

@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.GameAchievement
 import com.example.backlogium.data.repo.GameRepository
+import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
@@ -83,6 +84,8 @@ data class GameSummaryUi(
      * poll — never persisted, never a placeholder zero.
      */
     val activePlayers: Int? = null,
+    /** Ordered, cached Store genres. Empty means unknown or definitively unavailable. */
+    val genres: List<GameGenre> = emptyList(),
 ) {
     /** True when any HLTB length resolved. Gates the whole block: no zeros, no placeholders. */
     val hasHltb: Boolean
@@ -179,14 +182,14 @@ class GameDetailViewModel @Inject constructor(
 }
 
 /** The four flows the screen derives from, gathered before any per-row work. */
-private data class Content(
+internal data class Content(
     val game: LibraryGame?,
     val achievements: List<GameAchievement>,
     val trackedMinutes: Int,
     val config: RuleConfig,
 )
 
-private fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): GameSummaryUi {
+internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): GameSummaryUi {
     val game = game ?: return GameSummaryUi()
     return GameSummaryUi(
         headerUrl = game.headerUrl,
@@ -212,6 +215,7 @@ private fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): G
             config,
         ),
         activePlayers = activePlayers,
+        genres = game.genres,
     )
 }
 

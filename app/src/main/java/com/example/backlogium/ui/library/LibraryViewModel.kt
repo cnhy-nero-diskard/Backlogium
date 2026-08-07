@@ -7,6 +7,7 @@ import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.GameRepository
+import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.data.repo.HltbRepository
 import com.example.backlogium.data.repo.LibraryGame
@@ -58,6 +59,7 @@ data class GoalGameUi(
     val achievementTotal: Int? = null,
     /** True while Steam's live presence reports this exact game as the one running right now. */
     val isCurrentlyPlaying: Boolean = false,
+    override val genres: List<GameGenre> = emptyList(),
 ) : LibraryRow
 
 data class BacklogGameUi(
@@ -80,6 +82,7 @@ data class BacklogGameUi(
     val achievementTotal: Int? = null,
     /** True while Steam's live presence reports this exact game as the one running right now. */
     val isCurrentlyPlaying: Boolean = false,
+    override val genres: List<GameGenre> = emptyList(),
 ) : LibraryRow
 
 /** One processed game in a running batch sweep. A null [outcome] means the lookup failed. */
@@ -371,6 +374,7 @@ private fun LibraryGame.toGoalUi(
     achievementUnlocked = counts[appId]?.unlocked,
     achievementTotal = counts[appId]?.total,
     isCurrentlyPlaying = appId == playingAppId,
+    genres = genres,
 )
 
 private fun LibraryGame.toBacklogUi(
@@ -392,6 +396,7 @@ private fun LibraryGame.toBacklogUi(
     achievementUnlocked = counts[appId]?.unlocked,
     achievementTotal = counts[appId]?.total,
     isCurrentlyPlaying = appId == playingAppId,
+    genres = genres,
 )
 
 /**
@@ -410,9 +415,12 @@ private fun LibraryGame.xpContribution(xp: XpInputs): Int = LibraryXp.contributi
     xp.cfg,
 )
 
-/** Case-insensitive name filter; a blank query matches everything. */
-private fun <T : LibraryRow> List<T>.matching(query: String): List<T> {
+/** Case-insensitive name-or-genre filter; a blank query matches everything. */
+internal fun <T : LibraryRow> List<T>.matching(query: String): List<T> {
     val trimmed = query.trim()
     if (trimmed.isEmpty()) return this
-    return filter { it.name.contains(trimmed, ignoreCase = true) }
+    return filter { game ->
+        game.name.contains(trimmed, ignoreCase = true) ||
+            game.genres.any { it.label.contains(trimmed, ignoreCase = true) }
+    }
 }

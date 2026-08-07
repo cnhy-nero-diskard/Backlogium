@@ -8,6 +8,7 @@ import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.DiagnosticsDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
@@ -37,12 +38,16 @@ object DatabaseModule {
                 BacklogiumDatabase.MIGRATION_8_9,
                 BacklogiumDatabase.MIGRATION_9_10,
                 BacklogiumDatabase.MIGRATION_10_11,
+                BacklogiumDatabase.MIGRATION_11_12,
             )
             .fallbackToDestructiveMigration()
             .build()
 
     @Provides
     fun provideGameDao(db: BacklogiumDatabase): GameDao = db.gameDao()
+
+    @Provides
+    fun provideGameGenreCacheDao(db: BacklogiumDatabase): GameGenreCacheDao = db.gameGenreCacheDao()
 
     @Provides
     fun provideSessionDao(db: BacklogiumDatabase): SessionDao = db.sessionDao()

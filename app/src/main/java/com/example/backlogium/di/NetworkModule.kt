@@ -4,6 +4,7 @@ import com.example.backlogium.BuildConfig
 import com.example.backlogium.data.diagnostics.RedactingTimingInterceptor
 import com.example.backlogium.data.hltb.HltbHttpClient
 import com.example.backlogium.data.remote.SteamApi
+import com.example.backlogium.data.remote.SteamStoreApi
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import dagger.Module
 import dagger.Provides
@@ -22,6 +23,7 @@ import javax.inject.Singleton
 object NetworkModule {
 
     private const val STEAM_BASE_URL = "https://api.steampowered.com/"
+    private const val STEAM_STORE_BASE_URL = "https://store.steampowered.com/"
 
     @Provides
     @Singleton
@@ -52,6 +54,15 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideSteamApi(retrofit: Retrofit): SteamApi = retrofit.create(SteamApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideSteamStoreApi(json: Json, client: OkHttpClient): SteamStoreApi = Retrofit.Builder()
+        .baseUrl(STEAM_STORE_BASE_URL)
+        .client(client)
+        .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+        .build()
+        .create(SteamStoreApi::class.java)
 
     /**
      * A separate OkHttp client for HowLongToBeat: the scraper drives raw GET/POST calls with

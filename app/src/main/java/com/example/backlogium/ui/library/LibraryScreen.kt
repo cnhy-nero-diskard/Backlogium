@@ -283,7 +283,7 @@ private fun SearchField(
             .padding(bottom = 8.dp),
         singleLine = true,
         shape = RoundedCornerShape(20.dp),
-        label = { Text("Search games") },
+        label = { Text("Search games or genres") },
         leadingIcon = {
             Icon(
                 imageVector = TablerIcons.Search,

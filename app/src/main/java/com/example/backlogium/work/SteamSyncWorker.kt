@@ -50,6 +50,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private val gamificationUpdater: GamificationUpdater,
     private val achievementRepository: AchievementRepository,
     private val backupRepository: BackupRepository,
+    private val genreEnrichmentScheduler: GenreEnrichmentScheduler,
     private val presenceServiceStarter: PresenceServiceStarter,
     private val diagnostics: SyncRunRecorder,
     private val time: TimeProvider,
@@ -176,6 +177,9 @@ class SteamSyncWorker @AssistedInject constructor(
             )
         }
         gameDao.upsertAll(updatedGames)
+        // Store metadata is a separately scheduled best-effort concern: never await it or make
+        // an otherwise-valid owned-games poll fail because the public Store is unavailable.
+        runCatching { genreEnrichmentScheduler.ensureEnqueued() }
 
         // Attribute this poll's deltas to today's local date; always ensure today's row
         // exists so the quest/streak evaluation sees the current day.

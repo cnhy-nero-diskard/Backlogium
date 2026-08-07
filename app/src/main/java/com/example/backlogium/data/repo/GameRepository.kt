@@ -61,6 +61,8 @@ data class LibraryGame(
     val hltbMatchState: HltbMatchState? = null,
     /** Tagged as a "Focus" game — drives History's per-day Focus-minutes breakdown. */
     val isGoal: Boolean = false,
+    /** Ordered Steam Store genres; empty while unknown, unavailable, or malformed in cache. */
+    val genres: List<GameGenre> = emptyList(),
 )
 
 /** Read/write access to the game library, exposing domain models as observable [Flow]s. */
@@ -68,6 +70,7 @@ data class LibraryGame(
 class GameRepository @Inject constructor(
     private val gameDao: GameDao,
     private val hltbRepository: HltbRepository,
+    private val gameGenreRepository: GameGenreRepository,
     private val steamApi: SteamApi,
 ) {
     val library: Flow<List<LibraryGame>> = gameDao.observeLibrary().withHltb()
@@ -107,13 +110,14 @@ class GameRepository @Inject constructor(
 
     /** Joins each game with its cached HLTB row and maps both into [LibraryGame]. */
     private fun Flow<List<Game>>.withHltb(): Flow<List<LibraryGame>> =
-        combine(hltbRepository.allData) { games, hltb ->
+        combine(hltbRepository.allData) { games, hltb -> games to hltb }
+            .combine(gameGenreRepository.allGenres) { (games, hltb), genres ->
             val rowByAppId = hltb.associateBy(HltbData::appId)
-            games.map { it.toDomain(rowByAppId[it.appId]) }
+            games.map { it.toDomain(rowByAppId[it.appId], genres[it.appId].orEmpty()) }
         }
 }
 
-private fun Game.toDomain(hltb: HltbData?) = LibraryGame(
+private fun Game.toDomain(hltb: HltbData?, genres: List<GameGenre>) = LibraryGame(
     appId = appId,
     name = name,
     iconUrl = iconUrl,
@@ -127,6 +131,7 @@ private fun Game.toDomain(hltb: HltbData?) = LibraryGame(
     allStylesMinutes = hltb?.allStylesMinutes,
     hltbMatchState = hltb?.matchStatus?.toDomain(),
     isGoal = isGoal,
+    genres = genres,
 )
 
 /** Storage → domain status mapping; internal so [HltbRepository] can report batch outcomes. */

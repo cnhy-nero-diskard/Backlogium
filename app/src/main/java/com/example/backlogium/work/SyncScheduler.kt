@@ -17,10 +17,19 @@ import androidx.work.workDataOf
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** User-facing state for the independent, best-effort Steam Store genre backfill. */
+enum class GenreEnrichmentStatus {
+    IDLE,
+    QUEUED,
+    RUNNING,
+    RETRYING,
+}
 
 /**
  * Owns WorkManager scheduling for [SteamSyncWorker]: a 15-minute periodic poll that
@@ -53,6 +62,27 @@ class SyncScheduler @Inject constructor(
     ) { oneTime, periodic ->
         isSyncInProgress(oneTime.map { it.state }, periodic.map { it.state })
     }.holdTrue()
+
+    /**
+     * WorkManager-backed status for the genre enrichment chain. The chain is deliberately exposed
+     * separately from [syncInProgress]: Store requests run after Steam persistence and must not
+     * make the core Steam sync indicator look stuck.
+     */
+    val genreEnrichmentStatus: Flow<GenreEnrichmentStatus> = workManager
+        .getWorkInfosForUniqueWorkFlow(GenreEnrichmentWorker.UNIQUE_WORK_NAME)
+        .map { infos ->
+            when {
+                infos.any { it.state == WorkInfo.State.RUNNING } -> GenreEnrichmentStatus.RUNNING
+                infos.any {
+                    it.state == WorkInfo.State.ENQUEUED && it.runAttemptCount > 0
+                } -> GenreEnrichmentStatus.RETRYING
+                infos.any {
+                    it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED
+                } -> GenreEnrichmentStatus.QUEUED
+                else -> GenreEnrichmentStatus.IDLE
+            }
+        }
+        .distinctUntilChanged()
 
     /** Enqueue the periodic poll, keeping any already-scheduled work. Idempotent. */
     fun ensurePeriodicSync() {
