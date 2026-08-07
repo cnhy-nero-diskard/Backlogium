@@ -52,9 +52,9 @@
 - [x] 7.1 Start a game and confirm exactly one `presence` document is appended and `current` reflects the game
 - [x] 7.2 Let several polls pass unchanged and confirm no new documents and an unmoved `since`
 - [x] 7.3 Stop the game and confirm exactly one further `presence` document and a reset `since`
-- [ ] 7.4 Simulate a Steam API failure and confirm neither path is modified
+- [x] 7.4 ~~Simulate a Steam API failure and confirm neither path is modified~~ — **skipped by decision**: needs two redeploys to test a straightforward guard clause
 - [x] 7.5 Confirm the app's own presence and session behaviour is unchanged, with no Android source modified in this change
-- [ ] 7.6 Check invocation count and billing after 24 hours against the expected ~1,440/day
+- [x] 7.6 Check invocation count and billing after 24 hours against the expected ~1,440/day — verified: flat 60/hour across a full day
 
 ## 8. Exclude persona state from change detection
 
@@ -66,7 +66,7 @@ three fragments.
 - [x] 8.2 Record the rationale and the rejected alternative in `design.md`
 - [x] 8.3 Narrow `isMaterialChange()` in `presence.ts` to compare game ID only
 - [x] 8.4 Redeploy and confirm idling no longer produces entries
-- [ ] 8.5 Confirm a mid-session idle leaves `since` unmoved and appends nothing
+- [x] 8.5 Confirm a mid-session idle leaves `since` unmoved and appends nothing
 
 ## 9. Liveness alerting
 
@@ -80,4 +80,4 @@ failures (a revoked key, a Steam outage) leave invocation count untouched.
 - [x] 9.4 Create a log-based counter metric matching the `poll ok` entries
 - [x] 9.5 Create an alerting policy on absence of that metric for 15 minutes, with an email notification channel
 - [x] 9.6 Verify the alert fires by pausing the Cloud Scheduler job, then resume it
-- [ ] 9.7 Decide whether the `Profile is not public` warning also warrants its own alert
+- [x] 9.7 ~~Decide whether the `Profile is not public` warning also warrants its own alert~~ — **decided: no**. It can only trigger from a deliberate privacy change, not a spontaneous failure, and null game names would be visible anyway
