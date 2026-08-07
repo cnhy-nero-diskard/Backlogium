@@ -316,26 +316,25 @@ private fun SyncCard(
     onSyncNow: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = if (syncing) "Syncing…" else "Last sync: ${UiFormat.dateTime(lastSyncAt)}",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Button(onClick = onSyncNow, enabled = !syncing) { Text("Sync now") }
+                Text(
+                    text = genreStatusLabel(genreStatus),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                )
             }
-            Text(
-                text = genreStatusLabel(genreStatus),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
-            )
+            Button(onClick = onSyncNow, enabled = !syncing) { Text("Sync now") }
         }
     }
 }
