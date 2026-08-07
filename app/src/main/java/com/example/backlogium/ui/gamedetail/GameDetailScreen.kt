@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,6 +33,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -202,10 +205,34 @@ private fun GameSummarySection(name: String, summary: GameSummaryUi) {
                 }
                 CompletionLine(summary)
                 ActivePlayersLine(summary)
+                GenreTiles(summary.genres)
                 if (summary.hasHltb) {
                     Spacer(Modifier.height(8.dp))
                     HltbLengths(summary)
                 }
+            }
+        }
+    }
+}
+
+/** Informational cached genres: surfaces intentionally have no click action or navigation. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GenreTiles(genres: List<com.example.backlogium.data.repo.GameGenre>) {
+    if (genres.isEmpty()) return
+    Spacer(Modifier.height(10.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        genres.forEach { genre ->
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+            ) {
+                Text(
+                    text = genre.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                )
             }
         }
     }

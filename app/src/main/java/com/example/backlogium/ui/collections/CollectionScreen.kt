@@ -34,11 +34,13 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -719,16 +721,15 @@ private fun CollectionForm(
     viewModel: CollectionViewModel,
 ) {
     var showDatePicker by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
+    var query by rememberSaveable { mutableStateOf("") }
+    var selectedGenreIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var showGenreSheet by rememberSaveable { mutableStateOf(false) }
 
-    val filteredAddables = remember(state.addableGames, query) {
-        if (query.isBlank()) {
-            state.addableGames
-        } else {
-            state.addableGames.filter { game ->
-                game.name.contains(query, ignoreCase = true)
-            }
-        }
+    val memberIds = remember(state.members) { state.members.mapTo(mutableSetOf()) { it.appId } }
+    val selectedGenreSet = selectedGenreIds.toSet()
+    val genreCatalog = remember(state.libraryGames) { genreFilterCatalog(state.libraryGames) }
+    val filteredAddables = remember(state.libraryGames, memberIds, query, selectedGenreIds) {
+        filterAddableGames(state.libraryGames, memberIds, query, selectedGenreSet)
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -902,6 +903,36 @@ private fun CollectionForm(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !state.saving,
                 )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { showGenreSheet = true },
+                        enabled = !state.saving && genreCatalog.isNotEmpty(),
+                    ) {
+                        Text(if (selectedGenreIds.isEmpty()) "Genres" else "Genres (${selectedGenreIds.size})")
+                    }
+                    if (selectedGenreIds.isNotEmpty()) {
+                        TextButton(onClick = { selectedGenreIds = emptyList() }, enabled = !state.saving) {
+                            Text("Clear genres")
+                        }
+                    }
+                }
+                if (selectedGenreIds.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        genreCatalog.filter { it.id in selectedGenreSet }.forEach { genre ->
+                            FilterChip(
+                                selected = true,
+                                onClick = { selectedGenreIds = selectedGenreIds - genre.id },
+                                label = { Text(genre.label) },
+                                enabled = !state.saving,
+                            )
+                        }
+                    }
+                }
             }
 
             if (filteredAddables.isEmpty() && state.addableGames.isNotEmpty()) {
@@ -985,6 +1016,34 @@ private fun CollectionForm(
             },
         ) {
             DatePicker(state = datePickerState)
+        }
+    }
+
+    if (showGenreSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showGenreSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        ) {
+            Column(Modifier.padding(horizontal = 24.dp, vertical = 12.dp)) {
+                Text("Filter by genres", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                genreCatalog.forEach { genre ->
+                    FilterChip(
+                        selected = genre.id in selectedGenreSet,
+                        onClick = {
+                            selectedGenreIds = if (genre.id in selectedGenreSet) {
+                                selectedGenreIds - genre.id
+                            } else {
+                                selectedGenreIds + genre.id
+                            }
+                        },
+                        label = { Text(genre.label) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+                Spacer(Modifier.height(24.dp))
+            }
         }
     }
 }

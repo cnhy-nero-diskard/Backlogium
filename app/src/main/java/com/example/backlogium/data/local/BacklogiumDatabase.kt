@@ -10,6 +10,7 @@ import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.DiagnosticsDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
@@ -18,6 +19,7 @@ import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.GameGenreCache
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
@@ -38,8 +40,9 @@ import com.example.backlogium.data.local.entity.SyncRun
         PresenceDecision::class,
         Collection::class,
         CollectionMember::class,
+        GameGenreCache::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -52,6 +55,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun achievementDao(): AchievementDao
     abstract fun diagnosticsDao(): DiagnosticsDao
     abstract fun collectionDao(): CollectionDao
+    abstract fun gameGenreCacheDao(): GameGenreCacheDao
 
     companion object {
         const val NAME = "backlogium.db"
@@ -230,6 +234,24 @@ abstract class BacklogiumDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     "ALTER TABLE `collections` ADD COLUMN `timeBasis` TEXT NOT NULL DEFAULT 'COMPLETIONIST'",
+                )
+            }
+        }
+
+        /**
+         * v11 -> v12: add the independently refreshed Steam Store genre cache. Existing games
+         * deliberately receive no rows, keeping their genres unknown until background enrichment.
+         */
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `game_genre_cache` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`genresJson` TEXT NOT NULL, " +
+                        "`checkedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`), " +
+                        "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
                 )
             }
         }

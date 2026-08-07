@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.library
 
+import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.domain.LibrarySortKey
 
 /**
@@ -9,6 +10,7 @@ import com.example.backlogium.domain.LibrarySortKey
 interface LibraryRow {
     val appId: Long
     val name: String
+    val genres: List<GameGenre>
     val playtimeForever: Int
     val playtime2Weeks: Int
     val xpContributed: Int
