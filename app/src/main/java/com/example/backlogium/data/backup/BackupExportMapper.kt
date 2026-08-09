@@ -208,6 +208,8 @@ private fun Collection.toBackup() = BackupCollection(
     createdAt = createdAt,
     accent = accent?.name,
     timeBasis = timeBasis.name,
+    description = description,
+    displayOrder = displayOrder,
 )
 
 private fun CollectionMember.toBackup() = BackupCollectionMember(

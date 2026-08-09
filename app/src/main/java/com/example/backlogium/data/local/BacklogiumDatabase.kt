@@ -42,7 +42,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         CollectionMember::class,
         GameGenreCache::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -253,6 +253,31 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) " +
                         "ON UPDATE NO ACTION ON DELETE CASCADE)",
                 )
+            }
+        }
+
+        /**
+         * v12 -> v13: add optional collection descriptions and explicit collection display order.
+         * Existing rows are seeded in the same `createdAt ASC, id ASC` order used before v13 so
+         * the first ordered listing is unchanged for existing installs.
+         */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `collections` ADD COLUMN `description` TEXT")
+                db.execSQL(
+                    "ALTER TABLE `collections` ADD COLUMN `displayOrder` INTEGER NOT NULL DEFAULT 0",
+                )
+
+                db.query("SELECT `id` FROM `collections` ORDER BY `createdAt` ASC, `id` ASC").use { cursor ->
+                    var displayOrder = 0
+                    while (cursor.moveToNext()) {
+                        db.execSQL(
+                            "UPDATE `collections` SET `displayOrder` = ? WHERE `id` = ?",
+                            arrayOf(displayOrder, cursor.getLong(0)),
+                        )
+                        displayOrder++
+                    }
+                }
             }
         }
     }

@@ -17,6 +17,8 @@ import com.example.backlogium.domain.CollectionTimeBasis
  * [CollectionMode.DEADLINE_GOAL]; null for every other mode (spec: "Target date stored only
  * for deadline mode").
  * [accent] is an optional palette token; null means the default neutral styling.
+ * [description] is optional collection intent text; null means it has never been described.
+ * [displayOrder] is the contiguous user-controlled position used when listing collections.
  */
 @Entity(tableName = "collections")
 data class Collection(
@@ -28,4 +30,6 @@ data class Collection(
     val accent: CollectionAccent? = null,
     val timeBasis: CollectionTimeBasis = CollectionTimeBasis.COMPLETIONIST,
     val createdAt: Long,
+    val description: String? = null,
+    val displayOrder: Int = 0,
 )
