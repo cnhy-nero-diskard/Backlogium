@@ -154,8 +154,7 @@ today's quest has not yet been met while the day is still in progress.
   in progress
 
 ### Requirement: Collections section on the Home screen
-The Home screen SHALL present a collections section showing one card per custom collection, each card
-rendering the collection's name and its mode-specific banner. Cards SHALL use an elevated surface
+The Home screen SHALL present a collections section showing one card per custom collection. Each card SHALL foreground the collection name, one concise mode-relevant status line, and a structured progress surface when applicable without rendering a separate uppercase mode label. The mode icon SHALL remain visually and accessibly identifiable. Cards SHALL use an elevated surface
 distinct from the Home background and remain visually separated from
 one another and styled by mode — goal modes present a progress surface, deadline mode additionally
 presents its countdown, ordered-queue mode presents its next game — and a collection with a stored
@@ -164,9 +163,46 @@ collection overview. The collections section SHALL render from locally stored st
 usable offline, and SHALL present an empty state when no collections exist. The collections section SHALL
 NOT displace or demote the existing level, XP, quest, streak, or now-playing surfaces on Home.
 
+Cards SHALL be presented in the collection's stored display order, and the user SHALL be able to
+change that order by pressing and holding a card and dragging it to a new position. The reordering
+gesture SHALL be distinguishable from the section's own scrolling, so neither gesture triggers the
+other. A completed reorder SHALL be persisted so the new order is present on the next visit. The
+collection description SHALL NOT be rendered on the Home card, which stays limited to the name,
+one status line, progress, and member thumbnails.
+
 #### Scenario: Collections shown on Home
 - **WHEN** the Home screen is shown and one or more collections exist
 - **THEN** a card is shown for each collection, displaying its name and its mode-specific banner
+
+#### Scenario: Cards shown in stored order
+- **WHEN** the Home collections section is shown
+- **THEN** the cards appear in the collection's stored display order
+
+#### Scenario: Reordering a collection card
+- **WHEN** the user presses and holds a collection card and drags it to another position
+- **THEN** the card follows the drag, the other cards move aside, and on release the new order is
+  persisted
+
+#### Scenario: Reordered collections persist
+- **WHEN** the user reorders collections and later returns to Home
+- **THEN** the collections are presented in the order the user left them
+
+#### Scenario: Drag distinguished from scrolling
+- **WHEN** the user scrolls the Home screen with a swipe that begins on a collection card
+- **THEN** the screen scrolls and no card is picked up for reordering
+
+#### Scenario: Reorder abandoned
+- **WHEN** the user picks up a card and releases it at its original position
+- **THEN** the order is unchanged and no reorder is persisted
+
+#### Scenario: Single collection
+- **WHEN** only one collection exists
+- **THEN** it presents no reordering affordance, since there is no other position to move it to
+
+#### Scenario: Description absent from the Home card
+- **WHEN** a collection has a stored description
+- **THEN** its Home card does not render that description, keeping the card limited to name, status
+  line, progress, and member thumbnails
 
 #### Scenario: Cards visually separated
 - **WHEN** two or more collection cards are shown
@@ -194,12 +230,11 @@ NOT displace or demote the existing level, XP, quest, streak, or now-playing sur
 
 #### Scenario: Collection member thumbnail preview
 - **WHEN** a Home collection card has one or more members
-- **THEN** the card shows up to five small member-game thumbnails in a row on the right
+- **THEN** the card shows up to three small member-game thumbnails in stored member order on the right
 
 #### Scenario: Collection member thumbnail overflow
 - **WHEN** a Home collection card has more than five members
-- **THEN** the card shows five thumbnails followed by the number of remaining members with a `+`
-  suffix, such as `6+` for an eleven-game collection
+- **THEN** the card shows three thumbnails followed by the number of remaining members using the existing `N+` convention, such as `8+` for an eleven-game collection
 
 #### Scenario: Default styling without accent
 - **WHEN** a collection has no stored accent
@@ -226,10 +261,12 @@ NOT displace or demote the existing level, XP, quest, streak, or now-playing sur
 The system SHALL provide a collection management screen, reached as a pushed sub-destination from the
 collection create entry point or an existing collection's explicit customization action, where the user
 can create a collection, choose its mode and an accent from the app's
-palette, name it, add and remove games, filter the pool of addable games with a search, set a target
+palette, name it, give it an optional description, add and remove games, filter the pool of addable games with a search, set a target
 date for deadline-goal collections, reorder members and mark them done for ordered-queue collections,
 and delete the collection. The save action SHALL remain reachable regardless of the form's scroll
-position. The screen SHALL render from locally stored state.
+position. Deleting a collection SHALL require an explicit confirmation that names the collection and
+states that its game memberships are removed with it, and SHALL NOT delete anything until that
+confirmation is given. The screen SHALL render from locally stored state.
 
 #### Scenario: Creating a collection
 - **WHEN** the user creates a new collection with a name and a mode
@@ -252,6 +289,22 @@ position. The screen SHALL render from locally stored state.
 #### Scenario: Save blocked without a name
 - **WHEN** the collection name is blank
 - **THEN** the save action is not usable
+
+#### Scenario: Describing a collection
+- **WHEN** the user enters a description on the management screen and saves
+- **THEN** the description is persisted on the collection
+
+#### Scenario: Description is optional
+- **WHEN** the user saves a collection without entering a description
+- **THEN** the collection is saved and no description is required or rendered for it
+
+#### Scenario: Clearing a description
+- **WHEN** the user clears a previously saved description and saves
+- **THEN** the collection is stored with no description and none is rendered
+
+#### Scenario: Description shown on the overview
+- **WHEN** a collection with a stored description is opened
+- **THEN** its overview presents that description
 
 #### Scenario: Adding games to a collection
 - **WHEN** the user adds games to a collection from the management screen
@@ -302,8 +355,17 @@ position. The screen SHALL render from locally stored state.
   surface skips it
 
 #### Scenario: Deleting a collection
-- **WHEN** the user deletes a collection
+- **WHEN** the user deletes a collection and confirms the deletion
 - **THEN** the collection and its memberships are removed, and it no longer appears on Home
+
+#### Scenario: Delete requires confirmation
+- **WHEN** the user chooses the delete action for a collection
+- **THEN** a confirmation is presented naming the collection and stating that its game memberships are
+  removed with it, and nothing is deleted until the user confirms
+
+#### Scenario: Cancelling a deletion
+- **WHEN** the user dismisses or cancels the delete confirmation
+- **THEN** the collection and all of its memberships remain unchanged
 
 #### Scenario: Empty collection on the management screen
 - **WHEN** a collection has no members
