@@ -3,6 +3,7 @@ package com.example.backlogium.ui.library
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -53,10 +56,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -64,10 +69,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.domain.LibrarySortKey
+import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.components.GameHeaderBackdrop
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.components.GameListDensityControl
 import com.example.backlogium.ui.collections.GenreFilterChoice
 import com.example.backlogium.ui.collections.genreFilterCatalog
 import com.example.backlogium.ui.theme.overrunExcess
@@ -97,6 +104,22 @@ private data class GoalDialogTarget(
     val appId: Long,
     val name: String,
     val isGoal: Boolean,
+)
+
+/** Common display shape used by both Library sections and all three density renderers. */
+private data class LibraryDisplayGame(
+    val appId: Long,
+    val name: String,
+    val iconUrl: String,
+    val headerUrl: String,
+    val playtimeForever: Int,
+    val completionistMinutes: Int?,
+    val hltbStatus: HltbMatchState?,
+    val fetchOp: HltbFetchOp?,
+    val achievementUnlocked: Int?,
+    val achievementTotal: Int?,
+    val xpContributed: Int,
+    val isCurrentlyPlaying: Boolean,
 )
 
 @Composable
@@ -184,6 +207,10 @@ fun LibraryScreen(
                             onClear = viewModel::clearQuery,
                             modifier = Modifier.weight(1f),
                         )
+                        GameListDensityControl(
+                            density = state.density,
+                            onDensityChange = viewModel::setDensity,
+                        )
                         HltbMenuButton(
                             refreshing = state.refreshing,
                             reviewCount = state.reviewCount,
@@ -235,28 +262,24 @@ fun LibraryScreen(
                         onSortChange = viewModel::setFocusSort,
                     )
                 }
-                items(visibleGoalGames, key = { it.appId }) { game ->
-                    GoalGameRow(
-                        game = game,
-                        selected = game.appId in state.selection,
-                        selectionMode = state.selectionMode,
-                        onClick = {
-                            if (state.selectionMode) {
-                                viewModel.toggleSelection(game.appId)
-                            } else {
-                                onOpenGameDetail(game.appId)
-                            }
-                        },
-                        onLongClick = { viewModel.toggleSelection(game.appId) },
-                        onManageGoal = {
-                            dialogTarget = GoalDialogTarget(
-                                appId = game.appId,
-                                name = game.name,
-                                isGoal = true,
-                            )
-                        },
-                    )
-                }
+                libraryGameItems(
+                    games = visibleGoalGames.map(GoalGameUi::toDisplayGame),
+                    density = state.density,
+                    selectedIds = state.selection,
+                    selectionMode = state.selectionMode,
+                    onClick = { game ->
+                        if (state.selectionMode) viewModel.toggleSelection(game.appId)
+                        else onOpenGameDetail(game.appId)
+                    },
+                    onLongClick = { game -> viewModel.toggleSelection(game.appId) },
+                    onManageGoal = { game ->
+                        dialogTarget = GoalDialogTarget(
+                            appId = game.appId,
+                            name = game.name,
+                            isGoal = true,
+                        )
+                    },
+                )
             }
 
             // Heading only for a section that has matches — with a filter active, an empty
@@ -269,28 +292,24 @@ fun LibraryScreen(
                         onSortChange = viewModel::setLibrarySort,
                     )
                 }
-                items(visibleBacklog, key = { it.appId }) { game ->
-                    BacklogGameRow(
-                        game = game,
-                        selected = game.appId in state.selection,
-                        selectionMode = state.selectionMode,
-                        onClick = {
-                            if (state.selectionMode) {
-                                viewModel.toggleSelection(game.appId)
-                            } else {
-                                onOpenGameDetail(game.appId)
-                            }
-                        },
-                        onLongClick = { viewModel.toggleSelection(game.appId) },
-                        onManageGoal = {
-                            dialogTarget = GoalDialogTarget(
-                                appId = game.appId,
-                                name = game.name,
-                                isGoal = false,
-                            )
-                        },
-                    )
-                }
+                libraryGameItems(
+                    games = visibleBacklog.map(BacklogGameUi::toDisplayGame),
+                    density = state.density,
+                    selectedIds = state.selection,
+                    selectionMode = state.selectionMode,
+                    onClick = { game ->
+                        if (state.selectionMode) viewModel.toggleSelection(game.appId)
+                        else onOpenGameDetail(game.appId)
+                    },
+                    onLongClick = { game -> viewModel.toggleSelection(game.appId) },
+                    onManageGoal = { game ->
+                        dialogTarget = GoalDialogTarget(
+                            appId = game.appId,
+                            name = game.name,
+                            isGoal = false,
+                        )
+                    },
+                )
             }
 
             // Inside the column, beneath the search field: the query that produced no matches
@@ -734,10 +753,95 @@ private fun NoMatchesRow(
     }
 }
 
+private fun GoalGameUi.toDisplayGame() = LibraryDisplayGame(
+    appId = appId,
+    name = name,
+    iconUrl = iconUrl,
+    headerUrl = headerUrl,
+    playtimeForever = playtimeForever,
+    completionistMinutes = completionistMinutes,
+    hltbStatus = hltbStatus,
+    fetchOp = fetchOp,
+    achievementUnlocked = achievementUnlocked,
+    achievementTotal = achievementTotal,
+    xpContributed = xpContributed,
+    isCurrentlyPlaying = isCurrentlyPlaying,
+)
+
+private fun BacklogGameUi.toDisplayGame() = LibraryDisplayGame(
+    appId = appId,
+    name = name,
+    iconUrl = iconUrl,
+    headerUrl = headerUrl,
+    playtimeForever = playtimeForever,
+    completionistMinutes = completionistMinutes,
+    hltbStatus = hltbStatus,
+    fetchOp = fetchOp,
+    achievementUnlocked = achievementUnlocked,
+    achievementTotal = achievementTotal,
+    xpContributed = xpContributed,
+    isCurrentlyPlaying = isCurrentlyPlaying,
+)
+
+/** Emit one lazy item per row in list mode, or one lazy item per grid row in grid modes. */
+@OptIn(ExperimentalFoundationApi::class)
+private fun LazyListScope.libraryGameItems(
+    games: List<LibraryDisplayGame>,
+    density: GameListDensity,
+    selectedIds: Set<Long>,
+    selectionMode: Boolean,
+    onClick: (LibraryDisplayGame) -> Unit,
+    onLongClick: (LibraryDisplayGame) -> Unit,
+    onManageGoal: (LibraryDisplayGame) -> Unit,
+) {
+    if (!density.isGrid) {
+        games.forEach { game ->
+            item(key = "library-game-${game.appId}") {
+                LibraryGameRow(
+                    game = game,
+                    density = density,
+                    selected = game.appId in selectedIds,
+                    selectionMode = selectionMode,
+                    onClick = { onClick(game) },
+                    onLongClick = { onLongClick(game) },
+                    onManageGoal = { onManageGoal(game) },
+                )
+            }
+        }
+        return
+    }
+
+    games.chunked(density.columns).forEachIndexed { rowIndex, row ->
+        item(key = "library-grid-row-$rowIndex-${row.firstOrNull()?.appId ?: 0}") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                row.forEach { game ->
+                    LibraryGameCell(
+                        game = game,
+                        density = density,
+                        selected = game.appId in selectedIds,
+                        selectionMode = selectionMode,
+                        onClick = { onClick(game) },
+                        onLongClick = { onLongClick(game) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                repeat(density.columns - row.size) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+/** The single full-detail renderer used by both Library sections. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GoalGameRow(
-    game: GoalGameUi,
+private fun LibraryGameRow(
+    game: LibraryDisplayGame,
+    density: GameListDensity,
     selected: Boolean,
     selectionMode: Boolean,
     onClick: () -> Unit,
@@ -755,20 +859,25 @@ private fun GoalGameRow(
             status = game.hltbStatus,
             op = game.fetchOp,
             isCurrentlyPlaying = game.isCurrentlyPlaying,
+            showHltbStatus = density.showsBadges,
         )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(game.name, style = MaterialTheme.typography.bodyLarge)
-            PlaytimeLabel(game.playtimeForever)
-            CompletionProgress(
-                playtimeMinutes = game.playtimeForever,
-                completionistMinutes = game.completionistMinutes,
-            )
-            GameBadges(
-                unlocked = game.achievementUnlocked,
-                total = game.achievementTotal,
-                xpContributed = game.xpContributed,
-            )
+            if (density.showsPlaytime) PlaytimeLabel(game.playtimeForever)
+            if (density.showsCompletionProgress) {
+                CompletionProgress(
+                    playtimeMinutes = game.playtimeForever,
+                    completionistMinutes = game.completionistMinutes,
+                )
+            }
+            if (density.showsBadges) {
+                GameBadges(
+                    unlocked = game.achievementUnlocked,
+                    total = game.achievementTotal,
+                    xpContributed = game.xpContributed,
+                )
+            }
         }
         RowTrailing(
             selected = selected,
@@ -778,54 +887,182 @@ private fun GoalGameRow(
     }
 }
 
+/**
+ * Grid cell renderer. The two grid densities share a deliberate tile shell while changing only
+ * the amount of information in the body: the regular grid gets a small art stage and metadata,
+ * while compact grid becomes a clean thumbnail shelf. Grid cards intentionally have no trailing
+ * action control, keeping their visual hierarchy focused on the game itself.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun BacklogGameRow(
-    game: BacklogGameUi,
+private fun LibraryGameCell(
+    game: LibraryDisplayGame,
+    density: GameListDensity,
     selected: Boolean,
     selectionMode: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onManageGoal: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    GameCard(
-        headerUrl = game.headerUrl,
-        selected = selected,
-        onClick = onClick,
-        onLongClick = onLongClick,
+    val compact = density == GameListDensity.COMPACT_GRID
+    val tileShape = RoundedCornerShape(18.dp)
+    val borderColor = when {
+        selected -> MaterialTheme.colorScheme.primary
+        game.isCurrentlyPlaying -> MaterialTheme.colorScheme.playingIndicator
+        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
+    }
+    Card(
+        modifier = modifier
+            .padding(vertical = 4.dp)
+            .aspectRatio(if (compact) 0.84f else 0.88f)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        shape = tileShape,
+        border = BorderStroke(if (selected) 2.dp else 1.dp, borderColor),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (compact) 1.dp else 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+        ),
     ) {
-        GameIconWithHltbBadge(
-            iconUrl = game.iconUrl,
-            status = game.hltbStatus,
-            op = game.fetchOp,
-            isCurrentlyPlaying = game.isCurrentlyPlaying,
-        )
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(game.name, style = MaterialTheme.typography.bodyLarge)
-            PlaytimeLabel(game.playtimeForever)
-            CompletionProgress(
-                playtimeMinutes = game.playtimeForever,
-                completionistMinutes = game.completionistMinutes,
-            )
-            GameBadges(
-                unlocked = game.achievementUnlocked,
-                total = game.achievementTotal,
-                xpContributed = game.xpContributed,
-            )
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (compact) 76.dp else 92.dp)
+                    .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            ) {
+                if (!compact) {
+                    GameHeaderBackdrop(
+                        headerUrl = game.headerUrl,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    0f to Color.Transparent,
+                                    1f to MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+                                ),
+                            ),
+                    )
+                }
+
+                val iconFrameModifier = if (compact) {
+                    Modifier.align(Alignment.Center)
+                } else {
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 12.dp, bottom = 10.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
+                        .padding(4.dp)
+                }
+                Box(modifier = iconFrameModifier) {
+                    GameIconWithHltbBadge(
+                        iconUrl = game.iconUrl,
+                        status = game.hltbStatus,
+                        op = game.fetchOp,
+                        isCurrentlyPlaying = game.isCurrentlyPlaying,
+                        iconSize = if (compact) 54.dp else 62.dp,
+                        showHltbStatus = false,
+                    )
+                }
+
+                if (selectionMode) {
+                    TileSelectionIndicator(
+                        selected = selected,
+                        modifier = Modifier.align(Alignment.TopStart),
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(horizontal = if (compact) 9.dp else 12.dp, vertical = 9.dp),
+                horizontalAlignment = if (compact) Alignment.CenterHorizontally else Alignment.Start,
+            ) {
+                Text(
+                    text = game.name,
+                    style = if (compact) {
+                        MaterialTheme.typography.labelLarge
+                    } else {
+                        MaterialTheme.typography.titleSmall
+                    },
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = if (compact) TextAlign.Center else TextAlign.Start,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (density.showsPlaytime) {
+                    PlaytimeLabel(
+                        minutes = game.playtimeForever,
+                        modifier = Modifier.padding(top = 5.dp),
+                    )
+                }
+                if (density.showsCompletionProgress) {
+                    CompletionProgress(
+                        playtimeMinutes = game.playtimeForever,
+                        completionistMinutes = game.completionistMinutes,
+                    )
+                }
+            }
         }
-        RowTrailing(
-            selected = selected,
-            selectionMode = selectionMode,
-            onManageGoal = onManageGoal,
+    }
+}
+
+@Composable
+private fun TileSelectionIndicator(selected: Boolean, modifier: Modifier = Modifier) {
+    val fill = if (selected) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
+    }
+    Box(
+        modifier = modifier
+            .padding(8.dp)
+            .size(30.dp)
+            .clip(CircleShape)
+            .background(fill)
+            .border(
+                width = 1.dp,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f)
+                },
+                shape = CircleShape,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (selected) TablerIcons.Check else TablerIcons.Checkbox,
+            contentDescription = if (selected) "Selected" else "Not selected",
+            tint = if (selected) {
+                MaterialTheme.colorScheme.onPrimary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.size(18.dp),
         )
     }
 }
 
 /** A play icon plus the raw duration — "played" is implied by the row it sits in. */
 @Composable
-private fun PlaytimeLabel(minutes: Int) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+private fun PlaytimeLabel(minutes: Int, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Icon(
             imageVector = TablerIcons.PlayerPlay,
             contentDescription = null,
@@ -1099,18 +1336,22 @@ private fun GameIconWithHltbBadge(
     status: HltbMatchState?,
     op: HltbFetchOp?,
     isCurrentlyPlaying: Boolean,
+    iconSize: Dp = 40.dp,
+    showHltbStatus: Boolean = true,
 ) {
     Box {
-        GameIcon(iconUrl)
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .size(16.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surface),
-            contentAlignment = Alignment.Center,
-        ) {
-            HltbIndicator(status = status, op = op, size = 10.dp)
+        GameIcon(iconUrl, iconSize = iconSize)
+        if (showHltbStatus) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(16.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surface),
+                contentAlignment = Alignment.Center,
+            ) {
+                HltbIndicator(status = status, op = op, size = 10.dp)
+            }
         }
         if (isCurrentlyPlaying) {
             Box(

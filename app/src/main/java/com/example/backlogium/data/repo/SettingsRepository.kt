@@ -3,6 +3,7 @@ package com.example.backlogium.data.repo
 import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.SettingsDataStore
+import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.gamification.RuleConfig
@@ -42,6 +43,15 @@ interface SettingsRepository {
     suspend fun setFocusSort(key: LibrarySortKey)
 
     suspend fun setLibrarySort(key: LibrarySortKey)
+
+    /** Presentation preferences for the Library and collection overview, independently stored. */
+    val libraryDensity: Flow<GameListDensity>
+
+    suspend fun setLibraryDensity(density: GameListDensity)
+
+    val collectionDensity: Flow<GameListDensity>
+
+    suspend fun setCollectionDensity(density: GameListDensity)
 
     /** Automatic rolling snapshot configuration (add-backup-restore): see the Data & Backup section. */
     val autoSnapshotSettings: Flow<AutoSnapshotSettings>
@@ -87,6 +97,16 @@ class DataStoreSettingsRepository @Inject constructor(
     override suspend fun setFocusSort(key: LibrarySortKey) = settings.setFocusSort(key)
 
     override suspend fun setLibrarySort(key: LibrarySortKey) = settings.setLibrarySort(key)
+
+    override val libraryDensity: Flow<GameListDensity> = settings.libraryDensityFlow
+
+    override suspend fun setLibraryDensity(density: GameListDensity) =
+        settings.setLibraryDensity(density)
+
+    override val collectionDensity: Flow<GameListDensity> = settings.collectionDensityFlow
+
+    override suspend fun setCollectionDensity(density: GameListDensity) =
+        settings.setCollectionDensity(density)
 
     override val autoSnapshotSettings: Flow<AutoSnapshotSettings> = settings.autoSnapshotSettingsFlow
 
