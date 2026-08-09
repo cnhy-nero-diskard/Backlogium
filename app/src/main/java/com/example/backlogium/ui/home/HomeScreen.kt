@@ -9,6 +9,8 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,8 +40,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +55,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -56,12 +63,17 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.ScrollState
+import androidx.compose.animation.core.snap
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
@@ -92,6 +104,7 @@ import compose.icons.tablericons.PlayerPlay
 import compose.icons.tablericons.Trophy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 /**
  * @param onAccentColorChanged reports the shell-wide backdrop tint. While in game, Home reports the
@@ -150,13 +163,26 @@ fun HomeScreen(
         lastStreak = state.currentStreak
     }
 
+    val scrollState = rememberScrollState()
+    var scrollViewport by remember { mutableStateOf<Rect?>(null) }
+
     // The outer column is deliberately *unpadded* so the now-playing panel can run edge to edge
     // like the profile header above it; every other card keeps the screen's 16dp inset via the
     // inner column. An inset panel under a full-bleed header is exactly what read as disconnected.
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
+            .verticalScroll(scrollState)
+            .onGloballyPositioned { coordinates ->
+                val topLeft = coordinates.positionInRoot()
+                scrollViewport = Rect(
+                    topLeft = topLeft,
+                    bottomRight = topLeft + Offset(
+                        coordinates.size.width.toFloat(),
+                        coordinates.size.height.toFloat(),
+                    ),
+                )
+            },
     ) {
         // "Now playing" panel: conditionally composed so it adds no layout (and runs no
         // animation) when not in-game. Full-bleed and flush against the profile header — no gap,
@@ -183,6 +209,9 @@ fun HomeScreen(
             onSyncNow = viewModel::syncNow,
             onOpenCollection = onOpenCollection,
             onCreateCollection = onCreateCollection,
+            scrollState = scrollState,
+            scrollViewport = scrollViewport,
+            onReorderCollections = viewModel::reorderCollections,
         )
     }
 }
@@ -198,6 +227,9 @@ private fun InnerHomeContent(
     onSyncNow: () -> Unit,
     onOpenCollection: (Long) -> Unit,
     onCreateCollection: () -> Unit,
+    scrollState: ScrollState,
+    scrollViewport: Rect?,
+    onReorderCollections: (List<Long>) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -362,6 +394,9 @@ private fun InnerHomeContent(
             cards = state.collections,
             onOpenCollection = onOpenCollection,
             onCreateCollection = onCreateCollection,
+            scrollState = scrollState,
+            scrollViewport = scrollViewport,
+            onReorderCollections = onReorderCollections,
             modifier = Modifier.fillMaxWidth(),
         )
 
@@ -380,8 +415,39 @@ private fun CollectionsSection(
     cards: List<HomeCollectionCard>,
     onOpenCollection: (Long) -> Unit,
     onCreateCollection: () -> Unit,
+    scrollState: ScrollState,
+    scrollViewport: Rect?,
+    onReorderCollections: (List<Long>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val autoScrollScope = rememberCoroutineScope()
+    var orderedCards by remember { mutableStateOf(cards) }
+    val cardBounds = remember { mutableStateMapOf<Long, Rect>() }
+    val draggedId = remember { mutableStateOf<Long?>(null) }
+    val initialIndex = remember { mutableStateOf(-1) }
+    val currentIndex = remember { mutableStateOf(-1) }
+    val pointerRootY = remember { mutableFloatStateOf(0f) }
+    val latestCards = rememberUpdatedState(orderedCards)
+
+    LaunchedEffect(cards) {
+        val cardsById = cards.associateBy { it.collectionId }
+        orderedCards = orderedCards
+            .mapNotNull { cardsById[it.collectionId] }
+            .let { existing ->
+                existing + cards.filterNot { card -> existing.any { it.collectionId == card.collectionId } }
+            }
+        cardBounds.keys.toList()
+            .filterNot { it in cardsById }
+            .forEach(cardBounds::remove)
+    }
+
+    fun clearDrag() {
+        draggedId.value = null
+        initialIndex.value = -1
+        currentIndex.value = -1
+        pointerRootY.floatValue = 0f
+    }
+
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -407,11 +473,92 @@ private fun CollectionsSection(
                 }
             }
         } else {
-            cards.forEach { card ->
+            orderedCards.forEach { card ->
+                val isDragged = draggedId.value == card.collectionId
+                val cardCenter = cardBounds[card.collectionId]?.center?.y ?: pointerRootY.floatValue
+                val dragOffset = if (isDragged) pointerRootY.floatValue - cardCenter else 0f
                 CollectionCard(
                     card = card,
-                    onClick = { onOpenCollection(card.collectionId) },
-                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        if (draggedId.value == null) onOpenCollection(card.collectionId)
+                    },
+                    dragged = isDragged,
+                    dragOffset = dragOffset,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onGloballyPositioned { coordinates ->
+                            val topLeft = coordinates.positionInRoot()
+                            cardBounds[card.collectionId] = Rect(
+                                topLeft = topLeft,
+                                bottomRight = topLeft + Offset(
+                                    coordinates.size.width.toFloat(),
+                                    coordinates.size.height.toFloat(),
+                                ),
+                            )
+                        }
+                        .pointerInput(card.collectionId) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    if (latestCards.value.size <= 1) return@detectDragGesturesAfterLongPress
+                                    val index = latestCards.value.indexOfFirst {
+                                        it.collectionId == card.collectionId
+                                    }
+                                    val center = cardBounds[card.collectionId]?.center?.y
+                                        ?: return@detectDragGesturesAfterLongPress
+                                    draggedId.value = card.collectionId
+                                    initialIndex.value = index
+                                    currentIndex.value = index
+                                    pointerRootY.floatValue = center
+                                },
+                                onDragCancel = { clearDrag() },
+                                onDragEnd = {
+                                    if (draggedId.value == card.collectionId) {
+                                        if (currentIndex.value != initialIndex.value) {
+                                            onReorderCollections(latestCards.value.map { it.collectionId })
+                                        }
+                                        clearDrag()
+                                    }
+                                },
+                                onDrag = { change, dragAmount ->
+                                    if (draggedId.value != card.collectionId) return@detectDragGesturesAfterLongPress
+                                    change.consume()
+                                    pointerRootY.floatValue += dragAmount.y
+
+                                    scrollViewport?.let { viewport ->
+                                        val edgeDistance = 72f
+                                        val scrollDelta = when {
+                                            pointerRootY.floatValue < viewport.top + edgeDistance ->
+                                                -((viewport.top + edgeDistance - pointerRootY.floatValue) / edgeDistance * 24f)
+                                            pointerRootY.floatValue > viewport.bottom - edgeDistance ->
+                                                ((pointerRootY.floatValue - (viewport.bottom - edgeDistance)) / edgeDistance * 24f)
+                                            else -> 0f
+                                        }
+                                        if (scrollDelta != 0f) {
+                                            autoScrollScope.launch { scrollState.scrollBy(scrollDelta) }
+                                        }
+                                    }
+
+                                    val activeCards = latestCards.value
+                                    val fromIndex = currentIndex.value
+                                    if (fromIndex !in activeCards.indices) return@detectDragGesturesAfterLongPress
+                                    var targetIndex = activeCards.lastIndex
+                                    activeCards.forEachIndexed { index, candidate ->
+                                        val center = cardBounds[candidate.collectionId]?.center?.y
+                                            ?: return@forEachIndexed
+                                        if (pointerRootY.floatValue < center && targetIndex == activeCards.lastIndex) {
+                                            targetIndex = if (index > fromIndex) index - 1 else index
+                                        }
+                                    }
+                                    if (targetIndex != fromIndex) {
+                                        val reordered = activeCards.toMutableList()
+                                        val moved = reordered.removeAt(fromIndex)
+                                        reordered.add(targetIndex.coerceIn(0, reordered.size), moved)
+                                        orderedCards = reordered
+                                        currentIndex.value = targetIndex
+                                    }
+                                },
+                            )
+                        },
                 )
             }
         }
@@ -423,6 +570,8 @@ private fun CollectionsSection(
 private fun CollectionCard(
     card: HomeCollectionCard,
     onClick: () -> Unit,
+    dragged: Boolean = false,
+    dragOffset: Float = 0f,
     modifier: Modifier = Modifier,
 ) {
     val compactDeadlineCard = card.mode == CollectionMode.DEADLINE_GOAL
@@ -438,6 +587,11 @@ private fun CollectionCard(
         MaterialTheme.colorScheme.collectionAccentColor(it)
     } ?: MaterialTheme.colorScheme.playingIndicator
     val reducedMotion = rememberReducedMotion()
+    val dragScale by animateFloatAsState(
+        targetValue = if (dragged) 1.02f else 1f,
+        animationSpec = if (reducedMotion) snap() else tween(120),
+        label = "collectionDragScale",
+    )
     val glowVisibility by animateFloatAsState(
         targetValue = if (card.isCurrentlyPlaying) 1f else 0f,
         animationSpec = tween(durationMillis = 650),
@@ -485,6 +639,11 @@ private fun CollectionCard(
                         cornerRadius = CornerRadius(12.dp.toPx()),
                     )
                 }
+            }
+            .graphicsLayer {
+                translationY = if (dragged) dragOffset else 0f
+                scaleX = dragScale
+                scaleY = dragScale
             },
         colors = CardDefaults.cardColors(
             containerColor = cardSurface,
