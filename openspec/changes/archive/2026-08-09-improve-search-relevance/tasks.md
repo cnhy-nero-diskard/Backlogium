@@ -38,7 +38,7 @@
       both games and genres are searchable.
 - [x] 3.3 Reserve the trailing clear control unconditionally so the field's width does not change
       when the first character is typed.
-- [ ] 3.4 Verify by hand: focusing the empty field and typing changes neither the field's width nor
+- [x] 3.4 Verify by hand: focusing the empty field and typing changes neither the field's width nor
       the size of the text in it.
 
 ## 4. Library genre filter
@@ -66,15 +66,15 @@
 
 - [x] 6.1 Reposition the Add-games search so its results stay visible while typing, rather than
       rendering below the raised keyboard.
-- [ ] 6.2 Confirm the offered-games list remains scrollable with the keyboard raised, and that the
+- [x] 6.2 Confirm the offered-games list remains scrollable with the keyboard raised, and that the
       field does not scroll out of view while typing.
-- [ ] 6.3 Confirm adding a game leaves the query and genre selection intact, per the existing
+- [x] 6.3 Confirm adding a game leaves the query and genre selection intact, per the existing
       requirement.
 
 ## 7. Validation
 
 - [x] 7.1 Walk every scenario in `specs/app-ui/spec.md` for all three modified requirements.
-- [ ] 7.2 Verify the reported case end to end: search `Red` in the Library under the default playtime
+- [x] 7.2 Verify the reported case end to end: search `Red` in the Library under the default playtime
       sort and confirm Red Dead Redemption is presented before incidental mid-word matches.
 - [x] 7.3 Confirm both searches agree on what is searchable for the same query.
 - [x] 7.4 `./gradlew :gamification:test :app:testDebugUnitTest`.
