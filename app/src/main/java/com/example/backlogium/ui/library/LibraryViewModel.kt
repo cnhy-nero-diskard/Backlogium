@@ -16,6 +16,7 @@ import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.GameXpInput
+import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.domain.LibraryXp
@@ -100,6 +101,7 @@ data class LibraryUiState(
     val query: String = "",
     val focusSort: LibrarySortKey = LibrarySortKey.NAME,
     val librarySort: LibrarySortKey = LibrarySortKey.PLAYTIME,
+    val density: GameListDensity = GameListDensity.LIST,
     /**
      * Selected appIds, kept independent of the active filter so hiding a selected game does not
      * silently drop it from the pending refresh.
@@ -175,12 +177,17 @@ class LibraryViewModel @Inject constructor(
     ) { tracked, rarity, cfg -> XpInputs(tracked, rarity, cfg) }
 
     private val viewPrefs = combine(
-        query,
-        selection,
-        fetchOps,
-        settings.librarySort,
-        ::ViewPrefs,
-    )
+        combine(query, selection, fetchOps, settings.librarySort) { query, selection, ops, sort ->
+            ViewPrefs(
+                query = query,
+                selection = selection,
+                ops = ops,
+                sort = sort,
+                density = GameListDensity.LIST,
+            )
+        },
+        settings.libraryDensity,
+    ) { prefs, density -> prefs.copy(density = density) }
 
     /**
      * The sweep's progress plus the log accumulated from it. WorkManager progress carries one
@@ -221,6 +228,7 @@ class LibraryViewModel @Inject constructor(
             query = view.query,
             focusSort = view.sort.focus,
             librarySort = view.sort.library,
+            density = view.density,
             selection = view.selection,
             libraryEmpty = content.goals.isEmpty() && content.backlog.isEmpty(),
             batchProgress = batch.log.progress,
@@ -254,6 +262,10 @@ class LibraryViewModel @Inject constructor(
 
     fun setLibrarySort(key: LibrarySortKey) = viewModelScope.launch {
         settings.setLibrarySort(key)
+    }
+
+    fun setDensity(density: GameListDensity) = viewModelScope.launch {
+        settings.setLibraryDensity(density)
     }
 
     /** Add or remove one game from the selection; removing the last one exits selection mode. */
@@ -324,6 +336,7 @@ private data class ViewPrefs(
     val selection: Set<Long>,
     val ops: Map<Long, HltbFetchOp>,
     val sort: LibrarySortPrefs,
+    val density: GameListDensity,
 )
 
 private data class BatchState(val refreshing: Boolean, val log: BatchLog)

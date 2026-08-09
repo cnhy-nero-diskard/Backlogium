@@ -19,6 +19,7 @@ import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
+import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.CoroutineScope
@@ -437,6 +438,10 @@ class LiveStatusRepositoryTest {
         override val librarySort: Flow<LibrarySortPrefs> = MutableStateFlow(LibrarySortPrefs())
         override suspend fun setFocusSort(key: LibrarySortKey) = error("not used")
         override suspend fun setLibrarySort(key: LibrarySortKey) = error("not used")
+        override val libraryDensity: Flow<GameListDensity> = MutableStateFlow(GameListDensity.LIST)
+        override suspend fun setLibraryDensity(density: GameListDensity) = error("not used")
+        override val collectionDensity: Flow<GameListDensity> = MutableStateFlow(GameListDensity.LIST)
+        override suspend fun setCollectionDensity(density: GameListDensity) = error("not used")
         override val autoSnapshotSettings: Flow<AutoSnapshotSettings> =
             MutableStateFlow(AutoSnapshotSettings())
         override suspend fun setAutoSnapshotEnabled(enabled: Boolean) = error("not used")

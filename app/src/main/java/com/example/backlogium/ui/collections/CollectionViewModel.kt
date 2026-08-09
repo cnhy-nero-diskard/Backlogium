@@ -8,8 +8,11 @@ import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CollectionRepository
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
+import com.example.backlogium.data.repo.LiveStatusRepository
+import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.PersonalPaceRepository
 import com.example.backlogium.data.repo.SessionRepository
+import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionMemberSignals
@@ -17,6 +20,7 @@ import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CollectionTimeBasis
+import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.PersonalPaceProfile
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.defaultSort
@@ -46,6 +50,7 @@ data class CollectionMemberUi(
     val mainExtraMinutes: Int? = null,
     val completionistMinutes: Int? = null,
     val allStylesMinutes: Int? = null,
+    val isCurrentlyPlaying: Boolean = false,
 )
 
 /** Full management-screen state for one collection (create or edit), all local/offline-first. */
@@ -56,6 +61,7 @@ data class CollectionUiState(
     val name: String = "",
     val mode: CollectionMode = CollectionMode.BASIC,
     val sort: CollectionSort = CollectionSort.NAME,
+    val density: GameListDensity = GameListDensity.LIST,
     val targetDate: LocalDate? = null,
     val accent: CollectionAccent? = null,
     val timeBasis: CollectionTimeBasis = CollectionTimeBasis.COMPLETIONIST,
@@ -94,6 +100,8 @@ class CollectionViewModel @Inject constructor(
     private val achievementRepository: AchievementRepository,
     private val sessionRepository: SessionRepository,
     private val personalPaceRepository: PersonalPaceRepository,
+    private val settings: SettingsRepository,
+    private val liveStatusRepository: LiveStatusRepository,
     private val time: TimeProvider,
 ) : ViewModel() {
 
@@ -223,8 +231,11 @@ class CollectionViewModel @Inject constructor(
     val uiState: StateFlow<CollectionUiState> = combine(
         libraryMetrics,
         session,
-    ) { metrics, s ->
+        settings.collectionDensity,
+        liveStatusRepository.nowPlaying,
+    ) { metrics, s, density, nowPlaying ->
         val gamesById = metrics.games.associateBy { it.appId }
+        val playingAppId = (nowPlaying as? NowPlaying.InGame)?.gameId
         val memberSignals = s.memberAppIds.map { appId ->
             val game = gamesById[appId]
             CollectionMemberSignals(
@@ -256,6 +267,7 @@ class CollectionViewModel @Inject constructor(
             name = s.draft.name,
             mode = s.draft.mode,
             sort = s.draft.sort,
+            density = density,
             targetDate = s.draft.targetDate,
             accent = s.draft.accent,
             timeBasis = s.draft.timeBasis,
@@ -279,6 +291,7 @@ class CollectionViewModel @Inject constructor(
                     mainExtraMinutes = game?.mainExtraMinutes,
                     completionistMinutes = game?.completionistMinutes,
                     allStylesMinutes = game?.allStylesMinutes,
+                    isCurrentlyPlaying = appId == playingAppId,
                 )
             },
             libraryGames = metrics.games,
@@ -307,6 +320,10 @@ class CollectionViewModel @Inject constructor(
 
     fun setSort(sort: CollectionSort) {
         _sort.value = sort
+    }
+
+    fun setDensity(density: GameListDensity) = viewModelScope.launch {
+        settings.setCollectionDensity(density)
     }
 
     fun setTargetDate(date: LocalDate?) {
