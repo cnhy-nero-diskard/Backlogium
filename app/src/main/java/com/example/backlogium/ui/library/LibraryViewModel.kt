@@ -20,6 +20,7 @@ import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.domain.LibraryXp
 import com.example.backlogium.gamification.RuleConfig
+import com.example.backlogium.ui.search.gameSearchMatchTier
 import com.example.backlogium.work.HltbBatchProgress
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -100,6 +101,8 @@ data class LibraryUiState(
     val query: String = "",
     val focusSort: LibrarySortKey = LibrarySortKey.NAME,
     val librarySort: LibrarySortKey = LibrarySortKey.PLAYTIME,
+    /** All known genres, kept unfiltered so the transient Library catalog remains usable while searching. */
+    val availableGenres: List<GameGenre> = emptyList(),
     /**
      * Selected appIds, kept independent of the active filter so hiding a selected game does not
      * silently drop it from the pending refresh.
@@ -206,11 +209,11 @@ class LibraryViewModel @Inject constructor(
         val goals = content.goals
             .map { it.toGoalUi(xp, counts, view.ops, content.playingAppId) }
             .matching(view.query)
-            .sortedFor(view.sort.focus)
+            .sortedFor(view.sort.focus, view.query)
         val backlog = content.backlog
             .map { it.toBacklogUi(xp, counts, view.ops, content.playingAppId) }
             .matching(view.query)
-            .sortedFor(view.sort.library)
+            .sortedFor(view.sort.library, view.query)
         LibraryUiState(
             loading = false,
             configured = content.configured,
@@ -221,6 +224,11 @@ class LibraryViewModel @Inject constructor(
             query = view.query,
             focusSort = view.sort.focus,
             librarySort = view.sort.library,
+            availableGenres = content.goals
+                .asSequence()
+                .plus(content.backlog.asSequence())
+                .flatMap { it.genres.asSequence() }
+                .toList(),
             selection = view.selection,
             libraryEmpty = content.goals.isEmpty() && content.backlog.isEmpty(),
             batchProgress = batch.log.progress,
@@ -415,12 +423,17 @@ private fun LibraryGame.xpContribution(xp: XpInputs): Int = LibraryXp.contributi
     xp.cfg,
 )
 
-/** Case-insensitive name-or-genre filter; a blank query matches everything. */
+/** Case-insensitive name-or-genre filter ranked by the strongest match tier. */
 internal fun <T : LibraryRow> List<T>.matching(query: String): List<T> {
     val trimmed = query.trim()
     if (trimmed.isEmpty()) return this
-    return filter { game ->
-        game.name.contains(trimmed, ignoreCase = true) ||
-            game.genres.any { it.label.contains(trimmed, ignoreCase = true) }
+    return mapNotNull { game ->
+        gameSearchMatchTier(
+            query = trimmed,
+            name = game.name,
+            genreLabels = game.genres.asSequence().map(GameGenre::label).asIterable(),
+        )?.let { tier -> game to tier }
     }
+        .sortedBy { (_, tier) -> tier.ordinal }
+        .map { (game, _) -> game }
 }
