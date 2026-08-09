@@ -92,6 +92,17 @@ class LibrarySortingTest {
         assertEquals(listOf(10L, 20L), sorted.map { it.appId })
     }
 
+    @Test
+    fun activeSearchRanksTiersBeforeApplyingTheChosenSortWithinEachTier() {
+        val sorted = listOf(
+            row("Hundred Hours", playtimeForever = 10_000),
+            row("Red Beta", playtimeForever = 200),
+            row("Red Alpha", playtimeForever = 100),
+        ).sortedFor(LibrarySortKey.PLAYTIME, "red")
+
+        assertEquals(listOf("Red Beta", "Red Alpha", "Hundred Hours"), sorted.names())
+    }
+
     private fun List<LibraryRow>.names() = map { it.name }
 
     private fun row(
