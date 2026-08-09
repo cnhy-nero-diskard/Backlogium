@@ -741,84 +741,36 @@ private fun CollectionForm(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item {
-                SectionLabel("Add games")
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = { Text("Search library") },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = TablerIcons.Search,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !state.saving,
-                )
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = { showGenreSheet = true },
-                        enabled = !state.saving && genreCatalog.isNotEmpty(),
-                    ) {
-                        Text(if (selectedGenreIds.isEmpty()) "Genres" else "Genres (${selectedGenreIds.size})")
-                    }
-                    if (selectedGenreIds.isNotEmpty()) {
-                        TextButton(onClick = { selectedGenreIds = emptyList() }, enabled = !state.saving) {
-                            Text("Clear genres")
-                        }
-                    }
-                }
-                if (selectedGenreIds.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        genreCatalog.filter { it.id in selectedGenreSet }.forEach { genre ->
-                            FilterChip(
-                                selected = true,
-                                onClick = { selectedGenreIds = selectedGenreIds - genre.id },
-                                label = { Text(genre.label) },
-                                enabled = !state.saving,
+            item { SectionLabel("Games") }
+            if (state.members.isEmpty()) {
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text("No games yet", style = MaterialTheme.typography.titleSmall)
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "Add games below to build the collection's banner.",
+                                style = MaterialTheme.typography.bodySmall,
                             )
                         }
                     }
                 }
             }
-
-            if (filteredAddables.isEmpty() && state.addableGames.isNotEmpty()) {
-                item {
-                    Text(
-                        text = "No games match your search.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-
-            items(
-                items = filteredAddables,
-                key = { it.appId },
-            ) { game ->
-                AddGameRow(
-                    game = game,
-                    onAdd = { viewModel.addGame(game.appId) },
-                    enabled = !state.saving,
+            itemsIndexed(
+                items = state.members,
+                key = { _, member -> member.appId },
+            ) { index, member ->
+                MemberRow(
+                    member = member,
+                    index = index,
+                    count = state.members.size,
+                    reorderable = state.mode == CollectionMode.ORDERED_QUEUE,
+                    showDoneToggle = state.mode == CollectionMode.ORDERED_QUEUE,
+                    onRemove = { viewModel.removeGame(member.appId) },
+                    onMoveUp = { viewModel.moveMember(index, index - 1) },
+                    onMoveDown = { viewModel.moveMember(index, index + 1) },
+                    onToggleDone = { viewModel.toggleMemberDone(member.appId) },
                 )
-            }
-
-            if (state.addableGames.isEmpty()) {
-                item {
-                    Text(
-                        text = "Every library game is already in this collection.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
 
             item {
@@ -936,36 +888,84 @@ private fun CollectionForm(
                 }
             }
 
-            item { SectionLabel("Games") }
-            if (state.members.isEmpty()) {
-                item {
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp)) {
-                            Text("No games yet", style = MaterialTheme.typography.titleSmall)
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = "Add games below to build the collection's banner.",
-                                style = MaterialTheme.typography.bodySmall,
+            item {
+                SectionLabel("Add games")
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text("Search library") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = TablerIcons.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.saving,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { showGenreSheet = true },
+                        enabled = !state.saving && genreCatalog.isNotEmpty(),
+                    ) {
+                        Text(if (selectedGenreIds.isEmpty()) "Genres" else "Genres (${selectedGenreIds.size})")
+                    }
+                    if (selectedGenreIds.isNotEmpty()) {
+                        TextButton(onClick = { selectedGenreIds = emptyList() }, enabled = !state.saving) {
+                            Text("Clear genres")
+                        }
+                    }
+                }
+                if (selectedGenreIds.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        genreCatalog.filter { it.id in selectedGenreSet }.forEach { genre ->
+                            FilterChip(
+                                selected = true,
+                                onClick = { selectedGenreIds = selectedGenreIds - genre.id },
+                                label = { Text(genre.label) },
+                                enabled = !state.saving,
                             )
                         }
                     }
                 }
             }
-            itemsIndexed(
-                items = state.members,
-                key = { _, member -> member.appId },
-            ) { index, member ->
-                MemberRow(
-                    member = member,
-                    index = index,
-                    count = state.members.size,
-                    reorderable = state.mode == CollectionMode.ORDERED_QUEUE,
-                    showDoneToggle = state.mode == CollectionMode.ORDERED_QUEUE,
-                    onRemove = { viewModel.removeGame(member.appId) },
-                    onMoveUp = { viewModel.moveMember(index, index - 1) },
-                    onMoveDown = { viewModel.moveMember(index, index + 1) },
-                    onToggleDone = { viewModel.toggleMemberDone(member.appId) },
+
+            if (filteredAddables.isEmpty() && state.addableGames.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "No games match your search.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            items(
+                items = filteredAddables,
+                key = { it.appId },
+            ) { game ->
+                AddGameRow(
+                    game = game,
+                    onAdd = { viewModel.addGame(game.appId) },
+                    enabled = !state.saving,
                 )
+            }
+
+            if (state.addableGames.isEmpty()) {
+                item {
+                    Text(
+                        text = "Every library game is already in this collection.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             // Clearance for the floating save button so the last rows stay reachable.

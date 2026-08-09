@@ -173,25 +173,35 @@ fun LibraryScreen(
                 .padding(16.dp),
         ) {
             item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SearchField(
-                        query = state.query,
-                        onQueryChange = viewModel::setQuery,
-                        onClear = viewModel::clearQuery,
-                        modifier = Modifier.weight(1f),
-                    )
-                    GenreFilterButton(
-                        selectedCount = selectedGenreSet.size,
-                        enabled = genreCatalog.isNotEmpty(),
-                        onClick = { showGenreSheet = true },
-                    )
-                    HltbMenuButton(
-                        refreshing = state.refreshing,
-                        reviewCount = state.reviewCount,
-                        onRefresh = { viewModel.refreshHltb(force = false) },
-                        onForceRefresh = { viewModel.refreshHltb(force = true) },
-                        onOpenReview = onOpenReview,
-                    )
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SearchField(
+                            query = state.query,
+                            onQueryChange = viewModel::setQuery,
+                            onClear = viewModel::clearQuery,
+                            modifier = Modifier.weight(1f),
+                        )
+                        HltbMenuButton(
+                            refreshing = state.refreshing,
+                            reviewCount = state.reviewCount,
+                            onRefresh = { viewModel.refreshHltb(force = false) },
+                            onForceRefresh = { viewModel.refreshHltb(force = true) },
+                            onOpenReview = onOpenReview,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Start,
+                    ) {
+                        GenreFilterButton(
+                            selectedCount = selectedGenreSet.size,
+                            enabled = genreCatalog.isNotEmpty(),
+                            onClick = { showGenreSheet = true },
+                        )
+                    }
                 }
             }
 
@@ -363,7 +373,14 @@ private fun SearchField(
             .fillMaxWidth(),
         singleLine = true,
         shape = RoundedCornerShape(20.dp),
-        placeholder = { Text("Search games or genres") },
+        placeholder = {
+            Text(
+                text = "Search games or genres",
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
         leadingIcon = {
             Icon(
                 imageVector = TablerIcons.Search,
