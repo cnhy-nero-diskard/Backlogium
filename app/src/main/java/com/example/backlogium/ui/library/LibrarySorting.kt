@@ -2,6 +2,7 @@ package com.example.backlogium.ui.library
 
 import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.domain.LibrarySortKey
+import com.example.backlogium.ui.search.gameSearchMatchTier
 
 /**
  * The fields a Library sort reads. Both row shapes implement it, so the four comparators exist
@@ -27,7 +28,21 @@ interface LibraryRow {
  * returned. Games with no value for a key (no recent playtime, no XP) are zero, and every
  * descending key therefore places them last without needing a special case.
  */
-fun <T : LibraryRow> List<T>.sortedFor(key: LibrarySortKey): List<T> = sortedWith(comparatorFor(key))
+fun <T : LibraryRow> List<T>.sortedFor(
+    key: LibrarySortKey,
+    query: String = "",
+): List<T> {
+    if (query.isBlank()) return sortedWith(comparatorFor(key))
+
+    val relevanceThenSort = compareBy<LibraryRow> {
+        gameSearchMatchTier(
+            query = query,
+            name = it.name,
+            genreLabels = it.genres.asSequence().map(GameGenre::label).asIterable(),
+        )?.ordinal ?: Int.MAX_VALUE
+    }.then(comparatorFor(key))
+    return sortedWith(relevanceThenSort)
+}
 
 internal fun comparatorFor(key: LibrarySortKey): Comparator<LibraryRow> = when (key) {
     LibrarySortKey.NAME -> byNameAscending

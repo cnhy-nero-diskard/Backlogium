@@ -14,11 +14,11 @@ class LibraryGenreMatchingTest {
 
     @Test fun nameSearchWorksWithoutGenreDataAndGenreSearchIsPartialCaseInsensitive() {
         assertEquals(listOf(4L), rows.matching("unknown").map { it.appId })
-        assertEquals(listOf(2L, 3L), rows.matching("IND").map { it.appId })
+        assertEquals(listOf(3L, 2L), rows.matching("IND").map { it.appId })
     }
 
     @Test fun simultaneousNameAndGenreMatchAppearsOnlyOnceAndBlankQueryClears() {
-        assertEquals(listOf(1L, 3L), rows.matching("action").map { it.appId })
+        assertEquals(listOf(3L, 1L), rows.matching("action").map { it.appId })
         assertEquals(rows, rows.matching("  "))
         assertEquals(emptyList<Long>(), rows.matching("strategy").map { it.appId })
     }
@@ -28,6 +28,16 @@ class LibraryGenreMatchingTest {
         val backlog = rows.drop(1).matching("action")
         assertEquals(listOf(1L), focus.map { it.appId })
         assertEquals(listOf(3L), backlog.map { it.appId })
+    }
+
+    @Test fun prefixBeatsMidWordAndNameBeatsGenre() {
+        val ranked = listOf(
+            row(5, "Hundred Days", listOf(GameGenre("1", "Action"))),
+            row(6, "Red Dead Redemption", emptyList()),
+            row(7, "Portal", listOf(GameGenre("2", "Red"))),
+        )
+
+        assertEquals(listOf(6L, 5L, 7L), ranked.matching("red").map { it.appId })
     }
 
     private fun row(appId: Long, name: String, genres: List<GameGenre>) = BacklogGameUi(

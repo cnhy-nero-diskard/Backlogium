@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -790,9 +791,42 @@ private fun CollectionForm(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
+                .imePadding()
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            item { SectionLabel("Games") }
+            if (state.members.isEmpty()) {
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text("No games yet", style = MaterialTheme.typography.titleSmall)
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "Add games below to build the collection's banner.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
+            itemsIndexed(
+                items = state.members,
+                key = { _, member -> member.appId },
+            ) { index, member ->
+                MemberRow(
+                    member = member,
+                    index = index,
+                    count = state.members.size,
+                    reorderable = state.mode == CollectionMode.ORDERED_QUEUE,
+                    showDoneToggle = state.mode == CollectionMode.ORDERED_QUEUE,
+                    onRemove = { viewModel.removeGame(member.appId) },
+                    onMoveUp = { viewModel.moveMember(index, index - 1) },
+                    onMoveDown = { viewModel.moveMember(index, index + 1) },
+                    onToggleDone = { viewModel.toggleMemberDone(member.appId) },
+                )
+            }
+
             item {
                 OutlinedTextField(
                     value = state.name,
@@ -921,44 +955,12 @@ private fun CollectionForm(
                 }
             }
 
-            item { SectionLabel("Games") }
-            if (state.members.isEmpty()) {
-                item {
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp)) {
-                            Text("No games yet", style = MaterialTheme.typography.titleSmall)
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = "Add games below to build the collection's banner.",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                    }
-                }
-            }
-            itemsIndexed(
-                items = state.members,
-                key = { _, member -> member.appId },
-            ) { index, member ->
-                MemberRow(
-                    member = member,
-                    index = index,
-                    count = state.members.size,
-                    reorderable = state.mode == CollectionMode.ORDERED_QUEUE,
-                    showDoneToggle = state.mode == CollectionMode.ORDERED_QUEUE,
-                    onRemove = { viewModel.removeGame(member.appId) },
-                    onMoveUp = { viewModel.moveMember(index, index - 1) },
-                    onMoveDown = { viewModel.moveMember(index, index + 1) },
-                    onToggleDone = { viewModel.toggleMemberDone(member.appId) },
-                )
-            }
-
             item {
                 SectionLabel("Add games")
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    label = { Text("Search library") },
+                    placeholder = { Text("Search library") },
                     leadingIcon = {
                         Icon(
                             imageVector = TablerIcons.Search,

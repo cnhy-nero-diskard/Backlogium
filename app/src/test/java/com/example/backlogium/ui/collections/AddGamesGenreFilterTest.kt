@@ -29,9 +29,34 @@ class AddGamesGenreFilterTest {
     }
 
     @Test fun textAndGenreCombineAndUnknownGenresOnlyDropWithActiveGenreFilter() {
-        assertEquals(listOf(4L), filterAddableGames(games, emptySet(), "action", setOf("1")).ids())
+        assertEquals(listOf(4L, 1L), filterAddableGames(games, emptySet(), "action", setOf("1")).ids())
         assertEquals(listOf(3L), filterAddableGames(games, emptySet(), "untyped", emptySet()).ids())
         assertEquals(emptyList<Long>(), filterAddableGames(games, emptySet(), "untyped", setOf("1")).ids())
+    }
+
+    @Test fun textSearchRanksNameMatchesAboveGenreOnlyMatches() {
+        val rankedGames = listOf(
+            game(10, "Hundred Hours", listOf(action)),
+            game(11, "Red Dead", listOf(action)),
+            game(12, "Portal", listOf(GameGenre("99", "Red"))),
+        )
+
+        assertEquals(
+            listOf(11L, 10L, 12L),
+            filterAddableGames(rankedGames, emptySet(), "red", emptySet()).ids(),
+        )
+    }
+
+    @Test fun memberExclusionHappensBeforeRanking() {
+        val rankedGames = listOf(
+            game(10, "Red Dead", listOf(action)),
+            game(11, "Hundred Hours", listOf(action)),
+        )
+
+        assertEquals(
+            listOf(11L),
+            filterAddableGames(rankedGames, setOf(10L), "red", emptySet()).ids(),
+        )
     }
 
     @Test fun catalogIsDeduplicatedAndSorted() {
