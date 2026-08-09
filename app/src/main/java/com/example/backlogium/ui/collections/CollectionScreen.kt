@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -736,9 +737,90 @@ private fun CollectionForm(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
+                .imePadding()
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            item {
+                SectionLabel("Add games")
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text("Search library") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = TablerIcons.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.saving,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { showGenreSheet = true },
+                        enabled = !state.saving && genreCatalog.isNotEmpty(),
+                    ) {
+                        Text(if (selectedGenreIds.isEmpty()) "Genres" else "Genres (${selectedGenreIds.size})")
+                    }
+                    if (selectedGenreIds.isNotEmpty()) {
+                        TextButton(onClick = { selectedGenreIds = emptyList() }, enabled = !state.saving) {
+                            Text("Clear genres")
+                        }
+                    }
+                }
+                if (selectedGenreIds.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        genreCatalog.filter { it.id in selectedGenreSet }.forEach { genre ->
+                            FilterChip(
+                                selected = true,
+                                onClick = { selectedGenreIds = selectedGenreIds - genre.id },
+                                label = { Text(genre.label) },
+                                enabled = !state.saving,
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (filteredAddables.isEmpty() && state.addableGames.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "No games match your search.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            items(
+                items = filteredAddables,
+                key = { it.appId },
+            ) { game ->
+                AddGameRow(
+                    game = game,
+                    onAdd = { viewModel.addGame(game.appId) },
+                    enabled = !state.saving,
+                )
+            }
+
+            if (state.addableGames.isEmpty()) {
+                item {
+                    Text(
+                        text = "Every library game is already in this collection.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
             item {
                 OutlinedTextField(
                     value = state.name,
@@ -884,86 +966,6 @@ private fun CollectionForm(
                     onMoveDown = { viewModel.moveMember(index, index + 1) },
                     onToggleDone = { viewModel.toggleMemberDone(member.appId) },
                 )
-            }
-
-            item {
-                SectionLabel("Add games")
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = { Text("Search library") },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = TablerIcons.Search,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !state.saving,
-                )
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = { showGenreSheet = true },
-                        enabled = !state.saving && genreCatalog.isNotEmpty(),
-                    ) {
-                        Text(if (selectedGenreIds.isEmpty()) "Genres" else "Genres (${selectedGenreIds.size})")
-                    }
-                    if (selectedGenreIds.isNotEmpty()) {
-                        TextButton(onClick = { selectedGenreIds = emptyList() }, enabled = !state.saving) {
-                            Text("Clear genres")
-                        }
-                    }
-                }
-                if (selectedGenreIds.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        genreCatalog.filter { it.id in selectedGenreSet }.forEach { genre ->
-                            FilterChip(
-                                selected = true,
-                                onClick = { selectedGenreIds = selectedGenreIds - genre.id },
-                                label = { Text(genre.label) },
-                                enabled = !state.saving,
-                            )
-                        }
-                    }
-                }
-            }
-
-            if (filteredAddables.isEmpty() && state.addableGames.isNotEmpty()) {
-                item {
-                    Text(
-                        text = "No games match your search.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-
-            items(
-                items = filteredAddables,
-                key = { it.appId },
-            ) { game ->
-                AddGameRow(
-                    game = game,
-                    onAdd = { viewModel.addGame(game.appId) },
-                    enabled = !state.saving,
-                )
-            }
-
-            if (state.addableGames.isEmpty()) {
-                item {
-                    Text(
-                        text = "Every library game is already in this collection.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
 
             // Clearance for the floating save button so the last rows stay reachable.
