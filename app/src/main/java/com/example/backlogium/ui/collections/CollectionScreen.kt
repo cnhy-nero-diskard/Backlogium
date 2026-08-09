@@ -30,6 +30,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -112,6 +113,7 @@ fun CollectionScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showEditor by rememberSaveable { mutableStateOf(viewModel.collectionId == 0L) }
     var showActions by remember { mutableStateOf(false) }
+    var showDeleteConfirmation by rememberSaveable { mutableStateOf(false) }
     val showingOverview = !state.isNew && !showEditor
 
     LaunchedEffect(state.done) {
@@ -174,7 +176,7 @@ fun CollectionScreen(
                             text = { Text("Delete collection") },
                             onClick = {
                                 showActions = false
-                                viewModel.delete()
+                                showDeleteConfirmation = true
                             },
                         )
                     }
@@ -198,6 +200,30 @@ fun CollectionScreen(
                 CollectionForm(state = state, viewModel = viewModel)
             }
         }
+    }
+
+    if (showDeleteConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmation = false },
+            title = { Text("Delete ${state.name.ifBlank { "collection" }}?") },
+            text = {
+                Text(
+                    "This removes the collection and all of its game memberships. " +
+                        "This cannot be undone.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmation = false
+                        viewModel.delete()
+                    },
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmation = false }) { Text("Cancel") }
+            },
+        )
     }
 }
 
@@ -240,6 +266,12 @@ private fun CollectionOverview(
                         color = deadlineUrgencyColor(banner.daysRemaining),
                     )
                 }
+            }
+        }
+
+        if (state.description.isNotBlank()) {
+            item {
+                CollectionDescription(description = state.description)
             }
         }
 
@@ -379,6 +411,27 @@ private fun CollectionOverview(
             },
         ) {
             DatePicker(state = datePickerState)
+        }
+    }
+}
+
+/** Overview copy is bounded by default, with expansion for intentionally long descriptions. */
+@Composable
+private fun CollectionDescription(description: String) {
+    var expanded by rememberSaveable(description) { mutableStateOf(false) }
+    val expandable = description.length > 160
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("About this collection", style = MaterialTheme.typography.titleSmall)
+        Text(
+            text = description,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = if (expanded || !expandable) Int.MAX_VALUE else 4,
+            overflow = if (expanded || !expandable) TextOverflow.Clip else TextOverflow.Ellipsis,
+        )
+        if (expandable) {
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "Show less" else "Show more")
+            }
         }
     }
 }
@@ -977,6 +1030,19 @@ private fun CollectionForm(
                     label = { Text("Name") },
                     placeholder = { Text("e.g. Clear the backlog") },
                     singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.saving,
+                )
+            }
+
+            item {
+                OutlinedTextField(
+                    value = state.description,
+                    onValueChange = viewModel::setDescription,
+                    label = { Text("Description") },
+                    placeholder = { Text("What is this collection for?") },
+                    minLines = 3,
+                    maxLines = 5,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !state.saving,
                 )
