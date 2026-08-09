@@ -83,7 +83,6 @@ import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.work.HltbBatchProgress
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowsSort
-import compose.icons.tablericons.Bookmark
 import compose.icons.tablericons.Bolt
 import compose.icons.tablericons.Check
 import compose.icons.tablericons.Checkbox
@@ -121,7 +120,6 @@ private data class LibraryDisplayGame(
     val achievementTotal: Int?,
     val xpContributed: Int,
     val isCurrentlyPlaying: Boolean,
-    val isGoal: Boolean,
 )
 
 @Composable
@@ -768,7 +766,6 @@ private fun GoalGameUi.toDisplayGame() = LibraryDisplayGame(
     achievementTotal = achievementTotal,
     xpContributed = xpContributed,
     isCurrentlyPlaying = isCurrentlyPlaying,
-    isGoal = true,
 )
 
 private fun BacklogGameUi.toDisplayGame() = LibraryDisplayGame(
@@ -784,7 +781,6 @@ private fun BacklogGameUi.toDisplayGame() = LibraryDisplayGame(
     achievementTotal = achievementTotal,
     xpContributed = xpContributed,
     isCurrentlyPlaying = isCurrentlyPlaying,
-    isGoal = false,
 )
 
 /** Emit one lazy item per row in list mode, or one lazy item per grid row in grid modes. */
@@ -829,7 +825,6 @@ private fun LazyListScope.libraryGameItems(
                         selectionMode = selectionMode,
                         onClick = { onClick(game) },
                         onLongClick = { onLongClick(game) },
-                        onManageGoal = { onManageGoal(game) },
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -895,9 +890,8 @@ private fun LibraryGameRow(
 /**
  * Grid cell renderer. The two grid densities share a deliberate tile shell while changing only
  * the amount of information in the body: the regular grid gets a small art stage and metadata,
- * while compact grid becomes a clean thumbnail shelf. Actions stay in the media corner so they do
- * not create an awkward empty trailing column. The focus action uses a semantic bookmark rather
- * than a generic overflow menu so the card stays visually quiet without hiding the action.
+ * while compact grid becomes a clean thumbnail shelf. Grid cards intentionally have no trailing
+ * action control, keeping their visual hierarchy focused on the game itself.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -908,7 +902,6 @@ private fun LibraryGameCell(
     selectionMode: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onManageGoal: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val compact = density == GameListDensity.COMPACT_GRID
@@ -986,11 +979,6 @@ private fun LibraryGameCell(
                         modifier = Modifier.align(Alignment.TopStart),
                     )
                 }
-                TileFocusButton(
-                    isGoal = game.isGoal,
-                    onManageGoal = onManageGoal,
-                    modifier = Modifier.align(Alignment.TopEnd),
-                )
             }
 
             Column(
@@ -1060,33 +1048,6 @@ private fun TileSelectionIndicator(selected: Boolean, modifier: Modifier = Modif
             contentDescription = if (selected) "Selected" else "Not selected",
             tint = if (selected) {
                 MaterialTheme.colorScheme.onPrimary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-            modifier = Modifier.size(18.dp),
-        )
-    }
-}
-
-@Composable
-private fun TileFocusButton(
-    isGoal: Boolean,
-    onManageGoal: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    IconButton(
-        onClick = onManageGoal,
-        modifier = modifier
-            .padding(6.dp)
-            .size(34.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)),
-    ) {
-        Icon(
-            imageVector = TablerIcons.Bookmark,
-            contentDescription = if (isGoal) "Remove from Focus" else "Add to Focus",
-            tint = if (isGoal) {
-                MaterialTheme.colorScheme.primary
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
