@@ -3,6 +3,7 @@ package com.example.backlogium.ui.library
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -886,7 +888,12 @@ private fun LibraryGameRow(
     }
 }
 
-/** Grid cell renderer. Actions float over the artwork so the cell never reserves a trailing slot. */
+/**
+ * Grid cell renderer. The two grid densities share a deliberate tile shell while changing only
+ * the amount of information in the body: the regular grid gets a small art stage and metadata,
+ * while compact grid becomes a clean thumbnail shelf. Actions stay in the media corner so they do
+ * not create an awkward empty trailing column.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LibraryGameCell(
@@ -899,54 +906,111 @@ private fun LibraryGameCell(
     onManageGoal: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val compact = density == GameListDensity.COMPACT_GRID
+    val tileShape = RoundedCornerShape(18.dp)
+    val borderColor = when {
+        selected -> MaterialTheme.colorScheme.primary
+        game.isCurrentlyPlaying -> MaterialTheme.colorScheme.playingIndicator
+        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
+    }
     Card(
         modifier = modifier
             .padding(vertical = 4.dp)
+            .aspectRatio(if (compact) 0.84f else 0.88f)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        border = selectionBorder(selected),
-        colors = if (selected) {
-            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-        } else {
-            CardDefaults.cardColors()
-        },
+        shape = tileShape,
+        border = BorderStroke(if (selected) 2.dp else 1.dp, borderColor),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (compact) 1.dp else 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+        ),
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(if (density == GameListDensity.COMPACT_GRID) 0.82f else 0.9f),
-        ) {
-            if (density != GameListDensity.COMPACT_GRID) {
-                GameHeaderBackdrop(
-                    headerUrl = game.headerUrl,
-                    modifier = Modifier.matchParentSize(),
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (compact) 76.dp else 92.dp)
+                    .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            ) {
+                if (!compact) {
+                    GameHeaderBackdrop(
+                        headerUrl = game.headerUrl,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    0f to Color.Transparent,
+                                    1f to MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+                                ),
+                            ),
+                    )
+                }
+
+                val iconFrameModifier = if (compact) {
+                    Modifier.align(Alignment.Center)
+                } else {
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 12.dp, bottom = 10.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
+                        .padding(4.dp)
+                }
+                Box(modifier = iconFrameModifier) {
+                    GameIconWithHltbBadge(
+                        iconUrl = game.iconUrl,
+                        status = game.hltbStatus,
+                        op = game.fetchOp,
+                        isCurrentlyPlaying = game.isCurrentlyPlaying,
+                        iconSize = if (compact) 54.dp else 62.dp,
+                        showHltbStatus = false,
+                    )
+                }
+
+                if (selectionMode) {
+                    TileSelectionIndicator(
+                        selected = selected,
+                        modifier = Modifier.align(Alignment.TopStart),
+                    )
+                }
+                TileManageButton(
+                    onManageGoal = onManageGoal,
+                    modifier = Modifier.align(Alignment.TopEnd),
                 )
             }
+
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                    .weight(1f)
+                    .padding(horizontal = if (compact) 9.dp else 12.dp, vertical = 9.dp),
+                horizontalAlignment = if (compact) Alignment.CenterHorizontally else Alignment.Start,
             ) {
-                GameIconWithHltbBadge(
-                    iconUrl = game.iconUrl,
-                    status = game.hltbStatus,
-                    op = game.fetchOp,
-                    isCurrentlyPlaying = game.isCurrentlyPlaying,
-                    iconSize = if (density == GameListDensity.COMPACT_GRID) 52.dp else 64.dp,
-                    showHltbStatus = false,
-                )
-                Spacer(Modifier.height(6.dp))
                 Text(
                     text = game.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    textAlign = TextAlign.Center,
+                    style = if (compact) {
+                        MaterialTheme.typography.labelLarge
+                    } else {
+                        MaterialTheme.typography.titleSmall
+                    },
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = if (compact) TextAlign.Center else TextAlign.Start,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 if (density.showsPlaytime) {
                     PlaytimeLabel(
                         minutes = game.playtimeForever,
-                        modifier = Modifier.padding(top = 2.dp),
+                        modifier = Modifier.padding(top = 5.dp),
                     )
                 }
                 if (density.showsCompletionProgress) {
@@ -956,38 +1020,66 @@ private fun LibraryGameCell(
                     )
                 }
             }
-            if (selectionMode) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(6.dp)
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surface),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = if (selected) TablerIcons.Check else TablerIcons.Checkbox,
-                        contentDescription = if (selected) "Selected" else "Not selected",
-                        tint = if (selected) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            }
-            IconButton(
-                onClick = onManageGoal,
-                modifier = Modifier.align(Alignment.BottomEnd),
-            ) {
-                Icon(
-                    imageVector = TablerIcons.DotsVertical,
-                    contentDescription = "Manage focus",
-                )
-            }
         }
+    }
+}
+
+@Composable
+private fun TileSelectionIndicator(selected: Boolean, modifier: Modifier = Modifier) {
+    val fill = if (selected) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
+    }
+    Box(
+        modifier = modifier
+            .padding(8.dp)
+            .size(30.dp)
+            .clip(CircleShape)
+            .background(fill)
+            .border(
+                width = 1.dp,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f)
+                },
+                shape = CircleShape,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (selected) TablerIcons.Check else TablerIcons.Checkbox,
+            contentDescription = if (selected) "Selected" else "Not selected",
+            tint = if (selected) {
+                MaterialTheme.colorScheme.onPrimary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+@Composable
+private fun TileManageButton(
+    onManageGoal: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    IconButton(
+        onClick = onManageGoal,
+        modifier = modifier
+            .padding(6.dp)
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)),
+    ) {
+        Icon(
+            imageVector = TablerIcons.DotsVertical,
+            contentDescription = "Manage focus",
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
