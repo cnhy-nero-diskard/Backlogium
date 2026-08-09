@@ -67,11 +67,11 @@
 
 - [x] 7.1 Compact the configuration controls so the collection's games are reachable without scrolling
       past a full screen of settings on a phone-sized viewport.
-- [ ] 7.2 Keep every option available — name, description, mode, order, accent, and for deadline
+- [x] 7.2 Keep every option available — name, description, mode, order, accent, and for deadline
       collections the target date and estimate basis — directly or behind a disclosure.
 - [x] 7.3 Prefer collapsing the seldom-revisited settings over tightening spacing alone.
 - [x] 7.4 Confirm the floating save action stays reachable at any scroll position.
-- [ ] 7.5 Verify by hand on a phone-sized viewport, which is where the complaint originated.
+- [x] 7.5 Verify by hand on a phone-sized viewport, which is where the complaint originated.
 
 ## 8. Validation
 
