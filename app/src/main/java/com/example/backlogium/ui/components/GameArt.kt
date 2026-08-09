@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.SubcomposeAsyncImage
@@ -27,8 +28,8 @@ fun GameIcon(
     iconUrl: String,
     modifier: Modifier = Modifier,
     iconSize: Dp = 40.dp,
+    shape: Shape = RoundedCornerShape(8.dp),
 ) {
-    val shape = RoundedCornerShape(8.dp)
     SubcomposeAsyncImage(
         model = iconUrl,
         contentDescription = null,

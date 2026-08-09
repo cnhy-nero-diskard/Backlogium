@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
@@ -51,6 +53,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -60,9 +64,11 @@ import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionPacingState
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionTimeBasis
+import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.label
 import com.example.backlogium.ui.components.GameHeaderBackdrop
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.components.GameListDensityControl
 import com.example.backlogium.ui.theme.collectionAccentColor
 import com.example.backlogium.ui.theme.deadlineWarning
 import com.example.backlogium.ui.util.UiFormat
@@ -185,6 +191,7 @@ fun CollectionScreen(
                     state = state,
                     onCustomize = { showEditor = true },
                     onDeadlineChanged = viewModel::changeDeadline,
+                    onDensityChanged = viewModel::setDensity,
                 )
             } else {
                 CollectionForm(state = state, viewModel = viewModel)
@@ -200,6 +207,7 @@ private fun CollectionOverview(
     state: CollectionUiState,
     onCustomize: () -> Unit,
     onDeadlineChanged: (LocalDate) -> Unit,
+    onDensityChanged: (GameListDensity) -> Unit,
 ) {
     val accentColor = state.accent?.let {
         MaterialTheme.colorScheme.collectionAccentColor(it)
@@ -295,6 +303,10 @@ private fun CollectionOverview(
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f),
                 )
+                GameListDensityControl(
+                    density = state.density,
+                    onDensityChange = onDensityChanged,
+                )
                 Text(
                     text = "${state.members.size}",
                     style = MaterialTheme.typography.labelLarge,
@@ -328,12 +340,12 @@ private fun CollectionOverview(
                 }
             }
         } else {
-            items(
-                items = state.members,
-                key = { it.appId },
-            ) { member ->
-                CollectionGameCard(member = member, accentColor = accentColor)
-            }
+            collectionMemberItems(
+                members = state.members,
+                density = state.density,
+                accentColor = accentColor,
+                showQueuePosition = state.mode == CollectionMode.ORDERED_QUEUE,
+            )
         }
 
         item { Spacer(Modifier.height(16.dp)) }
@@ -629,9 +641,75 @@ private fun CollectionMetric(
 }
 
 @Composable
+private fun CollectionCompletionProgress(member: CollectionMemberUi) {
+    val completionist = member.completionistMinutes ?: return
+    if (completionist <= 0) return
+    val percent = (member.playtimeMinutes.toLong() * 100 / completionist).toInt()
+    val fraction = (member.playtimeMinutes.toFloat() / completionist.toFloat()).coerceIn(0f, 1f)
+    Spacer(Modifier.height(4.dp))
+    androidx.compose.material3.LinearProgressIndicator(
+        progress = { fraction },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Text(
+        text = "$percent%",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+private fun LazyListScope.collectionMemberItems(
+    members: List<CollectionMemberUi>,
+    density: GameListDensity,
+    accentColor: Color,
+    showQueuePosition: Boolean,
+) {
+    if (!density.isGrid) {
+        members.forEachIndexed { index, member ->
+            item(key = "collection-member-${member.appId}") {
+                CollectionGameCard(
+                    member = member,
+                    accentColor = accentColor,
+                    position = index,
+                    showQueuePosition = showQueuePosition,
+                    density = density,
+                )
+            }
+        }
+        return
+    }
+
+    members.chunked(density.columns).forEachIndexed { rowIndex, row ->
+        item(key = "collection-grid-row-$rowIndex-${row.firstOrNull()?.appId ?: 0}") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                row.forEachIndexed { offset, member ->
+                    CollectionGameTile(
+                        member = member,
+                        accentColor = accentColor,
+                        position = rowIndex * density.columns + offset,
+                        showQueuePosition = showQueuePosition,
+                        density = density,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                repeat(density.columns - row.size) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun CollectionGameCard(
     member: CollectionMemberUi,
     accentColor: Color,
+    position: Int,
+    showQueuePosition: Boolean,
+    density: GameListDensity,
 ) {
     val cardSurface = accentColor.copy(alpha = 0.08f)
         .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
@@ -650,51 +728,169 @@ private fun CollectionGameCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-            Box(
-                modifier = Modifier
-                    .width(5.dp)
-                    .heightIn(min = 88.dp)
-                    .background(accentColor),
-            )
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                member.iconUrl?.let { iconUrl ->
-                    GameIcon(iconUrl = iconUrl, iconSize = 56.dp)
-                    Spacer(Modifier.width(14.dp))
-                }
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                Box(
+                    modifier = Modifier
+                        .width(5.dp)
+                        .heightIn(min = 88.dp)
+                        .background(accentColor),
+                )
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = member.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                    )
-                    Text(
-                        text = "${UiFormat.minutes(member.playtimeMinutes)} played · " +
-                            sessionLabel(member.sessionCount),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                    )
-                    member.achievementsUnlocked?.let { unlocked ->
-                        member.achievementsTotal?.let { total ->
+                    member.iconUrl?.let { iconUrl ->
+                        Box {
+                            GameIcon(iconUrl = iconUrl, iconSize = 56.dp)
+                            CurrentPlayingDot(
+                                isCurrentlyPlaying = member.isCurrentlyPlaying,
+                                modifier = Modifier.align(Alignment.TopEnd),
+                            )
+                        }
+                        Spacer(Modifier.width(14.dp))
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Text(
+                            text = member.name,
+                            style = MaterialTheme.typography.titleSmall,
+                            maxLines = 1,
+                        )
+                        if (density.showsPlaytime) {
                             Text(
-                                text = "$unlocked/$total trophies",
+                                text = "${UiFormat.minutes(member.playtimeMinutes)} played · " +
+                                    sessionLabel(member.sessionCount),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = accentColor,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
+                            )
+                        }
+                        if (density.showsCompletionProgress) {
+                            CollectionCompletionProgress(member)
+                        }
+                        if (density.showsBadges) {
+                            TrophyLabel(member = member, accentColor = accentColor)
+                        }
+                        if (showQueuePosition) {
+                            Text(
+                                text = "#${position + 1} in queue",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun CollectionGameTile(
+    member: CollectionMemberUi,
+    accentColor: Color,
+    position: Int,
+    showQueuePosition: Boolean,
+    density: GameListDensity,
+    modifier: Modifier = Modifier,
+) {
+    val cardSurface = accentColor.copy(alpha = 0.08f)
+        .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
+    Card(
+        modifier = modifier
+            .padding(vertical = 4.dp)
+            .aspectRatio(if (density == GameListDensity.COMPACT_GRID) 0.82f else 0.9f),
+        colors = CardDefaults.cardColors(containerColor = cardSurface),
+    ) {
+        Box(Modifier.fillMaxWidth()) {
+            if (density != GameListDensity.COMPACT_GRID) {
+                GameHeaderBackdrop(
+                    headerUrl = member.headerUrl,
+                    modifier = Modifier.matchParentSize(),
+                )
             }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box {
+                    member.iconUrl?.let { iconUrl ->
+                        GameIcon(
+                            iconUrl = iconUrl,
+                            iconSize = if (density == GameListDensity.COMPACT_GRID) 52.dp else 64.dp,
+                        )
+                    } ?: Box(
+                        modifier = Modifier
+                            .size(if (density == GameListDensity.COMPACT_GRID) 52.dp else 64.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = TablerIcons.DeviceGamepad,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    CurrentPlayingDot(
+                        isCurrentlyPlaying = member.isCurrentlyPlaying,
+                        modifier = Modifier.align(Alignment.TopEnd),
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = member.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (density.showsPlaytime) {
+                    Text(
+                        text = UiFormat.minutes(member.playtimeMinutes),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (density.showsCompletionProgress) {
+                    CollectionCompletionProgress(member)
+                }
+                if (showQueuePosition) {
+                    Text(
+                        text = "#${position + 1}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = accentColor,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CurrentPlayingDot(isCurrentlyPlaying: Boolean, modifier: Modifier = Modifier) {
+    if (!isCurrentlyPlaying) return
+    Box(
+        modifier = modifier
+            .size(10.dp)
+            .background(MaterialTheme.colorScheme.primary, CircleShape),
+    )
+}
+
+@Composable
+private fun TrophyLabel(member: CollectionMemberUi, accentColor: Color) {
+    member.achievementsUnlocked?.let { unlocked ->
+        member.achievementsTotal?.let { total ->
+            Text(
+                text = "$unlocked/$total trophies",
+                style = MaterialTheme.typography.bodySmall,
+                color = accentColor,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -724,6 +920,7 @@ private fun CollectionForm(
     var query by rememberSaveable { mutableStateOf("") }
     var selectedGenreIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var showGenreSheet by rememberSaveable { mutableStateOf(false) }
+    var showAdvancedSettings by rememberSaveable { mutableStateOf(false) }
 
     val memberIds = remember(state.members) { state.members.mapTo(mutableSetOf()) { it.appId } }
     val selectedGenreSet = selectedGenreIds.toSet()
@@ -737,7 +934,7 @@ private fun CollectionForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
                 OutlinedTextField(
@@ -785,7 +982,27 @@ private fun CollectionForm(
                 }
             }
 
-            if (state.mode == CollectionMode.DEADLINE_GOAL) {
+            item {
+                TextButton(
+                    onClick = { showAdvancedSettings = !showAdvancedSettings },
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 2.dp),
+                ) {
+                    Icon(
+                        imageVector = if (showAdvancedSettings) {
+                            TablerIcons.ChevronUp
+                        } else {
+                            TablerIcons.ChevronDown
+                        },
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (showAdvancedSettings) "Hide additional settings" else "More settings")
+                }
+            }
+
+            if (showAdvancedSettings && state.mode == CollectionMode.DEADLINE_GOAL) {
                 item {
                     SectionLabel("Target date")
                     Card(modifier = Modifier.fillMaxWidth()) {
@@ -832,24 +1049,26 @@ private fun CollectionForm(
                 }
             }
 
-            item {
-                SectionLabel("Accent")
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    AccentChip(
-                        label = "Default",
-                        selected = state.accent == null,
-                        onClick = { viewModel.setAccent(null) },
-                    )
-                    CollectionAccent.entries.forEach { accent ->
+            if (showAdvancedSettings) {
+                item {
+                    SectionLabel("Accent")
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         AccentChip(
-                            label = accentLabel(accent),
-                            selected = state.accent == accent,
-                            onClick = { viewModel.setAccent(accent) },
-                            accentColor = MaterialTheme.colorScheme.collectionAccentColor(accent),
+                            label = "Default",
+                            selected = state.accent == null,
+                            onClick = { viewModel.setAccent(null) },
                         )
+                        CollectionAccent.entries.forEach { accent ->
+                            AccentChip(
+                                label = accentLabel(accent),
+                                selected = state.accent == accent,
+                                onClick = { viewModel.setAccent(accent) },
+                                accentColor = MaterialTheme.colorScheme.collectionAccentColor(accent),
+                            )
+                        }
                     }
                 }
             }
@@ -1052,7 +1271,7 @@ private fun CollectionForm(
 /** Section heading inside the form column. */
 @Composable
 private fun SectionLabel(text: String) {
-    Text(text = text, style = MaterialTheme.typography.titleMedium)
+    Text(text = text, style = MaterialTheme.typography.labelLarge)
 }
 
 @Composable

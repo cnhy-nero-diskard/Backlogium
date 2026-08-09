@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -51,6 +53,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -58,10 +61,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.domain.LibrarySortKey
+import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.components.GameHeaderBackdrop
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.components.GameListDensityControl
 import com.example.backlogium.ui.theme.overrunExcess
 import com.example.backlogium.ui.theme.playingIndicator
 import com.example.backlogium.ui.util.UiFormat
@@ -89,6 +94,22 @@ private data class GoalDialogTarget(
     val appId: Long,
     val name: String,
     val isGoal: Boolean,
+)
+
+/** Common display shape used by both Library sections and all three density renderers. */
+private data class LibraryDisplayGame(
+    val appId: Long,
+    val name: String,
+    val iconUrl: String,
+    val headerUrl: String,
+    val playtimeForever: Int,
+    val completionistMinutes: Int?,
+    val hltbStatus: HltbMatchState?,
+    val fetchOp: HltbFetchOp?,
+    val achievementUnlocked: Int?,
+    val achievementTotal: Int?,
+    val xpContributed: Int,
+    val isCurrentlyPlaying: Boolean,
 )
 
 @Composable
@@ -151,6 +172,10 @@ fun LibraryScreen(
                         onClear = viewModel::clearQuery,
                         modifier = Modifier.weight(1f),
                     )
+                    GameListDensityControl(
+                        density = state.density,
+                        onDensityChange = viewModel::setDensity,
+                    )
                     HltbMenuButton(
                         refreshing = state.refreshing,
                         reviewCount = state.reviewCount,
@@ -179,28 +204,24 @@ fun LibraryScreen(
                         onSortChange = viewModel::setFocusSort,
                     )
                 }
-                items(state.goalGames, key = { it.appId }) { game ->
-                    GoalGameRow(
-                        game = game,
-                        selected = game.appId in state.selection,
-                        selectionMode = state.selectionMode,
-                        onClick = {
-                            if (state.selectionMode) {
-                                viewModel.toggleSelection(game.appId)
-                            } else {
-                                onOpenGameDetail(game.appId)
-                            }
-                        },
-                        onLongClick = { viewModel.toggleSelection(game.appId) },
-                        onManageGoal = {
-                            dialogTarget = GoalDialogTarget(
-                                appId = game.appId,
-                                name = game.name,
-                                isGoal = true,
-                            )
-                        },
-                    )
-                }
+                libraryGameItems(
+                    games = state.goalGames.map(GoalGameUi::toDisplayGame),
+                    density = state.density,
+                    selectedIds = state.selection,
+                    selectionMode = state.selectionMode,
+                    onClick = { game ->
+                        if (state.selectionMode) viewModel.toggleSelection(game.appId)
+                        else onOpenGameDetail(game.appId)
+                    },
+                    onLongClick = { game -> viewModel.toggleSelection(game.appId) },
+                    onManageGoal = { game ->
+                        dialogTarget = GoalDialogTarget(
+                            appId = game.appId,
+                            name = game.name,
+                            isGoal = true,
+                        )
+                    },
+                )
             }
 
             // Heading only for a section that has matches — with a filter active, an empty
@@ -213,28 +234,24 @@ fun LibraryScreen(
                         onSortChange = viewModel::setLibrarySort,
                     )
                 }
-                items(state.backlog, key = { it.appId }) { game ->
-                    BacklogGameRow(
-                        game = game,
-                        selected = game.appId in state.selection,
-                        selectionMode = state.selectionMode,
-                        onClick = {
-                            if (state.selectionMode) {
-                                viewModel.toggleSelection(game.appId)
-                            } else {
-                                onOpenGameDetail(game.appId)
-                            }
-                        },
-                        onLongClick = { viewModel.toggleSelection(game.appId) },
-                        onManageGoal = {
-                            dialogTarget = GoalDialogTarget(
-                                appId = game.appId,
-                                name = game.name,
-                                isGoal = false,
-                            )
-                        },
-                    )
-                }
+                libraryGameItems(
+                    games = state.backlog.map(BacklogGameUi::toDisplayGame),
+                    density = state.density,
+                    selectedIds = state.selection,
+                    selectionMode = state.selectionMode,
+                    onClick = { game ->
+                        if (state.selectionMode) viewModel.toggleSelection(game.appId)
+                        else onOpenGameDetail(game.appId)
+                    },
+                    onLongClick = { game -> viewModel.toggleSelection(game.appId) },
+                    onManageGoal = { game ->
+                        dialogTarget = GoalDialogTarget(
+                            appId = game.appId,
+                            name = game.name,
+                            isGoal = false,
+                        )
+                    },
+                )
             }
 
             // Inside the column, beneath the search field: the query that produced no matches
@@ -569,10 +586,96 @@ private fun NoMatchesRow(query: String, onClear: () -> Unit) {
     }
 }
 
+private fun GoalGameUi.toDisplayGame() = LibraryDisplayGame(
+    appId = appId,
+    name = name,
+    iconUrl = iconUrl,
+    headerUrl = headerUrl,
+    playtimeForever = playtimeForever,
+    completionistMinutes = completionistMinutes,
+    hltbStatus = hltbStatus,
+    fetchOp = fetchOp,
+    achievementUnlocked = achievementUnlocked,
+    achievementTotal = achievementTotal,
+    xpContributed = xpContributed,
+    isCurrentlyPlaying = isCurrentlyPlaying,
+)
+
+private fun BacklogGameUi.toDisplayGame() = LibraryDisplayGame(
+    appId = appId,
+    name = name,
+    iconUrl = iconUrl,
+    headerUrl = headerUrl,
+    playtimeForever = playtimeForever,
+    completionistMinutes = completionistMinutes,
+    hltbStatus = hltbStatus,
+    fetchOp = fetchOp,
+    achievementUnlocked = achievementUnlocked,
+    achievementTotal = achievementTotal,
+    xpContributed = xpContributed,
+    isCurrentlyPlaying = isCurrentlyPlaying,
+)
+
+/** Emit one lazy item per row in list mode, or one lazy item per grid row in grid modes. */
+@OptIn(ExperimentalFoundationApi::class)
+private fun LazyListScope.libraryGameItems(
+    games: List<LibraryDisplayGame>,
+    density: GameListDensity,
+    selectedIds: Set<Long>,
+    selectionMode: Boolean,
+    onClick: (LibraryDisplayGame) -> Unit,
+    onLongClick: (LibraryDisplayGame) -> Unit,
+    onManageGoal: (LibraryDisplayGame) -> Unit,
+) {
+    if (!density.isGrid) {
+        games.forEach { game ->
+            item(key = "library-game-${game.appId}") {
+                LibraryGameRow(
+                    game = game,
+                    density = density,
+                    selected = game.appId in selectedIds,
+                    selectionMode = selectionMode,
+                    onClick = { onClick(game) },
+                    onLongClick = { onLongClick(game) },
+                    onManageGoal = { onManageGoal(game) },
+                )
+            }
+        }
+        return
+    }
+
+    games.chunked(density.columns).forEachIndexed { rowIndex, row ->
+        item(key = "library-grid-row-$rowIndex-${row.firstOrNull()?.appId ?: 0}") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                row.forEach { game ->
+                    LibraryGameCell(
+                        game = game,
+                        density = density,
+                        selected = game.appId in selectedIds,
+                        selectionMode = selectionMode,
+                        onClick = { onClick(game) },
+                        onLongClick = { onLongClick(game) },
+                        onManageGoal = { onManageGoal(game) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                repeat(density.columns - row.size) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+/** The single full-detail renderer used by both Library sections. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GoalGameRow(
-    game: GoalGameUi,
+private fun LibraryGameRow(
+    game: LibraryDisplayGame,
+    density: GameListDensity,
     selected: Boolean,
     selectionMode: Boolean,
     onClick: () -> Unit,
@@ -590,20 +693,25 @@ private fun GoalGameRow(
             status = game.hltbStatus,
             op = game.fetchOp,
             isCurrentlyPlaying = game.isCurrentlyPlaying,
+            showHltbStatus = density.showsBadges,
         )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(game.name, style = MaterialTheme.typography.bodyLarge)
-            PlaytimeLabel(game.playtimeForever)
-            CompletionProgress(
-                playtimeMinutes = game.playtimeForever,
-                completionistMinutes = game.completionistMinutes,
-            )
-            GameBadges(
-                unlocked = game.achievementUnlocked,
-                total = game.achievementTotal,
-                xpContributed = game.xpContributed,
-            )
+            if (density.showsPlaytime) PlaytimeLabel(game.playtimeForever)
+            if (density.showsCompletionProgress) {
+                CompletionProgress(
+                    playtimeMinutes = game.playtimeForever,
+                    completionistMinutes = game.completionistMinutes,
+                )
+            }
+            if (density.showsBadges) {
+                GameBadges(
+                    unlocked = game.achievementUnlocked,
+                    total = game.achievementTotal,
+                    xpContributed = game.xpContributed,
+                )
+            }
         }
         RowTrailing(
             selected = selected,
@@ -613,54 +721,118 @@ private fun GoalGameRow(
     }
 }
 
+/** Grid cell renderer. Actions float over the artwork so the cell never reserves a trailing slot. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun BacklogGameRow(
-    game: BacklogGameUi,
+private fun LibraryGameCell(
+    game: LibraryDisplayGame,
+    density: GameListDensity,
     selected: Boolean,
     selectionMode: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onManageGoal: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    GameCard(
-        headerUrl = game.headerUrl,
-        selected = selected,
-        onClick = onClick,
-        onLongClick = onLongClick,
+    Card(
+        modifier = modifier
+            .padding(vertical = 4.dp)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        border = selectionBorder(selected),
+        colors = if (selected) {
+            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        } else {
+            CardDefaults.cardColors()
+        },
     ) {
-        GameIconWithHltbBadge(
-            iconUrl = game.iconUrl,
-            status = game.hltbStatus,
-            op = game.fetchOp,
-            isCurrentlyPlaying = game.isCurrentlyPlaying,
-        )
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(game.name, style = MaterialTheme.typography.bodyLarge)
-            PlaytimeLabel(game.playtimeForever)
-            CompletionProgress(
-                playtimeMinutes = game.playtimeForever,
-                completionistMinutes = game.completionistMinutes,
-            )
-            GameBadges(
-                unlocked = game.achievementUnlocked,
-                total = game.achievementTotal,
-                xpContributed = game.xpContributed,
-            )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(if (density == GameListDensity.COMPACT_GRID) 0.82f else 0.9f),
+        ) {
+            if (density != GameListDensity.COMPACT_GRID) {
+                GameHeaderBackdrop(
+                    headerUrl = game.headerUrl,
+                    modifier = Modifier.matchParentSize(),
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                GameIconWithHltbBadge(
+                    iconUrl = game.iconUrl,
+                    status = game.hltbStatus,
+                    op = game.fetchOp,
+                    isCurrentlyPlaying = game.isCurrentlyPlaying,
+                    iconSize = if (density == GameListDensity.COMPACT_GRID) 52.dp else 64.dp,
+                    showHltbStatus = false,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = game.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (density.showsPlaytime) {
+                    PlaytimeLabel(
+                        minutes = game.playtimeForever,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                if (density.showsCompletionProgress) {
+                    CompletionProgress(
+                        playtimeMinutes = game.playtimeForever,
+                        completionistMinutes = game.completionistMinutes,
+                    )
+                }
+            }
+            if (selectionMode) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surface),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = if (selected) TablerIcons.Check else TablerIcons.Checkbox,
+                        contentDescription = if (selected) "Selected" else "Not selected",
+                        tint = if (selected) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            IconButton(
+                onClick = onManageGoal,
+                modifier = Modifier.align(Alignment.BottomEnd),
+            ) {
+                Icon(
+                    imageVector = TablerIcons.DotsVertical,
+                    contentDescription = "Manage focus",
+                )
+            }
         }
-        RowTrailing(
-            selected = selected,
-            selectionMode = selectionMode,
-            onManageGoal = onManageGoal,
-        )
     }
 }
 
 /** A play icon plus the raw duration — "played" is implied by the row it sits in. */
 @Composable
-private fun PlaytimeLabel(minutes: Int) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+private fun PlaytimeLabel(minutes: Int, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Icon(
             imageVector = TablerIcons.PlayerPlay,
             contentDescription = null,
@@ -934,18 +1106,22 @@ private fun GameIconWithHltbBadge(
     status: HltbMatchState?,
     op: HltbFetchOp?,
     isCurrentlyPlaying: Boolean,
+    iconSize: Dp = 40.dp,
+    showHltbStatus: Boolean = true,
 ) {
     Box {
-        GameIcon(iconUrl)
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .size(16.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surface),
-            contentAlignment = Alignment.Center,
-        ) {
-            HltbIndicator(status = status, op = op, size = 10.dp)
+        GameIcon(iconUrl, iconSize = iconSize)
+        if (showHltbStatus) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(16.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surface),
+                contentAlignment = Alignment.Center,
+            ) {
+                HltbIndicator(status = status, op = op, size = 10.dp)
+            }
         }
         if (isCurrentlyPlaying) {
             Box(
