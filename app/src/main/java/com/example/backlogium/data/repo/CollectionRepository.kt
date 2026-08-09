@@ -43,6 +43,7 @@ class CollectionRepository @Inject constructor(
         targetDate: String? = null,
         accent: CollectionAccent? = null,
         timeBasis: CollectionTimeBasis = CollectionTimeBasis.COMPLETIONIST,
+        description: String? = null,
     ): Long =
         collectionDao.insert(
             Collection(
@@ -53,6 +54,8 @@ class CollectionRepository @Inject constructor(
                 accent = accent,
                 timeBasis = timeBasis,
                 createdAt = time.nowMillis(),
+                description = description,
+                displayOrder = collectionDao.getAll().maxOfOrNull { it.displayOrder }?.plus(1) ?: 0,
             ),
         )
 
@@ -64,6 +67,7 @@ class CollectionRepository @Inject constructor(
         targetDate: String?,
         accent: CollectionAccent?,
         timeBasis: CollectionTimeBasis,
+        description: String?,
     ) = collectionDao.updateDetails(
         id,
         name,
@@ -72,6 +76,7 @@ class CollectionRepository @Inject constructor(
         targetDate.takeIf { mode == CollectionMode.DEADLINE_GOAL },
         accent,
         timeBasis,
+        description,
     )
 
     /** Deleting a collection cascades to its memberships via the FK. */
@@ -90,4 +95,8 @@ class CollectionRepository @Inject constructor(
     /** Persist a new full sequence (ordered-queue reorder), atomically. */
     suspend fun reorderMembers(collectionId: Long, orderedAppIds: List<Long>) =
         collectionDao.reorderMembers(collectionId, orderedAppIds)
+
+    /** Persist a new full collection sequence atomically. */
+    suspend fun reorderCollections(orderedIds: List<Long>) =
+        collectionDao.reorderCollections(orderedIds)
 }

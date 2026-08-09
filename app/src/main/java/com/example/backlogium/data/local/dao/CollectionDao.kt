@@ -23,10 +23,10 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface CollectionDao {
 
-    @Query("SELECT * FROM collections ORDER BY createdAt ASC, id ASC")
+    @Query("SELECT * FROM collections ORDER BY displayOrder ASC, id ASC")
     fun observeCollections(): Flow<List<Collection>>
 
-    @Query("SELECT * FROM collections")
+    @Query("SELECT * FROM collections ORDER BY displayOrder ASC, id ASC")
     suspend fun getAll(): List<Collection>
 
     @Query("SELECT * FROM collections WHERE id = :id")
@@ -46,7 +46,7 @@ interface CollectionDao {
     suspend fun upsertMember(member: CollectionMember)
 
     @Query(
-        "UPDATE collections SET name = :name, mode = :mode, sort = :sort, targetDate = :targetDate, accent = :accent, timeBasis = :timeBasis " +
+        "UPDATE collections SET name = :name, mode = :mode, sort = :sort, targetDate = :targetDate, accent = :accent, timeBasis = :timeBasis, description = :description " +
             "WHERE id = :id",
     )
     suspend fun updateDetails(
@@ -57,7 +57,22 @@ interface CollectionDao {
         targetDate: String?,
         accent: CollectionAccent?,
         timeBasis: CollectionTimeBasis,
+        description: String?,
     )
+
+    @Query(
+        "UPDATE collections SET displayOrder = :displayOrder " +
+            "WHERE id = :id",
+    )
+    suspend fun setDisplayOrder(id: Long, displayOrder: Int)
+
+    /** Persist a new full collection sequence atomically. */
+    @Transaction
+    suspend fun reorderCollections(orderedIds: List<Long>) {
+        orderedIds.forEachIndexed { index, id ->
+            setDisplayOrder(id, index)
+        }
+    }
 
     /** Deleting a collection cascades to its memberships via the FK. */
     @Query("DELETE FROM collections WHERE id = :id")

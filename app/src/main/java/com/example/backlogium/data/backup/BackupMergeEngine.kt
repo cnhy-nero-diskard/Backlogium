@@ -193,6 +193,10 @@ class BackupMergeEngine @Inject constructor(
         val accent = CollectionAccent.parse(backupCollection.accent)
         val timeBasis = runCatching { CollectionTimeBasis.valueOf(backupCollection.timeBasis) }
             .getOrDefault(CollectionTimeBasis.COMPLETIONIST)
+        val existing = collectionDao.getById(backupCollection.id)
+        val displayOrder = backupCollection.displayOrder
+            ?: existing?.displayOrder
+            ?: (collectionDao.getAll().maxOfOrNull { it.displayOrder }?.plus(1) ?: 0)
         collectionDao.upsert(
             Collection(
                 id = backupCollection.id,
@@ -203,6 +207,8 @@ class BackupMergeEngine @Inject constructor(
                 accent = accent,
                 timeBasis = timeBasis,
                 createdAt = backupCollection.createdAt,
+                description = backupCollection.description,
+                displayOrder = displayOrder,
             ),
         )
     }

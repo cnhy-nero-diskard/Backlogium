@@ -160,7 +160,16 @@ class BackupMergeEngineTest {
         val harness = newEngine()
         val file = baseFile(
             collections = listOf(
-                BackupCollection(id = 1L, name = "Queue", mode = "ORDERED_QUEUE", sort = "MANUAL_SEQUENCE", targetDate = null, createdAt = 5L),
+                BackupCollection(
+                    id = 1L,
+                    name = "Queue",
+                    mode = "ORDERED_QUEUE",
+                    sort = "MANUAL_SEQUENCE",
+                    targetDate = null,
+                    createdAt = 5L,
+                    description = "Play in sequence",
+                    displayOrder = 3,
+                ),
             ),
             collectionMembers = listOf(
                 BackupCollectionMember(collectionId = 1L, appId = 10L, orderIndex = 0),
@@ -175,6 +184,8 @@ class BackupMergeEngineTest {
         assertEquals("Queue", stored.single().name)
         assertEquals(CollectionMode.ORDERED_QUEUE, stored.single().mode)
         assertEquals(CollectionSort.MANUAL_SEQUENCE, stored.single().sort)
+        assertEquals("Play in sequence", stored.single().description)
+        assertEquals(3, stored.single().displayOrder)
         assertEquals(listOf(10L, 11L), harness.collectionDao.getMembers(1L).map { it.appId })
     }
 
@@ -579,8 +590,23 @@ private class FakeCollectionDao(
         targetDate: String?,
         accent: com.example.backlogium.domain.CollectionAccent?,
         timeBasis: com.example.backlogium.domain.CollectionTimeBasis,
+        description: String?,
     ) {
-        store[id]?.let { store[id] = it.copy(name = name, mode = mode, sort = sort, targetDate = targetDate, accent = accent, timeBasis = timeBasis) }
+        store[id]?.let {
+            store[id] = it.copy(
+                name = name,
+                mode = mode,
+                sort = sort,
+                targetDate = targetDate,
+                accent = accent,
+                timeBasis = timeBasis,
+                description = description,
+            )
+        }
+    }
+
+    override suspend fun setDisplayOrder(id: Long, displayOrder: Int) {
+        store[id]?.let { store[id] = it.copy(displayOrder = displayOrder) }
     }
 
     override fun observeAllMembers(): kotlinx.coroutines.flow.Flow<List<CollectionMember>> =
