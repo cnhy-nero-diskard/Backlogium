@@ -83,6 +83,7 @@ import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.work.HltbBatchProgress
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowsSort
+import compose.icons.tablericons.Bookmark
 import compose.icons.tablericons.Bolt
 import compose.icons.tablericons.Check
 import compose.icons.tablericons.Checkbox
@@ -120,6 +121,7 @@ private data class LibraryDisplayGame(
     val achievementTotal: Int?,
     val xpContributed: Int,
     val isCurrentlyPlaying: Boolean,
+    val isGoal: Boolean,
 )
 
 @Composable
@@ -766,6 +768,7 @@ private fun GoalGameUi.toDisplayGame() = LibraryDisplayGame(
     achievementTotal = achievementTotal,
     xpContributed = xpContributed,
     isCurrentlyPlaying = isCurrentlyPlaying,
+    isGoal = true,
 )
 
 private fun BacklogGameUi.toDisplayGame() = LibraryDisplayGame(
@@ -781,6 +784,7 @@ private fun BacklogGameUi.toDisplayGame() = LibraryDisplayGame(
     achievementTotal = achievementTotal,
     xpContributed = xpContributed,
     isCurrentlyPlaying = isCurrentlyPlaying,
+    isGoal = false,
 )
 
 /** Emit one lazy item per row in list mode, or one lazy item per grid row in grid modes. */
@@ -892,7 +896,8 @@ private fun LibraryGameRow(
  * Grid cell renderer. The two grid densities share a deliberate tile shell while changing only
  * the amount of information in the body: the regular grid gets a small art stage and metadata,
  * while compact grid becomes a clean thumbnail shelf. Actions stay in the media corner so they do
- * not create an awkward empty trailing column.
+ * not create an awkward empty trailing column. The focus action uses a semantic bookmark rather
+ * than a generic overflow menu so the card stays visually quiet without hiding the action.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -981,7 +986,8 @@ private fun LibraryGameCell(
                         modifier = Modifier.align(Alignment.TopStart),
                     )
                 }
-                TileManageButton(
+                TileFocusButton(
+                    isGoal = game.isGoal,
                     onManageGoal = onManageGoal,
                     modifier = Modifier.align(Alignment.TopEnd),
                 )
@@ -1003,7 +1009,8 @@ private fun LibraryGameCell(
                     },
                     fontWeight = FontWeight.SemiBold,
                     textAlign = if (compact) TextAlign.Center else TextAlign.Start,
-                    maxLines = 2,
+                    maxLines = 1,
+                    softWrap = false,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -1062,7 +1069,8 @@ private fun TileSelectionIndicator(selected: Boolean, modifier: Modifier = Modif
 }
 
 @Composable
-private fun TileManageButton(
+private fun TileFocusButton(
+    isGoal: Boolean,
     onManageGoal: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1075,9 +1083,13 @@ private fun TileManageButton(
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)),
     ) {
         Icon(
-            imageVector = TablerIcons.DotsVertical,
-            contentDescription = "Manage focus",
-            tint = MaterialTheme.colorScheme.onSurface,
+            imageVector = TablerIcons.Bookmark,
+            contentDescription = if (isGoal) "Remove from Focus" else "Add to Focus",
+            tint = if (isGoal) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
             modifier = Modifier.size(18.dp),
         )
     }
