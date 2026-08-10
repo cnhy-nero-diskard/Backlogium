@@ -32,12 +32,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.SubcomposeAsyncImage
 import com.example.backlogium.data.repo.LivePresence
 import com.example.backlogium.ui.shell.ProfileHeaderViewModel
+import com.example.backlogium.ui.theme.playingIndicator
 import com.example.backlogium.ui.util.rememberReducedMotion
 import compose.icons.TablerIcons
 import compose.icons.tablericons.Refresh
@@ -62,10 +66,15 @@ private const val SYNC_SPIN_MILLIS = 1200
  *
  * [transparent] drops the strip's own surface color so a backdrop painted behind the whole shell
  * (the game detail screen's header-art wash) shows through it rather than being cut off at its
- * bottom edge — the header stays laid out identically either way.
+ * bottom edge — the header stays laid out identically either way. [onHome] hides only the running
+ * game's name because Home's now-playing panel immediately below already identifies it.
  */
 @Composable
-fun ProfileHeader(viewModel: ProfileHeaderViewModel = hiltViewModel(), transparent: Boolean = false) {
+fun ProfileHeader(
+    viewModel: ProfileHeaderViewModel = hiltViewModel(),
+    transparent: Boolean = false,
+    onHome: Boolean = false,
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     if (!state.visible) return
@@ -98,11 +107,19 @@ fun ProfileHeader(viewModel: ProfileHeaderViewModel = hiltViewModel(), transpare
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                presenceLabel(state.presence)?.let { label ->
+                presenceLabel(
+                    presence = state.presence,
+                    gameName = state.gameName,
+                    showGameName = !onHome,
+                )?.let { label ->
                     Text(
-                        text = label,
+                        text = label.toAnnotatedString(MaterialTheme.colorScheme.playingIndicator),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
@@ -188,10 +205,43 @@ private fun AvatarFallback() {
     }
 }
 
+/** The text and range that identifies the currently-playing game without making color carry it. */
+internal data class PresenceLabel(
+    val text: String,
+    val gameNameStart: Int? = null,
+)
+
 /** Null for [LivePresence.UNKNOWN]: before the first poll returns, claiming a state would lie. */
-private fun presenceLabel(presence: LivePresence): String? = when (presence) {
+internal fun presenceLabel(
+    presence: LivePresence,
+    gameName: String?,
+    showGameName: Boolean,
+): PresenceLabel? = when (presence) {
     LivePresence.UNKNOWN -> null
-    LivePresence.OFFLINE -> "Offline"
-    LivePresence.ONLINE -> "Online"
-    LivePresence.IN_GAME -> "In game"
+    LivePresence.OFFLINE -> PresenceLabel("Offline")
+    LivePresence.ONLINE -> PresenceLabel("Online")
+    LivePresence.IN_GAME -> {
+        val resolvedName = gameName?.takeIf { it.isNotBlank() }
+        if (showGameName && resolvedName != null) {
+            val prefix = "In game · "
+            PresenceLabel(
+                text = prefix + resolvedName,
+                gameNameStart = prefix.length,
+            )
+        } else {
+            PresenceLabel("In game")
+        }
+    }
 }
+
+private fun PresenceLabel.toAnnotatedString(gameNameColor: Color): AnnotatedString =
+    buildAnnotatedString {
+        append(text)
+        gameNameStart?.let { start ->
+            addStyle(
+                style = SpanStyle(color = gameNameColor),
+                start = start,
+                end = text.length,
+            )
+        }
+    }
