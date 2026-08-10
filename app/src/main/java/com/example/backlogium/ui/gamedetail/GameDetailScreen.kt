@@ -339,9 +339,9 @@ private fun CompletionLine(summary: GameSummaryUi) {
 }
 
 /**
- * The game's current Steam concurrent-player count, fetched once when the screen opens. Renders
- * nothing while the fetch is in flight or if it fails — no zero, no dash, no spinner — the same
- * omit-rather-than-placeholder treatment [HltbLengths] gives an unresolved length.
+ * The game's current Steam concurrent-player count, fetched by the screen's poller or a manual
+ * refresh. Renders nothing while a fetch is in flight or if it fails — no zero, no dash, no spinner
+ * — the same omit-rather-than-placeholder treatment [HltbLengths] gives an unresolved length.
  */
 @Composable
 private fun ActivePlayersLine(summary: GameSummaryUi) {
