@@ -53,15 +53,17 @@
       a refresh is in flight and after a failure.
 - [x] 4.6 Confirm the gesture triggers no library sync, achievement fetch, or HowLongToBeat lookup.
 - [x] 4.7 Verify the gesture against the screen's accent-wash header and its `LazyColumn` scroll.
-- [ ] 4.8 ⚠️ If `collection-game-detail-sheet` has landed, decide explicitly whether the pull refresh
+- [x] 4.8 ⚠️ If `collection-game-detail-sheet` has landed, decide explicitly whether the pull refresh
       is available in the overlay presentation — a downward drag there is also the sheet's dismiss
       gesture. Safe default is full-destination only. If this change lands first, leave a note for
-      that change to make the same decision.
+      that change to make the same decision. **Decision:** The sheet has not landed here; pull refresh
+      is available only on the full destination, and a future overlay should keep it disabled unless
+      its competing gestures are resolved explicitly.
 
 ## 5. Validation
 
-- [ ] 5.1 Walk every scenario in `specs/app-ui/spec.md` for the modified and the three added
+- [x] 5.1 Walk every scenario in `specs/app-ui/spec.md` for the modified and the three added
       requirements.
-- [ ] 5.2 Confirm no full-size game icon anywhere changed shape.
-- [ ] 5.3 `./gradlew :gamification:test :app:testDebugUnitTest`.
-- [ ] 5.4 `openspec validate polish-game-surfaces --strict`.
+- [x] 5.2 Confirm no full-size game icon anywhere changed shape.
+- [x] 5.3 `./gradlew :gamification:test :app:testDebugUnitTest`.
+- [x] 5.4 `openspec validate polish-game-surfaces --strict`.
