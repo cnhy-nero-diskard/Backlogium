@@ -92,23 +92,31 @@ Every visible Home collection card containing the currently played game's app id
 - **WHEN** the platform requests reduced motion while a matching game is active
 - **THEN** the collection card uses a static faint outline or equivalent non-animated cue
 
-### Requirement: Collection game-card background art
-Game cards inside collection overview and management surfaces SHALL use the same right-aligned, low-opacity Steam header-art treatment and horizontal fade behavior as Library game cards. The collection accent strip, text, metrics, and controls SHALL remain legible above the artwork. Missing or failed header art SHALL leave a complete themed card surface rather than a broken image state.
+### Requirement: Collection game-card surface treatments
+Game cards inside collection overview and management surfaces SHALL use a surface treatment appropriate to their layout. Horizontal collection-list and management cards SHALL use the same right-aligned, low-opacity Steam `header.jpg` treatment and horizontal fade behavior as Library game cards. Library and collection overview grid tiles SHALL use Steam's portrait `hero_capsule.jpg` artwork derived from the app id as their primary image instead of a thumbnail-plus-faded-header composition. The collection accent, text, metrics, and controls SHALL remain legible, and missing or failed artwork SHALL leave a complete themed surface rather than a broken image state.
 
-#### Scenario: Header art is available
-- **WHEN** a collection member has a Steam header-art URL
-- **THEN** its collection game card shows the artwork aligned to the right and fading out before the primary text region
+#### Scenario: Header art is available on a horizontal card
+- **WHEN** a collection member with a Steam header-art URL is rendered in a horizontal collection or management card
+- **THEN** its card shows the artwork aligned to the right and fading out before the primary text region
 
-#### Scenario: Header art is unavailable
-- **WHEN** a collection member has no usable header artwork
+#### Scenario: Grid uses Steam hero capsule artwork
+- **WHEN** a game is rendered in the Library or collection overview's grid density
+- **THEN** its tile uses the game's portrait `hero_capsule.jpg` artwork as the primary image, with its name and density-appropriate metadata below, without a faded full-card header image
+
+#### Scenario: Header art is unavailable on a horizontal card
+- **WHEN** a collection member has no usable header artwork and is rendered in a horizontal collection or management card
 - **THEN** its game card retains the normal themed surface without a broken-image placeholder
+
+#### Scenario: Hero capsule artwork is unavailable
+- **WHEN** a game has no usable `hero_capsule.jpg` artwork and is rendered in a grid
+- **THEN** its tile retains the same geometry and shows the generic game fallback without a broken-image placeholder
 
 #### Scenario: Collection controls remain usable
 - **WHEN** a management game card contains reorder, done, or remove controls over a bright header image
 - **THEN** every control and its state remain visually legible and interactive
 
-#### Scenario: Artwork treatment stays shared
-- **WHEN** Library and Collections render game-header backdrops
+#### Scenario: Horizontal artwork treatment stays shared
+- **WHEN** Library and horizontal Collection cards render game-header backdrops
 - **THEN** both use the same shared fade and opacity treatment rather than independently tuned copies
 
 ### Requirement: Collection overview Personal Pace presentation

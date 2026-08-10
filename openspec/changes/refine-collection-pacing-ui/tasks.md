@@ -37,9 +37,9 @@
 
 - [x] 5.1 Extract the Library row's right-aligned header image, opacity, offscreen alpha mask, and horizontal fade into a shared Compose backdrop component.
 - [x] 5.2 Switch Library game rows to the shared backdrop without changing selection, click, or long-press behavior.
-- [x] 5.3 Add the shared backdrop behind collection overview member cards while preserving the collection accent strip and metric contrast.
+- [x] 5.3 Add the shared backdrop behind horizontal collection overview member cards and use Steam `hero_capsule.jpg` artwork in Library and collection overview grid tiles while preserving accent and metric contrast.
 - [x] 5.4 Add the shared backdrop behind management member/add-game cards while keeping done, reorder, add, and remove controls legible and interactive.
-- [x] 5.5 Verify missing and failed header art falls back to the normal themed card surface on both Library and Collections.
+- [ ] 5.5 Verify missing and failed header art falls back to the normal themed surface on horizontal Library/Collection cards, while missing `hero_capsule.jpg` assets use the grid fallback.
 
 ## 6. Home collection-card refinement
 
@@ -62,7 +62,7 @@
 
 - [x] 8.1 Run `./gradlew.bat testDebugUnitTest --offline` and fix all affected JVM tests and fakes.
 - [x] 8.2 Run `git diff --check` and validate `refine-collection-pacing-ui` with OpenSpec in non-interactive JSON mode.
-- [ ] 8.3 On a device or emulator, verify Home hierarchy and three-thumbnail overflow with narrow and wide cards, long collection names, missing icons, and several collections.
+- [ ] 8.3 On a device or emulator, verify Home hierarchy and three-thumbnail overflow with narrow and wide cards, long collection names, missing icons, and several collections; verify portrait hero-capsule artwork keeps Library and collection grids balanced.
 - [ ] 8.4 On a device or emulator, verify one active game illuminates every matching collection, the glow fades after play, and reduced motion uses a non-animated cue.
-- [ ] 8.5 On a device or emulator, verify bright/missing header art leaves collection metrics and management controls readable.
+- [ ] 8.5 On a device or emulator, verify bright/missing header art leaves horizontal collection metrics and management controls readable, and missing hero-capsule assets retain the grid fallback.
 - [ ] 8.6 Manually verify reliable, learning, incomplete, on-track, at-risk, today, passed, and completed pacing states, including exact `Change deadline` visibility.

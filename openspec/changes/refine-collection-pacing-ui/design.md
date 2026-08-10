@@ -13,7 +13,7 @@ The change crosses the session repository, pure domain derivation, collection su
 - Use confidence and completeness gates before declaring a collection infeasible.
 - Give deadline, completion-goal, and ordered-queue modes useful but mode-appropriate pacing guidance.
 - Make Home cards concise, cap previews at three games, and visually connect live play with every affected collection.
-- Reuse the Library's faded header-art language for game cards inside Collections.
+- Reuse the Library's faded `header.jpg` language for horizontal game cards inside Collections, while using Steam's portrait `hero_capsule.jpg` artwork for overview and Library grids.
 - Keep all derivation deterministic, offline, and JVM-testable.
 
 **Non-Goals:**
@@ -98,11 +98,11 @@ Missing HLTB details are not enumerated on Home. A compact incomplete-forecast s
 
 Home joins the live game app id against collection memberships. Every matching card animates a low-alpha accent-colored outer glow on a slow pulse while that game is active, then fades it after play ends. The effect animates drawing properties only, so card measurements do not change. A collection without an accent uses the theme's live-playing color. Reduced-motion mode replaces the pulse with a static faint outline.
 
-### 10. Extract a shared faded game-art treatment
+### 10. Use surface-appropriate game-card artwork
 
-The Library's right-aligned header image, low opacity, and horizontal alpha mask will become a reusable Compose component or modifier. Collection overview and management game cards layer content and controls above it while retaining the collection accent strip. Missing or failed header art leaves the normal card surface intact without a broken placeholder.
+The Library's right-aligned `header.jpg`, low opacity, and horizontal alpha mask remain a reusable Compose component for horizontal Library, collection-list, and management cards. Library and collection overview grid tiles use Steam's portrait `hero_capsule.jpg` asset derived from the app id as their primary artwork, replacing the thumbnail-plus-faded-header composition. A shared `GameHeroCapsule` renderer preserves the portrait frame while showing the themed controller fallback when the CDN asset is blank, missing, or fails to load.
 
-Alternative considered: copy the Library implementation into Collections. Rejected because independent constants and masks would drift.
+Alternative considered: reuse the horizontal header-art composition in every grid tile. Rejected because the wide Steam image and separate thumbnail make narrow grid cells feel visually disproportionate and obscure the game's primary artwork.
 
 ## Risks / Trade-offs
 
@@ -118,12 +118,12 @@ Alternative considered: copy the Library implementation into Collections. Reject
 1. Add the pure forecast types/engine and session-history projection without changing existing deadline behavior.
 2. Add unit tests for date bucketing, weighting, sparse history, outliers, forecast ranges, and confidence.
 3. Feed Personal Pace into collection summaries and replace the calendar-minute differential behind the new eligibility states.
-4. Update Home and collection UIs, then remove the obsolete 1,440-minutes-per-day comparison.
+4. Update Home and collection UIs, then remove the obsolete 1,440-minutes-per-day comparison. Use Steam hero capsules for Library and collection overview grids and keep the faded header-art component on horizontal cards.
 5. Validate existing collections without session history: they remain readable, show learning/incomplete states, and retain editable deadlines through customization.
 
 Rollback restores the previous summary/UI derivation. No stored collection or database data requires reversal because forecasts remain derived.
 
 ## Open Questions
 
-- Device verification should determine the final glow alpha, blur radius, and pulse duration; these are visual tuning constants rather than behavioral contracts.
+- Device verification should determine the final glow alpha, blur radius, pulse duration, hero-art crop/height, and fallback contrast; these are visual tuning constants rather than behavioral contracts.
 
