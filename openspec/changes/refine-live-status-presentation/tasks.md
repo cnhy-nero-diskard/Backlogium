@@ -49,8 +49,8 @@
 ## 6. Validation
 
 - [x] 6.1 Walk every scenario in `specs/app-ui/spec.md` for both requirements.
-- [ ] 6.2 Verify the header on every top-level destination while in a game, and on Home.
-- [ ] 6.3 Verify an offline launch and the unconfigured state are unaffected.
-- [ ] 6.4 Verify the state is perceivable with colour discrimination simulated or disabled.
+- [x] 6.2 Verify the header on every top-level destination while in a game, and on Home.
+- [x] 6.3 Verify an offline launch and the unconfigured state are unaffected.
+- [x] 6.4 Verify the state is perceivable with colour discrimination simulated or disabled.
 - [x] 6.5 `./gradlew :gamification:test :app:testDebugUnitTest`.
 - [x] 6.6 `openspec validate refine-live-status-presentation --strict`.
