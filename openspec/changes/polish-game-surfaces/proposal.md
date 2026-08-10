@@ -29,8 +29,8 @@ poll is in flight.
   expanding it.
 - Render game thumbnails circular in compact rows — Home's collection teasers and History's new day
   thumbnails — distinguishing them from the square achievement icons that appear alongside.
-- Add a pull-down gesture on game detail that refreshes the game's current player count, with
-  feedback while the refresh is in flight.
+- Add a pull-down gesture on game detail that refreshes only the selected game's current player
+  count, with feedback while that request is in flight and independent periodic polling afterward.
 
 **Not in scope:** the pull gesture refreshing anything other than the player count. Achievements,
 HowLongToBeat data, and library sync all have their own triggers and their own cadences; Steam sync
@@ -57,8 +57,9 @@ History day-tile game thumbnails, and game detail's manual refresh.
 
 - `ui/gamedetail/GameDetailScreen.kt` — the store link in `GameSummarySection`, and the pull gesture.
 - `ui/gamedetail/GameDetailViewModel.kt` — `activePlayers` is a `MutableStateFlow` fed by a
-  `while (true) { fetch; delay(30s) }` loop. A manual refresh writes to the same setter; the loop
-  should restart so a manual pull is not immediately followed by an already-scheduled poll.
+  `while (true) { fetch; delay(30s) }` loop. A manual refresh writes to the same setter; its
+  one-shot loading state must end when that game's request resolves, then the loop should restart
+  so a manual pull is not immediately followed by an already-scheduled poll.
 - `ui/history/HistoryScreen.kt`, `ui/history/HistoryGrouping.kt` — the day-tile thumbnail row. The
   grouping already carries per-game `iconUrl`; a cap and overflow count are needed, matching the
   achievement row's existing `HISTORY_ACHIEVEMENT_CAP` treatment.

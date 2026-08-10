@@ -186,15 +186,17 @@ class GameDetailViewModel @Inject constructor(
         activePlayersPollingJob?.cancel()
         refreshingPlayerCount.value = true
         activePlayersPollingJob = viewModelScope.launch {
-            try {
-                activePlayers.value = gameRepository.currentPlayerCount(appId)
-                // Keep the next poll relative to the manual fetch instead of the cancelled loop's
-                // previous schedule, which could otherwise fire immediately after the gesture.
-                delay(ACTIVE_PLAYERS_POLL_INTERVAL_MS)
-                pollActivePlayers()
-            } finally {
-                refreshingPlayerCount.value = false
-            }
+            refreshPlayerCountOnce(
+                refreshing = refreshingPlayerCount,
+                fetch = { gameRepository.currentPlayerCount(appId) },
+                publish = { activePlayers.value = it },
+            )
+            // Keep the next poll relative to the manual fetch instead of the cancelled loop's
+            // previous schedule, which could otherwise fire immediately after the gesture. The
+            // refresh indicator has already ended; polling is background maintenance, not the
+            // one-shot gesture still being in flight.
+            delay(ACTIVE_PLAYERS_POLL_INTERVAL_MS)
+            pollActivePlayers()
         }
     }
 
@@ -211,6 +213,24 @@ class GameDetailViewModel @Inject constructor(
 
     private companion object {
         const val ACTIVE_PLAYERS_POLL_INTERVAL_MS = 30_000L
+    }
+}
+
+/**
+ * Runs only the one-shot part of a player-count refresh. Keeping its completion state separate
+ * from the follow-up polling loop prevents the pull indicator from remaining active for the
+ * entire 30-second cadence (or forever while the loop is alive).
+ */
+internal suspend fun refreshPlayerCountOnce(
+    refreshing: MutableStateFlow<Boolean>,
+    fetch: suspend () -> Int?,
+    publish: (Int?) -> Unit,
+) {
+    refreshing.value = true
+    try {
+        publish(fetch())
+    } finally {
+        refreshing.value = false
     }
 }
 

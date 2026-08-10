@@ -120,6 +120,11 @@ state over the rest of the summary.
 - **WHEN** a manual refresh is in flight
 - **THEN** the screen indicates that a refresh is happening, and indicates when it has finished
 
+#### Scenario: Refresh completion is independent of periodic polling
+- **WHEN** the selected game's current-player response resolves
+- **THEN** the manual refresh indicator stops immediately, while the next periodic poll remains
+  scheduled relative to that response and does not keep the manual refresh active
+
 #### Scenario: Manual refresh resets the polling interval
 - **WHEN** the user manually refreshes the player count
 - **THEN** the next periodic poll is scheduled relative to the manual refresh, rather than firing

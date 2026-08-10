@@ -46,7 +46,8 @@
 - [x] 4.1 Add a pull-down refresh to game detail that re-fetches the current player count.
 - [x] 4.2 Restart the 30-second polling loop on a manual refresh, so a manual pull is not immediately
       followed by an already-scheduled poll.
-- [x] 4.3 Indicate the refresh is in progress and indicate completion.
+- [x] 4.3 Indicate the refresh is in progress and end the indicator when the selected game's
+      one-shot request resolves, independently of the resumed polling loop.
 - [x] 4.4 Keep the omit-rather-than-placeholder behavior on failure: no player-count line, no error
       state over the summary.
 - [x] 4.5 Confirm the summary's local content and the achievement list stay rendered and usable while
@@ -59,6 +60,8 @@
       that change to make the same decision. **Decision:** The sheet has not landed here; pull refresh
       is available only on the full destination, and a future overlay should keep it disabled unless
       its competing gestures are resolved explicitly.
+- [x] 4.9 Keep the one-shot refresh state independent from the restarted polling loop, and add
+      regression tests proving the indicator clears after a count or no-count response.
 
 ## 5. Validation
 
