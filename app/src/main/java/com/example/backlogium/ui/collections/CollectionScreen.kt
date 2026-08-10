@@ -64,6 +64,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionMode
@@ -818,6 +819,7 @@ private fun CollectionGameCard(
         Box(modifier = Modifier.fillMaxWidth()) {
             GameHeaderBackdrop(
                 headerUrl = member.headerUrl,
+                fallbackUrls = SteamIconMapper.listBackgroundFallbackUrls(member.appId),
                 modifier = Modifier.matchParentSize(),
             )
             Row(
@@ -924,6 +926,7 @@ private fun CollectionGameTile(
             ) {
                 GameHeroCapsule(
                     heroCapsuleUrl = member.heroCapsuleUrl,
+                    fallbackUrls = SteamIconMapper.gridArtworkFallbackUrls(member.appId),
                     modifier = Modifier.matchParentSize(),
                     shape = heroShape,
                 )
@@ -1453,6 +1456,7 @@ private fun MemberRow(
         Box(modifier = Modifier.fillMaxWidth()) {
             GameHeaderBackdrop(
                 headerUrl = member.headerUrl,
+                fallbackUrls = SteamIconMapper.listBackgroundFallbackUrls(member.appId),
                 modifier = Modifier.matchParentSize(),
             )
             Row(
@@ -1535,6 +1539,7 @@ private fun AddGameRow(
         Box(modifier = Modifier.fillMaxWidth()) {
             GameHeaderBackdrop(
                 headerUrl = game.headerUrl,
+                fallbackUrls = SteamIconMapper.listBackgroundFallbackUrls(game.appId),
                 modifier = Modifier.matchParentSize(),
             )
             Row(

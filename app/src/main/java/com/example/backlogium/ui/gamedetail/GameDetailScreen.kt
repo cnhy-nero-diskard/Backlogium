@@ -68,8 +68,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.SubcomposeAsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest
+import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.components.SteamArtworkWithFallback
 import com.example.backlogium.ui.theme.rarityHalo
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
@@ -104,9 +106,16 @@ fun GameDetailScreen(
     onAccentColorChanged: (Color?) -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val accentColor by rememberHeaderAccentColor(state.summary.headerUrl)
     val overlay = presentation == GameDetailPresentation.COLLECTION_OVERLAY
     val detailAppId = appId ?: viewModel.appId
+    val artworkFallbackUrls = remember(detailAppId) {
+        if (detailAppId > 0L) {
+            SteamIconMapper.listBackgroundFallbackUrls(detailAppId)
+        } else {
+            emptyList()
+        }
+    }
+    val accentColor by rememberHeaderAccentColor(state.summary.headerUrl, artworkFallbackUrls)
 
     LaunchedEffect(viewModel, appId) {
         appId?.let(viewModel::setAppId)
@@ -142,14 +151,24 @@ fun GameDetailScreen(
             ),
     ) {
         if (overlay) {
-            GameDetailList(state = state, appId = detailAppId, viewModel = viewModel)
+            GameDetailList(
+                state = state,
+                appId = detailAppId,
+                artworkFallbackUrls = artworkFallbackUrls,
+                viewModel = viewModel,
+            )
         } else {
             PullToRefreshBox(
                 isRefreshing = state.isRefreshingPlayerCount,
                 onRefresh = viewModel::refreshPlayerCount,
                 modifier = Modifier.fillMaxSize(),
             ) {
-                GameDetailList(state = state, appId = detailAppId, viewModel = viewModel)
+                GameDetailList(
+                    state = state,
+                    appId = detailAppId,
+                    artworkFallbackUrls = artworkFallbackUrls,
+                    viewModel = viewModel,
+                )
             }
         }
     }
@@ -159,6 +178,7 @@ fun GameDetailScreen(
 private fun GameDetailList(
     state: GameDetailUiState,
     appId: Long,
+    artworkFallbackUrls: List<String>,
     viewModel: GameDetailViewModel,
 ) {
     LazyColumn(
@@ -171,6 +191,7 @@ private fun GameDetailList(
             GameSummarySection(
                 name = state.gameName,
                 appId = appId,
+                artworkFallbackUrls = artworkFallbackUrls,
                 summary = state.summary,
             )
         }
@@ -202,15 +223,27 @@ private fun gameDetailWash(accentColor: Color): Brush = Brush.verticalGradient(
 )
 
 /**
- * The header art's muted average color, re-derived whenever the art itself changes. Coil already
- * holds the image in its memory cache from [HeaderArt]'s own load, so this is a decode, not a
- * second network fetch in practice.
+ * The first successful artwork candidate's muted average color, re-derived whenever the art itself
+ * changes. Coil already holds the image in its memory cache from [HeaderArt]'s own load, so this
+ * is a decode, not a second network fetch in practice.
  */
 @Composable
-private fun rememberHeaderAccentColor(headerUrl: String): State<Color?> {
+private fun rememberHeaderAccentColor(
+    headerUrl: String,
+    fallbackUrls: List<String>,
+): State<Color?> {
     val context = LocalContext.current
-    return produceState<Color?>(initialValue = null, headerUrl) {
-        value = if (headerUrl.isBlank()) null else loadAverageColor(context, headerUrl)
+    val artworkUrls = remember(headerUrl, fallbackUrls) {
+        (listOf(headerUrl) + fallbackUrls)
+            .filter(String::isNotBlank)
+            .distinct()
+    }
+    return produceState<Color?>(initialValue = null, artworkUrls) {
+        value = null
+        for (url in artworkUrls) {
+            value = loadAverageColor(context, url)
+            if (value != null) break
+        }
     }
 }
 
@@ -263,14 +296,22 @@ private fun Color.mutedForBackdrop(): Color {
  * completion/XP line — so the first achievement row sits at or near the fold on a typical phone.
  */
 @Composable
-private fun GameSummarySection(name: String, appId: Long, summary: GameSummaryUi) {
+private fun GameSummarySection(
+    name: String,
+    appId: Long,
+    artworkFallbackUrls: List<String>,
+    summary: GameSummaryUi,
+) {
     val uriHandler = LocalUriHandler.current
     val linkLabel = name.takeIf { it.isNotBlank() }?.let { "Open $it on Steam" } ?: "Open game on Steam"
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column {
-            if (summary.headerUrl.isNotBlank()) {
-                HeaderArt(summary.headerUrl)
+            if (summary.headerUrl.isNotBlank() || artworkFallbackUrls.isNotEmpty()) {
+                HeaderArt(
+                    headerUrl = summary.headerUrl,
+                    fallbackUrls = artworkFallbackUrls,
+                )
             }
             Column(modifier = Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -338,13 +379,13 @@ private fun GenreTiles(genres: List<com.example.backlogium.data.repo.GameGenre>)
     }
 }
 
-/** Store header art as a wide banner, themed while loading and simply absent on failure. */
+/** Store header art as a wide banner, advancing through the shared Steam fallback chain. */
 @Composable
-private fun HeaderArt(headerUrl: String) {
-    SubcomposeAsyncImage(
-        model = headerUrl,
-        contentDescription = null,
+private fun HeaderArt(headerUrl: String, fallbackUrls: List<String>) {
+    SteamArtworkWithFallback(
+        urls = listOf(headerUrl) + fallbackUrls,
         contentScale = ContentScale.Crop,
+        alignment = Alignment.Center,
         modifier = Modifier
             .fillMaxWidth()
             .height(120.dp),
@@ -356,7 +397,7 @@ private fun HeaderArt(headerUrl: String) {
             )
         },
         // No glyph fallback: a failed banner should read as "no art", not as a broken image.
-        error = {},
+        failure = {},
     )
 }
 

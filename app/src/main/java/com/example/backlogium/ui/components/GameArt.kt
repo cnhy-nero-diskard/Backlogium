@@ -72,21 +72,18 @@ fun GameIcon(
 @Composable
 fun GameHeroCapsule(
     heroCapsuleUrl: String,
+    fallbackUrls: List<String> = emptyList(),
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(12.dp),
 ) {
     val shapedModifier = modifier.clip(shape)
-    if (heroCapsuleUrl.isBlank()) {
-        HeroCapsuleFallback(shapedModifier)
-        return
-    }
-    SubcomposeAsyncImage(
-        model = heroCapsuleUrl,
-        contentDescription = null,
+    SteamArtworkWithFallback(
+        urls = listOf(heroCapsuleUrl) + fallbackUrls,
         contentScale = ContentScale.Crop,
         modifier = shapedModifier,
+        alignment = Alignment.Center,
         loading = { HeroCapsuleFallback(Modifier.fillMaxSize()) },
-        error = { HeroCapsuleFallback(Modifier.fillMaxSize()) },
+        failure = { HeroCapsuleFallback(Modifier.fillMaxSize()) },
     )
 }
 

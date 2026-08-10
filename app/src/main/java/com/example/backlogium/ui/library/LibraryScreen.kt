@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.GameListDensity
@@ -853,6 +854,7 @@ private fun LibraryGameRow(
 ) {
     GameCard(
         headerUrl = game.headerUrl,
+        fallbackUrls = SteamIconMapper.listBackgroundFallbackUrls(game.appId),
         selected = selected,
         onClick = onClick,
         onLongClick = onLongClick,
@@ -948,6 +950,7 @@ private fun LibraryGameCell(
             ) {
                 GameHeroCapsule(
                     heroCapsuleUrl = game.heroCapsuleUrl,
+                    fallbackUrls = SteamIconMapper.gridArtworkFallbackUrls(game.appId),
                     modifier = Modifier.matchParentSize(),
                     shape = heroShape,
                 )
@@ -1077,6 +1080,7 @@ private fun PlaytimeLabel(minutes: Int, modifier: Modifier = Modifier) {
 @Composable
 private fun GameCard(
     headerUrl: String,
+    fallbackUrls: List<String> = emptyList(),
     selected: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -1097,7 +1101,11 @@ private fun GameCard(
         },
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
-            GameHeaderBackdrop(headerUrl = headerUrl, modifier = Modifier.matchParentSize())
+            GameHeaderBackdrop(
+                headerUrl = headerUrl,
+                fallbackUrls = fallbackUrls,
+                modifier = Modifier.matchParentSize(),
+            )
             Row(
                 modifier = Modifier.padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
