@@ -39,7 +39,7 @@
 - [x] 5.2 Switch Library game rows to the shared backdrop without changing selection, click, or long-press behavior.
 - [x] 5.3 Add the shared backdrop behind horizontal collection overview member cards and use Steam `hero_capsule.jpg` artwork in Library and collection overview grid tiles while preserving accent and metric contrast.
 - [x] 5.4 Add the shared backdrop behind management member/add-game cards while keeping done, reorder, add, and remove controls legible and interactive.
-- [ ] 5.5 Verify missing and failed header art falls back to the normal themed surface on horizontal Library/Collection cards, while missing `hero_capsule.jpg` assets use the grid fallback.
+- [x] 5.5 Add and test ordered Steam asset fallbacks for horizontal Library/Collection cards, both game-detail entry points, and grid tiles, keeping `library_hero.jpg` first after each preferred asset and preserving the themed surface when every candidate fails.
 
 ## 6. Home collection-card refinement
 
@@ -64,5 +64,5 @@
 - [x] 8.2 Run `git diff --check` and validate `refine-collection-pacing-ui` with OpenSpec in non-interactive JSON mode.
 - [ ] 8.3 On a device or emulator, verify Home hierarchy and three-thumbnail overflow with narrow and wide cards, long collection names, missing icons, and several collections; verify portrait hero-capsule artwork keeps Library and collection grids balanced.
 - [ ] 8.4 On a device or emulator, verify one active game illuminates every matching collection, the glow fades after play, and reduced motion uses a non-animated cue.
-- [ ] 8.5 On a device or emulator, verify bright/missing header art leaves horizontal collection metrics and management controls readable, and missing hero-capsule assets retain the grid fallback.
+- [ ] 8.5 On a device or emulator, verify bright/missing header art leaves horizontal collection metrics, management controls, and both game-detail entry points readable, and missing hero-capsule assets retain the grid fallback.
 - [ ] 8.6 Manually verify reliable, learning, incomplete, on-track, at-risk, today, passed, and completed pacing states, including exact `Change deadline` visibility.

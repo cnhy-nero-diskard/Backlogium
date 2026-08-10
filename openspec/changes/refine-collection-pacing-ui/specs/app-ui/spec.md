@@ -93,7 +93,7 @@ Every visible Home collection card containing the currently played game's app id
 - **THEN** the collection card uses a static faint outline or equivalent non-animated cue
 
 ### Requirement: Collection game-card surface treatments
-Game cards inside collection overview and management surfaces SHALL use a surface treatment appropriate to their layout. Horizontal collection-list and management cards SHALL use the same right-aligned, low-opacity Steam `header.jpg` treatment and horizontal fade behavior as Library game cards. Library and collection overview grid tiles SHALL use Steam's portrait `hero_capsule.jpg` artwork derived from the app id as their primary image instead of a thumbnail-plus-faded-header composition. The collection accent, text, metrics, and controls SHALL remain legible, and missing or failed artwork SHALL leave a complete themed surface rather than a broken image state.
+Game cards inside collection overview and management surfaces SHALL use a surface treatment appropriate to their layout. Horizontal collection-list and management cards SHALL use the same right-aligned, low-opacity Steam `header.jpg` treatment and horizontal fade behavior as Library game cards. If `header.jpg` fails, the renderer SHALL try `library_hero.jpg`, `capsule_616x353.jpg`, `hero_capsule.jpg`, and `library_600x900.jpg` in that order. Library and collection overview grid tiles SHALL use Steam's portrait `hero_capsule.jpg` artwork derived from the app id as their primary image instead of a thumbnail-plus-faded-header composition. If the hero capsule fails, the renderer SHALL try `library_hero.jpg`, `library_600x900.jpg`, `header.jpg`, and `capsule_616x353.jpg` in that order. The collection accent, text, metrics, and controls SHALL remain legible, and exhaustion of every candidate SHALL leave a complete themed surface rather than a broken image state.
 
 #### Scenario: Header art is available on a horizontal card
 - **WHEN** a collection member with a Steam header-art URL is rendered in a horizontal collection or management card
@@ -103,13 +103,21 @@ Game cards inside collection overview and management surfaces SHALL use a surfac
 - **WHEN** a game is rendered in the Library or collection overview's grid density
 - **THEN** its tile uses the game's portrait `hero_capsule.jpg` artwork as the primary image, with its name and density-appropriate metadata below, without a faded full-card header image
 
-#### Scenario: Header art is unavailable on a horizontal card
-- **WHEN** a collection member has no usable header artwork and is rendered in a horizontal collection or management card
-- **THEN** its game card retains the normal themed surface without a broken-image placeholder
+#### Scenario: Header art falls back on a horizontal card
+- **WHEN** a collection member's `header.jpg` fails in a horizontal collection or management card
+- **THEN** the loader tries `library_hero.jpg` first, followed by the remaining ordered wide, portrait, and library assets
+
+#### Scenario: All horizontal artwork is unavailable
+- **WHEN** every horizontal background candidate fails
+- **THEN** the game card retains the normal themed surface without a broken-image placeholder
 
 #### Scenario: Hero capsule artwork is unavailable
 - **WHEN** a game has no usable `hero_capsule.jpg` artwork and is rendered in a grid
-- **THEN** its tile retains the same geometry and shows the generic game fallback without a broken-image placeholder
+- **THEN** the loader tries `library_hero.jpg` first, then the remaining ordered Steam assets, while retaining the same tile geometry
+
+#### Scenario: All grid artwork is unavailable
+- **WHEN** every grid artwork candidate fails
+- **THEN** the tile retains the same geometry and shows the generic game fallback without a broken-image placeholder
 
 #### Scenario: Collection controls remain usable
 - **WHEN** a management game card contains reorder, done, or remove controls over a bright header image
@@ -118,6 +126,21 @@ Game cards inside collection overview and management surfaces SHALL use a surfac
 #### Scenario: Horizontal artwork treatment stays shared
 - **WHEN** Library and horizontal Collection cards render game-header backdrops
 - **THEN** both use the same shared fade and opacity treatment rather than independently tuned copies
+
+### Requirement: Game detail artwork fallback
+The full game-detail destination opened from Library and the game-detail overlay opened from Collection SHALL render the same wide `header.jpg` banner treatment and ordered fallback chain as horizontal game cards. The chain SHALL try `header.jpg`, then `library_hero.jpg`, `capsule_616x353.jpg`, `hero_capsule.jpg`, and `library_600x900.jpg`; the detail surface SHALL remain intact if every candidate fails. The surrounding full-detail accent wash SHALL sample the first candidate that decodes successfully rather than depending only on `header.jpg`.
+
+#### Scenario: Library game detail uses fallback art
+- **WHEN** a Library game detail screen cannot load its `header.jpg`
+- **THEN** it tries `library_hero.jpg` first, followed by the remaining ordered assets, without changing the banner geometry
+
+#### Scenario: Collection game detail uses the same fallback art
+- **WHEN** a Collection game-detail overlay cannot load its `header.jpg`
+- **THEN** it uses the same ordered fallback chain and banner treatment as the Library detail screen
+
+#### Scenario: Detail artwork is entirely unavailable
+- **WHEN** every game-detail artwork candidate fails
+- **THEN** the detail card keeps its themed content and the full-detail accent wash remains unset rather than showing a broken-image placeholder
 
 ### Requirement: Collection overview Personal Pace presentation
 Collection overviews SHALL present Personal Pace detail only for modes that benefit from pacing. They SHALL distinguish reliable forecasts, learning history, and missing estimate data; use approximate human-readable durations; and SHALL show `Change deadline` only when the collection domain marks that action eligible.
