@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.collections
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -71,6 +72,8 @@ import com.example.backlogium.domain.label
 import com.example.backlogium.ui.components.GameHeaderBackdrop
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.components.GameListDensityControl
+import com.example.backlogium.ui.gamedetail.GameDetailPresentation
+import com.example.backlogium.ui.gamedetail.GameDetailScreen
 import com.example.backlogium.ui.theme.collectionAccentColor
 import com.example.backlogium.ui.theme.deadlineWarning
 import com.example.backlogium.ui.util.UiFormat
@@ -110,14 +113,22 @@ import androidx.compose.ui.text.style.TextDecoration
 @Composable
 fun CollectionScreen(
     onDone: () -> Unit,
-    onOpenGameDetail: (Long) -> Unit = {},
+    onOpenGameDetail: ((Long) -> Unit)? = null,
     viewModel: CollectionViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showEditor by rememberSaveable { mutableStateOf(viewModel.collectionId == 0L) }
     var showActions by remember { mutableStateOf(false) }
     var showDeleteConfirmation by rememberSaveable { mutableStateOf(false) }
+    var selectedGameAppId by rememberSaveable { mutableStateOf<Long?>(null) }
     val showingOverview = !state.isNew && !showEditor
+    val openGameDetail: (Long) -> Unit = { appId ->
+        onOpenGameDetail?.invoke(appId) ?: run { selectedGameAppId = appId }
+    }
+
+    BackHandler(enabled = selectedGameAppId != null) {
+        selectedGameAppId = null
+    }
 
     LaunchedEffect(state.done) {
         if (state.done) onDone()
@@ -198,11 +209,24 @@ fun CollectionScreen(
                     onCustomize = { showEditor = true },
                     onDeadlineChanged = viewModel::changeDeadline,
                     onDensityChanged = viewModel::setDensity,
-                    onOpenGameDetail = onOpenGameDetail,
+                    onOpenGameDetail = openGameDetail,
                 )
             } else {
                 CollectionForm(state = state, viewModel = viewModel)
             }
+        }
+    }
+
+    selectedGameAppId?.let { appId ->
+        ModalBottomSheet(
+            onDismissRequest = { selectedGameAppId = null },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
+        ) {
+            GameDetailScreen(
+                appId = appId,
+                presentation = GameDetailPresentation.COLLECTION_OVERLAY,
+                viewModel = hiltViewModel(key = appId.toString()),
+            )
         }
     }
 
