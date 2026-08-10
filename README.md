@@ -78,6 +78,35 @@ grep -rn "data.local.entity\|SettingsDataStore" app/src/main/java/com/example/ba
 One deliberate exception: `HltbCandidate` (`data.hltb`) crosses the boundary as a
 plain serializable class because it is exactly the shape the review surface needs.
 
+## Visual Identity
+
+Material 3, custom dark-first color scheme. Android dynamic (wallpaper-derived) color is
+**off** (`BacklogiumTheme(dynamicColor = false)`), so this palette is the app's look on every
+device. A light scheme is retained for system light-mode users.
+
+The palette is organized by family and by what each one *means* — not a full token dump. Exact
+values for every token, including light-scheme counterparts, live in `ui/theme/Color.kt`, which
+is the source of truth; per-screen usage is documented in `docs/ui-screens-descriptor.md`.
+
+| Family | Anchor hex (dark) | Meaning |
+|---|---|---|
+| Surfaces (charcoal/navy) | `#10141C` bg, `#171C26` surface, `#232A38` surface-variant | App chrome. Text on dark: `#E4E8F0` primary, `#AEB6C4` secondary. |
+| Gold accent | `Gold #E0A83A` on `#241A00` | Maps to Material 3 `primary` — ordinary emphasis (buttons, progress, selected state), not milestone-only. |
+| Steel-blue | `SteelBlue #7FA6C9` (secondary), `SteelBlueLight` (tertiary) | Owns the "in game right now" lane; hand-tuned `tertiaryContainer` (`#243B4C` / on `#CFE4F0`) for the now-playing card. |
+| Live presence | `PlayingIndicator #4ADE80` | The Library row's "currently playing" dot. Live presence only. |
+| Derived accents | `GoldOverrun #8A431C`, `DeadlineWarning #FFB454` | Completion overshoot and due-soon warnings — inside the gold hue family rather than a new one. |
+| Rarity halo | `RarityCommon #8A93A3`, `RarityUncommon #6FAE7A`, `RarityEpic #A579D6` | Achievement rarity glow. RARE and LEGENDARY reuse `SteelBlue` and `Gold` rather than adding two more accents. |
+| Collection tints | `CollectionTeal`, `CollectionRose`, `CollectionCoral` | Muted card tints; deliberately not vivid enough to compete with gold or green. |
+| Light scheme | `Gold #7A5A00`, `SteelBlue #2F5B7C`, surfaces `#FBF8F1` / `#EDE6D6` | Same families, re-anchored for contrast on cream surfaces. Every dark token has a `*Light` counterpart. |
+
+**The rule is hue territory, not a milestone reservation.** Gold is `primary` and carries ordinary
+emphasis everywhere — it is not held back for level-ups and streaks. What's actually enforced is
+that nothing else may *be* gold: the rarity ramp reuses `Gold` at LEGENDARY instead of minting a
+second gold, so gold keeps one meaning instead of splitting across two shades. Steel-blue owns the
+in-game lane, green means live presence and stays vivid enough that it can't be mistaken for
+`RarityUncommon`'s muted sage, and every derived accent stays inside an existing hue family rather
+than claiming new territory.
+
 ## App Surfaces
 
 - **Home:** live now-playing panel, level/XP progress, today's quest, streak,
