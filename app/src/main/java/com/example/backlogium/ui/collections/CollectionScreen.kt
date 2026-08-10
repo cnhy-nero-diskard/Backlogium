@@ -97,6 +97,8 @@ import java.time.format.FormatStyle
 import kotlin.math.abs
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextDecoration
 
 /**
@@ -108,6 +110,7 @@ import androidx.compose.ui.text.style.TextDecoration
 @Composable
 fun CollectionScreen(
     onDone: () -> Unit,
+    onOpenGameDetail: (Long) -> Unit = {},
     viewModel: CollectionViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -195,6 +198,7 @@ fun CollectionScreen(
                     onCustomize = { showEditor = true },
                     onDeadlineChanged = viewModel::changeDeadline,
                     onDensityChanged = viewModel::setDensity,
+                    onOpenGameDetail = onOpenGameDetail,
                 )
             } else {
                 CollectionForm(state = state, viewModel = viewModel)
@@ -235,6 +239,7 @@ private fun CollectionOverview(
     onCustomize: () -> Unit,
     onDeadlineChanged: (LocalDate) -> Unit,
     onDensityChanged: (GameListDensity) -> Unit,
+    onOpenGameDetail: (Long) -> Unit,
 ) {
     val accentColor = state.accent?.let {
         MaterialTheme.colorScheme.collectionAccentColor(it)
@@ -378,6 +383,7 @@ private fun CollectionOverview(
                 density = state.density,
                 accentColor = accentColor,
                 showQueuePosition = state.mode == CollectionMode.ORDERED_QUEUE,
+                onOpenGameDetail = onOpenGameDetail,
             )
         }
 
@@ -717,6 +723,7 @@ private fun LazyListScope.collectionMemberItems(
     density: GameListDensity,
     accentColor: Color,
     showQueuePosition: Boolean,
+    onOpenGameDetail: (Long) -> Unit,
 ) {
     if (!density.isGrid) {
         members.forEachIndexed { index, member ->
@@ -727,6 +734,7 @@ private fun LazyListScope.collectionMemberItems(
                     position = index,
                     showQueuePosition = showQueuePosition,
                     density = density,
+                    onOpenGameDetail = onOpenGameDetail,
                 )
             }
         }
@@ -747,6 +755,7 @@ private fun LazyListScope.collectionMemberItems(
                         showQueuePosition = showQueuePosition,
                         density = density,
                         modifier = Modifier.weight(1f),
+                        onOpenGameDetail = onOpenGameDetail,
                     )
                 }
                 repeat(density.columns - row.size) {
@@ -764,13 +773,18 @@ private fun CollectionGameCard(
     position: Int,
     showQueuePosition: Boolean,
     density: GameListDensity,
+    onOpenGameDetail: (Long) -> Unit,
 ) {
     val cardSurface = accentColor.copy(alpha = 0.08f)
         .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
     Card(
+        onClick = { onOpenGameDetail(member.appId) },
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 88.dp),
+            .heightIn(min = 88.dp)
+            .semantics {
+                contentDescription = "Open ${member.name} details"
+            },
         colors = CardDefaults.cardColors(containerColor = cardSurface),
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
@@ -850,13 +864,18 @@ private fun CollectionGameTile(
     showQueuePosition: Boolean,
     density: GameListDensity,
     modifier: Modifier = Modifier,
+    onOpenGameDetail: (Long) -> Unit,
 ) {
     val cardSurface = accentColor.copy(alpha = 0.08f)
         .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
     Card(
+        onClick = { onOpenGameDetail(member.appId) },
         modifier = modifier
             .padding(vertical = 4.dp)
-            .aspectRatio(if (density == GameListDensity.COMPACT_GRID) 0.82f else 0.9f),
+            .aspectRatio(if (density == GameListDensity.COMPACT_GRID) 0.82f else 0.9f)
+            .semantics {
+                contentDescription = "Open ${member.name} details"
+            },
         colors = CardDefaults.cardColors(containerColor = cardSurface),
     ) {
         Box(Modifier.fillMaxWidth()) {

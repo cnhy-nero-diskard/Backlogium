@@ -190,7 +190,10 @@ fun BacklogiumAppRoot() {
                     route = ROUTE_COLLECTION,
                     arguments = listOf(navArgument("collectionId") { type = NavType.LongType }),
                 ) {
-                    CollectionScreen(onDone = { navController.popBackStack() })
+                    CollectionScreen(
+                        onDone = { navController.popBackStack() },
+                        onOpenGameDetail = { appId -> navController.navigate(gameDetailRoute(appId)) },
+                    )
                 }
             }
         }

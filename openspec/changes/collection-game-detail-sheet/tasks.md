@@ -2,17 +2,17 @@
 
 ## Phase 1 — Entry point (independently shippable)
 
-- [ ] 1.1 Add an `onOpenGameDetail: (Long) -> Unit` parameter to `CollectionScreen`, defaulted so
+- [x] 1.1 Add an `onOpenGameDetail: (Long) -> Unit` parameter to `CollectionScreen`, defaulted so
       existing call sites and previews stay compilable.
-- [ ] 1.2 Pass `onOpenGameDetail = { appId -> navController.navigate(gameDetailRoute(appId)) }` into
+- [x] 1.2 Pass `onOpenGameDetail = { appId -> navController.navigate(gameDetailRoute(appId)) }` into
       `CollectionScreen` in `BacklogiumAppRoot`, mirroring the `LibraryScreen` wiring.
-- [ ] 1.3 Thread the callback from `CollectionScreen` through `CollectionOverview` to
+- [x] 1.3 Thread the callback from `CollectionScreen` through `CollectionOverview` to
       `CollectionGameCard`.
-- [ ] 1.4 Make `CollectionGameCard` clickable, with a content description naming the game so the
+- [x] 1.4 Make `CollectionGameCard` clickable, with a content description naming the game so the
       tile is reachable by screen reader.
-- [ ] 1.5 Confirm the bottom navigation bar still hides correctly on the pushed game detail, and
+- [x] 1.5 Confirm the bottom navigation bar still hides correctly on the pushed game detail, and
       that back from game detail returns to the collection overview rather than Home.
-- [ ] 1.6 Verify the collection overview's scroll position is preserved on return.
+- [x] 1.6 Verify the collection overview's scroll position is preserved on return.
 - [ ] 1.7 `./gradlew :app:testDebugUnitTest` and a manual pass on a collection with and without
       members.
 
