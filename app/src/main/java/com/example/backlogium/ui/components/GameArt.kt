@@ -19,9 +19,10 @@ import compose.icons.TablerIcons
 import compose.icons.tablericons.DeviceGamepad
 
 /**
- * A game's small square icon, themed while loading and on failure. Shared between the Library
- * (where it originated) and History's day-grouped game rows (regroup-history) — both need the same
- * "icon that never looks broken" treatment for a Steam CDN thumbnail.
+ * A game's thumbnail icon, themed while loading and on failure. The default remains a small rounded
+ * square, while compact rows can opt into another shape without changing full-size callers. Shared
+ * between the Library (where it originated) and History's day-grouped game rows (regroup-history) —
+ * both need the same "icon that never looks broken" treatment for a Steam CDN thumbnail.
  */
 @Composable
 fun GameIcon(

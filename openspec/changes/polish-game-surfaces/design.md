@@ -28,8 +28,10 @@ while (true) {
 ```
 
 It is deliberately outside `content`, which combines only local offline-safe flows, so a slow or
-failed network call never holds up the summary or the achievement list. No pull-to-refresh exists
-anywhere in the app.
+failed network call never holds up the summary or the achievement list. Manual refresh uses the same
+per-game fetch but has a separate one-shot loading lifecycle; after the response resolves, the
+indicator ends immediately and the polling loop resumes from that fetch. No pull-to-refresh exists
+anywhere else in the app.
 
 ## Goals / Non-Goals
 
@@ -89,10 +91,12 @@ anywhere in the app.
   latency and failure modes depend on the sync path this screen deliberately keeps itself independent
   of.
 
-- **A manual refresh restarts the polling loop rather than running beside it.**
+- **A manual refresh restarts the polling loop without sharing its completion state.**
   *Why:* the loop's `delay` is relative to its last fetch, so a manual pull two seconds before a
   scheduled poll produces two fetches in quick succession — the second silently overwriting the first
-  with a value the user did not ask for. Restarting makes the manual refresh the new anchor.
+  with a value the user did not ask for. Restarting makes the manual refresh the new anchor. The
+  one-shot indicator covers only the selected game's request; the following delay and recurring poll
+  are background maintenance and must not leave the pull gesture visibly active.
 
 - **A failed refresh keeps the omit-rather-than-placeholder behavior, and shows no error.**
   *Why:* the existing contract for this line is explicit — no zero, no dash, no spinner, and the rest
