@@ -20,6 +20,7 @@ import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.ui.history.HistoryWindowBounds
 import com.example.backlogium.ui.history.historyWindowBounds
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -144,6 +145,7 @@ private val INITIAL_WINDOW = AnalyticsWindow(
     length = AnalyticsWindowLength.THIRTY_DAYS,
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class AnalyticsViewModel @Inject constructor(
     private val sessionRepository: SessionRepository,
