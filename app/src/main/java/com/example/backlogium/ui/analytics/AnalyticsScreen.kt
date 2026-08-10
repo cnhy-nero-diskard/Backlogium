@@ -23,6 +23,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -32,12 +33,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,17 +55,12 @@ import compose.icons.tablericons.Flame
 import compose.icons.tablericons.Trophy
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
-
-private enum class ChartRange(val label: String, val dayCount: Int?) {
-    ACTIVE("Active days", null),
-    WEEK("7 days", 7),
-    MONTH("30 days", 30),
-}
+import java.util.Locale
 
 @Composable
 fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    var chartRange by remember { mutableStateOf(ChartRange.ACTIVE) }
+    var omitZeroDays by remember { mutableStateOf(true) }
 
     if (!state.configured) {
         EmptyState(
@@ -76,17 +70,10 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
         return
     }
 
-    if (!state.loading && !state.hasData) {
-        EmptyState(
-            title = "No analytics yet",
-            message = "Play a game and, after the next sync, your trends will appear here.",
-        )
-        return
-    }
-
-    val chartDays = when (chartRange) {
-        ChartRange.ACTIVE -> state.dailyMinutes.filter { it.minutes > 0 }
-        else -> state.dailyMinutes.takeLast(chartRange.dayCount ?: state.dailyMinutes.size)
+    val chartDays = if (omitZeroDays) {
+        state.dailyMinutes.filter { it.minutes > 0 }
+    } else {
+        state.dailyMinutes
     }
 
     Column(
@@ -107,65 +94,188 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        AnalyticsOverviewCard(days = state.dailyMinutes)
+        AnalyticsOverviewCard(days = state.dailyMinutes, window = state.window)
 
-        ChartRangeSelector(
-            selectedRange = chartRange,
-            onRangeSelected = { chartRange = it },
+        AnalyticsWindowSelector(
+            window = state.window,
+            bounds = state.windowBounds,
+            canStepEarlier = state.canStepEarlier,
+            onLengthSelected = viewModel::selectWindowLength,
+            onStepEarlier = viewModel::stepAnchorEarlier,
         )
 
-        DailyPlaytimeChart(
-            days = chartDays,
-            questThreshold = state.questThreshold,
-            modifier = Modifier.fillMaxWidth(),
+        ChartDisplaySelector(
+            omitZeroDays = omitZeroDays,
+            onOmitZeroDaysChanged = { omitZeroDays = it },
         )
 
-        StreakSummaryCard(
-            currentStreak = state.currentStreak,
-            longestStreak = state.longestStreak,
-            questMetDaysCount = state.questMetDaysCount,
-            windowDays = state.dailyMinutes.size,
-        )
+        if (!state.loading && !state.hasData) {
+            EmptyState(
+                title = "No analytics in this window",
+                message = "Play a game and, after the next sync, analytics for this period will appear here.",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp),
+            )
+            StreakSummaryCard(
+                currentStreak = state.currentStreak,
+                longestStreak = state.longestStreak,
+                questMetDaysCount = state.questMetDaysCount,
+                windowDays = state.windowBounds.dayCount,
+            )
+            RarityBreakdownCard(
+                breakdown = state.rarityBreakdown,
+                achievements = state.rarestAchievements,
+            )
+        } else {
+            DailyPlaytimeChart(
+                days = chartDays,
+                questThreshold = state.questThreshold,
+                gamesByDate = state.gamesByDate,
+                modifier = Modifier.fillMaxWidth(),
+            )
 
-        SessionInsightsCard(
-            sessionCount = state.sessionInsights.sessionCount,
-            averageMinutes = state.sessionInsights.averageMinutes,
-            longestMinutes = state.sessionInsights.longestMinutes,
-        )
+            StreakSummaryCard(
+                currentStreak = state.currentStreak,
+                longestStreak = state.longestStreak,
+                questMetDaysCount = state.questMetDaysCount,
+                windowDays = state.windowBounds.dayCount,
+            )
 
-        TimeOfDayCard(pattern = state.timeOfDayPattern)
+            SessionInsightsCard(
+                sessionCount = state.sessionInsights.sessionCount,
+                averageMinutes = state.sessionInsights.averageMinutes,
+                longestMinutes = state.sessionInsights.longestMinutes,
+            )
 
-        RarityBreakdownCard(breakdown = state.rarityBreakdown)
+            TimeOfDayCard(
+                pattern = state.timeOfDayPattern,
+                periodLabel = windowPeriodLabel(state.window, state.windowBounds),
+            )
 
-        MostPlayedGamesCard(games = state.topGames)
-    }
-}
+            RarityBreakdownCard(
+                breakdown = state.rarityBreakdown,
+                achievements = state.rarestAchievements,
+            )
 
-@Composable
-private fun ChartRangeSelector(
-    selectedRange: ChartRange,
-    onRangeSelected: (ChartRange) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = "Chart range",
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ChartRange.entries.forEach { range ->
-                FilterChip(
-                    selected = range == selectedRange,
-                    onClick = { onRangeSelected(range) },
-                    label = { Text(range.label) },
-                )
-            }
+            MostPlayedGamesCard(
+                games = state.topGames,
+                periodLabel = windowPeriodLabel(state.window, state.windowBounds),
+            )
         }
     }
 }
 
 @Composable
-private fun AnalyticsOverviewCard(days: List<AnalyticsDay>) {
+private fun AnalyticsWindowSelector(
+    window: AnalyticsWindow,
+    bounds: AnalyticsWindowBounds,
+    canStepEarlier: Boolean,
+    onLengthSelected: (AnalyticsWindowLength) -> Unit,
+    onStepEarlier: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Analytics window",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = "Rolling durations",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AnalyticsWindowLength.entries
+                .filter { it.kind == AnalyticsWindowKind.ROLLING }
+                .forEach { length ->
+                    FilterChip(
+                        selected = length == window.length,
+                        onClick = { onLengthSelected(length) },
+                        label = { Text(length.label) },
+                    )
+                }
+        }
+        Text(
+            text = "Calendar periods",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AnalyticsWindowLength.entries
+                .filter { it.kind == AnalyticsWindowKind.CALENDAR }
+                .forEach { length ->
+                    FilterChip(
+                        selected = length == window.length,
+                        onClick = { onLengthSelected(length) },
+                        label = { Text(length.label) },
+                    )
+                }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(
+                enabled = canStepEarlier,
+                onClick = onStepEarlier,
+            ) {
+                Text("Earlier")
+            }
+            Text(
+                text = windowPeriodLabel(window, bounds),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChartDisplaySelector(
+    omitZeroDays: Boolean,
+    onOmitZeroDaysChanged: (Boolean) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Chart display",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = omitZeroDays,
+                onClick = { onOmitZeroDaysChanged(true) },
+                label = { Text("Active days only") },
+            )
+            FilterChip(
+                selected = !omitZeroDays,
+                onClick = { onOmitZeroDaysChanged(false) },
+                label = { Text("All days") },
+            )
+        }
+    }
+}
+
+private fun windowPeriodLabel(window: AnalyticsWindow, bounds: AnalyticsWindowBounds): String {
+    val formatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.US)
+    return when (window.length.kind) {
+        AnalyticsWindowKind.CALENDAR -> {
+            if (bounds.start.monthValue == 1 && bounds.endInclusive.monthValue == 12) {
+                bounds.start.year.toString()
+            } else if (bounds.start.year == bounds.endInclusive.year) {
+                bounds.start.format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.US))
+            } else {
+                "${bounds.start.format(formatter)} - ${bounds.endInclusive.format(formatter)}"
+            }
+        }
+        AnalyticsWindowKind.ROLLING -> "${bounds.start.format(formatter)} - ${bounds.endInclusive.format(formatter)}"
+    }
+}
+
+@Composable
+private fun AnalyticsOverviewCard(days: List<AnalyticsDay>, window: AnalyticsWindow) {
     val activeDays = days.count { it.minutes > 0 }
     val totalMinutes = days.sumOf { it.minutes }
     val averageMinutes = if (activeDays == 0) 0 else totalMinutes / activeDays
@@ -190,7 +300,7 @@ private fun AnalyticsOverviewCard(days: List<AnalyticsDay>) {
                     color = contentColor,
                 )
                 Text(
-                    text = "30 DAYS",
+                    text = window.length.label.uppercase(Locale.US),
                     style = MaterialTheme.typography.labelSmall,
                     color = contentColor.copy(alpha = 0.7f),
                 )
@@ -219,6 +329,7 @@ private fun AnalyticsOverviewCard(days: List<AnalyticsDay>) {
 private fun DailyPlaytimeChart(
     days: List<AnalyticsDay>,
     questThreshold: Int,
+    gamesByDate: Map<java.time.LocalDate, List<AnalyticsGame>>,
     modifier: Modifier = Modifier,
 ) {
     val barColor = MaterialTheme.colorScheme.primary
@@ -421,6 +532,39 @@ private fun DailyPlaytimeChart(
                         },
                     )
                 }
+                val games = gamesByDate[day.date].orEmpty()
+                if (day.minutes > 0 && games.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "Games played",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    games.forEach { game ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            GameIcon(iconUrl = game.iconUrl, iconSize = 24.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = game.name,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = UiFormat.minutes(game.minutes),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -470,6 +614,12 @@ private fun StreakSummaryCard(
                     value = "$questMetDaysCount/$windowDays",
                 )
             }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Current and longest are all-time counters; quest met follows this window.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -496,14 +646,14 @@ private fun SummaryStat(
 }
 
 @Composable
-private fun MostPlayedGamesCard(games: List<AnalyticsGame>) {
+private fun MostPlayedGamesCard(games: List<AnalyticsGame>, periodLabel: String) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text("Most played", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
             if (games.isEmpty()) {
                 Text(
-                    text = "No tracked playtime in the last 30 days yet.",
+                    text = "No tracked playtime in $periodLabel yet.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -578,7 +728,7 @@ private fun SessionInsightsCard(
  * bucket is highlighted so "I'm a night owl" reads at a glance.
  */
 @Composable
-private fun TimeOfDayCard(pattern: TimeOfDayPattern) {
+private fun TimeOfDayCard(pattern: TimeOfDayPattern, periodLabel: String) {
     val peak = pattern.peakBucket
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -613,7 +763,7 @@ private fun TimeOfDayCard(pattern: TimeOfDayPattern) {
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                text = peak?.let { "Peak time: $it" } ?: "No tracked play in the last 30 days.",
+                text = peak?.let { "Peak time: $it" } ?: "No tracked play in $periodLabel.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -672,7 +822,10 @@ private fun TimeOfDayBar(
  * everywhere in the app.
  */
 @Composable
-private fun RarityBreakdownCard(breakdown: RarityBreakdown) {
+private fun RarityBreakdownCard(
+    breakdown: RarityBreakdown,
+    achievements: List<AnalyticsRarityAchievement>,
+) {
     val tiers = listOf(
         RarityTier.COMMON to breakdown.common,
         RarityTier.UNCOMMON to breakdown.uncommon,
@@ -680,6 +833,7 @@ private fun RarityBreakdownCard(breakdown: RarityBreakdown) {
         RarityTier.EPIC to breakdown.epic,
         RarityTier.LEGENDARY to breakdown.legendary,
     )
+    var expanded by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -692,12 +846,22 @@ private fun RarityBreakdownCard(breakdown: RarityBreakdown) {
                 Spacer(Modifier.width(8.dp))
                 Text("Achievement rarity", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.weight(1f))
+                if (achievements.isNotEmpty()) {
+                    TextButton(onClick = { expanded = !expanded }) {
+                        Text(if (expanded) "Hide rarest" else "Show rarest")
+                    }
+                }
                 Text(
                     text = "${breakdown.total} unlocked",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            Text(
+                text = "All-time profile; it does not follow the selected window.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Spacer(Modifier.height(12.dp))
             if (breakdown.total == 0) {
                 Text(
@@ -751,7 +915,56 @@ private fun RarityBreakdownCard(breakdown: RarityBreakdown) {
                         )
                     }
                 }
+                if (expanded && achievements.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = "Rarest unlocked achievements",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    achievements.forEach { achievement ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(10.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(MaterialTheme.colorScheme.rarityHalo(achievement.tier)),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = achievement.achievementName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = achievement.gameName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "${formatRarityPercent(achievement.rarityPercent)} · " +
+                                    achievement.tier.name.lowercase().replaceFirstChar { it.uppercase() },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
             }
         }
     }
 }
+
+private fun formatRarityPercent(percent: Double): String =
+    String.format(Locale.US, "%.1f%%", percent)

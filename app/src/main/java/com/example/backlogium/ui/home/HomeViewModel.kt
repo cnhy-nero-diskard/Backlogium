@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import javax.inject.Inject
 
@@ -227,4 +228,11 @@ class HomeViewModel @Inject constructor(
 
     /** Retry a failed sync from the Home error card; the manual trigger lives in Settings. */
     fun syncNow() = profileRepository.syncNow()
+
+    /** Persist the order of all collection cards after a completed Home drag. */
+    fun reorderCollections(orderedIds: List<Long>) {
+        viewModelScope.launch {
+            collectionRepository.reorderCollections(orderedIds)
+        }
+    }
 }

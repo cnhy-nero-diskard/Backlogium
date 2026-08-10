@@ -11,6 +11,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.SubcomposeAsyncImage
@@ -18,17 +20,18 @@ import compose.icons.TablerIcons
 import compose.icons.tablericons.DeviceGamepad
 
 /**
- * A game's small square icon, themed while loading and on failure. Shared between the Library
- * (where it originated) and History's day-grouped game rows (regroup-history) — both need the same
- * "icon that never looks broken" treatment for a Steam CDN thumbnail.
+ * A game's thumbnail icon, themed while loading and on failure. The default remains a small rounded
+ * square, while compact rows can opt into another shape without changing full-size callers. Shared
+ * between the Library (where it originated) and History's day-grouped game rows (regroup-history) —
+ * both need the same "icon that never looks broken" treatment for a Steam CDN thumbnail.
  */
 @Composable
 fun GameIcon(
     iconUrl: String,
     modifier: Modifier = Modifier,
     iconSize: Dp = 40.dp,
+    shape: Shape = RoundedCornerShape(8.dp),
 ) {
-    val shape = RoundedCornerShape(8.dp)
     SubcomposeAsyncImage(
         model = iconUrl,
         contentDescription = null,
@@ -60,4 +63,41 @@ fun GameIcon(
             }
         },
     )
+}
+
+/**
+ * Steam's portrait `hero_capsule.jpg` artwork for grid surfaces. The fallback stays inside the
+ * same frame when the asset is unavailable, so a missing CDN image never changes tile geometry.
+ */
+@Composable
+fun GameHeroCapsule(
+    heroCapsuleUrl: String,
+    fallbackUrls: List<String> = emptyList(),
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(12.dp),
+) {
+    val shapedModifier = modifier.clip(shape)
+    SteamArtworkWithFallback(
+        urls = listOf(heroCapsuleUrl) + fallbackUrls,
+        contentScale = ContentScale.Crop,
+        modifier = shapedModifier,
+        alignment = Alignment.Center,
+        loading = { HeroCapsuleFallback(Modifier.fillMaxSize()) },
+        failure = { HeroCapsuleFallback(Modifier.fillMaxSize()) },
+    )
+}
+
+@Composable
+private fun HeroCapsuleFallback(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = TablerIcons.DeviceGamepad,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(32.dp),
+        )
+    }
 }

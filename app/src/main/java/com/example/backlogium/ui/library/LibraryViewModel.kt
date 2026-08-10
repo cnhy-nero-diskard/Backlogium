@@ -16,10 +16,12 @@ import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.GameXpInput
+import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.domain.LibraryXp
 import com.example.backlogium.gamification.RuleConfig
+import com.example.backlogium.ui.search.gameSearchMatchTier
 import com.example.backlogium.work.HltbBatchProgress
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -43,6 +45,8 @@ data class GoalGameUi(
     val iconUrl: String,
     /** Store header art, drawn as a faint backdrop behind the row. */
     val headerUrl: String = "",
+    /** Steam's portrait hero capsule, used by grid cells. */
+    val heroCapsuleUrl: String = "",
     override val playtimeForever: Int,
     /** Steam's rolling two-week playtime — the "recently played" sort key, not displayed. */
     override val playtime2Weeks: Int = 0,
@@ -67,6 +71,7 @@ data class BacklogGameUi(
     override val name: String,
     val iconUrl: String,
     val headerUrl: String = "",
+    val heroCapsuleUrl: String = "",
     override val playtimeForever: Int,
     override val playtime2Weeks: Int = 0,
     override val xpContributed: Int = 0,
@@ -100,6 +105,9 @@ data class LibraryUiState(
     val query: String = "",
     val focusSort: LibrarySortKey = LibrarySortKey.NAME,
     val librarySort: LibrarySortKey = LibrarySortKey.PLAYTIME,
+    val density: GameListDensity = GameListDensity.LIST,
+    /** All known genres, kept unfiltered so the transient Library catalog remains usable while searching. */
+    val availableGenres: List<GameGenre> = emptyList(),
     /**
      * Selected appIds, kept independent of the active filter so hiding a selected game does not
      * silently drop it from the pending refresh.
@@ -175,12 +183,17 @@ class LibraryViewModel @Inject constructor(
     ) { tracked, rarity, cfg -> XpInputs(tracked, rarity, cfg) }
 
     private val viewPrefs = combine(
-        query,
-        selection,
-        fetchOps,
-        settings.librarySort,
-        ::ViewPrefs,
-    )
+        combine(query, selection, fetchOps, settings.librarySort) { query, selection, ops, sort ->
+            ViewPrefs(
+                query = query,
+                selection = selection,
+                ops = ops,
+                sort = sort,
+                density = GameListDensity.LIST,
+            )
+        },
+        settings.libraryDensity,
+    ) { prefs, density -> prefs.copy(density = density) }
 
     /**
      * The sweep's progress plus the log accumulated from it. WorkManager progress carries one
@@ -206,11 +219,11 @@ class LibraryViewModel @Inject constructor(
         val goals = content.goals
             .map { it.toGoalUi(xp, counts, view.ops, content.playingAppId) }
             .matching(view.query)
-            .sortedFor(view.sort.focus)
+            .sortedFor(view.sort.focus, view.query)
         val backlog = content.backlog
             .map { it.toBacklogUi(xp, counts, view.ops, content.playingAppId) }
             .matching(view.query)
-            .sortedFor(view.sort.library)
+            .sortedFor(view.sort.library, view.query)
         LibraryUiState(
             loading = false,
             configured = content.configured,
@@ -221,6 +234,12 @@ class LibraryViewModel @Inject constructor(
             query = view.query,
             focusSort = view.sort.focus,
             librarySort = view.sort.library,
+            density = view.density,
+            availableGenres = content.goals
+                .asSequence()
+                .plus(content.backlog.asSequence())
+                .flatMap { it.genres.asSequence() }
+                .toList(),
             selection = view.selection,
             libraryEmpty = content.goals.isEmpty() && content.backlog.isEmpty(),
             batchProgress = batch.log.progress,
@@ -254,6 +273,10 @@ class LibraryViewModel @Inject constructor(
 
     fun setLibrarySort(key: LibrarySortKey) = viewModelScope.launch {
         settings.setLibrarySort(key)
+    }
+
+    fun setDensity(density: GameListDensity) = viewModelScope.launch {
+        settings.setLibraryDensity(density)
     }
 
     /** Add or remove one game from the selection; removing the last one exits selection mode. */
@@ -324,6 +347,7 @@ private data class ViewPrefs(
     val selection: Set<Long>,
     val ops: Map<Long, HltbFetchOp>,
     val sort: LibrarySortPrefs,
+    val density: GameListDensity,
 )
 
 private data class BatchState(val refreshing: Boolean, val log: BatchLog)
@@ -365,6 +389,7 @@ private fun LibraryGame.toGoalUi(
     name = name,
     iconUrl = iconUrl,
     headerUrl = headerUrl,
+    heroCapsuleUrl = heroCapsuleUrl,
     playtimeForever = playtimeForever,
     playtime2Weeks = playtime2Weeks,
     xpContributed = xpContribution(xp),
@@ -387,6 +412,7 @@ private fun LibraryGame.toBacklogUi(
     name = name,
     iconUrl = iconUrl,
     headerUrl = headerUrl,
+    heroCapsuleUrl = heroCapsuleUrl,
     playtimeForever = playtimeForever,
     playtime2Weeks = playtime2Weeks,
     xpContributed = xpContribution(xp),
@@ -415,12 +441,17 @@ private fun LibraryGame.xpContribution(xp: XpInputs): Int = LibraryXp.contributi
     xp.cfg,
 )
 
-/** Case-insensitive name-or-genre filter; a blank query matches everything. */
+/** Case-insensitive name-or-genre filter ranked by the strongest match tier. */
 internal fun <T : LibraryRow> List<T>.matching(query: String): List<T> {
     val trimmed = query.trim()
     if (trimmed.isEmpty()) return this
-    return filter { game ->
-        game.name.contains(trimmed, ignoreCase = true) ||
-            game.genres.any { it.label.contains(trimmed, ignoreCase = true) }
+    return mapNotNull { game ->
+        gameSearchMatchTier(
+            query = trimmed,
+            name = game.name,
+            genreLabels = game.genres.asSequence().map(GameGenre::label).asIterable(),
+        )?.let { tier -> game to tier }
     }
+        .sortedBy { (_, tier) -> tier.ordinal }
+        .map { (game, _) -> game }
 }

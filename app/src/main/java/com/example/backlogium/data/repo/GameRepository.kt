@@ -49,6 +49,8 @@ data class LibraryGame(
     val iconUrl: String,
     /** Store header art, derived from the appId — the Library's faint card backdrop. */
     val headerUrl: String = "",
+    /** Steam's portrait hero capsule, derived from the appId for grid surfaces. */
+    val heroCapsuleUrl: String = "",
     val playtimeForever: Int,
     /** Steam's rolling two-week playtime — the "recently played" ordering. */
     val playtime2Weeks: Int = 0,
@@ -122,6 +124,7 @@ private fun Game.toDomain(hltb: HltbData?, genres: List<GameGenre>) = LibraryGam
     name = name,
     iconUrl = iconUrl,
     headerUrl = SteamIconMapper.headerUrl(appId),
+    heroCapsuleUrl = SteamIconMapper.heroCapsuleUrl(appId),
     playtimeForever = playtimeForever,
     playtime2Weeks = playtime2Weeks,
     backfillMinutes = backfillMinutes,

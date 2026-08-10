@@ -30,12 +30,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
@@ -54,6 +58,9 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -61,14 +68,24 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.SubcomposeAsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest
+import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.components.SteamArtworkWithFallback
 import com.example.backlogium.ui.theme.rarityHalo
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowsSort
+import compose.icons.tablericons.ExternalLink
 import compose.icons.tablericons.Trophy
 import java.util.Locale
+
+private const val STEAM_STORE_URL_PREFIX = "https://store.steampowered.com/app/"
+
+enum class GameDetailPresentation {
+    FULL_DESTINATION,
+    COLLECTION_OVERLAY,
+}
 
 /**
  * One game: its own summary — art, playtime, HowLongToBeat lengths, achievement completion, XP,
@@ -81,16 +98,89 @@ import java.util.Locale
  * a game screen showing nothing but an empty state was the gap this closed.
  */
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun GameDetailScreen(
+    appId: Long? = null,
+    presentation: GameDetailPresentation = GameDetailPresentation.FULL_DESTINATION,
     viewModel: GameDetailViewModel = hiltViewModel(),
     onAccentColorChanged: (Color?) -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val accentColor by rememberHeaderAccentColor(state.summary.headerUrl)
-    // The wash itself is painted by the app shell, behind the top bar as well as this screen's own
-    // content — reported up rather than drawn here so it can bleed past this screen's own bounds.
-    LaunchedEffect(accentColor) { onAccentColorChanged(accentColor) }
+    val overlay = presentation == GameDetailPresentation.COLLECTION_OVERLAY
+    val detailAppId = appId ?: viewModel.appId
+    val artworkFallbackUrls = remember(detailAppId) {
+        if (detailAppId > 0L) {
+            SteamIconMapper.listBackgroundFallbackUrls(detailAppId)
+        } else {
+            emptyList()
+        }
+    }
+    val accentColor by rememberHeaderAccentColor(state.summary.headerUrl, artworkFallbackUrls)
 
+    LaunchedEffect(viewModel, appId) {
+        appId?.let(viewModel::setAppId)
+        viewModel.startPolling()
+    }
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.stopPolling() }
+    }
+
+    // Full destinations report the wash to the shell so it can bleed behind the profile header.
+    // A collection overlay deliberately does not report it: its bounded background below is the
+    // only surface that may receive the game's accent.
+    LaunchedEffect(presentation, accentColor) {
+        if (!overlay) onAccentColorChanged(accentColor)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .then(
+                if (overlay) {
+                    Modifier.background(MaterialTheme.colorScheme.background)
+                } else {
+                    Modifier
+                },
+            )
+            .then(
+                if (overlay) {
+                    accentColor?.let { Modifier.background(gameDetailWash(it)) } ?: Modifier
+                } else {
+                    Modifier
+                },
+            ),
+    ) {
+        if (overlay) {
+            GameDetailList(
+                state = state,
+                appId = detailAppId,
+                artworkFallbackUrls = artworkFallbackUrls,
+                viewModel = viewModel,
+            )
+        } else {
+            PullToRefreshBox(
+                isRefreshing = state.isRefreshingPlayerCount,
+                onRefresh = viewModel::refreshPlayerCount,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                GameDetailList(
+                    state = state,
+                    appId = detailAppId,
+                    artworkFallbackUrls = artworkFallbackUrls,
+                    viewModel = viewModel,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GameDetailList(
+    state: GameDetailUiState,
+    appId: Long,
+    artworkFallbackUrls: List<String>,
+    viewModel: GameDetailViewModel,
+) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -98,7 +188,12 @@ fun GameDetailScreen(
         contentPadding = PaddingValues(vertical = 16.dp),
     ) {
         item {
-            GameSummarySection(name = state.gameName, summary = state.summary)
+            GameSummarySection(
+                name = state.gameName,
+                appId = appId,
+                artworkFallbackUrls = artworkFallbackUrls,
+                summary = state.summary,
+            )
         }
         if (state.allUnlocked) {
             item { GameCompletedBanner() }
@@ -119,16 +214,36 @@ fun GameDetailScreen(
     }
 }
 
+private fun gameDetailWash(accentColor: Color): Brush = Brush.verticalGradient(
+    colorStops = arrayOf(
+        0f to accentColor.copy(alpha = 0.75f),
+        0.45f to accentColor.copy(alpha = 0.32f),
+        1f to Color.Transparent,
+    ),
+)
+
 /**
- * The header art's muted average color, re-derived whenever the art itself changes. Coil already
- * holds the image in its memory cache from [HeaderArt]'s own load, so this is a decode, not a
- * second network fetch in practice.
+ * The first successful artwork candidate's muted average color, re-derived whenever the art itself
+ * changes. Coil already holds the image in its memory cache from [HeaderArt]'s own load, so this
+ * is a decode, not a second network fetch in practice.
  */
 @Composable
-private fun rememberHeaderAccentColor(headerUrl: String): State<Color?> {
+private fun rememberHeaderAccentColor(
+    headerUrl: String,
+    fallbackUrls: List<String>,
+): State<Color?> {
     val context = LocalContext.current
-    return produceState<Color?>(initialValue = null, headerUrl) {
-        value = if (headerUrl.isBlank()) null else loadAverageColor(context, headerUrl)
+    val artworkUrls = remember(headerUrl, fallbackUrls) {
+        (listOf(headerUrl) + fallbackUrls)
+            .filter(String::isNotBlank)
+            .distinct()
+    }
+    return produceState<Color?>(initialValue = null, artworkUrls) {
+        value = null
+        for (url in artworkUrls) {
+            value = loadAverageColor(context, url)
+            if (value != null) break
+        }
     }
 }
 
@@ -181,11 +296,22 @@ private fun Color.mutedForBackdrop(): Color {
  * completion/XP line — so the first achievement row sits at or near the fold on a typical phone.
  */
 @Composable
-private fun GameSummarySection(name: String, summary: GameSummaryUi) {
+private fun GameSummarySection(
+    name: String,
+    appId: Long,
+    artworkFallbackUrls: List<String>,
+    summary: GameSummaryUi,
+) {
+    val uriHandler = LocalUriHandler.current
+    val linkLabel = name.takeIf { it.isNotBlank() }?.let { "Open $it on Steam" } ?: "Open game on Steam"
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column {
-            if (summary.headerUrl.isNotBlank()) {
-                HeaderArt(summary.headerUrl)
+            if (summary.headerUrl.isNotBlank() || artworkFallbackUrls.isNotEmpty()) {
+                HeaderArt(
+                    headerUrl = summary.headerUrl,
+                    fallbackUrls = artworkFallbackUrls,
+                )
             }
             Column(modifier = Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -209,6 +335,21 @@ private fun GameSummarySection(name: String, summary: GameSummaryUi) {
                 if (summary.hasHltb) {
                     Spacer(Modifier.height(8.dp))
                     HltbLengths(summary)
+                }
+                TextButton(
+                    onClick = { uriHandler.openUri("$STEAM_STORE_URL_PREFIX$appId") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentDescription = linkLabel },
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+                ) {
+                    Icon(
+                        imageVector = TablerIcons.ExternalLink,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("View on Steam")
                 }
             }
         }
@@ -238,13 +379,13 @@ private fun GenreTiles(genres: List<com.example.backlogium.data.repo.GameGenre>)
     }
 }
 
-/** Store header art as a wide banner, themed while loading and simply absent on failure. */
+/** Store header art as a wide banner, advancing through the shared Steam fallback chain. */
 @Composable
-private fun HeaderArt(headerUrl: String) {
-    SubcomposeAsyncImage(
-        model = headerUrl,
-        contentDescription = null,
+private fun HeaderArt(headerUrl: String, fallbackUrls: List<String>) {
+    SteamArtworkWithFallback(
+        urls = listOf(headerUrl) + fallbackUrls,
         contentScale = ContentScale.Crop,
+        alignment = Alignment.Center,
         modifier = Modifier
             .fillMaxWidth()
             .height(120.dp),
@@ -256,7 +397,7 @@ private fun HeaderArt(headerUrl: String) {
             )
         },
         // No glyph fallback: a failed banner should read as "no art", not as a broken image.
-        error = {},
+        failure = {},
     )
 }
 
@@ -301,9 +442,9 @@ private fun CompletionLine(summary: GameSummaryUi) {
 }
 
 /**
- * The game's current Steam concurrent-player count, fetched once when the screen opens. Renders
- * nothing while the fetch is in flight or if it fails — no zero, no dash, no spinner — the same
- * omit-rather-than-placeholder treatment [HltbLengths] gives an unresolved length.
+ * The game's current Steam concurrent-player count, fetched by the screen's poller or a manual
+ * refresh. Renders nothing while a fetch is in flight or if it fails — no zero, no dash, no spinner
+ * — the same omit-rather-than-placeholder treatment [HltbLengths] gives an unresolved length.
  */
 @Composable
 private fun ActivePlayersLine(summary: GameSummaryUi) {

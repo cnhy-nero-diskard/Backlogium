@@ -17,12 +17,19 @@ import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.gamification.RuleConfig
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -105,6 +112,7 @@ data class GameDetailUiState(
     val summary: GameSummaryUi = GameSummaryUi(),
     val achievements: List<AchievementUi> = emptyList(),
     val sort: AchievementSort = AchievementSort.DATE_ACHIEVED,
+    val isRefreshingPlayerCount: Boolean = false,
 ) {
     /** True once every known achievement for this game is unlocked (100% completion). */
     val allUnlocked: Boolean
@@ -116,16 +124,22 @@ data class GameDetailUiState(
  * to a rarity tier and XP contribution via the engine's own `tierFor`/`achievementXp` (using the
  * persisted rarity snapshot, never the live percent — same rule the recompute uses).
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class GameDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     achievementRepository: AchievementRepository,
-    gameRepository: GameRepository,
+    private val gameRepository: GameRepository,
     sessionRepository: SessionRepository,
     settings: SettingsRepository,
 ) : ViewModel() {
 
-    private val appId: Long = checkNotNull(savedStateHandle["appId"])
+    private val appIdState = MutableStateFlow<Long?>(savedStateHandle["appId"])
+
+    internal val appId: Long
+        get() = checkNotNull(appIdState.value) {
+            "GameDetailViewModel requires an app id before it can render"
+        }
 
     /** Transient: a lens on the list, reset every visit rather than persisted as a preference. */
     private val sort = MutableStateFlow(AchievementSort.DATE_ACHIEVED)
@@ -136,17 +150,34 @@ class GameDetailViewModel @Inject constructor(
      * hold up the rest of the summary or the achievement list.
      */
     private val activePlayers = MutableStateFlow<Int?>(null)
+    private val refreshingPlayerCount = MutableStateFlow(false)
+    private var activePlayersPollingJob: Job? = null
 
-    private val content = combine(
-        gameRepository.library,
-        achievementRepository.observeForGame(appId),
-        sessionRepository.trackedMinutesByGame,
-        settings.ruleConfig,
-    ) { games, achievements, trackedByGame, config ->
-        Content(games.firstOrNull { it.appId == appId }, achievements, trackedByGame[appId] ?: 0, config)
-    }
+    private val content = appIdState
+        .filterNotNull()
+        .distinctUntilChanged()
+        .flatMapLatest { appId ->
+            combine(
+                gameRepository.library,
+                achievementRepository.observeForGame(appId),
+                sessionRepository.trackedMinutesByGame,
+                settings.ruleConfig,
+            ) { games, achievements, trackedByGame, config ->
+                Content(
+                    games.firstOrNull { it.appId == appId },
+                    achievements,
+                    trackedByGame[appId] ?: 0,
+                    config,
+                )
+            }
+        }
 
-    val uiState: StateFlow<GameDetailUiState> = combine(content, sort, activePlayers) { content, sort, activePlayers ->
+    val uiState: StateFlow<GameDetailUiState> = combine(
+        content,
+        sort,
+        activePlayers,
+        refreshingPlayerCount,
+    ) { content, sort, activePlayers, isRefreshingPlayerCount ->
         val rows = content.achievements.map { it.toUi(content.config) }
         GameDetailUiState(
             loading = false,
@@ -154,6 +185,7 @@ class GameDetailViewModel @Inject constructor(
             summary = content.toSummary(rows, activePlayers),
             achievements = rows.sortedWith(sort.comparator()),
             sort = sort,
+            isRefreshingPlayerCount = isRefreshingPlayerCount,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -161,14 +193,53 @@ class GameDetailViewModel @Inject constructor(
         initialValue = GameDetailUiState(),
     )
 
-    init {
-        // Polls only for as long as this ViewModel (and thus this screen) is alive — leaving
-        // the screen clears viewModelScope, which stops the loop with no extra lifecycle wiring.
-        viewModelScope.launch {
-            while (true) {
-                activePlayers.value = gameRepository.currentPlayerCount(appId)
-                delay(ACTIVE_PLAYERS_POLL_INTERVAL_MS)
-            }
+    /** Supply the explicit id used by a state-hosted sheet; navigation supplies the saved-state id. */
+    internal fun setAppId(value: Long) {
+        if (appIdState.value == value) return
+        stopPolling()
+        appIdState.value = value
+        activePlayers.value = null
+    }
+
+    /** Start live polling while this screen presentation is composed. */
+    internal fun startPolling() {
+        val appId = appIdState.value ?: return
+        if (activePlayersPollingJob?.isActive == true) return
+        activePlayersPollingJob = viewModelScope.launch { pollActivePlayers(appId) }
+    }
+
+    /** Stop live polling when a retained sheet ViewModel leaves composition. */
+    internal fun stopPolling() {
+        activePlayersPollingJob?.cancel()
+        activePlayersPollingJob = null
+    }
+
+    /** Refresh only the live player count, making this fetch the new anchor for periodic polling. */
+    fun refreshPlayerCount() {
+        val appId = appIdState.value ?: return
+        if (refreshingPlayerCount.value) return
+
+        stopPolling()
+        refreshingPlayerCount.value = true
+        activePlayersPollingJob = viewModelScope.launch {
+            refreshPlayerCountOnce(
+                refreshing = refreshingPlayerCount,
+                fetch = { gameRepository.currentPlayerCount(appId) },
+                publish = { activePlayers.value = it },
+            )
+            // Keep the next poll relative to the manual fetch instead of the cancelled loop's
+            // previous schedule, which could otherwise fire immediately after the gesture. The
+            // refresh indicator has already ended; polling is background maintenance, not the
+            // one-shot gesture still being in flight.
+            delay(ACTIVE_PLAYERS_POLL_INTERVAL_MS)
+            pollActivePlayers(appId)
+        }
+    }
+
+    private suspend fun pollActivePlayers(appId: Long) {
+        while (currentCoroutineContext().isActive) {
+            activePlayers.value = gameRepository.currentPlayerCount(appId)
+            delay(ACTIVE_PLAYERS_POLL_INTERVAL_MS)
         }
     }
 
@@ -178,6 +249,24 @@ class GameDetailViewModel @Inject constructor(
 
     private companion object {
         const val ACTIVE_PLAYERS_POLL_INTERVAL_MS = 30_000L
+    }
+}
+
+/**
+ * Runs only the one-shot part of a player-count refresh. Keeping its completion state separate
+ * from the follow-up polling loop prevents the pull indicator from remaining active for the
+ * entire 30-second cadence (or forever while the loop is alive).
+ */
+internal suspend fun refreshPlayerCountOnce(
+    refreshing: MutableStateFlow<Boolean>,
+    fetch: suspend () -> Int?,
+    publish: (Int?) -> Unit,
+) {
+    refreshing.value = true
+    try {
+        publish(fetch())
+    } finally {
+        refreshing.value = false
     }
 }
 

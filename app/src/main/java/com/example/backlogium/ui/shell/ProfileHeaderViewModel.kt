@@ -6,6 +6,7 @@ import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.LivePresence
 import com.example.backlogium.data.repo.LiveStatusRepository
+import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.ProfileRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -25,6 +26,8 @@ data class ProfileHeaderUiState(
     val personaName: String? = null,
     val avatarUrl: String? = null,
     val presence: LivePresence = LivePresence.UNKNOWN,
+    /** The resolved name of the running game, or null when Steam only exposed an app id. */
+    val gameName: String? = null,
     /**
      * True while a Steam poll is in flight — periodic as well as manual. Already latched to a
      * perceptible minimum upstream, so the header can render it directly.
@@ -57,6 +60,11 @@ class ProfileHeaderViewModel @Inject constructor(
             personaName = profile?.personaName,
             avatarUrl = profile?.avatarUrl,
             presence = live.presence,
+            gameName = if (live.presence == LivePresence.IN_GAME) {
+                (live.nowPlaying as? NowPlaying.InGame)?.profileHeaderName()
+            } else {
+                null
+            },
             syncing = syncing,
         )
     }.stateIn(
@@ -64,4 +72,15 @@ class ProfileHeaderViewModel @Inject constructor(
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = ProfileHeaderUiState(),
     )
+}
+
+/**
+ * Steam's live repository supplies a best-effort label when no game title is available. That
+ * label is useful to the now-playing card, but an app id or the generic "In game" text is not a
+ * game name for the profile header to repeat.
+ */
+internal fun NowPlaying.InGame.profileHeaderName(): String? {
+    val candidate = name.takeIf { it.isNotBlank() } ?: return null
+    val appIdFallback = gameId?.let { "App $it" }
+    return candidate.takeUnless { it == "In game" || it == appIdFallback }
 }

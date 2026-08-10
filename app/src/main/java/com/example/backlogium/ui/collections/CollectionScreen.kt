@@ -1,5 +1,7 @@
 package com.example.backlogium.ui.collections
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,17 +11,21 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -27,6 +33,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -50,19 +57,28 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionPacingState
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionTimeBasis
+import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.label
 import com.example.backlogium.ui.components.GameHeaderBackdrop
+import com.example.backlogium.ui.components.GameHeroCapsule
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.components.GameListDensityControl
+import com.example.backlogium.ui.gamedetail.GameDetailPresentation
+import com.example.backlogium.ui.gamedetail.GameDetailScreen
 import com.example.backlogium.ui.theme.collectionAccentColor
 import com.example.backlogium.ui.theme.deadlineWarning
 import com.example.backlogium.ui.util.UiFormat
@@ -89,6 +105,8 @@ import java.time.format.FormatStyle
 import kotlin.math.abs
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextDecoration
 
 /**
@@ -100,12 +118,22 @@ import androidx.compose.ui.text.style.TextDecoration
 @Composable
 fun CollectionScreen(
     onDone: () -> Unit,
+    onOpenGameDetail: ((Long) -> Unit)? = null,
     viewModel: CollectionViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showEditor by rememberSaveable { mutableStateOf(viewModel.collectionId == 0L) }
     var showActions by remember { mutableStateOf(false) }
+    var showDeleteConfirmation by rememberSaveable { mutableStateOf(false) }
+    var selectedGameAppId by rememberSaveable { mutableStateOf<Long?>(null) }
     val showingOverview = !state.isNew && !showEditor
+    val openGameDetail: (Long) -> Unit = { appId ->
+        onOpenGameDetail?.invoke(appId) ?: run { selectedGameAppId = appId }
+    }
+
+    BackHandler(enabled = selectedGameAppId != null) {
+        selectedGameAppId = null
+    }
 
     LaunchedEffect(state.done) {
         if (state.done) onDone()
@@ -167,7 +195,7 @@ fun CollectionScreen(
                             text = { Text("Delete collection") },
                             onClick = {
                                 showActions = false
-                                viewModel.delete()
+                                showDeleteConfirmation = true
                             },
                         )
                     }
@@ -185,11 +213,50 @@ fun CollectionScreen(
                     state = state,
                     onCustomize = { showEditor = true },
                     onDeadlineChanged = viewModel::changeDeadline,
+                    onDensityChanged = viewModel::setDensity,
+                    onOpenGameDetail = openGameDetail,
                 )
             } else {
                 CollectionForm(state = state, viewModel = viewModel)
             }
         }
+    }
+
+    selectedGameAppId?.let { appId ->
+        ModalBottomSheet(
+            onDismissRequest = { selectedGameAppId = null },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
+        ) {
+            GameDetailScreen(
+                appId = appId,
+                presentation = GameDetailPresentation.COLLECTION_OVERLAY,
+                viewModel = hiltViewModel(key = appId.toString()),
+            )
+        }
+    }
+
+    if (showDeleteConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmation = false },
+            title = { Text("Delete ${state.name.ifBlank { "collection" }}?") },
+            text = {
+                Text(
+                    "This removes the collection and all of its game memberships. " +
+                        "This cannot be undone.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmation = false
+                        viewModel.delete()
+                    },
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmation = false }) { Text("Cancel") }
+            },
+        )
     }
 }
 
@@ -200,6 +267,8 @@ private fun CollectionOverview(
     state: CollectionUiState,
     onCustomize: () -> Unit,
     onDeadlineChanged: (LocalDate) -> Unit,
+    onDensityChanged: (GameListDensity) -> Unit,
+    onOpenGameDetail: (Long) -> Unit,
 ) {
     val accentColor = state.accent?.let {
         MaterialTheme.colorScheme.collectionAccentColor(it)
@@ -231,6 +300,12 @@ private fun CollectionOverview(
                         color = deadlineUrgencyColor(banner.daysRemaining),
                     )
                 }
+            }
+        }
+
+        if (state.description.isNotBlank()) {
+            item {
+                CollectionDescription(description = state.description)
             }
         }
 
@@ -295,6 +370,10 @@ private fun CollectionOverview(
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f),
                 )
+                GameListDensityControl(
+                    density = state.density,
+                    onDensityChange = onDensityChanged,
+                )
                 Text(
                     text = "${state.members.size}",
                     style = MaterialTheme.typography.labelLarge,
@@ -328,12 +407,13 @@ private fun CollectionOverview(
                 }
             }
         } else {
-            items(
-                items = state.members,
-                key = { it.appId },
-            ) { member ->
-                CollectionGameCard(member = member, accentColor = accentColor)
-            }
+            collectionMemberItems(
+                members = state.members,
+                density = state.density,
+                accentColor = accentColor,
+                showQueuePosition = state.mode == CollectionMode.ORDERED_QUEUE,
+                onOpenGameDetail = onOpenGameDetail,
+            )
         }
 
         item { Spacer(Modifier.height(16.dp)) }
@@ -366,6 +446,27 @@ private fun CollectionOverview(
             },
         ) {
             DatePicker(state = datePickerState)
+        }
+    }
+}
+
+/** Overview copy is bounded by default, with expansion for intentionally long descriptions. */
+@Composable
+private fun CollectionDescription(description: String) {
+    var expanded by rememberSaveable(description) { mutableStateOf(false) }
+    val expandable = description.length > 160
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("About this collection", style = MaterialTheme.typography.titleSmall)
+        Text(
+            text = description,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = if (expanded || !expandable) Int.MAX_VALUE else 4,
+            overflow = if (expanded || !expandable) TextOverflow.Clip else TextOverflow.Ellipsis,
+        )
+        if (expandable) {
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "Show less" else "Show more")
+            }
         }
     }
 }
@@ -629,72 +730,269 @@ private fun CollectionMetric(
 }
 
 @Composable
+private fun CollectionCompletionProgress(member: CollectionMemberUi) {
+    val completionist = member.completionistMinutes ?: return
+    if (completionist <= 0) return
+    val percent = (member.playtimeMinutes.toLong() * 100 / completionist).toInt()
+    val fraction = (member.playtimeMinutes.toFloat() / completionist.toFloat()).coerceIn(0f, 1f)
+    Spacer(Modifier.height(4.dp))
+    androidx.compose.material3.LinearProgressIndicator(
+        progress = { fraction },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Text(
+        text = "$percent%",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+private fun LazyListScope.collectionMemberItems(
+    members: List<CollectionMemberUi>,
+    density: GameListDensity,
+    accentColor: Color,
+    showQueuePosition: Boolean,
+    onOpenGameDetail: (Long) -> Unit,
+) {
+    if (!density.isGrid) {
+        members.forEachIndexed { index, member ->
+            item(key = "collection-member-${member.appId}") {
+                CollectionGameCard(
+                    member = member,
+                    accentColor = accentColor,
+                    position = index,
+                    showQueuePosition = showQueuePosition,
+                    density = density,
+                    onOpenGameDetail = onOpenGameDetail,
+                )
+            }
+        }
+        return
+    }
+
+    members.chunked(density.columns).forEachIndexed { rowIndex, row ->
+        item(key = "collection-grid-row-$rowIndex-${row.firstOrNull()?.appId ?: 0}") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                row.forEachIndexed { offset, member ->
+                    CollectionGameTile(
+                        member = member,
+                        accentColor = accentColor,
+                        position = rowIndex * density.columns + offset,
+                        showQueuePosition = showQueuePosition,
+                        density = density,
+                        modifier = Modifier.weight(1f),
+                        onOpenGameDetail = onOpenGameDetail,
+                    )
+                }
+                repeat(density.columns - row.size) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun CollectionGameCard(
     member: CollectionMemberUi,
     accentColor: Color,
+    position: Int,
+    showQueuePosition: Boolean,
+    density: GameListDensity,
+    onOpenGameDetail: (Long) -> Unit,
 ) {
     val cardSurface = accentColor.copy(alpha = 0.08f)
         .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
     Card(
+        onClick = { onOpenGameDetail(member.appId) },
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 88.dp),
+            .heightIn(min = 88.dp)
+            .semantics {
+                contentDescription = "Open ${member.name} details"
+            },
         colors = CardDefaults.cardColors(containerColor = cardSurface),
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
             GameHeaderBackdrop(
                 headerUrl = member.headerUrl,
+                fallbackUrls = SteamIconMapper.listBackgroundFallbackUrls(member.appId),
                 modifier = Modifier.matchParentSize(),
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-            Box(
-                modifier = Modifier
-                    .width(5.dp)
-                    .heightIn(min = 88.dp)
-                    .background(accentColor),
-            )
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                member.iconUrl?.let { iconUrl ->
-                    GameIcon(iconUrl = iconUrl, iconSize = 56.dp)
-                    Spacer(Modifier.width(14.dp))
-                }
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                Box(
+                    modifier = Modifier
+                        .width(5.dp)
+                        .heightIn(min = 88.dp)
+                        .background(accentColor),
+                )
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = member.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                    )
-                    Text(
-                        text = "${UiFormat.minutes(member.playtimeMinutes)} played · " +
-                            sessionLabel(member.sessionCount),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                    )
-                    member.achievementsUnlocked?.let { unlocked ->
-                        member.achievementsTotal?.let { total ->
+                    member.iconUrl?.let { iconUrl ->
+                        Box {
+                            GameIcon(iconUrl = iconUrl, iconSize = 56.dp)
+                            CurrentPlayingDot(
+                                isCurrentlyPlaying = member.isCurrentlyPlaying,
+                                modifier = Modifier.align(Alignment.TopEnd),
+                            )
+                        }
+                        Spacer(Modifier.width(14.dp))
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Text(
+                            text = member.name,
+                            style = MaterialTheme.typography.titleSmall,
+                            maxLines = 1,
+                        )
+                        if (density.showsPlaytime) {
                             Text(
-                                text = "$unlocked/$total trophies",
+                                text = "${UiFormat.minutes(member.playtimeMinutes)} played · " +
+                                    sessionLabel(member.sessionCount),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = accentColor,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
+                            )
+                        }
+                        if (density.showsCompletionProgress) {
+                            CollectionCompletionProgress(member)
+                        }
+                        if (density.showsBadges) {
+                            TrophyLabel(member = member, accentColor = accentColor)
+                        }
+                        if (showQueuePosition) {
+                            Text(
+                                text = "#${position + 1} in queue",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun CollectionGameTile(
+    member: CollectionMemberUi,
+    accentColor: Color,
+    position: Int,
+    showQueuePosition: Boolean,
+    density: GameListDensity,
+    modifier: Modifier = Modifier,
+    onOpenGameDetail: (Long) -> Unit,
+) {
+    // Grid cells use Steam's portrait hero_capsule artwork; the wide header-art treatment remains
+    // reserved for horizontal cards.
+    val compact = density == GameListDensity.COMPACT_GRID
+    val tileShape = RoundedCornerShape(18.dp)
+    val heroShape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)
+    val cardSurface = accentColor.copy(alpha = 0.08f)
+        .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
+    Card(
+        onClick = { onOpenGameDetail(member.appId) },
+        modifier = modifier
+            .padding(vertical = 4.dp)
+            .aspectRatio(if (compact) 0.62f else 0.60f)
+            .semantics {
+                contentDescription = "Open ${member.name} details"
+            },
+        shape = tileShape,
+        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.28f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        colors = CardDefaults.cardColors(containerColor = cardSurface),
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .background(MaterialTheme.colorScheme.surfaceVariant, heroShape)
+                    .clip(heroShape),
+            ) {
+                GameHeroCapsule(
+                    heroCapsuleUrl = member.heroCapsuleUrl,
+                    fallbackUrls = SteamIconMapper.gridArtworkFallbackUrls(member.appId),
+                    modifier = Modifier.matchParentSize(),
+                    shape = heroShape,
+                )
+                CurrentPlayingDot(
+                    isCurrentlyPlaying = member.isCurrentlyPlaying,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp),
+                )
             }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text(
+                    text = member.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (density.showsPlaytime) {
+                    Text(
+                        text = UiFormat.minutes(member.playtimeMinutes),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (density.showsCompletionProgress) {
+                    CollectionCompletionProgress(member)
+                }
+                if (showQueuePosition) {
+                    Text(
+                        text = "#${position + 1}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = accentColor,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CurrentPlayingDot(isCurrentlyPlaying: Boolean, modifier: Modifier = Modifier) {
+    if (!isCurrentlyPlaying) return
+    Box(
+        modifier = modifier
+            .size(10.dp)
+            .background(MaterialTheme.colorScheme.primary, CircleShape),
+    )
+}
+
+@Composable
+private fun TrophyLabel(member: CollectionMemberUi, accentColor: Color) {
+    member.achievementsUnlocked?.let { unlocked ->
+        member.achievementsTotal?.let { total ->
+            Text(
+                text = "$unlocked/$total trophies",
+                style = MaterialTheme.typography.bodySmall,
+                color = accentColor,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -724,6 +1022,7 @@ private fun CollectionForm(
     var query by rememberSaveable { mutableStateOf("") }
     var selectedGenreIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var showGenreSheet by rememberSaveable { mutableStateOf(false) }
+    var showAdvancedSettings by rememberSaveable { mutableStateOf(false) }
 
     val memberIds = remember(state.members) { state.members.mapTo(mutableSetOf()) { it.appId } }
     val selectedGenreSet = selectedGenreIds.toSet()
@@ -736,9 +1035,42 @@ private fun CollectionForm(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
+                .imePadding()
                 .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            item { SectionLabel("Games") }
+            if (state.members.isEmpty()) {
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text("No games yet", style = MaterialTheme.typography.titleSmall)
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "Add games below to build the collection's banner.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
+            itemsIndexed(
+                items = state.members,
+                key = { _, member -> member.appId },
+            ) { index, member ->
+                MemberRow(
+                    member = member,
+                    index = index,
+                    count = state.members.size,
+                    reorderable = state.mode == CollectionMode.ORDERED_QUEUE,
+                    showDoneToggle = state.mode == CollectionMode.ORDERED_QUEUE,
+                    onRemove = { viewModel.removeGame(member.appId) },
+                    onMoveUp = { viewModel.moveMember(index, index - 1) },
+                    onMoveDown = { viewModel.moveMember(index, index + 1) },
+                    onToggleDone = { viewModel.toggleMemberDone(member.appId) },
+                )
+            }
+
             item {
                 OutlinedTextField(
                     value = state.name,
@@ -746,6 +1078,19 @@ private fun CollectionForm(
                     label = { Text("Name") },
                     placeholder = { Text("e.g. Clear the backlog") },
                     singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.saving,
+                )
+            }
+
+            item {
+                OutlinedTextField(
+                    value = state.description,
+                    onValueChange = viewModel::setDescription,
+                    label = { Text("Description") },
+                    placeholder = { Text("What is this collection for?") },
+                    minLines = 3,
+                    maxLines = 5,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !state.saving,
                 )
@@ -785,7 +1130,27 @@ private fun CollectionForm(
                 }
             }
 
-            if (state.mode == CollectionMode.DEADLINE_GOAL) {
+            item {
+                TextButton(
+                    onClick = { showAdvancedSettings = !showAdvancedSettings },
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 2.dp),
+                ) {
+                    Icon(
+                        imageVector = if (showAdvancedSettings) {
+                            TablerIcons.ChevronUp
+                        } else {
+                            TablerIcons.ChevronDown
+                        },
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (showAdvancedSettings) "Hide additional settings" else "More settings")
+                }
+            }
+
+            if (showAdvancedSettings && state.mode == CollectionMode.DEADLINE_GOAL) {
                 item {
                     SectionLabel("Target date")
                     Card(modifier = Modifier.fillMaxWidth()) {
@@ -832,58 +1197,28 @@ private fun CollectionForm(
                 }
             }
 
-            item {
-                SectionLabel("Accent")
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    AccentChip(
-                        label = "Default",
-                        selected = state.accent == null,
-                        onClick = { viewModel.setAccent(null) },
-                    )
-                    CollectionAccent.entries.forEach { accent ->
-                        AccentChip(
-                            label = accentLabel(accent),
-                            selected = state.accent == accent,
-                            onClick = { viewModel.setAccent(accent) },
-                            accentColor = MaterialTheme.colorScheme.collectionAccentColor(accent),
-                        )
-                    }
-                }
-            }
-
-            item { SectionLabel("Games") }
-            if (state.members.isEmpty()) {
+            if (showAdvancedSettings) {
                 item {
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp)) {
-                            Text("No games yet", style = MaterialTheme.typography.titleSmall)
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = "Add games below to build the collection's banner.",
-                                style = MaterialTheme.typography.bodySmall,
+                    SectionLabel("Accent")
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        AccentChip(
+                            label = "Default",
+                            selected = state.accent == null,
+                            onClick = { viewModel.setAccent(null) },
+                        )
+                        CollectionAccent.entries.forEach { accent ->
+                            AccentChip(
+                                label = accentLabel(accent),
+                                selected = state.accent == accent,
+                                onClick = { viewModel.setAccent(accent) },
+                                accentColor = MaterialTheme.colorScheme.collectionAccentColor(accent),
                             )
                         }
                     }
                 }
-            }
-            itemsIndexed(
-                items = state.members,
-                key = { _, member -> member.appId },
-            ) { index, member ->
-                MemberRow(
-                    member = member,
-                    index = index,
-                    count = state.members.size,
-                    reorderable = state.mode == CollectionMode.ORDERED_QUEUE,
-                    showDoneToggle = state.mode == CollectionMode.ORDERED_QUEUE,
-                    onRemove = { viewModel.removeGame(member.appId) },
-                    onMoveUp = { viewModel.moveMember(index, index - 1) },
-                    onMoveDown = { viewModel.moveMember(index, index + 1) },
-                    onToggleDone = { viewModel.toggleMemberDone(member.appId) },
-                )
             }
 
             item {
@@ -891,7 +1226,7 @@ private fun CollectionForm(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    label = { Text("Search library") },
+                    placeholder = { Text("Search library") },
                     leadingIcon = {
                         Icon(
                             imageVector = TablerIcons.Search,
@@ -1052,7 +1387,7 @@ private fun CollectionForm(
 /** Section heading inside the form column. */
 @Composable
 private fun SectionLabel(text: String) {
-    Text(text = text, style = MaterialTheme.typography.titleMedium)
+    Text(text = text, style = MaterialTheme.typography.labelLarge)
 }
 
 @Composable
@@ -1121,6 +1456,7 @@ private fun MemberRow(
         Box(modifier = Modifier.fillMaxWidth()) {
             GameHeaderBackdrop(
                 headerUrl = member.headerUrl,
+                fallbackUrls = SteamIconMapper.listBackgroundFallbackUrls(member.appId),
                 modifier = Modifier.matchParentSize(),
             )
             Row(
@@ -1203,6 +1539,7 @@ private fun AddGameRow(
         Box(modifier = Modifier.fillMaxWidth()) {
             GameHeaderBackdrop(
                 headerUrl = game.headerUrl,
+                fallbackUrls = SteamIconMapper.listBackgroundFallbackUrls(game.appId),
                 modifier = Modifier.matchParentSize(),
             )
             Row(

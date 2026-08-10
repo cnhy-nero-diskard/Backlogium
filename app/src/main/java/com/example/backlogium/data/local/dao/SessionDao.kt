@@ -27,6 +27,13 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE startAt >= :cutoff ORDER BY startAt DESC")
     fun observeSince(cutoff: Long): Flow<List<Session>>
 
+    /** Sessions whose start date falls within a complete local-day window. */
+    @Query(
+        "SELECT * FROM sessions WHERE startAt >= :startInclusive AND startAt < :endExclusive " +
+            "ORDER BY startAt DESC",
+    )
+    fun observeBetween(startInclusive: Long, endExclusive: Long): Flow<List<Session>>
+
     /** Closed synthesized sessions starting at or after [cutoff], for Personal Pace training. */
     @Query(
         "SELECT * FROM sessions WHERE startAt >= :cutoff AND open = 0 ORDER BY startAt DESC",
@@ -35,6 +42,10 @@ interface SessionDao {
 
     @Query("SELECT * FROM sessions ORDER BY startAt ASC")
     suspend fun getAll(): List<Session>
+
+    /** Earliest tracked session start, used to keep Analytics anchors inside available history. */
+    @Query("SELECT MIN(startAt) FROM sessions")
+    fun observeEarliestSessionStart(): Flow<Long?>
 
     /**
      * Natural-key lookup for the backup/restore merge engine (add-backup-restore): [Session.id]
@@ -78,6 +89,13 @@ interface SessionDao {
             "WHERE startAt >= :cutoff GROUP BY appId",
     )
     fun observeMinutesByGameSince(cutoff: Long): Flow<List<GameTrackedMinutes>>
+
+    /** Tracked minutes summed per game inside an explicit start-inclusive/end-exclusive window. */
+    @Query(
+        "SELECT appId, COALESCE(SUM(minutes), 0) AS minutes FROM sessions " +
+            "WHERE startAt >= :startInclusive AND startAt < :endExclusive GROUP BY appId",
+    )
+    fun observeMinutesByGameBetween(startInclusive: Long, endExclusive: Long): Flow<List<GameTrackedMinutes>>
 }
 
 /** Per-game tracked-minutes projection for [SessionDao.trackedMinutesByGame]. */

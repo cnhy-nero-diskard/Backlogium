@@ -39,8 +39,11 @@ object DatabaseModule {
                 BacklogiumDatabase.MIGRATION_9_10,
                 BacklogiumDatabase.MIGRATION_10_11,
                 BacklogiumDatabase.MIGRATION_11_12,
+                BacklogiumDatabase.MIGRATION_12_13,
             )
-            .fallbackToDestructiveMigration()
+            // Never silently replace a user's database when a branch has an unexpected schema
+            // version. A real version bump must ship and register its migration; otherwise the
+            // mismatch should surface so the app can use its explicit backup/restore path.
             .build()
 
     @Provides

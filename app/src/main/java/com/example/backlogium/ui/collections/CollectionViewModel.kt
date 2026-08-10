@@ -8,8 +8,11 @@ import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CollectionRepository
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
+import com.example.backlogium.data.repo.LiveStatusRepository
+import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.PersonalPaceRepository
 import com.example.backlogium.data.repo.SessionRepository
+import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionMemberSignals
@@ -17,6 +20,7 @@ import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CollectionTimeBasis
+import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.PersonalPaceProfile
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.defaultSort
@@ -37,6 +41,7 @@ data class CollectionMemberUi(
     val name: String,
     val iconUrl: String?,
     val headerUrl: String = "",
+    val heroCapsuleUrl: String = "",
     val done: Boolean = false,
     val playtimeMinutes: Int = 0,
     val achievementsUnlocked: Int? = null,
@@ -46,6 +51,7 @@ data class CollectionMemberUi(
     val mainExtraMinutes: Int? = null,
     val completionistMinutes: Int? = null,
     val allStylesMinutes: Int? = null,
+    val isCurrentlyPlaying: Boolean = false,
 )
 
 /** Full management-screen state for one collection (create or edit), all local/offline-first. */
@@ -54,8 +60,10 @@ data class CollectionUiState(
     val isNew: Boolean = true,
     val collectionId: Long = 0L,
     val name: String = "",
+    val description: String = "",
     val mode: CollectionMode = CollectionMode.BASIC,
     val sort: CollectionSort = CollectionSort.NAME,
+    val density: GameListDensity = GameListDensity.LIST,
     val targetDate: LocalDate? = null,
     val accent: CollectionAccent? = null,
     val timeBasis: CollectionTimeBasis = CollectionTimeBasis.COMPLETIONIST,
@@ -94,6 +102,8 @@ class CollectionViewModel @Inject constructor(
     private val achievementRepository: AchievementRepository,
     private val sessionRepository: SessionRepository,
     private val personalPaceRepository: PersonalPaceRepository,
+    private val settings: SettingsRepository,
+    private val liveStatusRepository: LiveStatusRepository,
     private val time: TimeProvider,
 ) : ViewModel() {
 
@@ -101,6 +111,9 @@ class CollectionViewModel @Inject constructor(
     val collectionId: Long = savedStateHandle.get<Long>("collectionId") ?: 0L
 
     private val _name = MutableStateFlow("")
+    private val _description = MutableStateFlow("")
+    private val _originalDescription = MutableStateFlow<String?>(null)
+    private val _descriptionTouched = MutableStateFlow(false)
     private val _mode = MutableStateFlow(CollectionMode.BASIC)
     private val _sort = MutableStateFlow(CollectionSort.NAME)
     private val _targetDate = MutableStateFlow<LocalDate?>(null)
@@ -120,6 +133,8 @@ class CollectionViewModel @Inject constructor(
                 val collection = collectionRepository.getById(collectionId)
                 if (collection != null) {
                     _name.value = collection.name
+                    _description.value = collection.description.orEmpty()
+                    _originalDescription.value = collection.description
                     _mode.value = collection.mode
                     _sort.value = collection.sort
                     _targetDate.value = collection.targetDate
@@ -139,6 +154,7 @@ class CollectionViewModel @Inject constructor(
     /** The editing session's draft fields, grouped so the UI combine stays within the typed overloads. */
     private data class Draft(
         val name: String,
+        val description: String,
         val mode: CollectionMode,
         val sort: CollectionSort,
         val targetDate: LocalDate?,
@@ -150,6 +166,7 @@ class CollectionViewModel @Inject constructor(
         val targetDate: LocalDate?,
         val accent: CollectionAccent?,
         val timeBasis: CollectionTimeBasis,
+        val description: String,
     )
 
     private data class Session(
@@ -185,19 +202,24 @@ class CollectionViewModel @Inject constructor(
 
     private val draft: StateFlow<Draft> = combine(
         combine(_name, _mode, _sort) { name, mode, sort -> Triple(name, mode, sort) },
-        combine(_targetDate, _accent, _timeBasis) { targetDate, accent, timeBasis ->
-            DraftDetails(targetDate, accent, timeBasis)
+        combine(
+            combine(_targetDate, _accent, _timeBasis) { targetDate, accent, timeBasis ->
+                Triple(targetDate, accent, timeBasis)
+            },
+            _description,
+        ) { details, description ->
+            DraftDetails(details.first, details.second, details.third, description)
         },
     ) { core, details ->
-        Draft(core.first, core.second, core.third, details.targetDate, details.accent, details.timeBasis)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, Draft("", CollectionMode.BASIC, CollectionSort.NAME, null, null, CollectionTimeBasis.COMPLETIONIST))
+        Draft(core.first, details.description, core.second, core.third, details.targetDate, details.accent, details.timeBasis)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, Draft("", "", CollectionMode.BASIC, CollectionSort.NAME, null, null, CollectionTimeBasis.COMPLETIONIST))
 
     private val session: StateFlow<Session> = combine(draft, sessionFields) { d, fields ->
         Session(d, fields.memberAppIds, fields.doneMarks, fields.loaded, fields.done, fields.saving)
     }.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,
-        Session(Draft("", CollectionMode.BASIC, CollectionSort.NAME, null, null, CollectionTimeBasis.COMPLETIONIST), emptyList(), emptySet(), collectionId == 0L, false, false),
+        Session(Draft("", "", CollectionMode.BASIC, CollectionSort.NAME, null, null, CollectionTimeBasis.COMPLETIONIST), emptyList(), emptySet(), collectionId == 0L, false, false),
     )
 
     private data class LibraryMetrics(
@@ -223,8 +245,11 @@ class CollectionViewModel @Inject constructor(
     val uiState: StateFlow<CollectionUiState> = combine(
         libraryMetrics,
         session,
-    ) { metrics, s ->
+        settings.collectionDensity,
+        liveStatusRepository.nowPlaying,
+    ) { metrics, s, density, nowPlaying ->
         val gamesById = metrics.games.associateBy { it.appId }
+        val playingAppId = (nowPlaying as? NowPlaying.InGame)?.gameId
         val memberSignals = s.memberAppIds.map { appId ->
             val game = gamesById[appId]
             CollectionMemberSignals(
@@ -254,8 +279,10 @@ class CollectionViewModel @Inject constructor(
             isNew = collectionId == 0L,
             collectionId = collectionId,
             name = s.draft.name,
+            description = s.draft.description,
             mode = s.draft.mode,
             sort = s.draft.sort,
+            density = density,
             targetDate = s.draft.targetDate,
             accent = s.draft.accent,
             timeBasis = s.draft.timeBasis,
@@ -270,6 +297,7 @@ class CollectionViewModel @Inject constructor(
                     name = game?.name ?: "Game $appId",
                     iconUrl = game?.iconUrl,
                     headerUrl = game?.headerUrl.orEmpty(),
+                    heroCapsuleUrl = game?.heroCapsuleUrl.orEmpty(),
                     done = appId in s.doneMarks,
                     playtimeMinutes = game?.playtimeForever ?: 0,
                     achievementsUnlocked = metrics.achievementsByGame[appId]?.unlocked,
@@ -279,6 +307,7 @@ class CollectionViewModel @Inject constructor(
                     mainExtraMinutes = game?.mainExtraMinutes,
                     completionistMinutes = game?.completionistMinutes,
                     allStylesMinutes = game?.allStylesMinutes,
+                    isCurrentlyPlaying = appId == playingAppId,
                 )
             },
             libraryGames = metrics.games,
@@ -295,6 +324,11 @@ class CollectionViewModel @Inject constructor(
         _name.value = value
     }
 
+    fun setDescription(value: String) {
+        _description.value = value
+        _descriptionTouched.value = true
+    }
+
     fun setMode(mode: CollectionMode) {
         _mode.value = mode
         // A mode is a preset, so switching modes adopts that mode's sensible default sort
@@ -307,6 +341,10 @@ class CollectionViewModel @Inject constructor(
 
     fun setSort(sort: CollectionSort) {
         _sort.value = sort
+    }
+
+    fun setDensity(density: GameListDensity) = viewModelScope.launch {
+        settings.setCollectionDensity(density)
     }
 
     fun setTargetDate(date: LocalDate?) {
@@ -331,6 +369,7 @@ class CollectionViewModel @Inject constructor(
                 targetDate = date?.toString(),
                 accent = collection.accent,
                 timeBasis = collection.timeBasis,
+                description = collection.description,
             )
         }
     }
@@ -379,17 +418,31 @@ class CollectionViewModel @Inject constructor(
             val target = _targetDate.value?.toString()
             val accent = _accent.value
             val timeBasis = _timeBasis.value
+            val description = if (_descriptionTouched.value) {
+                _description.value
+            } else {
+                _originalDescription.value
+            }
             val id = if (collectionId == 0L) {
-                collectionRepository.create(_name.value, _mode.value, _sort.value, target, accent, timeBasis)
+                collectionRepository.create(
+                    name = _name.value,
+                    mode = _mode.value,
+                    sort = _sort.value,
+                    targetDate = target,
+                    accent = accent,
+                    timeBasis = timeBasis,
+                    description = description,
+                )
             } else {
                 collectionRepository.updateDetails(
-                    collectionId,
-                    _name.value,
-                    _mode.value,
-                    _sort.value,
-                    target,
-                    accent,
-                    timeBasis,
+                    id = collectionId,
+                    name = _name.value,
+                    mode = _mode.value,
+                    sort = _sort.value,
+                    targetDate = target,
+                    accent = accent,
+                    timeBasis = timeBasis,
+                    description = description,
                 )
                 collectionId
             }

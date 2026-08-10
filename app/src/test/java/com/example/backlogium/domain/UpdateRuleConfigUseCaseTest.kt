@@ -159,6 +159,11 @@ class UpdateRuleConfigUseCaseTest {
             sort.value = sort.value.copy(library = key)
         }
 
+        override val libraryDensity: Flow<GameListDensity> = MutableStateFlow(GameListDensity.LIST)
+        override suspend fun setLibraryDensity(density: GameListDensity) = Unit
+        override val collectionDensity: Flow<GameListDensity> = MutableStateFlow(GameListDensity.LIST)
+        override suspend fun setCollectionDensity(density: GameListDensity) = Unit
+
         // Auto-snapshot configuration (add-backup-restore) is irrelevant to a rule change.
         private val autoSnapshot = MutableStateFlow(AutoSnapshotSettings())
         override val autoSnapshotSettings: Flow<AutoSnapshotSettings> = autoSnapshot

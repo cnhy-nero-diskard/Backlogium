@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
+import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.librarySortKeyOrNull
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
@@ -47,6 +48,8 @@ class SettingsDataStore @Inject constructor(
         val LEGENDARY_ACHIEVEMENT_XP = intPreferencesKey("legendary_achievement_xp")
         val LIBRARY_FOCUS_SORT = stringPreferencesKey("library_focus_sort")
         val LIBRARY_ALL_SORT = stringPreferencesKey("library_all_sort")
+        val LIBRARY_DENSITY = stringPreferencesKey("library_density")
+        val COLLECTION_DENSITY = stringPreferencesKey("collection_density")
         val AUTO_SNAPSHOT_ENABLED = booleanPreferencesKey("auto_snapshot_enabled")
         val SNAPSHOT_RETENTION_COUNT = intPreferencesKey("snapshot_retention_count")
         val SNAPSHOT_INTERVAL_HOURS = intPreferencesKey("snapshot_interval_hours")
@@ -109,6 +112,23 @@ class SettingsDataStore @Inject constructor(
 
     suspend fun setLibrarySort(key: LibrarySortKey) {
         context.dataStore.edit { it[Keys.LIBRARY_ALL_SORT] = key.name }
+    }
+
+    /** Each surface owns its presentation preference; an unset or stale value is the old list. */
+    val libraryDensityFlow: Flow<GameListDensity> = context.dataStore.data.map { prefs ->
+        GameListDensity.fromStored(prefs[Keys.LIBRARY_DENSITY])
+    }
+
+    val collectionDensityFlow: Flow<GameListDensity> = context.dataStore.data.map { prefs ->
+        GameListDensity.fromStored(prefs[Keys.COLLECTION_DENSITY])
+    }
+
+    suspend fun setLibraryDensity(density: GameListDensity) {
+        context.dataStore.edit { it[Keys.LIBRARY_DENSITY] = density.name }
+    }
+
+    suspend fun setCollectionDensity(density: GameListDensity) {
+        context.dataStore.edit { it[Keys.COLLECTION_DENSITY] = density.name }
     }
 
     /**

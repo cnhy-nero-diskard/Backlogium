@@ -12,6 +12,7 @@ import com.example.backlogium.data.local.entity.NO_ACHIEVEMENTS_MARKER
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -37,6 +38,14 @@ data class GameAchievement(
     val unlockedAt: Long? = null,
     val description: String? = null,
     val hidden: Boolean = false,
+)
+
+/** An unlocked achievement with the frozen percent used for its rarity tier and its game name. */
+data class UnlockedAchievementRarity(
+    val appId: Long,
+    val gameName: String,
+    val achievementName: String,
+    val rarityPercent: Double,
 )
 
 /**
@@ -70,6 +79,28 @@ class AchievementRepository @Inject constructor(
      */
     val unlockedRarityByGame: Flow<Map<Long, List<Double?>>> = achievementDao.observeUnlockedRarity()
         .map { rows -> rows.groupBy(AchievementRarity::appId) { it.snapshotPercent } }
+
+    /**
+     * Detailed all-time rarity rows for Analytics. The existing grouped percent flow remains
+     * unchanged because the Library XP engine consumes that shape; this projection adds identity
+     * and game names only for the Analytics drill-down.
+     */
+    val unlockedRarityDetails: Flow<List<UnlockedAchievementRarity>> = combine(
+        achievementDao.observeUnlockedRarity(),
+        gameDao.observeLibrary(),
+    ) { rows, games ->
+        val gameNames = games.associate { it.appId to it.name }
+        rows.mapNotNull { row ->
+            row.snapshotPercent?.let { percent ->
+                UnlockedAchievementRarity(
+                    appId = row.appId,
+                    gameName = gameNames[row.appId] ?: "App ${row.appId}",
+                    achievementName = row.displayName?.takeIf { it.isNotBlank() } ?: row.apiName,
+                    rarityPercent = percent,
+                )
+            }
+        }
+    }
 
     /**
      * Achievements unlocked at or after [cutoffMillis], across every game — feeds the History

@@ -5,20 +5,32 @@ import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
+import com.example.backlogium.data.repo.DayProgress
 import com.example.backlogium.data.repo.GameRepository
+import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.PlaySession
+import com.example.backlogium.data.repo.PlayerStats
 import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.data.repo.UnlockedAchievementRarity
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RarityTier
-import com.example.backlogium.ui.history.historyWindowCutoffMillis
+import com.example.backlogium.ui.history.HistoryWindowBounds
+import com.example.backlogium.ui.history.historyWindowBounds
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -27,7 +39,7 @@ import javax.inject.Inject
 /** One bar in the daily playtime chart: a local date and that day's tracked minutes. */
 data class AnalyticsDay(val date: LocalDate, val minutes: Int)
 
-/** One row in the most-played-games list: a game's identity and its tracked minutes in the window. */
+/** One row in a most-played or inspected-day games list. */
 data class AnalyticsGame(
     val appId: Long,
     val name: String,
@@ -35,7 +47,16 @@ data class AnalyticsGame(
     val minutes: Int,
 )
 
-/** Count of unlocked achievements per rarity tier — the "hidden" rarity profile. */
+/** One all-time unlocked achievement in the rarity drill-down. */
+data class AnalyticsRarityAchievement(
+    val appId: Long,
+    val gameName: String,
+    val achievementName: String,
+    val rarityPercent: Double,
+    val tier: RarityTier,
+)
+
+/** Count of unlocked achievements per rarity tier - the all-time rarity profile. */
 data class RarityBreakdown(
     val common: Int = 0,
     val uncommon: Int = 0,
@@ -46,7 +67,7 @@ data class RarityBreakdown(
     val total: Int get() = common + uncommon + rare + epic + legendary
 }
 
-/** Aggregated session shape over the window — count, average, and longest session. */
+/** Aggregated session shape over the selected window - count, average, and longest session. */
 data class SessionInsights(
     val sessionCount: Int = 0,
     val averageMinutes: Int = 0,
@@ -55,10 +76,10 @@ data class SessionInsights(
 
 /** When the player tends to play, bucketed by the local hour of session start. */
 data class TimeOfDayPattern(
-    val morningMinutes: Int = 0,   // 5:00–11:59
-    val afternoonMinutes: Int = 0, // 12:00–16:59
-    val eveningMinutes: Int = 0,   // 17:00–20:59
-    val nightMinutes: Int = 0,     // 21:00–4:59
+    val morningMinutes: Int = 0,   // 5:00-11:59
+    val afternoonMinutes: Int = 0, // 12:00-16:59
+    val eveningMinutes: Int = 0,   // 17:00-20:59
+    val nightMinutes: Int = 0,     // 21:00-4:59
 ) {
     /** The bucket with the most minutes, or null if all are zero. */
     val peakBucket: String?
@@ -73,37 +94,58 @@ data class TimeOfDayPattern(
 data class AnalyticsUiState(
     val loading: Boolean = true,
     val configured: Boolean = true,
-    /** One entry per day in the 30-day window, including zero-minute days, oldest first. */
+    val window: AnalyticsWindow = INITIAL_WINDOW,
+    val windowBounds: AnalyticsWindowBounds = INITIAL_WINDOW.resolve(),
+    val earliestTrackedDate: LocalDate? = null,
+    val canStepEarlier: Boolean = false,
+    /** One entry per local day in the selected window, including zero-minute days, oldest first. */
     val dailyMinutes: List<AnalyticsDay> = emptyList(),
     /** The configured daily-quest threshold, drawn as a reference line on the chart. */
     val questThreshold: Int = 30,
     val currentStreak: Int = 0,
     val longestStreak: Int = 0,
-    /** Count of quest-met days within the 30-day window. */
+    /** Count of quest-met days inside the selected window. */
     val questMetDaysCount: Int = 0,
-    /** Up to five games ranked by tracked minutes in the window, descending. */
+    /** Up to five games ranked by tracked minutes in the selected window, descending. */
     val topGames: List<AnalyticsGame> = emptyList(),
     /** All-time rarity tier breakdown of unlocked achievements. */
     val rarityBreakdown: RarityBreakdown = RarityBreakdown(),
-    /** Session shape over the 30-day window. */
+    /** Up to twenty all-time rarest unlocked achievements, ordered by frozen rarity percent. */
+    val rarestAchievements: List<AnalyticsRarityAchievement> = emptyList(),
+    /** Session shape over the selected window. */
     val sessionInsights: SessionInsights = SessionInsights(),
-    /** Time-of-day play pattern over the 30-day window. */
+    /** Time-of-day play pattern over the selected window. */
     val timeOfDayPattern: TimeOfDayPattern = TimeOfDayPattern(),
+    /** Per-day game totals used by chart-day inspection; absent days have no breakdown. */
+    val gamesByDate: Map<LocalDate, List<AnalyticsGame>> = emptyMap(),
 ) {
-    /** True when there is at least one tracked minute in the window — gates the empty state. */
+    /** True when there is at least one tracked minute in the selected window. */
     val hasData: Boolean
         get() = dailyMinutes.any { it.minutes > 0 } || topGames.isNotEmpty()
 }
 
-/** Intermediate bundle for the first combine stage (5 flows is the direct-combine ceiling). */
 private data class AnalyticsInputs(
     val sessions: List<PlaySession>,
     val minutesByGame: Map<Long, Int>,
-    val library: List<com.example.backlogium.data.repo.LibraryGame>,
-    val dailyProgress: List<com.example.backlogium.data.repo.DayProgress>,
-    val profile: com.example.backlogium.data.repo.PlayerStats?,
+    val library: List<LibraryGame>,
+    val dailyProgress: List<DayProgress>,
+    val profile: PlayerStats?,
 )
 
+private data class ResolvedAnalyticsWindow(
+    val window: AnalyticsWindow,
+    val bounds: AnalyticsWindowBounds,
+    val epochBounds: HistoryWindowBounds,
+    val earliestTrackedDate: LocalDate?,
+    val canStepEarlier: Boolean,
+)
+
+private val INITIAL_WINDOW = AnalyticsWindow(
+    anchor = LocalDate.of(1970, 1, 1),
+    length = AnalyticsWindowLength.THIRTY_DAYS,
+)
+
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class AnalyticsViewModel @Inject constructor(
     private val sessionRepository: SessionRepository,
@@ -115,78 +157,135 @@ class AnalyticsViewModel @Inject constructor(
     private val time: TimeProvider,
 ) : ViewModel() {
 
-    private val windowDays: Int = WINDOW_DAYS
+    private val selectedWindow = MutableStateFlow(
+        AnalyticsWindow(
+            anchor = time.today(),
+            length = AnalyticsWindowLength.THIRTY_DAYS,
+        ),
+    )
 
-    // combine() supports up to 5 flows directly; 8 inputs are split into two stages.
-    private val inputs = combine(
-        sessionRepository.sessionsSince(cutoffMillis()),
-        sessionRepository.minutesByGameSince(cutoffMillis()),
-        gameRepository.library,
-        profileRepository.dailyProgress,
-        profileRepository.profile,
-    ) { sessions, minutesByGame, library, dailyProgress, profile ->
-        AnalyticsInputs(sessions, minutesByGame, library, dailyProgress, profile)
+    /** The current selection, exposed separately for callers that need controls outside uiState. */
+    val window: StateFlow<AnalyticsWindow> = selectedWindow.asStateFlow()
+
+    private val earliestTrackedDate: StateFlow<LocalDate?> = sessionRepository.earliestSessionStart
+        .map { startAt -> startAt?.let { localDate(it, time.zone()) } }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = null,
+        )
+
+    private fun resolveWindow(window: AnalyticsWindow, earliest: LocalDate?): ResolvedAnalyticsWindow {
+        val bounds = window.resolve()
+        return ResolvedAnalyticsWindow(
+            window = window,
+            bounds = bounds,
+            epochBounds = historyWindowBounds(
+                start = bounds.start,
+                endInclusive = bounds.endInclusive,
+                zone = time.zone(),
+            ),
+            earliestTrackedDate = earliest,
+            canStepEarlier = window.canStepEarlier(earliest),
+        )
+    }
+
+    private val resolvedWindow: StateFlow<ResolvedAnalyticsWindow> = combine(
+        selectedWindow,
+        earliestTrackedDate,
+    ) { window, earliest -> resolveWindow(window, earliest) }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = resolveWindow(selectedWindow.value, null),
+        )
+
+    /** Select a new length while keeping the current anchor period. */
+    fun selectWindowLength(length: AnalyticsWindowLength) {
+        selectedWindow.update { it.copy(length = length) }
+    }
+
+    /** Move the selected anchor to the immediately preceding reachable period. */
+    fun stepAnchorEarlier() {
+        val earliest = earliestTrackedDate.value ?: return
+        selectedWindow.update { current ->
+            current.stepEarlier().takeIf { candidate ->
+                candidate.resolve().endInclusive >= earliest
+            } ?: current
+        }
+    }
+
+    // Re-query every windowed source when the same resolved bounds change. Room keeps the reads
+    // indexed in SQL; no wider history is fetched and pruned in memory.
+    private val inputs: Flow<AnalyticsInputs> = resolvedWindow.flatMapLatest { resolved ->
+        combine(
+            sessionRepository.sessionsBetween(
+                startInclusiveMillis = resolved.epochBounds.startInclusiveMillis,
+                endExclusiveMillis = resolved.epochBounds.endExclusiveMillis,
+            ),
+            sessionRepository.minutesByGameBetween(
+                startInclusiveMillis = resolved.epochBounds.startInclusiveMillis,
+                endExclusiveMillis = resolved.epochBounds.endExclusiveMillis,
+            ),
+            gameRepository.library,
+            profileRepository.dailyProgress,
+            profileRepository.profile,
+        ) { sessions, minutesByGame, library, dailyProgress, profile ->
+            AnalyticsInputs(sessions, minutesByGame, library, dailyProgress, profile)
+        }
     }
 
     val uiState: StateFlow<AnalyticsUiState> = combine(
         inputs,
+        resolvedWindow,
         settings.ruleConfig,
         credentials.credentialsStateFlow,
-        achievementRepository.unlockedRarityByGame,
-    ) { inputs, ruleConfig, credState, unlockedRarityByGame ->
-        val zone = time.zone()
-        val today = time.today()
-        val windowStart = today.minusDays((windowDays - 1).toLong())
-
-        // Daily minutes: one entry per day in the window (oldest first), filling zero-minute days
-        // so the chart renders a continuous axis rather than gaps.
-        val minutesByDate = inputs.sessions.groupBy { localDate(it.startAt, zone) }
+        achievementRepository.unlockedRarityDetails,
+    ) { inputs, resolved, ruleConfig, credState, rarityDetails ->
+        val dates = resolved.bounds.dates()
+        val gamesById = inputs.library.associateBy { it.appId }
+        val minutesByDate = inputs.sessions.groupBy { localDate(it.startAt, time.zone()) }
             .mapValues { (_, daySessions) -> daySessions.sumOf { it.minutes } }
-        val dailyMinutes = (0 until windowDays).map { offset ->
-            val date = windowStart.plusDays(offset.toLong())
+        val dailyMinutes = dates.map { date ->
             AnalyticsDay(date = date, minutes = minutesByDate[date] ?: 0)
         }
 
-        // Quest-met days within the window, from the authoritative DailyProgress rows.
         val progressByDate = inputs.dailyProgress.associateBy {
             runCatching { LocalDate.parse(it.date) }.getOrNull()
         }
-        val questMetDaysCount = (0 until windowDays).count { offset ->
-            val date = windowStart.plusDays(offset.toLong())
-            progressByDate[date]?.questMet == true
-        }
+        val questMetDaysCount = dates.count { date -> progressByDate[date]?.questMet == true }
 
-        // Top games: join per-game minutes to the library for names/icons, take top 5.
-        val gamesById = inputs.library.associateBy { it.appId }
-        val topGames = inputs.minutesByGame.entries
-            .mapNotNull { (appId, minutes) ->
-                val game = gamesById[appId] ?: return@mapNotNull null
-                AnalyticsGame(
-                    appId = appId,
-                    name = game.name,
-                    iconUrl = game.iconUrl,
-                    minutes = minutes,
+        val topGames = joinGameMinutes(inputs.minutesByGame, gamesById)
+            .take(TOP_GAMES_LIMIT)
+        val gamesByDate = inputs.sessions.groupBy { localDate(it.startAt, time.zone()) }
+            .mapValues { (_, daySessions) ->
+                val minutesByDayGame = daySessions.groupBy { it.appId }
+                    .mapValues { (_, gameSessions) -> gameSessions.sumOf { it.minutes } }
+                joinGameMinutes(minutesByDayGame, gamesById)
+            }
+
+        val rarityBreakdown = rarityDetails.fold(RarityBreakdown()) { acc, achievement ->
+            when (Gamification.tierFor(achievement.rarityPercent)) {
+                RarityTier.COMMON -> acc.copy(common = acc.common + 1)
+                RarityTier.UNCOMMON -> acc.copy(uncommon = acc.uncommon + 1)
+                RarityTier.RARE -> acc.copy(rare = acc.rare + 1)
+                RarityTier.EPIC -> acc.copy(epic = acc.epic + 1)
+                RarityTier.LEGENDARY -> acc.copy(legendary = acc.legendary + 1)
+            }
+        }
+        val rarestAchievements = rarityDetails
+            .sortedWith(compareBy<UnlockedAchievementRarity> { it.rarityPercent }.thenBy { it.achievementName })
+            .take(RAREST_ACHIEVEMENTS_LIMIT)
+            .map { achievement ->
+                AnalyticsRarityAchievement(
+                    appId = achievement.appId,
+                    gameName = achievement.gameName,
+                    achievementName = achievement.achievementName,
+                    rarityPercent = achievement.rarityPercent,
+                    tier = Gamification.tierFor(achievement.rarityPercent),
                 )
             }
-            .sortedByDescending { it.minutes }
-            .take(TOP_GAMES_LIMIT)
 
-        // Rarity breakdown: flatten all unlocked-achievement snapshot percents across every game,
-        // tier each with the gamification engine's fixed cut points, and count per tier.
-        val rarityBreakdown = unlockedRarityByGame.values
-            .flatten()
-            .filterNotNull()
-            .fold(RarityBreakdown()) { acc, percent ->
-                when (Gamification.tierFor(percent)) {
-                    RarityTier.COMMON -> acc.copy(common = acc.common + 1)
-                    RarityTier.UNCOMMON -> acc.copy(uncommon = acc.uncommon + 1)
-                    RarityTier.RARE -> acc.copy(rare = acc.rare + 1)
-                    RarityTier.EPIC -> acc.copy(epic = acc.epic + 1)
-                    RarityTier.LEGENDARY -> acc.copy(legendary = acc.legendary + 1)
-                }
-            }
-
-        // Session insights: count, average, longest — over the window's sessions.
         val sessionInsights = if (inputs.sessions.isEmpty()) {
             SessionInsights()
         } else {
@@ -197,22 +296,23 @@ class AnalyticsViewModel @Inject constructor(
             )
         }
 
-        // Time-of-day pattern: bucket each session's start hour into morning/afternoon/evening/night,
-        // summing minutes. Reveals when the player tends to play.
         val timeOfDayPattern = inputs.sessions.fold(TimeOfDayPattern()) { acc, session ->
-            val hour = Instant.ofEpochMilli(session.startAt).atZone(zone).hour
-            val minutes = session.minutes
+            val hour = Instant.ofEpochMilli(session.startAt).atZone(time.zone()).hour
             when (hour) {
-                in 5..11 -> acc.copy(morningMinutes = acc.morningMinutes + minutes)
-                in 12..16 -> acc.copy(afternoonMinutes = acc.afternoonMinutes + minutes)
-                in 17..20 -> acc.copy(eveningMinutes = acc.eveningMinutes + minutes)
-                else -> acc.copy(nightMinutes = acc.nightMinutes + minutes)
+                in 5..11 -> acc.copy(morningMinutes = acc.morningMinutes + session.minutes)
+                in 12..16 -> acc.copy(afternoonMinutes = acc.afternoonMinutes + session.minutes)
+                in 17..20 -> acc.copy(eveningMinutes = acc.eveningMinutes + session.minutes)
+                else -> acc.copy(nightMinutes = acc.nightMinutes + session.minutes)
             }
         }
 
         AnalyticsUiState(
             loading = false,
             configured = credState is CredentialsState.Configured,
+            window = resolved.window,
+            windowBounds = resolved.bounds,
+            earliestTrackedDate = resolved.earliestTrackedDate,
+            canStepEarlier = resolved.canStepEarlier,
             dailyMinutes = dailyMinutes,
             questThreshold = ruleConfig.questThresholdMin,
             currentStreak = inputs.profile?.currentStreak ?: 0,
@@ -220,24 +320,41 @@ class AnalyticsViewModel @Inject constructor(
             questMetDaysCount = questMetDaysCount,
             topGames = topGames,
             rarityBreakdown = rarityBreakdown,
+            rarestAchievements = rarestAchievements,
             sessionInsights = sessionInsights,
             timeOfDayPattern = timeOfDayPattern,
+            gamesByDate = gamesByDate,
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = AnalyticsUiState(),
+        initialValue = AnalyticsUiState(
+            window = selectedWindow.value,
+            windowBounds = selectedWindow.value.resolve(),
+        ),
     )
 
-    /** Epoch-millis cutoff for the start of the local day `windowDays - 1` days ago. */
-    private fun cutoffMillis(): Long =
-        historyWindowCutoffMillis(windowDays, time.today(), time.zone())
-
     private companion object {
-        const val WINDOW_DAYS = 30
         const val TOP_GAMES_LIMIT = 5
+        const val RAREST_ACHIEVEMENTS_LIMIT = 20
     }
 }
+
+private fun joinGameMinutes(
+    minutesByGame: Map<Long, Int>,
+    gamesById: Map<Long, LibraryGame>,
+): List<AnalyticsGame> = minutesByGame.entries
+    .mapNotNull { (appId, minutes) ->
+        if (minutes <= 0) return@mapNotNull null
+        val game = gamesById[appId]
+        AnalyticsGame(
+            appId = appId,
+            name = game?.name ?: "App $appId",
+            iconUrl = game?.iconUrl.orEmpty(),
+            minutes = minutes,
+        )
+    }
+    .sortedWith(compareByDescending<AnalyticsGame> { it.minutes }.thenBy { it.name })
 
 private fun localDate(epochMillis: Long, zone: ZoneId): LocalDate =
     Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalDate()

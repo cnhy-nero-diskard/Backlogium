@@ -217,9 +217,32 @@ private fun DayHeaderRow(
                     )
                 }
             }
-            if (day.achievements.iconUrls.isNotEmpty()) {
+            if (day.gameThumbnails.games.isNotEmpty()) {
                 Row(
                     modifier = Modifier.padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    day.gameThumbnails.games.forEach { game ->
+                        GameIcon(
+                            iconUrl = game.iconUrl,
+                            iconSize = 20.dp,
+                            shape = CircleShape,
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                    }
+                    if (day.gameThumbnails.overflowCount > 0) {
+                        Text(
+                            text = "+${day.gameThumbnails.overflowCount}",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+            }
+            if (day.achievements.iconUrls.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.padding(
+                        top = if (day.gameThumbnails.games.isNotEmpty()) 4.dp else 8.dp,
+                    ),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     day.achievements.iconUrls.forEach { icon ->
