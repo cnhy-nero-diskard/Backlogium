@@ -62,7 +62,7 @@
 
 - [x] 8.1 Run `./gradlew.bat testDebugUnitTest --offline` and fix all affected JVM tests and fakes.
 - [x] 8.2 Run `git diff --check` and validate `refine-collection-pacing-ui` with OpenSpec in non-interactive JSON mode.
-- [ ] 8.3 On a device or emulator, verify Home hierarchy and three-thumbnail overflow with narrow and wide cards, long collection names, missing icons, and several collections; verify portrait hero-capsule artwork keeps Library and collection grids balanced.
-- [ ] 8.4 On a device or emulator, verify one active game illuminates every matching collection, the glow fades after play, and reduced motion uses a non-animated cue.
-- [ ] 8.5 On a device or emulator, verify bright/missing header art leaves horizontal collection metrics, management controls, and both game-detail entry points readable, and missing hero-capsule assets retain the grid fallback.
-- [ ] 8.6 Manually verify reliable, learning, incomplete, on-track, at-risk, today, passed, and completed pacing states, including exact `Change deadline` visibility.
+- [x] 8.3 On a device or emulator, verify Home hierarchy and three-thumbnail overflow with narrow and wide cards, long collection names, missing icons, and several collections; verify portrait hero-capsule artwork keeps Library and collection grids balanced.
+- [x] 8.4 On a device or emulator, verify one active game illuminates every matching collection, the glow fades after play, and reduced motion uses a non-animated cue.
+- [x] 8.5 On a device or emulator, verify bright/missing header art leaves horizontal collection metrics, management controls, and both game-detail entry points readable, and missing hero-capsule assets retain the grid fallback.
+- [x] 8.6 Manually verify reliable, learning, incomplete, on-track, at-risk, today, passed, and completed pacing states, including exact `Change deadline` visibility.
