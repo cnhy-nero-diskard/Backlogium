@@ -112,7 +112,12 @@ fun BacklogiumAppRoot() {
             // and that step read as a crease. Dropping the fill puts header and panel on the same
             // pixels — the shell backdrop — so the boundary cannot draw a line whether or not the
             // in-game wash happens to be active.
-            topBar = { ProfileHeader(transparent = onHome || accentColor != null) },
+            topBar = {
+                ProfileHeader(
+                    transparent = onHome || accentColor != null,
+                    onHome = onHome,
+                )
+            },
             bottomBar = {
                 AnimatedVisibility(
                     visible = !onGameDetail && !onCollectionScreen,
