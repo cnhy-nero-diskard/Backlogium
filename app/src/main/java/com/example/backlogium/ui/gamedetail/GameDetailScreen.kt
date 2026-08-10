@@ -30,11 +30,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -54,6 +57,9 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -67,8 +73,11 @@ import com.example.backlogium.ui.theme.rarityHalo
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowsSort
+import compose.icons.tablericons.ExternalLink
 import compose.icons.tablericons.Trophy
 import java.util.Locale
+
+private const val STEAM_STORE_URL_PREFIX = "https://store.steampowered.com/app/"
 
 /**
  * One game: its own summary — art, playtime, HowLongToBeat lengths, achievement completion, XP,
@@ -81,6 +90,7 @@ import java.util.Locale
  * a game screen showing nothing but an empty state was the gap this closed.
  */
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun GameDetailScreen(
     viewModel: GameDetailViewModel = hiltViewModel(),
     onAccentColorChanged: (Color?) -> Unit = {},
@@ -91,29 +101,39 @@ fun GameDetailScreen(
     // content — reported up rather than drawn here so it can bleed past this screen's own bounds.
     LaunchedEffect(accentColor) { onAccentColorChanged(accentColor) }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(vertical = 16.dp),
+    PullToRefreshBox(
+        isRefreshing = state.isRefreshingPlayerCount,
+        onRefresh = viewModel::refreshPlayerCount,
+        modifier = Modifier.fillMaxSize(),
     ) {
-        item {
-            GameSummarySection(name = state.gameName, summary = state.summary)
-        }
-        if (state.allUnlocked) {
-            item { GameCompletedBanner() }
-        }
-        if (!state.loading && state.achievements.isEmpty()) {
-            item { NoAchievementsNotice() }
-        } else if (state.achievements.isNotEmpty()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(vertical = 16.dp),
+        ) {
             item {
-                AchievementSortControl(
-                    selected = state.sort,
-                    onSelect = viewModel::setSort,
+                GameSummarySection(
+                    name = state.gameName,
+                    appId = viewModel.appId,
+                    summary = state.summary,
                 )
             }
-            items(state.achievements, key = { it.apiName }) { achievement ->
-                AchievementRow(achievement)
+            if (state.allUnlocked) {
+                item { GameCompletedBanner() }
+            }
+            if (!state.loading && state.achievements.isEmpty()) {
+                item { NoAchievementsNotice() }
+            } else if (state.achievements.isNotEmpty()) {
+                item {
+                    AchievementSortControl(
+                        selected = state.sort,
+                        onSelect = viewModel::setSort,
+                    )
+                }
+                items(state.achievements, key = { it.apiName }) { achievement ->
+                    AchievementRow(achievement)
+                }
             }
         }
     }
@@ -181,7 +201,10 @@ private fun Color.mutedForBackdrop(): Color {
  * completion/XP line — so the first achievement row sits at or near the fold on a typical phone.
  */
 @Composable
-private fun GameSummarySection(name: String, summary: GameSummaryUi) {
+private fun GameSummarySection(name: String, appId: Long, summary: GameSummaryUi) {
+    val uriHandler = LocalUriHandler.current
+    val linkLabel = name.takeIf { it.isNotBlank() }?.let { "Open $it on Steam" } ?: "Open game on Steam"
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column {
             if (summary.headerUrl.isNotBlank()) {
@@ -209,6 +232,21 @@ private fun GameSummarySection(name: String, summary: GameSummaryUi) {
                 if (summary.hasHltb) {
                     Spacer(Modifier.height(8.dp))
                     HltbLengths(summary)
+                }
+                TextButton(
+                    onClick = { uriHandler.openUri("$STEAM_STORE_URL_PREFIX$appId") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentDescription = linkLabel },
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+                ) {
+                    Icon(
+                        imageVector = TablerIcons.ExternalLink,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("View on Steam")
                 }
             }
         }

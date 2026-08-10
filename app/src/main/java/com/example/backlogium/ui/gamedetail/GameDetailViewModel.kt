@@ -17,12 +17,15 @@ import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.gamification.RuleConfig
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -105,6 +108,7 @@ data class GameDetailUiState(
     val summary: GameSummaryUi = GameSummaryUi(),
     val achievements: List<AchievementUi> = emptyList(),
     val sort: AchievementSort = AchievementSort.DATE_ACHIEVED,
+    val isRefreshingPlayerCount: Boolean = false,
 ) {
     /** True once every known achievement for this game is unlocked (100% completion). */
     val allUnlocked: Boolean
@@ -120,12 +124,12 @@ data class GameDetailUiState(
 class GameDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     achievementRepository: AchievementRepository,
-    gameRepository: GameRepository,
+    private val gameRepository: GameRepository,
     sessionRepository: SessionRepository,
     settings: SettingsRepository,
 ) : ViewModel() {
 
-    private val appId: Long = checkNotNull(savedStateHandle["appId"])
+    internal val appId: Long = checkNotNull(savedStateHandle["appId"])
 
     /** Transient: a lens on the list, reset every visit rather than persisted as a preference. */
     private val sort = MutableStateFlow(AchievementSort.DATE_ACHIEVED)
@@ -136,6 +140,8 @@ class GameDetailViewModel @Inject constructor(
      * hold up the rest of the summary or the achievement list.
      */
     private val activePlayers = MutableStateFlow<Int?>(null)
+    private val refreshingPlayerCount = MutableStateFlow(false)
+    private var activePlayersPollingJob: Job? = null
 
     private val content = combine(
         gameRepository.library,
@@ -146,7 +152,12 @@ class GameDetailViewModel @Inject constructor(
         Content(games.firstOrNull { it.appId == appId }, achievements, trackedByGame[appId] ?: 0, config)
     }
 
-    val uiState: StateFlow<GameDetailUiState> = combine(content, sort, activePlayers) { content, sort, activePlayers ->
+    val uiState: StateFlow<GameDetailUiState> = combine(
+        content,
+        sort,
+        activePlayers,
+        refreshingPlayerCount,
+    ) { content, sort, activePlayers, isRefreshingPlayerCount ->
         val rows = content.achievements.map { it.toUi(content.config) }
         GameDetailUiState(
             loading = false,
@@ -154,6 +165,7 @@ class GameDetailViewModel @Inject constructor(
             summary = content.toSummary(rows, activePlayers),
             achievements = rows.sortedWith(sort.comparator()),
             sort = sort,
+            isRefreshingPlayerCount = isRefreshingPlayerCount,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -164,11 +176,32 @@ class GameDetailViewModel @Inject constructor(
     init {
         // Polls only for as long as this ViewModel (and thus this screen) is alive — leaving
         // the screen clears viewModelScope, which stops the loop with no extra lifecycle wiring.
-        viewModelScope.launch {
-            while (true) {
+        activePlayersPollingJob = viewModelScope.launch { pollActivePlayers() }
+    }
+
+    /** Refresh only the live player count, making this fetch the new anchor for periodic polling. */
+    fun refreshPlayerCount() {
+        if (refreshingPlayerCount.value) return
+
+        activePlayersPollingJob?.cancel()
+        refreshingPlayerCount.value = true
+        activePlayersPollingJob = viewModelScope.launch {
+            try {
                 activePlayers.value = gameRepository.currentPlayerCount(appId)
+                // Keep the next poll relative to the manual fetch instead of the cancelled loop's
+                // previous schedule, which could otherwise fire immediately after the gesture.
                 delay(ACTIVE_PLAYERS_POLL_INTERVAL_MS)
+                pollActivePlayers()
+            } finally {
+                refreshingPlayerCount.value = false
             }
+        }
+    }
+
+    private suspend fun pollActivePlayers() {
+        while (currentCoroutineContext().isActive) {
+            activePlayers.value = gameRepository.currentPlayerCount(appId)
+            delay(ACTIVE_PLAYERS_POLL_INTERVAL_MS)
         }
     }
 
