@@ -67,9 +67,12 @@
 - [x] 6.5 Do not reorder or hoist the running game; the user's chosen sort stands (already present)
 - [x] 6.6 Ensure presence clears when the service stops, so no row keeps a stale dot
   (`LiveStatusRepository.stopPolling()` resets the shared state to `LiveStatus()`)
-- [ ] 6.7 If `document-color-palette` has already landed, add the new token to the README palette
-  — **not yet applicable**: `document-color-palette` is still in-progress (0/7 tasks) as of this
-  session; revisit when it lands.
+- [x] 6.7 If `document-color-palette` has already landed, add the new token to the README palette
+  — **done via `document-color-palette`**: it has now landed and been archived (2026-08-10), and
+  its task 1.3 carried the token into the README "Visual Identity" palette table
+  (`PlayingIndicator #4ADE80`, `README.md:96`) — exactly the cross-change handoff `design.md`
+  anticipated ("whichever change lands second must carry the token"). The conditional is met and
+  the token is present, so no `enhance-now-playing` action remains.
 
 ## 7. Verification
 - [x] 7.1 Confirm by inspection that no `domain/` code and no `GamificationUpdater` path reads

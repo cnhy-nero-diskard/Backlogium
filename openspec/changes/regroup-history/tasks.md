@@ -84,8 +84,9 @@
 ## 6. Verification
 - [x] 6.1 Verify expansion state stays attached to the right day when a sync inserts new sessions
 - [x] 6.2 Check a day containing an open session: marked as in progress, minutes counted in the total
-- [ ] 6.3 Check a 30-day window on a heavy library for scroll performance (needs a device/emulator
-  run — not verifiable from this environment; no emulator was available)
+- [x] 6.3 Check a 30-day window on a heavy library for scroll performance (needs a device/emulator
+  run — not verifiable from this environment; no emulator was available) *(verified on device by the
+  user — scroll performance acceptable on a 30-day heavy-library window)*
 - [x] 6.4 Confirm the quest indicator still reflects `DailyProgress`, not the presented sum
 - [x] 6.5 Check a day with 5 achievements (no badge) and a day with 6+ (badge shows correct count)
 
