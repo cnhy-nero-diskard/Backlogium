@@ -25,4 +25,7 @@ object SteamIconMapper {
      * loader simply renders nothing when it 404s, which is the intended fallback.
      */
     fun headerUrl(appId: Long): String = "$STORE_CDN_BASE/$appId/header.jpg"
+
+    /** Steam's portrait grid artwork, served as the well-known `hero_capsule.jpg` asset. */
+    fun heroCapsuleUrl(appId: Long): String = "$STORE_CDN_BASE/$appId/hero_capsule.jpg"
 }

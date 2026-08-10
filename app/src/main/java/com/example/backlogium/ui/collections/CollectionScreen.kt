@@ -1,6 +1,7 @@
 package com.example.backlogium.ui.collections
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +25,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -55,6 +57,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -70,6 +73,7 @@ import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.label
 import com.example.backlogium.ui.components.GameHeaderBackdrop
+import com.example.backlogium.ui.components.GameHeroCapsule
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.components.GameListDensityControl
 import com.example.backlogium.ui.gamedetail.GameDetailPresentation
@@ -890,55 +894,53 @@ private fun CollectionGameTile(
     modifier: Modifier = Modifier,
     onOpenGameDetail: (Long) -> Unit,
 ) {
+    // Grid cells use Steam's portrait hero_capsule artwork; the wide header-art treatment remains
+    // reserved for horizontal cards.
+    val compact = density == GameListDensity.COMPACT_GRID
+    val tileShape = RoundedCornerShape(18.dp)
+    val heroShape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)
     val cardSurface = accentColor.copy(alpha = 0.08f)
         .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
     Card(
         onClick = { onOpenGameDetail(member.appId) },
         modifier = modifier
             .padding(vertical = 4.dp)
-            .aspectRatio(if (density == GameListDensity.COMPACT_GRID) 0.82f else 0.9f)
+            .aspectRatio(if (compact) 0.62f else 0.60f)
             .semantics {
                 contentDescription = "Open ${member.name} details"
             },
+        shape = tileShape,
+        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.28f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         colors = CardDefaults.cardColors(containerColor = cardSurface),
     ) {
-        Box(Modifier.fillMaxWidth()) {
-            if (density != GameListDensity.COMPACT_GRID) {
-                GameHeaderBackdrop(
-                    headerUrl = member.headerUrl,
+        Column(Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .background(MaterialTheme.colorScheme.surfaceVariant, heroShape)
+                    .clip(heroShape),
+            ) {
+                GameHeroCapsule(
+                    heroCapsuleUrl = member.heroCapsuleUrl,
                     modifier = Modifier.matchParentSize(),
+                    shape = heroShape,
+                )
+                CurrentPlayingDot(
+                    isCurrentlyPlaying = member.isCurrentlyPlaying,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp),
                 )
             }
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp),
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-                Box {
-                    member.iconUrl?.let { iconUrl ->
-                        GameIcon(
-                            iconUrl = iconUrl,
-                            iconSize = if (density == GameListDensity.COMPACT_GRID) 52.dp else 64.dp,
-                        )
-                    } ?: Box(
-                        modifier = Modifier
-                            .size(if (density == GameListDensity.COMPACT_GRID) 52.dp else 64.dp)
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = TablerIcons.DeviceGamepad,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    CurrentPlayingDot(
-                        isCurrentlyPlaying = member.isCurrentlyPlaying,
-                        modifier = Modifier.align(Alignment.TopEnd),
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
                 Text(
                     text = member.name,
                     style = MaterialTheme.typography.bodyMedium,

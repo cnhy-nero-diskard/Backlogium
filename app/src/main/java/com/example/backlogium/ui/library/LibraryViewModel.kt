@@ -45,6 +45,8 @@ data class GoalGameUi(
     val iconUrl: String,
     /** Store header art, drawn as a faint backdrop behind the row. */
     val headerUrl: String = "",
+    /** Steam's portrait hero capsule, used by grid cells. */
+    val heroCapsuleUrl: String = "",
     override val playtimeForever: Int,
     /** Steam's rolling two-week playtime — the "recently played" sort key, not displayed. */
     override val playtime2Weeks: Int = 0,
@@ -69,6 +71,7 @@ data class BacklogGameUi(
     override val name: String,
     val iconUrl: String,
     val headerUrl: String = "",
+    val heroCapsuleUrl: String = "",
     override val playtimeForever: Int,
     override val playtime2Weeks: Int = 0,
     override val xpContributed: Int = 0,
@@ -386,6 +389,7 @@ private fun LibraryGame.toGoalUi(
     name = name,
     iconUrl = iconUrl,
     headerUrl = headerUrl,
+    heroCapsuleUrl = heroCapsuleUrl,
     playtimeForever = playtimeForever,
     playtime2Weeks = playtime2Weeks,
     xpContributed = xpContribution(xp),
@@ -408,6 +412,7 @@ private fun LibraryGame.toBacklogUi(
     name = name,
     iconUrl = iconUrl,
     headerUrl = headerUrl,
+    heroCapsuleUrl = heroCapsuleUrl,
     playtimeForever = playtimeForever,
     playtime2Weeks = playtime2Weeks,
     xpContributed = xpContribution(xp),

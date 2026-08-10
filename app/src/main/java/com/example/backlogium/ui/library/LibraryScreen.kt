@@ -56,7 +56,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -73,6 +72,7 @@ import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.components.GameHeaderBackdrop
+import com.example.backlogium.ui.components.GameHeroCapsule
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.components.GameListDensityControl
 import com.example.backlogium.ui.collections.GenreFilterChoice
@@ -112,6 +112,7 @@ private data class LibraryDisplayGame(
     val name: String,
     val iconUrl: String,
     val headerUrl: String,
+    val heroCapsuleUrl: String,
     val playtimeForever: Int,
     val completionistMinutes: Int?,
     val hltbStatus: HltbMatchState?,
@@ -758,6 +759,7 @@ private fun GoalGameUi.toDisplayGame() = LibraryDisplayGame(
     name = name,
     iconUrl = iconUrl,
     headerUrl = headerUrl,
+    heroCapsuleUrl = heroCapsuleUrl,
     playtimeForever = playtimeForever,
     completionistMinutes = completionistMinutes,
     hltbStatus = hltbStatus,
@@ -773,6 +775,7 @@ private fun BacklogGameUi.toDisplayGame() = LibraryDisplayGame(
     name = name,
     iconUrl = iconUrl,
     headerUrl = headerUrl,
+    heroCapsuleUrl = heroCapsuleUrl,
     playtimeForever = playtimeForever,
     completionistMinutes = completionistMinutes,
     hltbStatus = hltbStatus,
@@ -896,10 +899,9 @@ private fun LibraryGameRow(
 }
 
 /**
- * Grid cell renderer. The two grid densities share a deliberate tile shell while changing only
- * the amount of information in the body: the regular grid gets a small art stage and metadata,
- * while compact grid becomes a clean thumbnail shelf. Grid cards intentionally have no trailing
- * action control, keeping their visual hierarchy focused on the game itself.
+ * Grid cell renderer. The two grid densities share a deliberate tile shell and portrait Steam hero
+ * capsule stage while changing only the amount of information in the body. Grid cards intentionally
+ * have no trailing action control, keeping their visual hierarchy focused on the game itself.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -914,6 +916,7 @@ private fun LibraryGameCell(
 ) {
     val compact = density == GameListDensity.COMPACT_GRID
     val tileShape = RoundedCornerShape(18.dp)
+    val heroShape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)
     val borderColor = when {
         selected -> MaterialTheme.colorScheme.primary
         game.isCurrentlyPlaying -> MaterialTheme.colorScheme.playingIndicator
@@ -922,7 +925,7 @@ private fun LibraryGameCell(
     Card(
         modifier = modifier
             .padding(vertical = 4.dp)
-            .aspectRatio(if (compact) 0.84f else 0.88f)
+            .aspectRatio(if (compact) 0.62f else 0.60f)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         shape = tileShape,
         border = BorderStroke(if (selected) 2.dp else 1.dp, borderColor),
@@ -939,47 +942,15 @@ private fun LibraryGameCell(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(if (compact) 76.dp else 92.dp)
-                    .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                    .weight(1f)
+                    .clip(heroShape)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             ) {
-                if (!compact) {
-                    GameHeaderBackdrop(
-                        headerUrl = game.headerUrl,
-                        modifier = Modifier.matchParentSize(),
-                    )
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    0f to Color.Transparent,
-                                    1f to MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
-                                ),
-                            ),
-                    )
-                }
-
-                val iconFrameModifier = if (compact) {
-                    Modifier.align(Alignment.Center)
-                } else {
-                    Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(start = 12.dp, bottom = 10.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
-                        .padding(4.dp)
-                }
-                Box(modifier = iconFrameModifier) {
-                    GameIconWithHltbBadge(
-                        iconUrl = game.iconUrl,
-                        status = game.hltbStatus,
-                        op = game.fetchOp,
-                        isCurrentlyPlaying = game.isCurrentlyPlaying,
-                        iconSize = if (compact) 54.dp else 62.dp,
-                        showHltbStatus = false,
-                    )
-                }
+                GameHeroCapsule(
+                    heroCapsuleUrl = game.heroCapsuleUrl,
+                    modifier = Modifier.matchParentSize(),
+                    shape = heroShape,
+                )
 
                 if (selectionMode) {
                     TileSelectionIndicator(
@@ -992,7 +963,6 @@ private fun LibraryGameCell(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
                     .padding(horizontal = if (compact) 9.dp else 12.dp, vertical = 9.dp),
                 horizontalAlignment = if (compact) Alignment.CenterHorizontally else Alignment.Start,
             ) {

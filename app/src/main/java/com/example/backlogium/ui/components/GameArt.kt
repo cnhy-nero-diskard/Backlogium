@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.SubcomposeAsyncImage
@@ -62,4 +63,44 @@ fun GameIcon(
             }
         },
     )
+}
+
+/**
+ * Steam's portrait `hero_capsule.jpg` artwork for grid surfaces. The fallback stays inside the
+ * same frame when the asset is unavailable, so a missing CDN image never changes tile geometry.
+ */
+@Composable
+fun GameHeroCapsule(
+    heroCapsuleUrl: String,
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(12.dp),
+) {
+    val shapedModifier = modifier.clip(shape)
+    if (heroCapsuleUrl.isBlank()) {
+        HeroCapsuleFallback(shapedModifier)
+        return
+    }
+    SubcomposeAsyncImage(
+        model = heroCapsuleUrl,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = shapedModifier,
+        loading = { HeroCapsuleFallback(Modifier.fillMaxSize()) },
+        error = { HeroCapsuleFallback(Modifier.fillMaxSize()) },
+    )
+}
+
+@Composable
+private fun HeroCapsuleFallback(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = TablerIcons.DeviceGamepad,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(32.dp),
+        )
+    }
 }
