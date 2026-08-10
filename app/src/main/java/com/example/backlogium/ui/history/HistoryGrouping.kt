@@ -54,6 +54,12 @@ data class HistoryDayGroup(
     val achievements: HistoryAchievements,
 )
 
+/** Local-day epoch bounds shared by History and Analytics; the end is exclusive. */
+data class HistoryWindowBounds(
+    val startInclusiveMillis: Long,
+    val endExclusiveMillis: Long,
+)
+
 /**
  * Joins sessions, the library, per-day progress, and achievement unlocks into the day → game →
  * session tree the History screen renders (regroup-history design).
@@ -152,8 +158,27 @@ private fun localDate(epochMillis: Long, zone: ZoneId): String =
  */
 fun historyWindowCutoffMillis(windowDays: Int, today: LocalDate, zone: ZoneId): Long {
     require(windowDays > 0) { "windowDays must be positive, was $windowDays" }
-    return today.minusDays((windowDays - 1).toLong())
-        .atStartOfDay(zone)
-        .toInstant()
-        .toEpochMilli()
+    return historyWindowBounds(
+        start = today.minusDays((windowDays - 1).toLong()),
+        endInclusive = today,
+        zone = zone,
+    ).startInclusiveMillis
+}
+
+/**
+ * Epoch bounds for complete local days from [start] through [endInclusive]. The exclusive upper
+ * bound keeps a session starting at the next local midnight out of the selected window.
+ */
+fun historyWindowBounds(
+    start: LocalDate,
+    endInclusive: LocalDate,
+    zone: ZoneId,
+): HistoryWindowBounds {
+    require(!endInclusive.isBefore(start)) {
+        "endInclusive must not be before start"
+    }
+    return HistoryWindowBounds(
+        startInclusiveMillis = start.atStartOfDay(zone).toInstant().toEpochMilli(),
+        endExclusiveMillis = endInclusive.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli(),
+    )
 }

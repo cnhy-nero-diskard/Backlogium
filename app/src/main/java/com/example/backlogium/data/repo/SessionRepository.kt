@@ -32,6 +32,14 @@ class SessionRepository @Inject constructor(
     fun sessionsSince(cutoffMillis: Long): Flow<List<PlaySession>> =
         sessionDao.observeSince(cutoffMillis).map { rows -> rows.map(Session::toDomain) }
 
+    /** Sessions whose start timestamps fall inside an explicit start-inclusive/end-exclusive window. */
+    fun sessionsBetween(startInclusiveMillis: Long, endExclusiveMillis: Long): Flow<List<PlaySession>> =
+        sessionDao.observeBetween(startInclusiveMillis, endExclusiveMillis)
+            .map { rows -> rows.map(Session::toDomain) }
+
+    /** Earliest tracked session start, or null before the first session is recorded. */
+    val earliestSessionStart: Flow<Long?> = sessionDao.observeEarliestSessionStart()
+
     /** Closed synthesized sessions used by Personal Pace; open sessions are excluded in Room. */
     fun closedSessionsSince(cutoffMillis: Long): Flow<List<PlaySession>> =
         sessionDao.observeClosedSince(cutoffMillis).map { rows -> rows.map(Session::toDomain) }
@@ -54,6 +62,11 @@ class SessionRepository @Inject constructor(
      */
     fun minutesByGameSince(cutoffMillis: Long): Flow<Map<Long, Int>> =
         sessionDao.observeMinutesByGameSince(cutoffMillis)
+            .map { rows -> rows.associate { it.appId to it.minutes } }
+
+    /** Tracked minutes per game inside an explicit start-inclusive/end-exclusive window. */
+    fun minutesByGameBetween(startInclusiveMillis: Long, endExclusiveMillis: Long): Flow<Map<Long, Int>> =
+        sessionDao.observeMinutesByGameBetween(startInclusiveMillis, endExclusiveMillis)
             .map { rows -> rows.associate { it.appId to it.minutes } }
 }
 
