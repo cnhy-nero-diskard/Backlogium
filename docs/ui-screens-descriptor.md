@@ -18,15 +18,18 @@ and **HowLongToBeat review** (from Library). Every screen renders from local sta
     primary/accent (gold) `#E0A83A` on `#241A00`, secondary (steel-blue) `#7FA6C9`.
   - Light scheme — background/surface `#FBF8F1`, primary (gold) `#7A5A00`, secondary
     (steel-blue) `#2F5B7C`.
-  - The single gold accent is a deliberate, forward-compatible hook (a possible future
-    LEGENDARY rarity color) — the full rarity ramp is intentionally out of scope.
+  - The single gold hue is enforced as **hue territory, not a milestone reservation**: gold is
+    Material 3 `primary` and carries ordinary emphasis everywhere, but nothing else may be gold.
+    The achievement rarity ramp (`enhance-game-detail`) reuses `Gold` at LEGENDARY and `SteelBlue`
+    at RARE rather than minting new accents — `RarityCommon #8A93A3` and `RarityUncommon
+    #6FAE7A` are the only new hues it adds.
   - **Tertiary container (enhance-now-playing)** — a hand-tuned steel-blue container/on-container
     pair for the Home now-playing card, since Material 3's auto-derived default would otherwise be
     an unrelated baseline purple: dark `#243B4C` on-container `#CFE4F0`; light `#D3E4F0`
     on-container `#12283A`.
   - **Live/active green (`playingIndicator`)** — the Library's "currently playing" row dot: dark
-    `#4ADE80`, light `#15803D`. Distinct from both the gold milestone accent and the steel-blue
-    in-game lane, so it can't be mistaken for either.
+    `#4ADE80`, light `#15803D`. Distinct from both gold's territory and the steel-blue in-game
+    lane, and vivid enough not to be mistaken for `RarityUncommon`'s muted sage.
 - **Typography:** Material 3 type scale, with a bundled **display font (Orbitron, SIL OFL,
   `res/font/orbitron.ttf`)** applied to the large numeral moments only — `headlineMedium`
   (Home "Level N") and `headlineSmall` (Home streak count). All other styles stay on
