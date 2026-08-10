@@ -75,7 +75,7 @@ fun BacklogiumAppRoot() {
     // Game detail isn't one of the top-level tabs, so the bottom bar would show with nothing
     // selected — hide it there instead of leaving a misleading state. Same for the collection
     // collection destination, another pushed sub-destination.
-    val onGameDetail = currentDestination?.route == ROUTE_GAME_DETAIL
+    val fullDestinationGameDetailPresented = currentDestination?.route == ROUTE_GAME_DETAIL
     val onCollectionScreen = currentDestination?.route == ROUTE_COLLECTION
 
     // Hoisted above the Scaffold so a screen-reported wash can paint behind the top bar too, not
@@ -86,8 +86,8 @@ fun BacklogiumAppRoot() {
     // game detail reports once on load and never retracts it.)
     var accentColor by remember { mutableStateOf<Color?>(null) }
     val onHome = currentDestination?.route == Destination.HOME.route
-    LaunchedEffect(onGameDetail, onHome) {
-        if (!onGameDetail && !onHome) accentColor = null
+    LaunchedEffect(fullDestinationGameDetailPresented, onHome, accentColor) {
+        if (!fullDestinationGameDetailPresented && !onHome) accentColor = null
     }
 
     // Shell-level and once per install: the ongoing now-playing notification is otherwise silently
@@ -120,7 +120,7 @@ fun BacklogiumAppRoot() {
             },
             bottomBar = {
                 AnimatedVisibility(
-                    visible = !onGameDetail && !onCollectionScreen,
+                    visible = !fullDestinationGameDetailPresented && !onCollectionScreen,
                     enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                     exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                 ) {
@@ -185,7 +185,9 @@ fun BacklogiumAppRoot() {
                 composable(
                     route = ROUTE_GAME_DETAIL,
                     arguments = listOf(navArgument("appId") { type = NavType.LongType }),
-                ) { GameDetailScreen(onAccentColorChanged = { accentColor = it }) }
+                ) {
+                    GameDetailScreen(onAccentColorChanged = { accentColor = it })
+                }
                 composable(
                     route = ROUTE_COLLECTION,
                     arguments = listOf(navArgument("collectionId") { type = NavType.LongType }),

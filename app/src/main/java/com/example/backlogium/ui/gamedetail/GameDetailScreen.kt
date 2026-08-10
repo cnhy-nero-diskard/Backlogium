@@ -39,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
@@ -79,6 +80,11 @@ import java.util.Locale
 
 private const val STEAM_STORE_URL_PREFIX = "https://store.steampowered.com/app/"
 
+enum class GameDetailPresentation {
+    FULL_DESTINATION,
+    COLLECTION_OVERLAY,
+}
+
 /**
  * One game: its own summary — art, playtime, HowLongToBeat lengths, achievement completion, XP,
  * and its current Steam concurrent-player count when available (add-active-player-count) — above
@@ -92,52 +98,108 @@ private const val STEAM_STORE_URL_PREFIX = "https://store.steampowered.com/app/"
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
 fun GameDetailScreen(
+    appId: Long? = null,
+    presentation: GameDetailPresentation = GameDetailPresentation.FULL_DESTINATION,
     viewModel: GameDetailViewModel = hiltViewModel(),
     onAccentColorChanged: (Color?) -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val accentColor by rememberHeaderAccentColor(state.summary.headerUrl)
-    // The wash itself is painted by the app shell, behind the top bar as well as this screen's own
-    // content — reported up rather than drawn here so it can bleed past this screen's own bounds.
-    LaunchedEffect(accentColor) { onAccentColorChanged(accentColor) }
+    val overlay = presentation == GameDetailPresentation.COLLECTION_OVERLAY
+    val detailAppId = appId ?: viewModel.appId
 
-    PullToRefreshBox(
-        isRefreshing = state.isRefreshingPlayerCount,
-        onRefresh = viewModel::refreshPlayerCount,
-        modifier = Modifier.fillMaxSize(),
+    LaunchedEffect(viewModel, appId) {
+        appId?.let(viewModel::setAppId)
+        viewModel.startPolling()
+    }
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.stopPolling() }
+    }
+
+    // Full destinations report the wash to the shell so it can bleed behind the profile header.
+    // A collection overlay deliberately does not report it: its bounded background below is the
+    // only surface that may receive the game's accent.
+    LaunchedEffect(presentation, accentColor) {
+        if (!overlay) onAccentColorChanged(accentColor)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .then(
+                if (overlay) {
+                    Modifier.background(MaterialTheme.colorScheme.background)
+                } else {
+                    Modifier
+                },
+            )
+            .then(
+                if (overlay) {
+                    accentColor?.let { Modifier.background(gameDetailWash(it)) } ?: Modifier
+                } else {
+                    Modifier
+                },
+            ),
     ) {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(vertical = 16.dp),
-        ) {
-            item {
-                GameSummarySection(
-                    name = state.gameName,
-                    appId = viewModel.appId,
-                    summary = state.summary,
-                )
-            }
-            if (state.allUnlocked) {
-                item { GameCompletedBanner() }
-            }
-            if (!state.loading && state.achievements.isEmpty()) {
-                item { NoAchievementsNotice() }
-            } else if (state.achievements.isNotEmpty()) {
-                item {
-                    AchievementSortControl(
-                        selected = state.sort,
-                        onSelect = viewModel::setSort,
-                    )
-                }
-                items(state.achievements, key = { it.apiName }) { achievement ->
-                    AchievementRow(achievement)
-                }
+        if (overlay) {
+            GameDetailList(state = state, appId = detailAppId, viewModel = viewModel)
+        } else {
+            PullToRefreshBox(
+                isRefreshing = state.isRefreshingPlayerCount,
+                onRefresh = viewModel::refreshPlayerCount,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                GameDetailList(state = state, appId = detailAppId, viewModel = viewModel)
             }
         }
     }
 }
+
+@Composable
+private fun GameDetailList(
+    state: GameDetailUiState,
+    appId: Long,
+    viewModel: GameDetailViewModel,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(vertical = 16.dp),
+    ) {
+        item {
+            GameSummarySection(
+                name = state.gameName,
+                appId = appId,
+                summary = state.summary,
+            )
+        }
+        if (state.allUnlocked) {
+            item { GameCompletedBanner() }
+        }
+        if (!state.loading && state.achievements.isEmpty()) {
+            item { NoAchievementsNotice() }
+        } else if (state.achievements.isNotEmpty()) {
+            item {
+                AchievementSortControl(
+                    selected = state.sort,
+                    onSelect = viewModel::setSort,
+                )
+            }
+            items(state.achievements, key = { it.apiName }) { achievement ->
+                AchievementRow(achievement)
+            }
+        }
+    }
+}
+
+private fun gameDetailWash(accentColor: Color): Brush = Brush.verticalGradient(
+    colorStops = arrayOf(
+        0f to accentColor.copy(alpha = 0.75f),
+        0.45f to accentColor.copy(alpha = 0.32f),
+        1f to Color.Transparent,
+    ),
+)
 
 /**
  * The header art's muted average color, re-derived whenever the art itself changes. Coil already
