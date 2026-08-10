@@ -13,14 +13,14 @@
 - [x] 1.5 Confirm the bottom navigation bar still hides correctly on the pushed game detail, and
       that back from game detail returns to the collection overview rather than Home.
 - [x] 1.6 Verify the collection overview's scroll position is preserved on return.
-- [ ] 1.7 `./gradlew :app:testDebugUnitTest` and a manual pass on a collection with and without
+- [x] 1.7 `./gradlew :app:testDebugUnitTest` and a manual pass on a collection with and without
       members.
 
 ## Phase 2 — Overlay presentation
 
 ### Spike (do first; gates the rest of phase 2)
 
-- [ ] 2.1 Prototype `GameDetailScreen`'s `LazyColumn` inside a partially-expanded `ModalBottomSheet`
+- [x] 2.1 Prototype `GameDetailScreen`'s `LazyColumn` inside a partially-expanded `ModalBottomSheet`
       and confirm all three behaviors: the list scrolls internally, a downward drag from the list's
       top dismisses, and a drag on the handle dismisses from any scroll position. If drag and scroll
       cannot be arbitrated without contortion, stop and reassess phase 2 — phase 1 stands alone.
@@ -57,12 +57,12 @@
 
 ## Validation
 
-- [ ] 3.1 Walk every scenario in `specs/app-ui/spec.md`: both entry points, both presentations,
+- [x] 3.1 Walk every scenario in `specs/app-ui/spec.md`: both entry points, both presentations,
       swipe dismissal, back dismissal, scrolling without dismissal, wash containment in the overlay,
       wash spanning the shell on the destination, wash cleared on dismissal, and a game whose header
       art does not resolve.
 - [x] 3.2 Confirm game detail content is identical between the two entry points for the same game.
-- [ ] 3.3 Check reduced-motion behavior for the sheet's rise animation against
+- [x] 3.3 Check reduced-motion behavior for the sheet's rise animation against
       `ui/util/ReducedMotion.kt`, consistent with the app's other animated surfaces.
 - [x] 3.4 `./gradlew :gamification:test :app:testDebugUnitTest`.
 - [x] 3.5 `openspec validate collection-game-detail-sheet`.
