@@ -96,9 +96,11 @@ This change is therefore almost entirely subtraction of a narrowing, plus a colo
 
 None. No schema, no persisted state, no settings key. Revertable by restoring the narrowed projection.
 
-## Open Questions
+## Resolved Questions
 
-- Should the Library's currently-playing dot remain once the game's name carries the accent, or does
-  the name plus its accessible description suffice? Keeping it is the safer default and is what the
-  colour-independence requirement is satisfied by today; removing it would need another non-colour
-  carrier in its place.
+- **The Library's currently-playing dot remains.** The accented name identifies the game visually,
+  while the existing dot and its `Currently playing` content description provide the non-colour
+  signal required for accessibility. Removing the dot would require another equivalent carrier.
+- **The accent passes as body text in both schemes.** `PlayingIndicator` against `NavySurface` is
+  9.79:1, and `PlayingIndicatorLight` against `LightSurface` is 4.73:1; both meet the 4.5:1 body-text
+  threshold, so the existing dot colors remain unchanged.
