@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -729,15 +730,13 @@ private fun CollectionGameThumbs(
     ) {
         preview.visibleGames.forEach { game ->
             if (game.iconUrl != null) {
-                GameIcon(iconUrl = game.iconUrl, iconSize = 26.dp)
+                GameIcon(iconUrl = game.iconUrl, iconSize = 26.dp, shape = CircleShape)
             } else {
                 Box(
                     modifier = Modifier
                         .size(26.dp)
-                        .background(
-                            accentColor.copy(alpha = 0.16f),
-                            RoundedCornerShape(6.dp),
-                        ),
+                        .clip(CircleShape)
+                        .background(accentColor.copy(alpha = 0.16f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(

@@ -11,6 +11,9 @@ import java.time.ZoneId
 /** Achievement thumbnails cap per day header before collapsing into a "+N" badge. */
 const val HISTORY_ACHIEVEMENT_CAP = 5
 
+/** Game thumbnails use the same compact five-item cap as the achievement row. */
+const val HISTORY_GAME_THUMBNAIL_CAP = HISTORY_ACHIEVEMENT_CAP
+
 /** One session as the History tree renders it — a leaf under a [HistoryGameGroup]. */
 data class HistorySessionUi(
     val id: Long,
@@ -34,6 +37,12 @@ data class HistoryAchievements(
     val overflowCount: Int,
 )
 
+/** A day header's game thumbnails, capped before collapsing into a "+N" badge. */
+data class HistoryGameThumbnails(
+    val games: List<HistoryGameGroup> = emptyList(),
+    val overflowCount: Int = 0,
+)
+
 /** One day of history: its games (and their sessions), its totals, and its achievement row. */
 data class HistoryDayGroup(
     val date: String,
@@ -41,6 +50,7 @@ data class HistoryDayGroup(
     val goalMinutesPlayed: Int,
     val questMet: Boolean,
     val games: List<HistoryGameGroup>,
+    val gameThumbnails: HistoryGameThumbnails = HistoryGameThumbnails(),
     val achievements: HistoryAchievements,
 )
 
@@ -116,6 +126,10 @@ fun groupHistory(
             goalMinutesPlayed = daySessions.filter { it.appId in goalAppIds }.sumOf { it.minutes },
             questMet = progress?.questMet ?: false,
             games = gameGroups,
+            gameThumbnails = HistoryGameThumbnails(
+                games = gameGroups.take(HISTORY_GAME_THUMBNAIL_CAP),
+                overflowCount = (gameGroups.size - HISTORY_GAME_THUMBNAIL_CAP).coerceAtLeast(0),
+            ),
             achievements = HistoryAchievements(
                 iconUrls = unlocksForDay.take(HISTORY_ACHIEVEMENT_CAP).map { it.iconUrl },
                 overflowCount = (unlocksForDay.size - HISTORY_ACHIEVEMENT_CAP).coerceAtLeast(0),

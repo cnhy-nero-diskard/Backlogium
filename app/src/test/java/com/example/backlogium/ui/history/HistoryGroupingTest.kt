@@ -127,6 +127,7 @@ class HistoryGroupingTest {
         assertEquals("2026-07-20", result.date)
         assertEquals(0, result.minutesPlayed)
         assertTrue(result.games.isEmpty())
+        assertTrue(result.gameThumbnails.games.isEmpty())
     }
 
     @Test
@@ -176,6 +177,54 @@ class HistoryGroupingTest {
 
         assertEquals(5, result.achievements.iconUrls.size)
         assertEquals(1, result.achievements.overflowCount)
+    }
+
+    @Test
+    fun fivePlayedGames_showsFiveThumbnailsInExpandedGameOrder() {
+        val day = "2026-07-25"
+        val sessions = (1L..5L).map { appId ->
+            session(
+                id = appId,
+                appId = appId,
+                startAt = atUtc(2026, 7, 25, appId.toInt(), 0),
+                minutes = appId.toInt() * 10,
+            )
+        }
+
+        val result = groupHistory(
+            sessions = sessions,
+            games = (1L..5L).map { game(it, "Game $it") },
+            dailyProgress = listOf(DayProgress(day, 0, 0, false)),
+            achievementUnlocks = emptyList(),
+            zone = zone,
+        ).single()
+
+        assertEquals(listOf(5L, 4L, 3L, 2L, 1L), result.gameThumbnails.games.map { it.appId })
+        assertEquals(0, result.gameThumbnails.overflowCount)
+    }
+
+    @Test
+    fun sixPlayedGames_showsFiveThumbnailsAndCorrectOverflowCount() {
+        val day = "2026-07-25"
+        val sessions = (1L..6L).map { appId ->
+            session(
+                id = appId,
+                appId = appId,
+                startAt = atUtc(2026, 7, 25, appId.toInt(), 0),
+                minutes = appId.toInt() * 10,
+            )
+        }
+
+        val result = groupHistory(
+            sessions = sessions,
+            games = (1L..6L).map { game(it, "Game $it") },
+            dailyProgress = listOf(DayProgress(day, 0, 0, false)),
+            achievementUnlocks = emptyList(),
+            zone = zone,
+        ).single()
+
+        assertEquals(listOf(6L, 5L, 4L, 3L, 2L), result.gameThumbnails.games.map { it.appId })
+        assertEquals(1, result.gameThumbnails.overflowCount)
     }
 
     @Test
