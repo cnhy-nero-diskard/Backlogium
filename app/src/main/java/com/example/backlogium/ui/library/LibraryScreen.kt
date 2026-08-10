@@ -863,7 +863,15 @@ private fun LibraryGameRow(
         )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(game.name, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = game.name,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (game.isCurrentlyPlaying) {
+                    MaterialTheme.colorScheme.playingIndicator
+                } else {
+                    Color.Unspecified
+                },
+            )
             if (density.showsPlaytime) PlaytimeLabel(game.playtimeForever)
             if (density.showsCompletionProgress) {
                 CompletionProgress(
@@ -996,6 +1004,11 @@ private fun LibraryGameCell(
                         MaterialTheme.typography.titleSmall
                     },
                     fontWeight = FontWeight.SemiBold,
+                    color = if (game.isCurrentlyPlaying) {
+                        MaterialTheme.colorScheme.playingIndicator
+                    } else {
+                        Color.Unspecified
+                    },
                     textAlign = if (compact) TextAlign.Center else TextAlign.Start,
                     maxLines = 1,
                     softWrap = false,
