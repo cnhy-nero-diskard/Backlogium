@@ -36,9 +36,13 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
     override fun observeSince(cutoff: Long): Flow<List<Session>> =
         flowOf(sessions.filter { it.startAt >= cutoff })
 
+    override fun observeBetween(startInclusive: Long, endExclusive: Long): Flow<List<Session>> =
+        flowOf(sessions.filter { it.startAt >= startInclusive && it.startAt < endExclusive })
+
     override fun observeClosedSince(cutoff: Long): Flow<List<Session>> =
         flowOf(sessions.filter { it.startAt >= cutoff && !it.open })
     override suspend fun getAll(): List<Session> = sessions
+    override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(sessions.minOfOrNull { it.startAt })
     override suspend fun findByNaturalKey(appId: Long, startAt: Long, endAt: Long?): Session? =
         sessions.firstOrNull { it.appId == appId && it.startAt == startAt && it.endAt == endAt }
 
@@ -53,6 +57,15 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
 
     override fun observeMinutesByGameSince(cutoff: Long): Flow<List<GameTrackedMinutes>> = flowOf(
         sessions.filter { it.startAt >= cutoff }
+            .groupBy { it.appId }
+            .map { (appId, group) -> GameTrackedMinutes(appId, group.sumOf { it.minutes }) },
+    )
+
+    override fun observeMinutesByGameBetween(
+        startInclusive: Long,
+        endExclusive: Long,
+    ): Flow<List<GameTrackedMinutes>> = flowOf(
+        sessions.filter { it.startAt >= startInclusive && it.startAt < endExclusive }
             .groupBy { it.appId }
             .map { (appId, group) -> GameTrackedMinutes(appId, group.sumOf { it.minutes }) },
     )

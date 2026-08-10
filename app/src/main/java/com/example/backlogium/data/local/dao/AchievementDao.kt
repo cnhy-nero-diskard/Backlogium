@@ -62,7 +62,7 @@ interface AchievementDao {
      * so the percents themselves have to cross the boundary.
      */
     @Query(
-        "SELECT appId, snapshotPercent FROM achievements " +
+        "SELECT appId, apiName, displayName, snapshotPercent FROM achievements " +
             "WHERE apiName != '$NO_ACHIEVEMENTS_MARKER' AND unlocked = 1",
     )
     fun observeUnlockedRarity(): Flow<List<AchievementRarity>>
@@ -92,4 +92,9 @@ data class AchievementUnlock(val appId: Long, val iconUrl: String?, val unlocked
  * (Steam reported no global stat) and worth zero XP — preserved rather than filtered out so the
  * count of unlocked achievements stays honest.
  */
-data class AchievementRarity(val appId: Long, val snapshotPercent: Double?)
+data class AchievementRarity(
+    val appId: Long,
+    val snapshotPercent: Double?,
+    val apiName: String = "",
+    val displayName: String? = null,
+)
