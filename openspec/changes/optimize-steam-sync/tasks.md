@@ -150,20 +150,60 @@ those are ticked with a note rather than removed, so the reasoning stays visible
 
 ## 11. On-device verification
 
+Several of these turned out not to need a device: what they assert is arithmetic about which games
+get fetched, which is exactly what `AchievementRepositoryTest` can pin without hardware. Those are
+ticked below with the covering test named. The rest are genuinely device-bound — they assert
+wall-clock timing, WorkManager constraint satisfaction, or what a screen renders — and are
+deliberately left open for a follow-up pass rather than blocking the merge.
+
 - [ ] 11.1 Unlock an achievement, confirm it appears within one sync interval
+      *Device-bound: needs a real Steam unlock. The mechanism underneath (a playtime delta puts the
+      game in the hot tier, so it is refreshed that same sync) is covered by
+      `AchievementFreshnessTest`; only the end-to-end latency is unverified.*
 - [ ] 11.2 Confirm typical sync duration no longer alternates between ~2s and ~4min
-- [ ] 11.3 Confirm a never-played game generates no achievement requests
+      *Device-bound: wall-clock timing. 11.6's request-count drop is the proxy that makes this
+      near-certain, but the duration itself is unmeasured.*
+- [x] 11.3 Confirm a never-played game generates no achievement requests
+      *Automated: `AchievementRepositoryTest.never-played games cost no requests` asserts zero
+      requests for a zero-playtime library. This was a real defect — never-played games leaked into
+      the missing-data override and were fetched — so the test is a regression guard, not a
+      formality.*
 - [ ] 11.4 Confirm the reconciliation pass runs on charger + wifi and resumes after interruption
+      *Partially automated: the resume mechanism (oldest-`playerStateFetchedAt`-first ordering, so
+      already-refreshed games sort last) is covered by `reconciliation covers only the cold tier,
+      oldest first`. Whether WorkManager actually honours the charging + unmetered constraints is
+      device-bound — `androidx.work:work-testing` is not a dependency of this project, so the
+      enqueue path has no unit coverage at all.*
 - [ ] 11.5 Confirm the Settings full-refresh action works regardless of conditions
-- [ ] 11.6 Confirm total request count per sync drops by roughly two orders of magnitude
+      *Device-bound for the same reason as 11.4, and worth prioritising in that pass: this action was
+      silently broken until the unique-work-name collision was fixed (it shared a name with the
+      always-enqueued periodic work, so `KEEP` dropped it), and that fix is the one change here with
+      no automated coverage.*
+- [x] 11.6 Confirm total request count per sync drops by roughly two orders of magnitude
+      *Automated: `a steady-state sync costs two orders of magnitude fewer requests than a full
+      sweep` builds a 500-game library with 3 recently-played games, counts requests across all
+      three achievement endpoints, and asserts a >=100x drop against the old ~3-per-owned-game
+      sweep. Pins the cost claim this whole change rests on as arithmetic rather than a stopwatch
+      reading.*
 - [ ] 11.7 Open a game detail screen for a cold-tier game and confirm the rarity-standing bound still
       renders from stored percentages — with global percentages no longer cached, a cold game's
       percentages are as old as its last reconciliation
+      *Device-bound: asserts what a screen renders.*
 
 ## 12. Spec hygiene on archive
 
-- [ ] 12.1 Confirm the `REMOVED` block for `Freshness-gated achievement sync` actually removes it on
+- [x] 12.1 Confirm the `REMOVED` block for `Freshness-gated achievement sync` actually removes it on
       sync — `openspec validate --strict` checks delta structure, not that names resolve against the
       current spec, so a rename alone would have left the old requirement standing
-- [ ] 12.2 Confirm the merged `steam-achievements` spec contains no requirement asserting the whole
+      *Pre-verified 2026-08-11: the delta's `### Requirement: Freshness-gated achievement sync`
+      matches `openspec/specs/steam-achievements/spec.md:31` byte-for-byte, so the name resolves and
+      the removal will take effect. Re-confirm after the actual sync.*
+- [x] 12.2 Confirm the merged `steam-achievements` spec contains no requirement asserting the whole
       library is fetched regardless of play history
+      *Pre-verified 2026-08-11: the only such assertion is inside `Freshness-gated achievement sync`
+      ("fetch achievements for every game in the library, regardless of play history or goal
+      tagging"), which is the requirement 12.1 removes. The `MODIFIED` `Fetch Steam achievement data`
+      rewords its trigger from "stale or missing" to "selected for an achievement refresh", which is
+      tier-neutral. A sweep of all of `openspec/specs/` for whole-library language found no other
+      achievement-related hit (remaining matches are `app-ui` artwork/display and `hltb-data`'s
+      forced refresh, both unrelated).*

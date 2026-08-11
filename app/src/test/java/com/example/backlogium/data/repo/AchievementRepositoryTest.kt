@@ -160,6 +160,37 @@ class AchievementRepositoryTest {
         assertEquals(setOf(1L, 2L, 3L), api.playerAchievementCalls.toSet())
     }
 
+    /**
+     * The cost claim the whole change rests on, pinned as arithmetic rather than left to an
+     * on-device stopwatch: in steady state (every game already has sync metadata, so the
+     * missing-data override is empty) a sync costs requests proportional to games *played*, not
+     * games *owned*. The old whole-library sweep cost ~3 requests per owned game.
+     */
+    @Test
+    fun `a steady-state sync costs two orders of magnitude fewer requests than a full sweep`() = runTest {
+        val api = FakeSteamApi()
+        val syncDao = FakeGameAchievementSyncDao()
+        val library = (1L..500L).map { appId ->
+            // Only the first three have been played recently; the rest are cold.
+            if (appId <= 3L) ownedGame(appId, forever = 100, weeks = 10) else ownedGame(appId, forever = 100, weeks = 0)
+        }
+        // Steady state: every game has been reconciled at some point, so nothing is missing data.
+        library.forEach { syncDao.upsert(syncRow(it.appId, playerStateFetchedAt = NOW, schemaFetchedAt = NOW)) }
+        val repo = repository(api, syncDao = syncDao)
+
+        repo.syncLibraryGames(KEY, STEAM_ID, library, emptyMap())
+
+        assertEquals(listOf(1L, 2L, 3L), api.playerAchievementCalls)
+        assertEquals("a fresh schema costs nothing", emptyList<Long>(), api.schemaCalls)
+        // 3 player-state + 3 global-percentage requests, against ~1500 for a 500-game sweep.
+        val tiered = api.totalRequests()
+        val fullSweep = library.size * 3
+        assertTrue(
+            "expected a >=100x drop, got $tiered vs $fullSweep",
+            fullSweep / tiered >= 100,
+        )
+    }
+
     @Test
     fun `reconciliation covers only the cold tier, oldest first`() = runTest {
         val api = FakeSteamApi()
@@ -284,8 +315,13 @@ class AchievementRepositoryTest {
         val inFlight = AtomicInteger(0)
         val maxInFlight = AtomicInteger(0)
 
+        private var globalPercentageCalls = 0
+
         val playerAchievementCalls: List<Long> get() = calls.toList()
         val schemaCalls: List<Long> get() = schemas.toList()
+
+        /** Every Steam request this pass made, across all three achievement endpoints. */
+        fun totalRequests(): Int = calls.size + schemas.size + globalPercentageCalls
 
         fun release() = gateSignal.complete(Unit)
 
@@ -329,8 +365,10 @@ class AchievementRepositoryTest {
             )
         }
 
-        override suspend fun getGlobalAchievementPercentages(gameId: Long) =
-            GlobalAchievementPercentagesResponse()
+        override suspend fun getGlobalAchievementPercentages(gameId: Long): GlobalAchievementPercentagesResponse {
+            globalPercentageCalls++
+            return GlobalAchievementPercentagesResponse()
+        }
 
         override suspend fun getOwnedGames(
             key: String,
