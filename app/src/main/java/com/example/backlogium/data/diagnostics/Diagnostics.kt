@@ -51,6 +51,10 @@ class SyncRunRecorder @Inject constructor(
         active.get()?.recordRequest(endpoint, status, durationMs)
     }
 
+    fun recordTiers(hot: Int, warm: Int, cold: Int, never: Int) {
+        active.get()?.recordTiers(hot, warm, cold, never)
+    }
+
     suspend fun finish(scope: RunScope, outcome: SyncOutcome, errorMessage: String?, gamesExamined: Int, gamesUpdated: Int) {
         if (active.get() !== scope) return
         try {
@@ -66,6 +70,10 @@ class SyncRunRecorder @Inject constructor(
                     gamesUpdated = gamesUpdated,
                     outcome = outcome.value,
                     errorMessage = errorMessage,
+                    hotCount = scope.tiers.hot,
+                    warmCount = scope.tiers.warm,
+                    coldCount = scope.tiers.cold,
+                    neverCount = scope.tiers.never,
                 ),
                 scope.metrics.map { (key, value) ->
                     RequestBreakdown(0, 0, key.endpoint, key.status, value.count, value.durationMs)
@@ -79,11 +87,21 @@ class SyncRunRecorder @Inject constructor(
 
     class RunScope internal constructor(val trigger: String, val startedAt: Long) {
         internal data class Key(val endpoint: String, val status: Int?)
+        internal data class TierCounts(var hot: Int = 0, var warm: Int = 0, var cold: Int = 0, var never: Int = 0)
         internal val metrics = linkedMapOf<Key, RequestMetrics>()
+        internal val tiers = TierCounts()
+
         internal fun recordRequest(endpoint: String, status: Int?, durationMs: Long) {
             val key = Key(endpoint, status)
             val prior = metrics[key] ?: RequestMetrics()
             metrics[key] = prior.copy(count = prior.count + 1, durationMs = prior.durationMs + durationMs)
+        }
+
+        internal fun recordTiers(hot: Int, warm: Int, cold: Int, never: Int) {
+            tiers.hot = hot
+            tiers.warm = warm
+            tiers.cold = cold
+            tiers.never = never
         }
     }
 

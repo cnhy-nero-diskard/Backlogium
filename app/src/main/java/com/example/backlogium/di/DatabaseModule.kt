@@ -7,6 +7,7 @@ import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.DiagnosticsDao
+import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HltbDataDao
@@ -40,6 +41,7 @@ object DatabaseModule {
                 BacklogiumDatabase.MIGRATION_10_11,
                 BacklogiumDatabase.MIGRATION_11_12,
                 BacklogiumDatabase.MIGRATION_12_13,
+                BacklogiumDatabase.MIGRATION_13_14,
             )
             // Never silently replace a user's database when a branch has an unexpected schema
             // version. A real version bump must ship and register its migration; otherwise the
@@ -66,6 +68,9 @@ object DatabaseModule {
 
     @Provides
     fun provideAchievementDao(db: BacklogiumDatabase): AchievementDao = db.achievementDao()
+
+    @Provides
+    fun provideGameAchievementSyncDao(db: BacklogiumDatabase): GameAchievementSyncDao = db.gameAchievementSyncDao()
 
     @Provides
     fun provideDiagnosticsDao(db: BacklogiumDatabase): DiagnosticsDao = db.diagnosticsDao()

@@ -211,7 +211,26 @@ class SteamSyncWorker @AssistedInject constructor(
                 avatarUrl = identity.avatarUrl,
             ),
         )
-        runCatching { achievementRepository.syncLibraryGames(apiKey, steamId) }
+        runCatching {
+            val selection = achievementRepository.syncLibraryGames(
+                apiKey = apiKey,
+                steamId = steamId,
+                ownedGames = games.map {
+                    com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
+                        appId = it.appid,
+                        playtimeForever = it.playtimeForever.toLong(),
+                        playtime2Weeks = it.playtime2Weeks.toLong(),
+                    )
+                },
+                playtimeDeltaByAppId = diff.playedDeltaByAppId,
+            )
+            diagnostics.recordTiers(
+                hot = selection.hot.size,
+                warm = selection.warm.size,
+                cold = selection.cold.size,
+                never = selection.never.size,
+            )
+        }
         gamificationUpdater.recompute(today, config)
         // Best-effort: a snapshot-write failure must never fail an otherwise-successful poll.
         runCatching { backupRepository.writeAutoSnapshotIfDue() }

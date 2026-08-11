@@ -7,8 +7,9 @@ import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.AchievementRarity
 import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.entity.Achievement
-import com.example.backlogium.data.local.entity.NO_ACHIEVEMENTS_MARKER
+import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.Flow
@@ -61,6 +62,7 @@ data class UnlockedAchievementRarity(
 class AchievementRepository @Inject constructor(
     private val steamApi: SteamApi,
     private val achievementDao: AchievementDao,
+    private val gameAchievementSyncDao: GameAchievementSyncDao,
     private val gameDao: GameDao,
     private val time: TimeProvider,
 ) {
@@ -110,25 +112,36 @@ class AchievementRepository @Inject constructor(
         achievementDao.observeUnlockedSince(cutoffMillis)
 
     /**
-     * Fetches achievements for every library game whose data is stale or missing. [apiKey]/
-     * [steamId] are passed in by the caller (the sync worker), matching [SteamApi]'s pattern.
+     * Fetches achievements for games selected by tier: hot (playtime delta), warm (recent play),
+     * and a bounded number of cold/never games with no stored achievement data.
+     * [apiKey]/[steamId] are passed in by the caller (the sync worker), matching [SteamApi]'s pattern.
      */
-    suspend fun syncLibraryGames(apiKey: String, steamId: String) {
-        val appIds = gameDao.allAppIds()
-        if (appIds.isEmpty()) return
+    suspend fun syncLibraryGames(
+        apiKey: String,
+        steamId: String,
+        ownedGames: List<AchievementFreshness.OwnedGame>,
+        playtimeDeltaByAppId: Map<Long, Int>,
+    ): AchievementFreshness.Result {
+        if (ownedGames.isEmpty()) {
+            return AchievementFreshness.Result(emptyList(), emptyList(), emptyList(), emptyList(), emptyList())
+        }
 
-        val fetchedAtByAppId = achievementDao.fetchedAtByApp()
-            .associate { it.appId to it.fetchedAt }
-        val stale = AchievementFreshness.selectStaleOrMissing(
+        val metadataByAppId = gameAchievementSyncDao.getAll(ownedGames.map { it.appId }.toSet())
+            .associateBy { it.appId }
+            .mapValues { AchievementFreshness.SyncMetadata(it.key, it.value.playerStateFetchedAt) }
+
+        val selection = AchievementFreshness.selectByTier(
             now = time.nowMillis(),
-            window = FRESHNESS_WINDOW_MILLIS,
-            appIds = appIds,
-            fetchedAtByAppId = fetchedAtByAppId,
+            ownedGames = ownedGames,
+            playtimeDeltaByAppId = playtimeDeltaByAppId,
+            metadataByAppId = metadataByAppId,
         )
 
-        for (appId in stale) {
+        for (appId in selection.inlineSelected) {
             runCatching { syncGame(apiKey, steamId, appId) }
         }
+
+        return selection
     }
 
     private suspend fun syncGame(apiKey: String, steamId: String, appId: Long) {
@@ -140,8 +153,14 @@ class AchievementRepository @Inject constructor(
             return
         }
         if (playerStats.achievements.isEmpty()) {
-            achievementDao.upsertAll(
-                listOf(Achievement(appId = appId, apiName = NO_ACHIEVEMENTS_MARKER, fetchedAt = now)),
+            gameAchievementSyncDao.upsert(
+                GameAchievementSync(
+                    appId = appId,
+                    playerStateFetchedAt = now,
+                    schemaFetchedAt = null,
+                    hasAchievements = false,
+                    checkedAt = now,
+                ),
             )
             return
         }
@@ -170,7 +189,15 @@ class AchievementRepository @Inject constructor(
             )
         }
         achievementDao.upsertAll(rows)
-        achievementDao.deleteMarker(appId)
+        gameAchievementSyncDao.upsert(
+            GameAchievementSync(
+                appId = appId,
+                playerStateFetchedAt = now,
+                schemaFetchedAt = now,
+                hasAchievements = true,
+                checkedAt = now,
+            ),
+        )
     }
 
     companion object {

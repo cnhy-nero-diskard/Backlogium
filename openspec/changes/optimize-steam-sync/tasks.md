@@ -9,37 +9,40 @@ those are ticked with a note rather than removed, so the reasoning stays visible
 - [x] 1.1 Land `add-sync-diagnostics` first — archived 2026-08-04. Persisted `SyncRun` records, the
       per-endpoint `RequestBreakdown`, and the `ui/diagnostics` surface all exist, so task groups 9
       and 10 below are runnable
-- [ ] 1.2 Extend the `sync_run` record with tier sizes (hot / warm / cold / never) so tier
+- [x] 1.2 Extend the `sync_run` record with tier sizes (hot / warm / cold / never) so tier
       distribution is observable per run
-- [ ] 1.3 **Blocks everything below.** Recover the actual measured sweep figures from the on-device
+- [x] 1.3 **Blocks everything below.** Recover the actual measured sweep figures from the on-device
       diagnostics history and record them in `design.md` — `add-sync-diagnostics` task group 10 is
       ticked complete but the numbers were never written down (commit `dfec198` changed checkboxes
       only). If a real sweep is materially smaller than ~780 requests, or the alternating fast/slow
       pattern is absent from the run history, revisit this change's scope before implementing it
+      *Measured on emulator-5554 2026-08-11: run #2 = 847 total requests, 102,033 ms, 302 games; 814
+      achievement-related requests. Validates the ~780-request premise and the alternating fast/slow
+      pattern, so the full scope stands.*
 
 ## 2. Per-game achievement sync metadata
 
-- [ ] 2.1 Add a `game_achievement_sync` entity keyed by `appId` with `schemaFetchedAt` and
+- [x] 2.1 Add a `game_achievement_sync` entity keyed by `appId` with `schemaFetchedAt` and
       `playerStateFetchedAt` — two timestamps, not three; global percentages are no longer cached
-- [ ] 2.2 Add its DAO with a bulk load for tiering input and a per-game upsert
-- [ ] 2.3 Add the Room migration 13 → 14 in the hand-written style used throughout
+- [x] 2.2 Add its DAO with a bulk load for tiering input and a per-game upsert
+- [x] 2.3 Add the Room migration 13 → 14 in the hand-written style used throughout
       `BacklogiumDatabase.kt:67-264`; translate or drop existing `NO_ACHIEVEMENTS_MARKER` rows
-- [ ] 2.4 Record "checked, no achievements" in the metadata row instead of a synthetic achievement
+- [x] 2.4 Record "checked, no achievements" in the metadata row instead of a synthetic achievement
       row (`AchievementRepository.kt:142-147`)
-- [ ] 2.5 Confirm dropped markers re-derive correctly on the first pass
+- [x] 2.5 Confirm dropped markers re-derive correctly on the first pass
 
 ## 3. Tier selection as a pure function
 
-- [ ] 3.1 Replace `AchievementFreshness.selectStaleOrMissing` (`AchievementFreshness.kt:10-18`) with
+- [x] 3.1 Replace `AchievementFreshness.selectStaleOrMissing` (`AchievementFreshness.kt:10-18`) with
       tier selection taking owned games (with `playtimeForever`/`playtime2Weeks`), the delta map,
       sync metadata, and `now`
-- [ ] 3.2 Classify: hot (delta > 0), warm (`playtime2Weeks > 0`), cold, never (`playtimeForever == 0`)
-- [ ] 3.3 Treat absence of stored achievement data as eligibility regardless of tier
-- [ ] 3.4 Cap the missing-data override at ~25 games per sync, ordered by ascending
+- [x] 3.2 Classify: hot (delta > 0), warm (`playtime2Weeks > 0`), cold, never (`playtimeForever == 0`)
+- [x] 3.3 Treat absence of stored achievement data as eligibility regardless of tier
+- [x] 3.4 Cap the missing-data override at ~25 games per sync, ordered by ascending
       `playerStateFetchedAt` (absent first), so inline volume is bounded by construction rather than
       by assuming few games lack data
-- [ ] 3.5 Keep the function free of Room, network, and WorkManager dependencies
-- [ ] 3.6 Unit-test every branch, including the never-played exclusion, the missing-data override,
+- [x] 3.5 Keep the function free of Room, network, and WorkManager dependencies
+- [x] 3.6 Unit-test every branch, including the never-played exclusion, the missing-data override,
       and the override cap with a whole library of uncovered games
 
 ## 4. Per-data-kind freshness windows
@@ -57,9 +60,9 @@ those are ticked with a note rather than removed, so the reasoning stays visible
 
 ## 5. Wire tiers into the sync
 
-- [ ] 5.1 Pass `diff.playedDeltaByAppId` (`SteamSyncWorker.kt:187-188`) into achievement sync,
+- [x] 5.1 Pass `diff.playedDeltaByAppId` (`SteamSyncWorker.kt:187-188`) into achievement sync,
       replacing the bare `syncLibraryGames(apiKey, steamId)` call at `:214`
-- [ ] 5.2 Restrict the inline sync to hot + warm + capped missing-data games
+- [x] 5.2 Restrict the inline sync to hot + warm + capped missing-data games
 - [ ] 5.3 Confirm a baseline first sync reports no deltas and triggers no play-driven refresh
 - [ ] 5.4 Confirm that same baseline sync does not fetch the whole library via the missing-data
       override — the cap from 3.4 is what makes this true

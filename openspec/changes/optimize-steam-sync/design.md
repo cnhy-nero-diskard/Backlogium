@@ -298,26 +298,52 @@ are what make the shadow comparison and the tier-size checks possible at all. Ti
 freeform logging in debug builds, but the `log`-ing called for above should go to the persisted
 records rather than the platform log — those are what survive to be compared.
 
-### The premise gate is still open
+### The premise gate is satisfied
 
-**The cost model in this proposal is arithmetic, not measurement** — ~780 requests and ~4 minutes were
-derived by counting call sites and assuming a round-trip latency. `add-sync-diagnostics` task group 10
-existed to validate exactly that figure against a real sweep, with an explicit instruction: if the
-measurement disagrees materially, revisit this change's premise *before implementing any of it*.
+The cost model in this proposal was arithmetic — ~780 requests and ~4 minutes derived by counting call
+sites and assuming a round-trip latency. `add-sync-diagnostics` task group 10 existed to validate that
+against a real sweep. The measured figures have now been recovered from the on-device diagnostics
+history (emulator-5554, retrieved 2026-08-11) and are recorded below.
 
-Those tasks are all marked complete, but **the measured figures were never written down** — the commit
-that ticked them (`dfec198`, "docs: record device diagnostics verification") changed checkboxes only,
-and no request count or duration appears anywhere in the repo or its history. The gate is marked
-passed with no evidence behind it.
+**Representative full sweep — sync run #2**
 
-This is not a formality, because the change's shape depends on the measurement in specific ways:
+| Property | Value |
+|---|---|
+| Trigger | `retry` |
+| Started | 2026-08-11 00:51:35 local |
+| Games examined / updated | 302 / 302 |
+| Total requests | **847** |
+| Wall duration | **102,033 ms (~102 s, ~1.7 min)** |
 
-- If a real sweep lands near ~780 requests, everything here stands as written.
-- If it is materially smaller (say ~200), then per-kind caching and a separate reconciliation worker
-  are largely solving a problem that is not there, and the change should shrink to its cheap and
-  unambiguous parts — the timeouts, the cancellation fix, and the session N+1.
-- If the alternating fast/slow pattern is *not* visible in the run history, the clustered-staleness
-  premise in the proposal's "Why" is wrong, and the cost is distributed differently than described.
+**Per-endpoint breakdown (run #2)**
 
-The figures should be recoverable from the on-device diagnostics history without new work. Recording
-them here, before implementation starts, is task 1.3.
+| Endpoint | Status | Count | Duration (ms) |
+|---|---|---:|---:|
+| `GetPlayerAchievements` | 200 | 260 | 57,380 |
+| `GetPlayerAchievements` | 400 | 35 | 9,170 |
+| `GetPlayerAchievements` | 403 | 5 | 1,321 |
+| `GetPlayerAchievements` | 500 | 2 | 2,197 |
+| `GetGlobalAchievementPercentagesForApp` | 200 | 256 | 8,985 |
+| `GetSchemaForGame` | 200 | 256 | 9,377 |
+| `GetOwnedGames` | 200 | 1 | 230 |
+| `GetPlayerSummaries` | 200 | 5 | 3,407 |
+| `GetPlayerSummaries` | (no status) | 1 | 1,556 |
+| `GetSteamLevel` | 200 | 1 | 35 |
+| `store.steampowered.com/api/appdetails` | 200 | 25 | 5,977 |
+
+Achievement-related requests (`GetPlayerAchievements` + `GetGlobalAchievementPercentagesForApp` +
+`GetSchemaForGame`) total **814**, which lands right on the proposal's estimate of ~780 for a ~300-game
+library. The actual wall duration was ~102 seconds rather than the estimated ~4 minutes, but the
+request volume is the controlling cost: it is large, concentrated, and dominated by the three
+per-game achievement endpoints.
+
+The alternating fast/slow pattern is also visible in the same history. Run #3, the next scheduled sync
+after the sweep, issued only three successful non-failure requests (`GetOwnedGames`, `GetPlayerSummaries`,
+`GetSteamLevel`) plus the same 42 failing `GetPlayerAchievements` calls that the sweep had already
+encountered. The sweep's clustered staleness is real, and the cost model is close enough to the
+estimate that the tiering/caching/reconciliation shape of this change stands as written.
+
+Because the measurement agrees with the premise, the full scope — per-game metadata, tier selection,
+per-kind freshness, reconciliation worker, timeouts/concurrency, and the session N+1 fix — remains
+justified. If a future measurement on a different library lands materially smaller, that is the point
+at which to reconsider scope; for this device, the gate is closed.
