@@ -2,7 +2,6 @@ package com.example.backlogium.data.backup
 
 import com.example.backlogium.data.local.dao.AchievementCounts
 import com.example.backlogium.data.local.dao.AchievementDao
-import com.example.backlogium.data.local.dao.AchievementFetchedAt
 import com.example.backlogium.data.local.dao.AchievementRarity
 import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.CollectionDao
@@ -541,8 +540,6 @@ private class FakeAchievementDao(private val store: MutableList<Achievement>) : 
         store.firstOrNull { it.appId == appId && it.apiName == apiName }
 
     override fun observeCounts(): Flow<List<AchievementCounts>> = flowOf(emptyList())
-    override suspend fun fetchedAtByApp(): List<AchievementFetchedAt> = emptyList()
-    override suspend fun deleteMarker(appId: Long) = Unit
     override suspend fun getAllUnlocked(): List<Achievement> = store.filter { it.unlocked }
     override fun observeUnlockedRarity(): Flow<List<AchievementRarity>> = flowOf(
         store.filter { it.unlocked }.map { AchievementRarity(it.appId, it.snapshotPercent) },

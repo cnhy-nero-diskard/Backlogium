@@ -29,6 +29,8 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 /**
  * Runs one Steam poll: fetch -> diff into sessions -> persist -> recompute gamification.
@@ -114,7 +116,12 @@ class SteamSyncWorker @AssistedInject constructor(
             error = e.message ?: "Sync failed"
             Result.retry()
         } finally {
-            runCatching { diagnostics.finish(scope, outcome, error, examined, updated) }
+            // NonCancellable: once cancelled, a plain suspend call here would throw at its first
+            // suspension point and never persist the record — the exact case the INCOMPLETE
+            // outcome above exists to make visible.
+            withContext(NonCancellable) {
+                runCatching { diagnostics.finish(scope, outcome, error, examined, updated) }
+            }
         }
     }
 

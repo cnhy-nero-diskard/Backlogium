@@ -12,7 +12,11 @@ import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.domain.TimeProvider
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -154,23 +158,14 @@ class AchievementRepository @Inject constructor(
             metadataByAppId = metadataByAppId,
         )
 
-        for (appId in selection.inlineSelected) {
-            val metadata = metadataByAppId[appId]
-            try {
-                fetchSemaphore.withPermit {
-                    syncGame(
-                        apiKey = apiKey,
-                        steamId = steamId,
-                        appId = appId,
-                        schemaFetchedAt = metadata?.schemaFetchedAt,
-                    )
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                // Per-game failure is swallowed so one bad response cannot fail the sync.
-            }
-        }
+        fetchGames(
+            apiKey = apiKey,
+            steamId = steamId,
+            appIds = selection.inlineSelected,
+            schemaFetchedAtByAppId = selection.inlineSelected.associateWith {
+                metadataByAppId[it]?.schemaFetchedAt
+            },
+        )
 
         return selection
     }
@@ -186,11 +181,15 @@ class AchievementRepository @Inject constructor(
      * successful refresh updates that timestamp, so an interrupted pass naturally resumes with
      * the games it did not yet reach rather than restarting.
      *
+     * [onProgress], if given, fires after every game attempt with the running refreshed/total
+     * counts — the only way a caller can know how far the pass got if it is cancelled mid-sweep.
+     *
      * @return counts of games refreshed and total cold games considered
      */
     suspend fun reconcileLibraryGames(
         apiKey: String,
         steamId: String,
+        onProgress: ((refreshed: Int, total: Int) -> Unit)? = null,
     ): ReconciliationResult {
         val games = gameDao.getAll()
         if (games.isEmpty()) return ReconciliationResult(0, 0)
@@ -198,37 +197,71 @@ class AchievementRepository @Inject constructor(
         val metadataByAppId = gameAchievementSyncDao.getAll(games.map { it.appId }.toSet())
             .associateBy { it.appId }
 
-        val cold = games
-            .filter { it.playtimeForever > 0 && it.playtime2Weeks == 0 }
-            .map {
-                it.appId to AchievementFreshness.SyncMetadata(
-                    it.appId,
-                    metadataByAppId[it.appId]?.playerStateFetchedAt,
-                    metadataByAppId[it.appId]?.schemaFetchedAt,
-                )
-            }
-            .sortedWith(compareBy { it.second.playerStateFetchedAt ?: Long.MIN_VALUE })
-            .map { it.first }
-
-        var refreshed = 0
-        for (appId in cold) {
-            try {
-                fetchSemaphore.withPermit {
-                    syncGame(
-                        apiKey = apiKey,
-                        steamId = steamId,
-                        appId = appId,
-                        schemaFetchedAt = metadataByAppId[appId]?.schemaFetchedAt,
-                    )
-                }
-                refreshed++
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                // Per-game failure is swallowed; keep going so one bad game doesn't abort the pass.
-            }
+        val ownedGames = games.map {
+            AchievementFreshness.OwnedGame(
+                appId = it.appId,
+                playtimeForever = it.playtimeForever.toLong(),
+                playtime2Weeks = it.playtime2Weeks.toLong(),
+            )
         }
+        // Reuses tiering's own cold-tier rule so this pass's population can never drift from what
+        // the inline sync considers cold; delta/metadata inputs are irrelevant to that rule.
+        val cold = AchievementFreshness.selectByTier(
+            now = time.nowMillis(),
+            ownedGames = ownedGames,
+            playtimeDeltaByAppId = emptyMap(),
+            metadataByAppId = emptyMap(),
+        ).cold.sortedBy { metadataByAppId[it]?.playerStateFetchedAt ?: Long.MIN_VALUE }
+
+        // Report the total up front too, so a cancellation before any single game finishes still
+        // leaves the caller with an accurate total rather than the callback's implicit initial 0.
+        onProgress?.invoke(0, cold.size)
+        val refreshed = fetchGames(
+            apiKey = apiKey,
+            steamId = steamId,
+            appIds = cold,
+            schemaFetchedAtByAppId = cold.associateWith { metadataByAppId[it]?.schemaFetchedAt },
+            onGameDone = { refreshedSoFar -> onProgress?.invoke(refreshedSoFar, cold.size) },
+        )
         return ReconciliationResult(refreshed, cold.size)
+    }
+
+    /**
+     * Fetches [appIds], bounded to [MAX_CONCURRENT_FETCHES] concurrent requests via
+     * [fetchSemaphore]. A per-game failure is swallowed so one bad response cannot abort the
+     * batch; [CancellationException] is always rethrown so callers stop promptly. [onGameDone],
+     * if given, fires after every successful fetch with the running refreshed count.
+     */
+    private suspend fun fetchGames(
+        apiKey: String,
+        steamId: String,
+        appIds: List<Long>,
+        schemaFetchedAtByAppId: Map<Long, Long?>,
+        onGameDone: ((refreshedSoFar: Int) -> Unit)? = null,
+    ): Int {
+        val refreshed = AtomicInteger(0)
+        coroutineScope {
+            appIds.map { appId ->
+                async {
+                    try {
+                        fetchSemaphore.withPermit {
+                            syncGame(
+                                apiKey = apiKey,
+                                steamId = steamId,
+                                appId = appId,
+                                schemaFetchedAt = schemaFetchedAtByAppId[appId],
+                            )
+                        }
+                        onGameDone?.invoke(refreshed.incrementAndGet())
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // Per-game failure is swallowed so one bad response cannot fail the batch.
+                    }
+                }
+            }.awaitAll()
+        }
+        return refreshed.get()
     }
 
     private suspend fun syncGame(
@@ -263,14 +296,24 @@ class AchievementRepository @Inject constructor(
                 .associate { it.name to it.percent }
         }.getOrDefault(emptyMap())
 
-        val schemaByName = if (schemaFetchedAt == null || now - schemaFetchedAt > SCHEMA_WINDOW_MILLIS) {
+        val schemaWasStale = schemaFetchedAt == null || now - schemaFetchedAt > SCHEMA_WINDOW_MILLIS
+        val schemaFetch = if (schemaWasStale) {
             runCatching {
                 steamApi.getSchemaForGame(apiKey, appId).game.availableGameStats?.achievements
                     ?.associateBy { it.name }
-            }.getOrNull()
+            }
         } else {
             null
-        }.orEmpty()
+        }
+        val schemaByName = schemaFetch?.getOrNull().orEmpty()
+        // A successful fetch is fresh even if the game genuinely has no achievement schema —
+        // only a fetch that was skipped (still fresh) or that threw should leave the old
+        // timestamp in place, so a real failure is retried next time rather than cached forever.
+        val schemaFetchedAtNext = when {
+            !schemaWasStale -> schemaFetchedAt
+            schemaFetch?.isSuccess == true -> now
+            else -> schemaFetchedAt
+        }
 
         val existingByName = achievementDao.getForGame(appId).associateBy { it.apiName }
 
@@ -289,7 +332,7 @@ class AchievementRepository @Inject constructor(
             GameAchievementSync(
                 appId = appId,
                 playerStateFetchedAt = now,
-                schemaFetchedAt = if (schemaByName.isEmpty()) schemaFetchedAt else now,
+                schemaFetchedAt = schemaFetchedAtNext,
                 hasAchievements = true,
                 checkedAt = now,
             ),

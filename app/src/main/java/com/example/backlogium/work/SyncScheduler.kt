@@ -57,13 +57,18 @@ class SyncScheduler @Inject constructor(
             .setRequiresCharging(true)
             .build()
 
-    /** Emits true while a reconciliation pass is enqueued or running. */
-    val reconciliationInProgress: Flow<Boolean> = workManager
-        .getWorkInfosForUniqueWorkFlow(ReconciliationWorker.UNIQUE_WORK_NAME)
-        .map { infos ->
-            infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
-        }
-        .distinctUntilChanged()
+    /**
+     * Emits true while a reconciliation pass is enqueued or running — the manual/forced one-time
+     * pass and the periodic deferred one alike. The periodic work is watched with the
+     * RUNNING-only predicate: it normally sits ENQUEUED for days waiting on charging + unmetered
+     * wifi, which must not read as "in progress" (mirrors [syncInProgress]'s reasoning).
+     */
+    val reconciliationInProgress: Flow<Boolean> = combine(
+        workManager.getWorkInfosForUniqueWorkFlow(ReconciliationWorker.ONE_TIME_NAME),
+        workManager.getWorkInfosForUniqueWorkFlow(ReconciliationWorker.PERIODIC_NAME),
+    ) { oneTime, periodic ->
+        isSyncInProgress(oneTime.map { it.state }, periodic.map { it.state })
+    }.distinctUntilChanged()
 
     /**
      * Emits true while *any* Steam poll is in flight — the manual "Sync now" and the periodic
@@ -149,7 +154,7 @@ class SyncScheduler @Inject constructor(
             .build()
 
         workManager.enqueueUniquePeriodicWork(
-            ReconciliationWorker.UNIQUE_WORK_NAME,
+            ReconciliationWorker.PERIODIC_NAME,
             ExistingPeriodicWorkPolicy.KEEP,
             request,
         )
@@ -159,6 +164,13 @@ class SyncScheduler @Inject constructor(
      * Enqueue a one-time reconciliation pass. [force] bypasses the charging/unmetered
      * constraints (the Settings "full achievement refresh" action); otherwise the pass waits
      * for the deferred conditions.
+     *
+     * Enqueued under its own [ReconciliationWorker.ONE_TIME_NAME] rather than sharing
+     * [ReconciliationWorker.PERIODIC_NAME]: WorkManager's unique-work names are a single
+     * namespace regardless of one-time vs periodic, so sharing a name with
+     * [ensurePeriodicReconciliation]'s always-enqueued periodic work would let `KEEP` silently
+     * drop this request whenever the periodic work is already sitting enqueued — which is most
+     * of the time, since its charging+unmetered constraints are rarely met.
      */
     fun reconcileNow(force: Boolean = false) {
         val request = OneTimeWorkRequestBuilder<ReconciliationWorker>()
@@ -168,7 +180,7 @@ class SyncScheduler @Inject constructor(
             .build()
 
         workManager.enqueueUniqueWork(
-            ReconciliationWorker.UNIQUE_WORK_NAME,
+            ReconciliationWorker.ONE_TIME_NAME,
             ExistingWorkPolicy.KEEP,
             request,
         )
