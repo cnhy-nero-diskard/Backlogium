@@ -111,8 +111,14 @@ those are ticked with a note rather than removed, so the reasoning stays visible
 
 - [x] 8.1 Add explicit connect/read/call timeouts to the Steam `OkHttpClient`
       (`NetworkModule.kt:35-40`), matching the HLTB client's pattern (`:82-84`).
-- [x] 8.2 Add a `Semaphore` (4–6) around per-game fetches — `AchievementRepository.fetchSemaphore`
-      with `MAX_CONCURRENT_FETCHES = 5`.
+- [x] 8.2 ~~Add a `Semaphore` (4–6) around per-game fetches~~ — **superseded: fetch serially, no
+      semaphore.** The semaphore was added but never functioned (acquired inside a sequential loop,
+      so one permit was ever held). Rather than repair it, per-game fetches are now serial by
+      intent: tiering left no inline pass big enough for concurrency to help, the Steam client has
+      no retry/backoff/429 handling, and `design.md`'s own rationale for the bound was courtesy
+      rather than throughput. The requirement became "issued serially"; see design.md's
+      "Superseded: fetch serially, no semaphore" and
+      `AchievementRepositoryTest.fetches are issued one at a time`.
 - [x] 8.3 Rethrow `CancellationException` in `AchievementRepository`'s per-game `runCatching`
       (`:157-173`), catching only real failures.
 - [x] 8.4 Apply the same cancellation fix to `SteamSyncWorker`'s outer catch — already made by

@@ -267,6 +267,33 @@ Then a `Semaphore` around per-game fetches. Modest — 4 to 6 — chosen against
 make duration predictable, not to race. With the cold pass off the interactive path, throughput is
 not the constraint anymore.
 
+### Superseded: fetch serially, no semaphore
+
+The `Semaphore` above was implemented but never functioned — it was acquired inside a sequential
+loop that awaited each fetch before starting the next, so exactly one permit was ever held. Code
+review caught it, and the obvious repair (`async`/`awaitAll` inside the permit) was written and then
+reverted, because making it work would have been the first time this code ever issued concurrent
+requests to Steam in production, and the reasoning above no longer supports doing so:
+
+- The paragraph above already concedes the bound is "out of courtesy to Steam, not to maximise
+  throughput" and that "throughput is not the constraint anymore." Serial issuance is that same
+  argument carried to its conclusion, not a departure from it.
+- Tiering removed the thing concurrency would have helped. A steady-state inline sync is now a
+  handful of requests (see the ~100x drop asserted in `AchievementRepositoryTest`), so there is
+  nothing left to parallelise on the interactive path. The one pass still large enough to care is
+  the weekly reconciliation, which runs on charger + unmetered wifi *specifically* so its duration
+  can be irrelevant.
+- The Steam client has no retry, no backoff, and no 429 handling (`NetworkModule.kt:36-44` is
+  timeouts only). Concurrency is therefore unhedged burst exposure bought for a speedup nothing
+  needs. The HLTB batch path in the same codebase serialises for the same reason and goes further,
+  sleeping `INTER_REQUEST_DELAY_MS` between requests (`HltbRepository.kt:126`).
+
+So the requirement became "issued serially" rather than "limited to a modest fixed number", and the
+semaphore is gone rather than fixed. `AchievementRepositoryTest.fetches are issued one at a time`
+pins it, so a future change that parallelises has to update a test and state its reasoning. If a
+later measurement shows the reconciliation pass genuinely needs to be faster, concurrency is the
+knob to reach for — but it should arrive with retry and 429 handling alongside it, not before.
+
 ## The N+1 in the diff path
 
 `SteamSyncWorker.kt:137-150` runs `sessionDao.getOpenSession(appId)` inside `mapValues` over every

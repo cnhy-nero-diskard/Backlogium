@@ -102,16 +102,16 @@ runs so a partial pass makes forward progress.
 
 ### Requirement: Bounded achievement fetch volume
 Achievement fetching SHALL be bounded so that its duration is predictable rather than proportional
-to the slowest individual request. Requests SHALL carry connect and read timeouts, and concurrent
-requests SHALL be limited to a modest fixed number.
+to the slowest individual request. Requests SHALL carry connect and read timeouts, and SHALL be
+issued serially rather than concurrently.
 
 #### Scenario: A stalled request does not stall the pass
 - **WHEN** an individual achievement request does not respond
 - **THEN** it times out and the pass continues with the remaining games
 
-#### Scenario: Concurrency is capped
+#### Scenario: Requests do not burst
 - **WHEN** many games require refreshing in one pass
-- **THEN** no more than a fixed modest number of achievement requests are in flight at once
+- **THEN** the pass issues one achievement request at a time rather than several at once
 
 #### Scenario: Cancellation is honoured
 - **WHEN** an achievement pass is cancelled by the system

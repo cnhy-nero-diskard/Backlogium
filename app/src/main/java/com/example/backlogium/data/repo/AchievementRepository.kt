@@ -12,16 +12,10 @@ import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.domain.TimeProvider
-import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -62,6 +56,9 @@ data class UnlockedAchievementRarity(
  * by tier (hot/warm/cold/never) and applies per-data-kind freshness windows so that inline
  * sync work is bounded and library-scale work is deferred to reconciliation.
  *
+ * Requests are issued serially, one in flight at a time — see [fetchGames] for why that is a
+ * decision rather than an omission.
+ *
  * A per-game failure (private profile, no stats, transport error) never fails the caller —
  * it is skipped and any previously stored rows for that game are left intact.
  * [CancellationException] is rethrown so WorkManager stops promptly.
@@ -74,13 +71,6 @@ class AchievementRepository @Inject constructor(
     private val gameDao: GameDao,
     private val time: TimeProvider,
 ) {
-
-    /**
-     * Caps concurrent achievement requests so a large hot/warm batch cannot pile up
-     * in-flight calls against Steam. Matches the bounded-concurrency pattern used for
-     * HLTB batch refreshes.
-     */
-    private val fetchSemaphore = Semaphore(MAX_CONCURRENT_FETCHES)
 
     fun observeForGame(appId: Long): Flow<List<GameAchievement>> =
         achievementDao.observeForGame(appId).map { rows -> rows.map(Achievement::toDomain) }
@@ -227,10 +217,21 @@ class AchievementRepository @Inject constructor(
     }
 
     /**
-     * Fetches [appIds], bounded to [MAX_CONCURRENT_FETCHES] concurrent requests via
-     * [fetchSemaphore]. A per-game failure is swallowed so one bad response cannot abort the
-     * batch; [CancellationException] is always rethrown so callers stop promptly. [onGameDone],
-     * if given, fires after every successful fetch with the running refreshed count.
+     * Fetches [appIds] **serially** — one request in flight at a time.
+     *
+     * This is deliberate, not a missing optimisation. Tiering is what made fetch volume small: a
+     * steady-state sync now selects a handful of played games, so a typical inline pass is a few
+     * requests and there is nothing left for concurrency to speed up. The only pass large enough to
+     * care is the weekly reconciliation, which runs on charger + unmetered wifi precisely so its
+     * duration can be irrelevant. That leaves concurrency with real burst exposure against a Steam
+     * client that has no retry, backoff, or 429 handling, in exchange for a speedup nothing needs —
+     * and it is the same courtesy-not-throughput reasoning design.md used to pick a modest bound in
+     * the first place, carried to its conclusion. The HLTB batch path serialises for the same
+     * reason (it goes further and sleeps between requests).
+     *
+     * A per-game failure is swallowed so one bad response cannot abort the batch;
+     * [CancellationException] is always rethrown so callers stop promptly. [onGameDone], if given,
+     * fires after every successful fetch with the running refreshed count.
      */
     private suspend fun fetchGames(
         apiKey: String,
@@ -239,29 +240,24 @@ class AchievementRepository @Inject constructor(
         schemaFetchedAtByAppId: Map<Long, Long?>,
         onGameDone: ((refreshedSoFar: Int) -> Unit)? = null,
     ): Int {
-        val refreshed = AtomicInteger(0)
-        coroutineScope {
-            appIds.map { appId ->
-                async {
-                    try {
-                        fetchSemaphore.withPermit {
-                            syncGame(
-                                apiKey = apiKey,
-                                steamId = steamId,
-                                appId = appId,
-                                schemaFetchedAt = schemaFetchedAtByAppId[appId],
-                            )
-                        }
-                        onGameDone?.invoke(refreshed.incrementAndGet())
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        // Per-game failure is swallowed so one bad response cannot fail the batch.
-                    }
-                }
-            }.awaitAll()
+        var refreshed = 0
+        for (appId in appIds) {
+            try {
+                syncGame(
+                    apiKey = apiKey,
+                    steamId = steamId,
+                    appId = appId,
+                    schemaFetchedAt = schemaFetchedAtByAppId[appId],
+                )
+                refreshed++
+                onGameDone?.invoke(refreshed)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Per-game failure is swallowed so one bad response cannot fail the batch.
+            }
         }
-        return refreshed.get()
+        return refreshed
     }
 
     private suspend fun syncGame(
@@ -342,9 +338,6 @@ class AchievementRepository @Inject constructor(
     companion object {
         /** How long a fetched achievement schema remains valid; schema changes only when patched by the developer. */
         const val SCHEMA_WINDOW_MILLIS = 30L * 24 * 60 * 60 * 1000
-
-        /** Maximum concurrent achievement fetches within a single sync/reconciliation pass. */
-        const val MAX_CONCURRENT_FETCHES = 5
     }
 }
 

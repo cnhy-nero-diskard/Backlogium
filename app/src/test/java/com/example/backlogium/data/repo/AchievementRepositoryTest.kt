@@ -66,12 +66,16 @@ class AchievementRepositoryTest {
         assertEquals(emptyList<Long>(), api.playerAchievementCalls)
     }
 
+    /**
+     * Serial fetching is a deliberate choice (see `fetchGames`), so it is asserted rather than left
+     * to drift: the Steam client has no retry, backoff, or 429 handling, and after tiering there is
+     * no pass large enough for concurrency to speed up. A future change that parallelises this
+     * should have to update this test and say why.
+     */
     @Test
-    fun `hot and warm games are fetched concurrently but capped`() = runTest {
+    fun `fetches are issued one at a time`() = runTest {
         val api = FakeSteamApi(gate = true)
         val repo = repository(api)
-        // 12 warm games against a cap of 5 — enough to prove both that fetches overlap and that
-        // the overlap is bounded, which a sequential loop with a semaphore would fail.
         val games = (1L..12L).map { ownedGame(it, forever = 100, weeks = 10) }
 
         val job = launch {
@@ -79,16 +83,12 @@ class AchievementRepositoryTest {
         }
         runCurrent()
 
-        assertEquals(AchievementRepository.MAX_CONCURRENT_FETCHES, api.inFlight.get())
+        assertEquals("only the first game should have started", 1, api.playerAchievementCalls.size)
         api.release()
         job.join()
 
         assertEquals(12, api.playerAchievementCalls.size)
-        assertEquals(
-            "concurrency should never exceed the semaphore's permits",
-            AchievementRepository.MAX_CONCURRENT_FETCHES,
-            api.maxInFlight.get(),
-        )
+        assertEquals("no request may overlap another", 1, api.maxInFlight.get())
     }
 
     @Test
