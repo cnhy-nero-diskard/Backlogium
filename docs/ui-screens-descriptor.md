@@ -205,7 +205,7 @@ padding, sections rendered only if they have rows:
    trailing X `IconButton` once non-empty. Filters both lists by case-insensitive name substring.
 2. **HowLongToBeat controls:** "Refresh HLTB library" `FilledTonalButton` (becomes a spinner +
    "Refreshing…" while running) + "Force all" `OutlinedButton`, both disabled while a refresh runs,
-   over a "Review HLTB matches ({n})" `TextButton`.
+   over a "Review HLTB matches ({n})" `TextButton` shown only when `{n} > 0`.
 3. **Batch progress card** (only while a refresh runs): `"{done} / {total}"` (bold) beside a
    "Stop" `TextButton` (`PlayerStop` icon), over a determinate `LinearProgressIndicator`, then a
    fixed-height (96dp) scrolling log, newest first, of
@@ -263,8 +263,13 @@ padding, sections rendered only if they have rows:
 **Focus dialog** (Material 3 `AlertDialog`, from the 3-dot menu):
    - Title: "Add to Focus" (new) or "Remove from Focus" (existing)
    - Body: the game name in a sentence — no typed target is collected, completion lengths come from
-     HowLongToBeat — plus this game's live HLTB status and a "Refresh HowLongToBeat" `TextButton`
-     that forces a single-game lookup (disabled while one is in flight)
+     HowLongToBeat — plus this game's live HLTB status, a "Choose match" `TextButton` when the
+     lookup needs review, or a "Change match" `TextButton` when it is resolved. Either opens a
+     library-hosted `ModalBottomSheet`; Change match performs a fresh non-persisting lookup so an
+     existing match is not overwritten before the user chooses. The sheet shows every candidate's
+     themed cover-art placeholder, name, and Completionist length in an internally scrolling list;
+     it shows progress while looking up and disables selection until the lookup completes. A
+     "Refresh HowLongToBeat" `TextButton` forces a single-game lookup (disabled while one is in flight).
    - Confirm button: "Add" / "Remove"; dismiss button: "Cancel"
 
 **Empty / alt states:**
@@ -450,12 +455,13 @@ the route into onboarding.
 **Purpose:** resolve ambiguous HowLongToBeat matches. Games whose match was uncertain after a
 refresh are listed with their candidate entries so the user can pick the right one.
 
-**Layout:** LazyColumn, 16dp padding, 12dp gaps. One `Card` per game needing review: bold
+**Layout:** LazyColumn, 16dp padding, 12dp gaps. The Library's review entry point is shown only
+when at least one game is queued. One `Card` per game needing review: bold
 game name (titleMedium), a "Choose the correct HowLongToBeat entry:" caption, then a list of
 tappable candidate rows separated by `HorizontalDivider`. Each candidate row shows the
-candidate name (bodyLarge) over its Completionist length (`"Completionist: 1h 20m"` or "No
-Completionist length"). Tapping a candidate resolves the match and drops that game from the
-list.
+cover art (or the themed placeholder), candidate name (bodyLarge), and its Completionist length
+(`"Completionist: 1h 20m"` or "No Completionist length"). Tapping a candidate resolves the match
+and drops that game from the list.
 
 **Empty state:** nothing to review → centered Empty State titled "Nothing to review", body
 "Games with an ambiguous HowLongToBeat match appear here after a refresh."

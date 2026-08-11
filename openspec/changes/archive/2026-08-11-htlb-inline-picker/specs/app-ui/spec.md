@@ -2,11 +2,11 @@
 
 ### Requirement: Inline HowLongToBeat match selection
 When a single game's HowLongToBeat lookup yields ambiguous candidates, the system SHALL let the user
-choose among those candidates without leaving the surface that initiated the lookup.
+choose among those candidates from the library itself, without navigating to a separate screen.
 
 #### Scenario: Choosing a candidate in place
 - **WHEN** a single-game lookup started from the game's menu reports an ambiguous match
-- **THEN** the candidates are presented for selection in that same dialog
+- **THEN** the candidates are presented for selection without navigating to a separate screen
 
 #### Scenario: Selection resolves immediately
 - **WHEN** the user selects a candidate
@@ -15,20 +15,25 @@ choose among those candidates without leaving the surface that initiated the loo
 
 #### Scenario: Changing an already-resolved match
 - **WHEN** a game's HowLongToBeat match is already resolved
-- **THEN** the dialog offers changing the match, and doing so presents candidates to choose from
+- **THEN** changing the match is offered, and choosing it presents candidates to select from
+
+#### Scenario: An offered change is abandoned
+- **WHEN** the user asks to change a resolved match and then dismisses the picker without selecting
+- **THEN** the previously resolved match remains in effect, unchanged
 
 #### Scenario: Lookup in flight
-- **WHEN** a lookup is running from within the dialog
-- **THEN** the dialog reflects the in-flight state and the selection action is unavailable until it
+- **WHEN** a lookup is running for the picker
+- **THEN** the picker reflects the in-flight state and the selection action is unavailable until it
   completes
 
 #### Scenario: Lookup finds a single confident match
 - **WHEN** a single-game lookup resolves confidently on its own
-- **THEN** no candidate selection is presented and the dialog reports the resolved match
+- **THEN** no candidate selection is presented and the resolved match is reported
 
 #### Scenario: Many candidates
-- **WHEN** more candidates are retained than fit on screen
-- **THEN** the candidate list scrolls within the dialog rather than overflowing it
+- **WHEN** more candidates are available than fit on screen
+- **THEN** the candidate list scrolls within the picker rather than overflowing it, and every
+  candidate is reachable
 
 ### Requirement: Candidate cover art
 The system SHALL present cover art alongside each HowLongToBeat candidate, wherever candidates are

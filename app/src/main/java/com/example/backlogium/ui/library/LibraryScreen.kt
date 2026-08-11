@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -66,6 +67,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.domain.LibrarySortKey
@@ -76,6 +78,7 @@ import com.example.backlogium.ui.components.GameHeaderBackdrop
 import com.example.backlogium.ui.components.GameHeroCapsule
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.components.GameListDensityControl
+import com.example.backlogium.ui.components.HltbCandidateRow
 import com.example.backlogium.ui.collections.GenreFilterChoice
 import com.example.backlogium.ui.collections.genreFilterCatalog
 import com.example.backlogium.ui.theme.overrunExcess
@@ -133,6 +136,7 @@ fun LibraryScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var dialogTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
+    var pickerTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
     var selectedGenreIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var showGenreSheet by rememberSaveable { mutableStateOf(false) }
     val selectedGenreSet = selectedGenreIds.toSet()
@@ -347,6 +351,36 @@ fun LibraryScreen(
                 dialogTarget = null
             },
             onRefresh = { viewModel.refreshGame(target.appId, target.name) },
+            onChooseMatch = {
+                viewModel.clearPicker(target.appId)
+                pickerTarget = target
+                dialogTarget = null
+            },
+            onChangeMatch = {
+                pickerTarget = target
+                dialogTarget = null
+                viewModel.changeMatch(target.appId, target.name)
+            },
+        )
+    }
+
+    pickerTarget?.let { target ->
+        val retainedCandidates = state.hltbCandidatesByAppId[target.appId].orEmpty()
+        val transient = state.pickerStates[target.appId]
+        HltbPickerSheet(
+            gameName = target.name,
+            candidates = transient?.candidates ?: retainedCandidates,
+            loading = transient?.loading == true,
+            failed = transient?.failed == true,
+            onDismiss = {
+                viewModel.clearPicker(target.appId)
+                pickerTarget = null
+            },
+            onSelect = { candidate ->
+                viewModel.resolveMatch(target.appId, candidate)
+                viewModel.clearPicker(target.appId)
+                pickerTarget = null
+            },
         )
     }
 
@@ -374,6 +408,105 @@ fun LibraryScreen(
                     Spacer(Modifier.height(4.dp))
                 }
                 Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun HltbPickerSheet(
+    gameName: String,
+    candidates: List<HltbCandidate>,
+    loading: Boolean,
+    failed: Boolean,
+    onDismiss: () -> Unit,
+    onSelect: (HltbCandidate) -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight()
+                .padding(horizontal = 24.dp, vertical = 12.dp),
+        ) {
+            Text("Choose HowLongToBeat match", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = gameName,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(12.dp))
+
+            when {
+                loading -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Looking up candidates…")
+                        }
+                    }
+                }
+
+                failed -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "HowLongToBeat lookup failed. Try again from Change match.",
+                            color = MaterialTheme.colorScheme.error,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
+
+                candidates.isEmpty() -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("No candidate matches found.")
+                    }
+                }
+
+                else -> {
+                    Text(
+                        text = "Choose the correct entry:",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                    ) {
+                        items(
+                            items = candidates,
+                            key = { candidate -> candidate.hltbId },
+                        ) { candidate ->
+                            HltbCandidateRow(
+                                candidate = candidate,
+                                enabled = !loading,
+                                onClick = { onSelect(candidate) },
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -522,17 +655,15 @@ private fun HltbMenuButton(
                     onForceRefresh()
                 },
             )
-            DropdownMenuItem(
-                text = {
-                    Text(
-                        if (reviewCount > 0) "Review HLTB matches ($reviewCount)" else "Review HLTB matches",
-                    )
-                },
-                onClick = {
-                    expanded = false
-                    onOpenReview()
-                },
-            )
+            if (reviewCount > 0) {
+                DropdownMenuItem(
+                    text = { Text("Review HLTB matches ($reviewCount)") },
+                    onClick = {
+                        expanded = false
+                        onOpenReview()
+                    },
+                )
+            }
         }
     }
 }
@@ -1513,6 +1644,8 @@ private fun GoalDialog(
     onTag: () -> Unit,
     onUntag: () -> Unit,
     onRefresh: () -> Unit,
+    onChooseMatch: () -> Unit,
+    onChangeMatch: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1529,6 +1662,25 @@ private fun GoalDialog(
                 )
                 Spacer(Modifier.height(12.dp))
                 HltbStatusLabel(status = hltbStatus, op = fetchOp)
+                when (hltbStatus) {
+                    HltbMatchState.NEEDS_REVIEW -> TextButton(
+                        onClick = onChooseMatch,
+                        enabled = fetchOp != HltbFetchOp.IN_PROGRESS,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                    ) {
+                        Text("Choose match")
+                    }
+
+                    HltbMatchState.RESOLVED -> TextButton(
+                        onClick = onChangeMatch,
+                        enabled = fetchOp != HltbFetchOp.IN_PROGRESS,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                    ) {
+                        Text("Change match")
+                    }
+
+                    else -> Unit
+                }
                 TextButton(
                     onClick = onRefresh,
                     enabled = fetchOp != HltbFetchOp.IN_PROGRESS,

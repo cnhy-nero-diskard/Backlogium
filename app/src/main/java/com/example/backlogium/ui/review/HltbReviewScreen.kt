@@ -1,9 +1,7 @@
 package com.example.backlogium.ui.review
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,7 +22,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.ui.components.EmptyState
-import com.example.backlogium.ui.util.UiFormat
+import com.example.backlogium.ui.components.HltbCandidateRow
 
 /**
  * Match-review surface: each game flagged as needing an HLTB match is listed with its
@@ -80,33 +78,9 @@ private fun ReviewCard(game: ReviewGameUi, onSelect: (HltbCandidate) -> Unit) {
             } else {
                 game.candidates.forEachIndexed { index, candidate ->
                     if (index > 0) HorizontalDivider()
-                    CandidateRow(candidate = candidate, onClick = { onSelect(candidate) })
+                    HltbCandidateRow(candidate = candidate, onClick = { onSelect(candidate) })
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun CandidateRow(candidate: HltbCandidate, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Column(modifier = Modifier.padding(end = 8.dp)) {
-            Text(candidate.name, style = MaterialTheme.typography.bodyLarge)
-            val completionist = candidate.completionistMinutes
-            Text(
-                text = if (completionist != null) {
-                    "Completionist: ${UiFormat.minutes(completionist)}"
-                } else {
-                    "No Completionist length"
-                },
-                style = MaterialTheme.typography.bodySmall,
-            )
         }
     }
 }

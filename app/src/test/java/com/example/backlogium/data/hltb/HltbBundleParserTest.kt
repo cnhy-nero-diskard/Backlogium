@@ -66,6 +66,7 @@ class HltbBundleParserTest {
                 HltbSearchGame(
                     gameId = 7231L,
                     gameName = "Portal 2",
+                    gameImage = "7231_Portal_2.jpg",
                     compMainSeconds = 30730, // ~512m
                     compPlusSeconds = 49433, // ~824m
                     comp100Seconds = 81179, // ~1353m
@@ -84,6 +85,16 @@ class HltbBundleParserTest {
         assertEquals(824, c.mainExtraMinutes)
         assertEquals(1353, c.completionistMinutes)
         assertNull(c.allStylesMinutes)
+        assertEquals("https://howlongtobeat.com/games/7231_Portal_2.jpg", c.imageUrl)
+    }
+
+    @Test
+    fun mapCandidates_leavesImageNullWhenAbsent() {
+        val response = HltbSearchResponse(
+            data = listOf(HltbSearchGame(gameId = 1L, gameName = "x")),
+        )
+
+        assertNull(HltbBundleParser.mapCandidates(response).first().imageUrl)
     }
 
     @Test

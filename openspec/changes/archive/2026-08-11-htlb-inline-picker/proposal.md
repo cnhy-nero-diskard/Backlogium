@@ -18,10 +18,12 @@ search response includes an image reference that the parser currently discards.
 
 ## What Changes
 
-- When a single-game lookup returns ambiguous candidates, the candidates are **selectable inside
-  the same dialog** — no navigation, no queue.
-- The dialog also offers **changing an already-resolved match**, so a bad auto-match is
-  correctable where it is noticed.
+- When a single-game lookup returns ambiguous candidates, the candidates are **selectable in a
+  picker opened from the library** — no navigation to another screen, no queue.
+- The game's menu also offers **changing an already-resolved match**, so a bad auto-match is
+  correctable where it is noticed. This needs a lookup that returns candidates *without* recording a
+  classification — re-running the automatic matcher would reproduce the same wrong result and
+  discard the candidates needed to fix it.
 - Candidates carry **cover art**, in both the dialog and the batch review screen.
 - The batch review screen keeps its role as the **post-sweep queue**, and its entry point is shown
   only when something is actually queued.
@@ -35,14 +37,20 @@ search response includes an image reference that the parser currently discards.
 
 ## Impact
 
-- **Affected code (new):** a candidate picker inside the Library's game dialog.
+- **Affected code (new):** a candidate picker as a modal bottom sheet hosted by `LibraryScreen`;
+  `HltbRepository.searchCandidates` — a lookup that scores and returns candidates but persists
+  nothing.
 - **Affected code (modified):** `HltbSearchGame` DTO gains the image field; `HltbCandidate` gains
-  `imageUrl`; `HltbBundleParser.mapCandidates` maps it; `LibraryViewModel` exposes candidates and a
-  resolve action; `LibraryScreen`'s `GoalDialog`; `HltbReviewScreen`'s candidate rows gain art.
+  `imageUrl`; `HltbBundleParser.mapCandidates` maps it; `HltbMatcher` exposes its scoring step so
+  the new lookup and `classify` share one implementation; `LibraryViewModel` exposes candidates and
+  a resolve action; `LibraryScreen`'s `GoalDialog` gains the picker entry points;
+  `HltbReviewScreen`'s candidate rows gain art.
 - **No migration.** `HltbCandidate` is persisted as JSON in `HltbData.candidatesJson`, and the new
   field has a default, so old cached candidates deserialize cleanly — they simply have no image
   until re-fetched.
-- **No new network calls.** The image reference comes from the search response already being parsed.
+- **No new network calls for cover art.** The image reference comes from the search response already
+  being parsed. Changing an already-resolved match does cost one request per correction — a
+  deliberate user action, not background traffic.
 
 ## Non-goals
 

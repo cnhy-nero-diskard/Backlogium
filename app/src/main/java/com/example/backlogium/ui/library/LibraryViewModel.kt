@@ -3,6 +3,7 @@ package com.example.backlogium.ui.library
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.local.dao.AchievementCounts
+import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
@@ -25,6 +26,7 @@ import com.example.backlogium.ui.search.gameSearchMatchTier
 import com.example.backlogium.work.HltbBatchProgress
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +40,13 @@ import javax.inject.Inject
 
 /** Transient (non-persisted) state of an in-flight or just-finished per-game HLTB lookup. */
 enum class HltbFetchOp { IN_PROGRESS, FAILED }
+
+/** Transient state for the inline candidate picker; never persisted with the library row. */
+data class HltbPickerUiState(
+    val candidates: List<HltbCandidate> = emptyList(),
+    val loading: Boolean = false,
+    val failed: Boolean = false,
+)
 
 data class GoalGameUi(
     override val appId: Long,
@@ -101,6 +110,8 @@ data class LibraryUiState(
     /** The rest of the library ("Your games"), already filtered and sorted for display. */
     val backlog: List<BacklogGameUi> = emptyList(),
     val reviewCount: Int = 0,
+    val hltbCandidatesByAppId: Map<Long, List<HltbCandidate>> = emptyMap(),
+    val pickerStates: Map<Long, HltbPickerUiState> = emptyMap(),
     val refreshing: Boolean = false,
     val query: String = "",
     val focusSort: LibrarySortKey = LibrarySortKey.NAME,
@@ -143,6 +154,8 @@ class LibraryViewModel @Inject constructor(
 
     /** Per-game manual-lookup state, keyed by appId. Not persisted — cleared on success. */
     private val fetchOps = MutableStateFlow<Map<Long, HltbFetchOp>>(emptyMap())
+    private val pickerStates = MutableStateFlow<Map<Long, HltbPickerUiState>>(emptyMap())
+    private val pickerJobs = mutableMapOf<Long, Job>()
 
     /** Name filter. Applied in memory: the library is already loaded, so no query per keystroke. */
     private val query = MutableStateFlow("")
@@ -153,10 +166,10 @@ class LibraryViewModel @Inject constructor(
     private val content = combine(
         gameRepository.goalGames,
         gameRepository.backlog,
-        hltbRepository.reviewCount,
+        hltbRepository.reviewQueue,
         credentials.credentialsStateFlow,
         liveStatusRepository.nowPlaying,
-    ) { goals, backlog, reviewCount, credState, nowPlaying ->
+    ) { goals, backlog, reviewQueue, credState, nowPlaying ->
         val goalIds = goals.mapTo(HashSet()) { it.appId }
         LibraryContent(
             configured = credState is CredentialsState.Configured,
@@ -165,7 +178,8 @@ class LibraryViewModel @Inject constructor(
             // independent Room queries that can momentarily both contain a just-tagged game,
             // and a duplicate appId across LazyColumn items crashes Compose.
             backlog = backlog.filterNot { it.appId in goalIds },
-            reviewCount = reviewCount,
+            reviewCount = reviewQueue.size,
+            hltbCandidatesByAppId = reviewQueue.associate { it.appId to it.candidates },
             playingAppId = (nowPlaying as? NowPlaying.InGame)?.gameId,
         )
     }
@@ -183,11 +197,13 @@ class LibraryViewModel @Inject constructor(
     ) { tracked, rarity, cfg -> XpInputs(tracked, rarity, cfg) }
 
     private val viewPrefs = combine(
-        combine(query, selection, fetchOps, settings.librarySort) { query, selection, ops, sort ->
+        combine(query, selection, fetchOps, pickerStates, settings.librarySort) {
+                query, selection, ops, pickerStates, sort ->
             ViewPrefs(
                 query = query,
                 selection = selection,
                 ops = ops,
+                pickerStates = pickerStates,
                 sort = sort,
                 density = GameListDensity.LIST,
             )
@@ -230,6 +246,8 @@ class LibraryViewModel @Inject constructor(
             goalGames = goals,
             backlog = backlog,
             reviewCount = content.reviewCount,
+            hltbCandidatesByAppId = content.hltbCandidatesByAppId,
+            pickerStates = view.pickerStates,
             refreshing = batch.refreshing,
             query = view.query,
             focusSort = view.sort.focus,
@@ -314,6 +332,35 @@ class LibraryViewModel @Inject constructor(
         }
     }
 
+    fun resolveMatch(appId: Long, candidate: HltbCandidate) = viewModelScope.launch {
+        hltbRepository.resolveMatch(appId, candidate)
+    }
+
+    fun changeMatch(appId: Long, name: String) {
+        pickerJobs.remove(appId)?.cancel()
+        pickerStates.update { it + (appId to HltbPickerUiState(loading = true)) }
+        val job = viewModelScope.launch {
+            val result = runCatching { hltbRepository.searchCandidates(name) }
+            pickerStates.update { states ->
+                val current = states[appId] ?: return@update states
+                states + (appId to current.copy(
+                    candidates = result.getOrDefault(emptyList()),
+                    loading = false,
+                    failed = result.isFailure,
+                ))
+            }
+        }
+        pickerJobs[appId] = job
+        job.invokeOnCompletion {
+            if (pickerJobs[appId] === job) pickerJobs.remove(appId)
+        }
+    }
+
+    fun clearPicker(appId: Long) {
+        pickerJobs.remove(appId)?.cancel()
+        pickerStates.update { it - appId }
+    }
+
     /** Enqueue the batch HLTB refresh. [force] re-fetches every game regardless of freshness. */
     fun refreshHltb(force: Boolean) = syncScheduler.refreshHltbNow(force)
 
@@ -330,6 +377,7 @@ private data class LibraryContent(
     val goals: List<LibraryGame>,
     val backlog: List<LibraryGame>,
     val reviewCount: Int,
+    val hltbCandidatesByAppId: Map<Long, List<HltbCandidate>>,
     /** appId of the game Steam's live presence reports as running right now, if any. */
     val playingAppId: Long?,
 )
@@ -346,6 +394,7 @@ private data class ViewPrefs(
     val query: String,
     val selection: Set<Long>,
     val ops: Map<Long, HltbFetchOp>,
+    val pickerStates: Map<Long, HltbPickerUiState>,
     val sort: LibrarySortPrefs,
     val density: GameListDensity,
 )
