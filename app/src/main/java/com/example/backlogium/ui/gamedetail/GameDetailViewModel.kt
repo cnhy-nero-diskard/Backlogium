@@ -14,6 +14,7 @@ import com.example.backlogium.domain.GameXpInput
 import com.example.backlogium.domain.LibraryXp
 import com.example.backlogium.gamification.AchievementInput
 import com.example.backlogium.gamification.Gamification
+import com.example.backlogium.gamification.RarityStanding
 import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.gamification.RuleConfig
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -110,6 +111,7 @@ data class GameDetailUiState(
     val loading: Boolean = true,
     val gameName: String = "",
     val summary: GameSummaryUi = GameSummaryUi(),
+    val rarityStanding: RarityStanding.Result? = null,
     val achievements: List<AchievementUi> = emptyList(),
     val sort: AchievementSort = AchievementSort.DATE_ACHIEVED,
     val isRefreshingPlayerCount: Boolean = false,
@@ -183,6 +185,7 @@ class GameDetailViewModel @Inject constructor(
             loading = false,
             gameName = content.game?.name ?: "",
             summary = content.toSummary(rows, activePlayers),
+            rarityStanding = content.toRarityStanding(),
             achievements = rows.sortedWith(sort.comparator()),
             sort = sort,
             isRefreshingPlayerCount = isRefreshingPlayerCount,
@@ -277,6 +280,21 @@ internal data class Content(
     val trackedMinutes: Int,
     val config: RuleConfig,
 )
+
+/**
+ * The standing uses the full observed row count and the live global rates. It must not reuse
+ * [GameAchievement.rarityPercent], which is intentionally frozen for XP/tier stability.
+ */
+internal fun Content.toRarityStanding(): RarityStanding.Result? {
+    if (achievements.isEmpty()) return null
+    return RarityStanding.derive(
+        RarityStanding.Input(
+            totalAchievements = achievements.size,
+            unlockedAchievements = achievements.count { it.unlocked },
+            globalUnlockPercents = achievements.map { it.globalPercent },
+        ),
+    )
+}
 
 internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): GameSummaryUi {
     val game = game ?: return GameSummaryUi()

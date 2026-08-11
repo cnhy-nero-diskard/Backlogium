@@ -380,6 +380,19 @@ its own information):
   is omitted individually when unknown and the whole block is gated on at least one being
   present — no zeros, no dashes, no placeholders.
 
+**Rarity Standing section** (directly below the summary when achievement rows exist):
+- A compact, dynamically tinted `Card` headed **"Rarity standing"** with a trophy icon and a
+  `✦ {tier}` marker. The color tier follows the same percentile cut points as achievement rarity:
+  COMMON at 50%+, UNCOMMON at 20%+, RARE at 5%+, EPIC at 1%+, and LEGENDARY below 1%. A useful
+  provable ceiling is the accent-colored `"Top {ceiling}% or better"` headline; the completionist
+  variant says `"At most {ceiling}% of owners have completed the game"`.
+- Inline icon stats show `CircleCheck {unlocked}/{total} earned` and `User {average} avg`, with
+  the values colored by the rarity accent and secondary steel-blue accent. When no bound can be
+  derived or it is at least 50%, only these compact stats remain.
+- Short caveat, always present: `"Steam owners • includes unplayed copies"`. The section is shared
+  by the full game-detail destination and the collection game-detail overlay because both render
+  the same `GameDetailList`.
+
 When every achievement is unlocked, a striking **"GAME COMPLETED"** banner `Card` in the gold
 accent color (`Trophy` icon + "Every achievement unlocked"), reading as a level-up-tier milestone.
 

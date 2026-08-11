@@ -11,6 +11,11 @@ bound SHALL be mathematically guaranteed rather than estimated.
 - **THEN** an upper bound on the share of owners at or above the player's unlocked count is derived
   from those rates alone, with no other data source
 
+#### Scenario: Derived from currently published rates
+- **WHEN** the unlock rates published for a game change
+- **THEN** the bound is derived from the current rates, not from any rate value persisted at the time
+  the player unlocked an achievement, because the bound describes the owner population as it stands
+
 #### Scenario: Tightest available bound chosen
 - **WHEN** more than one valid bound can be derived
 - **THEN** the smallest of them is used

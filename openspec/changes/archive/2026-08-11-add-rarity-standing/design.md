@@ -8,7 +8,7 @@ Everything the bound needs is already stored per achievement row:
 |---|---|
 | `N` — total achievements | `AchievementDao.getForGame(appId)` — `GetPlayerAchievements` returns **every** achievement, locked included, so the row count is complete |
 | `n` — unlocked count | `Achievement.unlocked` |
-| `p[]` — global unlock rates | `Achievement.globalPercent`, refreshed on every merge from `getGlobalAchievementPercentages` |
+| `p[]` — global unlock rates | `Achievement.globalPercent`, refreshed on every merge from `getGlobalAchievementPercentages` — **not** `snapshotPercent` |
 
 `AchievementRepository` fetches on a 1-hour freshness window, so the percentages are fresher than
 this feature requires. Two existing behaviors constrain the design:
@@ -21,6 +21,16 @@ this feature requires. Two existing behaviors constrain the design:
   can legitimately have rows with unknown rates.
 
 That second point is the sharp edge in this feature, and the reason for the decision below.
+
+There is a third, sharper one. `Achievement` carries **two** rate columns, and the entity's own KDoc
+instructs a reader to prefer the wrong one:
+
+> `[snapshotPercent]` is the global unlock percent captured the first sync that observed the
+> achievement unlocked, and is never overwritten afterward — it, **not** the live `[globalPercent]`,
+> drives the engine's rarity/XP.
+
+That rule exists so a player's earned XP cannot drift when Steam's rates move, and it is right for
+XP. It is wrong here, and the codebase actively points an implementer at it — see the decision below.
 
 ## The bound
 
@@ -68,6 +78,17 @@ the minimum. Matches the pigeonhole reasoning above.
   *Why:* free JVM tests over a pure function, and no risk of a display statistic being mistaken for
   an XP input later.
 
+- **`p[]` is live `globalPercent`, never the persisted `snapshotPercent` — the engine's rarity-drift
+  rule does not apply to this feature.** The snapshot is deliberately frozen per player at the moment
+  an achievement was first seen unlocked, so a library of snapshots is a set of values from many
+  different dates, and locked achievements have no snapshot at all. The bound is a statement about
+  the owner population *as it stands now*; mixing frozen per-player values into it computes a bound
+  against a population that never existed at any single point in time.
+  *Why this is called out at all:* the entity KDoc tells a reader to prefer the snapshot, and every
+  other rarity consumer in the app obeys it. An implementer doing the locally consistent thing here
+  gets a wrong answer with no error and no failing test unless one is written for it (task 1.2).
+  Drift is a feature here, not a bug — when Steam's rates move, the bound *should* move with them.
+
 - **When rates are missing, restrict `S_k` to achievements with known rates — never guess.** The
   pigeonhole argument holds for *any* set of size `m + k`, not only the globally rarest, so choosing
   the `m + k` smallest **known** rates yields a bound that is weaker but still proven. Requires at
@@ -97,15 +118,31 @@ the minimum. Matches the pigeonhole reasoning above.
     almost nobody.
   - Fewer than `m + 1` known rates → average only.
 
-- **`average = sum(p[])` is computed over known rates and labelled as the average owner's count.**
-  With unknown rates it understates slightly; that is preferable to omitting the one figure that
-  still works when the bound does not.
+- **`average = sum(p[]) / 100` is computed over known rates and labelled as the average owner's
+  count.** Steam publishes each `p` as a percentage, so the division converts the sum to an
+  achievement count. With unknown rates it understates slightly; that is preferable to omitting the
+  one figure that still works when the bound does not.
 
 - **The full-completion ceiling (`rarest = p[0]`) is surfaced only at 100%.** The original spec
   computes it but never renders it. At `n = N` the minimising `k` is 1 and `S₁` is the single rarest
   achievement, so `ceiling` *equals* the full-completion ceiling — the two collapse. Rather than a
   redundant field, a completionist gets the sharper phrasing: at most this share of owners have every
   achievement.
+
+- **The ceiling gets its own formatter; `GameDetailScreen`'s existing `formatPercent` is not reused.**
+  That helper is `"%.1f"` — round-to-nearest, which rounds *down* half the time. Correct for an
+  achievement's own rarity, fatal for a bound: a displayed value below the proven one is a claim the
+  math does not support. Two similarly-named percent formatters on one screen is a small cost against
+  silently breaking the feature's only real invariant.
+
+- **The section renders on every surface that hosts `GameDetailList`, including the collection bottom
+  sheet.** `GameDetailScreen` is presented both full-screen and inside a sheet from `CollectionScreen`
+  (`collection-game-detail-sheet`), sharing one `GameDetailList`. Sharing the section is the default
+  and is kept deliberately: suppressing it in the sheet would mean threading a placement flag through
+  a screen that has no such concept today, to hide a three-line section.
+  *Cost accepted:* the sheet is shorter and narrower, so the section must stay legible there —
+  footnote included, since the population caveat is load-bearing honesty rather than decoration and
+  is not a candidate for dropping to save a line.
 
 - **Computed in the ViewModel from already-observed rows; nothing is persisted.** `GameDetailViewModel`
   already collects `observeForGame(appId)`; the bound is derived in the same `combine`.
@@ -114,8 +151,12 @@ the minimum. Matches the pigeonhole reasoning above.
 
 ## Risks / Trade-offs
 
-- **The invalid-`m` trap** — the single most likely way to break this feature. Called out above and
-  given its own task and test.
+- **The invalid-`m` trap** — the most likely way to break the math. Called out above and given its
+  own task and test.
+- **The `snapshotPercent` trap** — the most likely way to break the *inputs*, and more insidious,
+  because the entity's KDoc and every other rarity consumer in the app point straight at it. Neither
+  trap raises an error; both produce a plausible number. Together they are the reason this feature
+  needs the brute-force cross-check in task 2.2 rather than example-based tests alone.
 - **"Top 12% or better" underwhelms** — a real cost of honest rounding. The alternative is a number
   that is sometimes unprovable, which for this feature is worse.
 - **Steam's population includes unplayed copies**, so bounds are conservative in the player's favour.
@@ -131,8 +172,14 @@ None. No new persistence, no schema change, no new network calls, no new cache.
 
 ## Open Questions
 
-- Should the section also appear on the Library row or Home for a standout game? Per-game detail only
-  for now.
 - Is there value in showing *which* achievements are doing the work (the `m + k` rarest that produced
   the minimising bound)? Interesting, and arguably the most actionable part — "unlock any of these to
-  move" — but it invites over-reading a bound as a target.
+  move" — but it invites over-reading a bound as a target, which is the exact misreading the "or
+  better" phrasing exists to prevent. **Out of scope for this change**; a candidate follow-up once
+  the section has been lived with.
+
+Resolved while finalising:
+
+- *Should the section also appear on the Library row or Home for a standout game?* No — per-game
+  detail surfaces only. A bound needs its game's total and the average alongside it to mean anything;
+  a bare "top 6.7%" on a library row is the rank-shaped misreading in miniature.
