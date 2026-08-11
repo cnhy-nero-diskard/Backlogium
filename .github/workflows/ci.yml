@@ -7,6 +7,7 @@ on:
 
 jobs:
   test:
+    name: Android unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,3 +30,29 @@ jobs:
         with:
           name: test-reports
           path: '**/build/reports/tests/'
+
+  # functions/ is a fully independent build system — invisible to Gradle, so the
+  # Android job above never typechecks it. Without this job a breaking change to
+  # functions/src/*.ts merges green. Separate job, not a step: the two toolchains
+  # share nothing and should fail independently.
+  functions:
+    name: Cloud functions typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          # Matches functions/package.json "engines.node" and the Cloud Functions runtime.
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: functions
+
+      - name: Typecheck and compile
+        run: npm run build
+        working-directory: functions

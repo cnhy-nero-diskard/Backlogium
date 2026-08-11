@@ -69,14 +69,27 @@ Repositories expose domain models. Room entities stay inside `data/`. Nothing
 under `ui/` imports a storage type: no `data.local.entity.*`, and no
 `SettingsDataStore` in a ViewModel. Settings go through `SettingsRepository`.
 
-Checkable from a shell:
+Checkable from a shell — matching on `import` skips prose mentions in KDoc, and
+`--exclude-dir` skips the documented diagnostics exception:
 
 ```bash
-grep -rn "data.local.entity\|SettingsDataStore" app/src/main/java/com/example/backlogium/ui/
+grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" \
+  app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics
 ```
 
-One deliberate exception: `HltbCandidate` (`data.hltb`) crosses the boundary as a
-plain serializable class because it is exactly the shape the review surface needs.
+Two deliberate exceptions:
+
+- `HltbCandidate` (`data.hltb`) crosses the boundary as a plain serializable class
+  because it is exactly the shape the review surface needs.
+- `ui/diagnostics/` reads `DiagnosticsDao` directly and renders `SyncRun`,
+  `RequestBreakdown`, and `PresenceDecision` verbatim. It is a developer-facing debug
+  screen whose purpose is to show the stored rows as stored, so an identity mapping to
+  look-alike domain models would only add a layer that can misrepresent what is being
+  debugged. Scoped to this package; writes still go through `SyncRunRecorder`.
+
+`ui/home/HomeViewModel.kt` is a known outstanding breach rather than an exception —
+`CollectionRepository` exposes entities across its public API, and mapping at that
+boundary is deferred work. See `CLAUDE.md` for the detail.
 
 ## Visual Identity
 
