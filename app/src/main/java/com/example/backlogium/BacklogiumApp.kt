@@ -96,6 +96,7 @@ class BacklogiumApp : Application(), Configuration.Provider {
             Timber.plant(Timber.DebugTree())
         }
         syncScheduler.ensurePeriodicSync()
+        syncScheduler.ensurePeriodicReconciliation()
         ProcessLifecycleOwner.get().lifecycle.addObserver(ForegroundPresenceCheck())
     }
 

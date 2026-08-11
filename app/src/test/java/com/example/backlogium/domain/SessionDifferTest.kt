@@ -130,6 +130,35 @@ class SessionDifferTest {
     }
 
     @Test
+    fun bulkOpenSessions_produceSameDiffAsPerGameReads() {
+        // Simulates the N+1 collapse: getAllOpenSessions() returns all open rows, which the
+        // caller associates by appId into priorStates. The resulting diff must match what
+        // per-game getOpenSession(appId) calls would have produced.
+        val openSessions = listOf(
+            OpenSession(startAt = 1000L, minutes = 30, lastIncreaseAt = 2000L),
+            OpenSession(startAt = 1000L, minutes = 10, lastIncreaseAt = 2000L),
+        )
+        val prior = mapOf(
+            1L to GameDiffState(lastPlaytime = 130, openSession = openSessions[0]),
+            2L to GameDiffState(lastPlaytime = 110, openSession = openSessions[1]),
+        )
+
+        val result = differ.diff(
+            polls = listOf(PollGame(1L, 150), PollGame(2L, 115)),
+            priorStates = prior,
+            now = 3000L,
+            previousPollAt = 2000L,
+        )
+
+        assertEquals(2, result.actions.size)
+        val extend1 = result.actions.first { it.appId == 1L } as SessionAction.Extend
+        assertEquals(50, extend1.minutes)
+        val extend2 = result.actions.first { it.appId == 2L } as SessionAction.Extend
+        assertEquals(15, extend2.minutes)
+        assertEquals(mapOf(1L to 20, 2L to 5), result.playedDeltaByAppId)
+    }
+
+    @Test
     fun newlyAppearingGame_isBaselined_notTurnedIntoSession() {
         val result = differ.diff(
             polls = listOf(PollGame(9L, 4242)),

@@ -65,6 +65,9 @@ class ProfileRepository @Inject constructor(
     /** Enqueue an immediate one-time poll. */
     fun syncNow() = syncScheduler.syncNow()
 
+    /** Enqueue a one-time full achievement reconciliation pass, bypassing deferred constraints. */
+    fun reconcileNow() = syncScheduler.reconcileNow(force = true)
+
     /**
      * One-time opt-in import of historical Steam playtime into XP. Idempotent: a no-op once
      * already imported. Recompute inside the use-case updates the observed profile, so Home

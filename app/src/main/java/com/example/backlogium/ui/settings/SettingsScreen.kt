@@ -88,6 +88,7 @@ fun SettingsScreen(
         actions = remember(viewModel) {
             SettingsActions(
                 onSyncNow = viewModel::syncNow,
+                onReconcileNow = viewModel::reconcileNow,
                 onLiveMonitorEnabledChanged = viewModel::onLiveMonitorEnabledChanged,
                 onFieldChanged = viewModel::onFieldChanged,
                 onQuestModeChanged = viewModel::onQuestModeChanged,
@@ -115,6 +116,7 @@ fun SettingsScreen(
 /** Every action the screen can raise, so the rendering half stays free of the view model. */
 data class SettingsActions(
     val onSyncNow: () -> Unit,
+    val onReconcileNow: () -> Unit,
     val onLiveMonitorEnabledChanged: (Boolean) -> Unit,
     val onFieldChanged: (RuleField, String) -> Unit,
     val onQuestModeChanged: (QuestMode) -> Unit,
@@ -167,6 +169,7 @@ fun SettingsScreen(
             syncing = state.isSyncing,
             genreStatus = state.genreEnrichmentStatus,
             onSyncNow = actions.onSyncNow,
+            onReconcileNow = actions.onReconcileNow,
         )
 
         SectionHeader("Live monitor")
@@ -314,6 +317,7 @@ private fun SyncCard(
     syncing: Boolean,
     genreStatus: GenreEnrichmentStatus,
     onSyncNow: () -> Unit,
+    onReconcileNow: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -334,7 +338,13 @@ private fun SyncCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
                 )
             }
-            Button(onClick = onSyncNow, enabled = !syncing) { Text("Sync now") }
+            Column(horizontalAlignment = Alignment.End) {
+                Button(onClick = onSyncNow, enabled = !syncing) { Text("Sync now") }
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = onReconcileNow, enabled = !syncing) {
+                    Text("Full achievement refresh")
+                }
+            }
         }
     }
 }

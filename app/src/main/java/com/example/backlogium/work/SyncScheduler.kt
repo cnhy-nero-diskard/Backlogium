@@ -48,6 +48,24 @@ class SyncScheduler @Inject constructor(
             .build()
 
     /**
+     * Constraints for the deferred reconciliation pass: charging + unmetered network so it can
+     * safely spend several minutes refreshing the cold tier without draining battery or data.
+     */
+    private val reconciliationConstraints: Constraints
+        get() = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.UNMETERED)
+            .setRequiresCharging(true)
+            .build()
+
+    /** Emits true while a reconciliation pass is enqueued or running. */
+    val reconciliationInProgress: Flow<Boolean> = workManager
+        .getWorkInfosForUniqueWorkFlow(ReconciliationWorker.UNIQUE_WORK_NAME)
+        .map { infos ->
+            infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
+        }
+        .distinctUntilChanged()
+
+    /**
      * Emits true while *any* Steam poll is in flight — the manual "Sync now" and the periodic
      * background sync alike, so the shell's indicator reflects real activity rather than only
      * button presses. WorkManager is the single source of truth here — no separate in-memory
@@ -111,6 +129,46 @@ class SyncScheduler @Inject constructor(
 
         workManager.enqueueUniqueWork(
             SteamSyncWorker.ONE_TIME_NAME,
+            ExistingWorkPolicy.KEEP,
+            request,
+        )
+    }
+
+    /**
+     * Enqueue a weekly deferred reconciliation pass. Idempotent: keeps any already-scheduled
+     * work. The pass refreshes the cold tier only when charging + on unmetered wifi.
+     */
+    fun ensurePeriodicReconciliation() {
+        val request = PeriodicWorkRequestBuilder<ReconciliationWorker>(7, TimeUnit.DAYS)
+            .setConstraints(reconciliationConstraints)
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                WorkRequest.MIN_BACKOFF_MILLIS,
+                TimeUnit.MILLISECONDS,
+            )
+            .build()
+
+        workManager.enqueueUniquePeriodicWork(
+            ReconciliationWorker.UNIQUE_WORK_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            request,
+        )
+    }
+
+    /**
+     * Enqueue a one-time reconciliation pass. [force] bypasses the charging/unmetered
+     * constraints (the Settings "full achievement refresh" action); otherwise the pass waits
+     * for the deferred conditions.
+     */
+    fun reconcileNow(force: Boolean = false) {
+        val request = OneTimeWorkRequestBuilder<ReconciliationWorker>()
+            .setConstraints(if (force) networkConstraints else reconciliationConstraints)
+            .setInputData(workDataOf(ReconciliationWorker.KEY_FORCE to force))
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .build()
+
+        workManager.enqueueUniqueWork(
+            ReconciliationWorker.UNIQUE_WORK_NAME,
             ExistingWorkPolicy.KEEP,
             request,
         )

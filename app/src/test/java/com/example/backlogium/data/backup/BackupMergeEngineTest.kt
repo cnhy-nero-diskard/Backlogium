@@ -464,6 +464,9 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     override suspend fun getOpenSession(appId: Long): Session? =
         store.firstOrNull { it.appId == appId && it.open }
 
+    override suspend fun getAllOpenSessions(): List<Session> =
+        store.filter { it.open }
+
     override fun observeSince(cutoff: Long): Flow<List<Session>> =
         flowOf(store.filter { it.startAt >= cutoff })
 

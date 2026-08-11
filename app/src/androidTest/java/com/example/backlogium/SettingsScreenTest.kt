@@ -84,6 +84,7 @@ class SettingsScreenTest {
 
     private fun noopActions() = SettingsActions(
         onSyncNow = {},
+        onReconcileNow = {},
         onFieldChanged = { _, _ -> },
         onQuestModeChanged = {},
         onAdvancedExpandedChanged = {},

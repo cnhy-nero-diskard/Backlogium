@@ -5,6 +5,7 @@ import android.net.Uri
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
@@ -34,6 +35,7 @@ class BackupRepository @Inject constructor(
     private val settings: SettingsDataStore,
     private val credentials: CredentialsRepository,
     private val time: TimeProvider,
+    private val syncScheduler: SyncScheduler,
 ) {
     /** Export to a user-chosen SAF destination. Independent of the auto-snapshot toggle. */
     suspend fun exportTo(uri: Uri) {
@@ -74,6 +76,10 @@ class BackupRepository @Inject constructor(
     /** Merge a validated file into the local database — the one import/restore code path. */
     suspend fun importBackup(file: BackupFile) {
         mergeEngine.merge(file, settings.ruleConfigFlow.first())
+        // Restore supplies only unlocked achievements and no per-game metadata, so a restored
+        // library reads as entirely unfetched. Kick off a deferred reconciliation pass to
+        // converge the cold tier as soon as conditions allow rather than waiting a week.
+        syncScheduler.reconcileNow(force = false)
     }
 
     /** Retained automatic snapshots, most recent first. */

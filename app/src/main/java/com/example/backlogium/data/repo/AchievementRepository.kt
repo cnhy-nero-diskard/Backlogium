@@ -12,9 +12,12 @@ import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.domain.TimeProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -51,12 +54,13 @@ data class UnlockedAchievementRarity(
 
 /**
  * Owns fetching, merging, and caching Steam achievement data. Covers every game in the
- * library — not just games the player is actively engaged with — but stays freshness-gated:
- * only stale-or-missing games are fetched, bounding per-sync API volume the same way
- * [HltbRepository] bounds its batch sweep.
+ * library — not just games the player is actively engaged with — but selects what to refresh
+ * by tier (hot/warm/cold/never) and applies per-data-kind freshness windows so that inline
+ * sync work is bounded and library-scale work is deferred to reconciliation.
  *
  * A per-game failure (private profile, no stats, transport error) never fails the caller —
  * it is skipped and any previously stored rows for that game are left intact.
+ * [CancellationException] is rethrown so WorkManager stops promptly.
  */
 @Singleton
 class AchievementRepository @Inject constructor(
@@ -66,6 +70,13 @@ class AchievementRepository @Inject constructor(
     private val gameDao: GameDao,
     private val time: TimeProvider,
 ) {
+
+    /**
+     * Caps concurrent achievement requests so a large hot/warm batch cannot pile up
+     * in-flight calls against Steam. Matches the bounded-concurrency pattern used for
+     * HLTB batch refreshes.
+     */
+    private val fetchSemaphore = Semaphore(MAX_CONCURRENT_FETCHES)
 
     fun observeForGame(appId: Long): Flow<List<GameAchievement>> =
         achievementDao.observeForGame(appId).map { rows -> rows.map(Achievement::toDomain) }
@@ -128,7 +139,13 @@ class AchievementRepository @Inject constructor(
 
         val metadataByAppId = gameAchievementSyncDao.getAll(ownedGames.map { it.appId }.toSet())
             .associateBy { it.appId }
-            .mapValues { AchievementFreshness.SyncMetadata(it.key, it.value.playerStateFetchedAt) }
+            .mapValues {
+                AchievementFreshness.SyncMetadata(
+                    it.key,
+                    it.value.playerStateFetchedAt,
+                    it.value.schemaFetchedAt,
+                )
+            }
 
         val selection = AchievementFreshness.selectByTier(
             now = time.nowMillis(),
@@ -138,13 +155,88 @@ class AchievementRepository @Inject constructor(
         )
 
         for (appId in selection.inlineSelected) {
-            runCatching { syncGame(apiKey, steamId, appId) }
+            val metadata = metadataByAppId[appId]
+            try {
+                fetchSemaphore.withPermit {
+                    syncGame(
+                        apiKey = apiKey,
+                        steamId = steamId,
+                        appId = appId,
+                        schemaFetchedAt = metadata?.schemaFetchedAt,
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Per-game failure is swallowed so one bad response cannot fail the sync.
+            }
         }
 
         return selection
     }
 
-    private suspend fun syncGame(apiKey: String, steamId: String, appId: Long) {
+    data class ReconciliationResult(
+        val refreshed: Int,
+        val total: Int,
+    )
+
+    /**
+     * Deferred reconciliation pass: refresh every cold game (played at some point, but not warm
+     * and not played since the last sync) ordered by oldest `playerStateFetchedAt` first. Each
+     * successful refresh updates that timestamp, so an interrupted pass naturally resumes with
+     * the games it did not yet reach rather than restarting.
+     *
+     * @return counts of games refreshed and total cold games considered
+     */
+    suspend fun reconcileLibraryGames(
+        apiKey: String,
+        steamId: String,
+    ): ReconciliationResult {
+        val games = gameDao.getAll()
+        if (games.isEmpty()) return ReconciliationResult(0, 0)
+
+        val metadataByAppId = gameAchievementSyncDao.getAll(games.map { it.appId }.toSet())
+            .associateBy { it.appId }
+
+        val cold = games
+            .filter { it.playtimeForever > 0 && it.playtime2Weeks == 0 }
+            .map {
+                it.appId to AchievementFreshness.SyncMetadata(
+                    it.appId,
+                    metadataByAppId[it.appId]?.playerStateFetchedAt,
+                    metadataByAppId[it.appId]?.schemaFetchedAt,
+                )
+            }
+            .sortedWith(compareBy { it.second.playerStateFetchedAt ?: Long.MIN_VALUE })
+            .map { it.first }
+
+        var refreshed = 0
+        for (appId in cold) {
+            try {
+                fetchSemaphore.withPermit {
+                    syncGame(
+                        apiKey = apiKey,
+                        steamId = steamId,
+                        appId = appId,
+                        schemaFetchedAt = metadataByAppId[appId]?.schemaFetchedAt,
+                    )
+                }
+                refreshed++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Per-game failure is swallowed; keep going so one bad game doesn't abort the pass.
+            }
+        }
+        return ReconciliationResult(refreshed, cold.size)
+    }
+
+    private suspend fun syncGame(
+        apiKey: String,
+        steamId: String,
+        appId: Long,
+        schemaFetchedAt: Long?,
+    ) {
         val now = time.nowMillis()
         val playerStats = steamApi.getPlayerAchievements(apiKey, steamId, appId).playerstats
 
@@ -157,7 +249,7 @@ class AchievementRepository @Inject constructor(
                 GameAchievementSync(
                     appId = appId,
                     playerStateFetchedAt = now,
-                    schemaFetchedAt = null,
+                    schemaFetchedAt = schemaFetchedAt,
                     hasAchievements = false,
                     checkedAt = now,
                 ),
@@ -171,10 +263,14 @@ class AchievementRepository @Inject constructor(
                 .associate { it.name to it.percent }
         }.getOrDefault(emptyMap())
 
-        val schemaByName = runCatching {
-            steamApi.getSchemaForGame(apiKey, appId).game.availableGameStats?.achievements
-                ?.associateBy { it.name }
-        }.getOrNull().orEmpty()
+        val schemaByName = if (schemaFetchedAt == null || now - schemaFetchedAt > SCHEMA_WINDOW_MILLIS) {
+            runCatching {
+                steamApi.getSchemaForGame(apiKey, appId).game.availableGameStats?.achievements
+                    ?.associateBy { it.name }
+            }.getOrNull()
+        } else {
+            null
+        }.orEmpty()
 
         val existingByName = achievementDao.getForGame(appId).associateBy { it.apiName }
 
@@ -193,7 +289,7 @@ class AchievementRepository @Inject constructor(
             GameAchievementSync(
                 appId = appId,
                 playerStateFetchedAt = now,
-                schemaFetchedAt = now,
+                schemaFetchedAt = if (schemaByName.isEmpty()) schemaFetchedAt else now,
                 hasAchievements = true,
                 checkedAt = now,
             ),
@@ -201,8 +297,11 @@ class AchievementRepository @Inject constructor(
     }
 
     companion object {
-        /** Bounds achievement-fetch volume: refreshed roughly hourly per library game. */
-        const val FRESHNESS_WINDOW_MILLIS = 60L * 60 * 1000
+        /** How long a fetched achievement schema remains valid; schema changes only when patched by the developer. */
+        const val SCHEMA_WINDOW_MILLIS = 30L * 24 * 60 * 60 * 1000
+
+        /** Maximum concurrent achievement fetches within a single sync/reconciliation pass. */
+        const val MAX_CONCURRENT_FETCHES = 5
     }
 }
 

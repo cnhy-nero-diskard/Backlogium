@@ -28,6 +28,7 @@ object AchievementFreshness {
     data class SyncMetadata(
         val appId: Long,
         val playerStateFetchedAt: Long?,
+        val schemaFetchedAt: Long? = null,
     )
 
     data class Result(

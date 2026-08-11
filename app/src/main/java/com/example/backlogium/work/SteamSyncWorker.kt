@@ -135,8 +135,9 @@ class SteamSyncWorker @AssistedInject constructor(
 
         // Reconstruct prior diff state from Room BEFORE writing new playtime.
         val existingGames = gameDao.getAll().associateBy { it.appId }
+        val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
         val priorStates = existingGames.mapValues { (appId, game) ->
-            val open = sessionDao.getOpenSession(appId)
+            val open = openSessionsByAppId[appId]
             SessionDiffer.GameDiffState(
                 lastPlaytime = game.lastPlaytime,
                 openSession = open?.let {

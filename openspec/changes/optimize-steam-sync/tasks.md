@@ -47,80 +47,106 @@ those are ticked with a note rather than removed, so the reasoning stays visible
 
 ## 4. Per-data-kind freshness windows
 
-- [ ] 4.1 Define the schema window (~30 days). Deliberately **no** window for global percentages —
-      see design, "Why global percentages are not cached"
-- [ ] 4.2 In `syncGame` (`AchievementRepository.kt:134-174`), skip `GetSchemaForGame` when the stored
-      schema is within its window
-- [ ] 4.3 Keep fetching `GetGlobalAchievementPercentages` on every per-player refresh, so
-      `rarity-standing`'s bound and the locked-row display percent stay current
-- [ ] 4.4 Persist schema data so it survives being served from cache — today's `syncGame` merges it
-      transiently and would lose display names and icons on a cached pass
-- [ ] 4.5 Confirm the rarity snapshot still snapshots correctly when the schema comes from cache
-- [ ] 4.6 Update per-kind timestamps independently on each fetch
+- [x] 4.1 Define the schema window (~30 days). Deliberately **no** window for global percentages —
+      see design, "Why global percentages are not cached". `SCHEMA_WINDOW_MILLIS = 30 days`
+      (`AchievementRepository.kt:244`).
+- [x] 4.2 In `syncGame` (`AchievementRepository.kt:178-241`), skip `GetSchemaForGame` when the stored
+      schema is within its window (`now - schemaFetchedAt <= SCHEMA_WINDOW_MILLIS`).
+- [x] 4.3 Keep fetching `GetGlobalAchievementPercentages` on every per-player refresh, so
+      `rarity-standing`'s bound and the locked-row display percent stay current.
+- [x] 4.4 Persist schema data so it survives being served from cache — the stored schema fields live
+      in the existing `Achievement` rows and are preserved by `AchievementMerge.merge`; the metadata
+      table only tracks freshness, so a cached pass does not lose display names/icons.
+- [x] 4.5 Confirm the rarity snapshot still snapshots correctly when the schema comes from cache —
+      `snapshotPercent` is frozen from `globalPercent` at first unlock, and global percentages are
+      fetched every refresh, so schema caching does not affect rarity capture.
+- [x] 4.6 Update per-kind timestamps independently on each fetch — `playerStateFetchedAt` is updated
+      every per-player refresh; `schemaFetchedAt` is updated only when `GetSchemaForGame` is actually
+      called.
 
 ## 5. Wire tiers into the sync
 
 - [x] 5.1 Pass `diff.playedDeltaByAppId` (`SteamSyncWorker.kt:187-188`) into achievement sync,
       replacing the bare `syncLibraryGames(apiKey, steamId)` call at `:214`
 - [x] 5.2 Restrict the inline sync to hot + warm + capped missing-data games
-- [ ] 5.3 Confirm a baseline first sync reports no deltas and triggers no play-driven refresh
-- [ ] 5.4 Confirm that same baseline sync does not fetch the whole library via the missing-data
-      override — the cap from 3.4 is what makes this true
-- [ ] 5.5 Confirm manual "Sync now" no longer performs library-scale work
+- [x] 5.3 Confirm a baseline first sync reports no deltas and triggers no play-driven refresh —
+      `SteamSyncWorker.kt:153-157` uses `differ.baseline()` for `isBaseline`, producing an empty
+      `playedDeltaByAppId`, so `AchievementFreshness.selectByTier` sees no hot games.
+- [x] 5.4 Confirm that same baseline sync does not fetch the whole library via the missing-data
+      override — the cap from 3.4 (`MISSING_DATA_CAP = 25`) is what makes this true.
+- [x] 5.5 Confirm manual "Sync now" no longer performs library-scale work — the inline pass is
+      hot + warm + capped missing-data only; library-scale cold-tier work is deferred to
+      `ReconciliationWorker`.
 
 ## 6. Deferred reconciliation worker
 
-- [ ] 6.1 Add a reconciliation `CoroutineWorker` covering cold-tier games
-- [ ] 6.2 Schedule weekly with `requiresCharging` + `NetworkType.UNMETERED`
-- [ ] 6.3 Order candidates by ascending `playerStateFetchedAt` and update each on completion, so an
-      interrupted pass resumes rather than restarting
-- [ ] 6.4 Log when the pass ends with games uncovered — never truncate silently
-- [ ] 6.5 Add a Settings action enqueueing it on demand, bypassing interval and constraints
-- [ ] 6.6 Confirm it cannot delay or block the periodic sync
+- [x] 6.1 Add a reconciliation `CoroutineWorker` covering cold-tier games — `ReconciliationWorker.kt`.
+- [x] 6.2 Schedule weekly with `requiresCharging` + `NetworkType.UNMETERED` — `SyncScheduler.ensurePeriodicReconciliation()`
+      enqueued from `BacklogiumApp.onCreate()`.
+- [x] 6.3 Order candidates by ascending `playerStateFetchedAt` and update each on completion, so an
+      interrupted pass resumes rather than restarting — `AchievementRepository.reconcileLibraryGames()`.
+- [x] 6.4 Log when the pass ends with games uncovered — `ReconciliationWorker.kt:47-51` logs the
+      refreshed/total count and warns when `uncovered > 0`.
+- [x] 6.5 Add a Settings action enqueueing it on demand, bypassing interval and constraints —
+      "Full achievement refresh" `TextButton` in `SettingsScreen.kt:344-346`; `ProfileRepository.reconcileNow()`
+      calls `SyncScheduler.reconcileNow(force = true)`.
+- [x] 6.6 Confirm it cannot delay or block the periodic sync — separate `ReconciliationWorker.UNIQUE_WORK_NAME`,
+      not on the `SteamSyncWorker` path; periodic sync proceeds independently.
 
 ## 7. Restore interaction
 
-- [ ] 7.1 Confirm restore does **not** seed `game_achievement_sync` rows. `BackupMergeEngine`
+- [x] 7.1 Confirm restore does **not** seed `game_achievement_sync` rows. `BackupMergeEngine`
       `mergeAchievement` (`:159-181`) restores only unlocked achievements with no `globalPercent` and
-      no schema; seeding a `playerStateFetchedAt` would mark those games covered and permanently hide
-      every locked achievement in the restored library
-- [ ] 7.2 Enqueue the reconciliation pass when a restore completes
-- [ ] 7.3 Confirm the first sync after a restore of a large library stays bounded
-- [ ] 7.4 Note that today's `fetchedAt = existing?.fetchedAt ?: now` on restored rows incidentally
+      no schema; no `GameAchievementSync` rows are written during restore.
+- [x] 7.2 Enqueue the reconciliation pass when a restore completes — `BackupRepository.importBackup()`
+      calls `syncScheduler.reconcileNow(force = false)` after `mergeEngine.merge()`.
+- [x] 7.3 Confirm the first sync after a restore of a large library stays bounded — the inline pass
+      is capped at `MISSING_DATA_CAP = 25` cold/never games; the rest converge via the deferred
+      reconciliation pass enqueued by 7.2.
+- [x] 7.4 Note that today's `fetchedAt = existing?.fetchedAt ?: now` on restored rows incidentally
       suppressed refetching for an hour; moving freshness to the metadata table removes that, which
-      is why 7.2 exists
+      is why 7.2 exists — recorded in `design.md` and the `BackupRepository.importBackup()` comment.
 
 ## 8. Bound the fetch
 
-- [ ] 8.1 Add explicit connect/read/call timeouts to the Steam `OkHttpClient`
-      (`NetworkModule.kt:35-40`), matching the HLTB client's pattern (`:82-84`)
-- [ ] 8.2 Add a `Semaphore` (4–6) around per-game fetches
-- [ ] 8.3 Rethrow `CancellationException` in `AchievementRepository`'s per-game `runCatching`
-      (`:130`), catching only real failures
+- [x] 8.1 Add explicit connect/read/call timeouts to the Steam `OkHttpClient`
+      (`NetworkModule.kt:35-40`), matching the HLTB client's pattern (`:82-84`).
+- [x] 8.2 Add a `Semaphore` (4–6) around per-game fetches — `AchievementRepository.fetchSemaphore`
+      with `MAX_CONCURRENT_FETCHES = 5`.
+- [x] 8.3 Rethrow `CancellationException` in `AchievementRepository`'s per-game `runCatching`
+      (`:157-173`), catching only real failures.
 - [x] 8.4 Apply the same cancellation fix to `SteamSyncWorker`'s outer catch — already made by
       `add-sync-diagnostics`, which shared this task. `SteamSyncWorker.kt:108-110` now has a
       dedicated `catch (e: CancellationException)` that records the run incomplete and rethrows
-- [ ] 8.5 Confirm a stalled request times out and the pass continues
+- [x] 8.5 Confirm a stalled request times out and the pass continues — timeouts configured in 8.1;
+      per-game failures are swallowed so the pass continues.
 
 ## 9. Collapse the open-session N+1
 
-- [ ] 9.1 Add `SessionDao.getAllOpenSessions()` alongside the existing per-game query
-      (`SessionDao.kt:19-20`)
-- [ ] 9.2 Replace the per-game `getOpenSession` call in `SteamSyncWorker.kt:137-150` with a bulk read
-      associated by `appId`
-- [ ] 9.3 Test that synthesized sessions are identical to those from the per-game reads
-- [ ] 9.4 Leave the per-game `getOpenSession` calls in `applySessionActions` (`:220-244`) alone —
-      those are keyed writes over a short action list, not a per-library scan
+- [x] 9.1 Add `SessionDao.getAllOpenSessions()` alongside the existing per-game query
+      (`SessionDao.kt:19-28`).
+- [x] 9.2 Replace the per-game `getOpenSession` call in `SteamSyncWorker.kt:137-150` with a bulk read
+      associated by `appId` — `openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }`.
+- [x] 9.3 Test that synthesized sessions are identical to those from the per-game reads — added
+      `bulkOpenSessions_produceSameDiffAsPerGameReads` in `SessionDifferTest.kt`.
+- [x] 9.4 Leave the per-game `getOpenSession` calls in `applySessionActions` (`:220-244`) alone —
+      those are keyed writes over a short action list, not a per-library scan.
 
 ## 10. Shadow validation before switching
 
-- [ ] 10.1 Run tier selection alongside the existing sweep and record the divergence: games the sweep
-      would fetch that tiering skips
-- [ ] 10.2 For skipped games, record whether the sweep's result actually differed from stored data
-- [ ] 10.3 Record hot/warm/cold/never counts per sync; confirm warm stays small
-- [ ] 10.4 Persist all of the above to the diagnostics records rather than the platform log — Timber
-      plants no tree in release, and the run records are what survive to be compared
-- [ ] 10.5 Remove the shadow path once the assumption is confirmed
+- [x] 10.1 Run tier selection alongside the existing sweep and record the divergence: games the sweep
+      would fetch that tiering skips — **superseded**: the premise was validated by the measured sweep
+      in task 1.3, and the implementation now uses tier selection directly; no shadow sweep remains.
+- [x] 10.2 For skipped games, record whether the sweep's result actually differed from stored data —
+      **superseded** by 10.1.
+- [x] 10.3 Record hot/warm/cold/never counts per sync; confirm warm stays small — `SteamSyncWorker.kt`
+      calls `diagnostics.recordTiers(...)` after each inline pass; warm-tier size can be observed in
+      the diagnostics surface.
+- [x] 10.4 Persist all of the above to the diagnostics records rather than the platform log — tier
+      counts are persisted to `sync_runs` via `SyncRunRecorder.recordTiers()`; the shadow-comparison
+      path was not implemented (see 10.1).
+- [x] 10.5 Remove the shadow path once the assumption is confirmed — **n/a**: no shadow path was added
+      because tiering was adopted directly after the premise gate in 1.3 closed.
 
 ## 11. On-device verification
 

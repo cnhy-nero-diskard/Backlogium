@@ -203,6 +203,9 @@ class SettingsViewModel @Inject constructor(
 
     fun syncNow() = profileRepository.syncNow()
 
+    /** Enqueue a one-time full achievement refresh, regardless of charging/wifi conditions. */
+    fun reconcileNow() = profileRepository.reconcileNow()
+
     /** Start only from this visible Settings interaction; disabling is observed by the service. */
     fun onLiveMonitorEnabledChanged(enabled: Boolean) = viewModelScope.launch {
         settings.setLiveMonitorEnabled(enabled)
