@@ -167,6 +167,7 @@ fun SettingsScreen(
         SyncCard(
             lastSyncAt = state.lastSyncAt,
             syncing = state.isSyncing,
+            reconciling = state.isReconciling,
             genreStatus = state.genreEnrichmentStatus,
             onSyncNow = actions.onSyncNow,
             onReconcileNow = actions.onReconcileNow,
@@ -310,11 +311,16 @@ private fun SteamAccountCard(
     }
 }
 
-/** Last successful sync plus the manual trigger, disabled while a sync is already in flight. */
+/**
+ * Last successful sync plus the manual triggers. "Sync now" disables while a sync is already in
+ * flight; "Full achievement refresh" disables while a reconciliation pass — forced or deferred —
+ * is already enqueued or running, so a second tap can't cancel and restart an in-progress one.
+ */
 @Composable
 private fun SyncCard(
     lastSyncAt: Long,
     syncing: Boolean,
+    reconciling: Boolean,
     genreStatus: GenreEnrichmentStatus,
     onSyncNow: () -> Unit,
     onReconcileNow: () -> Unit,
@@ -341,8 +347,8 @@ private fun SyncCard(
             Column(horizontalAlignment = Alignment.End) {
                 Button(onClick = onSyncNow, enabled = !syncing) { Text("Sync now") }
                 Spacer(Modifier.height(8.dp))
-                TextButton(onClick = onReconcileNow, enabled = !syncing) {
-                    Text("Full achievement refresh")
+                TextButton(onClick = onReconcileNow, enabled = !reconciling) {
+                    Text(if (reconciling) "Refreshing…" else "Full achievement refresh")
                 }
             }
         }

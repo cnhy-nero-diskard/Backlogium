@@ -276,6 +276,35 @@ already existed under that name. Forcing is explicitly a request to bypass whate
 queued, so it now uses `REPLACE`; the unforced path keeps `KEEP` so a later restore can never cancel
 a forced refresh already in flight. `SyncSchedulerTest` pins both directions.
 
+### A forced request could also be dropped behind — or cancel — another forced one
+
+`REPLACE` fixed forced-vs-unforced but, taken unconditionally, opened a second problem: `REPLACE`
+cancels whatever is currently enqueued or running under that name before enqueuing the new request.
+The "Full achievement refresh" `TextButton` (`SettingsScreen.kt`) had no debounce of its own — it
+stayed enabled for the whole multi-minute pass — so a double-tap, or any second tap while a forced
+refresh was already running, would cancel the in-flight pass and restart it from the top rather than
+leaving it alone. `SyncSchedulerTest`'s two tests on the forced/unforced pair didn't cover
+forced-vs-forced at all, so this shipped in the same fix that closed the first gap.
+
+Fixed at two levels, matching how `syncNow`'s "Sync now" button already disables `enabled = !syncing`:
+
+- **Scheduler**: `reconcileNow` tags a forced request (`addTag`) and, before choosing a policy,
+  reads whether a *forced* request is already `ENQUEUED`/`RUNNING` under this name
+  (`getWorkInfosForUniqueWorkFlow(...).first()` — a suspend read, never a blocking one, which is
+  why `reconcileNow` is `suspend` now). If so, the new call is `KEEP` — a no-op against the run
+  already in flight. Otherwise it's `REPLACE`, exactly as before (superseding a queued *unforced*
+  request, or enqueuing fresh). `ProfileRepository.reconcileNow()` and
+  `SettingsViewModel.reconcileNow()` became `suspend`/coroutine-launched to match.
+- **UI**: `SettingsUiState.isReconciling` (sourced from `SyncScheduler.reconciliationInProgress` via
+  `ProfileRepository`) disables the button and swaps its label to "Refreshing…" while a pass —
+  forced or deferred — is in flight, so the common case never reaches the scheduler at all.
+
+The scheduler fix is the one that actually can't be bypassed — the UI fix only covers this one
+button, but the tag-based check is correct for any future caller. `SyncSchedulerTest` covers the
+scheduler half directly (`a repeated forced reconcileNow does not cancel and restart an
+already-queued forced one`); the button's disabled state is not covered by a Robolectric-backed
+unit test, since it depends on `SettingsViewModel`'s Hilt-wired dependency graph.
+
 ### Reconciliation counted private-profile skips as covered
 
 `syncGame` returns normally — no exception — when Steam reports `playerstats.success = false`

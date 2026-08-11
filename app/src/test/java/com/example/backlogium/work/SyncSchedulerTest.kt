@@ -59,7 +59,7 @@ class SyncSchedulerTest {
     }
 
     @Test
-    fun `ensurePeriodicReconciliation and reconcileNow are not silently dropped by each other`() {
+    fun `ensurePeriodicReconciliation and reconcileNow are not silently dropped by each other`() = runTest {
         scheduler.ensurePeriodicReconciliation()
         scheduler.reconcileNow()
 
@@ -82,7 +82,7 @@ class SyncSchedulerTest {
     }
 
     @Test
-    fun `reconcileNow is order-independent — calling it before the periodic pass still enqueues both`() {
+    fun `reconcileNow is order-independent — calling it before the periodic pass still enqueues both`() = runTest {
         scheduler.reconcileNow()
         scheduler.ensurePeriodicReconciliation()
 
@@ -108,7 +108,7 @@ class SyncSchedulerTest {
     }
 
     @Test
-    fun `reconcileNow without force requires charging and unmetered network`() {
+    fun `reconcileNow without force requires charging and unmetered network`() = runTest {
         scheduler.reconcileNow(force = false)
 
         val constraints = workInfosFor(ReconciliationWorker.ONE_TIME_NAME).single().constraints
@@ -117,7 +117,7 @@ class SyncSchedulerTest {
     }
 
     @Test
-    fun `reconcileNow with force bypasses the charging and unmetered requirement`() {
+    fun `reconcileNow with force bypasses the charging and unmetered requirement`() = runTest {
         scheduler.reconcileNow(force = true)
 
         val constraints = workInfosFor(ReconciliationWorker.ONE_TIME_NAME).single().constraints
@@ -133,7 +133,7 @@ class SyncSchedulerTest {
      * ever superseding it, defeating the entire point of forcing.
      */
     @Test
-    fun `a forced reconcileNow replaces an already-queued unforced one`() {
+    fun `a forced reconcileNow replaces an already-queued unforced one`() = runTest {
         scheduler.reconcileNow(force = false)
         val unforcedId = workInfosFor(ReconciliationWorker.ONE_TIME_NAME).single().id
 
@@ -154,7 +154,7 @@ class SyncSchedulerTest {
 
     /** The converse of the above: an unforced call must not cancel a forced refresh in flight. */
     @Test
-    fun `an unforced reconcileNow does not replace a forced one already queued`() {
+    fun `an unforced reconcileNow does not replace a forced one already queued`() = runTest {
         scheduler.reconcileNow(force = true)
         val forcedId = workInfosFor(ReconciliationWorker.ONE_TIME_NAME).single().id
 
@@ -165,6 +165,28 @@ class SyncSchedulerTest {
         assertEquals(
             "KEEP must not let a later unforced call cancel a forced refresh already queued",
             forcedId,
+            infos.single().id,
+        )
+    }
+
+    /**
+     * The gap in the two tests above: a *second* forced call is exactly as capable of colliding
+     * with the *first* forced one as an unforced call is. The Settings "Full achievement refresh"
+     * button has no debounce of its own, so a double-tap — or any second tap while a long refresh
+     * is still running — must not cancel the in-flight pass and restart it from the top.
+     */
+    @Test
+    fun `a repeated forced reconcileNow does not cancel and restart an already-queued forced one`() = runTest {
+        scheduler.reconcileNow(force = true)
+        val firstId = workInfosFor(ReconciliationWorker.ONE_TIME_NAME).single().id
+
+        scheduler.reconcileNow(force = true)
+
+        val infos = workInfosFor(ReconciliationWorker.ONE_TIME_NAME)
+        assertEquals("a second forced tap must not stack a duplicate request", 1, infos.size)
+        assertEquals(
+            "a second forced tap while the first is still queued must not cancel and restart it",
+            firstId,
             infos.single().id,
         )
     }

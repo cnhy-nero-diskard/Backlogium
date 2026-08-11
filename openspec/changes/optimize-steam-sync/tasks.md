@@ -103,6 +103,14 @@ those are ticked with a note rather than removed, so the reasoning stays visible
       the forced call was silently dropped behind the queued one. Forced now uses `REPLACE`; see
       design.md's "A forced request could still be dropped behind an unforced one" and
       `SyncSchedulerTest`'s two tests on that pair.*
+      *Fixed 2026-08-11 (second pass): unconditional `REPLACE` then meant the button could cancel
+      and restart *itself* — it had no debounce, so a double-tap or a second tap during a long
+      refresh would cancel the in-flight pass. `reconcileNow` now tags forced requests and only
+      uses `REPLACE` when no forced request is already in flight (`KEEP` otherwise); the button
+      also now disables and reads "Refreshing…" via `SettingsUiState.isReconciling`. See design.md's
+      "A forced request could also be dropped behind — or cancel — another forced one" and
+      `SyncSchedulerTest.a repeated forced reconcileNow does not cancel and restart an
+      already-queued forced one`.*
 - [x] 6.6 Confirm it cannot delay or block the periodic sync — separate `ReconciliationWorker.PERIODIC_NAME`
       (renamed from `UNIQUE_WORK_NAME` when it needed a sibling `ONE_TIME_NAME`, see task group 8),
       not on the `SteamSyncWorker` path; periodic sync proceeds independently.

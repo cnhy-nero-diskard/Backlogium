@@ -18,6 +18,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -41,6 +42,9 @@ class SyncScheduler @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
     private val workManager: WorkManager get() = WorkManager.getInstance(context)
+
+    /** Marks a [reconcileNow] request as forced, so a later call can tell it apart from a queued unforced one. */
+    private val forcedTag = "reconciliation_forced"
 
     private val networkConstraints: Constraints
         get() = Constraints.Builder()
@@ -184,24 +188,35 @@ class SyncScheduler @Inject constructor(
      * just [ensurePeriodicReconciliation]'s: a restore enqueues the unforced, constrained pass
      * (`BackupRepository.importBackup()`), and the player can tap "full refresh" (forced) while it
      * is still sitting `ENQUEUED` waiting for charging + unmetered wifi. `KEEP` for both would let
-     * whichever enqueued first block the other forever — forcing is explicitly a request to bypass
-     * whatever's already queued, so it uses `REPLACE`; the unforced path keeps `KEEP` so it never
-     * cancels a forced refresh already in flight.
+     * whichever enqueued first block the other forever, so a forced call replaces a *queued
+     * unforced* request. But a forced call must not replace an *already forced* request either —
+     * `REPLACE` cancels the existing work outright, so tapping "full refresh" twice while the first
+     * tap is still running would cancel it and restart from the top rather than leaving it alone.
+     * [forcedTag] on the request is how a later call tells the two apart: if a forced request is
+     * already `ENQUEUED`/`RUNNING` under this name, this call is `KEEP` (a no-op); otherwise it's
+     * `REPLACE` (superseding whatever unforced request might be queued, or enqueuing fresh).
+     * Suspends only to read that state — `getWorkInfosForUniqueWorkFlow` never blocks a thread.
      */
-    fun reconcileNow(force: Boolean = false) {
+    suspend fun reconcileNow(force: Boolean = false) {
         val builder = OneTimeWorkRequestBuilder<ReconciliationWorker>()
             .setConstraints(if (force) networkConstraints else reconciliationConstraints)
             .setInputData(workDataOf(ReconciliationWorker.KEY_FORCE to force))
-        if (force) {
+        val policy = if (force) {
             builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            builder.addTag(forcedTag)
+            val forcedRunAlreadyInFlight = workManager
+                .getWorkInfosForUniqueWorkFlow(ReconciliationWorker.ONE_TIME_NAME)
+                .first()
+                .any { it.state.isInFlight() && forcedTag in it.tags }
+            if (forcedRunAlreadyInFlight) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE
+        } else {
+            ExistingWorkPolicy.KEEP
         }
 
-        workManager.enqueueUniqueWork(
-            ReconciliationWorker.ONE_TIME_NAME,
-            if (force) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
-            builder.build(),
-        )
+        workManager.enqueueUniqueWork(ReconciliationWorker.ONE_TIME_NAME, policy, builder.build())
     }
+
+    private fun WorkInfo.State.isInFlight() = this == WorkInfo.State.ENQUEUED || this == WorkInfo.State.RUNNING
 
     /** Emits true while a HowLongToBeat refresh sweep is enqueued or running. */
     val hltbRefreshInProgress: Flow<Boolean> = workManager
