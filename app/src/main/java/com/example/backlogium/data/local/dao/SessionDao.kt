@@ -20,6 +20,14 @@ interface SessionDao {
     suspend fun getOpenSession(appId: Long): Session?
 
     /**
+     * All currently-open sessions, in a single query. Used when reconstructing per-game diff
+     * state for a whole-library poll; associating by `appId` in memory avoids an N+1 query
+     * against the session table (optimize-steam-sync).
+     */
+    @Query("SELECT * FROM sessions WHERE open = 1")
+    suspend fun getAllOpenSessions(): List<Session>
+
+    /**
      * Sessions starting at or after [cutoff] (epoch millis), for a date-ranged window rather than
      * a fixed row count — the History screen's day-grouped view (regroup-history) needs every
      * session in a window of calendar days, which a row cap cannot guarantee.

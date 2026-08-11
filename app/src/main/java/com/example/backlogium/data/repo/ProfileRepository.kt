@@ -55,6 +55,9 @@ class ProfileRepository @Inject constructor(
      */
     val syncInProgress: Flow<Boolean> = syncScheduler.syncInProgress
 
+    /** True while a reconciliation pass — deferred or forced — is enqueued or running. */
+    val reconciliationInProgress: Flow<Boolean> = syncScheduler.reconciliationInProgress
+
     /**
      * One-shot read of the current aggregates. Callers comparing a *before* against a computed
      * *after* need a value, not a stream — sampling the flow would race the recompute they are
@@ -64,6 +67,9 @@ class ProfileRepository @Inject constructor(
 
     /** Enqueue an immediate one-time poll. */
     fun syncNow() = syncScheduler.syncNow()
+
+    /** Enqueue a one-time full achievement reconciliation pass, bypassing deferred constraints. */
+    suspend fun reconcileNow() = syncScheduler.reconcileNow(force = true)
 
     /**
      * One-time opt-in import of historical Steam playtime into XP. Idempotent: a no-op once

@@ -2,7 +2,6 @@ package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.dao.AchievementCounts
 import com.example.backlogium.data.local.dao.AchievementDao
-import com.example.backlogium.data.local.dao.AchievementFetchedAt
 import com.example.backlogium.data.local.dao.AchievementRarity
 import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.DailyProgressDao
@@ -33,6 +32,7 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
     override suspend fun insert(session: Session): Long = 0L
     override suspend fun update(session: Session) = Unit
     override suspend fun getOpenSession(appId: Long): Session? = null
+    override suspend fun getAllOpenSessions(): List<Session> = emptyList()
     override fun observeSince(cutoff: Long): Flow<List<Session>> =
         flowOf(sessions.filter { it.startAt >= cutoff })
 
@@ -174,8 +174,6 @@ internal class FakeAchievementDao(private val achievements: List<Achievement>) :
     override suspend fun getOne(appId: Long, apiName: String): Achievement? =
         achievements.firstOrNull { it.appId == appId && it.apiName == apiName }
     override fun observeCounts(): Flow<List<AchievementCounts>> = flowOf(emptyList())
-    override suspend fun fetchedAtByApp(): List<AchievementFetchedAt> = emptyList()
-    override suspend fun deleteMarker(appId: Long) = Unit
     override suspend fun getAllUnlocked(): List<Achievement> = achievements.filter { it.unlocked }
     override fun observeUnlockedRarity(): Flow<List<AchievementRarity>> = flowOf(
         achievements.filter { it.unlocked }.map { AchievementRarity(it.appId, it.snapshotPercent) },

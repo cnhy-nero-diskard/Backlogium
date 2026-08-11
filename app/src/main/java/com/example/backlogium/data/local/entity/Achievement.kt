@@ -4,13 +4,6 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 
 /**
- * Sentinel [Achievement.apiName] recorded when a fetch succeeds but the game defines no
- * achievements at all. Lets the freshness gate treat the game as checked (not stale/missing)
- * without a real achievement row; filtered out of every display/count query.
- */
-const val NO_ACHIEVEMENTS_MARKER = "__no_achievements__"
-
-/**
  * A Steam achievement for a game, keyed by ([appId], [apiName]). [unlocked]/[unlockedAt]/
  * [globalPercent] are refreshed on every sync; [snapshotPercent] is the global unlock percent
  * captured the first sync that observed the achievement unlocked, and is never overwritten

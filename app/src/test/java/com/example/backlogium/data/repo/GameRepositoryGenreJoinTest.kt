@@ -1,6 +1,7 @@
 package com.example.backlogium.data.repo
 
 import androidx.room.Room
+import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.data.hltb.HltbDataSource
 import com.example.backlogium.data.local.BacklogiumDatabase
@@ -153,28 +154,38 @@ class GameRepositoryGenreJoinTest {
             steamId: String,
             includeAppInfo: Int,
             includePlayedFreeGames: Int,
+            scope: SyncRunRecorder.RunScope?,
         ): OwnedGamesResponse = error("the library join must not call Steam")
 
-        override suspend fun getSteamLevel(key: String, steamId: String): SteamLevelResponse =
-            error("the library join must not call Steam")
+        override suspend fun getSteamLevel(
+            key: String,
+            steamId: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): SteamLevelResponse = error("the library join must not call Steam")
 
         override suspend fun getPlayerSummaries(
             key: String,
             steamIds: String,
+            scope: SyncRunRecorder.RunScope?,
         ): PlayerSummariesResponse = error("the library join must not call Steam")
 
         override suspend fun getPlayerAchievements(
             key: String,
             steamId: String,
             appId: Long,
+            scope: SyncRunRecorder.RunScope?,
         ): PlayerAchievementsResponse = error("the library join must not call Steam")
 
         override suspend fun getGlobalAchievementPercentages(
             gameId: Long,
+            scope: SyncRunRecorder.RunScope?,
         ): GlobalAchievementPercentagesResponse = error("the library join must not call Steam")
 
-        override suspend fun getSchemaForGame(key: String, appId: Long): GameSchemaResponse =
-            error("the library join must not call Steam")
+        override suspend fun getSchemaForGame(
+            key: String,
+            appId: Long,
+            scope: SyncRunRecorder.RunScope?,
+        ): GameSchemaResponse = error("the library join must not call Steam")
 
         override suspend fun resolveVanityUrl(
             key: String,

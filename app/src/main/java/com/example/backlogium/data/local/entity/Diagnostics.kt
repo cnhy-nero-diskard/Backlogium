@@ -6,7 +6,35 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 @Entity(tableName = "sync_runs", indices = [Index("startedAt")])
-data class SyncRun(@PrimaryKey(autoGenerate = true) val id: Long = 0, val startedAt: Long, val durationMs: Long, val trigger: String, val requestCount: Int, val requestMillis: Long, val gamesExamined: Int, val gamesUpdated: Int, val outcome: String, val errorMessage: String?)
+data class SyncRun(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val startedAt: Long,
+    val durationMs: Long,
+    val trigger: String,
+    val requestCount: Int,
+    val requestMillis: Long,
+    val gamesExamined: Int,
+    val gamesUpdated: Int,
+    val outcome: String,
+    val errorMessage: String?,
+    val hotCount: Int = 0,
+    val warmCount: Int = 0,
+    val coldCount: Int = 0,
+    val neverCount: Int = 0,
+)
+
+@Entity(
+    tableName = "game_achievement_sync",
+    foreignKeys = [ForeignKey(entity = Game::class, parentColumns = ["appId"], childColumns = ["appId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index("appId"), Index("playerStateFetchedAt"), Index("schemaFetchedAt")],
+)
+data class GameAchievementSync(
+    @PrimaryKey val appId: Long,
+    val playerStateFetchedAt: Long?,
+    val schemaFetchedAt: Long?,
+    val hasAchievements: Boolean?,
+    val checkedAt: Long,
+)
 
 @Entity(tableName = "request_breakdowns", foreignKeys = [ForeignKey(entity = SyncRun::class, parentColumns = ["id"], childColumns = ["runId"], onDelete = ForeignKey.CASCADE)], indices = [Index("runId")])
 data class RequestBreakdown(@PrimaryKey(autoGenerate = true) val id: Long = 0, val runId: Long, val endpoint: String, val status: Int?, val requestCount: Int, val durationMs: Long)

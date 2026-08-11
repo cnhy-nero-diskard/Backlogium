@@ -9,6 +9,7 @@ import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.DiagnosticsDao
+import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HltbDataDao
@@ -19,6 +20,7 @@ import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.local.entity.GameGenreCache
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.PlayerProfile
@@ -41,8 +43,9 @@ import com.example.backlogium.data.local.entity.SyncRun
         Collection::class,
         CollectionMember::class,
         GameGenreCache::class,
+        GameAchievementSync::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -56,6 +59,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun diagnosticsDao(): DiagnosticsDao
     abstract fun collectionDao(): CollectionDao
     abstract fun gameGenreCacheDao(): GameGenreCacheDao
+    abstract fun gameAchievementSyncDao(): GameAchievementSyncDao
 
     companion object {
         const val NAME = "backlogium.db"
@@ -278,6 +282,68 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         displayOrder++
                     }
                 }
+            }
+        }
+
+        /**
+         * v13 -> v14: tiered achievement refresh.
+         *
+         * - `sync_runs` gains `hotCount`, `warmCount`, `coldCount`, `neverCount` so tier distribution
+         *   is observable per run (task 1.2). Defaults to 0; existing runs have no tier data.
+         * - `game_achievement_sync` is the new per-game metadata table keyed by `appId`, holding
+         *   per-data-kind freshness timestamps and whether the game has achievements (task 2.1).
+         *   Existing rows are not backfilled: a missing row means "no stored achievement data",
+         *   which tier selection already treats as eligible.
+         * - Existing synthetic `NO_ACHIEVEMENTS_MARKER` rows in `achievements` are translated into
+         *   `game_achievement_sync` rows with `hasAchievements = 0` and then deleted (task 2.3).
+         */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `sync_runs` ADD COLUMN `hotCount` INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL(
+                    "ALTER TABLE `sync_runs` ADD COLUMN `warmCount` INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL(
+                    "ALTER TABLE `sync_runs` ADD COLUMN `coldCount` INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL(
+                    "ALTER TABLE `sync_runs` ADD COLUMN `neverCount` INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `game_achievement_sync` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`playerStateFetchedAt` INTEGER, " +
+                        "`schemaFetchedAt` INTEGER, " +
+                        "`hasAchievements` INTEGER, " +
+                        "`checkedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`), " +
+                        "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_game_achievement_sync_appId` " +
+                        "ON `game_achievement_sync` (`appId`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_game_achievement_sync_playerStateFetchedAt` " +
+                        "ON `game_achievement_sync` (`playerStateFetchedAt`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_game_achievement_sync_schemaFetchedAt` " +
+                        "ON `game_achievement_sync` (`schemaFetchedAt`)",
+                )
+                // Translate the old "no achievements" sentinel rows into metadata rows.
+                db.execSQL(
+                    "INSERT OR REPLACE INTO `game_achievement_sync` " +
+                        "(`appId`, `playerStateFetchedAt`, `schemaFetchedAt`, `hasAchievements`, `checkedAt`) " +
+                        "SELECT `appId`, `fetchedAt`, NULL, 0, `fetchedAt` " +
+                        "FROM `achievements` WHERE `apiName` = '__no_achievements__'",
+                )
+                db.execSQL(
+                    "DELETE FROM `achievements` WHERE `apiName` = '__no_achievements__'",
+                )
             }
         }
     }

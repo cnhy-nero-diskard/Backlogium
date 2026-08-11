@@ -18,6 +18,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -42,10 +43,36 @@ class SyncScheduler @Inject constructor(
 ) {
     private val workManager: WorkManager get() = WorkManager.getInstance(context)
 
+    /** Marks a [reconcileNow] request as forced, so a later call can tell it apart from a queued unforced one. */
+    private val forcedTag = "reconciliation_forced"
+
     private val networkConstraints: Constraints
         get() = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
+
+    /**
+     * Constraints for the deferred reconciliation pass: charging + unmetered network so it can
+     * safely spend several minutes refreshing the cold tier without draining battery or data.
+     */
+    private val reconciliationConstraints: Constraints
+        get() = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.UNMETERED)
+            .setRequiresCharging(true)
+            .build()
+
+    /**
+     * Emits true while a reconciliation pass is enqueued or running — the manual/forced one-time
+     * pass and the periodic deferred one alike. The periodic work is watched with the
+     * RUNNING-only predicate: it normally sits ENQUEUED for days waiting on charging + unmetered
+     * wifi, which must not read as "in progress" (mirrors [syncInProgress]'s reasoning).
+     */
+    val reconciliationInProgress: Flow<Boolean> = combine(
+        workManager.getWorkInfosForUniqueWorkFlow(ReconciliationWorker.ONE_TIME_NAME),
+        workManager.getWorkInfosForUniqueWorkFlow(ReconciliationWorker.PERIODIC_NAME),
+    ) { oneTime, periodic ->
+        isSyncInProgress(oneTime.map { it.state }, periodic.map { it.state })
+    }.distinctUntilChanged()
 
     /**
      * Emits true while *any* Steam poll is in flight — the manual "Sync now" and the periodic
@@ -115,6 +142,81 @@ class SyncScheduler @Inject constructor(
             request,
         )
     }
+
+    /**
+     * Enqueue a weekly deferred reconciliation pass. Idempotent: keeps any already-scheduled
+     * work. The pass refreshes the cold tier only when charging + on unmetered wifi.
+     */
+    fun ensurePeriodicReconciliation() {
+        val request = PeriodicWorkRequestBuilder<ReconciliationWorker>(7, TimeUnit.DAYS)
+            .setConstraints(reconciliationConstraints)
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                WorkRequest.MIN_BACKOFF_MILLIS,
+                TimeUnit.MILLISECONDS,
+            )
+            .build()
+
+        workManager.enqueueUniquePeriodicWork(
+            ReconciliationWorker.PERIODIC_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            request,
+        )
+    }
+
+    /**
+     * Enqueue a one-time reconciliation pass. [force] bypasses the charging/unmetered
+     * constraints (the Settings "full achievement refresh" action); otherwise the pass waits
+     * for the deferred conditions.
+     *
+     * Enqueued under its own [ReconciliationWorker.ONE_TIME_NAME] rather than sharing
+     * [ReconciliationWorker.PERIODIC_NAME]: WorkManager's unique-work names are a single
+     * namespace regardless of one-time vs periodic, so sharing a name with
+     * [ensurePeriodicReconciliation]'s always-enqueued periodic work would let `KEEP` silently
+     * drop this request whenever the periodic work is already sitting enqueued — which is most
+     * of the time, since its charging+unmetered constraints are rarely met.
+     *
+     * Only marked [OneTimeWorkRequest.Builder.setExpedited] when [force] is true. WorkManager
+     * rejects any expedited request whose constraints aren't network/storage-only —
+     * [reconciliationConstraints]'s `requiresCharging` throws `IllegalArgumentException` at
+     * `build()` if combined with it, which is what the unforced path did unconditionally until
+     * this was caught by [SyncSchedulerTest]. It is also the conceptually right call: "run this
+     * immediately" and "wait for charging + unmetered wifi, however long that takes" describe two
+     * different requests, and only the forced one means the former.
+     *
+     * [force] also decides the [ExistingWorkPolicy] against this method's own prior calls, not
+     * just [ensurePeriodicReconciliation]'s: a restore enqueues the unforced, constrained pass
+     * (`BackupRepository.importBackup()`), and the player can tap "full refresh" (forced) while it
+     * is still sitting `ENQUEUED` waiting for charging + unmetered wifi. `KEEP` for both would let
+     * whichever enqueued first block the other forever, so a forced call replaces a *queued
+     * unforced* request. But a forced call must not replace an *already forced* request either —
+     * `REPLACE` cancels the existing work outright, so tapping "full refresh" twice while the first
+     * tap is still running would cancel it and restart from the top rather than leaving it alone.
+     * [forcedTag] on the request is how a later call tells the two apart: if a forced request is
+     * already `ENQUEUED`/`RUNNING` under this name, this call is `KEEP` (a no-op); otherwise it's
+     * `REPLACE` (superseding whatever unforced request might be queued, or enqueuing fresh).
+     * Suspends only to read that state — `getWorkInfosForUniqueWorkFlow` never blocks a thread.
+     */
+    suspend fun reconcileNow(force: Boolean = false) {
+        val builder = OneTimeWorkRequestBuilder<ReconciliationWorker>()
+            .setConstraints(if (force) networkConstraints else reconciliationConstraints)
+            .setInputData(workDataOf(ReconciliationWorker.KEY_FORCE to force))
+        val policy = if (force) {
+            builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            builder.addTag(forcedTag)
+            val forcedRunAlreadyInFlight = workManager
+                .getWorkInfosForUniqueWorkFlow(ReconciliationWorker.ONE_TIME_NAME)
+                .first()
+                .any { it.state.isInFlight() && forcedTag in it.tags }
+            if (forcedRunAlreadyInFlight) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE
+        } else {
+            ExistingWorkPolicy.KEEP
+        }
+
+        workManager.enqueueUniqueWork(ReconciliationWorker.ONE_TIME_NAME, policy, builder.build())
+    }
+
+    private fun WorkInfo.State.isInFlight() = this == WorkInfo.State.ENQUEUED || this == WorkInfo.State.RUNNING
 
     /** Emits true while a HowLongToBeat refresh sweep is enqueued or running. */
     val hltbRefreshInProgress: Flow<Boolean> = workManager

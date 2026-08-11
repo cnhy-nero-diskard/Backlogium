@@ -55,6 +55,7 @@ data class SettingsUiState(
     val apiKeyMasked: String = "",
     val lastSyncAt: Long = 0L,
     val isSyncing: Boolean = false,
+    val isReconciling: Boolean = false,
     val genreEnrichmentStatus: GenreEnrichmentStatus = GenreEnrichmentStatus.IDLE,
     /** Explicit opt-in to poll Steam every 30 seconds before a game is detected. */
     val liveMonitorEnabled: Boolean = false,
@@ -157,6 +158,8 @@ class SettingsViewModel @Inject constructor(
         state.copy(liveMonitorEnabled = monitorEnabled)
     }.combine(syncScheduler.genreEnrichmentStatus) { state, genreStatus ->
         state.copy(genreEnrichmentStatus = genreStatus)
+    }.combine(profileRepository.reconciliationInProgress) { state, reconciling ->
+        state.copy(isReconciling = reconciling)
     }
 
     private val ruleLocalState = combine(
@@ -202,6 +205,11 @@ class SettingsViewModel @Inject constructor(
     )
 
     fun syncNow() = profileRepository.syncNow()
+
+    /** Enqueue a one-time full achievement refresh, regardless of charging/wifi conditions. */
+    fun reconcileNow() {
+        viewModelScope.launch { profileRepository.reconcileNow() }
+    }
 
     /** Start only from this visible Settings interaction; disabling is observed by the service. */
     fun onLiveMonitorEnabledChanged(enabled: Boolean) = viewModelScope.launch {

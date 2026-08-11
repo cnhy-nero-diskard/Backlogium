@@ -18,6 +18,12 @@ number of games owned and cannot approach the platform's background execution li
 - **WHEN** the player triggers "Sync now"
 - **THEN** it completes without waiting for library-scale work
 
+#### Scenario: A library with no stored derived data does not force a sweep
+- **WHEN** a sync runs against a library for which no per-game achievement data has been stored yet,
+  as on a first install or after a restore from backup
+- **THEN** it still issues only a bounded number of requests, and the uncovered games are left to
+  subsequent syncs and to the deferred pass rather than fetched in one inline sweep
+
 ### Requirement: Play deltas available to dependent work
 The sync SHALL make the per-game playtime deltas it computes available to work that depends on
 knowing which games were played, so that information is derived once per run rather than

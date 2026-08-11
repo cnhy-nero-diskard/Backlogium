@@ -29,6 +29,8 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 /**
  * Runs one Steam poll: fetch -> diff into sessions -> persist -> recompute gamification.
@@ -75,7 +77,7 @@ class SteamSyncWorker @AssistedInject constructor(
             // running game and the profile header identity; best-effort, so a failure yields null
             // and mergePlayerIdentity below keeps the stored values.
             val summary = runCatching {
-                steamApi.getPlayerSummaries(apiKey, steamId).response.players.firstOrNull()
+                steamApi.getPlayerSummaries(apiKey, steamId, scope = scope).response.players.firstOrNull()
             }.getOrNull()
 
             // The detection path for a game that started while the app was never opened: the
@@ -86,7 +88,7 @@ class SteamSyncWorker @AssistedInject constructor(
                 presenceServiceStarter.start()
             }
 
-            val owned = steamApi.getOwnedGames(apiKey, steamId)
+            val owned = steamApi.getOwnedGames(apiKey, steamId, scope = scope)
             val games = owned.response.games
 
             if (games.isEmpty()) {
@@ -97,10 +99,10 @@ class SteamSyncWorker @AssistedInject constructor(
             }
 
             val steamLevel = runCatching {
-                steamApi.getSteamLevel(apiKey, steamId).response.playerLevel
+                steamApi.getSteamLevel(apiKey, steamId, scope).response.playerLevel
             }.getOrDefault(profileDao.get()?.steamLevel ?: 0)
 
-            persistPoll(games, apiKey, steamId, steamLevel, summary)
+            persistPoll(games, apiKey, steamId, steamLevel, summary, scope)
             examined = games.size
             updated = games.size
             outcome = SyncOutcome.SUCCESS
@@ -114,7 +116,12 @@ class SteamSyncWorker @AssistedInject constructor(
             error = e.message ?: "Sync failed"
             Result.retry()
         } finally {
-            runCatching { diagnostics.finish(scope, outcome, error, examined, updated) }
+            // NonCancellable: once cancelled, a plain suspend call here would throw at its first
+            // suspension point and never persist the record — the exact case the INCOMPLETE
+            // outcome above exists to make visible.
+            withContext(NonCancellable) {
+                runCatching { diagnostics.finish(scope, outcome, error, examined, updated) }
+            }
         }
     }
 
@@ -124,6 +131,7 @@ class SteamSyncWorker @AssistedInject constructor(
         steamId: String,
         steamLevel: Int,
         summary: com.example.backlogium.data.remote.dto.PlayerSummaryDto?,
+        scope: SyncRunRecorder.RunScope,
     ) {
         val now = time.nowMillis()
         val today = time.today()
@@ -135,8 +143,9 @@ class SteamSyncWorker @AssistedInject constructor(
 
         // Reconstruct prior diff state from Room BEFORE writing new playtime.
         val existingGames = gameDao.getAll().associateBy { it.appId }
+        val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
         val priorStates = existingGames.mapValues { (appId, game) ->
-            val open = sessionDao.getOpenSession(appId)
+            val open = openSessionsByAppId[appId]
             SessionDiffer.GameDiffState(
                 lastPlaytime = game.lastPlaytime,
                 openSession = open?.let {
@@ -211,7 +220,31 @@ class SteamSyncWorker @AssistedInject constructor(
                 avatarUrl = identity.avatarUrl,
             ),
         )
-        runCatching { achievementRepository.syncLibraryGames(apiKey, steamId) }
+        try {
+            val selection = achievementRepository.syncLibraryGames(
+                apiKey = apiKey,
+                steamId = steamId,
+                ownedGames = games.map {
+                    com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
+                        appId = it.appid,
+                        playtimeForever = it.playtimeForever.toLong(),
+                        playtime2Weeks = it.playtime2Weeks.toLong(),
+                    )
+                },
+                playtimeDeltaByAppId = diff.playedDeltaByAppId,
+                scope = scope,
+            )
+            scope.recordTiers(
+                hot = selection.hot.size,
+                warm = selection.warm.size,
+                cold = selection.cold.size,
+                never = selection.never.size,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Best-effort: achievement sync failure must never fail an otherwise-successful poll.
+        }
         gamificationUpdater.recompute(today, config)
         // Best-effort: a snapshot-write failure must never fail an otherwise-successful poll.
         runCatching { backupRepository.writeAutoSnapshotIfDue() }
