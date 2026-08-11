@@ -1,46 +1,69 @@
 # Tasks — tiered achievement refresh
 
+Line references were refreshed against the tree as of 2026-08-11. This change was drafted 2026-08-02
+and both of its prerequisites have since landed, so several items were already made by other work —
+those are ticked with a note rather than removed, so the reasoning stays visible.
+
 ## 1. Prerequisite: diagnostics
 
-- [ ] 1.1 Land `add-sync-diagnostics` first — task groups 9 and 10 below are unrunnable without
-      persisted sync-run records, and this change's premise (~780 requests, ~4 min) has never been
-      measured
+- [x] 1.1 Land `add-sync-diagnostics` first — archived 2026-08-04. Persisted `SyncRun` records, the
+      per-endpoint `RequestBreakdown`, and the `ui/diagnostics` surface all exist, so task groups 9
+      and 10 below are runnable
 - [ ] 1.2 Extend the `sync_run` record with tier sizes (hot / warm / cold / never) so tier
       distribution is observable per run
+- [ ] 1.3 **Blocks everything below.** Recover the actual measured sweep figures from the on-device
+      diagnostics history and record them in `design.md` — `add-sync-diagnostics` task group 10 is
+      ticked complete but the numbers were never written down (commit `dfec198` changed checkboxes
+      only). If a real sweep is materially smaller than ~780 requests, or the alternating fast/slow
+      pattern is absent from the run history, revisit this change's scope before implementing it
 
 ## 2. Per-game achievement sync metadata
 
-- [ ] 2.1 Add a `game_achievement_sync` entity keyed by `appId` with `schemaFetchedAt`,
-      `globalFetchedAt`, `playerStateFetchedAt`
+- [ ] 2.1 Add a `game_achievement_sync` entity keyed by `appId` with `schemaFetchedAt` and
+      `playerStateFetchedAt` — two timestamps, not three; global percentages are no longer cached
 - [ ] 2.2 Add its DAO with a bulk load for tiering input and a per-game upsert
-- [ ] 2.3 Add the Room migration; translate or drop existing `NO_ACHIEVEMENTS_MARKER` rows
-- [ ] 2.4 Record "checked, no achievements" in the metadata row instead of a synthetic achievement row
+- [ ] 2.3 Add the Room migration 13 → 14 in the hand-written style used throughout
+      `BacklogiumDatabase.kt:67-264`; translate or drop existing `NO_ACHIEVEMENTS_MARKER` rows
+- [ ] 2.4 Record "checked, no achievements" in the metadata row instead of a synthetic achievement
+      row (`AchievementRepository.kt:142-147`)
 - [ ] 2.5 Confirm dropped markers re-derive correctly on the first pass
 
 ## 3. Tier selection as a pure function
 
-- [ ] 3.1 Replace `AchievementFreshness.selectStaleOrMissing` with tier selection taking owned games
-      (with `playtimeForever`/`playtime2Weeks`), the delta map, sync metadata, and `now`
+- [ ] 3.1 Replace `AchievementFreshness.selectStaleOrMissing` (`AchievementFreshness.kt:10-18`) with
+      tier selection taking owned games (with `playtimeForever`/`playtime2Weeks`), the delta map,
+      sync metadata, and `now`
 - [ ] 3.2 Classify: hot (delta > 0), warm (`playtime2Weeks > 0`), cold, never (`playtimeForever == 0`)
 - [ ] 3.3 Treat absence of stored achievement data as eligibility regardless of tier
-- [ ] 3.4 Keep the function free of Room, network, and WorkManager dependencies
-- [ ] 3.5 Unit-test every branch, including the never-played exclusion and the missing-data override
+- [ ] 3.4 Cap the missing-data override at ~25 games per sync, ordered by ascending
+      `playerStateFetchedAt` (absent first), so inline volume is bounded by construction rather than
+      by assuming few games lack data
+- [ ] 3.5 Keep the function free of Room, network, and WorkManager dependencies
+- [ ] 3.6 Unit-test every branch, including the never-played exclusion, the missing-data override,
+      and the override cap with a whole library of uncovered games
 
 ## 4. Per-data-kind freshness windows
 
-- [ ] 4.1 Define separate windows: schema ~30 days, global percentages ~7 days
-- [ ] 4.2 In `syncGame`, skip `GetSchemaForGame` when the stored schema is within its window
-- [ ] 4.3 Skip `GetGlobalAchievementPercentages` when stored percentages are within their window
-- [ ] 4.4 Persist schema and global-percentage data so it survives being served from cache
-- [ ] 4.5 Confirm the rarity snapshot still snapshots correctly when percentages come from cache
+- [ ] 4.1 Define the schema window (~30 days). Deliberately **no** window for global percentages —
+      see design, "Why global percentages are not cached"
+- [ ] 4.2 In `syncGame` (`AchievementRepository.kt:134-174`), skip `GetSchemaForGame` when the stored
+      schema is within its window
+- [ ] 4.3 Keep fetching `GetGlobalAchievementPercentages` on every per-player refresh, so
+      `rarity-standing`'s bound and the locked-row display percent stay current
+- [ ] 4.4 Persist schema data so it survives being served from cache — today's `syncGame` merges it
+      transiently and would lose display names and icons on a cached pass
+- [ ] 4.5 Confirm the rarity snapshot still snapshots correctly when the schema comes from cache
 - [ ] 4.6 Update per-kind timestamps independently on each fetch
 
 ## 5. Wire tiers into the sync
 
-- [ ] 5.1 Pass `diff.playedDeltaByAppId` from `SteamSyncWorker` into achievement sync
-- [ ] 5.2 Restrict the inline sync to hot + warm + missing-data games
+- [ ] 5.1 Pass `diff.playedDeltaByAppId` (`SteamSyncWorker.kt:187-188`) into achievement sync,
+      replacing the bare `syncLibraryGames(apiKey, steamId)` call at `:214`
+- [ ] 5.2 Restrict the inline sync to hot + warm + capped missing-data games
 - [ ] 5.3 Confirm a baseline first sync reports no deltas and triggers no play-driven refresh
-- [ ] 5.4 Confirm manual "Sync now" no longer performs library-scale work
+- [ ] 5.4 Confirm that same baseline sync does not fetch the whole library via the missing-data
+      override — the cap from 3.4 is what makes this true
+- [ ] 5.5 Confirm manual "Sync now" no longer performs library-scale work
 
 ## 6. Deferred reconciliation worker
 
@@ -52,35 +75,66 @@
 - [ ] 6.5 Add a Settings action enqueueing it on demand, bypassing interval and constraints
 - [ ] 6.6 Confirm it cannot delay or block the periodic sync
 
-## 7. Bound the fetch
+## 7. Restore interaction
 
-- [ ] 7.1 Add explicit connect/read/call timeouts to the Steam `OkHttpClient` in `NetworkModule`
-- [ ] 7.2 Add a `Semaphore` (4–6) around per-game fetches
-- [ ] 7.3 Rethrow `CancellationException` in `AchievementRepository`'s per-game `runCatching`
-      (`:99`), catching only real failures
-- [ ] 7.4 Apply the same cancellation fix to `SteamSyncWorker`'s outer catch (`:90`)
-- [ ] 7.5 Confirm a stalled request times out and the pass continues
+- [ ] 7.1 Confirm restore does **not** seed `game_achievement_sync` rows. `BackupMergeEngine`
+      `mergeAchievement` (`:159-181`) restores only unlocked achievements with no `globalPercent` and
+      no schema; seeding a `playerStateFetchedAt` would mark those games covered and permanently hide
+      every locked achievement in the restored library
+- [ ] 7.2 Enqueue the reconciliation pass when a restore completes
+- [ ] 7.3 Confirm the first sync after a restore of a large library stays bounded
+- [ ] 7.4 Note that today's `fetchedAt = existing?.fetchedAt ?: now` on restored rows incidentally
+      suppressed refetching for an hour; moving freshness to the metadata table removes that, which
+      is why 7.2 exists
 
-## 8. Collapse the open-session N+1
+## 8. Bound the fetch
 
-- [ ] 8.1 Add `SessionDao.getAllOpenSessions()`
-- [ ] 8.2 Replace the per-game `getOpenSession` call in `SteamSyncWorker.kt:113-126` with a bulk
-      read associated by `appId`
-- [ ] 8.3 Test that synthesized sessions are identical to those from the per-game reads
+- [ ] 8.1 Add explicit connect/read/call timeouts to the Steam `OkHttpClient`
+      (`NetworkModule.kt:35-40`), matching the HLTB client's pattern (`:82-84`)
+- [ ] 8.2 Add a `Semaphore` (4–6) around per-game fetches
+- [ ] 8.3 Rethrow `CancellationException` in `AchievementRepository`'s per-game `runCatching`
+      (`:130`), catching only real failures
+- [x] 8.4 Apply the same cancellation fix to `SteamSyncWorker`'s outer catch — already made by
+      `add-sync-diagnostics`, which shared this task. `SteamSyncWorker.kt:108-110` now has a
+      dedicated `catch (e: CancellationException)` that records the run incomplete and rethrows
+- [ ] 8.5 Confirm a stalled request times out and the pass continues
 
-## 9. Shadow validation before switching
+## 9. Collapse the open-session N+1
 
-- [ ] 9.1 Run tier selection alongside the existing sweep and log the divergence: games the sweep
+- [ ] 9.1 Add `SessionDao.getAllOpenSessions()` alongside the existing per-game query
+      (`SessionDao.kt:19-20`)
+- [ ] 9.2 Replace the per-game `getOpenSession` call in `SteamSyncWorker.kt:137-150` with a bulk read
+      associated by `appId`
+- [ ] 9.3 Test that synthesized sessions are identical to those from the per-game reads
+- [ ] 9.4 Leave the per-game `getOpenSession` calls in `applySessionActions` (`:220-244`) alone —
+      those are keyed writes over a short action list, not a per-library scan
+
+## 10. Shadow validation before switching
+
+- [ ] 10.1 Run tier selection alongside the existing sweep and record the divergence: games the sweep
       would fetch that tiering skips
-- [ ] 9.2 For skipped games, log whether the sweep's result actually differed from stored data
-- [ ] 9.3 Log hot/warm/cold/never counts per sync; confirm warm stays small
-- [ ] 9.4 Remove the shadow path once the assumption is confirmed
+- [ ] 10.2 For skipped games, record whether the sweep's result actually differed from stored data
+- [ ] 10.3 Record hot/warm/cold/never counts per sync; confirm warm stays small
+- [ ] 10.4 Persist all of the above to the diagnostics records rather than the platform log — Timber
+      plants no tree in release, and the run records are what survive to be compared
+- [ ] 10.5 Remove the shadow path once the assumption is confirmed
 
-## 10. On-device verification
+## 11. On-device verification
 
-- [ ] 10.1 Unlock an achievement, confirm it appears within one sync interval
-- [ ] 10.2 Confirm typical sync duration no longer alternates between ~2s and ~4min
-- [ ] 10.3 Confirm a never-played game generates no achievement requests
-- [ ] 10.4 Confirm the reconciliation pass runs on charger + wifi and resumes after interruption
-- [ ] 10.5 Confirm the Settings full-refresh action works regardless of conditions
-- [ ] 10.6 Confirm total request count per sync drops by roughly two orders of magnitude
+- [ ] 11.1 Unlock an achievement, confirm it appears within one sync interval
+- [ ] 11.2 Confirm typical sync duration no longer alternates between ~2s and ~4min
+- [ ] 11.3 Confirm a never-played game generates no achievement requests
+- [ ] 11.4 Confirm the reconciliation pass runs on charger + wifi and resumes after interruption
+- [ ] 11.5 Confirm the Settings full-refresh action works regardless of conditions
+- [ ] 11.6 Confirm total request count per sync drops by roughly two orders of magnitude
+- [ ] 11.7 Open a game detail screen for a cold-tier game and confirm the rarity-standing bound still
+      renders from stored percentages — with global percentages no longer cached, a cold game's
+      percentages are as old as its last reconciliation
+
+## 12. Spec hygiene on archive
+
+- [ ] 12.1 Confirm the `REMOVED` block for `Freshness-gated achievement sync` actually removes it on
+      sync — `openspec validate --strict` checks delta structure, not that names resolve against the
+      current spec, so a rename alone would have left the old requirement standing
+- [ ] 12.2 Confirm the merged `steam-achievements` spec contains no requirement asserting the whole
+      library is fetched regardless of play history

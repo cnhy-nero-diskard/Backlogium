@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Tiered achievement refresh
 The system SHALL select which games to refresh achievements for based on evidence that the player
@@ -30,34 +30,39 @@ fetch achievements for a game with no recorded playtime.
 - **THEN** it is eligible for fetching regardless of tier, so a newly added library game is not
   withheld until the next reconciliation pass
 
+#### Scenario: Missing-data eligibility is bounded per sync
+- **WHEN** more games lack stored achievement data than a single sync may cover, as after a first
+  install or a restore from backup
+- **THEN** a bounded number of them are fetched in that sync, oldest-first, and the remainder stay
+  eligible for subsequent syncs and the reconciliation pass, so inline work does not scale with the
+  library
+
 ### Requirement: Per-data-kind freshness
-The system SHALL apply freshness windows appropriate to how each kind of achievement data changes:
-a long window for a game's achievement schema, a medium window for global unlock percentages, and
-play-evidence-driven refresh for per-player unlock state. Refreshing one kind SHALL NOT require
-refetching the others.
+The system SHALL apply freshness windows appropriate to how each kind of achievement data changes: a
+long window for a game's achievement schema, and play-evidence-driven refresh for per-player unlock
+state. Global unlock percentages SHALL be fetched together with per-player unlock state rather than
+served from a window of their own, because other capabilities derive current-population figures from
+them. Refreshing one kind SHALL NOT require refetching the others.
 
 #### Scenario: Schema served from cache
 - **WHEN** a game's per-player achievement state is refreshed and its stored schema is within the
   long window
 - **THEN** the stored schema is reused and no schema request is made
 
-#### Scenario: Global percentages served from cache
-- **WHEN** a game's per-player achievement state is refreshed and its stored global percentages are
-  within the medium window
-- **THEN** the stored percentages are reused and no global-percentage request is made
+#### Scenario: Stale schema refreshed alongside
+- **WHEN** a game's achievements are refreshed and its stored schema is outside the long window
+- **THEN** the schema is refetched in that same refresh
 
-#### Scenario: Stale static data refreshed alongside
-- **WHEN** a game's achievements are refreshed and its schema or global percentages are outside
-  their window
-- **THEN** the stale kind is refetched in that same refresh
+#### Scenario: Global percentages stay current
+- **WHEN** a game's per-player achievement state is refreshed
+- **THEN** its global unlock percentages are fetched in that same refresh and the stored current
+  percentages are updated, so figures derived from the live percentages describe the owner
+  population as it currently stands
 
-#### Scenario: Rarity snapshot unaffected by caching
-- **WHEN** global percentages are served from cache at the moment an achievement is first observed
-  unlocked
-- **THEN** the cached percentage is used for the rarity snapshot, and the snapshot remains stable
-  against later drift as specified
-
-## ADDED Requirements
+#### Scenario: Schema caching does not affect the rarity snapshot
+- **WHEN** an achievement is first observed unlocked while its game's schema is served from cache
+- **THEN** the rarity snapshot is taken from the freshly fetched global percentage as specified, and
+  remains stable against later drift
 
 ### Requirement: Deferred achievement reconciliation
 The system SHALL periodically reconcile achievement data across the whole library on an infrequent
@@ -90,6 +95,11 @@ runs so a partial pass makes forward progress.
 - **THEN** a reconciliation pass is enqueued without waiting for the interval or the device
   conditions
 
+#### Scenario: Reconciliation after a restore
+- **WHEN** a restore from backup completes
+- **THEN** a reconciliation pass is enqueued, so a library whose achievement data the restore could
+  only partially supply converges as soon as conditions allow rather than waiting out the interval
+
 ### Requirement: Bounded achievement fetch volume
 Achievement fetching SHALL be bounded so that its duration is predictable rather than proportional
 to the slowest individual request. Requests SHALL carry connect and read timeouts, and concurrent
@@ -106,3 +116,36 @@ requests SHALL be limited to a modest fixed number.
 #### Scenario: Cancellation is honoured
 - **WHEN** an achievement pass is cancelled by the system
 - **THEN** it stops issuing further requests rather than continuing through its remaining work
+
+## MODIFIED Requirements
+
+### Requirement: Fetch Steam achievement data
+The system SHALL fetch, from Steam, each library game's per-player achievement unlock state and the
+global unlock percentage for each of that game's achievements, and MAY fetch the game's achievement
+schema for display names and icons or serve that schema from previously stored data.
+
+#### Scenario: Fetching a game's achievements
+- **WHEN** a library game is selected for an achievement refresh
+- **THEN** the system requests that game's per-player unlock state and global unlock percentages
+  from Steam and stores the results
+
+#### Scenario: Game has no achievements
+- **WHEN** a fetched game exposes no achievements
+- **THEN** the system records that the game has no achievements and does not treat it as an error
+
+#### Scenario: Achievement fetch fails for a game
+- **WHEN** a game's achievement request fails (private profile, no stats, or a transport error)
+- **THEN** that game's achievement fetch is skipped without failing the overall sync, and any
+  previously stored achievement data for that game is left intact
+
+## REMOVED Requirements
+
+### Requirement: Freshness-gated achievement sync
+**Reason**: Superseded by "Tiered achievement refresh" above. This requirement mandated the
+maximally expensive strategy available — *"fetch achievements for every game in the library,
+regardless of play history or goal tagging"* — gated only by a single wall-clock window, which is
+the whole cost this change exists to remove. Its two concerns are re-homed rather than dropped:
+deciding what to refresh is now specified by "Tiered achievement refresh", and how long each kind of
+data stays valid by "Per-data-kind freshness". Retaining it would leave the merged spec asserting
+both that every game is fetched regardless of play history and that games with no recorded playtime
+are never fetched.
