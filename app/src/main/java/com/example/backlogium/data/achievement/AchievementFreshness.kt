@@ -80,9 +80,6 @@ object AchievementFreshness {
                 }
                 else -> {
                     never.add(game.appId)
-                    if (metadataByAppId[game.appId] == null) {
-                        missingDataEligible.add(MissingDataCandidate(game.appId, null))
-                    }
                 }
             }
         }

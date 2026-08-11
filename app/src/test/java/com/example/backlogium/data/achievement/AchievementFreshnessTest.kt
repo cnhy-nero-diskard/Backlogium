@@ -21,7 +21,8 @@ class AchievementFreshnessTest {
         assertEquals(emptyList<Long>(), result.warm)
         assertEquals(listOf(2L), result.cold)
         assertEquals(listOf(3L), result.never)
-        assertEquals(listOf(1L, 2L, 3L), result.inlineSelected)
+        // Game 2 (cold, no metadata) is missing-data eligible; game 3 (never) is not.
+        assertEquals(listOf(1L, 2L), result.inlineSelected)
     }
 
     @Test
@@ -47,7 +48,7 @@ class AchievementFreshnessTest {
         assertEquals(emptyList<Long>(), result.warm)
         assertEquals(emptyList<Long>(), result.cold)
         assertEquals(listOf(1L), result.never)
-        assertEquals(listOf(1L), result.inlineSelected)
+        assertEquals(emptyList<Long>(), result.inlineSelected)
     }
 
     @Test

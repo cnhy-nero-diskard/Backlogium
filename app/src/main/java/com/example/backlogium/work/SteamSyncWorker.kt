@@ -212,7 +212,7 @@ class SteamSyncWorker @AssistedInject constructor(
                 avatarUrl = identity.avatarUrl,
             ),
         )
-        runCatching {
+        try {
             val selection = achievementRepository.syncLibraryGames(
                 apiKey = apiKey,
                 steamId = steamId,
@@ -231,6 +231,10 @@ class SteamSyncWorker @AssistedInject constructor(
                 cold = selection.cold.size,
                 never = selection.never.size,
             )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Best-effort: achievement sync failure must never fail an otherwise-successful poll.
         }
         gamificationUpdater.recompute(today, config)
         // Best-effort: a snapshot-write failure must never fail an otherwise-successful poll.
