@@ -1,6 +1,7 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.achievement.AchievementFreshness
+import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.dao.AchievementCounts
 import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.AchievementRarity
@@ -161,6 +162,27 @@ class AchievementRepositoryTest {
     }
 
     /**
+     * A private profile / no-stats response is a successful HTTP call that resolves to "nothing to
+     * write" — `syncGame` used to return normally either way, so `fetchGames` counted it as a
+     * refresh regardless. A reconciliation pass over an all-private-profile library would then
+     * report "N/N refreshed" while having updated zero `GameAchievementSync` rows.
+     */
+    @Test
+    fun `a private-profile response is not counted as a refresh`() = runTest {
+        val api = FakeSteamApi(noStatsFor = setOf(1L, 2L))
+        val gameDao = FakeGameDao(game(1, forever = 100, weeks = 0), game(2, forever = 200, weeks = 0))
+        val syncDao = FakeGameAchievementSyncDao()
+        val repo = repository(api, gameDao = gameDao, syncDao = syncDao)
+
+        val result = repo.reconcileLibraryGames(KEY, STEAM_ID)
+
+        assertEquals("both were attempted", 2, result.total)
+        assertEquals("neither actually updated anything", 0, result.refreshed)
+        assertEquals("no metadata row is written for a game Steam reported nothing for", null, syncDao.get(1))
+        assertEquals(null, syncDao.get(2))
+    }
+
+    /**
      * The cost claim the whole change rests on, pinned as arithmetic rather than left to an
      * on-device stopwatch: in steady state (every game already has sync metadata, so the
      * missing-data override is empty) a sync costs requests proportional to games *played*, not
@@ -308,6 +330,7 @@ class AchievementRepositoryTest {
         private val schemaAchievements: List<com.example.backlogium.data.remote.dto.AchievementSchemaDto>? = null,
         private val failSchema: Boolean = false,
         private val failPlayerAchievementsFor: Set<Long> = emptySet(),
+        private val noStatsFor: Set<Long> = emptySet(),
     ) : SteamApi {
         private val gateSignal = CompletableDeferred<Unit>()
         private val calls = mutableListOf<Long>()
@@ -329,6 +352,7 @@ class AchievementRepositoryTest {
             key: String,
             steamId: String,
             appId: Long,
+            scope: SyncRunRecorder.RunScope?,
         ): PlayerAchievementsResponse {
             calls += appId
             val now = inFlight.incrementAndGet()
@@ -336,6 +360,9 @@ class AchievementRepositoryTest {
             try {
                 if (gate) gateSignal.await()
                 if (appId in failPlayerAchievementsFor) throw IOException("per-game failure")
+                if (appId in noStatsFor) {
+                    return PlayerAchievementsResponse(PlayerAchievementsResult(success = false))
+                }
                 return PlayerAchievementsResponse(
                     PlayerAchievementsResult(
                         success = true,
@@ -347,7 +374,11 @@ class AchievementRepositoryTest {
             }
         }
 
-        override suspend fun getSchemaForGame(key: String, appId: Long): GameSchemaResponse {
+        override suspend fun getSchemaForGame(
+            key: String,
+            appId: Long,
+            scope: SyncRunRecorder.RunScope?,
+        ): GameSchemaResponse {
             schemas += appId
             if (failSchema) throw IOException("schema unavailable")
             return GameSchemaResponse(
@@ -365,7 +396,10 @@ class AchievementRepositoryTest {
             )
         }
 
-        override suspend fun getGlobalAchievementPercentages(gameId: Long): GlobalAchievementPercentagesResponse {
+        override suspend fun getGlobalAchievementPercentages(
+            gameId: Long,
+            scope: SyncRunRecorder.RunScope?,
+        ): GlobalAchievementPercentagesResponse {
             globalPercentageCalls++
             return GlobalAchievementPercentagesResponse()
         }
@@ -375,13 +409,20 @@ class AchievementRepositoryTest {
             steamId: String,
             includeAppInfo: Int,
             includePlayedFreeGames: Int,
+            scope: SyncRunRecorder.RunScope?,
         ): OwnedGamesResponse = error("not used")
 
-        override suspend fun getSteamLevel(key: String, steamId: String): SteamLevelResponse =
-            error("not used")
+        override suspend fun getSteamLevel(
+            key: String,
+            steamId: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): SteamLevelResponse = error("not used")
 
-        override suspend fun getPlayerSummaries(key: String, steamIds: String): PlayerSummariesResponse =
-            error("not used")
+        override suspend fun getPlayerSummaries(
+            key: String,
+            steamIds: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): PlayerSummariesResponse = error("not used")
 
         override suspend fun resolveVanityUrl(key: String, vanityUrl: String): ResolveVanityResponse =
             error("not used")

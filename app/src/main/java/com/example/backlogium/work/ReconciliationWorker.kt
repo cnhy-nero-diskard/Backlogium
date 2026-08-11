@@ -56,7 +56,7 @@ class ReconciliationWorker @AssistedInject constructor(
 
         return try {
             setProgress(workDataOf(KEY_RUNNING to true))
-            val result = achievementRepository.reconcileLibraryGames(apiKey, steamId) { refreshed, total ->
+            val result = achievementRepository.reconcileLibraryGames(apiKey, steamId, scope) { refreshed, total ->
                 refreshedSoFar = refreshed
                 totalSoFar = total
             }

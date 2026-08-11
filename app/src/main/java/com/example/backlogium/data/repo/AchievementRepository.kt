@@ -8,6 +8,7 @@ import com.example.backlogium.data.local.dao.AchievementRarity
 import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameAchievementSyncDao
+import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.remote.SteamApi
@@ -126,6 +127,7 @@ class AchievementRepository @Inject constructor(
         steamId: String,
         ownedGames: List<AchievementFreshness.OwnedGame>,
         playtimeDeltaByAppId: Map<Long, Int>,
+        scope: SyncRunRecorder.RunScope? = null,
     ): AchievementFreshness.Result {
         if (ownedGames.isEmpty()) {
             return AchievementFreshness.Result(emptyList(), emptyList(), emptyList(), emptyList(), emptyList())
@@ -155,6 +157,7 @@ class AchievementRepository @Inject constructor(
             schemaFetchedAtByAppId = selection.inlineSelected.associateWith {
                 metadataByAppId[it]?.schemaFetchedAt
             },
+            scope = scope,
         )
 
         return selection
@@ -179,6 +182,7 @@ class AchievementRepository @Inject constructor(
     suspend fun reconcileLibraryGames(
         apiKey: String,
         steamId: String,
+        scope: SyncRunRecorder.RunScope? = null,
         onProgress: ((refreshed: Int, total: Int) -> Unit)? = null,
     ): ReconciliationResult {
         val games = gameDao.getAll()
@@ -211,6 +215,7 @@ class AchievementRepository @Inject constructor(
             steamId = steamId,
             appIds = cold,
             schemaFetchedAtByAppId = cold.associateWith { metadataByAppId[it]?.schemaFetchedAt },
+            scope = scope,
             onGameDone = { refreshedSoFar -> onProgress?.invoke(refreshedSoFar, cold.size) },
         )
         return ReconciliationResult(refreshed, cold.size)
@@ -231,26 +236,31 @@ class AchievementRepository @Inject constructor(
      *
      * A per-game failure is swallowed so one bad response cannot abort the batch;
      * [CancellationException] is always rethrown so callers stop promptly. [onGameDone], if given,
-     * fires after every successful fetch with the running refreshed count.
+     * fires after every game [syncGame] actually updates — not merely attempted — with the
+     * running refreshed count.
      */
     private suspend fun fetchGames(
         apiKey: String,
         steamId: String,
         appIds: List<Long>,
         schemaFetchedAtByAppId: Map<Long, Long?>,
+        scope: SyncRunRecorder.RunScope? = null,
         onGameDone: ((refreshedSoFar: Int) -> Unit)? = null,
     ): Int {
         var refreshed = 0
         for (appId in appIds) {
             try {
-                syncGame(
+                val updated = syncGame(
                     apiKey = apiKey,
                     steamId = steamId,
                     appId = appId,
                     schemaFetchedAt = schemaFetchedAtByAppId[appId],
+                    scope = scope,
                 )
-                refreshed++
-                onGameDone?.invoke(refreshed)
+                if (updated) {
+                    refreshed++
+                    onGameDone?.invoke(refreshed)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -260,18 +270,22 @@ class AchievementRepository @Inject constructor(
         return refreshed
     }
 
+    /** @return true if this game's stored achievement data was actually updated. */
     private suspend fun syncGame(
         apiKey: String,
         steamId: String,
         appId: Long,
         schemaFetchedAt: Long?,
-    ) {
+        scope: SyncRunRecorder.RunScope? = null,
+    ): Boolean {
         val now = time.nowMillis()
-        val playerStats = steamApi.getPlayerAchievements(apiKey, steamId, appId).playerstats
+        val playerStats = steamApi.getPlayerAchievements(apiKey, steamId, appId, scope).playerstats
 
         if (!playerStats.success) {
             // Private profile, no stats, or another per-app error: skip, keep last-good cache.
-            return
+            // Not a refresh — playerStateFetchedAt is left untouched so this game keeps sorting
+            // first in the next reconciliation pass rather than being counted as covered.
+            return false
         }
         if (playerStats.achievements.isEmpty()) {
             gameAchievementSyncDao.upsert(
@@ -283,11 +297,11 @@ class AchievementRepository @Inject constructor(
                     checkedAt = now,
                 ),
             )
-            return
+            return true
         }
 
         val globalPercentByName = runCatching {
-            steamApi.getGlobalAchievementPercentages(appId)
+            steamApi.getGlobalAchievementPercentages(appId, scope)
                 .achievementpercentages.achievements
                 .associate { it.name to it.percent }
         }.getOrDefault(emptyMap())
@@ -295,7 +309,7 @@ class AchievementRepository @Inject constructor(
         val schemaWasStale = schemaFetchedAt == null || now - schemaFetchedAt > SCHEMA_WINDOW_MILLIS
         val schemaFetch = if (schemaWasStale) {
             runCatching {
-                steamApi.getSchemaForGame(apiKey, appId).game.availableGameStats?.achievements
+                steamApi.getSchemaForGame(apiKey, appId, scope).game.availableGameStats?.achievements
                     ?.associateBy { it.name }
             }
         } else {
@@ -333,6 +347,7 @@ class AchievementRepository @Inject constructor(
                 checkedAt = now,
             ),
         )
+        return true
     }
 
     companion object {

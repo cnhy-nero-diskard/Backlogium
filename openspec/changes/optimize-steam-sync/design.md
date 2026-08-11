@@ -264,6 +264,32 @@ gap, enqueues against a real `WorkManager` and hit the crash on its first run. T
 wifi, however long that takes" are two different requests, and only the forced one means the
 former, so the unforced path never needed to be expedited in the first place.
 
+### A forced request could still be dropped behind an unforced one
+
+Separately from the crash above: `reconcileNow(force = true)` and `reconcileNow(force = false)`
+both enqueue under the same `ReconciliationWorker.ONE_TIME_NAME`, and both used
+`ExistingWorkPolicy.KEEP`. The exact scenario the "Reconciliation after a restore" and
+"Player-initiated reconciliation" scenarios describe together — a restore enqueues the unforced,
+constrained pass, and the player taps "full refresh" while it is still sitting `ENQUEUED` waiting
+for charging + unmetered wifi — meant the forced call was silently dropped by `KEEP`, since work
+already existed under that name. Forcing is explicitly a request to bypass whatever's already
+queued, so it now uses `REPLACE`; the unforced path keeps `KEEP` so a later restore can never cancel
+a forced refresh already in flight. `SyncSchedulerTest` pins both directions.
+
+### Reconciliation counted private-profile skips as covered
+
+`syncGame` returns normally — no exception — when Steam reports `playerstats.success = false`
+(private profile, no stats, or another per-app error): correct, since that is exactly the
+"skip without failing the pass" behavior `AchievementRepository`'s own class doc describes. But
+`fetchGames` counted every call that didn't *throw* as refreshed, so a game that was reached but
+whose data Steam simply wouldn't return was counted as covered anyway — `ReconciliationResult`
+could report "50/50 refreshed" while some of those 50 had no `GameAchievementSync` row written at
+all. This directly undermines the "Partial pass makes progress" scenario's "the games already
+refreshed are recorded as such": a chronically-private-profile library would read as fully
+reconciled forever. `syncGame` now returns whether it actually wrote anything, and only that counts
+toward `refreshed` — the game itself is left with its stale `playerStateFetchedAt`, so it correctly
+keeps sorting to the front of the next pass rather than reading as done.
+
 ### Fixing the swallowed cancellation
 
 `runCatching { syncGame(...) }` (`AchievementRepository.kt:130`) catches `CancellationException`, so
@@ -314,6 +340,44 @@ semaphore is gone rather than fixed. `AchievementRepositoryTest.fetches are issu
 pins it, so a future change that parallelises has to update a test and state its reasoning. If a
 later measurement shows the reconciliation pass genuinely needs to be faster, concurrency is the
 knob to reach for — but it should arrive with retry and 429 handling alongside it, not before.
+
+## Diagnostics could not actually track two runs at once
+
+`SyncRunRecorder` tracked one ambient "current" run: `begin()` overwrote a single
+`AtomicReference<RunScope?>`, `recordRequest`/`recordTiers` delegated to `active.get()`, and
+`finish(scope, ...)` no-opped unless `active.get() === scope`. This was adequate as long as exactly
+one worker could ever be recording at a time — but "Reconciliation does not block the sync" is a
+requirement, not an accident: `ReconciliationWorker` runs for minutes on its own schedule,
+independent of `SteamSyncWorker`'s 15-minute tick, so the two can and eventually will overlap. When
+that happens with the ambient design:
+
+- Whichever `begin()` ran second overwrites `active`, so the *first* run's subsequent HTTP requests
+  get recorded into the *second* run's `SyncRun` instead of its own.
+- When the first run calls `finish(scope, ...)`, `active.get() !== scope` is true (it now points at
+  the second run), so `finish` returns without persisting anything — the first run's diagnostic
+  record silently never exists.
+
+This was a latent risk from the moment `add-sync-diagnostics` shared one recorder between what was
+then just retries of the same worker; wiring `ReconciliationWorker` into the same singleton made the
+overlap window (minutes, every week) large enough to matter rather than theoretical.
+
+The fix removes the shared "active" concept entirely rather than patching around it: each `RunScope`
+now carries its own `metrics`/`tiers` state and nothing more, `finish()` always persists whichever
+scope it's given, and attribution moves from "whichever run is active" to an explicit tag on the
+request itself. `SteamApi`'s methods take an optional `@Tag scope: SyncRunRecorder.RunScope?`
+(Retrofit attaches it to the underlying `okhttp3.Request`), and `RedactingTimingInterceptor` reads
+`chain.request().tag(RunScope::class.java)` instead of asking the recorder for "the current one."
+`SteamSyncWorker` and `ReconciliationWorker` thread their own `scope` down through every call they
+make (`persistPoll`, `AchievementRepository.syncLibraryGames`/`reconcileLibraryGames`/`fetchGames`/
+`syncGame`); calls outside a tracked run — `LiveStatusRepository`'s presence polling, HLTB, the Store
+genre backfill — simply omit it and go unrecorded, which is also strictly more correct than before:
+those calls used to get misattributed into whatever `SyncRun` happened to be active too, a second,
+unrelated instance of the same bug that predates this change and nobody had noticed.
+
+`RedactingTimingInterceptorTest` covers the interceptor's half (a request lands only in the scope it
+was tagged with, an untagged one lands nowhere, a failed request is still credited). There is no
+test that reproduces the *old* bug, because after this fix there is no shared mutable state left
+for two scopes to corrupt — the failure mode is structurally gone, not merely handled.
 
 ## The N+1 in the diff path
 

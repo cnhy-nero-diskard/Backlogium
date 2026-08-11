@@ -179,6 +179,14 @@ class SyncScheduler @Inject constructor(
      * this was caught by [SyncSchedulerTest]. It is also the conceptually right call: "run this
      * immediately" and "wait for charging + unmetered wifi, however long that takes" describe two
      * different requests, and only the forced one means the former.
+     *
+     * [force] also decides the [ExistingWorkPolicy] against this method's own prior calls, not
+     * just [ensurePeriodicReconciliation]'s: a restore enqueues the unforced, constrained pass
+     * (`BackupRepository.importBackup()`), and the player can tap "full refresh" (forced) while it
+     * is still sitting `ENQUEUED` waiting for charging + unmetered wifi. `KEEP` for both would let
+     * whichever enqueued first block the other forever — forcing is explicitly a request to bypass
+     * whatever's already queued, so it uses `REPLACE`; the unforced path keeps `KEEP` so it never
+     * cancels a forced refresh already in flight.
      */
     fun reconcileNow(force: Boolean = false) {
         val builder = OneTimeWorkRequestBuilder<ReconciliationWorker>()
@@ -190,7 +198,7 @@ class SyncScheduler @Inject constructor(
 
         workManager.enqueueUniqueWork(
             ReconciliationWorker.ONE_TIME_NAME,
-            ExistingWorkPolicy.KEEP,
+            if (force) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
             builder.build(),
         )
     }

@@ -1,5 +1,6 @@
 package com.example.backlogium.data.repo
 
+import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.dao.GameDao
@@ -377,7 +378,11 @@ class LiveStatusRepositoryTest {
             players = listOf(PlayerSummaryDto())
         }
 
-        override suspend fun getPlayerSummaries(key: String, steamIds: String): PlayerSummariesResponse {
+        override suspend fun getPlayerSummaries(
+            key: String,
+            steamIds: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): PlayerSummariesResponse {
             callCount++
             if (throwOnNextCall) {
                 throwOnNextCall = false
@@ -391,23 +396,32 @@ class LiveStatusRepositoryTest {
             steamId: String,
             includeAppInfo: Int,
             includePlayedFreeGames: Int,
+            scope: SyncRunRecorder.RunScope?,
         ): OwnedGamesResponse = error("not used")
 
-        override suspend fun getSteamLevel(key: String, steamId: String): SteamLevelResponse =
-            error("not used")
+        override suspend fun getSteamLevel(
+            key: String,
+            steamId: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): SteamLevelResponse = error("not used")
 
         override suspend fun getPlayerAchievements(
             key: String,
             steamId: String,
             appId: Long,
+            scope: SyncRunRecorder.RunScope?,
         ): PlayerAchievementsResponse = error("not used")
 
         override suspend fun getGlobalAchievementPercentages(
             gameId: Long,
+            scope: SyncRunRecorder.RunScope?,
         ): GlobalAchievementPercentagesResponse = error("not used")
 
-        override suspend fun getSchemaForGame(key: String, appId: Long): GameSchemaResponse =
-            error("not used")
+        override suspend fun getSchemaForGame(
+            key: String,
+            appId: Long,
+            scope: SyncRunRecorder.RunScope?,
+        ): GameSchemaResponse = error("not used")
 
         override suspend fun resolveVanityUrl(key: String, vanityUrl: String): ResolveVanityResponse =
             error("not used")

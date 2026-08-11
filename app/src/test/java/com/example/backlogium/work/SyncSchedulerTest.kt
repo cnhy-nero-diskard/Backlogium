@@ -125,6 +125,50 @@ class SyncSchedulerTest {
         assertEquals(NetworkType.CONNECTED, constraints.requiredNetworkType)
     }
 
+    /**
+     * A restore enqueues the unforced, constrained pass (`BackupRepository.importBackup()`); the
+     * player can then tap "full refresh" (forced) while it is still sitting `ENQUEUED` waiting for
+     * charging + unmetered wifi. Both calls share [ReconciliationWorker.ONE_TIME_NAME] — if both
+     * used `KEEP`, the already-queued unforced request would silently block the forced one from
+     * ever superseding it, defeating the entire point of forcing.
+     */
+    @Test
+    fun `a forced reconcileNow replaces an already-queued unforced one`() {
+        scheduler.reconcileNow(force = false)
+        val unforcedId = workInfosFor(ReconciliationWorker.ONE_TIME_NAME).single().id
+
+        scheduler.reconcileNow(force = true)
+
+        val infos = workInfosFor(ReconciliationWorker.ONE_TIME_NAME)
+        assertEquals("REPLACE must leave exactly one request, not stack a second", 1, infos.size)
+        assertNotEquals(
+            "the forced request must actually replace the queued one, not be dropped behind it",
+            unforcedId,
+            infos.single().id,
+        )
+        assertFalse(
+            "the replacement must carry the forced (no-charging) constraints, not the ones it replaced",
+            infos.single().constraints.requiresCharging(),
+        )
+    }
+
+    /** The converse of the above: an unforced call must not cancel a forced refresh in flight. */
+    @Test
+    fun `an unforced reconcileNow does not replace a forced one already queued`() {
+        scheduler.reconcileNow(force = true)
+        val forcedId = workInfosFor(ReconciliationWorker.ONE_TIME_NAME).single().id
+
+        scheduler.reconcileNow(force = false)
+
+        val infos = workInfosFor(ReconciliationWorker.ONE_TIME_NAME)
+        assertEquals(1, infos.size)
+        assertEquals(
+            "KEEP must not let a later unforced call cancel a forced refresh already queued",
+            forcedId,
+            infos.single().id,
+        )
+    }
+
     @Test
     fun `ensurePeriodicReconciliation is idempotent — a second call keeps the first request`() {
         scheduler.ensurePeriodicReconciliation()

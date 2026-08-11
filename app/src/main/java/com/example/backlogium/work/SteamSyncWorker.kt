@@ -77,7 +77,7 @@ class SteamSyncWorker @AssistedInject constructor(
             // running game and the profile header identity; best-effort, so a failure yields null
             // and mergePlayerIdentity below keeps the stored values.
             val summary = runCatching {
-                steamApi.getPlayerSummaries(apiKey, steamId).response.players.firstOrNull()
+                steamApi.getPlayerSummaries(apiKey, steamId, scope = scope).response.players.firstOrNull()
             }.getOrNull()
 
             // The detection path for a game that started while the app was never opened: the
@@ -88,7 +88,7 @@ class SteamSyncWorker @AssistedInject constructor(
                 presenceServiceStarter.start()
             }
 
-            val owned = steamApi.getOwnedGames(apiKey, steamId)
+            val owned = steamApi.getOwnedGames(apiKey, steamId, scope = scope)
             val games = owned.response.games
 
             if (games.isEmpty()) {
@@ -99,10 +99,10 @@ class SteamSyncWorker @AssistedInject constructor(
             }
 
             val steamLevel = runCatching {
-                steamApi.getSteamLevel(apiKey, steamId).response.playerLevel
+                steamApi.getSteamLevel(apiKey, steamId, scope).response.playerLevel
             }.getOrDefault(profileDao.get()?.steamLevel ?: 0)
 
-            persistPoll(games, apiKey, steamId, steamLevel, summary)
+            persistPoll(games, apiKey, steamId, steamLevel, summary, scope)
             examined = games.size
             updated = games.size
             outcome = SyncOutcome.SUCCESS
@@ -131,6 +131,7 @@ class SteamSyncWorker @AssistedInject constructor(
         steamId: String,
         steamLevel: Int,
         summary: com.example.backlogium.data.remote.dto.PlayerSummaryDto?,
+        scope: SyncRunRecorder.RunScope,
     ) {
         val now = time.nowMillis()
         val today = time.today()
@@ -231,8 +232,9 @@ class SteamSyncWorker @AssistedInject constructor(
                     )
                 },
                 playtimeDeltaByAppId = diff.playedDeltaByAppId,
+                scope = scope,
             )
-            diagnostics.recordTiers(
+            scope.recordTiers(
                 hot = selection.hot.size,
                 warm = selection.warm.size,
                 cold = selection.cold.size,

@@ -87,11 +87,27 @@ those are ticked with a note rather than removed, so the reasoning stays visible
       interrupted pass resumes rather than restarting — `AchievementRepository.reconcileLibraryGames()`.
 - [x] 6.4 Log when the pass ends with games uncovered — `ReconciliationWorker.kt:47-51` logs the
       refreshed/total count and warns when `uncovered > 0`.
+      *Fixed 2026-08-11: the refreshed/total count itself was wrong. `AchievementRepository.syncGame`
+      returns normally (not an exception) for a private-profile/no-stats response — correctly, per
+      its own "skip without failing the pass" contract — but `fetchGames` counted every call that
+      didn't throw as refreshed, so a private-profile game was counted as covered despite no
+      `GameAchievementSync` row being written. A chronically-private library would log "N/N
+      refreshed" forever. `syncGame` now returns whether it actually wrote anything; see
+      `AchievementRepositoryTest.a private-profile response is not counted as a refresh` and
+      design.md's "Reconciliation counted private-profile skips as covered".*
 - [x] 6.5 Add a Settings action enqueueing it on demand, bypassing interval and constraints —
       "Full achievement refresh" `TextButton` in `SettingsScreen.kt:344-346`; `ProfileRepository.reconcileNow()`
       calls `SyncScheduler.reconcileNow(force = true)`.
-- [x] 6.6 Confirm it cannot delay or block the periodic sync — separate `ReconciliationWorker.UNIQUE_WORK_NAME`,
+      *Fixed 2026-08-11: "bypassing interval and constraints" didn't hold if a restore's unforced
+      pass was already queued — both used the same work name under `ExistingWorkPolicy.KEEP`, so
+      the forced call was silently dropped behind the queued one. Forced now uses `REPLACE`; see
+      design.md's "A forced request could still be dropped behind an unforced one" and
+      `SyncSchedulerTest`'s two tests on that pair.*
+- [x] 6.6 Confirm it cannot delay or block the periodic sync — separate `ReconciliationWorker.PERIODIC_NAME`
+      (renamed from `UNIQUE_WORK_NAME` when it needed a sibling `ONE_TIME_NAME`, see task group 8),
       not on the `SteamSyncWorker` path; periodic sync proceeds independently.
+      *This independence is exactly what made diagnostics attribution a real bug, not a theoretical
+      one — see design.md's "Diagnostics could not actually track two runs at once."*
 
 ## 7. Restore interaction
 
@@ -156,11 +172,19 @@ those are ticked with a note rather than removed, so the reasoning stays visible
 - [x] 10.2 For skipped games, record whether the sweep's result actually differed from stored data —
       **superseded** by 10.1.
 - [x] 10.3 Record hot/warm/cold/never counts per sync; confirm warm stays small — `SteamSyncWorker.kt`
-      calls `diagnostics.recordTiers(...)` after each inline pass; warm-tier size can be observed in
-      the diagnostics surface.
+      calls `scope.recordTiers(...)` after each inline pass (moved off the now-removed ambient
+      `diagnostics.recordTiers(...)`, see 10.4's note); warm-tier size can be observed in the
+      diagnostics surface.
 - [x] 10.4 Persist all of the above to the diagnostics records rather than the platform log — tier
-      counts are persisted to `sync_runs` via `SyncRunRecorder.recordTiers()`; the shadow-comparison
+      counts are persisted to `sync_runs` via `SyncRunRecorder`; the shadow-comparison
       path was not implemented (see 10.1).
+      *Fixed 2026-08-11: persistence itself was at risk once `ReconciliationWorker` shared this
+      recorder — `SyncRunRecorder` tracked one ambient "active" scope, so two genuinely-concurrent
+      runs (which "does not delay or block the periodic sync" in task group 6 makes possible) could
+      overwrite each other's requests and cause the *first* run's `finish()` to silently persist
+      nothing. Attribution moved to an explicit `@Tag` on each `SteamApi` request instead of an
+      ambient "current run"; see design.md's "Diagnostics could not actually track two runs at
+      once" and `RedactingTimingInterceptorTest`.*
 - [x] 10.5 Remove the shadow path once the assumption is confirmed — **n/a**: no shadow path was added
       because tiering was adopted directly after the premise gate in 1.3 closed.
 
