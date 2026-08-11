@@ -67,6 +67,17 @@ class HltbMatcherTest {
     }
 
     @Test
+    fun scored_returnsAllCandidatesEvenWhenTopMatchIsConfident() {
+        val scored = HltbMatcher.scored(
+            "Portal 2",
+            listOf(candidate("Portal 2", id = 7L), candidate("Bridge Constructor Portal", id = 8L)),
+        )
+
+        assertEquals(listOf(7L, 8L), scored.map { it.hltbId })
+        assertTrue(scored.first().confidence >= HltbMatcher.CONFIDENT_THRESHOLD)
+    }
+
+    @Test
     fun similarity_isCaseAndPunctuationInsensitive() {
         assertEquals(1.0, HltbMatcher.similarity("Portal 2", "portal 2!"), 0.0001)
         assertEquals(1.0, HltbMatcher.similarity("NieR: Automata™", "nier automata"), 0.0001)

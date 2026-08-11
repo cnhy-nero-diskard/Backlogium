@@ -42,10 +42,25 @@ object HltbBundleParser {
                 mainExtraMinutes = secondsToMinutes(game.compPlusSeconds),
                 completionistMinutes = secondsToMinutes(game.comp100Seconds),
                 allStylesMinutes = secondsToMinutes(game.compAllSeconds),
+                imageUrl = imageUrl(game.gameImage),
             )
+        }
+
+    /** Resolve HLTB's filename-style image reference to the absolute cover-art URL. */
+    private fun imageUrl(reference: String?): String? = reference
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?.let { value ->
+            if (value.startsWith("http://") || value.startsWith("https://")) {
+                value
+            } else {
+                "$IMAGE_BASE_URL${value.trimStart('/')}"
+            }
         }
 
     /** Seconds → whole minutes (rounded), or null when the source length is absent (<= 0). */
     private fun secondsToMinutes(seconds: Int): Int? =
         if (seconds <= 0) null else (seconds + 30) / 60
+
+    private const val IMAGE_BASE_URL = "https://howlongtobeat.com/games/"
 }

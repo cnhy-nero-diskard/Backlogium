@@ -61,6 +61,10 @@ class HltbRepository @Inject constructor(
     /** Force a network lookup regardless of cache; never clears cache on failure. */
     suspend fun refresh(appId: Long, name: String): HltbData? = query(appId, name)
 
+    /** Search and score candidates for a fresh pick without changing any stored HLTB row. */
+    suspend fun searchCandidates(name: String): List<HltbCandidate> =
+        HltbMatcher.scored(name, dataSource.search(name))
+
     /**
      * Resolve a review-flagged game to the [chosen] candidate: store its id and completion
      * lengths, mark [HltbMatchStatus.RESOLVED], and drop the retained candidates.

@@ -41,9 +41,7 @@ object HltbMatcher {
     fun classify(query: String, candidates: List<HltbCandidate>): Classification {
         if (candidates.isEmpty()) return Classification.Unmatched
 
-        val scored = candidates
-            .map { it.copy(confidence = similarity(query, it.name)) }
-            .sortedByDescending { it.confidence }
+        val scored = scored(query, candidates)
 
         val top = scored.first()
         val runnerUp = scored.getOrNull(1)
@@ -56,6 +54,11 @@ object HltbMatcher {
             Classification.NeedsReview(scored)
         }
     }
+
+    /** Score and rank every candidate without applying an automatic classification. */
+    fun scored(query: String, candidates: List<HltbCandidate>): List<HltbCandidate> = candidates
+        .map { it.copy(confidence = similarity(query, it.name)) }
+        .sortedByDescending { it.confidence }
 
     /** Normalized similarity in 0.0..1.0 (1.0 = identical after normalization). */
     fun similarity(a: String, b: String): Double {

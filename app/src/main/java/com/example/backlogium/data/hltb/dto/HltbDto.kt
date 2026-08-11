@@ -16,6 +16,7 @@ data class HltbSearchResponse(
 data class HltbSearchGame(
     @SerialName("game_id") val gameId: Long = 0L,
     @SerialName("game_name") val gameName: String = "",
+    @SerialName("game_image") val gameImage: String? = null,
     @SerialName("comp_main") val compMainSeconds: Int = 0,
     @SerialName("comp_plus") val compPlusSeconds: Int = 0,
     @SerialName("comp_100") val comp100Seconds: Int = 0,

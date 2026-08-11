@@ -2,16 +2,19 @@ package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.data.hltb.HltbDataSource
+import com.example.backlogium.data.hltb.HltbMatcher
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 import java.time.LocalDate
@@ -26,6 +29,78 @@ import java.time.ZoneId
  * the request never got through.
  */
 class HltbRepositoryTest {
+
+    @Test
+    fun searchCandidates_returnsAllScoredCandidatesWithoutClassifying() = runTest {
+        val repository = repository(
+            results = mapOf(
+                "Portal" to listOf(candidate("Portal"), candidate("Portal 2", id = 2L)),
+            ),
+        )
+
+        val candidates = repository.searchCandidates("Portal")
+
+        assertEquals(2, candidates.size)
+        assertEquals("Portal", candidates.first().name)
+        assertTrue(candidates.first().confidence >= HltbMatcher.CONFIDENT_THRESHOLD)
+    }
+
+    @Test
+    fun searchCandidates_leavesExistingResolvedRowUntouched() = runTest {
+        val existing = HltbData(
+            appId = 1L,
+            hltbId = 99L,
+            completionistMinutes = 3_000,
+            fetchedAt = 1_000L,
+            matchStatus = HltbMatchStatus.RESOLVED,
+        )
+        val dao = FakeHltbDataDao(initial = listOf(existing))
+        val repository = repository(
+            dao = dao,
+            results = mapOf("Portal" to listOf(candidate("Portal"))),
+        )
+
+        repository.searchCandidates("Portal")
+
+        assertEquals(existing, dao.getByAppId(1L))
+    }
+
+    @Test
+    fun failedSearchCandidates_leavesExistingRowUntouched() = runTest {
+        val existing = HltbData(
+            appId = 1L,
+            hltbId = 99L,
+            completionistMinutes = 3_000,
+            fetchedAt = 1_000L,
+            matchStatus = HltbMatchStatus.RESOLVED,
+        )
+        val dao = FakeHltbDataDao(initial = listOf(existing))
+        val repository = repository(dao = dao, failing = setOf("Transport Broken"))
+
+        val failure = runCatching { repository.searchCandidates("Transport Broken") }.exceptionOrNull()
+
+        assertTrue(failure is IOException)
+        assertEquals(existing, dao.getByAppId(1L))
+    }
+
+    @Test
+    fun oldCandidatePayload_deserializesWithoutImage() = runTest {
+        val dao = FakeHltbDataDao(
+            initial = listOf(
+                HltbData(
+                    appId = 1L,
+                    fetchedAt = 1_000L,
+                    matchStatus = HltbMatchStatus.NEEDS_REVIEW,
+                    candidatesJson = """[{"hltbId":7,"name":"Portal","completionistMinutes":600,"confidence":0.9}]""",
+                ),
+            ),
+        )
+        val repository = repository(dao = dao)
+
+        val candidate = repository.reviewQueue.first().single().candidates.single()
+
+        assertNull(candidate.imageUrl)
+    }
 
     @Test
     fun reportsEachGameWithItsOutcome() = runTest {
@@ -113,8 +188,8 @@ class HltbRepositoryTest {
         time = FixedTime,
     )
 
-    private fun candidate(name: String) = HltbCandidate(
-        hltbId = name.hashCode().toLong(),
+    private fun candidate(name: String, id: Long = name.hashCode().toLong()) = HltbCandidate(
+        hltbId = id,
         name = name,
         completionistMinutes = 3_600,
     )

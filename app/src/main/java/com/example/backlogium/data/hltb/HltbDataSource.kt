@@ -16,6 +16,7 @@ data class HltbCandidate(
     val completionistMinutes: Int? = null,
     val allStylesMinutes: Int? = null,
     val confidence: Double = 0.0,
+    val imageUrl: String? = null,
 )
 
 /**
