@@ -7,10 +7,10 @@ rarity, completion estimates, quests, and streaks as one local progression syste
 
 ## Source of truth for behaviour
 
-**`openspec/specs/` is normative, not the code.** Fourteen capability specs live
+**`openspec/specs/` is normative, not the code.** One spec per capability lives
 there — `steam-sync`, `live-status`, `gamification`, `cloud-presence-poller`, and
-others. When behaviour is in question, read the spec before inferring intent from
-an implementation.
+others; `ls openspec/specs/` is the current list. When behaviour is in question,
+read the spec before inferring intent from an implementation.
 
 ```
 openspec/specs/<capability>/spec.md      current agreed behaviour
@@ -50,14 +50,30 @@ firebase deploy --only functions,firestore:rules     # deploy cloud side
 
 **Repositories expose domain models.** Room entities stay inside `data/`. Nothing
 under `ui/` imports a storage type — no `data.local.entity.*`, no `SettingsDataStore`
-in a ViewModel. Verifiable:
+in a ViewModel. Verifiable (matching on `import` skips prose mentions in KDoc, and
+`--exclude-dir` skips the documented exception below):
 
 ```bash
-grep -rn "data.local.entity\|SettingsDataStore" app/src/main/java/com/example/backlogium/ui/
+grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" \
+  app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics
 ```
 
-One deliberate exception: `HltbCandidate` (`data.hltb`) crosses the boundary as a
-plain serializable class, because it is exactly the shape the review surface needs.
+Two deliberate exceptions:
+
+- `HltbCandidate` (`data.hltb`) crosses the boundary as a plain serializable class,
+  because it is exactly the shape the review surface needs.
+- **`ui/diagnostics/` reads `DiagnosticsDao` directly** and renders `SyncRun`,
+  `RequestBreakdown`, and `PresenceDecision` verbatim. This is a developer-facing
+  debug surface whose whole purpose is to show the stored rows as stored — a
+  parallel set of identical domain models plus an identity mapper would add a layer
+  that can only ever misrepresent the thing being debugged. The exception is scoped
+  to this package: it is not licence for product surfaces to reach past a repository.
+  Writes still go through `SyncRunRecorder` (`data.diagnostics`), never the UI.
+
+Known outstanding breach, not an exception: `ui/home/HomeViewModel.kt` imports the
+`Collection` and `CollectionMember` entities because `CollectionRepository` exposes
+them across its whole public API. The fix is to map at the repository boundary; it
+is deferred because the collections UI surface is broad. The grep above reports it.
 
 **The on-device engine is the sole author of derived values.** Sessions, playtime,
 XP, streaks, and levels are computed on the phone, in `:gamification`. The cloud
