@@ -204,6 +204,11 @@ ticked below with the covering test named. The rest are genuinely device-bound �
 wall-clock timing, WorkManager constraint satisfaction, or what a screen renders — and are
 deliberately left open for a follow-up pass rather than blocking the merge.
 
+**Tracked in [#52](https://github.com/cnhy-nero-diskard/Backlogium/issues/52).** Merged to master
+with these four still open: the logic each one exercises is already unit-tested (see each item's
+note), so residual risk is low — this pass confirms real-device behavior matches, not that the
+logic is correct.
+
 - [ ] 11.1 Unlock an achievement, confirm it appears within one sync interval
       *Device-bound: needs a real Steam unlock. The mechanism underneath (a playtime delta puts the
       game in the hot tier, so it is refreshed that same sync) is covered by
