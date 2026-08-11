@@ -67,13 +67,13 @@
 
 ## 6. Verification
 
-- [ ] 6.1 Manual test: export, wipe app data (or fresh install), import — history, XP, level,
+- [x] 6.1 Manual test: export, wipe app data (or fresh install), import — history, XP, level,
       streaks, goal tags, and HLTB matches are restored
-- [ ] 6.2 Manual test: import a backup on top of existing data with partial overlap — no XP
+- [x] 6.2 Manual test: import a backup on top of existing data with partial overlap — no XP
       double-counting, gaps are backfilled, overlaps are replaced
-- [ ] 6.3 Manual test: auto-snapshot writes at most once per configured interval across
+- [x] 6.3 Manual test: auto-snapshot writes at most once per configured interval across
       multiple syncs, and the snapshot list never exceeds the configured retention count
-- [ ] 6.4 Manual test: import a backup with a different SteamID64 — warning shown, import
+- [x] 6.4 Manual test: import a backup with a different SteamID64 — warning shown, import
       proceeds only on confirmation
 - [x] 6.5 Confirm exported JSON is legible without app source access: sensible field names,
       ISO-8601 timestamps, game/achievement names present alongside IDs
