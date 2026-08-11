@@ -48,15 +48,20 @@ a list of tens of items, and the result is a theorem, not a guess.
 - **Affected code (new):** a pure `RarityStanding` object in the `:gamification` module with its own
   JVM unit tests; a section composable; ui state on `GameDetailViewModel`.
 - **Affected code (modified):** `GameDetailViewModel` (compute from already-observed achievement
-  rows); `GameDetailScreen` (render the section).
+  rows); `GameDetailScreen` (render the section below the game summary). The collection bottom sheet
+  shares `GameDetailList`, so it inherits the section with no further wiring — intended, not
+  incidental.
+- **Uses the live `globalPercent`, not the persisted `snapshotPercent`.** The engine's rarity-drift
+  rule — snapshot, never live — governs XP and does not apply here; the bound describes the owner
+  population as it stands now. See design.
 - **No new network calls, no new persistence, no migration.** `p[]`, `n`, and `N` all come from
   achievement rows already stored: `GetPlayerAchievements` returns every achievement including locked
   ones, and `getGlobalAchievementPercentages` is already called alongside it.
 - **No new cache.** `AchievementRepository` already gates fetches on a **1-hour** freshness window
   and stores every percentage in Room — tighter than the 24-hour caching this feature needs. Adding a
   second cache layer would duplicate a mechanism that already exists.
-- **Sequencing:** best landed after `enhance-game-detail`, which introduces the summary section this
-  belongs beside. It does not depend on it — the section can stand alone above the achievement list.
+- **Sequencing:** unblocked. `enhance-game-detail` landed 2026-08-04, so the summary section this
+  belongs beside already exists and the standalone fallback placement is moot.
 
 ## Non-goals
 

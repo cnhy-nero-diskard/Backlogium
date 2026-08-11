@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -69,15 +70,19 @@ import coil.compose.SubcomposeAsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest
 import com.example.backlogium.data.remote.SteamIconMapper
+import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RarityTier
+import com.example.backlogium.gamification.RarityStanding
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.components.SteamArtworkWithFallback
 import com.example.backlogium.ui.theme.rarityHalo
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
+import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.ExternalLink
 import compose.icons.tablericons.Trophy
+import compose.icons.tablericons.User
 import java.util.Locale
 
 private const val STEAM_STORE_URL_PREFIX = "https://store.steampowered.com/app/"
@@ -194,6 +199,9 @@ private fun GameDetailList(
                 artworkFallbackUrls = artworkFallbackUrls,
                 summary = state.summary,
             )
+        }
+        state.rarityStanding?.let { standing ->
+            item { RarityStandingSection(standing) }
         }
         if (state.allUnlocked) {
             item { GameCompletedBanner() }
@@ -547,6 +555,145 @@ private fun NoAchievementsNotice() {
         modifier = Modifier.padding(vertical = 16.dp),
     )
 }
+
+/**
+ * Shared by the full destination and the collection detail overlay because both render
+ * [GameDetailList]. The footnote remains in the compact overlay: it explains what the bound does
+ * and is part of the claim, not optional decoration.
+ */
+@Composable
+private fun RarityStandingSection(standing: RarityStanding.Result) {
+    val tier = rarityStandingTier(standing)
+    val accent = tier?.let(MaterialTheme.colorScheme::rarityHalo)
+        ?: MaterialTheme.colorScheme.onSurfaceVariant
+    val containerColor = tier?.let { accent.copy(alpha = 0.16f) }
+        ?: MaterialTheme.colorScheme.surfaceVariant
+    val labelColor = if (tier == null) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = containerColor,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = TablerIcons.Trophy,
+                    contentDescription = null,
+                    tint = accent,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "Rarity standing",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = labelColor,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = tier?.let { "✦ ${it.name}" } ?: "✦",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = accent,
+                )
+            }
+            rarityStandingHeadline(standing)?.let { headline ->
+                Text(
+                    text = headline,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = accent,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+            Row(
+                modifier = Modifier.padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RarityStandingStat(
+                    icon = TablerIcons.CircleCheck,
+                    value = "${standing.unlockedAchievements}/${standing.totalAchievements}",
+                    label = "earned",
+                    tint = accent,
+                    labelColor = labelColor,
+                )
+                RarityStandingStat(
+                    icon = TablerIcons.User,
+                    value = formatAverageOwnerUnlockCount(standing.averageOwnerUnlockCount),
+                    label = "avg",
+                    tint = accent.copy(alpha = 0.78f),
+                    labelColor = labelColor,
+                )
+            }
+            Text(
+                text = "Steam owners • includes unplayed copies",
+                style = MaterialTheme.typography.labelSmall,
+                color = labelColor.copy(alpha = 0.78f),
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun RarityStandingStat(
+    icon: ImageVector,
+    value: String,
+    label: String,
+    tint: Color,
+    labelColor: Color,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = tint,
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = labelColor,
+        )
+    }
+}
+
+internal fun rarityStandingTier(standing: RarityStanding.Result): RarityTier? =
+    standing.ceilingPercent?.let(Gamification::tierFor)
+
+/** Null means the bound is absent or intentionally suppressed as uninformative. */
+internal fun rarityStandingHeadline(standing: RarityStanding.Result): String? {
+    val ceiling = standing.ceilingPercent ?: return null
+    if (ceiling >= 50.0) return null
+    val formatted = RarityStanding.formatCeiling(ceiling)
+    return if (standing.totalAchievements > 0 &&
+        standing.unlockedAchievements == standing.totalAchievements
+    ) {
+        "At most $formatted% of owners have completed the game"
+    } else {
+        "Top $formatted% or better"
+    }
+}
+
+private fun formatAverageOwnerUnlockCount(count: Double): String =
+    String.format(Locale.getDefault(), "%.1f", count)
 
 /**
  * Striking, unmissable banner shown when every achievement for a game is unlocked (100%
