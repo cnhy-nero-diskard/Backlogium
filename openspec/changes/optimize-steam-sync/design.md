@@ -243,6 +243,27 @@ rather than restarting.
 Plus a Settings action to enqueue it on demand, bypassing interval and constraints — useful for the
 player who suspects data is stale, and useful for testing this change.
 
+### The unforced enqueue crashed, unnoticed, until it was actually enqueued in a test
+
+`SyncScheduler.reconcileNow()` marked every request `setExpedited(...)`, regardless of `force`.
+WorkManager rejects an expedited request whose constraints aren't network/storage-only, and the
+unforced path's constraints are `requiresCharging` + `NetworkType.UNMETERED` — so
+`reconcileNow(force = false)` threw `IllegalArgumentException` at `build()`, unconditionally, every
+time it was called. `BackupRepository.importBackup()` calls exactly that path after every restore,
+with no local `catch`; the exception propagated into `SettingsViewModel.runBackupOp`'s generic
+`catch (e: Exception)`, which reported "Backup operation failed" to the player — even though the
+restore itself had already committed — while the reconciliation pass the "Reconciliation after a
+restore" scenario promises was never actually enqueued.
+
+This survived every prior pass, including a full code review, because nothing had ever actually
+called `WorkRequest.Builder.build()` on the unforced path outside the app itself — `reconcileNow`
+was exercised only through `SyncScheduler`'s public surface being mocked or not called at all in
+tests. `SyncSchedulerTest`, added alongside `androidx.work:work-testing` specifically to close that
+gap, enqueues against a real `WorkManager` and hit the crash on its first run. The fix makes
+`setExpedited` conditional on `force`: "run this immediately" and "wait for charging + unmetered
+wifi, however long that takes" are two different requests, and only the forced one means the
+former, so the unforced path never needed to be expedited in the first place.
+
 ### Fixing the swallowed cancellation
 
 `runCatching { syncGame(...) }` (`AchievementRepository.kt:130`) catches `CancellationException`, so

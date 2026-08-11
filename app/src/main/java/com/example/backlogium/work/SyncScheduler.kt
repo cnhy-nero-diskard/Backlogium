@@ -171,18 +171,27 @@ class SyncScheduler @Inject constructor(
      * [ensurePeriodicReconciliation]'s always-enqueued periodic work would let `KEEP` silently
      * drop this request whenever the periodic work is already sitting enqueued — which is most
      * of the time, since its charging+unmetered constraints are rarely met.
+     *
+     * Only marked [OneTimeWorkRequest.Builder.setExpedited] when [force] is true. WorkManager
+     * rejects any expedited request whose constraints aren't network/storage-only —
+     * [reconciliationConstraints]'s `requiresCharging` throws `IllegalArgumentException` at
+     * `build()` if combined with it, which is what the unforced path did unconditionally until
+     * this was caught by [SyncSchedulerTest]. It is also the conceptually right call: "run this
+     * immediately" and "wait for charging + unmetered wifi, however long that takes" describe two
+     * different requests, and only the forced one means the former.
      */
     fun reconcileNow(force: Boolean = false) {
-        val request = OneTimeWorkRequestBuilder<ReconciliationWorker>()
+        val builder = OneTimeWorkRequestBuilder<ReconciliationWorker>()
             .setConstraints(if (force) networkConstraints else reconciliationConstraints)
             .setInputData(workDataOf(ReconciliationWorker.KEY_FORCE to force))
-            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            .build()
+        if (force) {
+            builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+        }
 
         workManager.enqueueUniqueWork(
             ReconciliationWorker.ONE_TIME_NAME,
             ExistingWorkPolicy.KEEP,
-            request,
+            builder.build(),
         )
     }
 

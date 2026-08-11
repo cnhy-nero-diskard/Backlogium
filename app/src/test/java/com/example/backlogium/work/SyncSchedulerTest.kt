@@ -1,0 +1,159 @@
+package com.example.backlogium.work
+
+import androidx.work.Configuration
+import androidx.work.NetworkType
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+
+/**
+ * Covers the enqueue path itself — work names, [androidx.work.ExistingWorkPolicy]/
+ * [androidx.work.ExistingPeriodicWorkPolicy] behaviour, and constraints — using a real
+ * [WorkManager] backed by [SynchronousExecutor] rather than asserting on [SyncScheduler]'s calls
+ * into a mock. No worker is ever allowed to actually run: none of the constraints below are
+ * satisfied by [WorkManagerTestInitHelper]'s default trackers, so every request this file
+ * enqueues stays `ENQUEUED`, which is exactly the state these tests need to inspect.
+ *
+ * The centerpiece is the pair of tests confirming the periodic and one-time reconciliation
+ * passes do not drop each other — a regression test for a real defect found in review: both used
+ * to share one unique work name, so `KEEP` silently dropped the manual/forced pass (the Settings
+ * "full refresh" action, and the post-restore kick) whenever the periodic work — which sits
+ * `ENQUEUED` almost permanently, since its charging+unmetered constraints are rarely met — was
+ * already scheduled. That is most of the time.
+ */
+@RunWith(RobolectricTestRunner::class)
+@OptIn(ExperimentalCoroutinesApi::class)
+class SyncSchedulerTest {
+
+    private lateinit var workManager: WorkManager
+    private lateinit var scheduler: SyncScheduler
+
+    @Before
+    fun setUp() {
+        val context = RuntimeEnvironment.getApplication()
+        val config = Configuration.Builder()
+            .setExecutor(SynchronousExecutor())
+            .build()
+        WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
+        workManager = WorkManager.getInstance(context)
+        scheduler = SyncScheduler(context)
+    }
+
+    @After
+    fun tearDown() {
+        WorkManagerTestInitHelper.closeWorkDatabase()
+    }
+
+    @Test
+    fun `ensurePeriodicReconciliation and reconcileNow are not silently dropped by each other`() {
+        scheduler.ensurePeriodicReconciliation()
+        scheduler.reconcileNow()
+
+        val periodic = workInfosFor(ReconciliationWorker.PERIODIC_NAME)
+        val oneTime = workInfosFor(ReconciliationWorker.ONE_TIME_NAME)
+
+        assertEquals("the periodic pass must still be enqueued", 1, periodic.size)
+        assertEquals(WorkInfo.State.ENQUEUED, periodic.single().state)
+        assertEquals(
+            "the manual pass must be enqueued too, not dropped by the periodic work's KEEP policy",
+            1,
+            oneTime.size,
+        )
+        assertEquals(WorkInfo.State.ENQUEUED, oneTime.single().state)
+        assertNotEquals(
+            "the two passes must be genuinely separate work, not the same request seen twice",
+            periodic.single().id,
+            oneTime.single().id,
+        )
+    }
+
+    @Test
+    fun `reconcileNow is order-independent — calling it before the periodic pass still enqueues both`() {
+        scheduler.reconcileNow()
+        scheduler.ensurePeriodicReconciliation()
+
+        assertEquals(1, workInfosFor(ReconciliationWorker.ONE_TIME_NAME).size)
+        assertEquals(1, workInfosFor(ReconciliationWorker.PERIODIC_NAME).size)
+    }
+
+    @Test
+    fun `reconciliationInProgress does not read true from the periodic pass sitting enqueued`() = runTest {
+        scheduler.ensurePeriodicReconciliation()
+
+        // The periodic pass is ENQUEUED (not RUNNING) — SyncScheduler's own contract is that this
+        // alone must not read as "in progress", since it sits ENQUEUED for days by design.
+        assertFalse(scheduler.reconciliationInProgress.first())
+    }
+
+    @Test
+    fun `reconciliationInProgress reads true once the manual pass is enqueued`() = runTest {
+        scheduler.ensurePeriodicReconciliation()
+        scheduler.reconcileNow()
+
+        assertTrue(scheduler.reconciliationInProgress.first())
+    }
+
+    @Test
+    fun `reconcileNow without force requires charging and unmetered network`() {
+        scheduler.reconcileNow(force = false)
+
+        val constraints = workInfosFor(ReconciliationWorker.ONE_TIME_NAME).single().constraints
+        assertTrue(constraints.requiresCharging())
+        assertEquals(NetworkType.UNMETERED, constraints.requiredNetworkType)
+    }
+
+    @Test
+    fun `reconcileNow with force bypasses the charging and unmetered requirement`() {
+        scheduler.reconcileNow(force = true)
+
+        val constraints = workInfosFor(ReconciliationWorker.ONE_TIME_NAME).single().constraints
+        assertFalse(constraints.requiresCharging())
+        assertEquals(NetworkType.CONNECTED, constraints.requiredNetworkType)
+    }
+
+    @Test
+    fun `ensurePeriodicReconciliation is idempotent — a second call keeps the first request`() {
+        scheduler.ensurePeriodicReconciliation()
+        val firstId = workInfosFor(ReconciliationWorker.PERIODIC_NAME).single().id
+
+        scheduler.ensurePeriodicReconciliation()
+
+        val infos = workInfosFor(ReconciliationWorker.PERIODIC_NAME)
+        assertEquals("KEEP must not enqueue a second periodic request", 1, infos.size)
+        assertEquals(firstId, infos.single().id)
+    }
+
+    @Test
+    fun `syncNow enqueues under its own name with connectivity constraints`() {
+        scheduler.syncNow()
+
+        val info = workInfosFor(SteamSyncWorker.ONE_TIME_NAME).single()
+        assertEquals(WorkInfo.State.ENQUEUED, info.state)
+        assertEquals(NetworkType.CONNECTED, info.constraints.requiredNetworkType)
+    }
+
+    @Test
+    fun `syncNow does not collide with the periodic Steam sync's work name`() {
+        scheduler.ensurePeriodicSync()
+        scheduler.syncNow()
+
+        assertEquals(1, workInfosFor(SteamSyncWorker.UNIQUE_PERIODIC_NAME).size)
+        assertEquals(1, workInfosFor(SteamSyncWorker.ONE_TIME_NAME).size)
+    }
+
+    private fun workInfosFor(name: String): List<WorkInfo> = workManager.getWorkInfosForUniqueWork(name).get()
+}

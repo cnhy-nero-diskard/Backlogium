@@ -100,6 +100,16 @@ those are ticked with a note rather than removed, so the reasoning stays visible
       no schema; no `GameAchievementSync` rows are written during restore.
 - [x] 7.2 Enqueue the reconciliation pass when a restore completes — `BackupRepository.importBackup()`
       calls `syncScheduler.reconcileNow(force = false)` after `mergeEngine.merge()`.
+      *Fixed 2026-08-11: this call crashed rather than enqueueing anything. `reconcileNow` always
+      set `.setExpedited(...)`, but WorkManager rejects an expedited request whose constraints
+      aren't network/storage-only — the unforced path's `requiresCharging` threw
+      `IllegalArgumentException` at `build()`, every time. `BackupRepository` has no local
+      try/catch, so the exception propagated out of `importBackup()` into
+      `SettingsViewModel.runBackupOp`'s generic `catch (e: Exception)`, which surfaced "Backup
+      operation failed" to the user — even though the restore itself had already succeeded — and
+      the promised reconciliation pass was never actually enqueued. `SyncSchedulerTest` (added
+      alongside `work-testing`) caught it by enqueuing against a real `WorkManager` instead of
+      asserting on a mock; `.setExpedited` is now conditional on `force`.*
 - [x] 7.3 Confirm the first sync after a restore of a large library stays bounded — the inline pass
       is capped at `MISSING_DATA_CAP = 25` cold/never games; the rest converge via the deferred
       reconciliation pass enqueued by 7.2.
@@ -175,16 +185,23 @@ deliberately left open for a follow-up pass rather than blocking the merge.
       the missing-data override and were fetched — so the test is a regression guard, not a
       formality.*
 - [ ] 11.4 Confirm the reconciliation pass runs on charger + wifi and resumes after interruption
-      *Partially automated: the resume mechanism (oldest-`playerStateFetchedAt`-first ordering, so
-      already-refreshed games sort last) is covered by `reconciliation covers only the cold tier,
-      oldest first`. Whether WorkManager actually honours the charging + unmetered constraints is
-      device-bound — `androidx.work:work-testing` is not a dependency of this project, so the
-      enqueue path has no unit coverage at all.*
-- [ ] 11.5 Confirm the Settings full-refresh action works regardless of conditions
-      *Device-bound for the same reason as 11.4, and worth prioritising in that pass: this action was
-      silently broken until the unique-work-name collision was fixed (it shared a name with the
-      always-enqueued periodic work, so `KEEP` dropped it), and that fix is the one change here with
-      no automated coverage.*
+      *Partially automated, now with `androidx.work:work-testing` as a dependency:
+      `SyncSchedulerTest` enqueues against a real `WorkManager` and asserts the exact constraints
+      requested (`reconcileNow(force = false)` → `requiresCharging` + `UNMETERED`), and that the
+      periodic and one-time reconciliation requests no longer drop each other (the unique-work-name
+      fix) or crash (the expedited+charging fix below). The resume mechanism itself
+      (oldest-`playerStateFetchedAt`-first ordering) is covered separately by
+      `AchievementRepositoryTest.reconciliation covers only the cold tier, oldest first`. What
+      remains device-bound is whether the real Android battery/connectivity trackers actually
+      gate execution the way the asserted constraints imply — `WorkManagerTestInitHelper`'s default
+      trackers never satisfy them, so no test here ever lets the worker itself run.*
+- [x] 11.5 Confirm the Settings full-refresh action works regardless of conditions
+      *Automated: `SyncSchedulerTest.reconcileNow with force bypasses the charging and unmetered
+      requirement` asserts `force = true` requests plain connectivity with no charging
+      requirement, matching "regardless of conditions." This action was silently broken until the
+      unique-work-name collision was fixed (`SyncSchedulerTest`'s two "not silently dropped"
+      tests cover that directly); it was never affected by the expedited+charging crash below,
+      since `force = true` never sets `requiresCharging`.*
 - [x] 11.6 Confirm total request count per sync drops by roughly two orders of magnitude
       *Automated: `a steady-state sync costs two orders of magnitude fewer requests than a full
       sweep` builds a 500-game library with 3 recently-played games, counts requests across all
