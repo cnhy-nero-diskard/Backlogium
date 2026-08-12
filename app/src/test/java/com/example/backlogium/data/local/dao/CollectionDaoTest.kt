@@ -187,6 +187,21 @@ class CollectionDaoTest {
     }
 
     @Test
+    fun completedReorderPersists_butCancelledReorderDoesNotWrite() = runBlocking {
+        val first = dao.insert(collection(name = "First", displayOrder = 0))
+        val second = dao.insert(collection(name = "Second", displayOrder = 1))
+        val third = dao.insert(collection(name = "Third", displayOrder = 2))
+        val storedBeforeCancel = dao.getAll().map { it.id }
+
+        // A cancelled Home gesture restores its baseline and does not call reorderCollections.
+        assertEquals(storedBeforeCancel, dao.getAll().map { it.id })
+
+        // A clean release is the only path that writes the new sequence.
+        dao.reorderCollections(listOf(third, first, second))
+        assertEquals(listOf(third, first, second), dao.getAll().map { it.id })
+    }
+
+    @Test
     fun deletingCollection_leavesRemainingDisplayOrderRelative() = runBlocking {
         val first = dao.insert(collection(name = "First", displayOrder = 0))
         val deleted = dao.insert(collection(name = "Deleted", displayOrder = 1))

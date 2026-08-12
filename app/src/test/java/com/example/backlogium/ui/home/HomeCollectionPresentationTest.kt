@@ -40,4 +40,30 @@ class HomeCollectionPresentationTest {
         assertEquals(false, homeCollectionContainsPlayingGame(firstCollection, null))
         assertEquals(false, homeCollectionContainsPlayingGame(firstCollection, 7L))
     }
+
+    @Test
+    fun cancelledMovedDrag_restoresPersistedOrder() {
+        assertEquals(
+            listOf(1L, 2L, 3L),
+            homeCollectionOrderAfterCancelledDrag(
+                persistedCards = listOf(1L, 2L, 3L),
+                currentCards = listOf(2L, 3L, 1L),
+                initialIndex = 0,
+                currentIndex = 2,
+            ),
+        )
+    }
+
+    @Test
+    fun cancelledUnmovedDrag_keepsCurrentOrder() {
+        assertEquals(
+            listOf(1L, 2L, 3L),
+            homeCollectionOrderAfterCancelledDrag(
+                persistedCards = listOf(1L, 2L, 3L),
+                currentCards = listOf(1L, 2L, 3L),
+                initialIndex = 1,
+                currentIndex = 1,
+            ),
+        )
+    }
 }
