@@ -11,12 +11,15 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,6 +27,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -55,10 +59,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1011,6 +1019,22 @@ private fun sessionLabel(count: Int): String = when (count) {
     else -> "$count sessions"
 }
 
+/** Actions raised by the stateless collection management form renderer. */
+data class CollectionFormActions(
+    val onNameChanged: (String) -> Unit = {},
+    val onDescriptionChanged: (String) -> Unit = {},
+    val onModeChanged: (CollectionMode) -> Unit = {},
+    val onSortChanged: (CollectionSort) -> Unit = {},
+    val onTargetDateChanged: (LocalDate?) -> Unit = {},
+    val onTimeBasisChanged: (CollectionTimeBasis) -> Unit = {},
+    val onAccentChanged: (CollectionAccent?) -> Unit = {},
+    val onRemoveGame: (Long) -> Unit = {},
+    val onMoveMember: (Int, Int) -> Unit = { _, _ -> },
+    val onToggleMemberDone: (Long) -> Unit = {},
+    val onAddGame: (Long) -> Unit = {},
+    val onSave: () -> Unit = {},
+)
+
 /** The management form: name, mode, sort, deadline, members, add-games, save/delete. */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -1018,11 +1042,39 @@ private fun CollectionForm(
     state: CollectionUiState,
     viewModel: CollectionViewModel,
 ) {
+    CollectionFormContent(
+        state = state,
+        actions = CollectionFormActions(
+            onNameChanged = viewModel::setName,
+            onDescriptionChanged = viewModel::setDescription,
+            onModeChanged = viewModel::setMode,
+            onSortChanged = viewModel::setSort,
+            onTargetDateChanged = viewModel::setTargetDate,
+            onTimeBasisChanged = viewModel::setTimeBasis,
+            onAccentChanged = viewModel::setAccent,
+            onRemoveGame = viewModel::removeGame,
+            onMoveMember = viewModel::moveMember,
+            onToggleMemberDone = viewModel::toggleMemberDone,
+            onAddGame = viewModel::addGame,
+            onSave = viewModel::save,
+        ),
+    )
+}
+
+/** Stateless form renderer used by the screen and by behavior-focused Compose tests. */
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+fun CollectionFormContent(
+    state: CollectionUiState,
+    actions: CollectionFormActions,
+) {
     var showDatePicker by remember { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var selectedGenreIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var showGenreSheet by rememberSaveable { mutableStateOf(false) }
     var showAdvancedSettings by rememberSaveable { mutableStateOf(false) }
+    val formListState = rememberLazyListState()
+    val searchFocusRequester = remember { FocusRequester() }
 
     val memberIds = remember(state.members) { state.members.mapTo(mutableSetOf()) { it.appId } }
     val selectedGenreSet = selectedGenreIds.toSet()
@@ -1031,17 +1083,26 @@ private fun CollectionForm(
         filterAddableGames(state.libraryGames, memberIds, query, selectedGenreSet)
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    // Scaffold has already reserved the navigation-bar portion in the NavHost's inner padding.
+    // Consume that shell-owned portion here so the form's imePadding adds only the keyboard
+    // delta, rather than reserving the shared bottom inset twice.
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("collection-form")
+            .consumeWindowInsets(WindowInsets.navigationBars),
+    ) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .imePadding()
                 .padding(horizontal = 16.dp),
+            state = formListState,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item { SectionLabel("Games") }
+            item(key = "games-heading") { SectionLabel("Games") }
             if (state.members.isEmpty()) {
-                item {
+                item(key = "no-members") {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
                             Text("No games yet", style = MaterialTheme.typography.titleSmall)
@@ -1064,29 +1125,31 @@ private fun CollectionForm(
                     count = state.members.size,
                     reorderable = state.mode == CollectionMode.ORDERED_QUEUE,
                     showDoneToggle = state.mode == CollectionMode.ORDERED_QUEUE,
-                    onRemove = { viewModel.removeGame(member.appId) },
-                    onMoveUp = { viewModel.moveMember(index, index - 1) },
-                    onMoveDown = { viewModel.moveMember(index, index + 1) },
-                    onToggleDone = { viewModel.toggleMemberDone(member.appId) },
+                    onRemove = { actions.onRemoveGame(member.appId) },
+                    onMoveUp = { actions.onMoveMember(index, index - 1) },
+                    onMoveDown = { actions.onMoveMember(index, index + 1) },
+                    onToggleDone = { actions.onToggleMemberDone(member.appId) },
                 )
             }
 
-            item {
+            item(key = "name") {
                 OutlinedTextField(
                     value = state.name,
-                    onValueChange = viewModel::setName,
+                    onValueChange = actions.onNameChanged,
                     label = { Text("Name") },
                     placeholder = { Text("e.g. Clear the backlog") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("collection-name"),
                     enabled = !state.saving,
                 )
             }
 
-            item {
+            item(key = "description") {
                 OutlinedTextField(
                     value = state.description,
-                    onValueChange = viewModel::setDescription,
+                    onValueChange = actions.onDescriptionChanged,
                     label = { Text("Description") },
                     placeholder = { Text("What is this collection for?") },
                     minLines = 3,
@@ -1096,7 +1159,7 @@ private fun CollectionForm(
                 )
             }
 
-            item {
+            item(key = "mode") {
                 SectionLabel("Mode")
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1105,7 +1168,7 @@ private fun CollectionForm(
                     CollectionMode.entries.forEach { mode ->
                         FilterChip(
                             selected = state.mode == mode,
-                            onClick = { viewModel.setMode(mode) },
+                            onClick = { actions.onModeChanged(mode) },
                             label = { Text(modeLabel(mode)) },
                             enabled = !state.saving,
                         )
@@ -1115,13 +1178,13 @@ private fun CollectionForm(
 
             val sortOptions = sortOptions(state.mode)
             if (sortOptions.isNotEmpty()) {
-                item {
+                item(key = "sort") {
                     SectionLabel("Order")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         sortOptions.forEach { sort ->
                             FilterChip(
                                 selected = state.sort == sort,
-                                onClick = { viewModel.setSort(sort) },
+                                onClick = { actions.onSortChanged(sort) },
                                 label = { Text(sortLabel(sort)) },
                                 enabled = !state.saving,
                             )
@@ -1130,7 +1193,7 @@ private fun CollectionForm(
                 }
             }
 
-            item {
+            item(key = "advanced-toggle") {
                 TextButton(
                     onClick = { showAdvancedSettings = !showAdvancedSettings },
                     modifier = Modifier.fillMaxWidth(),
@@ -1151,7 +1214,7 @@ private fun CollectionForm(
             }
 
             if (showAdvancedSettings && state.mode == CollectionMode.DEADLINE_GOAL) {
-                item {
+                item(key = "deadline") {
                     SectionLabel("Target date")
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Row(
@@ -1167,13 +1230,13 @@ private fun CollectionForm(
                             )
                             TextButton(onClick = { showDatePicker = true }) { Text("Pick") }
                             if (state.targetDate != null) {
-                                TextButton(onClick = { viewModel.setTargetDate(null) }) { Text("Clear") }
+                                TextButton(onClick = { actions.onTargetDateChanged(null) }) { Text("Clear") }
                             }
                         }
                     }
                 }
 
-                item {
+                item(key = "time-basis") {
                     SectionLabel("Time estimate basis")
                     Text(
                         text = "Choose which HowLongToBeat length Backlogium uses to check the deadline.",
@@ -1188,7 +1251,7 @@ private fun CollectionForm(
                         CollectionTimeBasis.entries.forEach { basis ->
                             FilterChip(
                                 selected = state.timeBasis == basis,
-                                onClick = { viewModel.setTimeBasis(basis) },
+                                onClick = { actions.onTimeBasisChanged(basis) },
                                 label = { Text(basis.label()) },
                                 enabled = !state.saving,
                             )
@@ -1198,7 +1261,7 @@ private fun CollectionForm(
             }
 
             if (showAdvancedSettings) {
-                item {
+                item(key = "accent") {
                     SectionLabel("Accent")
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1207,13 +1270,13 @@ private fun CollectionForm(
                         AccentChip(
                             label = "Default",
                             selected = state.accent == null,
-                            onClick = { viewModel.setAccent(null) },
+                            onClick = { actions.onAccentChanged(null) },
                         )
                         CollectionAccent.entries.forEach { accent ->
                             AccentChip(
                                 label = accentLabel(accent),
                                 selected = state.accent == accent,
-                                onClick = { viewModel.setAccent(accent) },
+                                onClick = { actions.onAccentChanged(accent) },
                                 accentColor = MaterialTheme.colorScheme.collectionAccentColor(accent),
                             )
                         }
@@ -1221,7 +1284,7 @@ private fun CollectionForm(
                 }
             }
 
-            item {
+            item(key = "add-games-search") {
                 SectionLabel("Add games")
                 OutlinedTextField(
                     value = query,
@@ -1235,7 +1298,10 @@ private fun CollectionForm(
                         )
                     },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("collection-add-search")
+                        .focusRequester(searchFocusRequester),
                     enabled = !state.saving,
                 )
                 Spacer(Modifier.height(8.dp))
@@ -1271,7 +1337,7 @@ private fun CollectionForm(
             }
 
             if (filteredAddables.isEmpty() && state.addableGames.isNotEmpty()) {
-                item {
+                item(key = "no-matches") {
                     Text(
                         text = "No games match your search.",
                         style = MaterialTheme.typography.bodySmall,
@@ -1286,13 +1352,18 @@ private fun CollectionForm(
             ) { game ->
                 AddGameRow(
                     game = game,
-                    onAdd = { viewModel.addGame(game.appId) },
+                    onAdd = {
+                        // Keep the query, viewport, and keyboard stable while the member/addable
+                        // lists reconcile around this row.
+                        searchFocusRequester.requestFocus()
+                        actions.onAddGame(game.appId)
+                    },
                     enabled = !state.saving,
                 )
             }
 
             if (state.addableGames.isEmpty()) {
-                item {
+                item(key = "no-addables") {
                     Text(
                         text = "Every library game is already in this collection.",
                         style = MaterialTheme.typography.bodySmall,
@@ -1302,14 +1373,16 @@ private fun CollectionForm(
             }
 
             // Clearance for the floating save button so the last rows stay reachable.
-            item { Spacer(Modifier.height(88.dp)) }
+            item(key = "save-clearance") { Spacer(Modifier.height(88.dp)) }
         }
 
         FloatingActionButton(
-            onClick = viewModel::save,
+            onClick = actions.onSave,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(16.dp),
+                .imePadding()
+                .padding(16.dp)
+                .testTag("collection-save"),
             containerColor = if (state.name.isBlank()) {
                 MaterialTheme.colorScheme.surfaceVariant
             } else {
@@ -1339,7 +1412,7 @@ private fun CollectionForm(
                     onClick = {
                         showDatePicker = false
                         datePickerState.selectedDateMillis?.let { millis ->
-                            viewModel.setTargetDate(
+                            actions.onTargetDateChanged(
                                 Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate(),
                             )
                         }

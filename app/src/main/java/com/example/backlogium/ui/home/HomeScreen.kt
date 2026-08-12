@@ -48,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -77,6 +78,7 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.animation.core.snap
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Job
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import com.airbnb.lottie.compose.LottieAnimation
@@ -411,6 +413,14 @@ private fun InnerHomeContent(
  * Cards are deliberately compact and sit at the very bottom of Home so they never displace or
  * demote the level, XP, quest, streak, or now-playing surfaces (app-ui spec).
  */
+/** Restore the last persisted presentation when a moved drag is cancelled. */
+internal fun <T> homeCollectionOrderAfterCancelledDrag(
+    persistedCards: List<T>,
+    currentCards: List<T>,
+    initialIndex: Int,
+    currentIndex: Int,
+): List<T> = if (currentIndex != initialIndex) persistedCards else currentCards
+
 @Composable
 private fun CollectionsSection(
     cards: List<HomeCollectionCard>,
@@ -428,7 +438,10 @@ private fun CollectionsSection(
     val initialIndex = remember { mutableStateOf(-1) }
     val currentIndex = remember { mutableStateOf(-1) }
     val pointerRootY = remember { mutableFloatStateOf(0f) }
+    val dragBaseline = remember { mutableStateOf<List<HomeCollectionCard>?>(null) }
+    val autoScrollJob = remember { mutableStateOf<Job?>(null) }
     val latestCards = rememberUpdatedState(orderedCards)
+    val latestPersistedCards = rememberUpdatedState(cards)
 
     LaunchedEffect(cards) {
         val cardsById = cards.associateBy { it.collectionId }
@@ -442,7 +455,18 @@ private fun CollectionsSection(
             .forEach(cardBounds::remove)
     }
 
-    fun clearDrag() {
+    fun clearDrag(revertToBaseline: Boolean = false) {
+        if (revertToBaseline && currentIndex.value != initialIndex.value) {
+            orderedCards = homeCollectionOrderAfterCancelledDrag<HomeCollectionCard>(
+                persistedCards = dragBaseline.value ?: latestPersistedCards.value,
+                currentCards = orderedCards,
+                initialIndex = initialIndex.value,
+                currentIndex = currentIndex.value,
+            )
+        }
+        autoScrollJob.value?.cancel()
+        autoScrollJob.value = null
+        dragBaseline.value = null
         draggedId.value = null
         initialIndex.value = -1
         currentIndex.value = -1
@@ -475,92 +499,98 @@ private fun CollectionsSection(
             }
         } else {
             orderedCards.forEach { card ->
-                val isDragged = draggedId.value == card.collectionId
-                val cardCenter = cardBounds[card.collectionId]?.center?.y ?: pointerRootY.floatValue
-                val dragOffset = if (isDragged) pointerRootY.floatValue - cardCenter else 0f
-                CollectionCard(
-                    card = card,
-                    onClick = {
-                        if (draggedId.value == null) onOpenCollection(card.collectionId)
-                    },
-                    dragged = isDragged,
-                    dragOffset = dragOffset,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .onGloballyPositioned { coordinates ->
-                            val topLeft = coordinates.positionInRoot()
-                            cardBounds[card.collectionId] = Rect(
-                                topLeft = topLeft,
-                                bottomRight = topLeft + Offset(
-                                    coordinates.size.width.toFloat(),
-                                    coordinates.size.height.toFloat(),
-                                ),
-                            )
-                        }
-                        .pointerInput(card.collectionId) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = {
-                                    if (latestCards.value.size <= 1) return@detectDragGesturesAfterLongPress
-                                    val index = latestCards.value.indexOfFirst {
-                                        it.collectionId == card.collectionId
-                                    }
-                                    val center = cardBounds[card.collectionId]?.center?.y
-                                        ?: return@detectDragGesturesAfterLongPress
-                                    draggedId.value = card.collectionId
-                                    initialIndex.value = index
-                                    currentIndex.value = index
-                                    pointerRootY.floatValue = center
-                                },
-                                onDragCancel = { clearDrag() },
-                                onDragEnd = {
-                                    if (draggedId.value == card.collectionId) {
-                                        if (currentIndex.value != initialIndex.value) {
-                                            onReorderCollections(latestCards.value.map { it.collectionId })
-                                        }
-                                        clearDrag()
-                                    }
-                                },
-                                onDrag = { change, dragAmount ->
-                                    if (draggedId.value != card.collectionId) return@detectDragGesturesAfterLongPress
-                                    change.consume()
-                                    pointerRootY.floatValue += dragAmount.y
-
-                                    scrollViewport?.let { viewport ->
-                                        val edgeDistance = 72f
-                                        val scrollDelta = when {
-                                            pointerRootY.floatValue < viewport.top + edgeDistance ->
-                                                -((viewport.top + edgeDistance - pointerRootY.floatValue) / edgeDistance * 24f)
-                                            pointerRootY.floatValue > viewport.bottom - edgeDistance ->
-                                                ((pointerRootY.floatValue - (viewport.bottom - edgeDistance)) / edgeDistance * 24f)
-                                            else -> 0f
-                                        }
-                                        if (scrollDelta != 0f) {
-                                            autoScrollScope.launch { scrollState.scrollBy(scrollDelta) }
-                                        }
-                                    }
-
-                                    val activeCards = latestCards.value
-                                    val fromIndex = currentIndex.value
-                                    if (fromIndex !in activeCards.indices) return@detectDragGesturesAfterLongPress
-                                    var targetIndex = activeCards.lastIndex
-                                    activeCards.forEachIndexed { index, candidate ->
-                                        val center = cardBounds[candidate.collectionId]?.center?.y
-                                            ?: return@forEachIndexed
-                                        if (pointerRootY.floatValue < center && targetIndex == activeCards.lastIndex) {
-                                            targetIndex = if (index > fromIndex) index - 1 else index
-                                        }
-                                    }
-                                    if (targetIndex != fromIndex) {
-                                        val reordered = activeCards.toMutableList()
-                                        val moved = reordered.removeAt(fromIndex)
-                                        reordered.add(targetIndex.coerceIn(0, reordered.size), moved)
-                                        orderedCards = reordered
-                                        currentIndex.value = targetIndex
-                                    }
-                                },
-                            )
+                key(card.collectionId) {
+                    val isDragged = draggedId.value == card.collectionId
+                    val cardCenter = cardBounds[card.collectionId]?.center?.y ?: pointerRootY.floatValue
+                    val dragOffset = if (isDragged) pointerRootY.floatValue - cardCenter else 0f
+                    CollectionCard(
+                        card = card,
+                        onClick = {
+                            if (draggedId.value == null) onOpenCollection(card.collectionId)
                         },
-                )
+                        dragged = isDragged,
+                        dragOffset = dragOffset,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onGloballyPositioned { coordinates ->
+                                val topLeft = coordinates.positionInRoot()
+                                cardBounds[card.collectionId] = Rect(
+                                    topLeft = topLeft,
+                                    bottomRight = topLeft + Offset(
+                                        coordinates.size.width.toFloat(),
+                                        coordinates.size.height.toFloat(),
+                                    ),
+                                )
+                            }
+                            .pointerInput(card.collectionId) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = {
+                                        if (latestCards.value.size <= 1) return@detectDragGesturesAfterLongPress
+                                        val index = latestCards.value.indexOfFirst {
+                                            it.collectionId == card.collectionId
+                                        }
+                                        val center = cardBounds[card.collectionId]?.center?.y
+                                            ?: return@detectDragGesturesAfterLongPress
+                                        dragBaseline.value = latestPersistedCards.value
+                                        draggedId.value = card.collectionId
+                                        initialIndex.value = index
+                                        currentIndex.value = index
+                                        pointerRootY.floatValue = center
+                                    },
+                                    onDragCancel = { clearDrag(revertToBaseline = true) },
+                                    onDragEnd = {
+                                        if (draggedId.value == card.collectionId) {
+                                            if (currentIndex.value != initialIndex.value) {
+                                                onReorderCollections(latestCards.value.map { it.collectionId })
+                                            }
+                                            clearDrag()
+                                        }
+                                    },
+                                    onDrag = { change, dragAmount ->
+                                        if (draggedId.value != card.collectionId) return@detectDragGesturesAfterLongPress
+                                        change.consume()
+                                        pointerRootY.floatValue += dragAmount.y
+
+                                        scrollViewport?.let { viewport ->
+                                            val edgeDistance = 72f
+                                            val scrollDelta = when {
+                                                pointerRootY.floatValue < viewport.top + edgeDistance ->
+                                                    -((viewport.top + edgeDistance - pointerRootY.floatValue) / edgeDistance * 24f)
+                                                pointerRootY.floatValue > viewport.bottom - edgeDistance ->
+                                                    ((pointerRootY.floatValue - (viewport.bottom - edgeDistance)) / edgeDistance * 24f)
+                                                else -> 0f
+                                            }
+                                            autoScrollJob.value?.cancel()
+                                            autoScrollJob.value = if (scrollDelta != 0f) {
+                                                autoScrollScope.launch { scrollState.scrollBy(scrollDelta) }
+                                            } else {
+                                                null
+                                            }
+                                        }
+
+                                        val activeCards = latestCards.value
+                                        val fromIndex = currentIndex.value
+                                        if (fromIndex !in activeCards.indices) return@detectDragGesturesAfterLongPress
+                                        var targetIndex = activeCards.lastIndex
+                                        activeCards.forEachIndexed { index, candidate ->
+                                            val center = cardBounds[candidate.collectionId]?.center?.y
+                                                ?: return@forEachIndexed
+                                            if (pointerRootY.floatValue < center && targetIndex == activeCards.lastIndex) {
+                                                targetIndex = if (index > fromIndex) index - 1 else index
+                                            }
+                                        }
+                                        if (targetIndex != fromIndex) {
+                                            val reordered = activeCards.toMutableList()
+                                            val moved = reordered.removeAt(fromIndex)
+                                            reordered.add(targetIndex.coerceIn(0, reordered.size), moved)
+                                            orderedCards = reordered
+                                            currentIndex.value = targetIndex
+                                        }
+                                    },
+                                )
+                            },
+                    )
+                }
             }
         }
     }
