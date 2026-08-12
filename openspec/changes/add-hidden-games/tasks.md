@@ -1,0 +1,81 @@
+## 1. Storage
+
+- [ ] 1.1 Add a `hidden_games` table keyed by app id, with a hidden-at timestamp and whether the hide came from the bulk action, and **no foreign key to `games`**
+- [ ] 1.2 Document in the entity's KDoc why it is a table rather than a `Game` column: `SteamSyncWorker` rebuilds each row from the Steam DTO and copies app-owned fields back by hand, and a missed line silently reverts the flag on the next sync — the same failure its `backfillMinutes` comment records
+- [ ] 1.3 Add the migration
+- [ ] 1.4 Add a DAO and a repository exposing the hidden set as domain models, keeping entities inside `data/`
+
+## 2. Exclusion at the repository boundary
+
+- [ ] 2.1 Filter hidden games centrally in the repository layer so surfaces receive already-filtered data and cannot forget
+- [ ] 2.2 Exclude from library lists and search
+- [ ] 2.3 Exclude from custom collection contents, member counts, and summaries, retaining the membership rows
+- [ ] 2.4 Exclude from derived collections
+- [ ] 2.5 Exclude from analytics and history
+- [ ] 2.6 Make a hidden game unreachable by navigation to game detail
+- [ ] 2.7 Add tests asserting a hidden game is absent from every read path, including one per surface
+
+## 3. Derived values
+
+- [ ] 3.1 Exclude hidden games from the XP input built in `GamificationUpdater.compute`
+- [ ] 3.2 Exclude hidden games from daily-progress attribution in `SteamSyncWorker` going forward
+- [ ] 3.3 Leave stored `DailyProgress` rows, quest results, and streaks untouched when a game is hidden; add a test pinning that a past met day stays met
+- [ ] 3.4 Add a `RecomputeSource` value for hiding and unhiding, declared as not earned, so it emits no progress events and reseeds the baseline including downward
+- [ ] 3.5 Add a test asserting unhiding restores exactly the XP and level that would have applied had the game never been hidden
+
+## 4. Disclosure and the hide action
+
+- [ ] 4.1 Build the hide preview on `GamificationUpdater.compute`, running the real computation with the game excluded rather than estimating
+- [ ] 4.2 Present current and resulting XP and level, calling out a level drop explicitly
+- [ ] 4.3 State that a goal designation will be cleared, where it applies
+- [ ] 4.4 Clear the goal flag on hide; do not restore it on unhide
+- [ ] 4.5 Apply nothing when the confirmation is declined
+- [ ] 4.6 Disclose the same effect on unhide
+- [ ] 4.7 Add the hide action to game detail, returning the player to where they came from afterwards
+
+## 5. Live status
+
+- [ ] 5.1 Resolve the in-game state to not-in-game in `LiveStatusRepository` when the reported game is hidden, so one resolution point governs every surface
+- [ ] 5.2 Verify the now-playing card, profile header presence line, and Library live indicator all follow from it without separate filtering
+- [ ] 5.3 Suppress the ongoing now-playing notification for a hidden game
+- [ ] 5.4 Confirm sessions are still recorded for a hidden game that is played
+- [ ] 5.5 Add a test asserting presence for a hidden game resolves to not-in-game
+
+## 6. Remote work exclusion
+
+- [ ] 6.1 Exclude hidden games from achievement, schema, and global-percentage fetching
+- [ ] 6.2 Exclude hidden games from HowLongToBeat matching, individual and batch
+- [ ] 6.3 Exclude hidden games from store enrichment scheduling
+- [ ] 6.4 Confirm unhiding makes a game eligible for every enrichment path again
+- [ ] 6.5 Add tests asserting no request is issued for a hidden game on each path
+
+## 7. Non-game bulk hide
+
+- [ ] 7.1 Deserialize the app `type` from the `appdetails` response into `StoreAppData` — it is already returned and currently discarded
+- [ ] 7.2 Record the type alongside the existing store enrichment result, adding no new request
+- [ ] 7.3 Add the migration for the stored type
+- [ ] 7.4 Identify library items whose recorded type is not a game; exclude items whose type has not been retrieved
+- [ ] 7.5 Present the candidates by name for review, hiding nothing without confirmation
+- [ ] 7.6 Disclose the combined XP and level effect for the group before confirming
+- [ ] 7.7 Ensure each bulk-hidden item can be unhidden individually
+- [ ] 7.8 Add tests: unknown types are never offered, nothing is hidden without confirmation, and a confirmed group is hidden together
+
+## 8. Settings and backup
+
+- [ ] 8.1 Add the hidden-games section listing each hidden game with when it was hidden
+- [ ] 8.2 Offer unhide individually and unhide all, each disclosing its effect
+- [ ] 8.3 Offer the non-game review from the same section
+- [ ] 8.4 State plainly when nothing is hidden, rather than showing an unexplained empty list
+- [ ] 8.5 Keep the section reachable even when every game in the library is hidden
+- [ ] 8.6 Include the hidden set in backup export and apply it on restore
+- [ ] 8.7 Add a round-trip test: export with games hidden, restore, confirm they are hidden and their playtime has not re-entered XP
+
+## 9. Verification
+
+- [ ] 9.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and `./gradlew assembleDebug`
+- [ ] 9.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
+- [ ] 9.3 Manually verify hiding a heavily-played game: the disclosure states the real level change, and applying it matches
+- [ ] 9.4 Manually verify unhiding restores XP, level, history, and collection membership exactly
+- [ ] 9.5 Manually verify a hidden game survives a sync still hidden — the case the standalone table exists to prevent
+- [ ] 9.6 Manually verify playing a hidden game shows no card, no indicator, and no notification, while its session is recorded
+- [ ] 9.7 Manually verify the non-game bulk review names real candidates and hides nothing until confirmed
