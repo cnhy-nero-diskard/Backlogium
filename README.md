@@ -5,10 +5,27 @@ playtime, achievements, rarity, completion estimates, daily quests, and streaks
 into one local progression system.
 
 The app is built for day-to-day personal use: connect a Steam account, sync the
-library, review HowLongToBeat matches, mark Focus games, import pre-install Steam
-history once, and keep a local backup. A server-side presence poller records play
-history to Firestore while the phone is asleep; the app itself does not read that
-data yet, and works entirely without it. An OBS overlay remains a roadmap item.
+library, review HowLongToBeat matches, organize custom collections, inspect
+analytics, mark Focus games, import pre-install Steam history once, and keep a
+local backup. An independent presence poller records server-side observations to
+Firestore while the phone is asleep; the app itself does not read that data yet,
+and works entirely without it. An OBS overlay remains a roadmap item.
+
+## Status snapshot — 2026-08-12
+
+The current branch contains the implemented offline-first Android product loop,
+including the collection UI behavior fixes merged on August 12 and the tiered
+achievement-sync optimization merged on August 11. The source is actively
+maintained; it is not presented here as a claim that every device-only check or
+future cloud consumer is complete.
+
+| Area | Current state |
+|---|---|
+| Android client | Five top-level destinations: Home, Library, History, Analytics, and Settings, with onboarding, game detail, HLTB review, collections, and diagnostics as pushed surfaces. |
+| Local product loop | Implemented: Steam onboarding/sync, local sessions and XP, quests/streaks, HLTB data, genres, custom collections, analytics, live monitoring, backups, and settings. |
+| Achievement sync | Tiered hot/warm/cold/never selection is merged. Normal sync is bounded; cold-tier reconciliation runs weekly on charging + unmetered network or from the forced Settings action. |
+| Cloud presence | The one-minute Firebase Admin writer and Firestore transition log are implemented. The Android app and OBS do not consume that log yet; client access is denied by the current Firestore rules. |
+| Verification | Kotlin/JVM tests, Android unit tests, instrumentation tests, compile checks, and function builds are available. Four hardware-dependent achievement-sync checks remain tracked in [#52](https://github.com/cnhy-nero-diskard/Backlogium/issues/52). |
 
 ## What Works Today
 
@@ -19,10 +36,19 @@ data yet, and works entirely without it. An OBS overlay remains a roadmap item.
   completionist progress.
 - XP, levels, quests, streaks, Focus games, Steam history import, and rarity-weighted
   achievement XP.
-- Home, Library, History, Settings, game detail, onboarding, and HLTB review screens.
+- Custom collections with descriptions, accents, display order, completion/deadline/queue modes,
+  pacing summaries, HLTB time-basis estimates, and manual member completion marks.
+- Analytics with rolling or calendar windows, daily playtime, streak/session/time-of-day insights,
+  achievement rarity, and most-played games.
+- Genre enrichment and Library filtering, game-detail current-player counts, and rarity standing.
+- Home, Library, History, Analytics, Settings, game detail, onboarding, collection, diagnostics,
+  and HLTB review screens.
 - Foreground now-playing tracking with an ongoing notification while a Steam game is
   detected.
-- Local backup and restore for the app's tracked data.
+- Local backup and restore for the app's tracked data, including optional rolling automatic
+  snapshots.
+- Sync diagnostics with persisted run timing, request breakdowns, presence decisions, and
+  achievement-refresh tier counts.
 - Fully local Room/DataStore persistence. Steam credentials are encrypted at rest
   with an Android Keystore-backed key.
 - A scheduled Cloud Function polling Steam presence every minute and appending game
@@ -39,16 +65,17 @@ data yet, and works entirely without it. An OBS overlay remains a roadmap item.
 - **Extra data:** HowLongToBeat completionist times used to taper playtime XP
 - **Cloud:** Firebase Cloud Functions (Node/TypeScript) on a one-minute schedule,
   writing a presence log to Firestore in `asia-southeast1`
-- **Planned:** an OBS Browser Source overlay, and app-side backfill from the
-  presence log
+- **Not implemented yet:** app-side backfill from the presence log and an OBS
+  Browser Source overlay
 
 ## Architecture
 
 ```text
 Steam Web API --\
-HowLongToBeat ----> Android app (Room + DataStore + gamification engine)
-                    |-> local backup / restore
-                    \-> planned: backfill from the presence log below
+HowLongToBeat ----> Android app (Compose + repositories + Room/DataStore)
+                    |-> WorkManager sync, HLTB refresh, genre enrichment,
+                    |   reconciliation, local backup/restore, gamification
+                    \-> planned: app-side backfill from the presence log below
 
 Steam Web API ----> Cloud Function (1/min) -> Firestore presence log
                                               \-> planned OBS browser overlay
@@ -62,6 +89,9 @@ The Cloud Function is a separate, independent writer. It records presence
 observations only — never sessions, playtime, or XP — so that the on-device engine
 remains the single author of derived values. Nothing consumes its output yet; the
 app-side backfill and the browser-source overlay are future work.
+
+For the source-oriented view of the layers, data stores, workers, and external
+boundaries, see the [ASCII architecture map](docs/architecture-map.md).
 
 ### Data-Source Boundary
 
@@ -123,14 +153,19 @@ than claiming new territory.
 ## App Surfaces
 
 - **Home:** live now-playing panel, level/XP progress, today's quest, streak,
-  Steam account summary, Steam history import, and manual sync.
+  Steam account summary, Steam history import, manual sync, and collection cards.
 - **Library:** searchable owned-games list split into Focus and Your games,
   independent sorting, completion progress, XP badges, live-game indicators, HLTB
-  refresh controls, and multi-select lookup.
+  refresh controls, multi-select lookup, and genre filtering.
 - **History:** day-grouped play sessions, daily quest results, achievement unlocks,
   expandable game/session detail, and older-history pagination.
-- **Settings:** sync schedule, live monitor controls, backup/restore, and editable
+- **Analytics:** selectable rolling/calendar windows, daily playtime chart, streak and
+  session summaries, time-of-day pattern, rarity breakdown, and most-played games.
+- **Settings:** sync controls, tiered achievement refresh, genre status, live monitor,
+  backup/restore and automatic snapshots, history import, diagnostics, and editable
   gamification rules.
+- **Collections:** pushed from Home for collection overview/editing, pacing/deadline
+  planning, member management, ordering, and game-detail overlays.
 - **Game detail:** game summary, store art, HLTB lengths, current player count,
   achievement progress, rarity tiers, and completion banner.
 - **HowLongToBeat review:** candidate picker for ambiguous HLTB matches.
@@ -206,19 +241,23 @@ imported into the encrypted store once, only when the store is empty.
 Use the Gradle wrapper from the repository root:
 
 ```powershell
-.\gradlew.bat testDebugUnitTest
+.\gradlew.bat :app:compileDebugKotlin --offline
+.\gradlew.bat :gamification:test :app:testDebugUnitTest --offline
+npm.cmd --prefix functions run build
 ```
 
 For Android Studio, open the repository root and run the `app` configuration on a
-device or emulator.
+device or emulator. Instrumentation tests and hardware-dependent sync checks need
+a connected Android device/emulator; a passing local unit/compile run does not
+replace those checks.
 
-## Roadmap
+## Remaining roadmap
 
 The offline-first Android app is the current product. It tracks real Steam
 sessions, awards XP from playtime and achievements, shows level/quests/streaks and
-history, reviews HLTB matches, monitors live presence, and supports local
-backup/restore. A cloud presence poller runs alongside it, recording play history
-the phone cannot observe.
+history, reviews HLTB matches, monitors live presence, provides analytics and
+collections, and supports local backup/restore. A cloud presence poller runs
+alongside it, recording observations the phone cannot observe.
 
 Remaining roadmap items:
 
@@ -227,6 +266,8 @@ Remaining roadmap items:
   since Firestore rules currently deny all client access.
 - Static OBS Browser Source overlay backed by the `players/{steamId}` document.
 - Overlay polish for quest completions, streak milestones, and level-ups.
+- Close the four device-dependent achievement-sync checks tracked in
+  [#52](https://github.com/cnhy-nero-diskard/Backlogium/issues/52).
 
 ## Security Notes
 
@@ -239,5 +280,6 @@ Remaining roadmap items:
 ## Project References
 
 - UI screen reference: [docs/ui-screens-descriptor.md](docs/ui-screens-descriptor.md)
+- Architecture map: [docs/architecture-map.md](docs/architecture-map.md)
 - OpenSpec specs: [openspec/specs](openspec/specs)
 - Current and archived changes: [openspec/changes](openspec/changes)

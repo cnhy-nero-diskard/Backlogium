@@ -7,6 +7,14 @@ while the phone is unreachable are never observed.
 
 This directory is invisible to Gradle. It is not part of the Android build.
 
+## Status
+
+The cloud writer is implemented in this repository as a Node 22 / TypeScript
+Firebase scheduled function. The repository proves the source and deployment
+configuration, not the health of a particular live deployment. It is intentionally
+not an app backend yet: the Android client has no reader for this data and
+`firestore.rules` denies client access until a narrowly scoped consumer is ready.
+
 ## What it records
 
 ```
