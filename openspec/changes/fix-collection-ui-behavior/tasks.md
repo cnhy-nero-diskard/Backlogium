@@ -53,3 +53,14 @@
   distinction and the add-games search behavior.
 - [x] 5.4 Run `openspec validate "fix-collection-ui-behavior"` and `openspec status --change
   "fix-collection-ui-behavior"` to confirm the change is valid and apply-ready.
+
+## 6. Focus-relocation keyboard gap follow-up
+
+- [x] 6.1 Record the narrowed device reproduction: the phantom area appears when the Add-games search field starts
+  low enough that it must move above the incoming keyboard, but not when it is already in the upper half.
+- [x] 6.2 Make the edge-to-edge activity's keyboard adjustment deterministic with `adjustResize`, and add a
+  regression test that verifies the activity manifest does not fall back to an unspecified mode.
+- [x] 6.3 Re-run the focused manifest regression, app/gamification JVM tests, Kotlin compilation, OpenSpec
+  validation, and whitespace checks.
+- [ ] 6.4 Verify on device with the search field near the bottom that focus relocation leaves the form flush with
+  the keyboard and the save action reachable.

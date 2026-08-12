@@ -59,6 +59,27 @@ every other screen.
 - Set `contentWindowInsets = WindowInsets(0)` on the app `Scaffold` globally. Rejected: too broad; would force every
   screen to handle its own insets.
 
+### Decision 1a: Make the activity's keyboard adjustment deterministic
+
+Set `android:windowSoftInputMode="adjustResize"` on `MainActivity`. The follow-up device reproduction showed that
+the phantom area is conditional: it appears only when the focused Add-games search field starts low enough that the
+window must move it above the incoming keyboard. The activity currently leaves the adjustment unspecified, allowing
+Android to select its window behavior from the current content while Compose independently resizes the `LazyColumn`
+with `imePadding()`. Explicit resize keeps the window and Compose on one resize/scroll path instead of permitting a
+second focus-dependent window movement.
+
+**Rationale:** Android's edge-to-edge Compose setup requires an explicit resize mode so IME insets reach the layout
+predictably. This matches the observed boundary: no phantom area when the field already fits, and a large area only
+when automatic focus relocation is needed.
+
+**Alternatives considered:**
+
+- Manually scroll the search field before showing the keyboard. Rejected: it works around the platform adjustment
+  choice and risks fighting Compose's built-in bring-into-view behavior during the IME animation.
+- Move IME padding from the `LazyColumn` to the outer form `Box`. Rejected for this follow-up: official Compose
+  guidance uses `imePadding()` directly on lazy content, and the reproduction points to window adjustment rather
+  than a permanently duplicated Compose inset.
+
 ### Decision 2: Add-game scroll stability without violating "Results visible while typing"
 
 Preserve the search field's focus across an add (do not let tapping an `AddGameRow` drop focus from the field), and
@@ -114,8 +135,10 @@ gesture addresses the root if cancellations are frequent.
   `WindowInsets.systemBarsForVisualComponents`. The shell applies the resulting `PaddingValues` to the `NavHost`
   without consuming them, while `CollectionForm` separately applies `imePadding()`. That source-level evidence
   selects the single-owner fix: consume the shell's navigation inset at the form boundary, then let the form and
-  save action own the IME adjustment. Per the user's device verification, the visible gap/FAB and keyboard
-  adjustment checks are complete.
+  save action own the IME adjustment. The first device pass was incomplete: a follow-up reproduction found the gap
+  still appears when the search field begins near the bottom and must move above the incoming keyboard. The activity
+  omits `windowSoftInputMode`, so Android is free to choose a content-dependent adjustment in addition to Compose's
+  own `imePadding()`. Decision 1a now makes that window adjustment deterministic with `adjustResize`.
 - Is `onDragCancel` actually firing in the user's repro, or is `onDragEnd` firing but the persist coroutine not
   landing? The static gesture path selects Candidate A as the implementation target: `onDragCancel` previously
   cleared only drag variables, and the reordered `forEach` had no stable composition key, so a moved card could

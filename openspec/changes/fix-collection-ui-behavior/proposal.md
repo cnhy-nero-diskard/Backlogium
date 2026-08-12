@@ -45,5 +45,7 @@ regressions of behavior the specs already promise.
   cancel and ensure `onDragEnd` persists reliably.
 - `ui/BacklogiumAppRoot.kt` — possibly the app-level `Scaffold` content insets, if the keyboard-gap root cause is a
   double-applied IME inset at the shell.
+- `AndroidManifest.xml` — explicitly select `adjustResize` for the edge-to-edge `MainActivity` so the platform does
+  not choose a focus-dependent window adjustment mode on top of Compose's IME inset handling.
 - No data-model, API, or dependency changes. Collections remain app-owned Room state; the fix is confined to the
   UI/insets and gesture layers.
