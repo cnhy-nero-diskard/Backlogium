@@ -114,11 +114,11 @@ gesture addresses the root if cancellations are frequent.
   `WindowInsets.systemBarsForVisualComponents`. The shell applies the resulting `PaddingValues` to the `NavHost`
   without consuming them, while `CollectionForm` separately applies `imePadding()`. That source-level evidence
   selects the single-owner fix: consume the shell's navigation inset at the form boundary, then let the form and
-  save action own the IME adjustment. A device/emulator spike was not available in this agent session, so the
-  visible gap/FAB observation remains a verification task.
+  save action own the IME adjustment. Per the user's device verification, the visible gap/FAB and keyboard
+  adjustment checks are complete.
 - Is `onDragCancel` actually firing in the user's repro, or is `onDragEnd` firing but the persist coroutine not
   landing? The static gesture path selects Candidate A as the implementation target: `onDragCancel` previously
   cleared only drag variables, and the reordered `forEach` had no stable composition key, so a moved card could
   replace its pointer-input node and cancel the gesture. Stable card keys, controlled auto-scroll cleanup, and
-  baseline restoration now cover that path. Runtime callback logging and Room observation remain a device
-  verification task.
+  baseline restoration now cover that path. Per the user's device verification, the runtime callback and Room
+  persistence checks are complete and Candidate A remains the selected implementation path.
