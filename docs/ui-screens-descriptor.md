@@ -2,11 +2,12 @@
 
 Source: `app/src/main/java/com/example/backlogium/ui/**`. Android app, Material 3 (Compose),
 using a custom "Steam-native dark" identity with dynamic (wallpaper-derived) color turned
-off, so the look is identical across devices. Bottom navigation with 4 destinations (Home /
-Library / History / Settings), plus three pushed sub-destinations reached from them:
-**Onboarding** (from Settings, or as a first-run takeover), **Game detail** (from Library),
-and **HowLongToBeat review** (from Library). Every screen renders from local state only (offline-first) and has an
-"empty" / "nothing to show" variant.
+off, so the look is identical across devices. Bottom navigation with 5 destinations (Home /
+Library / History / Analytics / Settings), plus five pushed sub-destinations reached from
+them: **Onboarding** (from Settings, or as a first-run takeover), **Game detail** (from
+Library), **HowLongToBeat review** (from Library), **Collection** (from Home), and
+**Diagnostics** (from Settings). Every screen renders from local state only (offline-first)
+and has an "empty" / "nothing to show" variant where the surface has no data.
 
 ## Design tokens
 
@@ -37,7 +38,7 @@ and **HowLongToBeat review** (from Library). Every screen renders from local sta
 - **Shape:** Material 3 `Card` everywhere (rounded rect, default M3 elevation/shape); game-art
   thumbnails are clipped to an 8dp rounded square.
 - **Icons:** a single icon library — **Tabler Icons** (Compose port,
-  `br.com.devsrsouza.compose.icons:tabler-icons`). Nav bar: Home / DeviceGamepad / History / Settings;
+  `br.com.devsrsouza.compose.icons:tabler-icons`). Nav bar: Home / DeviceGamepad / History / ChartBar / Settings;
   status glyphs: Flame (streak), CircleCheck / Clock (quest complete / in progress),
   CircleCheck / CircleMinus (History daily quest met / not met), Trophy (achievements /
   game-completed), BrandSteam + Pencil (Steam-account card), Download (history import),
@@ -78,16 +79,17 @@ and that step read as a crease. Layout is identical either way.
 - Renders **nothing** while credentials are unconfigured or still loading, so the onboarding
   takeover keeps the full screen.
 
-Bottom navigation: 4 items, icon (Tabler) + label, one selected at a time:
+Bottom navigation: 5 items, icon (Tabler) + label, one selected at a time:
 
 | Destination | Icon (Tabler) | Label |
 |---|---|---|
 | Home | `Home` | Home |
 | Library | `DeviceGamepad` | Library |
 | History | `History` | History |
+| Analytics | `ChartBar` | Analytics |
 | Settings | `Settings` | Settings |
 
-Content area is a `NavHost` that swaps between the 4 top-level screens below; state is preserved when
+Content area is a `NavHost` that swaps between the 5 top-level screens; state is preserved when
 switching tabs (standard save/restoreState nav behavior). Home is the start destination.
 
 ---
@@ -438,7 +440,8 @@ the route into onboarding.
 
 1. **Account** — "Steam account" card with masked API key and SteamID when configured, or a connect
    prompt when not configured. The action opens Onboarding.
-2. **Sync** — last sync state plus a "Sync now" action.
+2. **Sync** — last sync state plus a "Sync now" action. The same card exposes the forced
+   "Full achievement refresh" action and a muted genre-enrichment status line.
 3. **Live monitor** — toggle for foreground now-playing monitoring; disabled until Steam is
    configured.
 4. **Daily quest** — editable quest target and Focus-game scoping.
@@ -447,6 +450,8 @@ the route into onboarding.
    settings, and snapshot restore actions.
 7. **Advanced** — editable gamification rule constants, guarded by a confirmation dialog before
    saving.
+8. **Diagnostics** — a pushed developer-facing surface with recent sync runs, request breakdowns,
+   and recorded presence decisions.
 
 ---
 
@@ -468,9 +473,56 @@ and drops that game from the list.
 
 ---
 
+## Screen 8 — Analytics (top-level)
+
+**Purpose:** show how playtime, sessions, streaks, and achievements accumulate over a selected
+period. The screen is derived from local Room history and remains usable without network access.
+
+**Layout:** a vertically scrolling column with a play snapshot card, an analytics-window selector,
+an active-days/all-days chart toggle, and cards for daily playtime, streak summary, session
+insights, time-of-day pattern, achievement rarity, and most-played games.
+
+Windows include rolling **2 weeks**, **30 days**, and **90 days**, plus calendar **1 month** and
+**1 year** views. Earlier windows can be selected while tracked history still covers them. Tapping
+a daily chart bar reveals its exact total and quest status.
+
+**Empty state:** a configured account with no data in the selected window keeps the summary and
+shows "No analytics in this window" with guidance to play and sync.
+
+---
+
+## Screen 9 — Collection overview and editor (pushed from Home)
+
+**Purpose:** organize owned games into local collections and optionally plan a completion or
+deadline goal without introducing a server dependency.
+
+The overview shows the collection accent, mode, description, member count, game list, and the
+derived pacing/deadline plan when applicable. Deadline collections use a selected HowLongToBeat
+basis (Main Story, Main + Extra, Completionist, or All Styles), recent personal pace, remaining
+work, and capacity/shortfall signals. A member can open the existing game-detail presentation
+without leaving the collection flow.
+
+The editor supports name/description, one of four modes (Basic, Completion goal, Deadline goal,
+or Ordered queue), mode-appropriate sorting, accent, deadline, game add/remove, manual member
+ordering, and done marks for ordered queues. Saving persists the collection and memberships as one
+local edit; deleting requires confirmation.
+
+---
+
+## Screen 10 — Diagnostics (pushed from Settings)
+
+**Purpose:** provide a developer-facing view of the local sync and live-presence decisions. It
+does not read Firestore or replace the user-facing Home/Settings state.
+
+The list shows recent sync outcomes, triggers, durations, request counts, and presence decisions.
+Selecting a run opens its endpoint/request breakdown and game counters. An empty installation
+shows "No sync runs recorded yet" and "No presence decisions recorded yet."
+
+---
+
 ## Shared component — Empty State
 
-Used identically across all 3 screens for the "not configured" / "no data" variants.
+Used by screens that expose "not configured" / "no data" variants.
 Full-screen, centered both axes, 32dp padding:
 - Title text (titleLarge, centered)
 - 8dp gap
@@ -483,11 +535,12 @@ is a natural place to add an illustration if regenerating with more visual polis
 
 ## Notes for regenerating in Claude Design
 
-- This is a **3-tab mobile app** (phone-sized canvas) with three pushed sub-screens
-  (onboarding, game detail, HLTB review), Material 3 look — rounded cards, a bottom tab bar,
+- This is a **5-destination mobile app** (phone-sized canvas) with five pushed sub-screens
+  (onboarding, game detail, HLTB review, collection, diagnostics), Material 3 look — rounded cards, a bottom tab bar,
   no top app bar currently (could be added).
 - Card-heavy, single-column, vertically stacked info — no grids, no multi-column layouts.
-- Only 2 data-viz elements: linear (horizontal) progress bars — no charts, rings, or graphs.
+- Analytics adds a hand-rolled Canvas bar chart and compact time-of-day bars; other progress
+  indicators remain linear, with no rings or third-party chart dependency.
 - Icons come from a single set (Tabler Icons, Compose port); there are no emoji glyphs.
 - Every screen has a "sad path": not-configured and empty-data states are first-class, not
   afterthoughts — worth designing those explicitly rather than assuming happy path only.
