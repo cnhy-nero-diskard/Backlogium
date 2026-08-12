@@ -1,0 +1,65 @@
+## 1. Source on the game model
+
+- [ ] 1.1 Add a `GameSource` enum in `domain/` with `STEAM_OWNED` and `FAMILY_SHARED`, documented so that adding a third value later surfaces as a compile error at each branch rather than a silent default
+- [ ] 1.2 Add a `source` column to `Game` with a Room migration defaulting existing rows to `STEAM_OWNED` — a widening with no data movement
+- [ ] 1.3 Add an excluded-app-ids table for removed shared games, with its migration
+- [ ] 1.4 Expose source on the domain game model and through the repositories, keeping entities inside `data/`
+
+## 2. Presence-derived sessions
+
+- [ ] 2.1 Add `domain/PresenceSessionDeriver.kt`: a pure function over observed `(appId, observedAt)` samples plus open-session state, returning the same session-action shape `SessionDiffer` returns; no Room types, no Android
+- [ ] 2.2 Derive an open session on first observation, extend it across successive observations, and close it once the game is no longer observed
+- [ ] 2.3 Decide and document the gap tolerance that closes a session when observations stop, and record the reasoning in the deriver's KDoc
+- [ ] 2.4 Add JVM unit tests as a table of observation sequences: continuous play, a gap, a switch between games, an app restart mid-session, and observation resuming after a long silence
+- [ ] 2.5 Persist derived sessions through the same path as diffed sessions, so they are indistinguishable downstream
+
+## 3. Partition the two mechanisms
+
+- [ ] 3.1 Feed `SessionDiffer` only games whose source is `STEAM_OWNED`, so the partition is a property of the wiring rather than a runtime check
+- [ ] 3.2 Feed the presence deriver only games with no Steam-reported playtime
+- [ ] 3.3 Add a test asserting no game can receive session actions from both mechanisms in one cycle
+- [ ] 3.4 Verify that XP, quest, and streak computation are unchanged for owned games
+
+## 4. Admission
+
+- [ ] 4.1 In `LiveStatusRepository`, detect a presence app id with no row in `games` and no exclusion
+- [ ] 4.2 Require that a successful sync has completed since the app id was first observed before considering admission, so an unsynced owned game is never mistaken for a borrowed one
+- [ ] 4.3 Verify via Steam's store that the app id is a game; do not admit when the store cannot be reached, and reconsider on a later observation
+- [ ] 4.4 Admit with name, artwork, and genres resolved from the app id, source `FAMILY_SHARED`
+- [ ] 4.5 Ensure a second observation of an admitted game creates no duplicate
+- [ ] 4.6 Notify the player once, naming the game, when a game is admitted
+- [ ] 4.7 Add tests for each rejection path: already tracked, excluded, no completed sync, not a game, store unreachable
+
+## 5. Removal and conversion
+
+- [ ] 5.1 Offer removal on a family-shared game and not on an owned one
+- [ ] 5.2 On removal, record the exclusion so the game is not re-admitted on subsequent play
+- [ ] 5.3 Add the removed-games section to Settings, hidden when empty, with reversal
+- [ ] 5.4 On sync, convert an admitted shared game to `STEAM_OWNED` when it appears in the library, retaining its sessions
+- [ ] 5.5 Store the reported lifetime playtime as the diffing baseline at conversion and create no sessions from it — mirroring first-sync baselining
+- [ ] 5.6 Add tests for conversion: source changes, sessions retained, no phantom session, diffing resumes on the next increase
+
+## 6. Surfaces
+
+- [ ] 6.1 Indicate the family-shared source on game detail, subordinate to artwork and name
+- [ ] 6.2 Indicate it on Library rows without relying on colour alone
+- [ ] 6.3 Disclose that a shared game's tracked playtime is what the app observed, not a Steam total, wherever that playtime is shown
+- [ ] 6.4 Point the disclosure at the background presence monitoring setting when it is not enabled
+- [ ] 6.5 Include shared games in Analytics totals and make their contribution distinguishable
+- [ ] 6.6 Exclude games from metrics they cannot support rather than contributing a zero
+- [ ] 6.7 Confirm owned games are presented exactly as they are today, with no source marking anywhere
+
+## 7. Achievements
+
+- [ ] 7.1 Verify against a real borrowed game whether `GetPlayerAchievements` returns data for a family-shared title, and record the finding in `design.md`
+- [ ] 7.2 Where achievements are reported, confirm the existing achievement, rarity, rarity-XP, and rarity-standing surfaces work unmodified
+- [ ] 7.3 Where no achievement data is reported, present no achievement surface rather than an empty one
+
+## 8. Verification
+
+- [ ] 8.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and `./gradlew assembleDebug`
+- [ ] 8.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
+- [ ] 8.3 Manually verify admission end to end: play a borrowed game, confirm the notification, the new entry, its artwork and genres
+- [ ] 8.4 Manually verify a derived session earns XP and counts toward the daily quest
+- [ ] 8.5 Manually verify removal, that further play does not re-admit, and that reversal works
+- [ ] 8.6 Manually verify that owned-game sync, sessions, and XP are unchanged throughout
