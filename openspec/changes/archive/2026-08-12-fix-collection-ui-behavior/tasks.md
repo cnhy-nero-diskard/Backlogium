@@ -62,5 +62,5 @@
   regression test that verifies the activity manifest does not fall back to an unspecified mode.
 - [x] 6.3 Re-run the focused manifest regression, app/gamification JVM tests, Kotlin compilation, OpenSpec
   validation, and whitespace checks.
-- [ ] 6.4 Verify on device with the search field near the bottom that focus relocation leaves the form flush with
+- [x] 6.4 Verify on device with the search field near the bottom that focus relocation leaves the form flush with
   the keyboard and the save action reachable.

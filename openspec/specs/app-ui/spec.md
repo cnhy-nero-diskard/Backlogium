@@ -307,9 +307,12 @@ The Home screen SHALL present a collections section showing one card per custom 
 Cards SHALL be presented in the collection's stored display order, and the user SHALL be able to
 change that order by pressing and holding a card and dragging it to a new position. The reordering
 gesture SHALL be distinguishable from the section's own scrolling, so neither gesture triggers the
-other. A completed reorder SHALL be persisted so the new order is present on the next visit. The
-collection description SHALL NOT be rendered on the Home card, which stays limited to the name,
-one status line, progress, and member thumbnails.
+other. A completed reorder - one the user commits by releasing the dragged card - SHALL be persisted
+so the new order is present on the next visit, including after closing and reopening the screen. A
+drag that is cancelled rather than released SHALL leave both the stored order and the in-memory
+presentation unchanged, so a reorder the user saw started but did not commit does not appear to land
+and then revert. The collection description SHALL NOT be rendered on the Home card, which stays
+limited to the name, one status line, progress, and member thumbnails.
 
 #### Scenario: Collections shown on Home
 - **WHEN** the Home screen is shown and one or more collections exist
@@ -325,7 +328,8 @@ one status line, progress, and member thumbnails.
   persisted
 
 #### Scenario: Reordered collections persist
-- **WHEN** the user reorders collections and later returns to Home
+- **WHEN** the user reorders collections and later returns to Home, including after closing and
+  reopening the screen
 - **THEN** the collections are presented in the order the user left them
 
 #### Scenario: Drag distinguished from scrolling
@@ -335,6 +339,12 @@ one status line, progress, and member thumbnails.
 #### Scenario: Reorder abandoned
 - **WHEN** the user picks up a card and releases it at its original position
 - **THEN** the order is unchanged and no reorder is persisted
+
+#### Scenario: Reorder cancelled mid-drag
+- **WHEN** the user picks up a collection card to reorder and the drag is cancelled before a clean
+  release
+- **THEN** the stored order is unchanged and the in-memory presentation reverts to that stored order,
+  leaving no stale reorder that would revert on the next visit
 
 #### Scenario: Single collection
 - **WHEN** only one collection exists
@@ -658,7 +668,7 @@ this. The collection overview's member list SHALL offer a display density choice
 - **THEN** no target date field is offered
 
 ### Requirement: Collection add-game genre filtering
-The collection management screen SHALL provide a compact multi-select genre control for the Add games pool. With multiple genres selected, a non-member game SHALL remain addable when it has any selected genre. When both a text query and genre selections are active, the game SHALL satisfy the text query and at least one selected genre. Filtering SHALL never change collection membership by itself. The text query SHALL match a game's name or any known genre label, ignoring case, and offered games SHALL be presented in the same strongest-match-first order the Library search uses. The Add games search field and the games it offers SHALL be positioned so that results remain visible while the user is typing into the field.
+The collection management screen SHALL provide a compact multi-select genre control for the Add games pool. With multiple genres selected, a non-member game SHALL remain addable when it has any selected genre. When both a text query and genre selections are active, the game SHALL satisfy the text query and at least one selected genre. Filtering SHALL never change collection membership by itself. The text query SHALL match a game's name or any known genre label, ignoring case, and offered games SHALL be presented in the same strongest-match-first order the Library search uses. The Add games search field and the games it offers SHALL be positioned so that results remain visible while the user is typing into the field. Adding an offered game SHALL NOT cause a disorienting scroll reset or viewport jump that displaces the Add games pool from view, and the search field SHALL retain focus across the add so the keyboard is not dismissed by the act of adding.
 
 #### Scenario: No genre selected
 - **WHEN** the user has selected no genre filter
@@ -694,6 +704,11 @@ The collection management screen SHALL provide a compact multi-select genre cont
 - **WHEN** the user adds an offered game while text or genre filters are active
 - **THEN** that game becomes a draft member and the active filters remain available for continued curation
 
+#### Scenario: Adding a game does not reset the scroll position
+- **WHEN** the user taps to add an offered game while the Add games search is in view
+- **THEN** the form's scroll position does not jump to the top, the offered games remain visible, and
+  the search field retains focus so the keyboard is not dismissed by the add
+
 #### Scenario: Clearing selected genres
 - **WHEN** the user clears all selected genres
 - **THEN** genre filtering is removed without changing draft collection membership or the text query
@@ -701,6 +716,21 @@ The collection management screen SHALL provide a compact multi-select genre cont
 #### Scenario: Filtering never bulk-adds games
 - **WHEN** the user selects or clears a genre
 - **THEN** no game is added to or removed from the draft collection automatically
+
+### Requirement: Collection management form keyboard behavior
+When the collection management form is shown and the software keyboard (IME) is raised, the form content SHALL be presented flush against the top of the keyboard with no blank band between the keyboard and the content, and the form's primary save action SHALL remain reachable without first dismissing the keyboard. The keyboard inset SHALL be owned at a single layer so it is not double-applied.
+
+#### Scenario: No blank gap above the keyboard
+- **WHEN** the user focuses a text field in the collection management form and the keyboard is raised
+- **THEN** the form content sits flush against the top of the keyboard with no visible blank band between them
+
+#### Scenario: Save reachable while typing
+- **WHEN** the keyboard is raised over the collection management form
+- **THEN** the save action remains reachable without the user first dismissing the keyboard
+
+#### Scenario: Keyboard inset owned once
+- **WHEN** the keyboard is raised and lowered over the collection management form
+- **THEN** the content adjusts by exactly the keyboard height, with no double-reserved space
 
 ### Requirement: Custom dark visual theme
 The system SHALL render all screens using a hand-authored dark color scheme (charcoal/
