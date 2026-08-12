@@ -66,6 +66,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -1075,6 +1076,7 @@ fun CollectionFormContent(
     var showAdvancedSettings by rememberSaveable { mutableStateOf(false) }
     val formListState = rememberLazyListState()
     val searchFocusRequester = remember { FocusRequester() }
+    var searchHasFocus by remember { mutableStateOf(false) }
 
     val memberIds = remember(state.members) { state.members.mapTo(mutableSetOf()) { it.appId } }
     val selectedGenreSet = selectedGenreIds.toSet()
@@ -1301,7 +1303,8 @@ fun CollectionFormContent(
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("collection-add-search")
-                        .focusRequester(searchFocusRequester),
+                        .focusRequester(searchFocusRequester)
+                        .onFocusChanged { searchHasFocus = it.isFocused },
                     enabled = !state.saving,
                 )
                 Spacer(Modifier.height(8.dp))
@@ -1353,9 +1356,11 @@ fun CollectionFormContent(
                 AddGameRow(
                     game = game,
                     onAdd = {
-                        // Keep the query, viewport, and keyboard stable while the member/addable
-                        // lists reconcile around this row.
-                        searchFocusRequester.requestFocus()
+                        // Only restore focus when this edit session was already using the search
+                        // field. An off-screen LazyColumn item has no focus node to request.
+                        if (searchHasFocus) {
+                            runCatching { searchFocusRequester.requestFocus() }
+                        }
                         actions.onAddGame(game.appId)
                     },
                     enabled = !state.saving,
@@ -1612,7 +1617,8 @@ private fun AddGameRow(
         Box(modifier = Modifier.fillMaxWidth()) {
             GameHeaderBackdrop(
                 headerUrl = game.headerUrl,
-                fallbackUrls = SteamIconMapper.listBackgroundFallbackUrls(game.appId),
+                // This list can contain the whole library; avoid fanning out to several CDN
+                // fallback requests for every visible addable row.
                 modifier = Modifier.matchParentSize(),
             )
             Row(

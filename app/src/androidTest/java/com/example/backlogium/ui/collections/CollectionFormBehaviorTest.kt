@@ -79,13 +79,58 @@ class CollectionFormBehaviorTest {
         composeRule.onNodeWithTag("collection-save").assertIsDisplayed()
     }
 
-    private fun formState() = CollectionUiState(
-        loading = false,
-        name = "My collection",
-        libraryGames = listOf(
+    @Test
+    fun addingGameWithoutSearchFocus_doesNotCrashWhenSearchIsOffscreen() {
+        var state by mutableStateOf(
+            formState(
+                libraryGames = (1L..20L).map { appId ->
+                    LibraryGame(
+                        appId = appId,
+                        name = "Game $appId",
+                        iconUrl = "",
+                        playtimeForever = 0,
+                    )
+                },
+            ),
+        )
+
+        composeRule.setContent {
+            BacklogiumTheme {
+                CollectionFormContent(
+                    state = state,
+                    actions = CollectionFormActions(
+                        onAddGame = { appId ->
+                            val game = state.libraryGames.single { it.appId == appId }
+                            state = state.copy(
+                                members = state.members + CollectionMemberUi(
+                                    appId = game.appId,
+                                    name = game.name,
+                                    iconUrl = game.iconUrl,
+                                ),
+                            )
+                        },
+                    ),
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Game 20")
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+
+        check(state.members.any { it.appId == 20L })
+    }
+
+    private fun formState(
+        libraryGames: List<LibraryGame> = listOf(
             LibraryGame(appId = 1L, name = "Alpha", iconUrl = "", playtimeForever = 0),
             LibraryGame(appId = 2L, name = "Beta", iconUrl = "", playtimeForever = 0),
             LibraryGame(appId = 3L, name = "Gamma", iconUrl = "", playtimeForever = 0),
         ),
+    ) = CollectionUiState(
+        loading = false,
+        name = "My collection",
+        libraryGames = libraryGames,
     )
 }
