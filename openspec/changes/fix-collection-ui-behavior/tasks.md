@@ -8,24 +8,24 @@
   (`HomeScreen.kt`), perform a reorder, close and reopen Home, and record which callback fired and whether the
   `collections.displayOrder` column changed in Room. Determine Candidate A (cancel fires, no persist) vs. Candidate B
   (end fires, persist lands).
-- [ ] 1.3 Record the spike outcomes in `design.md` Open Questions and pick the concrete fix per bug before starting
+- [x] 1.3 Record the spike outcomes in `design.md` Open Questions and pick the concrete fix per bug before starting
   the matching implementation track.
 
 ## 2. Keyboard gap fix (bug #1 — CollectionForm IME)
 
-- [ ] 2.1 Make the `CollectionForm` scroll container the single IME owner: keep `.imePadding()` on the `LazyColumn`
+- [x] 2.1 Make the `CollectionForm` scroll container the single IME owner: keep `.imePadding()` on the `LazyColumn`
   and consume the IME inset at the form-container boundary (`Modifier.consumeWindowInsets`) so the shell's
   content-inset contribution is not re-applied.
-- [ ] 2.2 Move/keep the save `FloatingActionButton` inside the same inset-consumed `Box` so it lifts with the
+- [x] 2.2 Move/keep the save `FloatingActionButton` inside the same inset-consumed `Box` so it lifts with the
   keyboard and stays reachable while typing.
 - [ ] 2.3 Verify on device: no blank band between keyboard and content; save reachable with keyboard raised; content
   adjusts by exactly the keyboard height on raise/lower (no double-reserved space).
 
 ## 3. Add-game scroll stability fix (bug #2 — CollectionForm add-game)
 
-- [ ] 3.1 Preserve the Add-games search field's focus across an `AddGameRow` tap so adding a game does not dismiss
+- [x] 3.1 Preserve the Add-games search field's focus across an `AddGameRow` tap so adding a game does not dismiss
   the keyboard (e.g. request focus back to the field, or make the add row non-focus-stealing).
-- [ ] 3.2 Confirm the `LazyColumn`'s stable `appId` keys absorb the member-insertion + addable-removal relayout
+- [x] 3.2 Confirm the `LazyColumn`'s stable `appId` keys absorb the member-insertion + addable-removal relayout
   without a scroll reset; if a residual viewport shift remains, pin the Add-games section scroll anchor.
 - [ ] 3.3 Verify on device: adding an offered game does not jump the form to the top, the offered games stay
   visible, and the search field keeps focus — while preserving "Results visible while typing" and "Adding a
@@ -33,11 +33,11 @@
 
 ## 4. Reorder persist-on-cancel fix (bug #3 — Home drag-reorder)
 
-- [ ] 4.1 In `CollectionsSection`, on `onDragCancel` revert `orderedCards` to the last-known-persisted order (the
+- [x] 4.1 In `CollectionsSection`, on `onDragCancel` revert `orderedCards` to the last-known-persisted order (the
   `cards` snapshot) when the drag actually moved (`currentIndex != initialIndex`), so the in-memory presentation
   cannot desync from the DB.
-- [ ] 4.2 Keep `onDragEnd` persisting via `onReorderCollections` as today; ensure it fires on a clean release.
-- [ ] 4.3 If the bug-#3 spike found the auto-scroll-during-drag (`HomeScreen.kt:528-540`) causes spurious
+- [x] 4.2 Keep `onDragEnd` persisting via `onReorderCollections` as today; ensure it fires on a clean release.
+- [x] 4.3 If the bug-#3 spike found the auto-scroll-during-drag (`HomeScreen.kt:528-540`) causes spurious
   cancellations, harden the gesture so a committed drag ends rather than cancels, without breaking "Drag
   distinguished from scrolling".
 - [ ] 4.4 Verify on device: a completed drag persists across close/reopen; a cancelled/abandoned drag leaves the
@@ -45,11 +45,11 @@
 
 ## 5. Regression and automated checks
 
-- [ ] 5.1 Add or extend Compose UI tests covering the new `app-ui` scenarios: keyboard no-gap, save reachable while
+- [x] 5.1 Add or extend Compose UI tests covering the new `app-ui` scenarios: keyboard no-gap, save reachable while
   typing, add-game no-scroll-reset, and reorder-cancel-leaves-order-unchanged.
-- [ ] 5.2 Add a Home reorder persist test asserting `displayOrder` is written on a completed drag and unchanged on
+- [x] 5.2 Add a Home reorder persist test asserting `displayOrder` is written on a completed drag and unchanged on
   a cancelled drag.
-- [ ] 5.3 Run the existing collections/Home test suite and confirm no regressions in the drag-vs-scroll
+- [x] 5.3 Run the existing collections/Home test suite and confirm no regressions in the drag-vs-scroll
   distinction and the add-games search behavior.
 - [ ] 5.4 Run `openspec validate "fix-collection-ui-behavior"` and `openspec status --change
   "fix-collection-ui-behavior"` to confirm the change is valid and apply-ready.
