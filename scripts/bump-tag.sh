@@ -9,12 +9,10 @@
 #   ./scripts/bump-tag.sh --major          # v1.2.3 -> v2.0.0
 #   ./scripts/bump-tag.sh --dry-run        # show the next tag without creating/pushing
 #   ./scripts/bump-tag.sh -m "Custom note"
-#   ./scripts/bump-tag.sh --force          # patch bump that also triggers a release build
+#   ./scripts/bump-tag.sh --force          # backward-compatible alias; no extra effect
 #
-# --force embeds a "[force-release]" marker in the annotated tag message.
-# release.yml's gate normally skips patch releases (patch != 0); it checks
-# for this marker and builds anyway when present. No effect on major/minor
-# bumps, which already trigger a release.
+# All valid vX.Y.Z tags on master trigger the release workflow, including
+# patch bumps. --force is retained so existing release commands remain valid.
 
 set -euo pipefail
 
@@ -103,10 +101,6 @@ fi
 
 if [[ -z "$message" ]]; then
     message="Release $new_tag"
-fi
-
-if $force && [[ "$message" != *"[force-release]"* ]]; then
-    message="$message [force-release]"
 fi
 
 git tag -a "$new_tag" -m "$message"

@@ -22,15 +22,13 @@
     Compute and print the next tag without creating or pushing it.
 
 .PARAMETER Force
-    Force a release build for this tag even though the release workflow
-    normally skips patch releases (patch component != 0). This embeds a
-    "[force-release]" marker in the annotated tag message, which the
-    release.yml gate checks for. Has no effect on major/minor bumps, which
-    already trigger a release.
+    Retained for backward compatibility. All valid version tags now trigger
+    the release workflow, so this switch has no additional effect.
 
 .EXAMPLE
     ./scripts/bump-tag.ps1
-    Bumps the patch version and pushes, e.g. v1.2.3 -> v1.2.4
+    Bumps the patch version, pushes the tag, and triggers the release workflow,
+    e.g. v1.2.3 -> v1.2.4
 
 .EXAMPLE
     ./scripts/bump-tag.ps1 -Minor
@@ -38,7 +36,8 @@
 
 .EXAMPLE
     ./scripts/bump-tag.ps1 -Force
-    Patch bump that also triggers the release workflow, e.g. v1.2.3 -> v1.2.4
+    Backward-compatible alias for a normal patch bump; the release workflow is
+    already triggered without this switch.
 #>
 
 [CmdletBinding()]
@@ -127,10 +126,6 @@ if ($DryRun) {
 
 if (-not $Message) {
     $Message = "Release $newTag"
-}
-
-if ($Force -and $Message -notmatch '\[force-release\]') {
-    $Message = "$Message [force-release]"
 }
 
 git tag -a $newTag -m $Message

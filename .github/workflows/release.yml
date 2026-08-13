@@ -8,9 +8,7 @@ on:
 jobs:
   # Decide whether this tag qualifies for a release:
   #   1. the tagged commit must be contained in the master branch, and
-  #   2. the tag must be a minor or major release (patch component == 0),
-  #      UNLESS the tag message carries a "[force-release]" marker
-  #      (set by `bump-tag.ps1 -Force` / `bump-tag.sh --force`).
+  #   2. the tag must be a valid vX.Y.Z version.
   # A tag push carries no branch, so we resolve branch membership from history.
   gate:
     runs-on: ubuntu-latest
@@ -23,8 +21,6 @@ jobs:
 
       - name: Evaluate release gates
         id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
@@ -35,39 +31,10 @@ jobs:
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          PATCH="${BASH_REMATCH[3]}"
-
-          # actions/checkout re-pins refs/tags/$TAG straight to the commit SHA
-          # (a lightweight ref), discarding the annotated tag object — so the
-          # marker can't be read from the local git checkout. Read it from the
-          # GitHub API instead, which still has the real tag object.
-          REF_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/$TAG")"
-          OBJECT_SHA="$(echo "$REF_JSON" | jq -r .object.sha)"
-          OBJECT_TYPE="$(echo "$REF_JSON" | jq -r .object.type)"
-
-          if [[ "$OBJECT_TYPE" == "tag" ]]; then
-            TAG_MESSAGE="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/$OBJECT_SHA" --jq .message)"
-          else
-            TAG_MESSAGE=""
-          fi
-
-          if [[ "$TAG_MESSAGE" == *"[force-release]"* ]]; then
-            echo "::notice::'$TAG' carries a [force-release] marker — bypassing the patch-release gate."
-            FORCED=true
-          else
-            FORCED=false
-          fi
-
-          if [[ "$PATCH" != "0" && "$FORCED" != "true" ]]; then
-            echo "::notice::'$TAG' is a patch release (patch=$PATCH) — skipping release."
-            echo "eligible=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           # Is the tagged commit reachable from origin/master?
           SHA="$(git rev-list -n 1 "$TAG")"
           if git merge-base --is-ancestor "$SHA" origin/master; then
-            echo "::notice::'$TAG' (@$SHA) is on master and is a minor/major release — proceeding."
+            echo "::notice::'$TAG' (@$SHA) is on master — proceeding with the release build."
             echo "eligible=true" >> "$GITHUB_OUTPUT"
           else
             echo "::notice::'$TAG' (@$SHA) is not contained in master — skipping release."
