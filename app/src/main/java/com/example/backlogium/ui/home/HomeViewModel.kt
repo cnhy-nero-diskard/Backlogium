@@ -68,6 +68,8 @@ data class HomeUiState(
     val pendingProgressEvent: ProgressEvent? = null,
     /** Dedicated streak-break delivery so unrelated unacknowledged events cannot hide the card. */
     val pendingStreakBreak: ProgressEvent.StreakBroken? = null,
+    /** Dedicated streak-milestone delivery so an unrelated pending event cannot hide the animation. */
+    val pendingStreakMilestone: ProgressEvent.StreakMilestone? = null,
 ) {
     val xpFraction: Float
         get() = if (xpForNext > 0) (xpIntoLevel.toFloat() / xpForNext).coerceIn(0f, 1f) else 0f
@@ -219,6 +221,8 @@ class HomeViewModel @Inject constructor(
             },
             pendingProgressEvent = pendingEvents.firstOrNull(),
             pendingStreakBreak = pendingEvents.filterIsInstance<ProgressEvent.StreakBroken>().firstOrNull(),
+            pendingStreakMilestone = pendingEvents.filterIsInstance<ProgressEvent.StreakMilestone>()
+                .firstOrNull(),
         )
         when (val nowPlaying = live.nowPlaying) {
             is NowPlaying.InGame -> withCards.copy(

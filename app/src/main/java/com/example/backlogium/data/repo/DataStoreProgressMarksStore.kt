@@ -17,4 +17,7 @@ class DataStoreProgressMarksStore @Inject constructor(
     override suspend fun read(): ProgressMarks = settings.readProgressMarks()
 
     override suspend fun write(marks: ProgressMarks) = settings.writeProgressMarks(marks)
+
+    override suspend fun update(transform: (ProgressMarks) -> ProgressMarks): ProgressMarks =
+        settings.updateProgressMarks(transform)
 }

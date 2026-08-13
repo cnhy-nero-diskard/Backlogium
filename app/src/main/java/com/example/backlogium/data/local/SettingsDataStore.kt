@@ -1,6 +1,8 @@
 package com.example.backlogium.data.local
 
 import android.content.Context
+import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -11,7 +13,9 @@ import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.domain.PendingStreakBreak
+import com.example.backlogium.domain.PendingTransition
 import com.example.backlogium.domain.ProgressMarks
+import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.librarySortKeyOrNull
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
@@ -70,6 +74,15 @@ class SettingsDataStore @Inject constructor(
             intPreferencesKey("last_celebrated_streak_milestone")
         val LAST_QUEST_CELEBRATED_DATE = stringPreferencesKey("last_quest_celebrated_date")
         val LAST_STREAK_BROKEN_DATE = stringPreferencesKey("last_streak_broken_date")
+
+        // Write-ahead record of an in-flight persist() call, written before its Room write and
+        // cleared after its marks are finalized. Presence of PENDING_TRANSITION_SOURCE is what
+        // marks recovery needs to resolve after a crash between the two.
+        val PENDING_TRANSITION_SOURCE = stringPreferencesKey("pending_transition_source")
+        val PENDING_TRANSITION_LEVEL = intPreferencesKey("pending_transition_level")
+        val PENDING_TRANSITION_STREAK = intPreferencesKey("pending_transition_streak")
+        val PENDING_TRANSITION_QUEST_MET = booleanPreferencesKey("pending_transition_quest_met")
+        val PENDING_TRANSITION_DATE = stringPreferencesKey("pending_transition_date")
     }
 
     val ruleConfigFlow: Flow<RuleConfig> = context.dataStore.data.map { prefs ->
@@ -107,10 +120,35 @@ class SettingsDataStore @Inject constructor(
     }
 
     /** Durable progress-event marks. Unset level/streak keys mean no baseline has been seeded yet. */
-    val progressMarksFlow: Flow<ProgressMarks> = context.dataStore.data.map { prefs ->
+    val progressMarksFlow: Flow<ProgressMarks> = context.dataStore.data.map(::decodeProgressMarks)
+
+    suspend fun readProgressMarks(): ProgressMarks = progressMarksFlow.first()
+
+    suspend fun writeProgressMarks(marks: ProgressMarks) {
+        context.dataStore.edit { prefs -> encodeProgressMarks(prefs, marks) }
+    }
+
+    /**
+     * Atomically replace the stored marks with `transform(current)` inside a single DataStore
+     * `edit {}` transaction, so a concurrent [updateProgressMarks]/[writeProgressMarks] call can
+     * never be lost to a stale read-modify-write race — DataStore serializes `edit {}` calls
+     * against the same file, each seeing the latest committed state.
+     */
+    suspend fun updateProgressMarks(
+        transform: (ProgressMarks) -> ProgressMarks,
+    ): ProgressMarks {
+        lateinit var result: ProgressMarks
+        context.dataStore.edit { prefs ->
+            result = transform(decodeProgressMarks(prefs))
+            encodeProgressMarks(prefs, result)
+        }
+        return result
+    }
+
+    private fun decodeProgressMarks(prefs: Preferences): ProgressMarks {
         val rawBreak = prefs[Keys.LAST_STREAK_BROKEN_DATE]
         val pendingBreak = parsePendingBreak(rawBreak)
-        ProgressMarks(
+        return ProgressMarks(
             lastCelebratedLevel = prefs[Keys.LAST_CELEBRATED_LEVEL] ?: 0,
             lastCelebratedStreakMilestone = prefs[Keys.LAST_CELEBRATED_STREAK_MILESTONE] ?: 0,
             lastQuestCelebratedDate = parseDate(prefs[Keys.LAST_QUEST_CELEBRATED_DATE]),
@@ -118,25 +156,55 @@ class SettingsDataStore @Inject constructor(
             initialized = prefs.contains(Keys.LAST_CELEBRATED_LEVEL) ||
                 prefs.contains(Keys.LAST_CELEBRATED_STREAK_MILESTONE),
             pendingStreakBreak = pendingBreak,
+            pendingTransition = parsePendingTransition(prefs),
         )
     }
 
-    suspend fun readProgressMarks(): ProgressMarks = progressMarksFlow.first()
+    private fun encodeProgressMarks(
+        prefs: MutablePreferences,
+        marks: ProgressMarks,
+    ) {
+        prefs[Keys.LAST_CELEBRATED_LEVEL] = marks.lastCelebratedLevel
+        prefs[Keys.LAST_CELEBRATED_STREAK_MILESTONE] = marks.lastCelebratedStreakMilestone
+        writeNullableString(
+            prefs,
+            Keys.LAST_QUEST_CELEBRATED_DATE,
+            marks.lastQuestCelebratedDate?.toString(),
+        )
+        val breakValue = marks.pendingStreakBreak?.let {
+            "$PENDING_BREAK_PREFIX${it.date}|${it.previousLength}"
+        } ?: marks.lastStreakBrokenDate?.toString()
+        writeNullableString(prefs, Keys.LAST_STREAK_BROKEN_DATE, breakValue)
 
-    suspend fun writeProgressMarks(marks: ProgressMarks) {
-        context.dataStore.edit { prefs ->
-            prefs[Keys.LAST_CELEBRATED_LEVEL] = marks.lastCelebratedLevel
-            prefs[Keys.LAST_CELEBRATED_STREAK_MILESTONE] = marks.lastCelebratedStreakMilestone
-            writeNullableString(
-                prefs,
-                Keys.LAST_QUEST_CELEBRATED_DATE,
-                marks.lastQuestCelebratedDate?.toString(),
-            )
-            val breakValue = marks.pendingStreakBreak?.let {
-                "$PENDING_BREAK_PREFIX${it.date}|${it.previousLength}"
-            } ?: marks.lastStreakBrokenDate?.toString()
-            writeNullableString(prefs, Keys.LAST_STREAK_BROKEN_DATE, breakValue)
+        val pending = marks.pendingTransition
+        if (pending == null) {
+            prefs.remove(Keys.PENDING_TRANSITION_SOURCE)
+            prefs.remove(Keys.PENDING_TRANSITION_LEVEL)
+            prefs.remove(Keys.PENDING_TRANSITION_STREAK)
+            prefs.remove(Keys.PENDING_TRANSITION_QUEST_MET)
+            prefs.remove(Keys.PENDING_TRANSITION_DATE)
+        } else {
+            prefs[Keys.PENDING_TRANSITION_SOURCE] = pending.source.name
+            prefs[Keys.PENDING_TRANSITION_LEVEL] = pending.previousLevel
+            prefs[Keys.PENDING_TRANSITION_STREAK] = pending.previousStreak
+            prefs[Keys.PENDING_TRANSITION_QUEST_MET] = pending.previousTodayQuestMet
+            prefs[Keys.PENDING_TRANSITION_DATE] = pending.evaluationDate.toString()
         }
+    }
+
+    private fun parsePendingTransition(
+        prefs: Preferences,
+    ): PendingTransition? {
+        val source = prefs[Keys.PENDING_TRANSITION_SOURCE]
+            ?.let { runCatching { RecomputeSource.valueOf(it) }.getOrNull() } ?: return null
+        val date = parseDate(prefs[Keys.PENDING_TRANSITION_DATE]) ?: return null
+        return PendingTransition(
+            source = source,
+            previousLevel = prefs[Keys.PENDING_TRANSITION_LEVEL] ?: 0,
+            previousStreak = prefs[Keys.PENDING_TRANSITION_STREAK] ?: 0,
+            previousTodayQuestMet = prefs[Keys.PENDING_TRANSITION_QUEST_MET] ?: false,
+            evaluationDate = date,
+        )
     }
 
     /**
@@ -267,8 +335,8 @@ class SettingsDataStore @Inject constructor(
     }
 
     private fun writeNullableString(
-        prefs: androidx.datastore.preferences.core.MutablePreferences,
-        key: androidx.datastore.preferences.core.Preferences.Key<String>,
+        prefs: MutablePreferences,
+        key: Preferences.Key<String>,
         value: String?,
     ) {
         if (value == null) prefs.remove(key) else prefs[key] = value

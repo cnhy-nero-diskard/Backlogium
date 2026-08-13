@@ -77,6 +77,36 @@ class GamificationProgressEventsTest {
     }
 
     @Test
+    fun persistResolvesDanglingPendingTransitionBeforeStartingNewWork() = runTest {
+        // Simulates a prior RULE_CHANGE crashing between its write-ahead record and its marks
+        // finalize: Room already committed the jump from 4 to 24, but the marks still claim 4.
+        val marksStore = InMemoryProgressMarksStore(
+            ProgressMarks(
+                lastCelebratedLevel = 4,
+                initialized = true,
+                pendingTransition = PendingTransition(
+                    source = RecomputeSource.RULE_CHANGE,
+                    previousLevel = 4,
+                    previousStreak = 0,
+                    previousTodayQuestMet = false,
+                    evaluationDate = today,
+                ),
+            ),
+        )
+        val profileDao = FakePlayerProfileDao(PlayerProfile(level = 24))
+        val updater = updater(profileDao = profileDao, marksStore = marksStore)
+
+        updater.persist(result(level = 30), RecomputeSource.SYNC)
+
+        assertEquals(30, profileDao.get()!!.level)
+        // The dangling transition reseeds to 24 (the RULE_CHANGE's actual, non-earned effect)
+        // before this SYNC's own earned rise from 24 to 30 is measured against it — never a
+        // phantom rise measured from the stale mark of 4.
+        assertEquals(24, marksStore.read().lastCelebratedLevel)
+        assertEquals(null, marksStore.read().pendingTransition)
+    }
+
+    @Test
     fun firstPersistSeedsEvenForSync() = runTest {
         val marksStore = InMemoryProgressMarksStore()
         val updater = updater(profileDao = FakePlayerProfileDao(), marksStore = marksStore)

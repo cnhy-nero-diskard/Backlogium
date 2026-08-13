@@ -5,8 +5,9 @@ package com.example.backlogium.domain
  *
  * Deliberately lives in the app module's `domain` package — NOT in the pure `:gamification`
  * module — because it observes an engine-authored derived value rather than deriving XP/streak
- * state itself. [ProgressEventDetector] is now the durable transition/delivery authority; the
- * legacy Home milestone animation still calls this interval helper until that trigger is removed.
+ * state itself. [ProgressEventDetector] and [com.example.backlogium.data.repo.ProgressEventRepository]
+ * are the sole consumers of this interval rule; Home's milestone animation is driven entirely by
+ * the durable `ProgressEvent.StreakMilestone` they produce, not by calling this helper directly.
  */
 
 /** How often (in streak days) a milestone is reached. */

@@ -158,12 +158,45 @@ class GamificationUpdater @Inject constructor(
      * Write a [compute] result back, then update progress-event delivery state. [source] has no
      * default deliberately: a future derived-value writer cannot compile without declaring why
      * the values changed.
+     *
+     * The previous state is captured and durably recorded (as a [PendingTransition]) *before* the
+     * Room write below, and only cleared after the marks finalize succeeds. Once the Room write
+     * lands, the pre-write profile is gone from Room; the pending-transition record is what lets a
+     * crash between the two be resolved correctly — as a real transition if the Room write
+     * happened, as a no-op if it didn't — rather than either fabricating an event that was never
+     * earned or losing one that was (see [resolvePendingTransition]).
      */
     suspend fun persist(result: GamificationResult, source: RecomputeSource) {
         val today = result.evaluationDate
+
+        // Resolve any transition left dangling by a prior crashed persist() before starting a new
+        // one — otherwise this call's own previous-state read could observe a Room profile that
+        // already reflects an unresolved earlier write.
+        resolvePendingTransition(progressMarksStore, playerProfileDao, dailyProgressDao)
+
         val previousProfile = playerProfileDao.get()
         val previousTodayQuestMet = dailyProgressDao.getByDate(today.toString())?.questMet == true
-        val marks = progressMarksStore.read()
+        val previousState = previousProfile?.let {
+            ProgressState(
+                level = it.level,
+                currentStreak = it.currentStreak,
+                todayQuestMet = previousTodayQuestMet,
+            )
+        }
+
+        if (previousState != null) {
+            progressMarksStore.update { marks ->
+                marks.copy(
+                    pendingTransition = PendingTransition(
+                        source = source,
+                        previousLevel = previousState.level,
+                        previousStreak = previousState.currentStreak,
+                        previousTodayQuestMet = previousState.todayQuestMet,
+                        evaluationDate = today,
+                    ),
+                )
+            }
+        }
 
         result.changedDays.forEach { dailyProgressDao.upsert(it) }
 
@@ -181,27 +214,26 @@ class GamificationUpdater @Inject constructor(
         playerProfileDao.upsert(updatedProfile)
 
         // Event evaluation is deliberately after the successful Room write. `compute()` never
-        // touches marks, while non-earned sources reseed them to the values just persisted.
+        // touches marks, while non-earned sources reseed them to the values just persisted. The
+        // transform always reads the atomic update's *live* parameter, never `previousState`'s
+        // enclosing marks snapshot, so a concurrent acknowledge() can never be clobbered by a
+        // finalize computed against a value it has already superseded.
         val currentTodayQuestMet = result.questResults
             .firstOrNull { it.date == today }
             ?.met == true
-        val detection = ProgressEventDetector.detect(
-            marks = marks,
-            previous = previousProfile?.let {
-                ProgressState(
-                    level = it.level,
-                    currentStreak = it.currentStreak,
-                    todayQuestMet = previousTodayQuestMet,
-                )
-            },
-            current = ProgressState(
-                level = updatedProfile.level,
-                currentStreak = updatedProfile.currentStreak,
-                todayQuestMet = currentTodayQuestMet,
-            ),
-            source = source,
-            today = today,
+        val currentState = ProgressState(
+            level = updatedProfile.level,
+            currentStreak = updatedProfile.currentStreak,
+            todayQuestMet = currentTodayQuestMet,
         )
-        progressMarksStore.write(detection.marks)
+        progressMarksStore.update { marks ->
+            ProgressEventDetector.detect(
+                marks = marks,
+                previous = previousState,
+                current = currentState,
+                source = source,
+                today = today,
+            ).marks.copy(pendingTransition = null)
+        }
     }
 }
