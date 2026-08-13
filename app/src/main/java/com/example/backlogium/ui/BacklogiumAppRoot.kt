@@ -31,18 +31,18 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.example.backlogium.ui.components.ProfileHeader
 import com.example.backlogium.ui.analytics.AnalyticsScreen
 import com.example.backlogium.ui.collections.CollectionScreen
+import com.example.backlogium.ui.components.ProfileHeader
+import com.example.backlogium.ui.diagnostics.DiagnosticsScreen
 import com.example.backlogium.ui.gamedetail.GameDetailScreen
 import com.example.backlogium.ui.history.HistoryScreen
-import com.example.backlogium.ui.home.HomeScreen
+import com.example.backlogium.ui.home.HomeRoute
 import com.example.backlogium.ui.library.LibraryScreen
 import com.example.backlogium.ui.navigation.Destination
 import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.review.HltbReviewScreen
 import com.example.backlogium.ui.settings.SettingsScreen
-import com.example.backlogium.ui.diagnostics.DiagnosticsScreen
 
 /** Route for the HLTB match-review surface — a sub-destination reached from the Library. */
 private const val ROUTE_HLTB_REVIEW = "hltb_review"
@@ -157,7 +157,7 @@ fun BacklogiumAppRoot() {
                 modifier = Modifier.padding(innerPadding),
             ) {
                 composable(Destination.HOME.route) {
-                    HomeScreen(
+                    HomeRoute(
                         onAccentColorChanged = { accentColor = it },
                         onOpenCollection = { id -> navController.navigate(collectionRoute(id)) },
                         onCreateCollection = { navController.navigate(collectionRoute(0L)) },
