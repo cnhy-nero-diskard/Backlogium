@@ -2,8 +2,10 @@ package com.example.backlogium.di
 
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.repo.DataStoreProgressMarksStore
 import com.example.backlogium.data.repo.DataStoreSettingsRepository
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.domain.ProgressMarksStore
 import com.example.backlogium.domain.SystemTimeProvider
 import com.example.backlogium.domain.TimeProvider
 import dagger.Binds
@@ -27,6 +29,10 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindSettingsRepository(impl: DataStoreSettingsRepository): SettingsRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindProgressMarksStore(impl: DataStoreProgressMarksStore): ProgressMarksStore
 
     @Binds
     @Singleton
