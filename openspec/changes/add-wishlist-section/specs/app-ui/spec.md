@@ -1,0 +1,65 @@
+## ADDED Requirements
+
+### Requirement: Wishlist section
+The Library SHALL provide a wishlist section presenting the player's wishlisted games with their
+artwork, name, current price, and any active discount. It SHALL be reachable without displacing the
+owned-library lists, and its entries SHALL be visually distinguishable from owned games so the two
+are never mistaken for one another.
+
+#### Scenario: Viewing the wishlist
+- **WHEN** the player opens the wishlist section
+- **THEN** their wishlisted games are listed with artwork, name, and price where one is available
+
+#### Scenario: Discount shown
+- **WHEN** a wishlisted game is discounted
+- **THEN** the entry shows the discounted price and that a discount is active
+
+#### Scenario: Not mistaken for owned games
+- **WHEN** wishlist entries are presented
+- **THEN** they are distinguishable from owned-library entries without relying on colour alone
+
+#### Scenario: Owned lists unaffected
+- **WHEN** the wishlist section exists
+- **THEN** the owned-library lists, their sorting, grouping, density, and search behave exactly as
+  they do today
+
+#### Scenario: Wishlist games absent from library statistics
+- **WHEN** any library count, completion figure, or analytic is computed
+- **THEN** wishlisted games contribute to none of them
+
+### Requirement: Wishlist entry states
+Each wishlist entry SHALL convey the state of its price: current, retained from an earlier
+observation with its date, unavailable, or not yet observed. No state SHALL be rendered in a way
+that could be read as a price.
+
+#### Scenario: Current price
+- **WHEN** prices were just refreshed
+- **THEN** the entry shows its price without qualification
+
+#### Scenario: Retained price
+- **WHEN** the shown price was observed earlier
+- **THEN** the entry states when it was observed
+
+#### Scenario: No price available
+- **WHEN** Steam reports no price for the game
+- **THEN** the entry says the price is unavailable rather than showing a zero, dash, or blank
+
+#### Scenario: Not yet observed
+- **WHEN** no price has ever been observed for the game
+- **THEN** the entry claims no price
+
+### Requirement: Wishlist empty and unavailable states
+The section SHALL distinguish an empty wishlist from one that could not be read, and SHALL explain
+the latter.
+
+#### Scenario: Empty wishlist
+- **WHEN** the player's wishlist has no games
+- **THEN** the section says so
+
+#### Scenario: Unreadable wishlist
+- **WHEN** the wishlist cannot be retrieved
+- **THEN** the section says it is unavailable and why, rather than appearing empty
+
+#### Scenario: Retained entries during unavailability
+- **WHEN** the wishlist cannot be refreshed but entries were previously retrieved
+- **THEN** those entries remain listed with their dated prices
