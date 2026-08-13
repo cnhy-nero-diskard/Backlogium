@@ -1,6 +1,5 @@
 package com.example.backlogium.domain
 
-import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
@@ -64,7 +63,7 @@ class GamificationUpdater @Inject constructor(
     private val hltbDataDao: HltbDataDao,
     private val achievementDao: AchievementDao,
     private val gameDao: GameDao,
-    private val settings: SettingsDataStore,
+    private val progressMarksStore: ProgressMarksStore = InMemoryProgressMarksStore(),
 ) {
 
     /**
@@ -164,7 +163,7 @@ class GamificationUpdater @Inject constructor(
         val today = result.evaluationDate
         val previousProfile = playerProfileDao.get()
         val previousTodayQuestMet = dailyProgressDao.getByDate(today.toString())?.questMet == true
-        val marks = settings.readProgressMarks()
+        val marks = progressMarksStore.read()
 
         result.changedDays.forEach { dailyProgressDao.upsert(it) }
 
@@ -203,6 +202,6 @@ class GamificationUpdater @Inject constructor(
             source = source,
             today = today,
         )
-        settings.writeProgressMarks(detection.marks)
+        progressMarksStore.write(detection.marks)
     }
 }
