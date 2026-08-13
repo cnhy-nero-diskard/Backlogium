@@ -2,6 +2,8 @@ package com.example.backlogium.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.backlogium.data.local.entity.Collection
+import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CollectionRepository
@@ -12,17 +14,19 @@ import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.PersonalPaceRepository
 import com.example.backlogium.data.repo.ProfileRepository
+import com.example.backlogium.data.repo.ProgressEventRepository
 import com.example.backlogium.data.repo.SettingsRepository
-import com.example.backlogium.data.local.entity.Collection
-import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionMemberSignals
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSummary
+import com.example.backlogium.domain.ProgressEvent
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.time.LocalDate
+import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -31,8 +35,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.time.LocalDate
-import javax.inject.Inject
 
 data class HomeUiState(
     val loading: Boolean = true,
@@ -62,6 +64,8 @@ data class HomeUiState(
     val nowPlayingSessionStartedAt: Long? = null,
     /** Mission cards derived from the player's custom collections; empty when none exist. */
     val collections: List<HomeCollectionCard> = emptyList(),
+    /** Highest-priority durable progress transition waiting for a Home consumer. */
+    val pendingProgressEvent: ProgressEvent? = null,
 ) {
     val xpFraction: Float
         get() = if (xpForNext > 0) (xpIntoLevel.toFloat() / xpForNext).coerceIn(0f, 1f) else 0f
@@ -95,6 +99,7 @@ class HomeViewModel @Inject constructor(
     private val gameRepository: GameRepository,
     private val achievementRepository: AchievementRepository,
     private val personalPaceRepository: PersonalPaceRepository,
+    private val progressEventRepository: ProgressEventRepository,
 ) : ViewModel() {
 
     private val baseState: Flow<HomeUiState> = combine(
@@ -198,7 +203,8 @@ class HomeViewModel @Inject constructor(
         baseState,
         liveStatusRepository.liveStatus,
         collectionCards,
-    ) { state, live, cards ->
+        progressEventRepository.pendingEvents,
+    ) { state, live, cards, pendingEvents ->
         val playingAppId = (live.nowPlaying as? NowPlaying.InGame)?.gameId
         val withCards = state.copy(
             collections = cards.map { card ->
@@ -209,6 +215,7 @@ class HomeViewModel @Inject constructor(
                     ),
                 )
             },
+            pendingProgressEvent = pendingEvents.firstOrNull(),
         )
         when (val nowPlaying = live.nowPlaying) {
             is NowPlaying.InGame -> withCards.copy(
@@ -228,6 +235,13 @@ class HomeViewModel @Inject constructor(
 
     /** Retry a failed sync from the Home error card; the manual trigger lives in Settings. */
     fun syncNow() = profileRepository.syncNow()
+
+    /** Acknowledge only after the corresponding progress event has actually been presented. */
+    fun acknowledgeProgressEvent(event: ProgressEvent) {
+        viewModelScope.launch {
+            progressEventRepository.acknowledge(event)
+        }
+    }
 
     /** Persist the order of all collection cards after a completed Home drag. */
     fun reorderCollections(orderedIds: List<Long>) {
