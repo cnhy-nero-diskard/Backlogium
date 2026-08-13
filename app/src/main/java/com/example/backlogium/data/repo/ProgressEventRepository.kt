@@ -1,9 +1,9 @@
 package com.example.backlogium.data.repo
 
-import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.domain.ProgressEvent
+import com.example.backlogium.domain.ProgressMarksStore
 import com.example.backlogium.domain.STREAK_MILESTONE_INTERVAL_DAYS
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.inPresentationOrder
@@ -16,18 +16,18 @@ import kotlinx.coroutines.flow.combine
 /**
  * Durable delivery seam for player-facing progress events.
  *
- * Pending state is reconstructed from Room's current derived values and DataStore's acknowledged
+ * Pending state is reconstructed from Room's current derived values and the acknowledged
  * high-water marks. Acknowledgement advances only the mark for the event that was actually shown.
  */
 @Singleton
 class ProgressEventRepository @Inject constructor(
-    private val settings: SettingsDataStore,
+    private val marksStore: ProgressMarksStore,
     private val profileDao: PlayerProfileDao,
     private val dailyProgressDao: DailyProgressDao,
     private val time: TimeProvider,
 ) {
     val pendingEvents: Flow<List<ProgressEvent>> = combine(
-        settings.progressMarksFlow,
+        marksStore.marks,
         profileDao.observe(),
         dailyProgressDao.observeAll(),
     ) { marks, profile, days ->
@@ -61,7 +61,7 @@ class ProgressEventRepository @Inject constructor(
 
     /** Advance only the delivery mark corresponding to [event], after it has been presented. */
     suspend fun acknowledge(event: ProgressEvent) {
-        val marks = settings.readProgressMarks()
+        val marks = marksStore.read()
         val next = when (event) {
             is ProgressEvent.LevelUp -> marks.copy(
                 lastCelebratedLevel = maxOf(marks.lastCelebratedLevel, event.to),
@@ -87,7 +87,7 @@ class ProgressEventRepository @Inject constructor(
                 )
             }
         }
-        settings.writeProgressMarks(next)
+        marksStore.write(next)
     }
 
     private fun highestMilestoneAtOrBelow(streak: Int): Int {
