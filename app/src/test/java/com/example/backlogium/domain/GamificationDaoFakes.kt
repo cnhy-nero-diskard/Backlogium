@@ -19,6 +19,8 @@ import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flowOf
 
 /**
@@ -150,8 +152,13 @@ internal class FakeDailyProgressDao(initial: List<DailyProgress>) : DailyProgres
     override suspend fun getAllOrdered(): List<DailyProgress> = store.values.sortedBy { it.date }
 }
 
+/**
+ * Profile store backed by a [MutableStateFlow], so [observe] reflects writes that land *after* a
+ * consumer subscribed — the difference between a test that can observe an in-flight transition and
+ * one that silently sees a stale snapshot forever.
+ */
 internal class FakePlayerProfileDao(initial: PlayerProfile? = null) : PlayerProfileDao {
-    private var profile: PlayerProfile? = initial
+    private val state = MutableStateFlow(initial)
 
     /** Counts writes, so `compute()` can be asserted to make none. */
     var upsertCount = 0
@@ -159,11 +166,11 @@ internal class FakePlayerProfileDao(initial: PlayerProfile? = null) : PlayerProf
 
     override suspend fun upsert(profile: PlayerProfile) {
         upsertCount++
-        this.profile = profile
+        state.value = profile
     }
 
-    override fun observe(): Flow<PlayerProfile?> = flowOf(profile)
-    override suspend fun get(): PlayerProfile? = profile
+    override fun observe(): Flow<PlayerProfile?> = state.asStateFlow()
+    override suspend fun get(): PlayerProfile? = state.value
 }
 
 /** Seeded, read-only stand-in: only [getAllUnlocked] is exercised by the updater. */

@@ -71,6 +71,6 @@ class PlaytimeBackfillUseCase @Inject constructor(
 
     private suspend fun recompute() {
         val config = settings.ruleConfigFlow.first()
-        gamificationUpdater.recompute(time.today(), config)
+        gamificationUpdater.recompute(time.today(), RecomputeSource.BACKFILL, config)
     }
 }

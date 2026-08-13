@@ -17,6 +17,8 @@ import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.gamification.XpState
 import java.time.LocalDate
 import javax.inject.Inject
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 /**
  * Everything one recompute pass derives, before any of it is written back.
@@ -38,6 +40,8 @@ data class GamificationResult(
     val longestStreak: Int,
     /** Stored days whose `questMet` differs from the recomputed value; the only rows to write. */
     val changedDays: List<DailyProgress>,
+    /** The injected local date against which this result was evaluated. */
+    val evaluationDate: LocalDate,
 )
 
 /**
@@ -61,21 +65,32 @@ class GamificationUpdater @Inject constructor(
     private val hltbDataDao: HltbDataDao,
     private val achievementDao: AchievementDao,
     private val gameDao: GameDao,
+    private val progressMarksStore: ProgressMarksStore = InMemoryProgressMarksStore(),
+    /**
+     * Serializes [persist] against every other participant in the transition protocol. The default
+     * is a private instance, matching [progressMarksStore]'s: usable for tests that ignore progress
+     * events, never correct for a caller that shares state with a [ProgressEventRepository]-side
+     * consumer, which must be handed the same coordinator instance.
+     */
+    private val transitionCoordinator: ProgressTransitionCoordinator = ProgressTransitionCoordinator(),
 ) {
 
     /**
-     * Recompute and persist all derived gamification values. Called on each sync and on day
-     * rollover. [today] is injected so the engine stays clock-free; [config] carries the
-     * tunable rules.
+     * Recompute and persist all derived gamification values. [source] is required so every write
+     * declares whether the resulting transition was earned progress or a baseline reset.
      */
-    suspend fun recompute(today: LocalDate, config: RuleConfig = RuleConfig()) {
-        persist(compute(today, config))
+    suspend fun recompute(
+        today: LocalDate,
+        source: RecomputeSource,
+        config: RuleConfig = RuleConfig(),
+    ) {
+        persist(compute(today, config), source)
     }
 
     /**
      * Run the full recompute and return the result **without writing anything**. Callers that
      * want the values stored hand the result to [persist]; callers previewing a candidate
-     * [config] simply discard it.
+     * [config] simply discard it. Progress-event marks are intentionally untouched here.
      */
     suspend fun compute(today: LocalDate, config: RuleConfig = RuleConfig()): GamificationResult {
         // XP/level from each game's cumulative minutes = frozen backfill offset (0 unless the
@@ -144,25 +159,133 @@ class GamificationUpdater @Inject constructor(
             currentStreak = currentStreak,
             longestStreak = maxOf(storedLongest, computedLongest),
             changedDays = changedDays,
+            evaluationDate = today,
         )
     }
 
-    /** Write a [compute] result back: the changed quest days, then the profile aggregates. */
-    suspend fun persist(result: GamificationResult) {
+    /**
+     * Write a [compute] result back, then update progress-event delivery state. [source] has no
+     * default deliberately: a future derived-value writer cannot compile without declaring why
+     * the values changed.
+     *
+     * The whole protocol — resolve prior pending transition, capture previous state, write the
+     * pending-transition write-ahead record, perform the Room writes, finalize the marks, clear the
+     * record — runs inside [transitionCoordinator], so a second `persist()` cannot enter it until
+     * the first has finalized and a recovery pass cannot mistake a live call's write-ahead record
+     * for an abandoned one. The phases are individually atomic but jointly ordered; interleaving two
+     * of them is what would let one provenance's recovery state be cleared or claimed by the other.
+     */
+    suspend fun persist(result: GamificationResult, source: RecomputeSource) {
+        transitionCoordinator.withTransition { persistWithinProtocol(result, source) }
+    }
+
+    /**
+     * The protocol body, run with the coordinator held.
+     *
+     * The previous state is captured and durably recorded (as a [PendingTransition]) *before* the
+     * Room write below, and only cleared after the marks finalize succeeds. Once the Room write
+     * lands, the pre-write profile is gone from Room; the pending-transition record is what lets a
+     * crash between the two be resolved correctly — as a real transition if the Room write
+     * happened, as a no-op if it didn't — rather than either fabricating an event that was never
+     * earned or losing one that was (see [resolvePendingTransition]).
+     */
+    private suspend fun persistWithinProtocol(result: GamificationResult, source: RecomputeSource) {
+        val today = result.evaluationDate
+
+        // Resolve any transition left dangling by a prior crashed persist() before starting a new
+        // one — otherwise this call's own previous-state read could observe a Room profile that
+        // already reflects an unresolved earlier write. The within-protocol variant: this call
+        // already owns the coordinator, which is not reentrant.
+        resolvePendingTransitionWithinProtocol(progressMarksStore, playerProfileDao, dailyProgressDao)
+
+        val previousProfile = playerProfileDao.get()
+        val previousTodayQuestMet = dailyProgressDao.getByDate(today.toString())?.questMet == true
+        val previousState = previousProfile?.let {
+            ProgressState(
+                level = it.level,
+                currentStreak = it.currentStreak,
+                todayQuestMet = previousTodayQuestMet,
+            )
+        }
+
+        if (previousState != null) {
+            progressMarksStore.update { marks ->
+                marks.copy(
+                    pendingTransition = PendingTransition(
+                        source = source,
+                        previousLevel = previousState.level,
+                        previousStreak = previousState.currentStreak,
+                        previousTodayQuestMet = previousState.todayQuestMet,
+                        evaluationDate = today,
+                    ),
+                )
+            }
+        }
+
+        try {
+            writeAndFinalize(result, source, previousState, previousProfile, today)
+        } catch (t: Throwable) {
+            // A pending transition suppresses event derivation by design, so returning from this
+            // call with our own record still in place would freeze delivery for the rest of the
+            // process — the WAL exists to survive process death, not to outlive a caught failure.
+            // Resolve it against whatever Room actually committed, then let the failure propagate.
+            withContext(NonCancellable) {
+                runCatching {
+                    resolvePendingTransitionWithinProtocol(
+                        progressMarksStore,
+                        playerProfileDao,
+                        dailyProgressDao,
+                    )
+                }
+            }
+            throw t
+        }
+    }
+
+    /** The Room half of the protocol plus its marks finalize; see [persistWithinProtocol]. */
+    private suspend fun writeAndFinalize(
+        result: GamificationResult,
+        source: RecomputeSource,
+        previousState: ProgressState?,
+        previousProfile: PlayerProfile?,
+        today: LocalDate,
+    ) {
         result.changedDays.forEach { dailyProgressDao.upsert(it) }
 
         // Persist profile aggregates, preserving sync/status fields. `currentStreak` is written
         // as computed — only the record is protected — while `longestStreak` takes the maximum
         // against whatever is stored now, so a concurrent write between compute and persist
         // still cannot lower it.
-        val profile = playerProfileDao.get() ?: PlayerProfile()
-        playerProfileDao.upsert(
-            profile.copy(
-                totalXp = result.xpState.totalXp,
-                level = result.xpState.level,
-                currentStreak = result.currentStreak,
-                longestStreak = maxOf(profile.longestStreak, result.longestStreak),
-            ),
+        val profile = previousProfile ?: PlayerProfile()
+        val updatedProfile = profile.copy(
+            totalXp = result.xpState.totalXp,
+            level = result.xpState.level,
+            currentStreak = result.currentStreak,
+            longestStreak = maxOf(profile.longestStreak, result.longestStreak),
         )
+        playerProfileDao.upsert(updatedProfile)
+
+        // Event evaluation is deliberately after the successful Room write. `compute()` never
+        // touches marks, while non-earned sources reseed them to the values just persisted. The
+        // transform always reads the atomic update's *live* parameter, never `previousState`'s
+        // enclosing marks snapshot, so a concurrent acknowledge() can never be clobbered by a
+        // finalize computed against a value it has already superseded.
+        val currentTodayQuestMet = result.questResults
+            .firstOrNull { it.date == today }
+            ?.met == true
+        val currentState = ProgressState(
+            level = updatedProfile.level,
+            currentStreak = updatedProfile.currentStreak,
+            todayQuestMet = currentTodayQuestMet,
+        )
+        progressMarksStore.update { marks ->
+            ProgressEventDetector.detect(
+                marks = marks,
+                previous = previousState,
+                current = currentState,
+                source = source,
+                today = today,
+            ).marks.copy(pendingTransition = null)
+        }
     }
 }

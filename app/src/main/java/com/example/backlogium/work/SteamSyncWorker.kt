@@ -22,14 +22,15 @@ import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.PlayerIdentity
+import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.SessionDiffer
-import com.example.backlogium.domain.mergePlayerIdentity
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.domain.mergePlayerIdentity
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 /**
@@ -245,7 +246,7 @@ class SteamSyncWorker @AssistedInject constructor(
         } catch (e: Exception) {
             // Best-effort: achievement sync failure must never fail an otherwise-successful poll.
         }
-        gamificationUpdater.recompute(today, config)
+        gamificationUpdater.recompute(today, RecomputeSource.SYNC, config)
         // Best-effort: a snapshot-write failure must never fail an otherwise-successful poll.
         runCatching { backupRepository.writeAutoSnapshotIfDue() }
     }

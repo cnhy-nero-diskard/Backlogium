@@ -793,20 +793,36 @@ goal and backlog game rows.
 
 ### Requirement: Celebratory inline animations
 The system SHALL play an inline animation within the Home screen's Level card when the
-player's level increments, and SHALL play an inline animation within the Home screen's
-Streak card when the current streak reaches a milestone interval of every 7 days.
+player's level increments. The system SHALL play an inline animation within the Home screen's
+Streak card when a durable streak-milestone progress event is pending, and SHALL acknowledge that
+event only once the animation has actually been presented to completion, so the animation is
+driven by the durable event rather than by the streak's current position. A pending
+streak-milestone event SHALL remain deliverable across navigation away from and back to Home, and
+across an app process death, until it has been acknowledged this way.
 
 #### Scenario: Level increments
 - **WHEN** the player's level increases from its previous value
 - **THEN** an inline animation plays within the Level card
 
 #### Scenario: Streak reaches a weekly milestone
-- **WHEN** the current streak's day count is a positive multiple of 7
-- **THEN** an inline animation plays within the Streak card
+- **WHEN** a streak-milestone progress event carrying a milestone not previously delivered is
+  pending
+- **THEN** an inline animation plays within the Streak card, and the event is acknowledged once
+  the animation completes
 
 #### Scenario: Streak not at a milestone
-- **WHEN** the current streak's day count is not a multiple of 7
+- **WHEN** no streak-milestone progress event is pending
 - **THEN** no milestone animation plays within the Streak card
+
+#### Scenario: Milestone earned while Home is not shown
+- **WHEN** a background sync earns a streak-milestone event while Home is not composed
+- **THEN** the milestone animation plays within the Streak card the next time Home is shown,
+  rather than being missed
+
+#### Scenario: Acknowledged milestone does not replay
+- **WHEN** a streak-milestone event has been presented and acknowledged, and Home is recomposed or
+  the app process is killed and relaunched
+- **THEN** the milestone animation does not play again for that milestone
 
 ### Requirement: Game list display density
 The system SHALL let the user choose the display density of a list of games, offering a full-detail
@@ -1972,3 +1988,38 @@ without the user locating a system settings toggle unaided.
 #### Scenario: Permission not re-requested
 - **WHEN** the user has already responded to the request
 - **THEN** the app does not repeatedly prompt on subsequent launches
+
+### Requirement: Streak-broken acknowledgement on Home
+When a streak the player had built ends, Home SHALL present a one-time acknowledgement naming the
+length that was lost, shown once and not again for that break. The acknowledgement SHALL be
+dismissible, SHALL NOT block the rest of Home, and SHALL NOT appear for a player who has never held
+a streak.
+
+#### Scenario: Break acknowledged once
+- **WHEN** a streak of 14 days ends and the player next opens Home
+- **THEN** an overlay states that the streak was broken and names its length
+
+#### Scenario: Not shown again for the same break
+- **WHEN** the player has dismissed the streak-broken overlay and returns to Home, including after
+  the app process has been killed and relaunched
+- **THEN** the overlay is not shown again for that break
+
+#### Scenario: A later break is acknowledged separately
+- **WHEN** the player rebuilds a streak and it later breaks again
+- **THEN** the overlay is shown once for the new break, naming the new length
+
+#### Scenario: Never held a streak
+- **WHEN** a player who has never reached a streak of at least one day opens Home
+- **THEN** no streak-broken overlay is shown
+
+#### Scenario: Not shown for a rule change
+- **WHEN** the player raises the daily quest goal so that the current streak recomputes to zero
+- **THEN** no streak-broken overlay is shown, because the streak was not lost through play
+
+#### Scenario: Home remains usable
+- **WHEN** the streak-broken overlay is shown
+- **THEN** the rest of Home remains reachable, and dismissing the overlay requires no confirmation
+
+#### Scenario: Reduced motion honored
+- **WHEN** the system indicates that animations should be reduced or disabled
+- **THEN** the overlay appears without motion and its message remains fully legible

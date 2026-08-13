@@ -37,10 +37,11 @@ class UpdateRuleConfigUseCase @Inject constructor(
 
     /**
      * Persist [config] and immediately recompute under it, so no screen is left displaying a
-     * level, quest status, or streak derived from the previous rules.
+     * level, quest status, or streak derived from the previous rules. Rule changes redefine the
+     * progress-event baseline and therefore never celebrate the resulting transition.
      */
     suspend fun apply(config: RuleConfig) {
         settings.setRuleConfig(config)
-        gamificationUpdater.recompute(time.today(), config)
+        gamificationUpdater.recompute(time.today(), RecomputeSource.RULE_CHANGE, config)
     }
 }

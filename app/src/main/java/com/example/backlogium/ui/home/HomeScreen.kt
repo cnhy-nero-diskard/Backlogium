@@ -90,8 +90,8 @@ import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionPacingState
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.label
+import com.example.backlogium.domain.ProgressEvent
 import com.example.backlogium.ui.components.GameIcon
-import com.example.backlogium.domain.isStreakMilestone
 import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.theme.collectionAccentColor
 import com.example.backlogium.ui.theme.deadlineWarning
@@ -154,18 +154,6 @@ fun HomeScreen(
         lastLevel = state.level
     }
 
-    // Streak-milestone detection: fire only when the streak *changes* to a positive multiple
-    // of 7 (STREAK_MILESTONE_INTERVAL_DAYS). The change-guard keeps it from replaying on every
-    // recomposition/navigation while sitting at the same milestone value (task 7.5).
-    var lastStreak by remember { mutableStateOf(state.currentStreak) }
-    var playStreakMilestone by remember { mutableStateOf(false) }
-    LaunchedEffect(state.currentStreak) {
-        if (state.currentStreak != lastStreak && isStreakMilestone(state.currentStreak)) {
-            playStreakMilestone = true
-        }
-        lastStreak = state.currentStreak
-    }
-
     val scrollState = rememberScrollState()
     var scrollViewport by remember { mutableStateOf<Rect?>(null) }
 
@@ -207,8 +195,7 @@ fun HomeScreen(
             state = state,
             playLevelUp = playLevelUp,
             onLevelUpFinished = { playLevelUp = false },
-            playStreakMilestone = playStreakMilestone,
-            onStreakMilestoneFinished = { playStreakMilestone = false },
+            onStreakMilestoneFinished = { viewModel.acknowledgeProgressEvent(it) },
             onSyncNow = viewModel::syncNow,
             onOpenCollection = onOpenCollection,
             onCreateCollection = onCreateCollection,
@@ -225,8 +212,7 @@ private fun InnerHomeContent(
     state: HomeUiState,
     playLevelUp: Boolean,
     onLevelUpFinished: () -> Unit,
-    playStreakMilestone: Boolean,
-    onStreakMilestoneFinished: () -> Unit,
+    onStreakMilestoneFinished: (ProgressEvent.StreakMilestone) -> Unit,
     onSyncNow: () -> Unit,
     onOpenCollection: (Long) -> Unit,
     onCreateCollection: () -> Unit,
@@ -378,10 +364,11 @@ private fun InnerHomeContent(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
+                val pendingMilestone = state.pendingStreakMilestone
                 CelebrationAnimation(
                     resId = R.raw.streak_milestone,
-                    play = playStreakMilestone,
-                    onFinished = onStreakMilestoneFinished,
+                    play = pendingMilestone != null,
+                    onFinished = { pendingMilestone?.let(onStreakMilestoneFinished) },
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(8.dp)
