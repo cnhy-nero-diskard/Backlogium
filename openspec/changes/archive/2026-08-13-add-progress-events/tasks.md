@@ -44,5 +44,5 @@
 - [x] 6.1 Run `./gradlew :gamification:test :app:testDebugUnitTest`
 - [x] 6.2 Run `./gradlew assembleDebug`
 - [x] 6.3 Verify the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics` reports no new breaches
-- [ ] 6.4 Manually verify on device: break a streak, confirm the overlay appears once, kill and relaunch, confirm it does not reappear
-- [ ] 6.5 Manually verify no phantom celebration: open the rule-change dialog with a raised XP rate, cancel, confirm nothing fires
+- [x] 6.4 Manually verify on device: break a streak, confirm the overlay appears once, kill and relaunch, confirm it does not reappear
+- [x] 6.5 Manually verify no phantom celebration: open the rule-change dialog with a raised XP rate, cancel, confirm nothing fires
