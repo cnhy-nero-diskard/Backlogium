@@ -1,17 +1,15 @@
 package com.example.backlogium.domain
 
 /**
- * Streak-milestone rule for the celebratory Home-screen animation (restyle-visual-identity).
+ * Streak-milestone interval rule shared by progress-event detection and presentation.
  *
  * Deliberately lives in the app module's `domain` package — NOT in the pure `:gamification`
- * module — because that module's `Gamification.kt` is a stub slated for wholesale replacement
- * by `add-gamification-engine`; new code added there risks being dropped when that change
- * lands (see the change's design.md decision 5). This is a purely decorative UI trigger: it
- * awards no XP and does not touch `XpState`, so it has no reason to live inside the engine's
- * boundary regardless.
+ * module — because it observes an engine-authored derived value rather than deriving XP/streak
+ * state itself. The rule no longer acts as a celebration trigger: [ProgressEventDetector] owns
+ * the transition and delivery baseline so recomposition cannot replay a milestone.
  */
 
-/** How often (in streak days) a milestone celebration fires. */
+/** How often (in streak days) a milestone is reached. */
 const val STREAK_MILESTONE_INTERVAL_DAYS: Int = 7
 
 /**
