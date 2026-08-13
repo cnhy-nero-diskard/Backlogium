@@ -11,7 +11,7 @@
 - [x] 2.3 Implement threshold collapse: one `LevelUp` carrying the mark and the new level; one `StreakMilestone` carrying the highest interval multiple reached
 - [x] 2.4 Implement non-earned reseeding: for every source other than `SYNC`, emit nothing and set all marks to the newly computed values, including downward
 - [x] 2.5 Implement first-persist seeding: when no profile previously existed, emit nothing and seed the marks regardless of source
-- [ ] 2.6 Reuse `isStreakMilestone` / `STREAK_MILESTONE_INTERVAL_DAYS` from `domain/StreakMilestone.kt` as the interval rule; update its KDoc to record that it is no longer the celebration trigger
+- [x] 2.6 Reuse `isStreakMilestone` / `STREAK_MILESTONE_INTERVAL_DAYS` from `domain/StreakMilestone.kt` as the interval rule; update its KDoc to record that it is no longer the celebration trigger
 - [x] 2.7 Add JVM unit tests for the detector covering every scenario in `specs/progress-events/spec.md`, as a table of transitions
 
 ## 3. Delivery marks
@@ -41,8 +41,8 @@
 
 ## 6. Verification
 
-- [ ] 6.1 Run `./gradlew :gamification:test :app:testDebugUnitTest`
-- [ ] 6.2 Run `./gradlew assembleDebug`
-- [ ] 6.3 Verify the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics` reports no new breaches
+- [x] 6.1 Run `./gradlew :gamification:test :app:testDebugUnitTest`
+- [x] 6.2 Run `./gradlew assembleDebug`
+- [x] 6.3 Verify the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics` reports no new breaches
 - [ ] 6.4 Manually verify on device: break a streak, confirm the overlay appears once, kill and relaunch, confirm it does not reappear
 - [ ] 6.5 Manually verify no phantom celebration: open the rule-change dialog with a raised XP rate, cancel, confirm nothing fires
