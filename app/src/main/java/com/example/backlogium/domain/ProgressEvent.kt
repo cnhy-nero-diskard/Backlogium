@@ -23,7 +23,7 @@ val ProgressEvent.priority: Int
     }
 
 val progressEventPriorityComparator: Comparator<ProgressEvent> =
-    compareBy(ProgressEvent::priority)
+    compareBy { it.priority }
 
 fun Iterable<ProgressEvent>.inPresentationOrder(): List<ProgressEvent> =
     sortedWith(progressEventPriorityComparator)
