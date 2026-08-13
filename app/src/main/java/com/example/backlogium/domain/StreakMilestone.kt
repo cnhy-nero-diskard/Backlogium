@@ -5,8 +5,8 @@ package com.example.backlogium.domain
  *
  * Deliberately lives in the app module's `domain` package — NOT in the pure `:gamification`
  * module — because it observes an engine-authored derived value rather than deriving XP/streak
- * state itself. The rule no longer acts as a celebration trigger: [ProgressEventDetector] owns
- * the transition and delivery baseline so recomposition cannot replay a milestone.
+ * state itself. [ProgressEventDetector] is now the durable transition/delivery authority; the
+ * legacy Home milestone animation still calls this interval helper until that trigger is removed.
  */
 
 /** How often (in streak days) a milestone is reached. */
