@@ -2,7 +2,6 @@ package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.PlayerProfile
-import com.example.backlogium.data.repo.ProgressEventRepository
 import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -18,6 +17,7 @@ import org.junit.Test
 
 class ProgressEventRepositoryTest {
     private val today = LocalDate.parse("2026-08-13")
+    private val coordinator = ProgressTransitionCoordinator()
 
     @Test
     fun acknowledgedEventDoesNotReappearIncludingAfterRepositoryRecreation() = runTest {
@@ -26,14 +26,14 @@ class ProgressEventRepositoryTest {
         )
         val profileDao = FakePlayerProfileDao(PlayerProfile(level = 5))
         val dailyDao = FakeDailyProgressDao(emptyList())
-        val repository = ProgressEventRepository(marksStore, profileDao, dailyDao)
+        val repository = testRepository(marksStore, coordinator, profileDao, dailyDao)
 
         val levelUp = repository.pendingEvents.first().single()
         assertEquals(ProgressEvent.LevelUp(4, 5), levelUp)
         repository.acknowledge(levelUp)
         assertTrue(repository.pendingEvents.first().isEmpty())
 
-        val recreated = ProgressEventRepository(marksStore, profileDao, dailyDao)
+        val recreated = testRepository(marksStore, coordinator, profileDao, dailyDao)
         assertTrue(recreated.pendingEvents.first().isEmpty())
     }
 
@@ -45,10 +45,10 @@ class ProgressEventRepositoryTest {
         val profileDao = FakePlayerProfileDao(PlayerProfile(level = 7))
         val dailyDao = FakeDailyProgressDao(emptyList())
 
-        val firstProcess = ProgressEventRepository(marksStore, profileDao, dailyDao)
+        val firstProcess = testRepository(marksStore, coordinator, profileDao, dailyDao)
         assertEquals(ProgressEvent.LevelUp(4, 7), firstProcess.pendingEvents.first().single())
 
-        val nextProcess = ProgressEventRepository(marksStore, profileDao, dailyDao)
+        val nextProcess = testRepository(marksStore, coordinator, profileDao, dailyDao)
         assertEquals(ProgressEvent.LevelUp(4, 7), nextProcess.pendingEvents.first().single())
     }
 
@@ -62,8 +62,9 @@ class ProgressEventRepositoryTest {
                 pendingStreakBreak = pending,
             ),
         )
-        val repository = ProgressEventRepository(
+        val repository = testRepository(
             marksStore,
+            coordinator,
             FakePlayerProfileDao(PlayerProfile(level = 4, currentStreak = 0)),
             FakeDailyProgressDao(emptyList()),
         )
@@ -86,65 +87,129 @@ class ProgressEventRepositoryTest {
         val profileDao = FakePlayerProfileDao(PlayerProfile(currentStreak = 7))
         val dailyDao = FakeDailyProgressDao(emptyList())
 
-        val firstProcess = ProgressEventRepository(marksStore, profileDao, dailyDao)
+        val firstProcess = testRepository(marksStore, coordinator, profileDao, dailyDao)
         val milestone = firstProcess.pendingEvents.first().single()
         assertEquals(ProgressEvent.StreakMilestone(7), milestone)
 
         // Recreated before acknowledgement (e.g. Home was never composed) — still pending.
-        val recreatedBeforeAck = ProgressEventRepository(marksStore, profileDao, dailyDao)
+        val recreatedBeforeAck = testRepository(marksStore, coordinator, profileDao, dailyDao)
         assertEquals(milestone, recreatedBeforeAck.pendingEvents.first().single())
 
         recreatedBeforeAck.acknowledge(milestone)
 
-        val recreatedAfterAck = ProgressEventRepository(marksStore, profileDao, dailyDao)
+        val recreatedAfterAck = testRepository(marksStore, coordinator, profileDao, dailyDao)
         assertTrue(recreatedAfterAck.pendingEvents.first().isEmpty())
     }
 
     @Test
-    fun questEarnedYesterdayIsStillDeliveredToday() = runTest {
-        val yesterday = today.minusDays(1)
+    fun earnedQuestDateStaysDeliverableRegardlessOfHowManyDaysPass() = runTest {
+        // The pending date is the event's identity. Nothing here consults the current date, which
+        // is why a rollover cannot change or drop it.
+        val earnedOn = today.minusDays(1)
         val marksStore = InMemoryProgressMarksStore(
-            ProgressMarks(lastCelebratedLevel = 4, initialized = true),
+            ProgressMarks(
+                lastCelebratedLevel = 4,
+                initialized = true,
+                pendingQuestDates = setOf(earnedOn),
+            ),
         )
-        val dailyDao = FakeDailyProgressDao(
-            listOf(DailyProgress(date = yesterday.toString(), questMet = true)),
-        )
-        val repository = ProgressEventRepository(
+        val repository = testRepository(
             marksStore,
+            coordinator,
             FakePlayerProfileDao(PlayerProfile(level = 4)),
-            dailyDao,
         )
 
-        val event = repository.pendingEvents.first().single()
-        assertEquals(ProgressEvent.QuestMet(yesterday), event)
+        assertEquals(
+            ProgressEvent.QuestMet(earnedOn),
+            repository.pendingEvents.first().single(),
+        )
     }
 
     @Test
-    fun twoUnacknowledgedQuestDaysBothEventuallyDeliverOldestFirst() = runTest {
+    fun twoEarnedQuestDatesDeliverIndependentlyOldestFirst() = runTest {
         val dayOne = today.minusDays(2)
         val dayTwo = today.minusDays(1)
         val marksStore = InMemoryProgressMarksStore(
-            ProgressMarks(lastCelebratedLevel = 4, initialized = true),
-        )
-        val dailyDao = FakeDailyProgressDao(
-            listOf(
-                DailyProgress(date = dayOne.toString(), questMet = true),
-                DailyProgress(date = dayTwo.toString(), questMet = true),
+            ProgressMarks(
+                lastCelebratedLevel = 4,
+                initialized = true,
+                pendingQuestDates = setOf(dayTwo, dayOne),
             ),
         )
-        val repository = ProgressEventRepository(
+        val repository = testRepository(
             marksStore,
+            coordinator,
             FakePlayerProfileDao(PlayerProfile(level = 4)),
-            dailyDao,
         )
 
         val first = repository.pendingEvents.first().single()
         assertEquals(ProgressEvent.QuestMet(dayOne), first)
 
+        // Acknowledging the earlier day removes exactly that date and reveals the later one; the
+        // later one was never at risk of being obscured, only of being delivered second.
         repository.acknowledge(first)
+        assertEquals(setOf(dayTwo), marksStore.read().pendingQuestDates)
 
         val second = repository.pendingEvents.first().single()
         assertEquals(ProgressEvent.QuestMet(dayTwo), second)
+
+        repository.acknowledge(second)
+        assertEquals(emptySet<LocalDate>(), marksStore.read().pendingQuestDates)
+        assertEquals(dayTwo, marksStore.read().lastQuestCelebratedDate)
+        assertTrue(repository.pendingEvents.first().isEmpty())
+    }
+
+    @Test
+    fun acknowledgingOneQuestDateDoesNotAcknowledgeAnother() = runTest {
+        val older = today.minusDays(3)
+        val newer = today.minusDays(1)
+        val marksStore = InMemoryProgressMarksStore(
+            ProgressMarks(
+                lastCelebratedLevel = 4,
+                initialized = true,
+                pendingQuestDates = setOf(older, newer),
+            ),
+        )
+        val repository = testRepository(
+            marksStore,
+            coordinator,
+            FakePlayerProfileDao(PlayerProfile(level = 4)),
+        )
+
+        // Acknowledging the *newer* date out of order must not sweep up the older one, and
+        // re-acknowledging it must be a no-op rather than consuming the remaining date.
+        repository.acknowledge(ProgressEvent.QuestMet(newer))
+        repository.acknowledge(ProgressEvent.QuestMet(newer))
+
+        assertEquals(setOf(older), marksStore.read().pendingQuestDates)
+        assertEquals(
+            ProgressEvent.QuestMet(older),
+            repository.pendingEvents.first().single(),
+        )
+    }
+
+    @Test
+    fun historicalMetQuestRowsAreNeverDeliverableWithoutAnEarnedPendingDate() = runTest {
+        // Rows that predate progress-event tracking, or that a recompute flipped to met: evidence of
+        // nothing. With no earned pending date, there is nothing to deliver.
+        val marksStore = InMemoryProgressMarksStore(
+            ProgressMarks(lastCelebratedLevel = 4, initialized = true),
+        )
+        val dailyDao = FakeDailyProgressDao(
+            listOf(
+                DailyProgress(date = today.minusDays(9).toString(), questMet = true),
+                DailyProgress(date = today.minusDays(2).toString(), questMet = true),
+                DailyProgress(date = today.toString(), questMet = true),
+            ),
+        )
+        val repository = testRepository(
+            marksStore,
+            coordinator,
+            FakePlayerProfileDao(PlayerProfile(level = 4)),
+            dailyDao,
+        )
+
+        assertTrue(repository.pendingEvents.first().isEmpty())
     }
 
     @Test
@@ -153,8 +218,9 @@ class ProgressEventRepositoryTest {
         val marksStore = InMemoryProgressMarksStore(
             ProgressMarks(lastCelebratedLevel = 0, initialized = true, pendingStreakBreak = pending),
         )
-        val repository = ProgressEventRepository(
+        val repository = testRepository(
             marksStore,
+            coordinator,
             FakePlayerProfileDao(PlayerProfile(level = 0, currentStreak = 0)),
             FakeDailyProgressDao(emptyList()),
         )

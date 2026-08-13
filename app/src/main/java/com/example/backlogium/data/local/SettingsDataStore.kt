@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
@@ -74,6 +75,11 @@ class SettingsDataStore @Inject constructor(
             intPreferencesKey("last_celebrated_streak_milestone")
         val LAST_QUEST_CELEBRATED_DATE = stringPreferencesKey("last_quest_celebrated_date")
         val LAST_STREAK_BROKEN_DATE = stringPreferencesKey("last_streak_broken_date")
+
+        // Quest dates an earned recompute actually earned and no consumer has acknowledged. A set
+        // rather than a single date because several days can be owed at once, and durable rather
+        // than re-derived because a stored `questMet` row is not evidence a quest was ever earned.
+        val PENDING_QUEST_DATES = stringSetPreferencesKey("pending_quest_dates")
 
         // Write-ahead record of an in-flight persist() call, written before its Room write and
         // cleared after its marks are finalized. Presence of PENDING_TRANSITION_SOURCE is what
@@ -157,8 +163,21 @@ class SettingsDataStore @Inject constructor(
                 prefs.contains(Keys.LAST_CELEBRATED_STREAK_MILESTONE),
             pendingStreakBreak = pendingBreak,
             pendingTransition = parsePendingTransition(prefs),
+            pendingQuestDates = parsePendingQuestDates(prefs),
         )
     }
+
+    /**
+     * Read back oldest-first so delivery order is a property of the stored value rather than of the
+     * consumer that happens to iterate it. Unparseable entries are dropped: a corrupt date can only
+     * ever produce an undeliverable event.
+     */
+    private fun parsePendingQuestDates(prefs: Preferences): Set<LocalDate> =
+        prefs[Keys.PENDING_QUEST_DATES]
+            ?.mapNotNull(::parseDate)
+            ?.sorted()
+            ?.toCollection(LinkedHashSet())
+            ?: emptySet()
 
     private fun encodeProgressMarks(
         prefs: MutablePreferences,
@@ -175,6 +194,13 @@ class SettingsDataStore @Inject constructor(
             "$PENDING_BREAK_PREFIX${it.date}|${it.previousLength}"
         } ?: marks.lastStreakBrokenDate?.toString()
         writeNullableString(prefs, Keys.LAST_STREAK_BROKEN_DATE, breakValue)
+
+        if (marks.pendingQuestDates.isEmpty()) {
+            prefs.remove(Keys.PENDING_QUEST_DATES)
+        } else {
+            prefs[Keys.PENDING_QUEST_DATES] =
+                marks.pendingQuestDates.map(LocalDate::toString).toSet()
+        }
 
         val pending = marks.pendingTransition
         if (pending == null) {

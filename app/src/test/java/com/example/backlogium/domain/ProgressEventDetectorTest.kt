@@ -20,6 +20,7 @@ class ProgressEventDetectorTest {
         assertEquals(30, result.marks.lastCelebratedLevel)
         assertEquals(14, result.marks.lastCelebratedStreakMilestone)
         assertEquals(today, result.marks.lastQuestCelebratedDate)
+        assertEquals(emptySet<LocalDate>(), result.marks.pendingQuestDates)
         assertTrue(result.marks.initialized)
     }
 
@@ -97,6 +98,8 @@ class ProgressEventDetectorTest {
         )
 
         assertEquals(listOf(ProgressEvent.QuestMet(today)), result.events)
+        // The event's identity is recorded durably, not left to be re-derived from the day's row.
+        assertEquals(setOf(today), result.marks.pendingQuestDates)
     }
 
     @Test
@@ -108,6 +111,68 @@ class ProgressEventDetectorTest {
         )
 
         assertTrue(result.events.isEmpty())
+        assertEquals(emptySet<LocalDate>(), result.marks.pendingQuestDates)
+    }
+
+    @Test
+    fun aQuestAlreadyMetBeforeThisRecomputeIsNotEarnedAgain() {
+        // Edge-triggered: a second sync on the same day sees the flag already set. Only the
+        // recompute that flipped it earned the transition.
+        val result = detect(
+            marks = initializedMarks(level = 4),
+            previous = ProgressState(level = 4, currentStreak = 3, todayQuestMet = true),
+            current = ProgressState(level = 4, currentStreak = 3, todayQuestMet = true),
+        )
+
+        assertTrue(result.events.isEmpty())
+        assertEquals(emptySet<LocalDate>(), result.marks.pendingQuestDates)
+    }
+
+    @Test
+    fun earnedQuestDatesFromEarlierDaysSurviveALaterRecompute() {
+        val yesterday = today.minusDays(1)
+        val result = detect(
+            marks = initializedMarks(level = 4).copy(pendingQuestDates = setOf(yesterday)),
+            previous = ProgressState(level = 4, currentStreak = 1, todayQuestMet = false),
+            current = ProgressState(level = 4, currentStreak = 2, todayQuestMet = true),
+        )
+
+        assertEquals(listOf(ProgressEvent.QuestMet(today)), result.events)
+        assertEquals(setOf(yesterday, today), result.marks.pendingQuestDates)
+    }
+
+    @Test
+    fun nonEarnedSourcesNeitherAddNorCancelPendingQuestDates() {
+        val yesterday = today.minusDays(1)
+        RecomputeSource.entries.filter { it != RecomputeSource.SYNC }.forEach { source ->
+            val result = detect(
+                marks = initializedMarks(level = 4, questDate = yesterday)
+                    .copy(pendingQuestDates = setOf(yesterday)),
+                previous = ProgressState(level = 4, currentStreak = 1, todayQuestMet = false),
+                current = ProgressState(level = 4, currentStreak = 2, todayQuestMet = true),
+                source = source,
+            )
+
+            assertTrue("$source should not emit", result.events.isEmpty())
+            // Today's newly-met row is not an earned quest; yesterday's earned one is still owed.
+            assertEquals("$source pending set", setOf(yesterday), result.marks.pendingQuestDates)
+        }
+    }
+
+    @Test
+    fun nonEarnedSourcesNeverRegressTheAcknowledgedQuestDate() {
+        // Today's quest is unmet under the new rule. Clearing the acknowledged high-water mark here
+        // is what used to make an already-celebrated day look undelivered again.
+        RecomputeSource.entries.filter { it != RecomputeSource.SYNC }.forEach { source ->
+            val result = detect(
+                marks = initializedMarks(level = 4, questDate = today.minusDays(1)),
+                previous = ProgressState(level = 4, currentStreak = 1, todayQuestMet = true),
+                current = ProgressState(level = 4, currentStreak = 0, todayQuestMet = false),
+                source = source,
+            )
+
+            assertEquals("$source", today.minusDays(1), result.marks.lastQuestCelebratedDate)
+        }
     }
 
     @Test

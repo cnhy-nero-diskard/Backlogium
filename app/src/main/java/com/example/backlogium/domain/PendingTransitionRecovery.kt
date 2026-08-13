@@ -13,12 +13,29 @@ import com.example.backlogium.data.local.dao.PlayerProfileDao
  * equals previous and this is a no-op) or after it (in which case the real transition, including a
  * `StreakBroken` that would otherwise be unrecoverable, is detected and delivered).
  *
- * Cheap when nothing is pending: a single marks read with no further I/O. Safe to call
- * defensively both at the start of [GamificationUpdater.persist] and at the start of
- * [com.example.backlogium.data.repo.ProgressEventRepository]'s pending-events flow, since neither
- * caller can otherwise guarantee the other has already run.
+ * Acquires [coordinator] first, because "a pending transition is present" is not by itself evidence
+ * that the call which wrote it is dead — a `persist()` that is merely between its WAL and its
+ * finalize looks identical from the outside. Only the coordinator can distinguish the two: while it
+ * is held by a live persist, no recovery pass can observe that persist's WAL at all, so an abandoned
+ * record is the only kind this function can ever see.
+ *
+ * Cheap when nothing is pending: acquiring an uncontended mutex plus a single marks read.
  */
 suspend fun resolvePendingTransition(
+    coordinator: ProgressTransitionCoordinator,
+    marksStore: ProgressMarksStore,
+    profileDao: PlayerProfileDao,
+    dailyProgressDao: DailyProgressDao,
+): ProgressMarks = coordinator.withTransition {
+    resolvePendingTransitionWithinProtocol(marksStore, profileDao, dailyProgressDao)
+}
+
+/**
+ * The recovery step itself, for callers that already own the protocol — [GamificationUpdater]'s own
+ * critical section, which must not deadlock re-acquiring a non-reentrant coordinator. Every other
+ * caller wants [resolvePendingTransition].
+ */
+internal suspend fun resolvePendingTransitionWithinProtocol(
     marksStore: ProgressMarksStore,
     profileDao: PlayerProfileDao,
     dailyProgressDao: DailyProgressDao,

@@ -1,7 +1,6 @@
 package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.entity.PlayerProfile
-import com.example.backlogium.data.repo.ProgressEventRepository
 import java.time.LocalDate
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -17,6 +16,7 @@ import org.junit.Test
  */
 class PendingTransitionRecoveryTest {
     private val today = LocalDate.parse("2026-08-13")
+    private val coordinator = ProgressTransitionCoordinator()
 
     @Test
     fun interruptedNonEarnedSourceProducesNoPhantomEventOnRecovery() = runTest {
@@ -38,14 +38,14 @@ class PendingTransitionRecoveryTest {
             val profileDao = FakePlayerProfileDao(PlayerProfile(level = 24))
             val dailyDao = FakeDailyProgressDao(emptyList())
 
-            resolvePendingTransition(marksStore, profileDao, dailyDao)
+            resolvePendingTransition(coordinator, marksStore, profileDao, dailyDao)
 
             val marks = marksStore.read()
             assertNull("$source pending transition", marks.pendingTransition)
             // Reseeded silently to the values actually written, not reported as earned.
             assertEquals("$source baseline", 24, marks.lastCelebratedLevel)
 
-            val repository = ProgressEventRepository(marksStore, profileDao, dailyDao)
+            val repository = testRepository(marksStore, coordinator, profileDao, dailyDao)
             assertEquals(
                 "$source produced a phantom event",
                 emptyList<ProgressEvent>(),
@@ -74,7 +74,7 @@ class PendingTransitionRecoveryTest {
         val profileDao = FakePlayerProfileDao(PlayerProfile(level = 4, currentStreak = 0))
         val dailyDao = FakeDailyProgressDao(emptyList())
 
-        resolvePendingTransition(marksStore, profileDao, dailyDao)
+        resolvePendingTransition(coordinator, marksStore, profileDao, dailyDao)
 
         val marks = marksStore.read()
         assertNull(marks.pendingTransition)
@@ -101,7 +101,7 @@ class PendingTransitionRecoveryTest {
         val profileDao = FakePlayerProfileDao(PlayerProfile(level = 4, currentStreak = 0))
         val dailyDao = FakeDailyProgressDao(emptyList())
 
-        resolvePendingTransition(marksStore, profileDao, dailyDao)
+        resolvePendingTransition(coordinator, marksStore, profileDao, dailyDao)
 
         val marks = marksStore.read()
         assertNull(marks.pendingTransition)

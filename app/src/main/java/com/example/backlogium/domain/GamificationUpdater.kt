@@ -17,6 +17,8 @@ import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.gamification.XpState
 import java.time.LocalDate
 import javax.inject.Inject
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 /**
  * Everything one recompute pass derives, before any of it is written back.
@@ -64,6 +66,13 @@ class GamificationUpdater @Inject constructor(
     private val achievementDao: AchievementDao,
     private val gameDao: GameDao,
     private val progressMarksStore: ProgressMarksStore = InMemoryProgressMarksStore(),
+    /**
+     * Serializes [persist] against every other participant in the transition protocol. The default
+     * is a private instance, matching [progressMarksStore]'s: usable for tests that ignore progress
+     * events, never correct for a caller that shares state with a [ProgressEventRepository]-side
+     * consumer, which must be handed the same coordinator instance.
+     */
+    private val transitionCoordinator: ProgressTransitionCoordinator = ProgressTransitionCoordinator(),
 ) {
 
     /**
@@ -159,6 +168,20 @@ class GamificationUpdater @Inject constructor(
      * default deliberately: a future derived-value writer cannot compile without declaring why
      * the values changed.
      *
+     * The whole protocol — resolve prior pending transition, capture previous state, write the
+     * pending-transition write-ahead record, perform the Room writes, finalize the marks, clear the
+     * record — runs inside [transitionCoordinator], so a second `persist()` cannot enter it until
+     * the first has finalized and a recovery pass cannot mistake a live call's write-ahead record
+     * for an abandoned one. The phases are individually atomic but jointly ordered; interleaving two
+     * of them is what would let one provenance's recovery state be cleared or claimed by the other.
+     */
+    suspend fun persist(result: GamificationResult, source: RecomputeSource) {
+        transitionCoordinator.withTransition { persistWithinProtocol(result, source) }
+    }
+
+    /**
+     * The protocol body, run with the coordinator held.
+     *
      * The previous state is captured and durably recorded (as a [PendingTransition]) *before* the
      * Room write below, and only cleared after the marks finalize succeeds. Once the Room write
      * lands, the pre-write profile is gone from Room; the pending-transition record is what lets a
@@ -166,13 +189,14 @@ class GamificationUpdater @Inject constructor(
      * happened, as a no-op if it didn't — rather than either fabricating an event that was never
      * earned or losing one that was (see [resolvePendingTransition]).
      */
-    suspend fun persist(result: GamificationResult, source: RecomputeSource) {
+    private suspend fun persistWithinProtocol(result: GamificationResult, source: RecomputeSource) {
         val today = result.evaluationDate
 
         // Resolve any transition left dangling by a prior crashed persist() before starting a new
         // one — otherwise this call's own previous-state read could observe a Room profile that
-        // already reflects an unresolved earlier write.
-        resolvePendingTransition(progressMarksStore, playerProfileDao, dailyProgressDao)
+        // already reflects an unresolved earlier write. The within-protocol variant: this call
+        // already owns the coordinator, which is not reentrant.
+        resolvePendingTransitionWithinProtocol(progressMarksStore, playerProfileDao, dailyProgressDao)
 
         val previousProfile = playerProfileDao.get()
         val previousTodayQuestMet = dailyProgressDao.getByDate(today.toString())?.questMet == true
@@ -198,6 +222,34 @@ class GamificationUpdater @Inject constructor(
             }
         }
 
+        try {
+            writeAndFinalize(result, source, previousState, previousProfile, today)
+        } catch (t: Throwable) {
+            // A pending transition suppresses event derivation by design, so returning from this
+            // call with our own record still in place would freeze delivery for the rest of the
+            // process — the WAL exists to survive process death, not to outlive a caught failure.
+            // Resolve it against whatever Room actually committed, then let the failure propagate.
+            withContext(NonCancellable) {
+                runCatching {
+                    resolvePendingTransitionWithinProtocol(
+                        progressMarksStore,
+                        playerProfileDao,
+                        dailyProgressDao,
+                    )
+                }
+            }
+            throw t
+        }
+    }
+
+    /** The Room half of the protocol plus its marks finalize; see [persistWithinProtocol]. */
+    private suspend fun writeAndFinalize(
+        result: GamificationResult,
+        source: RecomputeSource,
+        previousState: ProgressState?,
+        previousProfile: PlayerProfile?,
+        today: LocalDate,
+    ) {
         result.changedDays.forEach { dailyProgressDao.upsert(it) }
 
         // Persist profile aggregates, preserving sync/status fields. `currentStreak` is written
