@@ -1,5 +1,6 @@
 package com.example.backlogium.domain
 
+import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
@@ -38,6 +39,8 @@ data class GamificationResult(
     val longestStreak: Int,
     /** Stored days whose `questMet` differs from the recomputed value; the only rows to write. */
     val changedDays: List<DailyProgress>,
+    /** The injected local date against which this result was evaluated. */
+    val evaluationDate: LocalDate,
 )
 
 /**
@@ -61,21 +64,25 @@ class GamificationUpdater @Inject constructor(
     private val hltbDataDao: HltbDataDao,
     private val achievementDao: AchievementDao,
     private val gameDao: GameDao,
+    private val settings: SettingsDataStore,
 ) {
 
     /**
-     * Recompute and persist all derived gamification values. Called on each sync and on day
-     * rollover. [today] is injected so the engine stays clock-free; [config] carries the
-     * tunable rules.
+     * Recompute and persist all derived gamification values. [source] is required so every write
+     * declares whether the resulting transition was earned progress or a baseline reset.
      */
-    suspend fun recompute(today: LocalDate, config: RuleConfig = RuleConfig()) {
-        persist(compute(today, config))
+    suspend fun recompute(
+        today: LocalDate,
+        source: RecomputeSource,
+        config: RuleConfig = RuleConfig(),
+    ) {
+        persist(compute(today, config), source)
     }
 
     /**
      * Run the full recompute and return the result **without writing anything**. Callers that
      * want the values stored hand the result to [persist]; callers previewing a candidate
-     * [config] simply discard it.
+     * [config] simply discard it. Progress-event marks are intentionally untouched here.
      */
     suspend fun compute(today: LocalDate, config: RuleConfig = RuleConfig()): GamificationResult {
         // XP/level from each game's cumulative minutes = frozen backfill offset (0 unless the
@@ -144,25 +151,58 @@ class GamificationUpdater @Inject constructor(
             currentStreak = currentStreak,
             longestStreak = maxOf(storedLongest, computedLongest),
             changedDays = changedDays,
+            evaluationDate = today,
         )
     }
 
-    /** Write a [compute] result back: the changed quest days, then the profile aggregates. */
-    suspend fun persist(result: GamificationResult) {
+    /**
+     * Write a [compute] result back, then update progress-event delivery state. [source] has no
+     * default deliberately: a future derived-value writer cannot compile without declaring why
+     * the values changed.
+     */
+    suspend fun persist(result: GamificationResult, source: RecomputeSource) {
+        val today = result.evaluationDate
+        val previousProfile = playerProfileDao.get()
+        val previousTodayQuestMet = dailyProgressDao.getByDate(today.toString())?.questMet == true
+        val marks = settings.readProgressMarks()
+
         result.changedDays.forEach { dailyProgressDao.upsert(it) }
 
         // Persist profile aggregates, preserving sync/status fields. `currentStreak` is written
         // as computed — only the record is protected — while `longestStreak` takes the maximum
         // against whatever is stored now, so a concurrent write between compute and persist
         // still cannot lower it.
-        val profile = playerProfileDao.get() ?: PlayerProfile()
-        playerProfileDao.upsert(
-            profile.copy(
-                totalXp = result.xpState.totalXp,
-                level = result.xpState.level,
-                currentStreak = result.currentStreak,
-                longestStreak = maxOf(profile.longestStreak, result.longestStreak),
-            ),
+        val profile = previousProfile ?: PlayerProfile()
+        val updatedProfile = profile.copy(
+            totalXp = result.xpState.totalXp,
+            level = result.xpState.level,
+            currentStreak = result.currentStreak,
+            longestStreak = maxOf(profile.longestStreak, result.longestStreak),
         )
+        playerProfileDao.upsert(updatedProfile)
+
+        // Event evaluation is deliberately after the successful Room write. `compute()` never
+        // touches marks, while non-earned sources reseed them to the values just persisted.
+        val currentTodayQuestMet = result.questResults
+            .firstOrNull { it.date == today }
+            ?.met == true
+        val detection = ProgressEventDetector.detect(
+            marks = marks,
+            previous = previousProfile?.let {
+                ProgressState(
+                    level = it.level,
+                    currentStreak = it.currentStreak,
+                    todayQuestMet = previousTodayQuestMet,
+                )
+            },
+            current = ProgressState(
+                level = updatedProfile.level,
+                currentStreak = updatedProfile.currentStreak,
+                todayQuestMet = currentTodayQuestMet,
+            ),
+            source = source,
+            today = today,
+        )
+        settings.writeProgressMarks(detection.marks)
     }
 }
