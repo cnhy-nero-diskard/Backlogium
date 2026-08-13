@@ -21,6 +21,7 @@ import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.defaultSort
 import com.example.backlogium.gamification.RuleConfig
@@ -71,6 +72,7 @@ class BackupMergeEngine @Inject constructor(
         val result = gamificationUpdater.compute(time.today(), config)
         gamificationUpdater.persist(
             result.copy(longestStreak = maxOf(result.longestStreak, importedLongestStreak)),
+            RecomputeSource.RESTORE,
         )
 
         // playtimeBackfilled is a historical fact ("has this account ever backfilled"), not a
