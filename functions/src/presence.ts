@@ -18,7 +18,7 @@ const PRESENCE = "presence";
 
 export type WriteOutcome = "unchanged" | "written";
 
-interface StoredState {
+export interface StoredState {
   gameid?: unknown;
 }
 
@@ -35,7 +35,7 @@ interface StoredState {
  * entries share a game ID, so every entry is a genuine game change and no
  * merge-contiguous-runs logic is needed downstream.
  */
-function isMaterialChange(
+export function isMaterialChange(
   previous: StoredState | undefined,
   observation: Observation,
 ): boolean {
