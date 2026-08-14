@@ -2,9 +2,9 @@
 
 - [ ] 1.1 Choose between design.md Decision 0's options: (A) refuse a mismatched SteamID outright, (B) detect and reset — recommended, or (C) namespace every table by account
 - [ ] 1.2 Establish whether the configured SteamID will ever plausibly change on this install; if it will not, option A is the correct outcome and the rest of this change collapses to section 2 plus the spec work
-- [ ] 1.3 If option A is chosen, narrow `onboarding-credentials`' "change credentials at any time" requirement to the API key and skip sections 4 through 6
+- [ ] 1.3 If option A is chosen, narrow `onboarding-credentials`' "change credentials at any time" requirement to the API key and skip sections 4 through 7
 - [ ] 1.4 If option C is chosen, this task list does not apply — rewrite it around the account dimension and its migration before proceeding
-- [ ] 1.5 Confirm `auditfix-sync-write-integrity` and `auditfix-verification-coverage` have landed; a reset must be atomic for the same reason the sync must be, and a half-completed wipe is worse than the defect
+- [ ] 1.5 Confirm `auditfix-sync-write-integrity` and `auditfix-verification-coverage` have landed; the Room reset needs the same transactional discipline as the sync, and section 5 adds a migration
 
 ## 2. Detect the identity change
 
@@ -27,30 +27,41 @@
 - [ ] 4.3 Ensure declining leaves both credentials and stored data untouched
 - [ ] 4.4 Test: declining is a complete no-op; the export offer produces a valid backup
 
-## 5. Atomic reset and re-baseline
+## 5. Resolve the HLTB cascade before writing the reset
 
-- [ ] 5.1 Implement the reset as one transaction clearing games, sessions, daily progress, achievements and their rarity snapshots, collections, members, and the profile's XP, level, streaks, and backfill state
-- [ ] 5.2 Retain rule configuration, UI preferences, and HLTB data — the latter is a property of the game rather than the account and is expensive to rebuild
-- [ ] 5.3 Clear `longestStreak`, with a comment explaining why the never-decreases invariant does not apply here: attributing one person's record to another is not preserving a fact
-- [ ] 5.4 Zero the profile's `lastSyncAt` so the next poll takes the existing baseline path at `SteamSyncWorker.kt:142-143`, reusing the specified first-sync behaviour rather than inventing a reset-specific one
-- [ ] 5.5 Apply the credential change and the reset in the same transaction, so no state exists where credentials name one account and data reflects another
-- [ ] 5.6 Test: all listed tables cleared, kept tables intact, `lastSyncAt` zeroed
-- [ ] 5.7 Test: an interrupted reset leaves the database fully pre-reset or fully post-reset, never mixed
-- [ ] 5.8 Test: the first poll after a reset takes the baseline path and synthesizes no sessions
-- [ ] 5.9 Test: HLTB data survives a reset
+- [ ] 5.1 Confirm the cascade: `HltbData.kt:31-35` foreign-keys `appId` to `games.appId` with `onDelete = ForeignKey.CASCADE`, so deleting games destroys HLTB rows — the original "delete games, keep HLTB" plan was self-defeating
+- [ ] 5.2 Choose per design.md Decision 2: (i) accept re-scraping, (ii) snapshot-and-restore, or (iii) drop the FK and make `hltb_data` standalone — recommended, since completion times are a property of a game title rather than of ownership
+- [ ] 5.3 If (iii), write the migration removing the foreign key and commit the exported schema; verify `Session`, `Achievement`, `CollectionMember`, `GameGenreCache`, and the diagnostics entities keep their cascades, which are correct
+- [ ] 5.4 Note that under (iii) removing a single game from the library also stops discarding its HLTB data — an incidental behaviour change worth stating in the commit message
 
-## 6. Reconcile the cross-account import allowance
+## 6. Resumable reset and re-baseline
 
-- [ ] 6.1 Extend the existing mismatch warning to state that the imported data belongs to a different account and will be merged with the current account's
-- [ ] 6.2 Confirm a cross-account import leaves the configured SteamID unchanged and triggers no account-change consequence
-- [ ] 6.3 Keep the import permitted — it is an existing deliberate allowance and no finding argues against it
-- [ ] 6.4 Test: cross-account import still warns and still proceeds, and does not trigger a reset
+- [ ] 6.1 Implement the Room reset as one transaction clearing games, sessions, daily progress, achievements and their rarity snapshots, collections, members, and the profile's XP, level, streaks, and backfill state
+- [ ] 6.2 Retain rule configuration and UI preferences; retain HLTB data per the option chosen in 5.2
+- [ ] 6.3 Clear `longestStreak`, with a comment explaining why the never-decreases invariant does not apply here: attributing one person's record to another is not preserving a fact
+- [ ] 6.4 Zero the profile's `lastSyncAt` so the next poll takes the existing baseline path at `SteamSyncWorker.kt:142-143`, reusing the specified first-sync behaviour rather than inventing a reset-specific one
+- [ ] 6.5 **Do not attempt to commit the credential change and the Room reset in one transaction** — `EncryptedCredentialStore` uses a Preferences DataStore plus Keystore, which shares no transaction with Room
+- [ ] 6.6 Implement the marker protocol from design.md Decision 2: write the intent marker first, run the idempotent Room reset, commit credentials, clear the marker
+- [ ] 6.7 Resume an incomplete reset on app start, before any sync can be enqueued or run
+- [ ] 6.8 Block polling while a reset marker is present, so no poll can diff against a half-applied change
+- [ ] 6.9 Test: all listed tables cleared, kept tables intact, `lastSyncAt` zeroed
+- [ ] 6.10 Test: each of the three crash points in design.md's table resolves correctly on the next start
+- [ ] 6.11 Test: the Room reset is idempotent when resumed
+- [ ] 6.12 Test: the first poll after a reset takes the baseline path and synthesizes no sessions
+- [ ] 6.13 Test: HLTB data survives a reset under the chosen option, or is documented as re-scraped under (i)
 
-## 7. Verification and close-out
+## 7. Reconcile the cross-account import allowance
 
-- [ ] 7.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm green
-- [ ] 7.2 Exercise a real account switch on-device: confirm the warning, take the export, verify the reset, and confirm the first sync baselines cleanly
-- [ ] 7.3 Re-import the export taken during that switch and confirm the original account's data is recoverable — the destructive path is only acceptable if this works
-- [ ] 7.4 Run the instrumented migration tests if any schema change was made
-- [ ] 7.5 Run `openspec validate auditfix-account-identity`
-- [ ] 7.6 Record in the commit message that this is the one audit fix that deliberately deletes user data, and that the export offer is the mitigation
+- [ ] 7.1 Extend the existing mismatch warning to state that the imported data belongs to a different account and will be merged with the current account's
+- [ ] 7.2 Confirm a cross-account import leaves the configured SteamID unchanged and triggers no account-change consequence
+- [ ] 7.3 Keep the import permitted — it is an existing deliberate allowance and no finding argues against it
+- [ ] 7.4 Test: cross-account import still warns and still proceeds, and does not trigger a reset
+
+## 8. Verification and close-out
+
+- [ ] 8.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm green
+- [ ] 8.2 Exercise a real account switch on-device: confirm the warning, take the export, verify the reset, and confirm the first sync baselines cleanly
+- [ ] 8.3 Re-import the export taken during that switch and confirm the original account's data is recoverable — the destructive path is only acceptable if this works
+- [ ] 8.4 Run the instrumented migration tests if any schema change was made
+- [ ] 8.5 Run `openspec validate auditfix-account-identity`
+- [ ] 8.6 Record in the commit message that this is the one audit fix that deliberately deletes user data, and that the export offer is the mitigation

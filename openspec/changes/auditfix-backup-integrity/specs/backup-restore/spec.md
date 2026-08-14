@@ -60,9 +60,14 @@ failed. No part of an invalid file SHALL be applied.
 - **THEN** the merge proceeds without re-deriving the same checks during writing
 
 ### Requirement: Import is all-or-nothing
-Merging an imported backup SHALL apply as a single unit covering every affected data type and
-the recomputation of derived aggregates. If any part fails or the process ends partway, the
-stored data SHALL be exactly as it was before the import began.
+Merging an imported backup SHALL apply as a single unit covering every affected raw data type.
+If any part fails or the process ends partway, the stored data SHALL be exactly as it was
+before the import began.
+
+Derived aggregates are recomputed immediately after that unit commits, through the existing
+recoverable protocol spanning the database and settings storage. They are outside the unit
+because that protocol cannot execute inside a database transaction; an interruption between the
+two steps SHALL be detected and resolved rather than left standing.
 
 #### Scenario: Failure partway through the merge
 - **WHEN** a merge fails after writing some data types but not others
@@ -72,10 +77,15 @@ stored data SHALL be exactly as it was before the import began.
 - **WHEN** the process ends while a merge is in progress
 - **THEN** the next start observes the pre-import state rather than a mixture
 
-#### Scenario: Aggregate recomputation is included
+#### Scenario: Aggregates are recomputed after the merge commits
 - **WHEN** a merge commits
-- **THEN** the recomputation of derived aggregates over the merged data commits with it, so raw
-  data and aggregates cannot describe different states
+- **THEN** derived aggregates are recomputed over the merged raw data immediately afterwards
+
+#### Scenario: Interruption between merge and recomputation
+- **WHEN** the process ends after the merge commits but before aggregates are recomputed
+- **THEN** the merged raw data remains, the incomplete recomputation is detected on the next
+  attempt, and aggregates are regenerated from the merged data rather than left describing the
+  pre-import state
 
 #### Scenario: Cancellation during a merge
 - **WHEN** an in-progress import is cancelled

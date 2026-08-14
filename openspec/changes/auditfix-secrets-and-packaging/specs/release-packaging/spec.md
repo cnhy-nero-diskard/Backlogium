@@ -28,6 +28,18 @@ committed build file where it could diverge from the tag.
 - **THEN** no released version number is recorded in a build file that a tag could
   contradict
 
+#### Scenario: A tag outside the encoding's range is refused
+- **WHEN** a release tag carries a version component the version-code encoding cannot represent
+  without colliding with another valid version
+- **THEN** the release fails with a message naming the offending component, rather than
+  producing a build whose version code duplicates or undercuts an earlier release
+
+#### Scenario: Ordering holds across a major increment
+- **WHEN** the highest version representable at one major number is compared with the first
+  version of the next major number
+- **THEN** the later version's code is greater, with no value of minor or patch able to reverse
+  that
+
 ### Requirement: Release artifacts contain no developer credentials
 A release build SHALL contain no Steam API key and no SteamID, regardless of whether
 the machine assembling it has developer credentials configured locally. Credential

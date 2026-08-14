@@ -17,13 +17,14 @@
 
 - [ ] 3.1 Add a transactional entry point on `BacklogiumDatabase` for the merge
 - [ ] 3.2 Wrap the whole `BackupMergeEngine` merge in it, covering games, sessions, daily progress, HLTB data, achievements, collections, members, and profile state
-- [ ] 3.3 Bring the post-import gamification recompute inside the transaction, so raw data and aggregates cannot describe different states
-- [ ] 3.4 Hoist any non-database suspension out of the transaction body — settings reads, file access, anything that hops threads
-- [ ] 3.5 Audit `BackupMergeEngine`'s four broad `catch` blocks: with validation ahead of the merge, a caught exception now means a preflight bug and should surface, not be absorbed
-- [ ] 3.6 Do not chunk the transaction to reduce peak cost (design.md Decision 2)
-- [ ] 3.7 Test: failure injected midway through the merge leaves the database exactly as before
-- [ ] 3.8 Test: failure injected between merge and recompute leaves the database exactly as before
-- [ ] 3.9 Test: cancelling an in-progress import leaves no partial result
+- [ ] 3.3 Keep the post-import gamification recompute **outside** the transaction: `GamificationUpdater.persistWithinProtocol` suspends on `progressMarksStore` (DataStore) and owns a non-reentrant coordinator, so nesting it risks deadlock and defeats the write-ahead log that exists because Room and DataStore cannot commit together
+- [ ] 3.4 Verify the existing `resolvePendingTransition` recovery covers an interruption between the merge commit and the recompute, and add the case if it does not
+- [ ] 3.5 Hoist any non-database suspension out of the transaction body — settings reads, file access, anything that hops threads
+- [ ] 3.6 Audit `BackupMergeEngine`'s four broad `catch` blocks: with validation ahead of the merge, a caught exception now means a preflight bug and should surface, not be absorbed
+- [ ] 3.7 Do not chunk the transaction to reduce peak cost (design.md Decision 2)
+- [ ] 3.8 Test: failure injected midway through the merge leaves the database exactly as before
+- [ ] 3.9 Test: an interruption between the merge commit and the recompute leaves the merged data intact and is detected and resolved on the next attempt
+- [ ] 3.10 Test: cancelling an in-progress import leaves no partial result
 
 ## 4. Size limit
 

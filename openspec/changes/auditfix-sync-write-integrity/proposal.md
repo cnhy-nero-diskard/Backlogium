@@ -39,14 +39,19 @@ The concrete confirmed shapes:
 
 ## What Changes
 
-- **One sync at a time.** The periodic and one-shot polls share a single unique work
-  name, so WorkManager serializes them instead of the app relying on them not
-  coinciding. Achievement reconciliation is serialized against the sync's own
-  achievement refresh on the same basis.
-- **Persistence becomes one atomic step.** All Room writes for a poll — sessions, game
-  baselines, daily progress, profile, and the gamification result — commit together or
-  not at all. Advancing a diff baseline and crediting the minutes that baseline change
-  represents stop being separately-failable operations.
+- **One sync at a time, enforced in the database.** The commit re-reads the baselines it
+  diffs from and recomputes the delta against them, so a second poll committing after the
+  first observes the advanced baseline and writes nothing. A process-wide lock additionally
+  stops a redundant poll from spending Steam requests, but correctness does not rest on it.
+  **The two workers keep their separate unique work names** — merging them is unworkable
+  for the reason `SyncScheduler.kt:173-177` already documents: unique-work names are a
+  single namespace, a periodic request sits `ENQUEUED` almost permanently, and `KEEP` would
+  then drop nearly every manual sync, including while idle.
+- **Persistence of raw data becomes one atomic step.** Sessions, game baselines, daily
+  progress, and profile fields commit together or not at all. Advancing a diff baseline and
+  crediting the minutes that advance represents stop being separately-failable operations.
+  Derived gamification values persist immediately afterwards through the existing
+  write-ahead protocol, which cannot join a Room transaction — see below.
 - **Steam-owned and app-owned columns get separate write paths.** The sync updates only
   the columns Steam is the authority for, via targeted queries. `isGoal`,
   `targetMinutes`, and `backfillMinutes` are never written by the sync at all, so there
@@ -54,9 +59,13 @@ The concrete confirmed shapes:
 - **`PlayerProfile` writes become field-scoped.** Each writer updates only the columns
   it owns. Whole-row upsert stops being the mechanism by which unrelated domains
   overwrite each other.
-- **Rule configuration is sampled at the point of use**, inside the same atomic step
-  that persists what it derives, so persisted rules and persisted derived state cannot
-  disagree.
+- **Rule configuration becomes versioned and is compared at commit.** `RuleConfig` lives in
+  DataStore and derived values live in Room, so no transaction can span them and "read the
+  config inside the commit" is not implementable. Instead the configuration carries a
+  monotonic version, the version is read with the config, re-checked before derived values
+  are written, and stamped alongside them. A superseded write is refused and recomputed
+  rather than silently landing — and afterwards it is possible to *tell* which rules
+  produced a stored value, which today nothing records.
 - **Achievement rows gain defined removal semantics.** `AchievementDao` currently has
   no delete path at all, so a row Steam stops returning persists forever and keeps
   counting toward totals and XP. Reconciliation gets an explicit rule for what to do.

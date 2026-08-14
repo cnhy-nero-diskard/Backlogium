@@ -2,16 +2,25 @@
 
 ## ADDED Requirements
 
-### Requirement: At most one poll runs at a time
-The system SHALL ensure that no two Steam polls execute concurrently, regardless of
-whether each was scheduled periodically or requested manually. A manual request made
-while a poll is already running SHALL NOT start a second poll, and the interface SHALL
-reflect that the request was absorbed rather than appearing to do nothing.
+### Requirement: Concurrent polls cannot double-count
+A playtime increase SHALL be recorded exactly once no matter how many polls observe it. The
+system SHALL guarantee this by deriving each poll's committed delta from baselines read within
+the same transaction that commits it, so a poll committing after another has already advanced
+a baseline records nothing further. This guarantee SHALL NOT depend on scheduling behaviour,
+work-request identity, or the two polls running in the same process.
+
+Additionally, a manual request made while a poll is already running SHOULD be absorbed rather
+than starting redundant remote work, and the interface SHALL reflect that rather than
+appearing to do nothing.
 
 #### Scenario: Manual request during a running poll
 - **WHEN** the user requests a sync while a scheduled poll is already running
-- **THEN** no second poll begins, and the observed playtime increase is recorded exactly
-  once
+- **THEN** the observed playtime increase is recorded exactly once
+
+#### Scenario: Two polls commit the same observed increase
+- **WHEN** two polls both observe the same playtime increase and both reach their commit
+- **THEN** the second commit derives its delta from the already-advanced baseline and records
+  no additional session and no additional minutes
 
 #### Scenario: Manual request while idle
 - **WHEN** the user requests a sync and no poll is running
@@ -26,12 +35,17 @@ reflect that the request was absorbed rather than appearing to do nothing.
 - **WHEN** two poll requests overlap in time for the same playtime increase
 - **THEN** the day's recorded minutes increase by that increase once, not twice
 
-### Requirement: A poll's persistence is atomic
-All database changes derived from a single poll — synthesized sessions, per-game
-playtime baselines, daily progress, player profile state, and derived gamification
-values — SHALL be committed as one unit that either applies completely or not at all. A
-playtime baseline SHALL NOT be advanced unless the progress that advance represents is
-committed with it.
+### Requirement: A poll's raw persistence is atomic
+The raw data a poll produces — synthesized sessions, per-game playtime baselines, daily
+progress, and player profile fields — SHALL be committed as one unit that either applies
+completely or not at all. A playtime baseline SHALL NOT be advanced unless the progress that
+advance represents is committed with it.
+
+Derived gamification values are written separately, immediately afterwards, through the
+existing recoverable protocol that spans the database and settings storage. They are excluded
+from this unit because that protocol cannot execute inside a database transaction, and because
+derived values can be regenerated from committed raw data whereas raw data cannot be
+regenerated from anything.
 
 #### Scenario: Interruption during persistence
 - **WHEN** a poll's persistence is interrupted partway through
@@ -53,6 +67,11 @@ committed with it.
 - **THEN** previously stored data is unchanged, and the failure is surfaced rather than
   partially applied
 
+#### Scenario: Interruption between raw and derived writes
+- **WHEN** a poll commits its raw data and is interrupted before derived values are written
+- **THEN** the raw data remains committed, the incomplete derived write is detected on the next
+  attempt, and derived values are regenerated from the committed raw data
+
 ### Requirement: The sync writes only Steam-owned fields
 When persisting a poll, the system SHALL update only those per-game fields for which
 Steam is the authority — name, icon, total and recent playtime, the diff baseline, and
@@ -73,20 +92,39 @@ import cannot be reverted by it.
 - **THEN** the game is created with Steam-owned fields populated and app-owned fields at
   their documented defaults
 
-### Requirement: Derived values are committed with the configuration that produced them
-The rule configuration used to derive experience, quest results, and streaks SHALL be
-the configuration in effect at the moment those derived values are committed, so
-persisted rules and persisted derived state cannot disagree.
+### Requirement: Derived values record and verify the configuration that produced them
+Rule configuration SHALL carry a version that changes whenever the configuration changes, and
+SHALL be read together with that version. Before derived values are written, the system SHALL
+verify that the version is still current and SHALL refuse the write if it is not. Stored
+derived values SHALL record the version that produced them, so persisted rules and persisted
+derived state can be compared rather than assumed to agree.
+
+Because rule configuration and derived values are held in separate stores that cannot commit
+together, this requirement is satisfied by detecting and refusing a superseded write, not by
+making the two writes atomic.
 
 #### Scenario: Rules changed during a poll
-- **WHEN** the user changes rule configuration while a poll is in progress
-- **THEN** the poll does not commit derived values computed under the superseded
-  configuration
+- **WHEN** the user changes rule configuration after a poll has computed derived values but
+  before that poll writes them
+- **THEN** the poll does not write those derived values, and a recomputation under the current
+  configuration follows
 
-#### Scenario: Configuration read position
-- **WHEN** a poll derives values that depend on rule configuration
-- **THEN** the configuration is read within the same unit that commits those values,
-  with no intervening remote call
+#### Scenario: Raw data survives a refused derived write
+- **WHEN** a derived write is refused because the configuration changed
+- **THEN** the poll's observed sessions, playtime baselines, and daily progress are still
+  committed, because that data is unrecoverable and does not depend on configuration
+
+#### Scenario: Version is recorded with the values
+- **WHEN** derived values are written
+- **THEN** the configuration version that produced them is stored with them
+
+#### Scenario: Disagreement is detectable
+- **WHEN** stored derived values and the current configuration are compared
+- **THEN** a mismatch is identifiable from the stored version rather than being invisible
+
+#### Scenario: Configuration unchanged
+- **WHEN** the configuration is unchanged between computation and writing
+- **THEN** the derived values are written and stamped with that version
 
 ### Requirement: Profile fields are written by their owning domain only
 Each writer of the player profile SHALL update only the fields it owns — sync status,

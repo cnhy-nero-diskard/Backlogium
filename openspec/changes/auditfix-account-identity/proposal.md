@@ -73,6 +73,8 @@ Either way:
 | `data/repo/CredentialsRepository.kt` | detect identity change on save |
 | `ui/onboarding/OnboardingViewModel.kt` | confirmation step; export offer |
 | `data/local/BacklogiumDatabase.kt` | transactional reset covering all account-derived tables |
+| `data/local/entity/HltbData.kt` | drop the `CASCADE` foreign key so HLTB survives the reset |
+| reset marker store | intent marker enabling a resumable cross-store reset |
 | `work/SteamSyncWorker.kt` | re-baseline path after a reset |
 | `openspec/specs/backup-restore/spec.md` | cross-account allowance reconciled |
 
@@ -87,7 +89,8 @@ data, and it deserves proportionate care.
 
 **Should land last.** It is the most invasive change on the audit list for the rarest
 scenario, and it wants `auditfix-sync-write-integrity`'s transactional commit and
-`auditfix-verification-coverage`'s migration tests already in place — the reset must be atomic
+`auditfix-verification-coverage`'s migration tests already in place — the reset must be
+crash-safe
 for the same reason the sync must be, and a wipe-and-rebaseline that half-completes is worse
 than the bug.
 

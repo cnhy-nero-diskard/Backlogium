@@ -6,23 +6,29 @@
 
 ## 2. Serialize the sync
 
-- [ ] 2.1 Give the periodic and one-shot poll requests in `work/SyncScheduler.kt` a single shared unique work name, replacing `UNIQUE_PERIODIC_NAME` / `ONE_TIME_NAME` as separate identities
-- [ ] 2.2 Keep `KEEP` semantics for the manual path so a tap during a running poll is absorbed rather than queued (design.md Decision 2)
-- [ ] 2.3 Verify `syncInProgress` observes the merged name correctly, so the existing progress indicator still reflects both entry points
+- [ ] 2.1 **Keep `UNIQUE_PERIODIC_NAME` and `ONE_TIME_NAME` separate.** Do not merge them — `SyncScheduler.kt:173-177` documents why: unique-work names are one namespace, periodic work sits `ENQUEUED` almost always, and `KEEP` on a shared name would drop nearly every manual sync
+- [ ] 2.2 Make the commit re-read `lastPlaytime`, `lastSyncAt`, and open sessions inside the transaction and recompute the delta against them, so a second poll's commit produces a zero delta (design.md Decision 2, layer 1) — this is the correctness mechanism
+- [ ] 2.3 Add a `@Singleton` `Mutex` with `tryLock()` around the whole poll so a redundant poll returns immediately without spending Steam requests; document that it is process-scoped and an optimization, not the guarantee
 - [ ] 2.4 Make the manual sync affordance reflect an absorbed request — a tap during a poll must not look like a no-op
-- [ ] 2.5 Give `ReconciliationWorker`'s achievement pass the same unique name so it serializes against the sync's own refresh
-- [ ] 2.6 Test: enqueue both entry points together and assert exactly one execution
+- [ ] 2.5 Serialize `ReconciliationWorker`'s achievement pass against the sync's refresh using the same lock, not a shared work name — the same namespace hazard applies, and `SyncScheduler.kt:173-177` documents it for this very worker
+- [ ] 2.6 Test: a manual sync while idle starts promptly and is never dropped — this is the regression test for the rejected shared-name design
+- [ ] 2.7 Test: two polls observing the same increase, both reaching commit, produce one session and one credit
+- [ ] 2.8 Test: the correctness property holds with the mutex disabled, proving it does not depend on the lock
 
 ## 3. Restructure into fetch → compute → commit
 
 - [ ] 3.1 Extract the network reads in `SteamSyncWorker` — owned games, player summary, Steam level — into an explicit fetch phase that performs no writes
 - [ ] 3.2 Move `achievementRepository.syncLibraryGames` fetching out of the current position at `:225` and into the fetch phase, so no remote call remains inside the write path
 - [ ] 3.3 Extract diffing, session actions, day deltas, and the gamification computation into a pure compute phase with no I/O
-- [ ] 3.4 Create a single transactional commit function covering sessions, game baselines, daily progress, profile fields, achievement merge, and the gamification result
-- [ ] 3.5 Run the commit inside `withContext(NonCancellable)`, following the pattern and reasoning already used for the diagnostics record at `:120-125`
-- [ ] 3.6 Read the rule configuration inside the commit rather than at `:139` (design.md Decision 4)
-- [ ] 3.7 Confirm the auto-snapshot write and genre-enrichment scheduling stay outside the transaction — both are best-effort and neither may hold or fail a commit
-- [ ] 3.8 Test: inject a failure between the game-baseline write and the daily-progress write, then assert `lastPlaytime` did **not** advance — this is the regression test for permanent playtime loss and the most important test in this change
+- [ ] 3.4 Create a single transactional commit function covering sessions, game baselines, daily progress, profile fields, and the achievement merge — **excluding** the gamification persist
+- [ ] 3.5 Keep `GamificationUpdater.persistWithinProtocol` outside that transaction: it suspends on `progressMarksStore` (DataStore) and owns a coordinator its own KDoc marks non-reentrant, so nesting it risks deadlock and defeats the write-ahead log built to survive process death (design.md Decision 4a)
+- [ ] 3.6 Add a monotonic version to `RuleConfig` in `SettingsDataStore`, readable atomically with the config, and a Room column recording which version produced stored derived values
+- [ ] 3.7 Read `(config, version)` at the start of the compute phase; re-check the version before writing derived values and refuse the write if it moved, leaving raw data committed and scheduling a recompute
+- [ ] 3.8 Make `UpdateRuleConfigUseCase` increment the version and stamp its own recompute, so both writers participate
+- [ ] 3.9 Confirm the auto-snapshot write and genre-enrichment scheduling stay outside the transaction — both are best-effort and neither may hold or fail a commit
+- [ ] 3.10 Test: inject a failure between the game-baseline write and the daily-progress write, then assert `lastPlaytime` did **not** advance — the regression test for permanent playtime loss and the most important test in this change
+- [ ] 3.11 Test: interruption between the raw commit and the derived write leaves raw data committed and is resolved by the existing protocol on the next entry
+- [ ] 3.12 Test: a configuration change between compute and derived write refuses the derived write, preserves the raw data, and recomputes
 
 ## 4. Split column ownership
 

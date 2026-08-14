@@ -66,11 +66,25 @@ Two constraints that are easy to get wrong:
   network, no `DataStore` access. Room transactions are tied to a connection and a
   suspending call that hops threads can deadlock or silently break atomicity. If the merge
   currently reads settings mid-way, hoist that read out.
-- **The post-import gamification recompute is inside the transaction.** `backup-restore`
-  already requires aggregates be recomputed from merged raw data rather than taken from the
-  file. If the recompute is outside, a crash between merge and recompute leaves raw data
-  restored and aggregates describing the pre-import state — which is precisely the hybrid
-  this change exists to prevent, just moved one step later.
+- **The post-import gamification recompute must be OUTSIDE the transaction.** An earlier
+  draft required it inside, which contradicts the bullet above and is not implementable.
+  `GamificationUpdater.persistWithinProtocol` suspends on `progressMarksStore` (DataStore)
+  and owns a coordinator its own KDoc marks non-reentrant; it is a write-ahead-log protocol
+  whose entire purpose is to survive process death *precisely because* Room and DataStore
+  cannot commit together. Nesting it inside `withTransaction` risks deadlock and defeats the
+  protocol it depends on.
+
+  So the shape is: **merge raw data in one transaction, then recompute through the existing
+  protocol.** A crash between the two leaves raw data restored and aggregates describing the
+  pre-import state — which the WAL already detects and resolves via
+  `resolvePendingTransition` on the next entry. That intermediate state is recoverable by
+  construction, which is different in kind from the un-recoverable hybrid this change exists
+  to prevent: there, a half-written *raw* merge cannot be repaired because nothing records
+  what was intended.
+
+  The spec must therefore require that aggregates are recomputed and that an interruption
+  between the two steps is detected and resolved — not that they commit atomically, which no
+  API here can deliver.
 
 **Size**: a full library merge in one transaction is a large write. Acceptable — restore is
 a rare, explicitly-initiated, foreground operation, and the user is already waiting. Do not

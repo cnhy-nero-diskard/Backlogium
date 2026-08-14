@@ -132,8 +132,9 @@ that can disagree with the tag, and disagreement between them is exactly the bug
         ▼
   release.yml validates (on master? semver?)
         │
-        ├─ versionName ← "1.4.2"           (strip the leading v)
-        └─ versionCode ← 1*10000 + 4*100 + 2 = 10402
+        ├─ reject if major/minor/patch >= 1000   (else the encoding collides)
+        ├─ versionName ← "1.4.2"                 (strip the leading v)
+        └─ versionCode ← 1*1_000_000 + 4*1_000 + 2 = 1_004_002
                             │
                             ▼
         ./gradlew assembleRelease -PversionName=... -PversionCode=...
@@ -142,10 +143,27 @@ that can disagree with the tag, and disagreement between them is exactly the bug
   build.gradle.kts: project property if present, else a local dev default
 ```
 
-`major*10000 + minor*100 + patch` is monotonic for the whole plausible life of this
-project and reads directly as the version, which matters when the only place you can
-see it is a Play console error message. It caps minor and patch at 99 — an acceptable
-ceiling, and one worth writing down rather than discovering.
+A positional encoding is right here: the code reads directly as the version, which matters when
+the only place you can see it is a Play console error message.
+
+**But the field widths must be enforced, and an earlier draft of this design merely documented
+them.** With `major*10000 + minor*100 + patch`, monotonicity holds only while `minor` and
+`patch` stay below 100 — `v1.100.0` and `v2.0.0` both yield 20000. The spec requires that later
+releases *always* order above earlier ones, unconditionally, so a comment noting the ceiling
+does not satisfy it.
+
+Two changes:
+
+- **Widen to `major*1_000_000 + minor*1_000 + patch`**, giving each field three digits. Still
+  comfortably inside `Int` (a `versionCode` is capped at 2,100,000,000, so `major` may reach
+  2099) and still legible.
+- **Validate the tag in CI and fail the release** if any field reaches 1000. The release
+  workflow already validates that the tag is reachable from `master` and matches `vX.Y.Z`;
+  this is one more condition in the same place, and it turns a silent collision into a loud
+  refusal at the only moment anyone can act on it.
+
+Enforcement is the point. A constraint the build checks is a constraint; a constraint in a
+comment is a note.
 
 Local builds with no properties supplied fall back to `versionCode = 1` /
 `versionName = "0.0.0-dev"`. A dev build should be obviously a dev build.

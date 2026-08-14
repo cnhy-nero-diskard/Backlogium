@@ -31,15 +31,16 @@
 ## 5. Version metadata
 
 - [ ] 5.1 Make `versionName` and `versionCode` in `app/build.gradle.kts` read project properties when supplied, falling back to `0.0.0-dev` / `1` for local builds
-- [ ] 5.2 Add the tag-to-version derivation to `.github/workflows/release.yml`: strip the leading `v` for `versionName`, compute `major*10000 + minor*100 + patch` for `versionCode`, and pass both as Gradle project properties
-- [ ] 5.3 Record the `minor`/`patch` ceiling of 99 as a comment beside the derivation so the limit is discovered by reading rather than by overflowing
+- [ ] 5.2 Add the tag-to-version derivation to `.github/workflows/release.yml`: strip the leading `v` for `versionName`, compute `major*1_000_000 + minor*1_000 + patch` for `versionCode`, and pass both as Gradle project properties
+- [ ] 5.3 **Enforce the encoding's range in CI**: fail the release when any of major, minor, or patch reaches 1000, alongside the existing master-reachability and semver checks — documenting the ceiling in a comment is not sufficient, since `v1.100.0` and `v2.0.0` collide under the narrower encoding and the spec requires unconditional ordering
 - [ ] 5.4 Confirm `scripts/bump-tag.sh` and `scripts/bump-tag.ps1` need no change, and add a comment to each stating that version metadata is derived in CI so a future reader does not add Gradle editing back
 - [ ] 5.5 Verify end to end on a throwaway tag that the produced APK reports the expected version name and code
+- [ ] 5.6 Test the derivation and the guard: adjacent versions order correctly, a major increment outranks every version below it, and an out-of-range component fails the release with a message naming it
 
 ## 6. Verification and close-out
 
 - [ ] 6.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm green
 - [ ] 6.2 Run `./gradlew assembleDebug` and `assembleRelease` and confirm both succeed
 - [ ] 6.3 Re-run the audit's five checks against the tree: hardcoded version gone, credential fields debug-only, backup rules non-template, snapshots under `noBackupFilesDir`, singular `steamid` unstorable
-- [ ] 6.4 Run `openspec validate --change auditfix-secrets-and-packaging`
+- [ ] 6.4 Run `openspec validate auditfix-secrets-and-packaging`
 - [ ] 6.5 Note in the commit message that the device-transfer convenience regression (design.md Decision 1) is a deliberate trade, so the reasoning survives in git

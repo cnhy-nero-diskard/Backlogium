@@ -29,12 +29,18 @@ subsequent polls would then compare one account's playtime against another's bas
 - **WHEN** credentials are saved and no SteamID was previously configured
 - **THEN** they are stored without confirmation, as there is no previous account
 
-#### Scenario: Account change applies atomically
-- **WHEN** a confirmed account change is applied
-- **THEN** the credential change and its data consequence apply together, leaving no state in
-  which credentials name one account while data reflects another
+#### Scenario: Account change survives interruption
+- **WHEN** a confirmed account change is interrupted at any point
+- **THEN** the next start detects the incomplete change and completes it, rather than leaving
+  credentials naming one account while data reflects another
+
+#### Scenario: No sync runs against an incomplete account change
+- **WHEN** an account change has not finished applying
+- **THEN** no playtime poll is permitted to diff against the stored data until it has, so a
+  half-applied change cannot produce a baseline from one account and a poll from another
 
 #### Scenario: Account-independent data is retained
 - **WHEN** a confirmed account change discards account-specific data
 - **THEN** data that is a property of a game rather than of an account, such as external
-  completion-time estimates, is retained
+  completion-time estimates, is retained and is not removed as a side effect of discarding the
+  library it was linked to
