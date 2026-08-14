@@ -2,8 +2,10 @@ package com.example.backlogium
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.ui.settings.RuleDraft
 import com.example.backlogium.ui.settings.RuleField
@@ -50,7 +52,9 @@ class SettingsScreenTest {
         // The primary quest controls are unaffected by the collapse.
         composeRule.onNodeWithText(RuleField.QUEST_GOAL_MINUTES.label).assertIsDisplayed()
 
-        composeRule.onNodeWithText("XP and level curve").performClick()
+        composeRule.onNodeWithTag("settings-advanced-toggle")
+            .performScrollTo()
+            .performClick()
         composeRule.waitForIdle()
 
         assertEquals(listOf(true), expansions)
@@ -92,6 +96,7 @@ class SettingsScreenTest {
         onDiscardChanges = {},
         onConfirmSave = {},
         onDismissConfirmation = {},
+        onLiveMonitorEnabledChanged = {},
         onImportHistory = {},
         onResetHistoryImport = {},
         onAutoSnapshotEnabledChanged = {},

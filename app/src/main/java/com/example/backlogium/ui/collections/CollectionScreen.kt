@@ -1098,7 +1098,8 @@ fun CollectionFormContent(
             modifier = Modifier
                 .fillMaxSize()
                 .imePadding()
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 16.dp)
+                .testTag("collection-form-list"),
             state = formListState,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {

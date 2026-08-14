@@ -38,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -445,6 +446,7 @@ private fun AdvancedCard(state: SettingsUiState, actions: SettingsActions) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .testTag("settings-advanced-toggle")
                     .clickable { actions.onAdvancedExpandedChanged(!state.advancedExpanded) },
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
