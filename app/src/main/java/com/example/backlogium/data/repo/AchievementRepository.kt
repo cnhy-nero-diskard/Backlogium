@@ -16,11 +16,13 @@ import com.example.backlogium.data.remote.dto.AchievementSchemaDto
 import com.example.backlogium.data.remote.dto.PlayerAchievementDto
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -232,7 +234,7 @@ class AchievementRepository @Inject constructor(
     )
 
     data class ReconciliationFetch(
-        val refreshes: List<AchievementRefresh>,
+        val refreshed: Int,
         val total: Int,
     )
 
@@ -253,20 +255,36 @@ class AchievementRepository @Inject constructor(
         scope: SyncRunRecorder.RunScope? = null,
         onProgress: ((refreshed: Int, total: Int) -> Unit)? = null,
     ): ReconciliationResult {
-        val fetched = fetchReconciliationGames(apiKey, steamId, scope, onProgress)
-        applyRefreshes(fetched.refreshes)
-        return ReconciliationResult(fetched.refreshes.size, fetched.total)
+        val fetched = fetchReconciliationGames(
+            apiKey = apiKey,
+            steamId = steamId,
+            scope = scope,
+            onRefresh = { refresh ->
+                withContext(NonCancellable) {
+                    applyRefreshes(listOf(refresh))
+                }
+            },
+            onProgress = onProgress,
+        )
+        return ReconciliationResult(fetched.refreshed, fetched.total)
     }
 
-    /** Fetch the full-reconciliation payloads without applying their tombstones. */
+    /**
+     * Fetch and hand off each full-reconciliation payload before the next game starts.
+     *
+     * The callback is the persistence boundary. Callers that own a larger transaction may commit
+     * the one refresh there; the worker uses a non-cancellable transaction so a completed fetch is
+     * never stranded in an in-memory list when WorkManager cancels the sweep.
+     */
     suspend fun fetchReconciliationGames(
         apiKey: String,
         steamId: String,
         scope: SyncRunRecorder.RunScope? = null,
+        onRefresh: suspend (AchievementRefresh) -> Unit,
         onProgress: ((refreshed: Int, total: Int) -> Unit)? = null,
     ): ReconciliationFetch {
         val games = gameDao.getAll()
-        if (games.isEmpty()) return ReconciliationFetch(emptyList(), 0)
+        if (games.isEmpty()) return ReconciliationFetch(refreshed = 0, total = 0)
 
         val metadataByAppId = gameAchievementSyncDao.getAll(games.map { it.appId }.toSet())
             .associateBy { it.appId }
@@ -290,16 +308,21 @@ class AchievementRepository @Inject constructor(
         // Report the total up front too, so a cancellation before any single game finishes still
         // leaves the caller with an accurate total rather than the callback's implicit initial 0.
         onProgress?.invoke(0, cold.size)
-        val refreshes = fetchGames(
+        var refreshed = 0
+        fetchGames(
             apiKey = apiKey,
             steamId = steamId,
             appIds = cold,
             schemaFetchedAtByAppId = cold.associateWith { metadataByAppId[it]?.schemaFetchedAt },
             scope = scope,
+            onRefresh = { refresh ->
+                onRefresh(refresh)
+                refreshed++
+            },
             onGameDone = { refreshedSoFar -> onProgress?.invoke(refreshedSoFar, cold.size) },
             fullReconciliation = true,
         )
-        return ReconciliationFetch(refreshes, cold.size)
+        return ReconciliationFetch(refreshed = refreshed, total = cold.size)
     }
 
     /**
@@ -326,27 +349,39 @@ class AchievementRepository @Inject constructor(
         appIds: List<Long>,
         schemaFetchedAtByAppId: Map<Long, Long?>,
         scope: SyncRunRecorder.RunScope? = null,
+        onRefresh: (suspend (AchievementRefresh) -> Unit)? = null,
         onGameDone: ((refreshedSoFar: Int) -> Unit)? = null,
         fullReconciliation: Boolean = false,
     ): List<AchievementRefresh> {
         val refreshes = mutableListOf<AchievementRefresh>()
+        var refreshedSoFar = 0
         for (appId in appIds) {
-            try {
-                val refresh = fetchGame(
+            val refresh = try {
+                fetchGame(
                     apiKey = apiKey,
                     steamId = steamId,
                     appId = appId,
                     schemaFetchedAt = schemaFetchedAtByAppId[appId],
                     scope = scope,
                 )
-                if (refresh != null) {
-                    refreshes += refresh.copy(fullReconciliation = fullReconciliation)
-                    onGameDone?.invoke(refreshes.size)
-                }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
                 // Per-game failure is swallowed so one bad response cannot fail the batch.
+                null
+            }
+            if (refresh != null) {
+                val completed = refresh.copy(fullReconciliation = fullReconciliation)
+                if (onRefresh != null) {
+                    // A persistence callback is deliberately outside the per-game failure catch:
+                    // database failures must fail the worker and be retried, not be misreported as
+                    // an innocuous Steam game that had no stats.
+                    onRefresh(completed)
+                } else {
+                    refreshes += completed
+                }
+                refreshedSoFar++
+                onGameDone?.invoke(refreshedSoFar)
             }
         }
         return refreshes

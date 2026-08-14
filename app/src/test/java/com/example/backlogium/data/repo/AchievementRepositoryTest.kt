@@ -25,6 +25,7 @@ import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.domain.TimeProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -252,6 +253,39 @@ class AchievementRepositoryTest {
         api.release()
         job.join()
         assertEquals(2 to 2, progress.last())
+    }
+
+    @Test
+    fun `reconciliation commits a completed refresh before cancellation`() = runTest {
+        val api = FakeSteamApi()
+        val gameDao = FakeGameDao(
+            game(1, forever = 100, weeks = 0),
+            game(2, forever = 200, weeks = 0),
+        )
+        val syncDao = FakeGameAchievementSyncDao()
+        val repo = repository(api, gameDao = gameDao, syncDao = syncDao)
+        var cancelled = false
+
+        try {
+            repo.fetchReconciliationGames(
+                apiKey = KEY,
+                steamId = STEAM_ID,
+                onRefresh = { refresh ->
+                    repo.applyRefreshes(listOf(refresh))
+                    throw CancellationException("constraints changed")
+                },
+            )
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
+
+        assertTrue("the cancellation must reach the worker", cancelled)
+        assertEquals(
+            "completed work is durable before the sweep propagates cancellation",
+            NOW,
+            syncDao.get(1)?.playerStateFetchedAt,
+        )
+        assertNull("the next game was not reached", syncDao.get(2))
     }
 
     @Test
