@@ -257,9 +257,7 @@ class LiveStatusRepository @Inject constructor(
         val stored = PlayerIdentity(profile.personaName, profile.avatarUrl)
         val merged = mergePlayerIdentity(player, stored)
         if (merged == stored) return
-        profileDao.upsert(
-            profile.copy(personaName = merged.personaName, avatarUrl = merged.avatarUrl),
-        )
+        profileDao.updateHeaderIdentity(merged.personaName, merged.avatarUrl)
     }
 
     companion object {
