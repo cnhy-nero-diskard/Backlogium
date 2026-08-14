@@ -88,7 +88,7 @@ The concrete confirmed shapes:
 
 | Path | Change |
 |---|---|
-| `work/SyncScheduler.kt` | single unique work name for both poll entry points |
+| `work/SyncScheduler.kt` | keep the two distinct unique work names; surface absorbed "Sync now" requests during an in-flight poll |
 | `work/SteamSyncWorker.kt` | persistence extracted into one transactional unit |
 | `work/ReconciliationWorker.kt` | serialized against in-sync achievement refresh |
 | `data/local/dao/GameDao.kt` | targeted Steam-field update query |
