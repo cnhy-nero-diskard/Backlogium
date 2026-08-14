@@ -256,6 +256,18 @@ class MigrationTest {
                 "('2026-08-13', 90, 60, 1)",
         )
         execSQL(
+            "INSERT INTO sync_runs " +
+                "(id, startedAt, durationMs, trigger, requestCount, requestMillis, " +
+                "gamesExamined, gamesUpdated, outcome, errorMessage) VALUES " +
+                "(23, 1700000060000, 4567, 'SCHEDULED', 9, 3210, 440, 2, " +
+                "'SUCCESS', 'legacy warning')",
+        )
+        execSQL(
+            "INSERT INTO request_breakdowns " +
+                "(id, runId, endpoint, status, requestCount, durationMs) VALUES " +
+                "(31, 23, 'player-summaries', 200, 4, 1234)",
+        )
+        execSQL(
             "INSERT INTO achievements " +
                 "(appId, apiName, displayName, iconUrl, unlocked, unlockedAt, globalPercent, " +
                 "snapshotPercent, description, hidden, fetchedAt) VALUES " +
@@ -318,6 +330,83 @@ class MigrationTest {
             assertEquals(90, cursor.getInt(1))
             assertEquals(60, cursor.getInt(2))
             assertEquals(1, cursor.getInt(3))
+        }
+
+        query(
+            "SELECT id, startedAt, durationMs, trigger, requestCount, requestMillis, " +
+                "gamesExamined, gamesUpdated, outcome, errorMessage, hotCount, warmCount, " +
+                "coldCount, neverCount FROM sync_runs WHERE id = 23",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(23L, cursor.getLong(0))
+            assertEquals(1700000060000L, cursor.getLong(1))
+            assertEquals(4567L, cursor.getLong(2))
+            assertEquals("SCHEDULED", cursor.getString(3))
+            assertEquals(9, cursor.getInt(4))
+            assertEquals(3210L, cursor.getLong(5))
+            assertEquals(440, cursor.getInt(6))
+            assertEquals(2, cursor.getInt(7))
+            assertEquals("SUCCESS", cursor.getString(8))
+            assertEquals("legacy warning", cursor.getString(9))
+            assertEquals(0, cursor.getInt(10))
+            assertEquals(0, cursor.getInt(11))
+            assertEquals(0, cursor.getInt(12))
+            assertEquals(0, cursor.getInt(13))
+            assertFalse(cursor.moveToNext())
+        }
+
+        query("PRAGMA table_info(`sync_runs`)").use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            val defaultIndex = cursor.getColumnIndexOrThrow("dflt_value")
+            val tierDefaults = mutableMapOf<String, String?>()
+            while (cursor.moveToNext()) {
+                val name = cursor.getString(nameIndex)
+                if (name in setOf("hotCount", "warmCount", "coldCount", "neverCount")) {
+                    tierDefaults[name] = cursor.getString(defaultIndex)
+                }
+            }
+            assertEquals(
+                mapOf(
+                    "hotCount" to "0",
+                    "warmCount" to "0",
+                    "coldCount" to "0",
+                    "neverCount" to "0",
+                ),
+                tierDefaults,
+            )
+        }
+
+        query(
+            "SELECT id, runId, endpoint, status, requestCount, durationMs " +
+                "FROM request_breakdowns WHERE id = 31",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(31L, cursor.getLong(0))
+            assertEquals(23L, cursor.getLong(1))
+            assertEquals("player-summaries", cursor.getString(2))
+            assertEquals(200, cursor.getInt(3))
+            assertEquals(4, cursor.getInt(4))
+            assertEquals(1234L, cursor.getLong(5))
+            assertFalse(cursor.moveToNext())
+        }
+
+        query(
+            "SELECT COUNT(*) FROM request_breakdowns b " +
+                "INNER JOIN sync_runs r ON r.id = b.runId " +
+                "WHERE b.id = 31 AND r.id = 23",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(1, cursor.getInt(0))
+        }
+
+        query("PRAGMA foreign_key_list(`request_breakdowns`)").use { cursor ->
+            val tableIndex = cursor.getColumnIndexOrThrow("table")
+            val fromIndex = cursor.getColumnIndexOrThrow("from")
+            val toIndex = cursor.getColumnIndexOrThrow("to")
+            assertTrue(cursor.moveToFirst())
+            assertEquals("sync_runs", cursor.getString(tableIndex))
+            assertEquals("runId", cursor.getString(fromIndex))
+            assertEquals("id", cursor.getString(toIndex))
         }
 
         query(

@@ -94,6 +94,7 @@ Every migration test in this change therefore follows:
   2. insert representative rows      ← the step that makes this a real test
        - one game with playtime, backfillMinutes, isGoal set
        - one session, one daily-progress row
+       - one pre-v14 sync run with a related request-breakdown row
        - one achievement with a rarity snapshot
        - the singleton player profile with XP and longestStreak
   3. run the real migrations to current

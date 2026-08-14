@@ -14,7 +14,7 @@
 ## 3. Migration tests
 
 - [x] 3.1 Create `app/src/androidTest/java/.../data/local/MigrationTest.kt` with a `MigrationTestHelper` configured against the committed schema directory
-- [x] 3.2 Write a reusable seeding helper that inserts the representative record set from design.md: a game with playtime plus `backfillMinutes` and `isGoal`, a session, a daily-progress row, an achievement with a rarity snapshot, and the singleton profile with XP and `longestStreak`
+- [x] 3.2 Write a reusable seeding helper that inserts the representative record set from design.md: a game with playtime plus `backfillMinutes` and `isGoal`, a session, a daily-progress row, a pre-v14 `sync_runs` row with a related `request_breakdowns` row, an achievement with a rarity snapshot, and the singleton profile with XP and `longestStreak`
 - [x] 3.3 Write a reusable assertion helper that reads every seeded value back and compares it to what was inserted — schema validation alone must never be the only assertion
 - [x] 3.4 Add the deep-history test using a raw `execSQL` fixture for the version chosen in task 1.3, running the full chain to current
 - [x] 3.5 Confirm the tests fail when deliberately broken — temporarily alter a migration to drop a column's data and verify the assertion catches it, then revert
