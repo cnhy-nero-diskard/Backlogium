@@ -209,10 +209,11 @@ with these four still open: the logic each one exercises is already unit-tested 
 note), so residual risk is low — this pass confirms real-device behavior matches, not that the
 logic is correct.
 
-- [ ] 11.1 Unlock an achievement, confirm it appears within one sync interval
+- [x] 11.1 Unlock an achievement, confirm it appears within one sync interval
       *Device-bound: needs a real Steam unlock. The mechanism underneath (a playtime delta puts the
       game in the hot tier, so it is refreshed that same sync) is covered by
       `AchievementFreshnessTest`; only the end-to-end latency is unverified.*
+      *Observed on device 2026-08-14: real Steam unlock appeared within one sync interval.*
 - [x] 11.2 Confirm typical sync duration no longer alternates between ~2s and ~4min
       *Device-bound: wall-clock timing. 11.6's request-count drop is the proxy that makes this
       near-certain, but the duration itself is unmeasured.*
