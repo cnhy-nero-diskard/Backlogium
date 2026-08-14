@@ -68,7 +68,7 @@ class QuestEventProvenanceTest {
                     dayTwo,
                     level = 1,
                     questMet = false,
-                    changedDays = listOf(day(dayOne, met = true)),
+                    changedDays = listOf(QuestStatusUpdate(dayOne.toString(), questMet = true)),
                 ),
                 source,
             )
@@ -164,6 +164,6 @@ class QuestEventProvenanceTest {
         date,
         level = 1,
         questMet = true,
-        changedDays = listOf(day(date, met = true)),
+        changedDays = listOf(QuestStatusUpdate(date.toString(), questMet = true)),
     )
 }

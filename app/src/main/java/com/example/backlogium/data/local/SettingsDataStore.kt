@@ -17,6 +17,7 @@ import com.example.backlogium.domain.PendingStreakBreak
 import com.example.backlogium.domain.PendingTransition
 import com.example.backlogium.domain.ProgressMarks
 import com.example.backlogium.domain.RecomputeSource
+import com.example.backlogium.domain.VersionedRuleConfig
 import com.example.backlogium.domain.librarySortKeyOrNull
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
@@ -67,6 +68,7 @@ class SettingsDataStore @Inject constructor(
         val NOTIFICATION_PERMISSION_REQUESTED =
             booleanPreferencesKey("notification_permission_requested")
         val LIVE_MONITOR_ENABLED = booleanPreferencesKey("live_monitor_enabled")
+        val RULE_CONFIG_VERSION = longPreferencesKey("rule_config_version")
 
         // Progress-event presentation state, not user-editable settings. These marks are the
         // durable acknowledgement baseline and intentionally live in DataStore, not Room.
@@ -91,26 +93,37 @@ class SettingsDataStore @Inject constructor(
         val PENDING_TRANSITION_DATE = stringPreferencesKey("pending_transition_date")
     }
 
-    val ruleConfigFlow: Flow<RuleConfig> = context.dataStore.data.map { prefs ->
+    val ruleConfigWithVersionFlow: Flow<VersionedRuleConfig> = context.dataStore.data.map { prefs ->
         val defaults = RuleConfig()
-        RuleConfig(
-            xpPerMinute = prefs[Keys.XP_PER_MINUTE] ?: defaults.xpPerMinute,
-            levelBase = prefs[Keys.LEVEL_BASE] ?: defaults.levelBase,
-            questThresholdMin = prefs[Keys.QUEST_THRESHOLD_MIN] ?: defaults.questThresholdMin,
-            questMode = prefs[Keys.QUEST_MODE]?.let { runCatching { QuestMode.valueOf(it) }.getOrNull() }
-                ?: defaults.questMode,
-            streakGraceDays = prefs[Keys.STREAK_GRACE_DAYS] ?: defaults.streakGraceDays,
-            commonAchievementXp = prefs[Keys.COMMON_ACHIEVEMENT_XP] ?: defaults.commonAchievementXp,
-            uncommonAchievementXp = prefs[Keys.UNCOMMON_ACHIEVEMENT_XP]
-                ?: defaults.uncommonAchievementXp,
-            rareAchievementXp = prefs[Keys.RARE_ACHIEVEMENT_XP] ?: defaults.rareAchievementXp,
-            epicAchievementXp = prefs[Keys.EPIC_ACHIEVEMENT_XP] ?: defaults.epicAchievementXp,
-            legendaryAchievementXp = prefs[Keys.LEGENDARY_ACHIEVEMENT_XP]
-                ?: defaults.legendaryAchievementXp,
+        VersionedRuleConfig(
+            config = RuleConfig(
+                xpPerMinute = prefs[Keys.XP_PER_MINUTE] ?: defaults.xpPerMinute,
+                levelBase = prefs[Keys.LEVEL_BASE] ?: defaults.levelBase,
+                questThresholdMin = prefs[Keys.QUEST_THRESHOLD_MIN] ?: defaults.questThresholdMin,
+                questMode = prefs[Keys.QUEST_MODE]?.let { runCatching { QuestMode.valueOf(it) }.getOrNull() }
+                    ?: defaults.questMode,
+                streakGraceDays = prefs[Keys.STREAK_GRACE_DAYS] ?: defaults.streakGraceDays,
+                commonAchievementXp = prefs[Keys.COMMON_ACHIEVEMENT_XP] ?: defaults.commonAchievementXp,
+                uncommonAchievementXp = prefs[Keys.UNCOMMON_ACHIEVEMENT_XP]
+                    ?: defaults.uncommonAchievementXp,
+                rareAchievementXp = prefs[Keys.RARE_ACHIEVEMENT_XP] ?: defaults.rareAchievementXp,
+                epicAchievementXp = prefs[Keys.EPIC_ACHIEVEMENT_XP] ?: defaults.epicAchievementXp,
+                legendaryAchievementXp = prefs[Keys.LEGENDARY_ACHIEVEMENT_XP]
+                    ?: defaults.legendaryAchievementXp,
+            ),
+            version = prefs[Keys.RULE_CONFIG_VERSION] ?: 0L,
         )
     }
 
+    val ruleConfigFlow: Flow<RuleConfig> = ruleConfigWithVersionFlow.map { it.config }
+
     suspend fun setRuleConfig(config: RuleConfig) {
+        setRuleConfigAndGetVersion(config)
+    }
+
+    /** Atomically writes the rules and advances their monotonic provenance version. */
+    suspend fun setRuleConfigAndGetVersion(config: RuleConfig): VersionedRuleConfig {
+        lateinit var result: VersionedRuleConfig
         context.dataStore.edit { prefs ->
             prefs[Keys.XP_PER_MINUTE] = config.xpPerMinute
             prefs[Keys.LEVEL_BASE] = config.levelBase
@@ -122,7 +135,11 @@ class SettingsDataStore @Inject constructor(
             prefs[Keys.RARE_ACHIEVEMENT_XP] = config.rareAchievementXp
             prefs[Keys.EPIC_ACHIEVEMENT_XP] = config.epicAchievementXp
             prefs[Keys.LEGENDARY_ACHIEVEMENT_XP] = config.legendaryAchievementXp
+            val version = (prefs[Keys.RULE_CONFIG_VERSION] ?: 0L) + 1L
+            prefs[Keys.RULE_CONFIG_VERSION] = version
+            result = VersionedRuleConfig(config, version)
         }
+        return result
     }
 
     /** Durable progress-event marks. Unset level/streak keys mean no baseline has been seeded yet. */

@@ -346,7 +346,9 @@ private fun SyncCard(
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
-                Button(onClick = onSyncNow, enabled = !syncing) { Text("Sync now") }
+                Button(onClick = onSyncNow, enabled = !syncing) {
+                    Text(if (syncing) "Sync in progress" else "Sync now")
+                }
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = onReconcileNow, enabled = !reconciling) {
                     Text(if (reconciling) "Refreshing…" else "Full achievement refresh")

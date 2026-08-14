@@ -62,6 +62,65 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun v14ToV15_preservesAchievementSnapshotAndSeedsNewColumns() {
+        val databaseName = "migration-v14-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 14)
+        try {
+            database.execSQL(
+                "INSERT INTO games " +
+                    "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+                    "isGoal, targetMinutes, lastSyncedAt, backfillMinutes) VALUES " +
+                    "(440, 'Game', '', 100, 0, 100, 1, 200, 1700000000000, 12)",
+            )
+            database.execSQL(
+                "INSERT INTO achievements " +
+                    "(appId, apiName, displayName, iconUrl, unlocked, unlockedAt, globalPercent, " +
+                    "snapshotPercent, description, hidden, fetchedAt) VALUES " +
+                    "(440, 'ACH_WIN', 'Win', '', 1, 1700000000000, 12.5, 13.75, " +
+                    "'Win', 0, 1700000001000)",
+            )
+            database.execSQL(
+                "INSERT INTO player_profile " +
+                    "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                    "lastSyncAt, lastSyncError, playtimeBackfilled, personaName, avatarUrl) VALUES " +
+                    "(0, '76561198000000000', 42, 100, 2, 1, 3, 1700000000000, " +
+                    "NULL, 0, 'Player', 'avatar')",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                15,
+                true,
+                BacklogiumDatabase.MIGRATION_14_15,
+            )
+            try {
+                migrated.query(
+                    "SELECT snapshotPercent, retired FROM achievements " +
+                        "WHERE appId = 440 AND apiName = 'ACH_WIN'",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(13.75, cursor.getDouble(0), 0.0)
+                    assertEquals(0, cursor.getInt(1))
+                }
+                migrated.query(
+                    "SELECT gamificationConfigVersion FROM player_profile WHERE id = 0",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0L, cursor.getLong(0))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private fun openRawV13Database(databaseName: String): SupportSQLiteOpenHelper {
         val callback = object : SupportSQLiteOpenHelper.Callback(13) {
             override fun onCreate(db: SupportSQLiteDatabase) {

@@ -25,6 +25,7 @@ import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.domain.TimeProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -33,6 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -254,6 +256,39 @@ class AchievementRepositoryTest {
     }
 
     @Test
+    fun `reconciliation commits a completed refresh before cancellation`() = runTest {
+        val api = FakeSteamApi()
+        val gameDao = FakeGameDao(
+            game(1, forever = 100, weeks = 0),
+            game(2, forever = 200, weeks = 0),
+        )
+        val syncDao = FakeGameAchievementSyncDao()
+        val repo = repository(api, gameDao = gameDao, syncDao = syncDao)
+        var cancelled = false
+
+        try {
+            repo.fetchReconciliationGames(
+                apiKey = KEY,
+                steamId = STEAM_ID,
+                onRefresh = { refresh ->
+                    repo.applyRefreshes(listOf(refresh))
+                    throw CancellationException("constraints changed")
+                },
+            )
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
+
+        assertTrue("the cancellation must reach the worker", cancelled)
+        assertEquals(
+            "completed work is durable before the sweep propagates cancellation",
+            NOW,
+            syncDao.get(1)?.playerStateFetchedAt,
+        )
+        assertNull("the next game was not reached", syncDao.get(2))
+    }
+
+    @Test
     fun `reconciliation with an empty library does no work`() = runTest {
         val api = FakeSteamApi()
         val repo = repository(api, gameDao = FakeGameDao())
@@ -280,15 +315,115 @@ class AchievementRepositoryTest {
         assertTrue("the batch must not outlive its cancelled caller", job.isCancelled)
     }
 
+    @Test
+    fun `full reconciliation retires absent rows and a later observation reinstates them`() = runTest {
+        val old = Achievement(
+            appId = 1L,
+            apiName = "OLD",
+            unlocked = true,
+            snapshotPercent = 7.5,
+            fetchedAt = 10L,
+        )
+        val achievementDao = FakeAchievementDao(listOf(old))
+        val repo = repository(FakeSteamApi(), achievementDao = achievementDao)
+
+        repo.applyRefreshes(
+            listOf(
+                AchievementRefresh(
+                    appId = 1L,
+                    fetchedAt = 15L,
+                    achievements = listOf(PlayerAchievementDto("NEW", achieved = 1, unlocktime = 2L)),
+                    globalPercentByName = emptyMap(),
+                    schemaByName = emptyMap(),
+                    schemaFetchedAt = null,
+                ),
+            ),
+        )
+        assertFalse("partial refresh absence must not retire a row", achievementDao.row(1L, "OLD")!!.retired)
+
+        repo.applyRefreshes(
+            listOf(
+                AchievementRefresh(
+                    appId = 1L,
+                    fetchedAt = 20L,
+                    achievements = listOf(PlayerAchievementDto("NEW", achieved = 1, unlocktime = 2L)),
+                    globalPercentByName = emptyMap(),
+                    schemaByName = emptyMap(),
+                    schemaFetchedAt = null,
+                    fullReconciliation = true,
+                ),
+            ),
+        )
+        assertTrue(achievementDao.row(1L, "OLD")!!.retired)
+        assertEquals(7.5, achievementDao.row(1L, "OLD")!!.snapshotPercent!!, 0.0)
+
+        repo.applyRefreshes(
+            listOf(
+                AchievementRefresh(
+                    appId = 1L,
+                    fetchedAt = 30L,
+                    achievements = listOf(PlayerAchievementDto("NEW", achieved = 1, unlocktime = 2L)),
+                    globalPercentByName = emptyMap(),
+                    schemaByName = emptyMap(),
+                    schemaFetchedAt = null,
+                ),
+            ),
+        )
+        assertTrue("partial refresh must not retire another absent row", achievementDao.row(1L, "OLD")!!.retired)
+
+        repo.applyRefreshes(
+            listOf(
+                AchievementRefresh(
+                    appId = 1L,
+                    fetchedAt = 40L,
+                    achievements = listOf(PlayerAchievementDto("OLD", achieved = 1, unlocktime = 2L)),
+                    globalPercentByName = emptyMap(),
+                    schemaByName = emptyMap(),
+                    schemaFetchedAt = null,
+                ),
+            ),
+        )
+        val reinstated = achievementDao.row(1L, "OLD")!!
+        assertFalse(reinstated.retired)
+        assertEquals(7.5, reinstated.snapshotPercent!!, 0.0)
+    }
+
+    @Test
+    fun `a late older merge cannot overwrite a newer observation`() = runTest {
+        val achievementDao = FakeAchievementDao()
+        val repo = repository(FakeSteamApi(), achievementDao = achievementDao)
+        val newer = AchievementRefresh(
+            appId = 1L,
+            fetchedAt = 20L,
+            achievements = listOf(PlayerAchievementDto("ACH", achieved = 1, unlocktime = 2L)),
+            globalPercentByName = mapOf("ACH" to 5.0),
+            schemaByName = emptyMap(),
+            schemaFetchedAt = null,
+        )
+        val older = newer.copy(
+            fetchedAt = 10L,
+            achievements = listOf(PlayerAchievementDto("ACH", achieved = 0, unlocktime = 0L)),
+        )
+
+        repo.applyRefreshes(listOf(newer))
+        repo.applyRefreshes(listOf(older))
+
+        val stored = achievementDao.row(1L, "ACH")!!
+        assertTrue(stored.unlocked)
+        assertEquals(5.0, stored.snapshotPercent!!, 0.0)
+        assertEquals(20L, stored.fetchedAt)
+    }
+
     // --- helpers -----------------------------------------------------------------------------
 
     private fun repository(
         api: FakeSteamApi,
         gameDao: GameDao = FakeGameDao(),
         syncDao: GameAchievementSyncDao = FakeGameAchievementSyncDao(),
+        achievementDao: FakeAchievementDao = FakeAchievementDao(),
     ) = AchievementRepository(
         steamApi = api,
-        achievementDao = FakeAchievementDao(),
+        achievementDao = achievementDao,
         gameAchievementSyncDao = syncDao,
         gameDao = gameDao,
         time = FixedTimeProvider(NOW),
@@ -453,8 +588,11 @@ class AchievementRepositoryTest {
         }
     }
 
-    private class FakeAchievementDao : AchievementDao {
-        private val store = mutableListOf<Achievement>()
+    private class FakeAchievementDao(initial: List<Achievement> = emptyList()) : AchievementDao {
+        private val store = initial.toMutableList()
+
+        fun row(appId: Long, apiName: String): Achievement? =
+            store.firstOrNull { it.appId == appId && it.apiName == apiName }
 
         override suspend fun upsertAll(achievements: List<Achievement>) {
             achievements.forEach { incoming ->
@@ -479,6 +617,8 @@ class AchievementRepositoryTest {
     private class FakeGameDao(private vararg val games: Game) : GameDao {
         override suspend fun upsertAll(games: List<Game>) = error("not used")
         override suspend fun upsert(game: Game) = error("not used")
+        override suspend fun insertSteamGameIfMissing(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long) = error("not used")
+        override suspend fun updateSteamFields(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long) = error("not used")
         override fun observeLibrary(): Flow<List<Game>> = flowOf(games.toList())
         override fun observeGoalGames(): Flow<List<Game>> = error("not used")
         override fun observeBacklog(): Flow<List<Game>> = error("not used")

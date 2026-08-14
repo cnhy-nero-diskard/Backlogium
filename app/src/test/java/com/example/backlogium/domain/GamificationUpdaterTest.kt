@@ -4,6 +4,8 @@ import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.gamification.RuleConfig
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -15,6 +17,46 @@ import java.time.LocalDate
  * `:gamification` engine, and the expected XP/level/quest/streak values are persisted.
  */
 class GamificationUpdaterTest {
+
+    @Test
+    fun persistQuestStatusCannotOverwriteMinutesCreditedAfterComputeSnapshot() = runTest {
+        val snapshotTaken = CompletableDeferred<Unit>()
+        val releaseCompute = CompletableDeferred<Unit>()
+        val date = "2026-07-17"
+        val dailyDao = FakeDailyProgressDao(
+            initial = listOf(
+                DailyProgress(
+                    date,
+                    minutesPlayed = 100,
+                    goalMinutesPlayed = 40,
+                    questMet = false,
+                ),
+            ),
+            beforeGetAllOrdered = {
+                snapshotTaken.complete(Unit)
+                releaseCompute.await()
+            },
+        )
+        val updater = GamificationUpdater(
+            FakeSessionDao(emptyList()),
+            dailyDao,
+            FakePlayerProfileDao(),
+            FakeHltbDataDao(),
+            FakeAchievementDao(emptyList()),
+            FakeGameDao(emptyList()),
+        )
+
+        val computed = async { updater.compute(LocalDate.parse(date), RuleConfig()) }
+        snapshotTaken.await()
+        dailyDao.addMinutes(date, minutesPlayed = 10, goalMinutesPlayed = 5)
+        releaseCompute.complete(Unit)
+
+        updater.persist(computed.await(), RecomputeSource.SYNC)
+
+        assertEquals(110, dailyDao.getByDate(date)!!.minutesPlayed)
+        assertEquals(45, dailyDao.getByDate(date)!!.goalMinutesPlayed)
+        assertTrue(dailyDao.getByDate(date)!!.questMet)
+    }
 
     @Test
     fun recompute_persistsExpectedXpLevelQuestAndStreak() = runTest {
@@ -113,6 +155,25 @@ class GamificationUpdaterTest {
         updater.recompute(today = LocalDate.parse("2026-07-17"), config = RuleConfig())
 
         assertEquals(400, profileDao.get()!!.totalXp)
+    }
+
+    @Test
+    fun compute_readsHltbFixtureWithOneBulkQuery() = runTest {
+        val appIds = (1L..100L).toList()
+        val hltbDao = FakeHltbDataDao(appIds.associateWith { 1_000 })
+        val updater = GamificationUpdater(
+            sessionDao = FakeSessionDao(appIds.map { testSession(minutes = 1, appId = it) }),
+            dailyProgressDao = FakeDailyProgressDao(emptyList()),
+            playerProfileDao = FakePlayerProfileDao(),
+            hltbDataDao = hltbDao,
+            achievementDao = FakeAchievementDao(emptyList()),
+            gameDao = FakeGameDao(appIds.map { testGame(appId = it, backfillMinutes = 0) }),
+        )
+
+        updater.compute(LocalDate.parse("2026-07-17"), RuleConfig())
+
+        assertEquals("one library-sized HLTB read", 1, hltbDao.getAllCalls)
+        assertEquals("the old per-game query is gone", 0, hltbDao.getByAppIdCalls)
     }
 
     @Test

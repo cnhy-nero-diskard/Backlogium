@@ -6,8 +6,11 @@ import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
+import com.example.backlogium.domain.VersionedRuleConfig
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,6 +35,18 @@ interface SettingsRepository {
     val ruleConfig: Flow<RuleConfig>
 
     suspend fun setRuleConfig(config: RuleConfig)
+
+    /** Rules and their DataStore provenance version, read as one preference snapshot. */
+    val ruleConfigWithVersion: Flow<VersionedRuleConfig>
+        get() = ruleConfig.map { VersionedRuleConfig(it, 0L) }
+
+    suspend fun readRuleConfigWithVersion(): VersionedRuleConfig = ruleConfigWithVersion.first()
+
+    /** Production storage overrides this to return the version from the same edit transaction. */
+    suspend fun setRuleConfigAndGetVersion(config: RuleConfig): VersionedRuleConfig {
+        setRuleConfig(config)
+        return readRuleConfigWithVersion()
+    }
 
     /**
      * The per-list Library sort selections. Unlike the achievement sort — a lens applied inside
@@ -91,6 +106,11 @@ class DataStoreSettingsRepository @Inject constructor(
     override val ruleConfig: Flow<RuleConfig> = settings.ruleConfigFlow
 
     override suspend fun setRuleConfig(config: RuleConfig) = settings.setRuleConfig(config)
+
+    override val ruleConfigWithVersion: Flow<VersionedRuleConfig> = settings.ruleConfigWithVersionFlow
+
+    override suspend fun setRuleConfigAndGetVersion(config: RuleConfig): VersionedRuleConfig =
+        settings.setRuleConfigAndGetVersion(config)
 
     override val librarySort: Flow<LibrarySortPrefs> = settings.librarySortFlow
 

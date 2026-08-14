@@ -13,7 +13,8 @@ import androidx.room.ForeignKey
  * [description] and [hidden] come from the achievement schema (enhance-game-detail). [description]
  * is nullable and not backfilled: rows stored before it was retained keep null until their game's
  * next natural schema fetch, and Steam withholds descriptions for [hidden] achievements the player
- * has not unlocked yet.
+ * has not unlocked yet. [retired] is a reversible tombstone used only by full reconciliation when
+ * Steam no longer returns a previously stored achievement; the row and rarity snapshot remain.
  */
 @Entity(
     tableName = "achievements",
@@ -38,5 +39,6 @@ data class Achievement(
     val snapshotPercent: Double? = null,
     val description: String? = null,
     val hidden: Boolean = false,
+    val retired: Boolean = false,
     val fetchedAt: Long,
 )

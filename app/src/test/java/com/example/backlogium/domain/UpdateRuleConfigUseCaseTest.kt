@@ -9,6 +9,7 @@ import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -39,6 +40,8 @@ class UpdateRuleConfigUseCaseTest {
         // the recompute ran under: 300 tracked minutes at 1 XP/min -> level 3 on a base of 50.
         assertEquals(300, profile.totalXp)
         assertEquals(3, profile.level)
+        assertEquals(1L, fixture.settings.version)
+        assertEquals(1L, profile.gamificationConfigVersion)
     }
 
     @Test
@@ -141,11 +144,18 @@ class UpdateRuleConfigUseCaseTest {
 
     /** In-memory stand-in for the DataStore-backed implementation. */
     private class FakeSettingsRepository : SettingsRepository {
-        private val state = MutableStateFlow(RuleConfig())
-        val stored: RuleConfig get() = state.value
-        override val ruleConfig: Flow<RuleConfig> = state
+        private val versioned = MutableStateFlow(VersionedRuleConfig(RuleConfig(), 0L))
+        val stored: RuleConfig get() = versioned.value.config
+        val version: Long get() = versioned.value.version
         override suspend fun setRuleConfig(config: RuleConfig) {
-            state.value = config
+            setRuleConfigAndGetVersion(config)
+        }
+        override val ruleConfig: Flow<RuleConfig> = versioned.map { it.config }
+        override val ruleConfigWithVersion: Flow<VersionedRuleConfig> = versioned
+        override suspend fun setRuleConfigAndGetVersion(config: RuleConfig): VersionedRuleConfig {
+            val result = VersionedRuleConfig(config, versioned.value.version + 1L)
+            versioned.value = result
+            return result
         }
 
         // The Library sort selections share this store but are irrelevant to a rule change.

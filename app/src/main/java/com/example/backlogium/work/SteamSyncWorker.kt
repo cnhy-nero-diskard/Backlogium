@@ -2,30 +2,33 @@ package com.example.backlogium.work
 
 import android.content.Context
 import androidx.hilt.work.HiltWorker
+import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.diagnostics.SyncOutcome
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
+import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
-import com.example.backlogium.data.local.entity.DailyProgress
-import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.repo.AchievementLibraryFetch
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.PlayerIdentity
 import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.SessionDiffer
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.mergePlayerIdentity
+import com.example.backlogium.domain.persistVersionChecked
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
@@ -45,6 +48,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private val steamApi: SteamApi,
     private val settings: SettingsDataStore,
     private val credentials: CredentialsRepository,
+    private val database: BacklogiumDatabase,
     private val gameDao: GameDao,
     private val sessionDao: SessionDao,
     private val dailyProgressDao: DailyProgressDao,
@@ -57,9 +61,14 @@ class SteamSyncWorker @AssistedInject constructor(
     private val presenceServiceStarter: PresenceServiceStarter,
     private val diagnostics: SyncRunRecorder,
     private val time: TimeProvider,
+    private val syncCoordinator: SteamSyncCoordinator,
+    private val derivedStateWrites: DerivedStateWriteCoordinator,
 ) : CoroutineWorker(appContext, params) {
 
-    override suspend fun doWork(): Result {
+    override suspend fun doWork(): Result =
+        syncCoordinator.withLock { doWorkLocked() }
+
+    private suspend fun doWorkLocked(): Result {
         val scope = diagnostics.begin(if (runAttemptCount > 0) "retry" else "scheduled")
         var outcome = SyncOutcome.FAILED
         var error: String? = null
@@ -136,15 +145,159 @@ class SteamSyncWorker @AssistedInject constructor(
     ) {
         val now = time.nowMillis()
         val today = time.today()
-        val config = settings.ruleConfigFlow.first()
+        val polls = games.map { SessionDiffer.PollGame(it.appid, it.playtimeForever) }
+        val configAtCompute = settings.ruleConfigWithVersionFlow.first()
+        val provisionalDiff = readAndComputeDiff(polls, now)
 
-        val profile = profileDao.get() ?: PlayerProfile(steamId = steamId)
-        val isBaseline = profile.lastSyncAt == 0L
-        val previousPollAt = if (isBaseline) now else profile.lastSyncAt
+        // Achievement requests are part of fetch, never the Room commit. Their payload is merged
+        // below only after the raw playtime transaction has acquired its database boundary.
+        val achievementFetch = achievementRepository.fetchLibraryGames(
+            apiKey = apiKey,
+            steamId = steamId,
+            ownedGames = games.map {
+                com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
+                    appId = it.appid,
+                    playtimeForever = it.playtimeForever.toLong(),
+                    playtime2Weeks = it.playtime2Weeks.toLong(),
+                )
+            },
+            playtimeDeltaByAppId = provisionalDiff.playedDeltaByAppId,
+            scope = scope,
+        )
+        scope.recordTiers(
+            hot = achievementFetch.selection.hot.size,
+            warm = achievementFetch.selection.warm.size,
+            cold = achievementFetch.selection.cold.size,
+            never = achievementFetch.selection.never.size,
+        )
 
-        // Reconstruct prior diff state from Room BEFORE writing new playtime.
+        withContext(NonCancellable) {
+            database.withTransaction {
+                commitRawPoll(
+                    games = games,
+                    steamId = steamId,
+                    steamLevel = steamLevel,
+                    summary = summary,
+                    now = now,
+                    today = today,
+                    polls = polls,
+                    achievementFetch = achievementFetch,
+                )
+            }
+        }
+
+        // Store metadata is a separately scheduled best-effort concern: never await it or make
+        // an otherwise-valid owned-games poll fail because the public Store is unavailable.
+        runCatching { genreEnrichmentScheduler.ensureEnqueued() }
+
+        // Raw data is durable now. Derived values deliberately follow through the existing
+        // cross-store write-ahead protocol, after a version check against the configuration read
+        // before compute. If rules moved, the stale candidate is refused and recomputed under the
+        // current version instead of being silently stamped as current.
+        persistDerived(today, configAtCompute)
+        // Best-effort: a snapshot-write failure must never fail an otherwise-successful poll.
+        runCatching { backupRepository.writeAutoSnapshotIfDue() }
+    }
+
+    private suspend fun readAndComputeDiff(
+        polls: List<SessionDiffer.PollGame>,
+        now: Long,
+    ): SessionDiffer.DiffResult {
+        val profile = profileDao.get()
         val existingGames = gameDao.getAll().associateBy { it.appId }
         val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
+        return diffAgainst(
+            polls = polls,
+            existingGames = existingGames,
+            openSessionsByAppId = openSessionsByAppId,
+            lastSyncAt = profile?.lastSyncAt ?: 0L,
+            now = now,
+        )
+    }
+
+    /** The only raw-write boundary. Every baseline read used here is intentionally fresh. */
+    private suspend fun commitRawPoll(
+        games: List<com.example.backlogium.data.remote.dto.OwnedGameDto>,
+        steamId: String,
+        steamLevel: Int,
+        summary: com.example.backlogium.data.remote.dto.PlayerSummaryDto?,
+        now: Long,
+        today: java.time.LocalDate,
+        polls: List<SessionDiffer.PollGame>,
+        achievementFetch: AchievementLibraryFetch,
+    ) {
+        val profileBefore = profileDao.get()
+        val existingGames = gameDao.getAll().associateBy { it.appId }
+        val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
+        val diff = diffAgainst(
+            polls = polls,
+            existingGames = existingGames,
+            openSessionsByAppId = openSessionsByAppId,
+            lastSyncAt = profileBefore?.lastSyncAt ?: 0L,
+            now = now,
+        )
+
+        applySessionActions(diff.actions)
+
+        games.forEach { dto ->
+            val lastPlaytime = diff.newLastPlaytime[dto.appid] ?: dto.playtimeForever
+            val iconUrl = SteamIconMapper.iconUrl(dto.appid, dto.imgIconUrl)
+            gameDao.insertSteamGameIfMissing(
+                appId = dto.appid,
+                name = dto.name,
+                iconUrl = iconUrl,
+                playtimeForever = dto.playtimeForever,
+                playtime2Weeks = dto.playtime2Weeks,
+                lastPlaytime = lastPlaytime,
+                lastSyncedAt = now,
+            )
+            gameDao.updateSteamFields(
+                appId = dto.appid,
+                name = dto.name,
+                iconUrl = iconUrl,
+                playtimeForever = dto.playtimeForever,
+                playtime2Weeks = dto.playtime2Weeks,
+                lastPlaytime = lastPlaytime,
+                lastSyncedAt = now,
+            )
+        }
+
+        val goalIds = existingGames.values.filter { it.isGoal }.mapTo(mutableSetOf()) { it.appId }
+        val addedAny = diff.playedDeltaByAppId.values.sum()
+        val addedGoal = diff.playedDeltaByAppId
+            .filterKeys { it in goalIds }
+            .values
+            .sum()
+        val todayKey = today.toString()
+        dailyProgressDao.ensureDate(todayKey)
+        dailyProgressDao.addMinutes(todayKey, addedAny, addedGoal)
+
+        if (profileBefore == null) profileDao.insertIfMissing()
+        val currentProfile = profileDao.get() ?: PlayerProfile()
+        val identity = mergePlayerIdentity(
+            summary,
+            PlayerIdentity(currentProfile.personaName, currentProfile.avatarUrl),
+        )
+        profileDao.updateSteamIdentity(
+            steamId = steamId,
+            steamLevel = steamLevel,
+            personaName = identity.personaName,
+            avatarUrl = identity.avatarUrl,
+        )
+        profileDao.updateSyncStatus(lastSyncAt = now, lastSyncError = null)
+
+        // This is the only achievement write path for an inline poll, and it is deliberately
+        // called while the same transaction still owns the raw commit.
+        achievementRepository.applyRefreshes(achievementFetch.refreshes)
+    }
+
+    private fun diffAgainst(
+        polls: List<SessionDiffer.PollGame>,
+        existingGames: Map<Long, com.example.backlogium.data.local.entity.Game>,
+        openSessionsByAppId: Map<Long, Session>,
+        lastSyncAt: Long,
+        now: Long,
+    ): SessionDiffer.DiffResult {
         val priorStates = existingGames.mapValues { (appId, game) ->
             val open = openSessionsByAppId[appId]
             SessionDiffer.GameDiffState(
@@ -158,97 +311,31 @@ class SteamSyncWorker @AssistedInject constructor(
                 },
             )
         }
-
-        val polls = games.map { SessionDiffer.PollGame(it.appid, it.playtimeForever) }
-        val diff = if (isBaseline) {
+        return if (lastSyncAt == 0L) {
             differ.baseline(polls)
         } else {
-            differ.diff(polls, priorStates, now = now, previousPollAt = previousPollAt)
-        }
-
-        applySessionActions(diff.actions)
-
-        // Upsert games with fresh remote fields + new baseline, preserving goal tagging.
-        val updatedGames = games.map { dto ->
-            val existing = existingGames[dto.appid]
-            Game(
-                appId = dto.appid,
-                name = dto.name,
-                iconUrl = SteamIconMapper.iconUrl(dto.appid, dto.imgIconUrl),
-                playtimeForever = dto.playtimeForever,
-                playtime2Weeks = dto.playtime2Weeks,
-                lastPlaytime = diff.newLastPlaytime[dto.appid] ?: dto.playtimeForever,
-                isGoal = existing?.isGoal ?: false,
-                targetMinutes = existing?.targetMinutes,
-                lastSyncedAt = now,
-                // Preserve the frozen opt-in history offset; rebuilding the row from the DTO
-                // would otherwise reset it to 0 and wipe imported XP on the next sync.
-                backfillMinutes = existing?.backfillMinutes ?: 0,
+            differ.diff(
+                polls = polls,
+                priorStates = priorStates,
+                now = now,
+                previousPollAt = lastSyncAt,
             )
         }
-        gameDao.upsertAll(updatedGames)
-        // Store metadata is a separately scheduled best-effort concern: never await it or make
-        // an otherwise-valid owned-games poll fail because the public Store is unavailable.
-        runCatching { genreEnrichmentScheduler.ensureEnqueued() }
+    }
 
-        // Attribute this poll's deltas to today's local date; always ensure today's row
-        // exists so the quest/streak evaluation sees the current day.
-        val goalIds = updatedGames.filter { it.isGoal }.map { it.appId }.toSet()
-        val addedAny = diff.playedDeltaByAppId.values.sum()
-        val addedGoal = diff.playedDeltaByAppId.filterKeys { it in goalIds }.values.sum()
-        val todayKey = today.toString()
-        val existingDay = dailyProgressDao.getByDate(todayKey) ?: DailyProgress(todayKey)
-        dailyProgressDao.upsert(
-            existingDay.copy(
-                minutesPlayed = existingDay.minutesPlayed + addedAny,
-                goalMinutesPlayed = existingDay.goalMinutesPlayed + addedGoal,
-            ),
+    private suspend fun persistDerived(
+        today: java.time.LocalDate,
+        initialConfig: com.example.backlogium.domain.VersionedRuleConfig,
+    ) {
+        persistVersionChecked(
+            initial = initialConfig,
+            readCurrent = { settings.ruleConfigWithVersionFlow.first() },
+            compute = { config -> gamificationUpdater.compute(today, config) },
+            persist = { result, version ->
+                gamificationUpdater.persist(result, RecomputeSource.SYNC, version)
+            },
+            coordinator = derivedStateWrites,
         )
-
-        // Update sync status, then fetch achievements for the whole library (freshness-gated,
-        // best-effort — never fails the poll) before recomputing derived gamification values.
-        val identity = mergePlayerIdentity(
-            summary,
-            PlayerIdentity(profile.personaName, profile.avatarUrl),
-        )
-        profileDao.upsert(
-            profile.copy(
-                steamId = steamId,
-                steamLevel = steamLevel,
-                lastSyncAt = now,
-                lastSyncError = null,
-                personaName = identity.personaName,
-                avatarUrl = identity.avatarUrl,
-            ),
-        )
-        try {
-            val selection = achievementRepository.syncLibraryGames(
-                apiKey = apiKey,
-                steamId = steamId,
-                ownedGames = games.map {
-                    com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
-                        appId = it.appid,
-                        playtimeForever = it.playtimeForever.toLong(),
-                        playtime2Weeks = it.playtime2Weeks.toLong(),
-                    )
-                },
-                playtimeDeltaByAppId = diff.playedDeltaByAppId,
-                scope = scope,
-            )
-            scope.recordTiers(
-                hot = selection.hot.size,
-                warm = selection.warm.size,
-                cold = selection.cold.size,
-                never = selection.never.size,
-            )
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            // Best-effort: achievement sync failure must never fail an otherwise-successful poll.
-        }
-        gamificationUpdater.recompute(today, RecomputeSource.SYNC, config)
-        // Best-effort: a snapshot-write failure must never fail an otherwise-successful poll.
-        runCatching { backupRepository.writeAutoSnapshotIfDue() }
     }
 
     private suspend fun applySessionActions(actions: List<SessionDiffer.SessionAction>) {
@@ -278,8 +365,8 @@ class SteamSyncWorker @AssistedInject constructor(
     }
 
     private suspend fun recordError(message: String) {
-        val profile = profileDao.get() ?: PlayerProfile()
-        profileDao.upsert(profile.copy(lastSyncError = message))
+        profileDao.insertIfMissing()
+        profileDao.updateLastSyncError(message)
     }
 
     companion object {

@@ -20,6 +20,7 @@ import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionTimeBasis
+import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.TimeProvider
@@ -49,13 +50,32 @@ class BackupMergeEngine @Inject constructor(
     private val collectionDao: CollectionDao,
     private val gamificationUpdater: GamificationUpdater,
     private val time: TimeProvider,
+    private val derivedStateWrites: DerivedStateWriteCoordinator = DerivedStateWriteCoordinator(),
 ) {
     /**
      * [config] is the app's currently active [RuleConfig] — never the file's own `ruleConfig`,
      * which is export-time-only (see [BackupFile.ruleConfig]'s doc). Passed in rather than read
      * internally so this engine stays a plain, JVM-testable class, mirroring [GamificationUpdater].
      */
-    suspend fun merge(file: BackupFile, config: RuleConfig) {
+    suspend fun merge(file: BackupFile, config: RuleConfig, configVersion: Long = 0L) =
+        derivedStateWrites.withLock {
+            mergeContents(file, config, configVersion)
+        }
+
+    /** Called by [BackupRepository] while it owns the shared rule/write coordinator. */
+    internal suspend fun mergeWithLockHeld(
+        file: BackupFile,
+        config: RuleConfig,
+        configVersion: Long,
+    ) {
+        mergeContents(file, config, configVersion)
+    }
+
+    private suspend fun mergeContents(
+        file: BackupFile,
+        config: RuleConfig,
+        configVersion: Long,
+    ) {
         // Games first: Session/Achievement/HltbData all carry a FOREIGN KEY on games.appId, so a
         // fresh-install restore (no games synced yet) needs the skeleton row to exist first.
         file.games.forEach { mergeGame(it) }
@@ -73,14 +93,17 @@ class BackupMergeEngine @Inject constructor(
         gamificationUpdater.persist(
             result.copy(longestStreak = maxOf(result.longestStreak, importedLongestStreak)),
             RecomputeSource.RESTORE,
+            configVersion,
         )
 
         // playtimeBackfilled is a historical fact ("has this account ever backfilled"), not a
         // derivation — folded in like longestStreak, as a one-way OR rather than a replace, so
         // an import can never un-flag an import that already happened locally.
-        val profile = playerProfileDao.get() ?: PlayerProfile()
+        val storedProfile = playerProfileDao.get()
+        val profile = storedProfile ?: PlayerProfile()
         if (importedBackfilled && !profile.playtimeBackfilled) {
-            playerProfileDao.upsert(profile.copy(playtimeBackfilled = true))
+            if (storedProfile == null) playerProfileDao.insertIfMissing()
+            playerProfileDao.updatePlaytimeBackfilled(true)
         }
     }
 

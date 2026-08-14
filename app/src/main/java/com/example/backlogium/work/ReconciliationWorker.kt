@@ -2,11 +2,13 @@ package com.example.backlogium.work
 
 import android.content.Context
 import androidx.hilt.work.HiltWorker
+import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.example.backlogium.data.diagnostics.SyncOutcome
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
+import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
 import dagger.assisted.Assisted
@@ -22,19 +24,24 @@ import timber.log.Timber
  * minutes without affecting the periodic/manual sync experience.
  *
  * The pass orders games by oldest `playerStateFetchedAt` and refreshes each one. Because each
- * refresh writes a fresh timestamp back, an interrupted pass resumes where it left off rather
- * than restarting from the beginning.
+ * refresh writes a fresh timestamp back before the next fetch begins, an interrupted pass resumes
+ * where it left off rather than discarding all completed work.
  */
 @HiltWorker
 class ReconciliationWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
     private val credentials: CredentialsRepository,
+    private val database: BacklogiumDatabase,
     private val achievementRepository: AchievementRepository,
     private val diagnostics: SyncRunRecorder,
+    private val syncCoordinator: SteamSyncCoordinator,
 ) : CoroutineWorker(appContext, params) {
 
-    override suspend fun doWork(): Result {
+    override suspend fun doWork(): Result =
+        syncCoordinator.withLock { doWorkLocked() }
+
+    private suspend fun doWorkLocked(): Result {
         val creds = credentials.currentCredentials()
         if (creds == null) {
             Timber.tag(TAG).i("Skipping reconciliation: no Steam credentials")
@@ -46,9 +53,9 @@ class ReconciliationWorker @AssistedInject constructor(
         val force = inputData.getBoolean(KEY_FORCE, false)
 
         val scope = diagnostics.begin(if (force) "reconciliation:forced" else "reconciliation:scheduled")
-        // Updated by reconcileLibraryGames's onProgress after every game, so a cancelled pass
+        // Updated by onProgress after every committed game, so a cancelled pass
         // still has an accurate refreshed/total count to persist in the `finally` below — the
-        // ReconciliationResult return value is never reached if the coroutine is cancelled mid-sweep.
+        // ReconciliationFetch return value is never reached if the coroutine is cancelled mid-sweep.
         var refreshedSoFar = 0
         var totalSoFar = 0
         var outcome = SyncOutcome.SUCCESS
@@ -56,19 +63,31 @@ class ReconciliationWorker @AssistedInject constructor(
 
         return try {
             setProgress(workDataOf(KEY_RUNNING to true))
-            val result = achievementRepository.reconcileLibraryGames(apiKey, steamId, scope) { refreshed, total ->
-                refreshedSoFar = refreshed
-                totalSoFar = total
-            }
-            refreshedSoFar = result.refreshed
-            totalSoFar = result.total
-            val uncovered = result.total - result.refreshed
+            val fetched = achievementRepository.fetchReconciliationGames(
+                apiKey = apiKey,
+                steamId = steamId,
+                scope = scope,
+                onRefresh = { refresh ->
+                    withContext(NonCancellable) {
+                        database.withTransaction {
+                            achievementRepository.applyRefreshes(listOf(refresh))
+                        }
+                    }
+                },
+                onProgress = { refreshed, total ->
+                    refreshedSoFar = refreshed
+                    totalSoFar = total
+                }
+            )
+            refreshedSoFar = fetched.refreshed
+            totalSoFar = fetched.total
+            val uncovered = fetched.total - fetched.refreshed
             if (uncovered > 0) {
-                Timber.tag(TAG).w("Reconciliation stopped early: ${result.refreshed}/${result.total} games refreshed, $uncovered uncovered")
+                Timber.tag(TAG).w("Reconciliation stopped early: ${fetched.refreshed}/${fetched.total} games refreshed, $uncovered uncovered")
             } else {
-                Timber.tag(TAG).i("Reconciliation complete: ${result.refreshed}/${result.total} games refreshed")
+                Timber.tag(TAG).i("Reconciliation complete: ${fetched.refreshed}/${fetched.total} games refreshed")
             }
-            Result.success(workDataOf(KEY_REFRESHED to result.refreshed, KEY_TOTAL to result.total))
+            Result.success(workDataOf(KEY_REFRESHED to fetched.refreshed, KEY_TOTAL to fetched.total))
         } catch (e: CancellationException) {
             outcome = SyncOutcome.INCOMPLETE
             Timber.tag(TAG).i("Reconciliation cancelled early: $refreshedSoFar/$totalSoFar games refreshed")

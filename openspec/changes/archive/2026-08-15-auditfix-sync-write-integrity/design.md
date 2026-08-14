@@ -173,6 +173,21 @@ Same reasoning for `PlayerProfile`: field-scoped update queries per owning domai
 than one `upsert(profile.copy(...))`. Note `recordError` at `:280-283` is a second
 read-modify-write on the same row and needs the same treatment.
 
+The current writer map is:
+
+| Writer | Owned fields |
+|---|---|
+| `SteamSyncWorker.persistPoll` | `steamId`, `steamLevel`, `lastSyncAt`, `lastSyncError`, `personaName`, `avatarUrl` |
+| `SteamSyncWorker.recordError` | `lastSyncError` |
+| `LiveStatusRepository.refreshStoredIdentity` | `personaName`, `avatarUrl` |
+| `GamificationUpdater` | `totalXp`, `level`, `currentStreak`, `longestStreak` |
+| `PlaytimeBackfillUseCase` | `playtimeBackfilled` |
+| `BackupMergeEngine` restore | `playtimeBackfilled` (one-way OR); aggregate fields are owned by `GamificationUpdater` |
+
+`ProfileRepository`, `BackupExportMapper`, `ProgressEventRepository`, and recovery
+helpers read the profile but do not currently write it directly. This map is the
+source of truth for the field-scoped DAO methods below.
+
 `DailyProgress` needs an additive SQL update (`SET minutesPlayed = minutesPlayed + :d`)
 rather than a read-add-write, so the addition is atomic in the database even inside a
 transaction.
