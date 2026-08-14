@@ -2,10 +2,12 @@ package com.example.backlogium.ui.collections
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.junit4.createComposeRule
 import com.example.backlogium.data.repo.LibraryGame
@@ -114,9 +116,9 @@ class CollectionFormBehaviorTest {
             }
         }
 
-        composeRule.onNodeWithText("Game 20")
-            .performScrollTo()
-            .performClick()
+        composeRule.onNodeWithTag("collection-form-list")
+            .performScrollToNode(hasText("Game 20"))
+        composeRule.onNodeWithText("Game 20").performClick()
         composeRule.waitForIdle()
 
         check(state.members.any { it.appId == 20L })
