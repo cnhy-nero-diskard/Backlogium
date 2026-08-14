@@ -191,7 +191,8 @@ class GamificationTest {
 
     @Test
     fun streak_ignoresGapsBetweenDatesUsesOrderOnly() {
-        // Non-consecutive calendar dates, all met: the engine keys off order, not the dates.
+        // The gamification spec defines order-only folding as this pure engine contract.
+        // Calendar densification is the caller's responsibility, not Gamification.streak().
         val results = listOf(
             QuestResult(LocalDate.of(2026, 1, 1), met = true),
             QuestResult(LocalDate.of(2026, 1, 5), met = true),
