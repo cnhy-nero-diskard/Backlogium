@@ -562,6 +562,11 @@ private class FakeDailyProgressDao(private val store: MutableMap<String, DailyPr
         )
     }
 
+    override suspend fun updateQuestMet(date: String, questMet: Boolean) {
+        val day = store[date] ?: DailyProgress(date)
+        store[date] = day.copy(questMet = questMet)
+    }
+
     override suspend fun getByDate(date: String): DailyProgress? = store[date]
     override fun observeAll(): Flow<List<DailyProgress>> = flowOf(store.values.toList())
     override suspend fun getAllOrdered(): List<DailyProgress> = store.values.sortedBy { it.date }
