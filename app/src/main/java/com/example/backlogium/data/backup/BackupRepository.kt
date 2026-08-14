@@ -75,7 +75,8 @@ class BackupRepository @Inject constructor(
 
     /** Merge a validated file into the local database — the one import/restore code path. */
     suspend fun importBackup(file: BackupFile) {
-        mergeEngine.merge(file, settings.ruleConfigFlow.first())
+        val rules = settings.ruleConfigWithVersionFlow.first()
+        mergeEngine.merge(file, rules.config, rules.version)
         // Restore supplies only unlocked achievements and no per-game metadata, so a restored
         // library reads as entirely unfetched. Kick off a deferred reconciliation pass to
         // converge the cold tier as soon as conditions allow rather than waiting a week.
