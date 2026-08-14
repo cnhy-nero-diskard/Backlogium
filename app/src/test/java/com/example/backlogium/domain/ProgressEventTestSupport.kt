@@ -2,7 +2,6 @@ package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
-import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.repo.ProgressEventRepository
 import com.example.backlogium.gamification.QuestResult
@@ -141,7 +140,7 @@ internal fun progressResult(
     level: Int,
     streak: Int = 0,
     questMet: Boolean = false,
-    changedDays: List<DailyProgress> = emptyList(),
+    changedDays: List<QuestStatusUpdate> = emptyList(),
 ): GamificationResult = GamificationResult(
     xpState = XpState(totalXp = 0, level = level, xpIntoLevel = 0, xpForNext = 100),
     questResults = listOf(QuestResult(date, questMet)),

@@ -6,7 +6,6 @@ import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
-import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.gamification.AchievementInput
 import com.example.backlogium.gamification.DayInput
@@ -19,6 +18,12 @@ import java.time.LocalDate
 import javax.inject.Inject
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+
+/** The only field a gamification recompute is allowed to change on a progress row. */
+data class QuestStatusUpdate(
+    val date: String,
+    val questMet: Boolean,
+)
 
 /**
  * Everything one recompute pass derives, before any of it is written back.
@@ -38,8 +43,8 @@ data class GamificationResult(
      * number [GamificationUpdater.persist] will write, not the raw per-day computation.
      */
     val longestStreak: Int,
-    /** Stored days whose `questMet` differs from the recomputed value; the only rows to write. */
-    val changedDays: List<DailyProgress>,
+    /** Stored days whose `questMet` differs; raw playtime fields are deliberately absent. */
+    val changedDays: List<QuestStatusUpdate>,
     /** The injected local date against which this result was evaluated. */
     val evaluationDate: LocalDate,
 )
@@ -125,7 +130,7 @@ class GamificationUpdater @Inject constructor(
 
         // Recompute each stored day's quest status; collect (don't write) the rows that changed.
         val days = dailyProgressDao.getAllOrdered()
-        val changedDays = mutableListOf<DailyProgress>()
+        val changedDays = mutableListOf<QuestStatusUpdate>()
         val questResults = days.map { day ->
             val result = Gamification.quest(
                 DayInput(
@@ -136,7 +141,7 @@ class GamificationUpdater @Inject constructor(
                 config,
             )
             if (result.met != day.questMet) {
-                changedDays += day.copy(questMet = result.met)
+                changedDays += QuestStatusUpdate(day.date, result.met)
             }
             result
         }
@@ -263,7 +268,7 @@ class GamificationUpdater @Inject constructor(
         today: LocalDate,
         configVersion: Long,
     ) {
-        result.changedDays.forEach { dailyProgressDao.upsert(it) }
+        result.changedDays.forEach { dailyProgressDao.updateQuestMet(it.date, it.questMet) }
 
         // Persist profile aggregates, preserving sync/status fields. `currentStreak` is written
         // as computed — only the record is protected — while `longestStreak` takes the maximum

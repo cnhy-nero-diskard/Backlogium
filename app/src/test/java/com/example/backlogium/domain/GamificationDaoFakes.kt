@@ -154,11 +154,17 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
     }
 }
 
-internal class FakeDailyProgressDao(initial: List<DailyProgress>) : DailyProgressDao {
+internal class FakeDailyProgressDao(
+    initial: List<DailyProgress>,
+    private val beforeGetAllOrdered: (suspend () -> Unit)? = null,
+) : DailyProgressDao {
     private val store = linkedMapOf<String, DailyProgress>()
 
     /** Counts writes, so `compute()` can be asserted to make none. */
     var upsertCount = 0
+        private set
+
+    var questUpdateCount = 0
         private set
 
     init {
@@ -179,11 +185,21 @@ internal class FakeDailyProgressDao(initial: List<DailyProgress>) : DailyProgres
         store[date] = day.copy(minutesPlayed = day.minutesPlayed + minutesPlayed, goalMinutesPlayed = day.goalMinutesPlayed + goalMinutesPlayed)
     }
 
+    override suspend fun updateQuestMet(date: String, questMet: Boolean) {
+        questUpdateCount++
+        val day = store[date] ?: DailyProgress(date)
+        store[date] = day.copy(questMet = questMet)
+    }
+
     override suspend fun getByDate(date: String): DailyProgress? = store[date]
     override fun observeAll(): Flow<List<DailyProgress>> =
         flowOf(store.values.sortedByDescending { it.date })
 
-    override suspend fun getAllOrdered(): List<DailyProgress> = store.values.sortedBy { it.date }
+    override suspend fun getAllOrdered(): List<DailyProgress> {
+        val snapshot = store.values.sortedBy { it.date }
+        beforeGetAllOrdered?.invoke()
+        return snapshot
+    }
 }
 
 /**

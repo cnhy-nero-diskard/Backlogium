@@ -26,6 +26,10 @@ interface DailyProgressDao {
     )
     suspend fun addMinutes(date: String, minutesPlayed: Int, goalMinutesPlayed: Int)
 
+    /** Gamification owns only the derived quest flag; raw playtime remains sync-owned. */
+    @Query("UPDATE daily_progress SET questMet = :questMet WHERE date = :date")
+    suspend fun updateQuestMet(date: String, questMet: Boolean)
+
     @Query("SELECT * FROM daily_progress WHERE date = :date")
     suspend fun getByDate(date: String): DailyProgress?
 
