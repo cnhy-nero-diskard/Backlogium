@@ -22,6 +22,7 @@ import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.PlayerIdentity
 import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.SessionDiffer
@@ -61,10 +62,11 @@ class SteamSyncWorker @AssistedInject constructor(
     private val diagnostics: SyncRunRecorder,
     private val time: TimeProvider,
     private val syncCoordinator: SteamSyncCoordinator,
+    private val derivedStateWrites: DerivedStateWriteCoordinator,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result =
-        syncCoordinator.tryRun { doWorkLocked() } ?: Result.success()
+        syncCoordinator.withLock { doWorkLocked() }
 
     private suspend fun doWorkLocked(): Result {
         val scope = diagnostics.begin(if (runAttemptCount > 0) "retry" else "scheduled")
@@ -332,14 +334,7 @@ class SteamSyncWorker @AssistedInject constructor(
             persist = { result, version ->
                 gamificationUpdater.persist(result, RecomputeSource.SYNC, version)
             },
-            recomputeLatest = { latest ->
-                gamificationUpdater.recompute(
-                    today,
-                    RecomputeSource.SYNC,
-                    latest.config,
-                    latest.version,
-                )
-            },
+            coordinator = derivedStateWrites,
         )
     }
 
