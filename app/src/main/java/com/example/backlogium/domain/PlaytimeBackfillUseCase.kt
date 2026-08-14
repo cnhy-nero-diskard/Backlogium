@@ -37,7 +37,9 @@ class PlaytimeBackfillUseCase @Inject constructor(
      *   history had already been imported (idempotence guarantee).
      */
     suspend operator fun invoke(): Boolean {
-        val profile = playerProfileDao.get() ?: PlayerProfile()
+        val storedProfile = playerProfileDao.get()
+        val profile = storedProfile ?: PlayerProfile()
+        if (storedProfile == null) playerProfileDao.insertIfMissing()
         // Idempotent: once imported, never re-import or double-count.
         if (profile.playtimeBackfilled) return false
 
@@ -48,7 +50,7 @@ class PlaytimeBackfillUseCase @Inject constructor(
         }
 
         gameDao.applyBackfill(backfillByAppId)
-        playerProfileDao.upsert(profile.copy(playtimeBackfilled = true))
+        playerProfileDao.updatePlaytimeBackfilled(true)
 
         // Reflect the freshly imported history in XP/level using the injected clock + rules.
         recompute()
@@ -65,12 +67,17 @@ class PlaytimeBackfillUseCase @Inject constructor(
     suspend fun reset() {
         val profile = playerProfileDao.get() ?: return
         gameDao.applyBackfill(gameDao.getAll().associate { it.appId to 0 })
-        playerProfileDao.upsert(profile.copy(playtimeBackfilled = false))
+        playerProfileDao.updatePlaytimeBackfilled(false)
         recompute()
     }
 
     private suspend fun recompute() {
-        val config = settings.ruleConfigFlow.first()
-        gamificationUpdater.recompute(time.today(), RecomputeSource.BACKFILL, config)
+        val rules = settings.ruleConfigWithVersionFlow.first()
+        gamificationUpdater.recompute(
+            today = time.today(),
+            source = RecomputeSource.BACKFILL,
+            config = rules.config,
+            configVersion = rules.version,
+        )
     }
 }

@@ -83,8 +83,9 @@ class GamificationUpdater @Inject constructor(
         today: LocalDate,
         source: RecomputeSource,
         config: RuleConfig = RuleConfig(),
+        configVersion: Long = 0L,
     ) {
-        persist(compute(today, config), source)
+        persist(compute(today, config), source, configVersion)
     }
 
     /**
@@ -99,6 +100,7 @@ class GamificationUpdater @Inject constructor(
         // null -> flat fallback. The union covers backfilled games with no tracked sessions.
         val trackedByGame = sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes }
         val backfillByGame = gameDao.getAll().associate { it.appId to it.backfillMinutes }
+        val hltbByGame = hltbDataDao.getAll().associateBy { it.appId }
         val games = (trackedByGame.keys + backfillByGame.keys)
             .map { appId -> appId to (backfillByGame[appId] ?: 0) + (trackedByGame[appId] ?: 0) }
             .filter { (_, minutes) -> minutes > 0 }
@@ -106,7 +108,7 @@ class GamificationUpdater @Inject constructor(
                 GamePlaytimeInput(
                     gameId = appId.toString(),
                     minutesPlayed = minutes,
-                    completionistAverageMinutes = hltbDataDao.getByAppId(appId)?.completionistMinutes,
+                    completionistAverageMinutes = hltbByGame[appId]?.completionistMinutes,
                 )
             }
         // Unlocked achievements, rarity-tiered by their first-unlock snapshot percent (never the
@@ -175,8 +177,14 @@ class GamificationUpdater @Inject constructor(
      * for an abandoned one. The phases are individually atomic but jointly ordered; interleaving two
      * of them is what would let one provenance's recovery state be cleared or claimed by the other.
      */
-    suspend fun persist(result: GamificationResult, source: RecomputeSource) {
-        transitionCoordinator.withTransition { persistWithinProtocol(result, source) }
+    suspend fun persist(
+        result: GamificationResult,
+        source: RecomputeSource,
+        configVersion: Long = 0L,
+    ) {
+        transitionCoordinator.withTransition {
+            persistWithinProtocol(result, source, configVersion)
+        }
     }
 
     /**
@@ -189,7 +197,11 @@ class GamificationUpdater @Inject constructor(
      * happened, as a no-op if it didn't — rather than either fabricating an event that was never
      * earned or losing one that was (see [resolvePendingTransition]).
      */
-    private suspend fun persistWithinProtocol(result: GamificationResult, source: RecomputeSource) {
+    private suspend fun persistWithinProtocol(
+        result: GamificationResult,
+        source: RecomputeSource,
+        configVersion: Long,
+    ) {
         val today = result.evaluationDate
 
         // Resolve any transition left dangling by a prior crashed persist() before starting a new
@@ -223,7 +235,7 @@ class GamificationUpdater @Inject constructor(
         }
 
         try {
-            writeAndFinalize(result, source, previousState, previousProfile, today)
+            writeAndFinalize(result, source, previousState, previousProfile, today, configVersion)
         } catch (t: Throwable) {
             // A pending transition suppresses event derivation by design, so returning from this
             // call with our own record still in place would freeze delivery for the rest of the
@@ -249,6 +261,7 @@ class GamificationUpdater @Inject constructor(
         previousState: ProgressState?,
         previousProfile: PlayerProfile?,
         today: LocalDate,
+        configVersion: Long,
     ) {
         result.changedDays.forEach { dailyProgressDao.upsert(it) }
 
@@ -257,13 +270,25 @@ class GamificationUpdater @Inject constructor(
         // against whatever is stored now, so a concurrent write between compute and persist
         // still cannot lower it.
         val profile = previousProfile ?: PlayerProfile()
+        if (previousProfile == null) {
+            // A first recompute needs a row, but creation must not replace a row another writer
+            // inserted while this result was being computed. Subsequent writes remain scoped.
+            playerProfileDao.insertIfMissing()
+        }
         val updatedProfile = profile.copy(
             totalXp = result.xpState.totalXp,
             level = result.xpState.level,
             currentStreak = result.currentStreak,
             longestStreak = maxOf(profile.longestStreak, result.longestStreak),
+            gamificationConfigVersion = configVersion,
         )
-        playerProfileDao.upsert(updatedProfile)
+        playerProfileDao.updateGamification(
+            totalXp = updatedProfile.totalXp,
+            level = updatedProfile.level,
+            currentStreak = updatedProfile.currentStreak,
+            longestStreak = updatedProfile.longestStreak,
+            gamificationConfigVersion = configVersion,
+        )
 
         // Event evaluation is deliberately after the successful Room write. `compute()` never
         // touches marks, while non-earned sources reseed them to the values just persisted. The

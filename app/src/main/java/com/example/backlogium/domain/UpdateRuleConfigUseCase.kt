@@ -41,7 +41,12 @@ class UpdateRuleConfigUseCase @Inject constructor(
      * progress-event baseline and therefore never celebrate the resulting transition.
      */
     suspend fun apply(config: RuleConfig) {
-        settings.setRuleConfig(config)
-        gamificationUpdater.recompute(time.today(), RecomputeSource.RULE_CHANGE, config)
+        val stored = settings.setRuleConfigAndGetVersion(config)
+        gamificationUpdater.recompute(
+            today = time.today(),
+            source = RecomputeSource.RULE_CHANGE,
+            config = stored.config,
+            configVersion = stored.version,
+        )
     }
 }
