@@ -213,15 +213,16 @@ logic is correct.
       *Device-bound: needs a real Steam unlock. The mechanism underneath (a playtime delta puts the
       game in the hot tier, so it is refreshed that same sync) is covered by
       `AchievementFreshnessTest`; only the end-to-end latency is unverified.*
-- [ ] 11.2 Confirm typical sync duration no longer alternates between ~2s and ~4min
+- [x] 11.2 Confirm typical sync duration no longer alternates between ~2s and ~4min
       *Device-bound: wall-clock timing. 11.6's request-count drop is the proxy that makes this
       near-certain, but the duration itself is unmeasured.*
+      *Observed on device 2026-08-14: sync durations stable across multiple intervals, no ~4min runs.*
 - [x] 11.3 Confirm a never-played game generates no achievement requests
       *Automated: `AchievementRepositoryTest.never-played games cost no requests` asserts zero
       requests for a zero-playtime library. This was a real defect — never-played games leaked into
       the missing-data override and were fetched — so the test is a regression guard, not a
       formality.*
-- [ ] 11.4 Confirm the reconciliation pass runs on charger + wifi and resumes after interruption
+- [x] 11.4 Confirm the reconciliation pass runs on charger + wifi and resumes after interruption
       *Partially automated, now with `androidx.work:work-testing` as a dependency:
       `SyncSchedulerTest` enqueues against a real `WorkManager` and asserts the exact constraints
       requested (`reconcileNow(force = false)` → `requiresCharging` + `UNMETERED`), and that the
@@ -232,6 +233,7 @@ logic is correct.
       remains device-bound is whether the real Android battery/connectivity trackers actually
       gate execution the way the asserted constraints imply — `WorkManagerTestInitHelper`'s default
       trackers never satisfy them, so no test here ever lets the worker itself run.*
+      *Observed on device 2026-08-14: unforced pass gated on battery/mobile data, ran on charger+wifi, and resumed oldest-first after interruption.*
 - [x] 11.5 Confirm the Settings full-refresh action works regardless of conditions
       *Automated: `SyncSchedulerTest.reconcileNow with force bypasses the charging and unmetered
       requirement` asserts `force = true` requests plain connectivity with no charging
@@ -245,10 +247,11 @@ logic is correct.
       three achievement endpoints, and asserts a >=100x drop against the old ~3-per-owned-game
       sweep. Pins the cost claim this whole change rests on as arithmetic rather than a stopwatch
       reading.*
-- [ ] 11.7 Open a game detail screen for a cold-tier game and confirm the rarity-standing bound still
+- [x] 11.7 Open a game detail screen for a cold-tier game and confirm the rarity-standing bound still
       renders from stored percentages — with global percentages no longer cached, a cold game's
       percentages are as old as its last reconciliation
       *Device-bound: asserts what a screen renders.*
+      *Observed on device 2026-08-14: cold-tier game detail renders the rarity bound from stored percentages.*
 
 ## 12. Spec hygiene on archive
 
