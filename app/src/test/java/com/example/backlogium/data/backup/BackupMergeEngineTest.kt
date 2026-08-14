@@ -426,6 +426,49 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
         store[game.appId] = game
     }
 
+    override suspend fun insertSteamGameIfMissing(
+        appId: Long,
+        name: String,
+        iconUrl: String,
+        playtimeForever: Int,
+        playtime2Weeks: Int,
+        lastPlaytime: Int,
+        lastSyncedAt: Long,
+    ) {
+        if (appId !in store) {
+            store[appId] = Game(
+                appId = appId,
+                name = name,
+                iconUrl = iconUrl,
+                playtimeForever = playtimeForever,
+                playtime2Weeks = playtime2Weeks,
+                lastPlaytime = lastPlaytime,
+                lastSyncedAt = lastSyncedAt,
+            )
+        }
+    }
+
+    override suspend fun updateSteamFields(
+        appId: Long,
+        name: String,
+        iconUrl: String,
+        playtimeForever: Int,
+        playtime2Weeks: Int,
+        lastPlaytime: Int,
+        lastSyncedAt: Long,
+    ) {
+        store[appId]?.let {
+            store[appId] = it.copy(
+                name = name,
+                iconUrl = iconUrl,
+                playtimeForever = playtimeForever,
+                playtime2Weeks = playtime2Weeks,
+                lastPlaytime = lastPlaytime,
+                lastSyncedAt = lastSyncedAt,
+            )
+        }
+    }
+
     override fun observeLibrary(): Flow<List<Game>> = flowOf(store.values.toList())
     override fun observeGoalGames(): Flow<List<Game>> = flowOf(emptyList())
     override fun observeBacklog(): Flow<List<Game>> = flowOf(emptyList())
@@ -507,6 +550,18 @@ private class FakeDailyProgressDao(private val store: MutableMap<String, DailyPr
         store[day.date] = day
     }
 
+    override suspend fun ensureDate(date: String) {
+        store.putIfAbsent(date, DailyProgress(date))
+    }
+
+    override suspend fun addMinutes(date: String, minutesPlayed: Int, goalMinutesPlayed: Int) {
+        val day = store[date] ?: DailyProgress(date)
+        store[date] = day.copy(
+            minutesPlayed = day.minutesPlayed + minutesPlayed,
+            goalMinutesPlayed = day.goalMinutesPlayed + goalMinutesPlayed,
+        )
+    }
+
     override suspend fun getByDate(date: String): DailyProgress? = store[date]
     override fun observeAll(): Flow<List<DailyProgress>> = flowOf(store.values.toList())
     override suspend fun getAllOrdered(): List<DailyProgress> = store.values.sortedBy { it.date }
@@ -557,8 +612,44 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
         this.profile = profile
     }
 
+    override suspend fun insertIfMissing() {
+        if (profile == null) profile = PlayerProfile()
+    }
+
     override fun observe(): Flow<PlayerProfile?> = flowOf(profile)
     override suspend fun get(): PlayerProfile? = profile
+
+    override suspend fun updateSyncStatus(lastSyncAt: Long, lastSyncError: String?) {
+        profile = (profile ?: PlayerProfile()).copy(
+            lastSyncAt = maxOf(profile?.lastSyncAt ?: 0L, lastSyncAt),
+            lastSyncError = lastSyncError,
+        )
+    }
+
+    override suspend fun updateSteamIdentity(
+        steamId: String,
+        steamLevel: Int,
+        personaName: String?,
+        avatarUrl: String?,
+    ) {
+        profile = (profile ?: PlayerProfile()).copy(steamId = steamId, steamLevel = steamLevel, personaName = personaName, avatarUrl = avatarUrl)
+    }
+
+    override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?) {
+        profile = (profile ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl)
+    }
+
+    override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {
+        profile = (profile ?: PlayerProfile()).copy(totalXp = totalXp, level = level, currentStreak = currentStreak, longestStreak = maxOf(profile?.longestStreak ?: 0, longestStreak), gamificationConfigVersion = gamificationConfigVersion)
+    }
+
+    override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) {
+        profile = (profile ?: PlayerProfile()).copy(playtimeBackfilled = playtimeBackfilled)
+    }
+
+    override suspend fun updateLastSyncError(message: String) {
+        profile = (profile ?: PlayerProfile()).copy(lastSyncError = message)
+    }
 }
 
 private class FakeCollectionDao(

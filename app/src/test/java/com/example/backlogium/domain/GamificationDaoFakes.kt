@@ -86,9 +86,15 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
 internal class FakeHltbDataDao(
     private val completionistByAppId: Map<Long, Int> = emptyMap(),
 ) : HltbDataDao {
+    var getByAppIdCalls = 0
+        private set
+    var getAllCalls = 0
+        private set
+
     override suspend fun upsert(data: HltbData) = Unit
-    override suspend fun getByAppId(appId: Long): HltbData? =
-        completionistByAppId[appId]?.let { minutes ->
+    override suspend fun getByAppId(appId: Long): HltbData? {
+        getByAppIdCalls++
+        return completionistByAppId[appId]?.let { minutes ->
             HltbData(
                 appId = appId,
                 completionistMinutes = minutes,
@@ -96,9 +102,20 @@ internal class FakeHltbDataDao(
                 matchStatus = HltbMatchStatus.RESOLVED,
             )
         }
+    }
 
     override fun observeAll(): Flow<List<HltbData>> = flowOf(emptyList())
-    override suspend fun getAll(): List<HltbData> = emptyList()
+    override suspend fun getAll(): List<HltbData> {
+        getAllCalls++
+        return completionistByAppId.map { (appId, minutes) ->
+            HltbData(
+                appId = appId,
+                completionistMinutes = minutes,
+                fetchedAt = 0L,
+                matchStatus = HltbMatchStatus.RESOLVED,
+            )
+        }
+    }
     override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(emptyList())
     override suspend fun appIdsStaleOrMissing(cutoff: Long): List<Long> = emptyList()
 }
@@ -113,6 +130,14 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
 
     override suspend fun upsert(game: Game) {
         store[game.appId] = game
+    }
+
+    override suspend fun insertSteamGameIfMissing(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long) {
+        store.putIfAbsent(appId, Game(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, lastSyncedAt = lastSyncedAt))
+    }
+
+    override suspend fun updateSteamFields(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long) {
+        store[appId]?.let { store[appId] = it.copy(name = name, iconUrl = iconUrl, playtimeForever = playtimeForever, playtime2Weeks = playtime2Weeks, lastPlaytime = lastPlaytime, lastSyncedAt = lastSyncedAt) }
     }
 
     override fun observeLibrary(): Flow<List<Game>> = flowOf(store.values.toList())
@@ -145,6 +170,15 @@ internal class FakeDailyProgressDao(initial: List<DailyProgress>) : DailyProgres
         store[day.date] = day
     }
 
+    override suspend fun ensureDate(date: String) {
+        store.putIfAbsent(date, DailyProgress(date))
+    }
+
+    override suspend fun addMinutes(date: String, minutesPlayed: Int, goalMinutesPlayed: Int) {
+        val day = store[date] ?: DailyProgress(date)
+        store[date] = day.copy(minutesPlayed = day.minutesPlayed + minutesPlayed, goalMinutesPlayed = day.goalMinutesPlayed + goalMinutesPlayed)
+    }
+
     override suspend fun getByDate(date: String): DailyProgress? = store[date]
     override fun observeAll(): Flow<List<DailyProgress>> =
         flowOf(store.values.sortedByDescending { it.date })
@@ -169,8 +203,36 @@ internal class FakePlayerProfileDao(initial: PlayerProfile? = null) : PlayerProf
         state.value = profile
     }
 
+    override suspend fun insertIfMissing() {
+        if (state.value == null) state.value = PlayerProfile()
+    }
+
     override fun observe(): Flow<PlayerProfile?> = state.asStateFlow()
     override suspend fun get(): PlayerProfile? = state.value
+
+    override suspend fun updateSyncStatus(lastSyncAt: Long, lastSyncError: String?) {
+        state.value = (state.value ?: PlayerProfile()).copy(lastSyncAt = maxOf(state.value?.lastSyncAt ?: 0L, lastSyncAt), lastSyncError = lastSyncError)
+    }
+
+    override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?) {
+        state.value = (state.value ?: PlayerProfile()).copy(steamId = steamId, steamLevel = steamLevel, personaName = personaName, avatarUrl = avatarUrl)
+    }
+
+    override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?) {
+        state.value = (state.value ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl)
+    }
+
+    override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {
+        state.value = (state.value ?: PlayerProfile()).copy(totalXp = totalXp, level = level, currentStreak = currentStreak, longestStreak = maxOf(state.value?.longestStreak ?: 0, longestStreak), gamificationConfigVersion = gamificationConfigVersion)
+    }
+
+    override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) {
+        state.value = (state.value ?: PlayerProfile()).copy(playtimeBackfilled = playtimeBackfilled)
+    }
+
+    override suspend fun updateLastSyncError(message: String) {
+        state.value = (state.value ?: PlayerProfile()).copy(lastSyncError = message)
+    }
 }
 
 /** Seeded, read-only stand-in: only [getAllUnlocked] is exercised by the updater. */

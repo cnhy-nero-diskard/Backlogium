@@ -1,0 +1,327 @@
+package com.example.backlogium.data.local
+
+import androidx.room.Room
+import androidx.room.withTransaction
+import com.example.backlogium.data.local.entity.DailyProgress
+import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.domain.SessionDiffer
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+
+/**
+ * Exercises the real Room write surfaces introduced by auditfix-sync-write-integrity. These are
+ * deliberately database tests rather than fake-DAO tests: the guarantees here are SQL column
+ * scope, additive updates, and rollback when a raw commit fails halfway through.
+ */
+@RunWith(RobolectricTestRunner::class)
+class WriteIntegrityDaoTest {
+
+    private lateinit var database: BacklogiumDatabase
+
+    @Before
+    fun setUp() {
+        database = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(),
+            BacklogiumDatabase::class.java,
+        ).allowMainThreadQueries().build()
+    }
+
+    @After
+    fun tearDown() {
+        database.close()
+    }
+
+    @Test
+    fun steamUpdatePreservesGoalTargetAndBackfillColumns() = runBlocking {
+        database.gameDao().upsert(
+            Game(
+                appId = 440L,
+                name = "Old",
+                iconUrl = "old-icon",
+                playtimeForever = 100,
+                playtime2Weeks = 10,
+                lastPlaytime = 100,
+                isGoal = true,
+                targetMinutes = 240,
+                backfillMinutes = 55,
+            ),
+        )
+
+        database.gameDao().insertSteamGameIfMissing(
+            appId = 440L,
+            name = "Ignored",
+            iconUrl = "ignored",
+            playtimeForever = 1,
+            playtime2Weeks = 1,
+            lastPlaytime = 1,
+            lastSyncedAt = 1L,
+        )
+        database.gameDao().updateSteamFields(
+            appId = 440L,
+            name = "New",
+            iconUrl = "new-icon",
+            playtimeForever = 130,
+            playtime2Weeks = 20,
+            lastPlaytime = 130,
+            lastSyncedAt = 2L,
+        )
+
+        val stored = database.gameDao().getById(440L)!!
+        assertEquals("New", stored.name)
+        assertEquals(130, stored.lastPlaytime)
+        assertTrue(stored.isGoal)
+        assertEquals(240, stored.targetMinutes)
+        assertEquals(55, stored.backfillMinutes)
+    }
+
+    @Test
+    fun additiveDailyUpdatesKeepBothCredits() = runBlocking {
+        database.dailyProgressDao().ensureDate(DATE)
+        database.dailyProgressDao().addMinutes(DATE, minutesPlayed = 12, goalMinutesPlayed = 5)
+        database.dailyProgressDao().addMinutes(DATE, minutesPlayed = 8, goalMinutesPlayed = 3)
+
+        val stored = database.dailyProgressDao().getByDate(DATE)!!
+        assertEquals(20, stored.minutesPlayed)
+        assertEquals(8, stored.goalMinutesPlayed)
+        assertFalse(stored.questMet)
+    }
+
+    @Test
+    fun retiredAchievementsStayStoredButLeaveDerivedReads() = runBlocking {
+        database.gameDao().upsert(
+            Game(
+                appId = 440L,
+                name = "Game",
+                iconUrl = "",
+                playtimeForever = 0,
+                playtime2Weeks = 0,
+                lastPlaytime = 0,
+            ),
+        )
+        database.achievementDao().upsertAll(
+            listOf(
+                com.example.backlogium.data.local.entity.Achievement(
+                    appId = 440L,
+                    apiName = "RETIRED",
+                    unlocked = true,
+                    snapshotPercent = 5.0,
+                    retired = true,
+                    fetchedAt = 1L,
+                ),
+                com.example.backlogium.data.local.entity.Achievement(
+                    appId = 440L,
+                    apiName = "ACTIVE",
+                    unlocked = true,
+                    snapshotPercent = 20.0,
+                    fetchedAt = 2L,
+                ),
+                com.example.backlogium.data.local.entity.Achievement(
+                    appId = 440L,
+                    apiName = "LOCKED",
+                    unlocked = false,
+                    fetchedAt = 2L,
+                ),
+            ),
+        )
+
+        assertEquals(1, database.achievementDao().getAllUnlocked().size)
+        val counts = database.achievementDao().observeCounts().first().single()
+        assertEquals(2, counts.total)
+        assertEquals(1, counts.unlocked)
+        assertEquals(1, database.achievementDao().observeUnlockedRarity().first().size)
+        assertEquals(3, database.achievementDao().getForGame(440L).size)
+    }
+
+    @Test
+    fun profileDomainWritesDoNotLoseEachOther() = runBlocking {
+        database.playerProfileDao().upsert(
+            PlayerProfile(
+                steamId = "steam",
+                steamLevel = 4,
+                totalXp = 10,
+                level = 1,
+                currentStreak = 1,
+                longestStreak = 2,
+                lastSyncAt = 100L,
+                lastSyncError = "old",
+                playtimeBackfilled = true,
+                personaName = "Player",
+                avatarUrl = "avatar",
+            ),
+        )
+
+        coroutineScope {
+            val gamification = launch {
+                database.playerProfileDao().updateGamification(
+                    totalXp = 400,
+                    level = 4,
+                    currentStreak = 3,
+                    longestStreak = 5,
+                    gamificationConfigVersion = 9L,
+                )
+            }
+            val sync = launch {
+                database.playerProfileDao().updateSyncStatus(200L, null)
+            }
+            joinAll(gamification, sync)
+        }
+
+        val stored = database.playerProfileDao().get()!!
+        assertEquals(400, stored.totalXp)
+        assertEquals(4, stored.level)
+        assertEquals(9L, stored.gamificationConfigVersion)
+        assertEquals(200L, stored.lastSyncAt)
+        assertEquals(null, stored.lastSyncError)
+        assertEquals("steam", stored.steamId)
+        assertTrue(stored.playtimeBackfilled)
+    }
+
+    @Test
+    fun failedRawCommitRollsBackBaselineBeforeDailyCredit() = runBlocking {
+        database.gameDao().upsert(
+            Game(
+                appId = 440L,
+                name = "Game",
+                iconUrl = "",
+                playtimeForever = 100,
+                playtime2Weeks = 0,
+                lastPlaytime = 100,
+            ),
+        )
+        database.dailyProgressDao().upsert(
+            DailyProgress(DATE, minutesPlayed = 4, goalMinutesPlayed = 2, questMet = true),
+        )
+
+        try {
+            database.withTransaction {
+                database.gameDao().updateSteamFields(
+                    appId = 440L,
+                    name = "Game",
+                    iconUrl = "",
+                    playtimeForever = 130,
+                    playtime2Weeks = 0,
+                    lastPlaytime = 130,
+                    lastSyncedAt = 2L,
+                )
+                error("injected failure between baseline and daily progress")
+                // The real commit credits daily progress after the baseline write. The injected
+                // exception must roll both writes back, so the next poll can observe the delta.
+                database.dailyProgressDao().addMinutes(DATE, 30, 30)
+            }
+        } catch (_: IllegalStateException) {
+            // Expected: the transaction boundary is the behavior under test.
+        }
+
+        assertEquals(100, database.gameDao().getById(440L)!!.lastPlaytime)
+        assertEquals(4, database.dailyProgressDao().getByDate(DATE)!!.minutesPlayed)
+    }
+
+    @Test
+    fun twoConcurrentCommitsReReadBaselineAndCreditOneSession() = runBlocking {
+        database.gameDao().upsert(
+            Game(
+                appId = 440L,
+                name = "Game",
+                iconUrl = "",
+                playtimeForever = 100,
+                playtime2Weeks = 0,
+                lastPlaytime = 100,
+            ),
+        )
+        database.playerProfileDao().upsert(PlayerProfile(lastSyncAt = 1_000L))
+        database.dailyProgressDao().ensureDate(DATE)
+
+        // This intentionally does not use SteamSyncCoordinator. Both callers reach Room, which
+        // proves the correctness layer is the transaction's fresh read rather than the mutex.
+        coroutineScope {
+            launch { commitPollSnapshot(playtime = 130, pollAt = 2_000L) }
+            launch { commitPollSnapshot(playtime = 130, pollAt = 3_000L) }
+        }
+
+        val sessions = database.sessionDao().getAll()
+        assertEquals(1, sessions.size)
+        assertEquals(30, sessions.single().minutes)
+        assertFalse(sessions.single().open)
+        assertEquals(30, database.dailyProgressDao().getByDate(DATE)!!.minutesPlayed)
+        assertEquals(130, database.gameDao().getById(440L)!!.lastPlaytime)
+    }
+
+    private suspend fun commitPollSnapshot(playtime: Int, pollAt: Long) {
+        database.withTransaction {
+            val profile = database.playerProfileDao().get()!!
+            val game = database.gameDao().getById(440L)!!
+            val open = database.sessionDao().getOpenSession(440L)
+            val prior = SessionDiffer.GameDiffState(
+                lastPlaytime = game.lastPlaytime,
+                openSession = open?.let {
+                    SessionDiffer.OpenSession(
+                        startAt = it.startAt,
+                        minutes = it.minutes,
+                        lastIncreaseAt = it.endAt ?: it.startAt,
+                    )
+                },
+            )
+            val diff = SessionDiffer().diff(
+                polls = listOf(SessionDiffer.PollGame(440L, playtime)),
+                priorStates = mapOf(440L to prior),
+                now = pollAt,
+                previousPollAt = profile.lastSyncAt,
+            )
+            diff.actions.forEach { action ->
+                when (action) {
+                    is SessionDiffer.SessionAction.Open -> database.sessionDao().insert(
+                        Session(
+                            appId = action.appId,
+                            startAt = action.startAt,
+                            endAt = action.endAt,
+                            minutes = action.minutes,
+                            open = true,
+                        ),
+                    )
+
+                    is SessionDiffer.SessionAction.Extend ->
+                        database.sessionDao().getOpenSession(action.appId)?.let {
+                            database.sessionDao().update(it.copy(minutes = action.minutes, endAt = action.endAt))
+                        }
+
+                    is SessionDiffer.SessionAction.Close ->
+                        database.sessionDao().getOpenSession(action.appId)?.let {
+                            database.sessionDao().update(it.copy(open = false, endAt = action.endAt))
+                        }
+                }
+            }
+
+            database.gameDao().updateSteamFields(
+                appId = 440L,
+                name = game.name,
+                iconUrl = game.iconUrl,
+                playtimeForever = playtime,
+                playtime2Weeks = 0,
+                lastPlaytime = diff.newLastPlaytime[440L]!!,
+                lastSyncedAt = pollAt,
+            )
+            val delta = diff.playedDeltaByAppId[440L] ?: 0
+            database.dailyProgressDao().ensureDate(DATE)
+            database.dailyProgressDao().addMinutes(DATE, delta, delta)
+            database.playerProfileDao().updateSyncStatus(pollAt, null)
+        }
+    }
+
+    private companion object {
+        const val DATE = "2026-08-15"
+    }
+}

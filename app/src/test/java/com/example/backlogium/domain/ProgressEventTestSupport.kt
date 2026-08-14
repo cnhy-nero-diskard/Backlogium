@@ -57,9 +57,31 @@ internal class GatedPlayerProfileDao(
         onAfterUpsert()
     }
 
+    override suspend fun insertIfMissing() = delegate.insertIfMissing()
+
     override fun observe(): Flow<PlayerProfile?> = delegate.observe()
 
     override suspend fun get(): PlayerProfile? = delegate.get()
+
+    override suspend fun updateSyncStatus(lastSyncAt: Long, lastSyncError: String?) =
+        delegate.updateSyncStatus(lastSyncAt, lastSyncError)
+
+    override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?) =
+        delegate.updateSteamIdentity(steamId, steamLevel, personaName, avatarUrl)
+
+    override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?) =
+        delegate.updateHeaderIdentity(personaName, avatarUrl)
+
+    override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) =
+        delegate.updateGamification(totalXp, level, currentStreak, longestStreak, gamificationConfigVersion).also {
+            onAfterUpsert()
+        }
+
+    override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) =
+        delegate.updatePlaytimeBackfilled(playtimeBackfilled)
+
+    override suspend fun updateLastSyncError(message: String) =
+        delegate.updateLastSyncError(message)
 }
 
 /**

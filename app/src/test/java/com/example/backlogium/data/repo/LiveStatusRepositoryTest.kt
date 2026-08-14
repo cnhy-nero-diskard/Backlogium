@@ -341,6 +341,8 @@ class LiveStatusRepositoryTest {
     private class FakeGameDao(private vararg val games: Game) : GameDao {
         override suspend fun upsertAll(games: List<Game>) = error("not used")
         override suspend fun upsert(game: Game) = error("not used")
+        override suspend fun insertSteamGameIfMissing(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long) = error("not used")
+        override suspend fun updateSteamFields(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long) = error("not used")
         override fun observeLibrary(): Flow<List<Game>> = error("not used")
         override fun observeGoalGames(): Flow<List<Game>> = error("not used")
         override fun observeBacklog(): Flow<List<Game>> = error("not used")
@@ -359,8 +361,19 @@ class LiveStatusRepositoryTest {
         override suspend fun upsert(profile: PlayerProfile) {
             stored = profile
         }
+        override suspend fun insertIfMissing() {
+            if (stored == null) stored = PlayerProfile()
+        }
         override fun observe(): Flow<PlayerProfile?> = error("not used")
         override suspend fun get(): PlayerProfile? = stored
+        override suspend fun updateSyncStatus(lastSyncAt: Long, lastSyncError: String?) = error("not used")
+        override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?) = error("not used")
+        override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?) {
+            stored = (stored ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl)
+        }
+        override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) = error("not used")
+        override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) = error("not used")
+        override suspend fun updateLastSyncError(message: String) = error("not used")
     }
 
     /** Configurable player-summary responses; [throwOnNextCall] simulates a transient failure. */

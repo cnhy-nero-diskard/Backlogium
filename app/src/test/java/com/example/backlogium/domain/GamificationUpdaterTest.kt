@@ -116,6 +116,25 @@ class GamificationUpdaterTest {
     }
 
     @Test
+    fun compute_readsHltbFixtureWithOneBulkQuery() = runTest {
+        val appIds = (1L..100L).toList()
+        val hltbDao = FakeHltbDataDao(appIds.associateWith { 1_000 })
+        val updater = GamificationUpdater(
+            sessionDao = FakeSessionDao(appIds.map { testSession(minutes = 1, appId = it) }),
+            dailyProgressDao = FakeDailyProgressDao(emptyList()),
+            playerProfileDao = FakePlayerProfileDao(),
+            hltbDataDao = hltbDao,
+            achievementDao = FakeAchievementDao(emptyList()),
+            gameDao = FakeGameDao(appIds.map { testGame(appId = it, backfillMinutes = 0) }),
+        )
+
+        updater.compute(LocalDate.parse("2026-07-17"), RuleConfig())
+
+        assertEquals("one library-sized HLTB read", 1, hltbDao.getAllCalls)
+        assertEquals("the old per-game query is gone", 0, hltbDao.getByAppIdCalls)
+    }
+
+    @Test
     fun recompute_streakIntactTodayUnmet_currentStreakEqualsYesterdaysValue() = runTest {
         // Yesterday and the day before both met (past streak = 2); today's row exists but is
         // still in progress (10 < 30 min threshold). The engine must never see today's row as
