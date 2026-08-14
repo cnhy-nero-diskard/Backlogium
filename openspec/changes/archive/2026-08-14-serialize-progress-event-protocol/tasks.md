@@ -53,4 +53,5 @@
 - [x] 7.2 Run `./gradlew assembleDebug`
 - [x] 7.3 Mutation-check the new protocol tests: with `persist()`'s `withTransition` removed, the two race tests fail; with the `pendingTransition == null` derivation guard removed, the two suppression tests fail
 - [x] 7.4 Re-run the repository-boundary grep from `CLAUDE.md` and confirm only the documented `HomeViewModel` breach is reported
-- [ ] 7.5 Manually verify on device: earn a quest via a background sync, leave it unacknowledged past midnight, confirm it presents with the earned date on next open and does not replay after a rule change
+- [x] 7.5 Manually verify on device: earn a quest via a background sync, leave it unacknowledged past midnight, confirm it presents with the earned date on next open and does not replay after a rule change
+      *Observed on device 2026-08-14: background-sync quest presented with the earned date after rollover; no replay after a rule change.*
