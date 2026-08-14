@@ -43,6 +43,45 @@ roughly one device. If the implementer can establish that no device is running b
 say, v12, then C's scope shrinks accordingly and should. Do not build historical
 coverage for versions that have no users — write down the finding instead.
 
+### Historical target decision made during implementation
+
+The repository's original app design records a single user, single Steam account, and
+one device (`openspec/changes/archive/2026-07-24-add-android-steam-app/design.md`). The
+latest recorded device observations identify `emulator-5554` on 2026-08-14
+(`openspec/changes/archive/2026-08-14-optimize-steam-sync/tasks.md`). This checkout could
+not query the live database: `adb` is not available to the process and the SDK path in
+`local.properties` is inaccessible. Therefore this decision does not claim a live
+database dump or prove that an older install still exists.
+
+The current application schema is v14, and v13 is the immediately preceding schema for
+the only documented installation. v13 is therefore the oldest version this evidence
+justifies as an installed-base target. The deep fixture will be a hand-authored raw-SQL
+v13 database that runs the real 13->14 migration. Versions v1->v12 are explicitly not
+covered: no second or older installation is documented, and no Room exports exist from
+which to reconstruct those shapes without testing against fiction. The v13 fixture is
+an honest pre-export fixture, not a retroactive Room schema export.
+
+### Migration chain inventory
+
+The real chain under test is the following; the inventory also fixes the historical
+fixture's target to an actual transition rather than a guessed version:
+
+| Transition | Change |
+|---|---|
+| v1->v2 | Create `hltb_data`. |
+| v2->v3 | Create `achievements`. |
+| v3->v4 | Add `games.backfillMinutes` and `player_profile.playtimeBackfilled`. |
+| v4->v5 | Add `player_profile.personaName` and `avatarUrl`. |
+| v5->v6 | Add the sessions natural-key index. |
+| v6->v7 | Add achievement `description` and `hidden`. |
+| v7->v8 | Create diagnostics tables and their indexes. |
+| v8->v9 | Create `collections`, `collection_members`, and the member index. |
+| v9->v10 | Add collection `accent` and member `done`. |
+| v10->v11 | Add collection `timeBasis`. |
+| v11->v12 | Create `game_genre_cache`. |
+| v12->v13 | Add collection `description` and `displayOrder`, then backfill order. |
+| v13->v14 | Add sync tier counters, create `game_achievement_sync`, and translate/delete the old no-achievements sentinel. |
+
 ## Data survival, not just schema equality
 
 `MigrationTestHelper.validateMigration` compares schemas. A migration that recreates a
@@ -55,6 +94,7 @@ Every migration test in this change therefore follows:
   2. insert representative rows      ← the step that makes this a real test
        - one game with playtime, backfillMinutes, isGoal set
        - one session, one daily-progress row
+       - one pre-v14 sync run with a related request-breakdown row
        - one achievement with a rarity snapshot
        - the singleton player profile with XP and longestStreak
   3. run the real migrations to current
@@ -67,11 +107,12 @@ app-owned columns the sync must not clobber, `longestStreak` is a high-water mar
 must never regress, and the rarity snapshot has a documented first-unlock invariant.
 A migration that silently drops one of them is the failure this test exists to catch.
 
-## CI shape: three new jobs, not three new steps
+## CI shape: independent jobs, not steps
 
 The existing `ci.yml` already models the right instinct — `functions` is a separate job
 from `test` with a comment explaining that the toolchains share nothing and should fail
-independently. Extend that instinct rather than adding steps to existing jobs.
+independently. Add lint and instrumented as separate jobs; extend `functions` with its
+test command while keeping its toolchain independent.
 
 ```
   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
@@ -79,7 +120,7 @@ independently. Extend that instinct rather than adding steps to existing jobs.
   │ (existing)   │  │ (new)        │  │ (new)        │  │ typecheck +  │
   │ ./gradlew    │  │ ./gradlew    │  │ emulator:    │  │ test (new)   │
   │   test       │  │ lintDebug    │  │ migrations   │  │              │
-  │              │  │              │  │ + DAO        │  │              │
+  │              │  │              │  │ migrations   │  │              │
   │  ~fast       │  │  ~fast       │  │  ~slow       │  │  ~fast       │
   └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘
         │                 │                 │                 │
@@ -96,6 +137,17 @@ six months if it is flaky or slow. Two decisions to keep it alive:
 - **Pin the emulator API level and AVD cache.** An unpinned emulator image is the usual
   source of "it failed again, just re-run it", and two re-runs is all it takes before a
   team starts ignoring a job.
+
+The app's DAO tests are JVM tests (`:app:testDebugUnitTest`), so they remain in the
+existing fast unit-test job. The instrumented job is intentionally filtered to
+`MigrationTest`: the current Android-test tree also contains unrelated Compose UI
+tests, and this change must not make migration coverage depend on their state.
+
+The focused local `MigrationTest` on the API 35 `Medium_Phone_API_35` emulator
+completed in approximately 65 seconds wall-clock, including Gradle startup,
+installation, and test execution. That is acceptable for pull-request coverage;
+if the complete instrumented suite proves materially slower, reduce its scope to
+migrations before reducing its trigger frequency.
 
 **Lint will almost certainly fail on first run.** A codebase that has never run lint
 accumulates warnings. Establish a baseline (`lint.baseline`) so the job starts green and

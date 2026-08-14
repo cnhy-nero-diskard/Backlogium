@@ -2,6 +2,8 @@
 .gradle
 /local.properties
 /.idea/
+/.claude/settings.local.json
+/.android/
 .DS_Store
 /build
 **/build/

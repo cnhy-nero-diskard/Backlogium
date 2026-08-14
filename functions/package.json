@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "test": "vitest run src",
     "build:watch": "tsc --watch",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log --only pollPresence"
@@ -18,6 +19,7 @@
     "firebase-functions": "^6.3.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.10"
   }
 }

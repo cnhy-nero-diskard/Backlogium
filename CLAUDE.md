@@ -12,6 +12,11 @@ there — `steam-sync`, `live-status`, `gamification`, `cloud-presence-poller`, 
 others; `ls openspec/specs/` is the current list. When behaviour is in question,
 read the spec before inferring intent from an implementation.
 
+**Specs win over tests and implementation.** If a test disagrees with a normative
+spec, treat the spec as authoritative and propose a spec change before changing
+behaviour. A test that intentionally encodes known-incorrect behaviour must say so
+in a comment and name the change that will make it correct.
+
 ```
 openspec/specs/<capability>/spec.md      current agreed behaviour
 openspec/changes/<name>/                 in-flight work (proposal, design, specs, tasks)
