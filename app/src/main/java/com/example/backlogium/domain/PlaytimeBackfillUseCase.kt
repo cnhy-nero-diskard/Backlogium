@@ -28,6 +28,7 @@ class PlaytimeBackfillUseCase @Inject constructor(
     private val settings: SettingsDataStore,
     private val gamificationUpdater: GamificationUpdater,
     private val time: TimeProvider,
+    private val derivedStateWrites: DerivedStateWriteCoordinator,
 ) {
 
     /**
@@ -36,25 +37,27 @@ class PlaytimeBackfillUseCase @Inject constructor(
      * @return `true` if this call performed the import, `false` if it was a no-op because
      *   history had already been imported (idempotence guarantee).
      */
-    suspend operator fun invoke(): Boolean {
+    suspend operator fun invoke(): Boolean = derivedStateWrites.withLock {
         val storedProfile = playerProfileDao.get()
         val profile = storedProfile ?: PlayerProfile()
         if (storedProfile == null) playerProfileDao.insertIfMissing()
         // Idempotent: once imported, never re-import or double-count.
-        if (profile.playtimeBackfilled) return false
+        if (profile.playtimeBackfilled) {
+            false
+        } else {
+            val trackedByGame = sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes }
+            val backfillByAppId = gameDao.getAll().associate { game ->
+                val tracked = trackedByGame[game.appId] ?: 0
+                game.appId to (game.playtimeForever - tracked).coerceAtLeast(0)
+            }
 
-        val trackedByGame = sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes }
-        val backfillByAppId = gameDao.getAll().associate { game ->
-            val tracked = trackedByGame[game.appId] ?: 0
-            game.appId to (game.playtimeForever - tracked).coerceAtLeast(0)
+            gameDao.applyBackfill(backfillByAppId)
+            playerProfileDao.updatePlaytimeBackfilled(true)
+
+            // Reflect the freshly imported history in XP/level using the injected clock + rules.
+            recompute()
+            true
         }
-
-        gameDao.applyBackfill(backfillByAppId)
-        playerProfileDao.updatePlaytimeBackfilled(true)
-
-        // Reflect the freshly imported history in XP/level using the injected clock + rules.
-        recompute()
-        return true
     }
 
     /**
@@ -64,11 +67,13 @@ class PlaytimeBackfillUseCase @Inject constructor(
      * an add, so re-importing is safe and restores the prior result). Tracked sessions, daily
      * progress, and streaks are untouched.
      */
-    suspend fun reset() {
-        val profile = playerProfileDao.get() ?: return
-        gameDao.applyBackfill(gameDao.getAll().associate { it.appId to 0 })
-        playerProfileDao.updatePlaytimeBackfilled(false)
-        recompute()
+    suspend fun reset() = derivedStateWrites.withLock {
+        val profile = playerProfileDao.get()
+        if (profile != null) {
+            gameDao.applyBackfill(gameDao.getAll().associate { it.appId to 0 })
+            playerProfileDao.updatePlaytimeBackfilled(false)
+            recompute()
+        }
     }
 
     private suspend fun recompute() {

@@ -21,6 +21,7 @@ class UpdateRuleConfigUseCase @Inject constructor(
     private val settings: SettingsRepository,
     private val gamificationUpdater: GamificationUpdater,
     private val time: TimeProvider,
+    private val derivedStateWrites: DerivedStateWriteCoordinator = DerivedStateWriteCoordinator(),
 ) {
 
     /**
@@ -40,7 +41,7 @@ class UpdateRuleConfigUseCase @Inject constructor(
      * level, quest status, or streak derived from the previous rules. Rule changes redefine the
      * progress-event baseline and therefore never celebrate the resulting transition.
      */
-    suspend fun apply(config: RuleConfig) {
+    suspend fun apply(config: RuleConfig) = derivedStateWrites.withLock {
         val stored = settings.setRuleConfigAndGetVersion(config)
         gamificationUpdater.recompute(
             today = time.today(),
