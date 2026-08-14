@@ -2,11 +2,13 @@ package com.example.backlogium.work
 
 import android.content.Context
 import androidx.hilt.work.HiltWorker
+import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.example.backlogium.data.diagnostics.SyncOutcome
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
+import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
 import dagger.assisted.Assisted
@@ -30,11 +32,16 @@ class ReconciliationWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
     private val credentials: CredentialsRepository,
+    private val database: BacklogiumDatabase,
     private val achievementRepository: AchievementRepository,
     private val diagnostics: SyncRunRecorder,
+    private val syncCoordinator: SteamSyncCoordinator,
 ) : CoroutineWorker(appContext, params) {
 
-    override suspend fun doWork(): Result {
+    override suspend fun doWork(): Result =
+        syncCoordinator.tryRun { doWorkLocked() } ?: Result.success()
+
+    private suspend fun doWorkLocked(): Result {
         val creds = credentials.currentCredentials()
         if (creds == null) {
             Timber.tag(TAG).i("Skipping reconciliation: no Steam credentials")
@@ -56,19 +63,24 @@ class ReconciliationWorker @AssistedInject constructor(
 
         return try {
             setProgress(workDataOf(KEY_RUNNING to true))
-            val result = achievementRepository.reconcileLibraryGames(apiKey, steamId, scope) { refreshed, total ->
+            val fetched = achievementRepository.fetchReconciliationGames(apiKey, steamId, scope) { refreshed, total ->
                 refreshedSoFar = refreshed
                 totalSoFar = total
             }
-            refreshedSoFar = result.refreshed
-            totalSoFar = result.total
-            val uncovered = result.total - result.refreshed
-            if (uncovered > 0) {
-                Timber.tag(TAG).w("Reconciliation stopped early: ${result.refreshed}/${result.total} games refreshed, $uncovered uncovered")
-            } else {
-                Timber.tag(TAG).i("Reconciliation complete: ${result.refreshed}/${result.total} games refreshed")
+            withContext(NonCancellable) {
+                database.withTransaction {
+                    achievementRepository.applyRefreshes(fetched.refreshes)
+                }
             }
-            Result.success(workDataOf(KEY_REFRESHED to result.refreshed, KEY_TOTAL to result.total))
+            refreshedSoFar = fetched.refreshes.size
+            totalSoFar = fetched.total
+            val uncovered = fetched.total - fetched.refreshes.size
+            if (uncovered > 0) {
+                Timber.tag(TAG).w("Reconciliation stopped early: ${fetched.refreshes.size}/${fetched.total} games refreshed, $uncovered uncovered")
+            } else {
+                Timber.tag(TAG).i("Reconciliation complete: ${fetched.refreshes.size}/${fetched.total} games refreshed")
+            }
+            Result.success(workDataOf(KEY_REFRESHED to fetched.refreshes.size, KEY_TOTAL to fetched.total))
         } catch (e: CancellationException) {
             outcome = SyncOutcome.INCOMPLETE
             Timber.tag(TAG).i("Reconciliation cancelled early: $refreshedSoFar/$totalSoFar games refreshed")
