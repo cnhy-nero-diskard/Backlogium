@@ -1,0 +1,381 @@
+package com.example.backlogium.data.local
+
+import android.content.Context
+import androidx.room.testing.MigrationTestHelper
+import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.sqlite.db.SupportSQLiteOpenHelper
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * Migration coverage is intentionally discoverable here: whenever the database version
+ * increases, add the corresponding preceding-version fixture and data-survival assertions
+ * before merging the migration. Schema validation by itself cannot catch a migration that
+ * creates the right columns while dropping the user's rows.
+ */
+@RunWith(AndroidJUnit4::class)
+class MigrationTest {
+
+    @get:Rule
+    val migrationTestHelper = MigrationTestHelper(
+        InstrumentationRegistry.getInstrumentation(),
+        BacklogiumDatabase::class.java,
+        emptyList(),
+        FrameworkSQLiteOpenHelperFactory(),
+    )
+
+    private val context: Context
+        get() = InstrumentationRegistry.getInstrumentation().targetContext
+
+    @Test
+    fun deepHistory_v13ToV14_preservesRepresentativeDataAndTranslatesSentinel() {
+        val databaseName = "migration-v13-${System.nanoTime()}"
+        val rawHelper = openRawV13Database(databaseName)
+
+        try {
+            rawHelper.writableDatabase.seedRepresentativeData()
+        } finally {
+            rawHelper.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                14,
+                true,
+                BacklogiumDatabase.MIGRATION_13_14,
+            )
+            try {
+                migrated.assertRepresentativeData()
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    private fun openRawV13Database(databaseName: String): SupportSQLiteOpenHelper {
+        val callback = object : SupportSQLiteOpenHelper.Callback(13) {
+            override fun onCreate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE `games` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`name` TEXT NOT NULL, " +
+                        "`iconUrl` TEXT NOT NULL, " +
+                        "`playtimeForever` INTEGER NOT NULL, " +
+                        "`playtime2Weeks` INTEGER NOT NULL, " +
+                        "`lastPlaytime` INTEGER NOT NULL, " +
+                        "`isGoal` INTEGER NOT NULL, " +
+                        "`targetMinutes` INTEGER, " +
+                        "`lastSyncedAt` INTEGER NOT NULL, " +
+                        "`backfillMinutes` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE `sessions` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`startAt` INTEGER NOT NULL, " +
+                        "`endAt` INTEGER, " +
+                        "`minutes` INTEGER NOT NULL, " +
+                        "`open` INTEGER NOT NULL, " +
+                        "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE TABLE `daily_progress` (" +
+                        "`date` TEXT NOT NULL, " +
+                        "`minutesPlayed` INTEGER NOT NULL, " +
+                        "`goalMinutesPlayed` INTEGER NOT NULL, " +
+                        "`questMet` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`date`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE `player_profile` (" +
+                        "`id` INTEGER NOT NULL, " +
+                        "`steamId` TEXT NOT NULL, " +
+                        "`steamLevel` INTEGER NOT NULL, " +
+                        "`totalXp` INTEGER NOT NULL, " +
+                        "`level` INTEGER NOT NULL, " +
+                        "`currentStreak` INTEGER NOT NULL, " +
+                        "`longestStreak` INTEGER NOT NULL, " +
+                        "`lastSyncAt` INTEGER NOT NULL, " +
+                        "`lastSyncError` TEXT, " +
+                        "`playtimeBackfilled` INTEGER NOT NULL, " +
+                        "`personaName` TEXT, " +
+                        "`avatarUrl` TEXT, " +
+                        "PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE `hltb_data` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`hltbId` INTEGER, " +
+                        "`mainStoryMinutes` INTEGER, " +
+                        "`mainExtraMinutes` INTEGER, " +
+                        "`completionistMinutes` INTEGER, " +
+                        "`allStylesMinutes` INTEGER, " +
+                        "`fetchedAt` INTEGER NOT NULL, " +
+                        "`matchStatus` TEXT NOT NULL, " +
+                        "`candidatesJson` TEXT, " +
+                        "PRIMARY KEY(`appId`), " +
+                        "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE TABLE `achievements` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`apiName` TEXT NOT NULL, " +
+                        "`displayName` TEXT, " +
+                        "`iconUrl` TEXT, " +
+                        "`unlocked` INTEGER NOT NULL, " +
+                        "`unlockedAt` INTEGER, " +
+                        "`globalPercent` REAL, " +
+                        "`snapshotPercent` REAL, " +
+                        "`description` TEXT, " +
+                        "`hidden` INTEGER NOT NULL, " +
+                        "`fetchedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`, `apiName`), " +
+                        "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE TABLE `sync_runs` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`startedAt` INTEGER NOT NULL, " +
+                        "`durationMs` INTEGER NOT NULL, " +
+                        "`trigger` TEXT NOT NULL, " +
+                        "`requestCount` INTEGER NOT NULL, " +
+                        "`requestMillis` INTEGER NOT NULL, " +
+                        "`gamesExamined` INTEGER NOT NULL, " +
+                        "`gamesUpdated` INTEGER NOT NULL, " +
+                        "`outcome` TEXT NOT NULL, " +
+                        "`errorMessage` TEXT)",
+                )
+                db.execSQL("CREATE INDEX `index_sync_runs_startedAt` ON `sync_runs` (`startedAt`)")
+                db.execSQL(
+                    "CREATE TABLE `request_breakdowns` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`runId` INTEGER NOT NULL, " +
+                        "`endpoint` TEXT NOT NULL, " +
+                        "`status` INTEGER, " +
+                        "`requestCount` INTEGER NOT NULL, " +
+                        "`durationMs` INTEGER NOT NULL, " +
+                        "FOREIGN KEY(`runId`) REFERENCES `sync_runs`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL("CREATE INDEX `index_request_breakdowns_runId` ON `request_breakdowns` (`runId`)")
+                db.execSQL(
+                    "CREATE TABLE `presence_decisions` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`at` INTEGER NOT NULL, " +
+                        "`trigger` TEXT NOT NULL, " +
+                        "`outcome` TEXT NOT NULL, " +
+                        "`appId` INTEGER, " +
+                        "`retainedPriorState` INTEGER NOT NULL)",
+                )
+                db.execSQL("CREATE INDEX `index_presence_decisions_at` ON `presence_decisions` (`at`)")
+                db.execSQL(
+                    "CREATE TABLE `collections` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, " +
+                        "`mode` TEXT NOT NULL, " +
+                        "`sort` TEXT NOT NULL, " +
+                        "`targetDate` TEXT, " +
+                        "`accent` TEXT, " +
+                        "`timeBasis` TEXT NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "`description` TEXT, " +
+                        "`displayOrder` INTEGER NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE TABLE `collection_members` (" +
+                        "`collectionId` INTEGER NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`orderIndex` INTEGER NOT NULL, " +
+                        "`done` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`collectionId`, `appId`), " +
+                        "FOREIGN KEY(`collectionId`) REFERENCES `collections`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX `index_collection_members_collectionId` " +
+                        "ON `collection_members` (`collectionId`)",
+                )
+                db.execSQL(
+                    "CREATE TABLE `game_genre_cache` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`genresJson` TEXT NOT NULL, " +
+                        "`checkedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`), " +
+                        "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL("CREATE INDEX `index_sessions_appId` ON `sessions` (`appId`)")
+                db.execSQL(
+                    "CREATE INDEX `index_sessions_appId_startAt_endAt` " +
+                        "ON `sessions` (`appId`, `startAt`, `endAt`)",
+                )
+                db.execSQL("CREATE TABLE room_master_table (id INTEGER PRIMARY KEY, identity_hash TEXT)")
+                db.execSQL(
+                    "INSERT INTO room_master_table (id, identity_hash) VALUES(42, 'raw-v13-fixture')",
+                )
+            }
+
+            override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+        }
+
+        return FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration(context, databaseName, callback),
+        )
+    }
+
+    private fun SupportSQLiteDatabase.seedRepresentativeData() {
+        execSQL(
+            "INSERT INTO games " +
+                "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+                "isGoal, targetMinutes, lastSyncedAt, backfillMinutes) VALUES " +
+                "(440, 'Team Fortress 2', 'icon-440', 12345, 67, 12340, 1, 24000, " +
+                "1700000000000, 42), " +
+                "(441, 'Sentinel Game', 'icon-441', 10, 0, 10, 0, NULL, 1700000000001, 0)",
+        )
+        execSQL(
+            "INSERT INTO sessions (id, appId, startAt, endAt, minutes, open) VALUES " +
+                "(7, 440, 1700000010000, 1700005410000, 90, 0)",
+        )
+        execSQL(
+            "INSERT INTO daily_progress " +
+                "(date, minutesPlayed, goalMinutesPlayed, questMet) VALUES " +
+                "('2026-08-13', 90, 60, 1)",
+        )
+        execSQL(
+            "INSERT INTO achievements " +
+                "(appId, apiName, displayName, iconUrl, unlocked, unlockedAt, globalPercent, " +
+                "snapshotPercent, description, hidden, fetchedAt) VALUES " +
+                "(440, 'ACH_WIN', 'Win one match', 'achievement-440', 1, 1700000020000, " +
+                "12.5, 13.75, 'Win a match', 0, 1700000030000)",
+        )
+        execSQL(
+            "INSERT INTO achievements " +
+                "(appId, apiName, displayName, iconUrl, unlocked, unlockedAt, globalPercent, " +
+                "snapshotPercent, description, hidden, fetchedAt) VALUES " +
+                "(441, '__no_achievements__', NULL, NULL, 0, NULL, NULL, NULL, NULL, 0, " +
+                "1700000040000)",
+        )
+        execSQL(
+            "INSERT INTO player_profile " +
+                "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                "lastSyncAt, lastSyncError, playtimeBackfilled, personaName, avatarUrl) VALUES " +
+                "(0, '76561198000000000', 42, 9876, 8, 3, 12, 1700000050000, " +
+                "'transient', 1, 'Player One', 'avatar-url')",
+        )
+    }
+
+    private fun SupportSQLiteDatabase.assertRepresentativeData() {
+        query(
+            "SELECT appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+                "isGoal, targetMinutes, lastSyncedAt, backfillMinutes FROM games WHERE appId = 440",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(440L, cursor.getLong(0))
+            assertEquals("Team Fortress 2", cursor.getString(1))
+            assertEquals("icon-440", cursor.getString(2))
+            assertEquals(12345, cursor.getInt(3))
+            assertEquals(67, cursor.getInt(4))
+            assertEquals(12340, cursor.getInt(5))
+            assertEquals(1, cursor.getInt(6))
+            assertEquals(24000, cursor.getInt(7))
+            assertEquals(1700000000000L, cursor.getLong(8))
+            assertEquals(42, cursor.getInt(9))
+            assertFalse(cursor.moveToNext())
+        }
+
+        query(
+            "SELECT id, appId, startAt, endAt, minutes, open FROM sessions WHERE id = 7",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(7L, cursor.getLong(0))
+            assertEquals(440L, cursor.getLong(1))
+            assertEquals(1700000010000L, cursor.getLong(2))
+            assertEquals(1700005410000L, cursor.getLong(3))
+            assertEquals(90, cursor.getInt(4))
+            assertEquals(0, cursor.getInt(5))
+        }
+
+        query(
+            "SELECT date, minutesPlayed, goalMinutesPlayed, questMet " +
+                "FROM daily_progress WHERE date = '2026-08-13'",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("2026-08-13", cursor.getString(0))
+            assertEquals(90, cursor.getInt(1))
+            assertEquals(60, cursor.getInt(2))
+            assertEquals(1, cursor.getInt(3))
+        }
+
+        query(
+            "SELECT appId, apiName, displayName, iconUrl, unlocked, unlockedAt, globalPercent, " +
+                "snapshotPercent, description, hidden, fetchedAt FROM achievements " +
+                "WHERE appId = 440 AND apiName = 'ACH_WIN'",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(440L, cursor.getLong(0))
+            assertEquals("ACH_WIN", cursor.getString(1))
+            assertEquals("Win one match", cursor.getString(2))
+            assertEquals("achievement-440", cursor.getString(3))
+            assertEquals(1, cursor.getInt(4))
+            assertEquals(1700000020000L, cursor.getLong(5))
+            assertEquals(12.5, cursor.getDouble(6), 0.0)
+            assertEquals(13.75, cursor.getDouble(7), 0.0)
+            assertEquals("Win a match", cursor.getString(8))
+            assertEquals(0, cursor.getInt(9))
+            assertEquals(1700000030000L, cursor.getLong(10))
+        }
+
+        query(
+            "SELECT id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                "lastSyncAt, lastSyncError, playtimeBackfilled, personaName, avatarUrl " +
+                "FROM player_profile WHERE id = 0",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(0, cursor.getInt(0))
+            assertEquals("76561198000000000", cursor.getString(1))
+            assertEquals(42, cursor.getInt(2))
+            assertEquals(9876, cursor.getInt(3))
+            assertEquals(8, cursor.getInt(4))
+            assertEquals(3, cursor.getInt(5))
+            assertEquals(12, cursor.getInt(6))
+            assertEquals(1700000050000L, cursor.getLong(7))
+            assertEquals("transient", cursor.getString(8))
+            assertEquals(1, cursor.getInt(9))
+            assertEquals("Player One", cursor.getString(10))
+            assertEquals("avatar-url", cursor.getString(11))
+        }
+
+        query(
+            "SELECT appId, playerStateFetchedAt, schemaFetchedAt, hasAchievements, checkedAt " +
+                "FROM game_achievement_sync WHERE appId = 441",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(441L, cursor.getLong(0))
+            assertEquals(1700000040000L, cursor.getLong(1))
+            assertTrue(cursor.isNull(2))
+            assertEquals(0, cursor.getInt(3))
+            assertEquals(1700000040000L, cursor.getLong(4))
+        }
+
+        query(
+            "SELECT COUNT(*) FROM achievements WHERE apiName = '__no_achievements__'",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(0, cursor.getInt(0))
+        }
+    }
+}

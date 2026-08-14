@@ -92,6 +92,7 @@ class SettingsScreenTest {
         onDiscardChanges = {},
         onConfirmSave = {},
         onDismissConfirmation = {},
+        onLiveMonitorEnabledChanged = {},
         onImportHistory = {},
         onResetHistoryImport = {},
         onAutoSnapshotEnabledChanged = {},

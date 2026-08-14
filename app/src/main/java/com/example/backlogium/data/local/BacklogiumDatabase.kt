@@ -46,7 +46,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         GameAchievementSync::class,
     ],
     version = 14,
-    exportSchema = false,
+    exportSchema = true,
 )
 @TypeConverters(Converters::class)
 abstract class BacklogiumDatabase : RoomDatabase() {

@@ -9,6 +9,10 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 // Read Steam credentials from local.properties (git-ignored). Falls back to empty
 // strings so the project always builds; the app surfaces a "Steam not configured"
 // state at runtime when either value is blank.
@@ -88,6 +92,14 @@ android {
         compose = true
         buildConfig = true
     }
+    sourceSets {
+        getByName("androidTest") {
+            assets.srcDir("$projectDir/schemas")
+        }
+    }
+    lint {
+        baseline = file("lint.baseline")
+    }
 }
 
 dependencies {
@@ -152,6 +164,7 @@ dependencies {
     testImplementation(libs.androidx.work.testing)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.androidx.room.testing)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
