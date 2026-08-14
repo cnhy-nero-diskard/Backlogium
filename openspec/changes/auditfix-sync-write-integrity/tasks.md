@@ -63,5 +63,5 @@
 - [x] 7.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm green
 - [x] 7.2 Run the instrumented migration tests and confirm the new column's migration preserves seeded achievement rows and their snapshots
 - [x] 7.3 Re-read `openspec/specs/steam-sync/spec.md` requirements "Session synthesis by playtime diffing" and "First-sync baselining" and confirm the restructure did not change either behaviour
-- [ ] 7.4 Run `openspec validate auditfix-sync-write-integrity`
-- [ ] 7.5 Record in the commit message that manual sync during an in-flight poll is now absorbed, since that is the one user-visible behavioural change here
+- [x] 7.4 Run `openspec validate auditfix-sync-write-integrity`
+- [x] 7.5 Record in the commit message that manual sync during an in-flight poll is now absorbed, since that is the one user-visible behavioural change here
