@@ -67,13 +67,19 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       - name: Cache pinned Android emulator
         uses: actions/cache@v4
         with:
           path: |
-            ~/.android/avd
+            ~/.android/avd/*
             ~/.android/adb*
-          key: android-avd-api35-google-apis-x86_64-pixel2-v1-${{ runner.os }}
+          key: android-avd-api35-google-apis-x86_64-pixel2-v2-${{ runner.os }}
 
       - name: Run instrumented tests
         uses: reactivecircus/android-emulator-runner@v2
@@ -82,7 +88,8 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_2
-          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           disable-animations: true
           script: ./gradlew :app:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=com.example.backlogium.data.local.MigrationTest'
 
