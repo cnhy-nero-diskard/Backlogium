@@ -16,6 +16,40 @@ interface GameDao {
     @Upsert
     suspend fun upsert(game: Game)
 
+    /** Insert a new row only; an existing row's app-owned fields are never replaced. */
+    @Query(
+        "INSERT OR IGNORE INTO games " +
+            "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+            "isGoal, targetMinutes, lastSyncedAt, backfillMinutes) " +
+            "VALUES (:appId, :name, :iconUrl, :playtimeForever, :playtime2Weeks, " +
+            ":lastPlaytime, 0, NULL, :lastSyncedAt, 0)",
+    )
+    suspend fun insertSteamGameIfMissing(
+        appId: Long,
+        name: String,
+        iconUrl: String,
+        playtimeForever: Int,
+        playtime2Weeks: Int,
+        lastPlaytime: Int,
+        lastSyncedAt: Long,
+    )
+
+    /** Update only fields for which Steam is authoritative. */
+    @Query(
+        "UPDATE games SET name = :name, iconUrl = :iconUrl, " +
+            "playtimeForever = :playtimeForever, playtime2Weeks = :playtime2Weeks, " +
+            "lastPlaytime = :lastPlaytime, lastSyncedAt = :lastSyncedAt WHERE appId = :appId",
+    )
+    suspend fun updateSteamFields(
+        appId: Long,
+        name: String,
+        iconUrl: String,
+        playtimeForever: Int,
+        playtime2Weeks: Int,
+        lastPlaytime: Int,
+        lastSyncedAt: Long,
+    )
+
     @Query("SELECT * FROM games ORDER BY playtime2Weeks DESC, name ASC")
     fun observeLibrary(): Flow<List<Game>>
 

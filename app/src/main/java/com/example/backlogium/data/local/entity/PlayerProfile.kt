@@ -16,6 +16,8 @@ data class PlayerProfile(
     val level: Int = 1,
     val currentStreak: Int = 0,
     val longestStreak: Int = 0,
+    /** Rule-config version that produced the stored derived values above. */
+    val gamificationConfigVersion: Long = 0L,
     val lastSyncAt: Long = 0L,
     val lastSyncError: String? = null,
     /** True once the player has opted in to importing historical Steam playtime (one-time). */

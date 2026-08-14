@@ -45,7 +45,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         GameGenreCache::class,
         GameAchievementSync::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -343,6 +343,19 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "DELETE FROM `achievements` WHERE `apiName` = '__no_achievements__'",
+                )
+            }
+        }
+
+        /** v14 -> v15: record derived-rule provenance and retain retired achievements as tombstones. */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `player_profile` " +
+                        "ADD COLUMN `gamificationConfigVersion` INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL(
+                    "ALTER TABLE `achievements` ADD COLUMN `retired` INTEGER NOT NULL DEFAULT 0",
                 )
             }
         }
