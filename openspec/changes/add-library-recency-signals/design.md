@@ -115,9 +115,26 @@ cannot recover it.
 
 The fix is to record the fact at the one moment both halves of it exist. When a poll observes a
 game's playtime increase, it holds the *old* `lastPlayedAt` (about to be overwritten) and the *new*
-one. If the gap between them meets the dormancy threshold, the poll writes
-`returnedToPlayAt = now`. Derivation then reads a single timestamp and asks only whether it is
-within the badge window.
+one. If the gap between them meets the dormancy threshold, the poll records the return. Derivation
+then reads a single timestamp and asks only whether it is within the badge window.
+
+**Both the gap and the recorded timestamp are measured in event time, never in poll time.** This is
+the second thing an earlier draft got wrong, and it was worse than a rounding error — it compared
+`now - previousPlayAt` and wrote `returnedToPlayAt = now`, which conflates *when the player played*
+with *when the app happened to find out*. Those diverge by however long the app went unsynced, which
+is unbounded: a phone left off for a week, a revoked API key, airplane mode on holiday.
+
+Two distinct defects followed:
+
+- **Manufactured returns.** Last played Aug 1, actually played again Aug 30 — a 29-day gap, not
+  dormant — but the sync only runs Sep 2. Poll-time arithmetic sees 32 days and records a return
+  that never happened.
+- **A badge window anchored to the wrong instant.** `returnedToPlayAt = now` starts the 7-day window
+  when the *sync* ran. A sync three days late gives the badge ten days of life, and a sync ten days
+  late shows a "returned!" badge for something that stopped being news a week ago.
+
+The poll already holds the correct instant — Steam's newly reported `rtime_last_played` — so both
+uses switch to it:
 
 ```
    poll observes an increase for game G
@@ -125,10 +142,33 @@ within the badge window.
             ├── previousPlayAt = max( end of G's most recent stored session,
             │                         G's stored lastPlayedAt before this poll )
             │
-            ├── if now - previousPlayAt >= 30 days  ──▶  returnedToPlayAt = now
+            ├── observedPlayAt = min( G's NEW lastPlayedAt from Steam, now )
+            │                    └─ clamped: Steam's clock may lead the device's
+            │
+            ├── if observedPlayAt - previousPlayAt >= 30 days
+            │                      ──▶  returnedToPlayAt = observedPlayAt
             │
             └── lastPlayedAt = <new value from Steam>     (safe to overwrite now)
 ```
+
+Every quantity in that comparison is now an event time, including both sides of `previousPlayAt` —
+a session end and a Steam timestamp are both statements about when play happened.
+
+**A late-discovered return can be recorded already expired, and that is correct.** If the app finds
+out ten days afterwards, `returnedToPlayAt` is ten days old and the badge never appears. The player
+returned; the app simply missed the window in which saying so was interesting. Announcing it late
+would be worse than staying quiet.
+
+**Where Steam reports no new last-played time, the caller supplies the observation instant it does
+have.** The committing path takes `observedPlayAt` as an explicit argument rather than reading a
+clock, so each caller passes the best estimate available to it: a periodic poll passes Steam's
+timestamp, and the post-play targeted fetch passes the session end that triggered it — which is
+seconds to minutes old and therefore *more* accurate than a coarse Steam value would be. If a caller
+has neither, it records no return; the failure mode stays a missing badge rather than a wrong one.
+
+Making `observedPlayAt` a parameter is what keeps the two paths honest. A commit path that reads
+`System.currentTimeMillis()` internally cannot be given a correct event time by any caller, however
+much better information that caller has.
 
 Taking the **max** of the two sources unifies what the earlier draft split into a primary path and a
 fallback. A game with recorded sessions and a game whose only prior play predates the install go
@@ -143,7 +183,7 @@ still costs no write, and the design's rule that states are never stored is inta
 prior `lastPlayedAt` — possible only for a game acquired and first played between two polls — leaves
 `returnedToPlayAt` null. That case is `NEWLY_PLAYED` anyway, which outranks `RETURNED`.
 
-**The threshold is read at write time, not at read time.** If the dormancy constant ever changes,
+**The threshold is applied at write time, not at read time.** If the dormancy constant ever changes,
 already-recorded returns keep the meaning they had when they were observed. That is the honest
 behaviour for a fact about the past, and it is the unavoidable consequence of recording rather than
 deriving.

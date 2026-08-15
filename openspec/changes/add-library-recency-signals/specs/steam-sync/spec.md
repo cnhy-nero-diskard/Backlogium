@@ -17,6 +17,11 @@ time, whether the play it observed followed a dormant period, and SHALL record a
 did. This evaluation SHALL happen within the poll because the value it depends on is destroyed by the
 poll's own update.
 
+The evaluation SHALL be expressed in event time. The path that commits an observation SHALL accept
+the time the play occurred as an input supplied by its caller, and SHALL NOT substitute the time of
+the commit for it, so that a delayed poll cannot report a gap or a return that the play times do not
+support.
+
 #### Scenario: Focus toggled during a poll
 - **WHEN** the user changes a game's focus flag while a poll is in progress
 - **THEN** that change survives the poll's persistence
@@ -45,6 +50,16 @@ poll's own update.
 #### Scenario: Return evaluated before the overwrite
 - **WHEN** a poll observes a play increase for a game
 - **THEN** it evaluates dormancy against the previously stored last-played time before replacing it
+
+#### Scenario: The play time is supplied, not assumed
+- **WHEN** a poll commits an observation for a game
+- **THEN** it supplies the time that play occurred, taken from the newly reported last-played time,
+  rather than the commit path reading a clock
+
+#### Scenario: A poll delayed by a long offline period
+- **WHEN** a poll runs after the system has been unable to observe for a long time
+- **THEN** the returns and gaps it records reflect the play times reported by Steam, not the length
+  of the gap in observation
 
 #### Scenario: Return recorded in the same commit
 - **WHEN** a poll records a return for a game

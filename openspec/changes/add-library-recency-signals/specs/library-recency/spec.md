@@ -111,14 +111,51 @@ state after the fact.
 The previously known last-play time SHALL be the later of the game's most recent recorded session and
 its stored last-played time as it was before that poll's update.
 
+The dormancy gap and the recorded time of a return SHALL both be expressed in **event time — when
+the play happened — and never in observation time — when the system found out.** The two diverge by
+however long the system went without observing, which is unbounded. Specifically, the gap SHALL be
+measured between the previously known last-play time and the newly observed play time, and a
+recorded return SHALL carry the newly observed play time.
+
+The newly observed play time SHALL be the most accurate estimate available to the observer: the
+last-played time newly reported by Steam where one is reported, otherwise the time of the play
+observation that prompted the evaluation. Where an observer has neither, it SHALL record no return.
+It SHALL NOT be later than the present.
+
 #### Scenario: Return recorded on observation
-- **WHEN** a poll observes a play increase for a game whose previously known last-play time is older
-  than the dormancy threshold
-- **THEN** a return is recorded for that game at the time of that poll
+- **WHEN** a poll observes a play increase for a game, and the gap between the previously known
+  last-play time and the newly observed play time is at least the dormancy threshold
+- **THEN** a return is recorded for that game, timed at the newly observed play time
+
+#### Scenario: A delayed observation does not manufacture a return
+- **WHEN** a game was last played 29 days before it was played again, but the system does not
+  observe that play until several days later, so that the delay pushes the interval past the
+  dormancy threshold
+- **THEN** no return is recorded, because the gap is measured between the two plays and not against
+  the time of observation
+
+#### Scenario: A delayed observation does not extend the recency window
+- **WHEN** a return is observed some days after the play that ended the dormancy
+- **THEN** the recorded return is timed at that play, so its recency window is measured from when
+  the player returned rather than from when the system noticed
+
+#### Scenario: A return discovered after its window has passed
+- **WHEN** a return is observed longer after the play than the recency window
+- **THEN** the return is recorded and the game carries no returned-to-play state, rather than the
+  state appearing belatedly
+
+#### Scenario: Observed play time not reported by the source
+- **WHEN** an observer sees a play increase but its source reports no last-played time
+- **THEN** it uses the time of the observation that prompted the evaluation as the newly observed
+  play time, and records no return if it has no such time either
+
+#### Scenario: Source reports a time in the future
+- **WHEN** a source reports a last-played time later than the present
+- **THEN** the newly observed play time is treated as the present rather than as a future instant
 
 #### Scenario: No return for continuous play
-- **WHEN** a poll observes a play increase for a game whose previously known last-play time is within
-  the dormancy threshold
+- **WHEN** a poll observes a play increase for a game and the gap between the previously known
+  last-play time and the newly observed play time is within the dormancy threshold
 - **THEN** no return is recorded and any previously recorded return is left unchanged
 
 #### Scenario: Prior play known only from recorded sessions

@@ -8,8 +8,11 @@
 ## 2. Sync-side recording
 
 - [ ] 2.1 Read each observed game's stored `lastPlayedAt` and most recent session end **before** computing the poll's writes — the dormancy evaluation depends on values this poll is about to destroy
-- [ ] 2.2 For each game with a play increase, compute `previousPlayAt = max(mostRecentSessionEnd, storedLastPlayedAt)` and stamp `returnedToPlayAt = now` when `now - previousPlayAt >= 30 days`; leave it untouched otherwise
-- [ ] 2.3 Where neither source has a value, record no return rather than one against an assumed zero
+- [ ] 2.2 Give the commit path an explicit `observedPlayAt` parameter and make it the only source of "when the play happened" — the path must never call a clock for this, or no caller can supply a better value than the commit time
+- [ ] 2.2a For each game with a play increase, compute `previousPlayAt = max(mostRecentSessionEnd, storedLastPlayedAt)` and `observedPlayAt = min(newLastPlayedAtFromSteam, now)`; stamp `returnedToPlayAt = observedPlayAt` when `observedPlayAt - previousPlayAt >= 30 days`; leave it untouched otherwise
+- [ ] 2.2b Clamp `observedPlayAt` to the present, so a Steam clock running ahead of the device cannot record a return in the future
+- [ ] 2.2c Where Steam reports no new last-played time, fall back to the observation instant the caller supplies; where the caller has none either, record no return
+- [ ] 2.3 Where neither source has a value for `previousPlayAt`, record no return rather than one against an assumed zero
 - [ ] 2.4 Write `lastPlayedAt` on every poll as a Steam-owned field, alongside name, icon, and playtime — after 2.2 has read the old value
 - [ ] 2.5 Stamp `firstSeenAt` only when a non-baseline poll inserts an app id not already in `games`
 - [ ] 2.6 Ensure a baseline poll stamps `firstSeenAt` for nothing and records no returns, while still storing `lastPlayedAt`
@@ -74,6 +77,11 @@
 - [ ] 8.5 Unit-test the dormancy evaluation at poll time: `previousPlayAt` taken from the session when it is later, from the stored last-played time when it is later, and no return recorded when neither exists
 - [ ] 8.6 Unit-test the ordering hazard directly — a poll that advances `lastPlayedAt` past the dormancy threshold still records the return, proving the old value was read before the overwrite
 - [ ] 8.7 Unit-test that a poll with a play increase inside the dormancy threshold records no return and leaves an existing `returnedToPlayAt` untouched
+- [ ] 8.7a Unit-test the manufactured-return case from the review: previous play at day 0, Steam reports the next play at day 29, the poll runs at day 32 — assert **no** return is recorded, since the gap is 29 days in event time
+- [ ] 8.7b Unit-test the window-anchoring case: a return whose play occurred 3 days before the poll is recorded at the play time, so its badge expires 4 days later rather than 7
+- [ ] 8.7c Unit-test that a return whose play predates the poll by more than the badge window is recorded and yields no state
+- [ ] 8.7d Unit-test that `observedPlayAt` is clamped to the present when Steam reports a future time
+- [ ] 8.7e Unit-test that the commit path derives no time of its own — passing two different `observedPlayAt` values with identical stored state produces two different `returnedToPlayAt` values
 - [ ] 8.8 Unit-test that a baseline poll over a large library stamps zero arrivals, records zero returns, and stores last-played times
 - [ ] 8.9 Unit-test that a second poll observing a new app id stamps exactly that one
 - [ ] 8.10 Unit-test that a poll never overwrites an existing `firstSeenAt`
