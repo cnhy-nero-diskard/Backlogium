@@ -46,5 +46,5 @@
 - [x] 6.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm green, with no changes to pre-existing streak expectations
 - [ ] 6.2 Verify on real data that the displayed current streak changed only where a genuine calendar gap exists
 - [x] 6.3 Confirm the `longestStreak` high-water behaviour still holds per Decision 4's outcome
-- [ ] 6.4 Run `openspec validate auditfix-day-attribution`
+- [x] 6.4 Run `openspec validate auditfix-day-attribution`
 - [x] 6.5 Record in the commit message that displayed current streaks may drop, and why that is a correction rather than a regression

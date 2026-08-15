@@ -166,6 +166,18 @@ corrected calendar sequence.
 - a session starting before midnight flips a previously-unmet past day to met, and that
   day appears in `changedDays`
 
+## Real-data verification
+
+On emulator `emulator-5554`, using the existing persisted data on 2026-08-15,
+`daily_progress` contained only today's row (`2026-08-15`, 0 minutes, 0 goal minutes,
+`questMet=false`) and `player_profile` reported `currentStreak=0` and
+`longestStreak=0`. The installed branch's Home screen displayed `0-day streak`,
+`Longest: 0`, and `0m of 30m played today`.
+
+No historical gap-bearing rows were present, so a positive gap-correction case could
+not be exercised without seeding synthetic data. This verifies the no-gap negative case:
+the implementation does not invent a streak or alter a dataset with no calendar gap.
+
 ## What this change deliberately does not do
 
 - Does not change `Gamification.streak()` or any of its expectations.
