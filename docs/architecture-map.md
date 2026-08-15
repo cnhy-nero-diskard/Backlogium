@@ -172,6 +172,48 @@ is merged; four hardware-dependent checks remain tracked in
 latency, real sync duration, real constraint gating/resume, and cold-game
 rarity-standing rendering.
 
+## Sync write integrity
+
+`SteamSyncWorker` is restructured into three phases so that no partial write can
+land and no two polls can double-count the same increase:
+
+```text
+PHASE 1  fetch       network only, no writes: owned games, presence summary,
+                     Steam level, achievement payloads
+PHASE 2  compute     pure, no I/O: diff against last-known state, session
+                     actions, day deltas, provisional gamification result
+PHASE 3  commit      one non-cancellable Room transaction: re-reads the
+                     baselines phase 2 diffed from, recomputes the delta
+                     against them, then writes sessions + game baselines +
+                     daily progress + profile fields together or not at all
+PHASE 4  derived     outside the transaction, via the existing DataStore
+                     write-ahead protocol: gamification XP/quests/streaks,
+                     refused and recomputed if rule config changed since
+                     phase 2 read it
+```
+
+Two coordinators sit around this, at different layers:
+
+- **`SteamSyncCoordinator`** — a process-wide `Mutex` (`tryLock`) around a whole
+  poll. A "Sync now" tap that overlaps a running poll is absorbed instead of
+  spending a second round of Steam requests; this is an efficiency/UX layer,
+  not the correctness mechanism — phase 3's re-read is.
+- **`DerivedStateWriteCoordinator`** — serializes derived-state writes across
+  the sync, backup restore, rule-config change, and playtime-backfill call
+  sites, since all four go through the same non-reentrant WAL protocol
+  (`GamificationUpdater.persistWithinProtocol`).
+
+`Game` and `PlayerProfile` rows are written through field-scoped queries keyed
+to which domain owns each column (Steam-owned vs. app-owned for `Game`; sync
+status / identity / gamification aggregates / history-import state for
+`PlayerProfile`), rather than a whole-row upsert — see `openspec/changes/
+archive/2026-08-15-auditfix-sync-write-integrity/design.md` for the full column
+ownership map and the reasoning behind each rejected alternative. Rule
+configuration (`VersionedRuleConfig`) and stored derived values
+(`VersionedDerivedPersistence`) each carry a monotonic version so a superseded
+write is detected and refused rather than silently applied. Achievements Steam
+stops returning are tombstoned during reconciliation rather than deleted.
+
 ## Independent cloud writer
 
 ```text
