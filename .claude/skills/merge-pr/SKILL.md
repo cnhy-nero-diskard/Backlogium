@@ -51,12 +51,32 @@ archiving"), skip this gate entirely and go straight to merge.
 
 Otherwise:
 
-1. Run `openspec status --change "<name>" --json` to inspect delta specs.
-2. If the change is still active and has delta specs → run `openspec-sync-specs`
-   (agent-driven) to sync them into `openspec/specs/`, then `openspec-archive-change`
-   to archive the change.
-3. If the change is still active but has no delta specs → archive it directly.
-4. If the change is already archived → nothing to do.
+1. Check out the PR's head branch so the sync/archive edits land on the branch being
+   merged. If that branch is already checked out in a separate worktree, switch to
+   that worktree directory instead:
+   ```bash
+   git checkout <head-branch>
+   # or, when using a worktree:
+   cd <path-to-worktree>
+   ```
+2. Run `openspec status --change "<name>" --json` to inspect delta specs.
+3. If the change is still active and has delta specs → run `openspec-sync-specs`
+   (agent-driven) to sync them into `openspec/specs/`, then commit and push; then run
+   `openspec-archive-change` to archive the change, then commit and push again.
+4. If the change is still active but has no delta specs → archive it directly, then
+   commit and push.
+5. If the change is already archived → nothing to do.
+
+Commit and push after **each** sync and **each** archive occurrence — they are separate
+operations and each must be recorded on the branch:
+```bash
+git add openspec/
+git commit -m "chore: sync specs for <name>"
+git push
+# ...then, after archiving:
+git commit -m "chore: archive <name> change"
+git push
+```
 
 ### 4. Merge
 
