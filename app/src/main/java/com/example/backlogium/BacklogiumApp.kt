@@ -12,6 +12,7 @@ import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.domain.DailyProgressBackfillUseCase
+import com.example.backlogium.domain.PendingImportRecomputeUseCase
 import com.example.backlogium.work.PresenceServiceStarter
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.HiltAndroidApp
@@ -83,6 +84,9 @@ class BacklogiumApp : Application(), Configuration.Provider {
     lateinit var dailyProgressBackfill: DailyProgressBackfillUseCase
 
     @Inject
+    lateinit var pendingImportRecompute: PendingImportRecomputeUseCase
+
+    @Inject
     @ApplicationScope
     lateinit var scope: CoroutineScope
 
@@ -103,6 +107,19 @@ class BacklogiumApp : Application(), Configuration.Provider {
         syncScheduler.ensurePeriodicReconciliation()
         ProcessLifecycleOwner.get().lifecycle.addObserver(ForegroundPresenceCheck())
         correctHistoricalDailyTotals()
+        resolvePendingImportRecompute()
+    }
+
+    /**
+     * Finish a backup restore whose process ended after the merge committed but before the
+     * follow-up recompute ran (auditfix-backup-integrity). A no-op on every launch where no merge
+     * is mid-flight, which is the common case.
+     */
+    private fun resolvePendingImportRecompute() {
+        scope.launch {
+            runCatching { pendingImportRecompute() }
+                .onFailure { Timber.e(it, "Pending import recompute failed") }
+        }
     }
 
     /**

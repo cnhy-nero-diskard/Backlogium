@@ -81,6 +81,8 @@ internal class GatedPlayerProfileDao(
 
     override suspend fun updateLastSyncError(message: String) =
         delegate.updateLastSyncError(message)
+
+    override suspend fun markPendingImportRecompute() = delegate.markPendingImportRecompute()
 }
 
 /**

@@ -121,6 +121,46 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun v15ToV16_preservesProfileAndDefaultsPendingImportRecomputeToFalse() {
+        val databaseName = "migration-v15-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 15)
+        try {
+            database.execSQL(
+                "INSERT INTO player_profile " +
+                    "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                    "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
+                    "personaName, avatarUrl) VALUES " +
+                    "(0, '76561198000000000', 42, 100, 2, 1, 3, 5, 1700000000000, " +
+                    "NULL, 0, 'Player', 'avatar')",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                16,
+                true,
+                BacklogiumDatabase.MIGRATION_15_16,
+            )
+            try {
+                migrated.query(
+                    "SELECT totalXp, pendingImportRecompute FROM player_profile WHERE id = 0",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(100, cursor.getInt(0))
+                    assertEquals(0, cursor.getInt(1))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private fun openRawV13Database(databaseName: String): SupportSQLiteOpenHelper {
         val callback = object : SupportSQLiteOpenHelper.Callback(13) {
             override fun onCreate(db: SupportSQLiteDatabase) {

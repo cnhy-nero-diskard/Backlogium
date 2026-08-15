@@ -17,8 +17,8 @@ interface PlayerProfileDao {
         "INSERT OR IGNORE INTO player_profile " +
             "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
             "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
-            "personaName, avatarUrl) VALUES " +
-            "(0, '', 0, 0, 1, 0, 0, 0, 0, NULL, 0, NULL, NULL)",
+            "personaName, avatarUrl, pendingImportRecompute) VALUES " +
+            "(0, '', 0, 0, 1, 0, 0, 0, 0, NULL, 0, NULL, NULL, 0)",
     )
     suspend fun insertIfMissing()
 
@@ -53,11 +53,17 @@ interface PlayerProfileDao {
     )
     suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?)
 
-    /** Gamification aggregates and the configuration provenance that produced them. */
+    /**
+     * Gamification aggregates and the configuration provenance that produced them. Also clears
+     * [com.example.backlogium.data.local.entity.PlayerProfile.pendingImportRecompute]: any
+     * completed recompute, regardless of source, proves aggregates are back in sync with
+     * whatever raw data existed when it ran (auditfix-backup-integrity).
+     */
     @Query(
         "UPDATE player_profile SET totalXp = :totalXp, level = :level, " +
             "currentStreak = :currentStreak, longestStreak = MAX(longestStreak, :longestStreak), " +
-            "gamificationConfigVersion = :gamificationConfigVersion WHERE id = 0",
+            "gamificationConfigVersion = :gamificationConfigVersion, pendingImportRecompute = 0 " +
+            "WHERE id = 0",
     )
     suspend fun updateGamification(
         totalXp: Int,
@@ -66,6 +72,14 @@ interface PlayerProfileDao {
         longestStreak: Int,
         gamificationConfigVersion: Long,
     )
+
+    /**
+     * Marks that a backup merge's raw-data transaction has committed and the follow-up recompute
+     * has not yet run — set as the last write inside that same transaction, so it commits
+     * atomically with the merged data (auditfix-backup-integrity).
+     */
+    @Query("UPDATE player_profile SET pendingImportRecompute = 1 WHERE id = 0")
+    suspend fun markPendingImportRecompute()
 
     /** Historical-import flag only. */
     @Query("UPDATE player_profile SET playtimeBackfilled = :playtimeBackfilled WHERE id = 0")

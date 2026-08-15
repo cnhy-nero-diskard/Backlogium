@@ -45,7 +45,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         GameGenreCache::class,
         GameAchievementSync::class,
     ],
-    version = 15,
+    version = 16,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -356,6 +356,20 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "ALTER TABLE `achievements` ADD COLUMN `retired` INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        /**
+         * v15 -> v16: track whether a backup merge's raw data has committed without its follow-up
+         * gamification recompute having completed yet (auditfix-backup-integrity). Defaults to
+         * false; existing installs have no merge in flight, so this is a pure no-op on upgrade.
+         */
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `player_profile` " +
+                        "ADD COLUMN `pendingImportRecompute` INTEGER NOT NULL DEFAULT 0",
                 )
             }
         }
