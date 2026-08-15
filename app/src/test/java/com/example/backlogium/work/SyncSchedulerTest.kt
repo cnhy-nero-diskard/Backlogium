@@ -6,7 +6,11 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -41,6 +45,7 @@ class SyncSchedulerTest {
 
     private lateinit var workManager: WorkManager
     private lateinit var scheduler: SyncScheduler
+    private lateinit var schedulerScope: CoroutineScope
 
     @Before
     fun setUp() {
@@ -50,11 +55,13 @@ class SyncSchedulerTest {
             .build()
         WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
         workManager = WorkManager.getInstance(context)
-        scheduler = SyncScheduler(context)
+        schedulerScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        scheduler = SyncScheduler(context, schedulerScope)
     }
 
     @After
     fun tearDown() {
+        schedulerScope.cancel()
         WorkManagerTestInitHelper.closeWorkDatabase()
     }
 
@@ -256,6 +263,15 @@ class SyncSchedulerTest {
         assertTrue(shouldCancelHltbRefresh(firstAttemptStillQueued = true, hasValidatedNetwork = false))
         assertFalse(shouldCancelHltbRefresh(firstAttemptStillQueued = true, hasValidatedNetwork = true))
         assertFalse(shouldCancelHltbRefresh(firstAttemptStillQueued = false, hasValidatedNetwork = false))
+    }
+
+    @Test
+    fun `offline timeout starts at the connectivity transition rather than queue time`() {
+        val offlineSince = 29_000L
+
+        assertEquals(29_000L, hltbTimeoutDelayMillis(30_000L, offlineSince))
+        assertEquals(1L, hltbTimeoutDelayMillis(58_999L, offlineSince))
+        assertEquals(0L, hltbTimeoutDelayMillis(59_000L, offlineSince))
     }
 
     private fun workInfosFor(name: String): List<WorkInfo> = workManager.getWorkInfosForUniqueWork(name).get()
