@@ -2,6 +2,7 @@ package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.data.hltb.HltbDataSource
+import com.example.backlogium.data.hltb.HltbFailureClass
 import com.example.backlogium.data.hltb.HltbMatcher
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.entity.HltbData
@@ -10,6 +11,7 @@ import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -112,8 +114,8 @@ class HltbRepositoryTest {
             ),
         )
 
-        val reported = mutableListOf<Triple<String, HltbMatchState?, Pair<Int, Int>>>()
-        repository.refreshBatch(
+        val reported = mutableListOf<Triple<String, HltbRefreshOutcome, Pair<Int, Int>>>()
+        val result = repository.refreshBatch(
             games = listOf(1L to "Portal", 2L to "Hades", 3L to "Obscure Indie"),
             force = true,
         ) { done, total, name, outcome ->
@@ -122,12 +124,16 @@ class HltbRepositoryTest {
 
         assertEquals(
             listOf(
-                Triple("Portal", HltbMatchState.RESOLVED, 1 to 3),
-                Triple("Hades", HltbMatchState.NEEDS_REVIEW, 2 to 3),
-                Triple("Obscure Indie", HltbMatchState.UNMATCHED, 3 to 3),
+                Triple("Portal", HltbRefreshOutcome.Refreshed(HltbMatchState.RESOLVED), 1 to 3),
+                Triple("Hades", HltbRefreshOutcome.Refreshed(HltbMatchState.NEEDS_REVIEW), 2 to 3),
+                Triple("Obscure Indie", HltbRefreshOutcome.NoMatch, 3 to 3),
             ),
             reported,
         )
+        assertEquals(3, result.attempted)
+        assertEquals(2, result.refreshed)
+        assertEquals(1, result.noMatch)
+        assertEquals(0, result.failed)
     }
 
     @Test
@@ -148,18 +154,37 @@ class HltbRepositoryTest {
             failing = setOf("Transport Broken"),
         )
 
-        val outcomes = mutableMapOf<String, HltbMatchState?>()
-        repository.refreshBatch(
+        val outcomes = mutableMapOf<String, HltbRefreshOutcome>()
+        val result = repository.refreshBatch(
             games = listOf(1L to "Transport Broken", 2L to "Nothing Found"),
             force = true,
         ) { _, _, name, outcome -> outcomes[name] = outcome }
 
-        // Null (lookup failed) is not UNMATCHED (searched, found nothing).
-        assertNull(outcomes["Transport Broken"])
-        assertEquals(HltbMatchState.UNMATCHED, outcomes["Nothing Found"])
+        val failure = outcomes["Transport Broken"] as HltbRefreshOutcome.Failed
+        assertEquals(HltbFailureClass.TRANSPORT, failure.failureClass)
+        assertEquals(HltbRefreshOutcome.NoMatch, outcomes["Nothing Found"])
+        assertEquals(2, result.attempted)
+        assertEquals(0, result.refreshed)
+        assertEquals(1, result.noMatch)
+        assertEquals(1, result.failed)
+        assertTrue(result.shouldRetry)
         // The failure wrote nothing: the game's last-good completion length survives.
         assertEquals(3_000, dao.getByAppId(1L)?.completionistMinutes)
         assertEquals(HltbMatchStatus.RESOLVED, dao.getByAppId(1L)?.matchStatus)
+    }
+
+    @Test
+    fun cancellationPropagatesFromBatchLookup() = runTest {
+        val repository = repository(cancellation = setOf("Cancelled"))
+
+        val failure = runCatching {
+            repository.refreshBatch(
+                games = listOf(1L to "Cancelled"),
+                force = true,
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure is CancellationException)
     }
 
     @Test
@@ -181,8 +206,9 @@ class HltbRepositoryTest {
         dao: FakeHltbDataDao = FakeHltbDataDao(),
         results: Map<String, List<HltbCandidate>> = emptyMap(),
         failing: Set<String> = emptySet(),
+        cancellation: Set<String> = emptySet(),
     ) = HltbRepository(
-        dataSource = FakeHltbDataSource(results, failing),
+        dataSource = FakeHltbDataSource(results, failing, cancellation),
         hltbDataDao = dao,
         json = Json,
         time = FixedTime,
@@ -198,8 +224,10 @@ class HltbRepositoryTest {
     private class FakeHltbDataSource(
         private val results: Map<String, List<HltbCandidate>>,
         private val failing: Set<String>,
+        private val cancellation: Set<String>,
     ) : HltbDataSource {
         override suspend fun search(name: String): List<HltbCandidate> {
+            if (name in cancellation) throw CancellationException("cancelled")
             if (name in failing) throw IOException("transport failed")
             return results[name].orEmpty()
         }
