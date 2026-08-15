@@ -8,6 +8,7 @@ import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.SessionRepository
+import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +35,7 @@ class HistoryViewModel @Inject constructor(
     private val achievementRepository: AchievementRepository,
     private val credentials: CredentialsRepository,
     private val time: TimeProvider,
+    private val currentDate: CurrentDateProvider,
 ) : ViewModel() {
 
     /**
@@ -42,9 +44,11 @@ class HistoryViewModel @Inject constructor(
      */
     private val windowDays = MutableStateFlow(INITIAL_WINDOW_DAYS)
 
-    val uiState: StateFlow<HistoryUiState> = windowDays
-        .flatMapLatest { window ->
-            val cutoff = historyWindowCutoffMillis(window, time.today(), time.zone())
+    // Both the window cutoff and the expand-today anchor are dated, so the date joins the window as
+    // an input: crossing midnight has to re-derive them without waiting for a sync to arrive.
+    val uiState: StateFlow<HistoryUiState> = combine(windowDays, currentDate.currentDate, ::Pair)
+        .flatMapLatest { (window, today) ->
+            val cutoff = historyWindowCutoffMillis(window, today, time.zone())
             combine(
                 sessionRepository.sessionsSince(cutoff),
                 gameRepository.library,
@@ -62,7 +66,7 @@ class HistoryViewModel @Inject constructor(
                         achievementUnlocks = achievements,
                         zone = time.zone(),
                     ),
-                    today = time.today().toString(),
+                    today = today.toString(),
                 )
             }
         }

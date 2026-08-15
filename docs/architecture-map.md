@@ -194,10 +194,12 @@ PHASE 4  derived     outside the transaction, via the existing DataStore
 
 Two coordinators sit around this, at different layers:
 
-- **`SteamSyncCoordinator`** — a process-wide `Mutex` (`tryLock`) around a whole
-  poll. A "Sync now" tap that overlaps a running poll is absorbed instead of
-  spending a second round of Steam requests; this is an efficiency/UX layer,
-  not the correctness mechanism — phase 3's re-read is.
+- **`SteamSyncCoordinator`** — a process-wide `Mutex` (`withLock`) around a whole
+  poll, reconciliation pass, or historical daily-progress correction. A "Sync
+  now" tap that overlaps a running poll waits behind it instead of spending a
+  second round of Steam requests; the shared boundary also prevents the
+  backfill's session-ledger snapshot from racing a raw sync commit. Phase 3's
+  fresh Room re-read remains the correctness fallback for concurrent observers.
 - **`DerivedStateWriteCoordinator`** — serializes derived-state writes across
   the sync, backup restore, rule-config change, and playtime-backfill call
   sites, since all four go through the same non-reentrant WAL protocol

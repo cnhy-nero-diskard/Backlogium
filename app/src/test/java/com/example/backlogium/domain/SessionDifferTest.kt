@@ -39,6 +39,7 @@ class SessionDifferTest {
         assertEquals(1000L, open.startAt)
         assertEquals(2000L, open.endAt)
         assertEquals(30, open.minutes)
+        assertEquals(30, open.addedMinutes)
         assertEquals(130, result.newLastPlaytime[1L])
         assertEquals(30, result.playedDeltaByAppId[1L])
     }
@@ -60,8 +61,10 @@ class SessionDifferTest {
         )
 
         val extend = result.actions.single() as SessionAction.Extend
+        assertEquals(1000L, extend.startAt)
         assertEquals(50, extend.minutes) // 30 + 20
         assertEquals(3000L, extend.endAt)
+        assertEquals(20, extend.addedMinutes)
         assertEquals(150, result.newLastPlaytime[1L])
         assertEquals(20, result.playedDeltaByAppId[1L])
     }
@@ -83,7 +86,9 @@ class SessionDifferTest {
         )
 
         val close = result.actions.single() as SessionAction.Close
+        assertEquals(1000L, close.startAt)
         assertEquals(3000L, close.endAt) // end = last-increase time, not now
+        assertEquals(0, close.addedMinutes)
         assertEquals(150, result.newLastPlaytime[1L])
         assertTrue(result.playedDeltaByAppId.isEmpty())
     }
@@ -106,7 +111,9 @@ class SessionDifferTest {
 
         // The open session is closed (no forward progress) but no negative playtime is produced.
         val close = result.actions.single() as SessionAction.Close
+        assertEquals(1000L, close.startAt)
         assertEquals(5000L, close.endAt)
+        assertEquals(0, close.addedMinutes)
         assertEquals(200, result.newLastPlaytime[1L]) // baseline NOT lowered
         assertTrue(result.playedDeltaByAppId.isEmpty())
     }
@@ -152,9 +159,13 @@ class SessionDifferTest {
 
         assertEquals(2, result.actions.size)
         val extend1 = result.actions.first { it.appId == 1L } as SessionAction.Extend
+        assertEquals(1000L, extend1.startAt)
         assertEquals(50, extend1.minutes)
+        assertEquals(20, extend1.addedMinutes)
         val extend2 = result.actions.first { it.appId == 2L } as SessionAction.Extend
+        assertEquals(1000L, extend2.startAt)
         assertEquals(15, extend2.minutes)
+        assertEquals(5, extend2.addedMinutes)
         assertEquals(mapOf(1L to 20, 2L to 5), result.playedDeltaByAppId)
     }
 

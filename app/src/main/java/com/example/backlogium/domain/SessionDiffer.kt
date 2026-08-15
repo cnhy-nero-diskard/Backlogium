@@ -28,27 +28,36 @@ class SessionDiffer @Inject constructor() {
 
     sealed interface SessionAction {
         val appId: Long
+        val startAt: Long
+        val addedMinutes: Int
 
         /** Create a new open session. */
         data class Open(
             override val appId: Long,
-            val startAt: Long,
+            override val startAt: Long,
             val endAt: Long,
             val minutes: Int,
-        ) : SessionAction
+        ) : SessionAction {
+            override val addedMinutes: Int get() = minutes
+        }
 
         /** Extend the game's currently-open session to the given absolute values. */
         data class Extend(
             override val appId: Long,
+            override val startAt: Long,
             val minutes: Int,
             val endAt: Long,
+            override val addedMinutes: Int,
         ) : SessionAction
 
         /** Close the game's open session with the given end time. */
         data class Close(
             override val appId: Long,
+            override val startAt: Long,
             val endAt: Long,
-        ) : SessionAction
+        ) : SessionAction {
+            override val addedMinutes: Int = 0
+        }
     }
 
     data class DiffResult(
@@ -105,8 +114,10 @@ class SessionDiffer @Inject constructor() {
                 } else {
                     actions += SessionAction.Extend(
                         appId = poll.appId,
+                        startAt = prior.openSession.startAt,
                         minutes = prior.openSession.minutes + delta,
                         endAt = now,
+                        addedMinutes = delta,
                     )
                 }
                 newLastPlaytime[poll.appId] = poll.playtimeForever
@@ -118,6 +129,7 @@ class SessionDiffer @Inject constructor() {
                 if (prior.openSession != null) {
                     actions += SessionAction.Close(
                         appId = poll.appId,
+                        startAt = prior.openSession.startAt,
                         endAt = prior.openSession.lastIncreaseAt,
                     )
                 }

@@ -50,6 +50,16 @@ size, and task 1.1 measures it before anything is designed around it.
   contract and receives a list where order and calendar finally agree.
 - **The streak test gains a comment saying why it is correct.** Its absence is what let a
   thorough audit reach a confident wrong conclusion.
+- **Home re-resolves "today" at the day boundary.** `HomeViewModel.kt:116` computes
+  `todayKey` inside a `combine` of five *data* flows, none of them time-driven, so after
+  midnight with no sync the screen keeps presenting yesterday's row — totals and quest tick
+  — as the current day's. This is a second, independent route to the same reported symptom
+  as the attribution split, which is why it lands here rather than separately: fixing only
+  one of the two leaves the bug report open.
+- **The poll-gap start estimate is written down as a bound, not narrowed.** A session's
+  `startAt` is the previous poll's timestamp, and a poll deferred by Doze can put that on
+  the wrong calendar day. Recorded in the `steam-sync` spec; design Decision 5 records why
+  the obvious clamp is a regression rather than a fix, and what a real fix would need.
 
 ## Capabilities
 
@@ -59,8 +69,11 @@ size, and task 1.1 measures it before anything is designed around it.
   is contiguous, locating that obligation explicitly on the caller so the engine's purity
   is preserved rather than quietly eroded.
 - `steam-sync`: change delta attribution from per-poll to per-session, so a poll spanning
-  midnight credits both dates.
-- `app-ui`: require History and daily progress to agree on a session's date.
+  midnight credits both dates; and state the accuracy bound on a session's start, since a
+  rule that names the start date is only as good as the start it names.
+- `app-ui`: require History and daily progress to agree on a session's date, and require a
+  surface labelling activity "today" to follow the calendar rather than its last data
+  emission.
 
 ## Impact
 
@@ -70,6 +83,7 @@ size, and task 1.1 measures it before anything is designed around it.
 | `work/SteamSyncWorker.kt` | attribute deltas per session instead of per poll |
 | `domain/SessionDiffer.kt` | may need to expose per-session date boundaries |
 | `ui/history/HistoryGrouping.kt` | align with the canonical rule |
+| `ui/home/HomeViewModel.kt` | drive `todayKey` from a date flow in the combine, not a call inside it |
 | `gamification/.../GamificationTest.kt` | comment only — no expectation changes |
 
 **User-visible numbers will move.** Correcting streak adjacency can *shorten* a displayed

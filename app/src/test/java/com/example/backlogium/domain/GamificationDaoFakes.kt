@@ -185,6 +185,11 @@ internal class FakeDailyProgressDao(
         store[date] = day.copy(minutesPlayed = day.minutesPlayed + minutesPlayed, goalMinutesPlayed = day.goalMinutesPlayed + goalMinutesPlayed)
     }
 
+    override suspend fun setMinutes(date: String, minutesPlayed: Int, goalMinutesPlayed: Int) {
+        val day = store[date] ?: DailyProgress(date)
+        store[date] = day.copy(minutesPlayed = minutesPlayed, goalMinutesPlayed = goalMinutesPlayed)
+    }
+
     override suspend fun updateQuestMet(date: String, questMet: Boolean) {
         questUpdateCount++
         val day = store[date] ?: DailyProgress(date)

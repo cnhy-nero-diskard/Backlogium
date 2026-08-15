@@ -244,8 +244,10 @@ class AnalyticsViewModel @Inject constructor(
     ) { inputs, resolved, ruleConfig, credState, rarityDetails ->
         val dates = resolved.bounds.dates()
         val gamesById = inputs.library.associateBy { it.appId }
-        val minutesByDate = inputs.sessions.groupBy { localDate(it.startAt, time.zone()) }
-            .mapValues { (_, daySessions) -> daySessions.sumOf { it.minutes } }
+        // Session start date is the canonical attribution shared with sync daily progress and
+        // History, including for sessions that cross local midnight.
+        val sessionsByDate = inputs.sessions.groupBy { localDate(it.startAt, time.zone()) }
+        val minutesByDate = sessionsByDate.mapValues { (_, daySessions) -> daySessions.sumOf { it.minutes } }
         val dailyMinutes = dates.map { date ->
             AnalyticsDay(date = date, minutes = minutesByDate[date] ?: 0)
         }
@@ -257,7 +259,7 @@ class AnalyticsViewModel @Inject constructor(
 
         val topGames = joinGameMinutes(inputs.minutesByGame, gamesById)
             .take(TOP_GAMES_LIMIT)
-        val gamesByDate = inputs.sessions.groupBy { localDate(it.startAt, time.zone()) }
+        val gamesByDate = sessionsByDate
             .mapValues { (_, daySessions) ->
                 val minutesByDayGame = daySessions.groupBy { it.appId }
                     .mapValues { (_, gameSessions) -> gameSessions.sumOf { it.minutes } }

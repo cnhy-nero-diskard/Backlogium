@@ -37,4 +37,41 @@ class SteamSyncCoordinatorTest {
         second.join()
         assertEquals("third", coordinator.withLock { "third" })
     }
+
+    @Test
+    fun backfillAndSyncRawBoundariesCannotInterleave() = runTest {
+        val coordinator = SteamSyncCoordinator()
+        val syncEntered = CompletableDeferred<Unit>()
+        val releaseSync = CompletableDeferred<Unit>()
+        val backfillEntered = CompletableDeferred<Unit>()
+        val writes = mutableListOf<String>()
+
+        val sync = launch {
+            coordinator.withLock {
+                writes += "sync-read"
+                syncEntered.complete(Unit)
+                releaseSync.await()
+                writes += "sync-write"
+            }
+        }
+        syncEntered.await()
+
+        val backfill = launch {
+            coordinator.withLock {
+                writes += "backfill-read"
+                backfillEntered.complete(Unit)
+                writes += "backfill-write"
+            }
+        }
+
+        assertEquals(false, backfillEntered.isCompleted)
+        releaseSync.complete(Unit)
+        sync.join()
+        backfill.join()
+
+        assertEquals(
+            listOf("sync-read", "sync-write", "backfill-read", "backfill-write"),
+            writes,
+        )
+    }
 }

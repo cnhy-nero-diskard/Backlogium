@@ -70,6 +70,14 @@ class SettingsDataStore @Inject constructor(
         val LIVE_MONITOR_ENABLED = booleanPreferencesKey("live_monitor_enabled")
         val RULE_CONFIG_VERSION = longPreferencesKey("rule_config_version")
 
+        /**
+         * Guard for the one-time correction of daily totals recorded under poll-time attribution
+         * (auditfix-day-attribution Decision 7). In DataStore rather than on the profile row so the
+         * correction needs no schema migration; absent means "not yet applied", which is also the
+         * right answer for a fresh install with nothing to correct.
+         */
+        val DAILY_PROGRESS_BACKFILLED = booleanPreferencesKey("daily_progress_backfilled")
+
         // Progress-event presentation state, not user-editable settings. These marks are the
         // durable acknowledgement baseline and intentionally live in DataStore, not Room.
         val LAST_CELEBRATED_LEVEL = intPreferencesKey("last_celebrated_level")
@@ -363,6 +371,14 @@ class SettingsDataStore @Inject constructor(
 
     suspend fun setLiveMonitorEnabled(enabled: Boolean) {
         context.dataStore.edit { it[Keys.LIVE_MONITOR_ENABLED] = enabled }
+    }
+
+    /** Whether the one-time daily-totals correction has already been applied. */
+    suspend fun dailyProgressBackfilled(): Boolean =
+        context.dataStore.data.map { it[Keys.DAILY_PROGRESS_BACKFILLED] ?: false }.first()
+
+    suspend fun setDailyProgressBackfilled(applied: Boolean) {
+        context.dataStore.edit { it[Keys.DAILY_PROGRESS_BACKFILLED] = applied }
     }
 
     private fun parseDate(value: String?): LocalDate? =

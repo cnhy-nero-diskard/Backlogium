@@ -19,12 +19,26 @@ interface DailyProgressDao {
     )
     suspend fun ensureDate(date: String)
 
-    /** Add this poll's minutes atomically; never read-add-write a daily total. */
+    /** Add session-start-attributed minutes atomically; never read-add-write a daily total. */
     @Query(
         "UPDATE daily_progress SET minutesPlayed = minutesPlayed + :minutesPlayed, " +
             "goalMinutesPlayed = goalMinutesPlayed + :goalMinutesPlayed WHERE date = :date",
     )
     suspend fun addMinutes(date: String, minutesPlayed: Int, goalMinutesPlayed: Int)
+
+    /**
+     * Set a day's totals absolutely, replacing whatever is stored.
+     *
+     * Deliberately separate from [addMinutes], which is the only correct write for a poll — the
+     * additive update exists so concurrent polls cannot lose minutes. This one serves the one-time
+     * correction that rebuilds a day from the session ledger (auditfix-day-attribution Decision 7),
+     * where replacing the stored value *is* the point. It must not be used on a sync path.
+     */
+    @Query(
+        "UPDATE daily_progress SET minutesPlayed = :minutesPlayed, " +
+            "goalMinutesPlayed = :goalMinutesPlayed WHERE date = :date",
+    )
+    suspend fun setMinutes(date: String, minutesPlayed: Int, goalMinutesPlayed: Int)
 
     /** Gamification owns only the derived quest flag; raw playtime remains sync-owned. */
     @Query("UPDATE daily_progress SET questMet = :questMet WHERE date = :date")
