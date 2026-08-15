@@ -11,10 +11,13 @@ local backup. An independent presence poller records server-side observations to
 Firestore while the phone is asleep; the app itself does not read that data yet,
 and works entirely without it. An OBS overlay remains a roadmap item.
 
-## Status snapshot — 2026-08-12
+## Status snapshot — 2026-08-15
 
 The current branch contains the implemented offline-first Android product loop,
-including the collection UI behavior fixes merged on August 12 and the tiered
+including the sync write-integrity hardening merged on August 15 (atomic poll
+persistence, database-serialized concurrent polls, field-scoped Steam/app column
+ownership, versioned rule-config provenance, and tombstoned achievement removal),
+the collection UI behavior fixes merged on August 12, and the tiered
 achievement-sync optimization merged on August 11. The source is actively
 maintained; it is not presented here as a claim that every device-only check or
 future cloud consumer is complete.
@@ -23,9 +26,10 @@ future cloud consumer is complete.
 |---|---|
 | Android client | Five top-level destinations: Home, Library, History, Analytics, and Settings, with onboarding, game detail, HLTB review, collections, and diagnostics as pushed surfaces. |
 | Local product loop | Implemented: Steam onboarding/sync, local sessions and XP, quests/streaks, HLTB data, genres, custom collections, analytics, live monitoring, backups, and settings. |
-| Achievement sync | Tiered hot/warm/cold/never selection is merged. Normal sync is bounded; cold-tier reconciliation runs weekly on charging + unmetered network or from the forced Settings action. |
+| Sync write integrity | A poll's raw persistence (sessions, playtime baselines, daily progress, profile fields) commits as one atomic unit; concurrent polls re-read baselines at commit so an increase is never double-counted; the sync writes only Steam-owned game/profile columns, never app-owned ones; rule-config changes are versioned and compared at commit so derived values can't persist under superseded rules. |
+| Achievement sync | Tiered hot/warm/cold/never selection is merged. Normal sync is bounded; cold-tier reconciliation runs weekly on charging + unmetered network or from the forced Settings action. Reconciliation and the sync's in-line refresh are serialized against each other, and achievements Steam stops returning are tombstoned rather than deleted or left to drift. |
 | Cloud presence | The one-minute Firebase Admin writer and Firestore transition log are implemented. The Android app and OBS do not consume that log yet; client access is denied by the current Firestore rules. |
-| Verification | Kotlin/JVM tests, Android unit tests, instrumentation tests, compile checks, and function builds are available. Four hardware-dependent achievement-sync checks remain tracked in [#52](https://github.com/cnhy-nero-diskard/Backlogium/issues/52). |
+| Verification | Kotlin/JVM tests, Android unit tests, instrumentation tests, compile checks, and function builds are available, including a schema v14→v15 migration test and dedicated write-integrity/versioned-persistence coverage. Four hardware-dependent achievement-sync checks remain tracked in [#52](https://github.com/cnhy-nero-diskard/Backlogium/issues/52). |
 
 ## What Works Today
 
@@ -49,6 +53,10 @@ future cloud consumer is complete.
   snapshots.
 - Sync diagnostics with persisted run timing, request breakdowns, presence decisions, and
   achievement-refresh tier counts.
+- Crash-safe, concurrency-safe sync persistence: atomic commit of a poll's sessions,
+  playtime baselines, daily progress, and profile fields; no double-counting when a manual
+  sync overlaps a scheduled one; and versioned rule configuration so gamification values
+  can never persist under superseded rules.
 - Fully local Room/DataStore persistence. Steam credentials are encrypted at rest
   with an Android Keystore-backed key.
 - A scheduled Cloud Function polling Steam presence every minute and appending game

@@ -440,7 +440,9 @@ the route into onboarding.
 
 1. **Account** — "Steam account" card with masked API key and SteamID when configured, or a connect
    prompt when not configured. The action opens Onboarding.
-2. **Sync** — last sync state plus a "Sync now" action. The same card exposes the forced
+2. **Sync** — last sync state plus a "Sync now" action, which relabels to "Sync in progress" and
+   disables while a poll (scheduled or manual) is already running, since an overlapping tap is
+   absorbed rather than starting a second poll. The same card exposes the forced
    "Full achievement refresh" action and a muted genre-enrichment status line.
 3. **Live monitor** — toggle for foreground now-playing monitoring; disabled until Steam is
    configured.
