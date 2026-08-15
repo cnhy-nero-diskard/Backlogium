@@ -70,6 +70,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.HltbMatchState
+import com.example.backlogium.data.repo.HltbRefreshOutcome
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.gamification.Gamification
@@ -752,12 +753,15 @@ private fun StopScanButton(onStop: () -> Unit) {
     }
 }
 
-/** A null outcome is a failed lookup — distinct from a search that found no candidates. */
-private fun outcomeLabel(outcome: HltbMatchState?): String = when (outcome) {
-    HltbMatchState.RESOLVED -> "matched"
-    HltbMatchState.NEEDS_REVIEW -> "needs review"
-    HltbMatchState.UNMATCHED -> "no match"
-    null -> "lookup failed"
+/** The rolling log distinguishes a failed lookup from a successful no-match. */
+private fun outcomeLabel(outcome: HltbRefreshOutcome): String = when (outcome) {
+    is HltbRefreshOutcome.Refreshed -> when (outcome.state) {
+        HltbMatchState.RESOLVED -> "matched"
+        HltbMatchState.NEEDS_REVIEW -> "needs review"
+        HltbMatchState.UNMATCHED -> "no match"
+    }
+    HltbRefreshOutcome.NoMatch -> "no match"
+    is HltbRefreshOutcome.Failed -> "lookup failed (${outcome.failureClass.name.lowercase()})"
 }
 
 /**

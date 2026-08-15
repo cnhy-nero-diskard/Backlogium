@@ -11,6 +11,7 @@ import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.data.repo.HltbRepository
+import com.example.backlogium.data.repo.HltbRefreshOutcome
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
@@ -99,8 +100,8 @@ data class BacklogGameUi(
     override val genres: List<GameGenre> = emptyList(),
 ) : LibraryRow
 
-/** One processed game in a running batch sweep. A null [outcome] means the lookup failed. */
-data class HltbLogEntry(val gameName: String, val outcome: HltbMatchState?)
+/** One processed game in a running batch sweep, including structured failure evidence. */
+data class HltbLogEntry(val gameName: String, val outcome: HltbRefreshOutcome)
 
 data class LibraryUiState(
     val loading: Boolean = true,

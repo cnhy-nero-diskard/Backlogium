@@ -14,6 +14,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.example.backlogium.R
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.repo.HltbBatchResult
 import com.example.backlogium.data.repo.HltbRepository
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -31,8 +32,8 @@ import dagger.assisted.AssistedInject
  * skipping them for being inside the freshness window would make the action look broken.
  *
  * Progress is published per game — count, total, the game's name, and its outcome — since that is
- * the only channel that survives the screen closing. The outcome travels as a name string because
- * `Data` holds no enums; its absence means the lookup itself failed.
+ * the only channel that survives the screen closing. The outcome is encoded as a compact string
+ * because `Data` holds no sealed hierarchies.
  */
 @HiltWorker
 class HltbRefreshWorker @AssistedInject constructor(
@@ -51,33 +52,32 @@ class HltbRefreshWorker @AssistedInject constructor(
             .map { it.appId to it.name }
 
         if (games.isEmpty()) {
-            notifyComplete(0)
+            notifyComplete(HltbBatchResult(0, 0, 0, 0, emptySet()))
             return Result.success()
         }
 
         return try {
-            var completed = 0
-            hltbRepository.refreshBatch(games, force) { done, total, name, outcome ->
-                completed = done
+            val result = hltbRepository.refreshBatch(games, force) { done, total, name, outcome ->
                 setProgress(
                     workDataOf(
                         KEY_PROGRESS to done,
                         KEY_TOTAL to total,
                         KEY_CURRENT_GAME to name,
-                        // Absent = the lookup failed; a match state means it completed.
-                        KEY_OUTCOME to outcome?.name,
+                        KEY_OUTCOME to encodeHltbOutcome(outcome),
                     ),
                 )
             }
-            notifyComplete(completed)
-            Result.success()
+            notifyComplete(result)
+            if (result.shouldRetry) Result.retry() else Result.success()
+        } catch (cancellation: kotlinx.coroutines.CancellationException) {
+            throw cancellation
         } catch (e: Exception) {
             // Transient failure: keep cached data, let WorkManager back off and retry.
             Result.retry()
         }
     }
 
-    private fun notifyComplete(refreshedCount: Int) {
+    private fun notifyComplete(result: HltbBatchResult) {
         val context = applicationContext
         // On API 33+ posting requires the runtime POST_NOTIFICATIONS grant; skip silently
         // if it was never granted (the Library screen also reflects completion via WorkManager).
@@ -100,11 +100,7 @@ class HltbRefreshWorker @AssistedInject constructor(
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("HowLongToBeat refresh complete")
             .setContentText(
-                if (refreshedCount == 0) {
-                    "Library already up to date"
-                } else {
-                    "Refreshed $refreshedCount game${if (refreshedCount == 1) "" else "s"}"
-                },
+                hltbCompletionText(result),
             )
             .setAutoCancel(true)
             .build()
@@ -126,4 +122,17 @@ class HltbRefreshWorker @AssistedInject constructor(
         private const val CHANNEL_ID = "hltb_refresh"
         private const val NOTIFICATION_ID = 4201
     }
+}
+
+internal fun hltbCompletionText(result: HltbBatchResult): String {
+    val parts = buildList {
+        add("Refreshed ${result.refreshed} game${if (result.refreshed == 1) "" else "s"}")
+        if (result.noMatch > 0) {
+            add("No match for ${result.noMatch} game${if (result.noMatch == 1) "" else "s"}")
+        }
+        if (result.failed > 0) {
+            add("Failed ${result.failed} lookup${if (result.failed == 1) "" else "s"}")
+        }
+    }
+    return parts.joinToString("; ")
 }
