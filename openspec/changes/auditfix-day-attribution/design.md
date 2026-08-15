@@ -16,6 +16,21 @@ Nothing here is a coding mistake. Two call sites each made a locally reasonable 
 and no spec said which was canonical. That is what makes it worth fixing at the spec
 level rather than by editing whichever one looks wrong.
 
+## Exposure finding
+
+`DailyProgress` rows are sparse in practice. The only production path that creates a
+zero-minute row is `SteamSyncWorker.commitRawPoll`, which calls `ensureDate(today)` after
+a successful poll. There is no startup or day-rollover writer that creates rows for dates
+the device did not observe, so a device that is off or offline across a day boundary can
+leave Monday and Thursday rows with no Tuesday or Wednesday rows between them. The
+streak gap is therefore a live defect after an offline interval, not merely a theoretical
+case after data corruption.
+
+The prerequisite `auditfix-sync-write-integrity` is present on `origin/master`:
+`DailyProgressDao.addMinutes` performs the additive SQL update used by the raw sync
+transaction. Per-date attribution can therefore reuse that transaction without restoring
+a read-add-write or duplicating the preceding change.
+
 ## Decision 1: Attribute to the session's start date
 
 **Chosen**: a session's minutes belong entirely to the local date of its `startAt`.
@@ -133,6 +148,11 @@ flag for the owner rather than settle.** For a single-user personal app, "wipe i
 start honest" is a legitimate answer that a multi-user product could not choose. If that
 is wanted, take option B as an explicit, commented, one-time migration — not as a
 softening of the rule.
+
+For this implementation, the proposal's recommended option A is the owner decision:
+leave `longestStreak` banked and do not add a corrective migration. The existing
+never-decreases invariant remains intact; only newly recomputed current streaks use the
+corrected calendar sequence.
 
 ## Testing strategy
 

@@ -72,11 +72,10 @@ data class HistoryWindowBounds(
  *   entirely on the day it began, never split across two days.
  * - A day header's total, and its Focus-games total, are both the **sum of the sessions grouped
  *   beneath it** (the latter filtered to games tagged [LibraryGame.isGoal]) — not the stored
- *   [DayProgress] counters. [DayProgress] buckets by the sync poll's "today", which can disagree
- *   with a session's `startAt` day (e.g. a sync that runs just after local midnight); recomputing
- *   both totals from the same sessions keeps them internally consistent with each other and with
- *   what the breakdown actually shows. [DayProgress] still supplies `questMet`, which remains
- *   authoritative for streaks.
+ *   [DayProgress] counters. Daily progress is credited to the same session-start date by the sync
+ *   worker; recomputing both totals from the sessions keeps them internally consistent with each
+ *   other and with what the breakdown actually shows. [DayProgress] still supplies `questMet`,
+ *   which remains authoritative for streaks.
  * - Days with [DayProgress] but no sessions still produce a (session-less) day group.
  * - Achievement unlocks are matched to a day by the local date of `unlockedAt`, across every game
  *   — not just the games played that day — since an achievement can unlock retroactively or from

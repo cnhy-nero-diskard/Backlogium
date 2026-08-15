@@ -19,7 +19,7 @@ interface DailyProgressDao {
     )
     suspend fun ensureDate(date: String)
 
-    /** Add this poll's minutes atomically; never read-add-write a daily total. */
+    /** Add session-start-attributed minutes atomically; never read-add-write a daily total. */
     @Query(
         "UPDATE daily_progress SET minutesPlayed = minutesPlayed + :minutesPlayed, " +
             "goalMinutesPlayed = goalMinutesPlayed + :goalMinutesPlayed WHERE date = :date",

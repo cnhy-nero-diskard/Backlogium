@@ -137,6 +137,8 @@ class GamificationUpdater @Inject constructor(
         // like adjacent met days, while stored rows remain the sole source of changedDays.
         val questResults = daysByDate.keys.minOrNull()?.let { firstDate ->
             val lastDate = maxOf(firstDate, today)
+            // One linear pass over the evaluated calendar span; no rows are synthesized before
+            // the first stored day or persisted for the missing dates.
             generateSequence(firstDate) { date ->
                 date.plusDays(1).takeUnless { it.isAfter(lastDate) }
             }.map { date ->
