@@ -11,6 +11,7 @@ import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.di.ApplicationScope
+import com.example.backlogium.domain.DailyProgressBackfillUseCase
 import com.example.backlogium.work.PresenceServiceStarter
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.HiltAndroidApp
@@ -79,6 +80,9 @@ class BacklogiumApp : Application(), Configuration.Provider {
     lateinit var settings: SettingsRepository
 
     @Inject
+    lateinit var dailyProgressBackfill: DailyProgressBackfillUseCase
+
+    @Inject
     @ApplicationScope
     lateinit var scope: CoroutineScope
 
@@ -98,6 +102,32 @@ class BacklogiumApp : Application(), Configuration.Provider {
         syncScheduler.ensurePeriodicSync()
         syncScheduler.ensurePeriodicReconciliation()
         ProcessLifecycleOwner.get().lifecycle.addObserver(ForegroundPresenceCheck())
+        correctHistoricalDailyTotals()
+    }
+
+    /**
+     * One-time correction of per-day totals recorded under the superseded poll-time attribution
+     * (auditfix-day-attribution Decision 7). Guarded by a persisted flag, so this is a no-op on
+     * every launch after the first and costs a fresh install nothing.
+     *
+     * On start-up rather than in the sync worker: the rows most likely to be skewed belong to users
+     * who are offline or whose credentials have lapsed, and those users' syncs may never run. It
+     * reads only local data, so it needs no network either.
+     */
+    private fun correctHistoricalDailyTotals() {
+        scope.launch {
+            runCatching { dailyProgressBackfill() }
+                .onSuccess { corrections ->
+                    when {
+                        corrections == null -> Timber.d("Daily-totals correction already applied")
+                        corrections.isEmpty() -> Timber.d("Daily totals already agree with sessions")
+                        else -> Timber.i("Corrected %d daily totals from sessions", corrections.size)
+                    }
+                }
+                // Never let a failed correction take down app start-up: the stored totals stay as
+                // they were, the guard stays unset, and the next launch retries.
+                .onFailure { Timber.e(it, "Daily-totals correction failed") }
+        }
     }
 
     /**

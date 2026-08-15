@@ -224,6 +224,54 @@ would not help a screen already open at the boundary.
 The emission interval is a design detail for implementation, not a spec concern: the
 `app-ui` requirement states the boundary must be observed, not how often to look.
 
+## Decision 7: Historical totals are corrected once, from the session ledger
+
+Per-session attribution fixes what the sync records *from now on*. It does not touch rows already
+written, so every date recorded under the old rule keeps its poll-bucketed total — and keeps
+displaying the contradiction this change exists to remove. On the owner's device, 20 of 24 stored
+dates disagreed with their sessions, one by the full 31 minutes of a single midnight-crossing
+session.
+
+**Chosen**: a one-time backfill that recomputes `minutesPlayed` and `goalMinutesPlayed` from the
+sessions, then lets `GamificationUpdater` re-derive quest status and streaks from the corrected
+totals.
+
+**Why this is safe to do at all**: sessions are an append-only ledger. Nothing in the app deletes
+a session row — there is no `DELETE FROM sessions`, no `@Delete` on `SessionDao`, and no retention
+policy — so for any date at or after the first session, the ledger is complete and recomputation
+is authoritative rather than lossy. That property is what makes `daily_progress` a cache that can
+be rebuilt; if sessions were ever pruned, this decision would be wrong.
+
+**Dates before the first session are left alone.** The first sync baselines the library without
+synthesizing sessions, so the earliest `DailyProgress` row can predate any session. Rebuilding
+such a date would write a zero, reporting "no records" as "no play". Preserving it keeps the one
+case the ledger genuinely cannot speak to.
+
+**`goalMinutesPlayed` is recomputed against today's Focus flags**, because nothing records what a
+game's `isGoal` flag was on a past date. This is not a faithful reconstruction and is not claimed
+as one — it is the same basis History already displays (`HistoryGrouping.kt:132` filters by the
+current `isGoal` set), so the two agree afterwards. The visible consequence: toggling a game's
+Focus flag retroactively changes what past days report as Focus time. That was already true of
+History; the backfill makes `DailyProgress` match rather than introducing it.
+
+**A shortened current streak is the correct outcome, not a regression.** The owner's Aug 14 held
+52 stored minutes against 21 minutes of actual sessions, and the 31-minute difference was one
+session that began at 23:54 the night before. Correcting it puts Aug 14 below the 30-minute quota
+and breaks a 6-day streak — which is precisely the discrepancy that prompted this work. The same
+recomputation lengthens the longest streak from 10 to 15, because a day stored as 0 held 72
+minutes of sessions and joined two runs. `longestStreak` remains a protected high-water mark, so
+it can only rise here.
+
+**Rejected: a Room migration.** Attribution needs the local time zone to turn a session's
+`startAt` into a date, and DST makes that more than an offset. Expressing it in migration SQL
+would mean a second, dumber implementation of the rule this change spent Decision 1 defining.
+A Kotlin one-shot reuses the real rule.
+
+**Rejected: running it inside the sync worker.** It would never run for a user who is offline or
+whose credentials have lapsed, and those are exactly the users whose rows are most likely to be
+skewed. It runs on start-up instead, guarded by a persisted flag, so a fresh install never pays
+for it and an existing install pays once.
+
 ## Testing strategy
 
 - midnight-crossing session credits its start date in both History and daily progress
@@ -261,7 +309,10 @@ fold, and calendar densification has no missing date to add.
 - Does not split sessions at midnight. Rejected in Decision 1.
 - Does not persist synthesized gap days.
 - Does not correct `longestStreak` values inflated by the old behaviour, pending the
-  owner's call on Decision 4.
+  owner's call on Decision 4. Note that Decision 7's backfill re-derives streaks from
+  corrected totals, which can *raise* the high-water mark but still never lowers it.
+- Does not reconstruct historical `isGoal` flags. Decision 7 recomputes Focus minutes
+  against today's flags and says so rather than implying a faithful replay.
 - Does not handle time zone or DST changes mid-session. Known limitation, written down.
 - Does not narrow the poll-gap start estimate. A session opened after a deferred poll is
   dated to the poll before the gap, which may be the wrong calendar day. Bound stated in

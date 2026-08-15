@@ -81,3 +81,25 @@ itself is a regression, so there is nothing to implement here.
 - [x] 8.3 Record in design Decision 5 why `max(previousPollAt, now - addedMinutes)` moves to the opposite end of the feasible interval instead of narrowing it, with the overnight case that regresses
 - [x] 8.4 Name the presence-anchored start as the real fix and locate it in `live-status`, so the clamp is not re-derived and re-rejected later
 - [x] 8.5 Add the bound to design's "What this change deliberately does not do"
+
+## 9. Correct the historical totals
+
+Per-session attribution fixes what the sync records going forward; it leaves every row written
+under the old rule contradicting its own sessions. On the owner's device 20 of 24 stored dates
+disagreed. See design Decision 7.
+
+- [x] 9.1 Confirm the session ledger is append-only before treating it as authoritative — no `DELETE FROM sessions`, no `@Delete` on `SessionDao`, no retention policy, so recomputation is lossless for any date at or after the first session
+- [x] 9.2 Express the rule as a pure function (`dailyProgressCorrections`) taking sessions, goal app ids, stored rows and the zone, so it is testable without a DataStore, a recompute, or the one-shot guard
+- [x] 9.3 Add `DailyProgressDao.setMinutes` for absolute writes, documented as forbidden on a sync path — `addMinutes` stays the only correct poll write
+- [x] 9.4 Leave dates before the earliest session untouched, since the first sync baselines the library without synthesizing sessions and rebuilding them would report absent records as absent play
+- [x] 9.5 Recompute `goalMinutesPlayed` against today's Focus flags, matching what `HistoryGrouping.kt:132` already displays, and record in design that this is not a faithful replay
+- [x] 9.6 Guard with a persisted DataStore flag (`daily_progress_backfilled`) so the correction runs once and needs no schema migration
+- [x] 9.7 Run it from `BacklogiumApp.onCreate`, not the sync worker, so an offline or credential-lapsed user still gets it; wrap in `runCatching` so a failure never takes down start-up and the next launch retries
+- [x] 9.8 Re-derive quest status and streaks via `GamificationUpdater.recompute` with `RecomputeSource.BACKFILL`, so the transition is not delivered to the player as earned progress
+- [x] 9.9 Test: a midnight-crossing session's minutes move to the date it began, and the day that had been credited falls accordingly
+- [x] 9.10 Test: dates before the earliest session are excluded; a date whose sessions all moved away falls to zero; dates already agreeing produce no correction
+- [x] 9.11 Test: Focus minutes count only currently-flagged games, and a goal-minutes-only disagreement is still corrected
+- [x] 9.12 Test: attribution uses the device zone, not UTC
+- [x] 9.13 Add `setMinutes` to both existing `FakeDailyProgressDao` implementations
+- [x] 9.14 Run `./gradlew :gamification:test :app:testDebugUnitTest` — 448 app tests, 0 failures
+- [x] 9.15 Verify on the owner's device that the corrected totals land and the displayed streak moves as predicted (current 6 → 0, longest 10 → 15)
