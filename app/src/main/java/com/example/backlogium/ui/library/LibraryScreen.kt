@@ -256,6 +256,7 @@ fun LibraryScreen(
                 item {
                     BatchProgressPanel(
                         status = state.hltbRefreshStatus,
+                        waitRemainingSeconds = state.hltbWaitRemainingSeconds,
                         progress = state.batchProgress,
                         log = state.batchLog,
                         onStop = viewModel::stopHltbRefresh,
@@ -681,6 +682,7 @@ private fun HltbMenuButton(
 @Composable
 private fun BatchProgressPanel(
     status: HltbRefreshStatus,
+    waitRemainingSeconds: Int?,
     progress: HltbBatchProgress?,
     log: List<HltbLogEntry>,
     onStop: () -> Unit,
@@ -688,9 +690,14 @@ private fun BatchProgressPanel(
     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
         Column(modifier = Modifier.padding(12.dp)) {
             if (progress == null || progress.total <= 0) {
+                val waitSuffix = if (status == HltbRefreshStatus.WAITING_FOR_NETWORK) {
+                    " ${waitRemainingSeconds ?: HLTB_OFFLINE_WAIT_SECONDS}s"
+                } else {
+                    ""
+                }
                 val statusText = when (status) {
                     HltbRefreshStatus.WAITING_FOR_NETWORK ->
-                        "Waiting for an internet connection…"
+                        "Waiting for an internet connection…$waitSuffix"
                     HltbRefreshStatus.RETRYING -> "Retrying HowLongToBeat refresh…"
                     HltbRefreshStatus.IDLE,
                     HltbRefreshStatus.RUNNING,

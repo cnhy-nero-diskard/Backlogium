@@ -67,5 +67,7 @@
 - The attempted offline run confirmed the HLTB request remains `ENQUEUED` behind its connectivity
   constraint before the worker can classify a lookup; `HltbRefreshStatus` now exposes that state as
   waiting for network instead of leaving the progress panel looking stalled.
+- The offline waiting state now counts down for 30 seconds and cancels the queued HLTB work if
+  connectivity does not return; timer cancellation is covered by virtual-time tests.
 - Task 7.4 could not run because `openspec` and `openspec.cmd` are unavailable in this process.
 - Task 7.5 is recorded by commit `ee73fb5` (`fix: report fewer hltb refreshed games as the correction`).

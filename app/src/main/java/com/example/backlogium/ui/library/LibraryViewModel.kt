@@ -29,9 +29,11 @@ import com.example.backlogium.work.HltbRefreshStatus
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.runningFold
@@ -133,6 +135,7 @@ data class LibraryUiState(
      */
     val libraryEmpty: Boolean = true,
     val hltbRefreshStatus: HltbRefreshStatus = HltbRefreshStatus.IDLE,
+    val hltbWaitRemainingSeconds: Int? = null,
     val batchProgress: HltbBatchProgress? = null,
     val batchLog: List<HltbLogEntry> = emptyList(),
 ) {
@@ -165,6 +168,26 @@ class LibraryViewModel @Inject constructor(
 
     /** Transient multi-select for the targeted refresh. Never persisted (see [clearSelection]). */
     private val selection = MutableStateFlow<Set<Long>>(emptySet())
+    private val hltbWaitRemainingSeconds = MutableStateFlow<Int?>(null)
+
+    init {
+        viewModelScope.launch {
+            syncScheduler.hltbRefreshStatus.collectLatest { status ->
+                if (status != HltbRefreshStatus.WAITING_FOR_NETWORK) {
+                    hltbWaitRemainingSeconds.value = null
+                    return@collectLatest
+                }
+
+                runHltbOfflineWaitTimer(
+                    onTick = { hltbWaitRemainingSeconds.value = it },
+                    onTimeout = {
+                        syncScheduler.cancelHltbRefresh()
+                        hltbWaitRemainingSeconds.value = null
+                    },
+                )
+            }
+        }
+    }
 
     private val content = combine(
         gameRepository.goalGames,
@@ -225,8 +248,10 @@ class LibraryViewModel @Inject constructor(
         syncScheduler.hltbRefreshProgress
             .distinctUntilChanged()
             .runningFold(BatchLog()) { acc, next -> acc.accumulate(next) },
-        ::BatchState,
-    )
+        hltbWaitRemainingSeconds,
+    ) { status, log, waitRemainingSeconds ->
+        BatchState(status, log, waitRemainingSeconds)
+    }
 
     val uiState: StateFlow<LibraryUiState> = combine(
         content,
@@ -264,6 +289,7 @@ class LibraryViewModel @Inject constructor(
             selection = view.selection,
             libraryEmpty = content.goals.isEmpty() && content.backlog.isEmpty(),
             hltbRefreshStatus = batch.status,
+            hltbWaitRemainingSeconds = batch.waitRemainingSeconds,
             batchProgress = batch.log.progress,
             batchLog = batch.log.entries,
         )
@@ -375,6 +401,22 @@ class LibraryViewModel @Inject constructor(
     fun stopHltbRefresh() = syncScheduler.cancelHltbRefresh()
 }
 
+internal const val HLTB_OFFLINE_WAIT_SECONDS = 30
+private const val HLTB_WAIT_TICK_MILLIS = 1_000L
+
+/** Counts down an offline HLTB wait and invokes [onTimeout] only after the full interval. */
+internal suspend fun runHltbOfflineWaitTimer(
+    onTick: (remainingSeconds: Int) -> Unit,
+    onTimeout: () -> Unit,
+) {
+    for (remainingSeconds in HLTB_OFFLINE_WAIT_SECONDS downTo 1) {
+        onTick(remainingSeconds)
+        delay(HLTB_WAIT_TICK_MILLIS)
+    }
+    onTick(0)
+    onTimeout()
+}
+
 /** The two Room-backed lists plus the two screen-wide facts, before any per-row derivation. */
 private data class LibraryContent(
     val configured: Boolean,
@@ -403,7 +445,11 @@ private data class ViewPrefs(
     val density: GameListDensity,
 )
 
-private data class BatchState(val status: HltbRefreshStatus, val log: BatchLog)
+private data class BatchState(
+    val status: HltbRefreshStatus,
+    val log: BatchLog,
+    val waitRemainingSeconds: Int?,
+)
 
 /** Progress snapshot plus the entries accumulated from earlier snapshots of the same run. */
 private data class BatchLog(
