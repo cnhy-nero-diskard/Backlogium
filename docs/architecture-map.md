@@ -1,6 +1,6 @@
 # Backlogium architecture map
 
-Status snapshot: 2026-08-12
+Status snapshot: 2026-08-15
 
 This is a source-oriented map of the current repository. It describes the Android
 client and the independent cloud presence writer as they exist on the current
@@ -74,7 +74,7 @@ collection-entity boundary breach documented in the root README.
 ```text
 +------------------------------ Android local state ----------------------+
 |                                                                         |
-|  Room database (schema version 14)                                     |
+|  Room database (schema version 15)                                     |
 |    games                 sessions              daily_progress            |
 |    player_profile       hltb_data              achievements              |
 |    game_achievement_sync                         collections             |
