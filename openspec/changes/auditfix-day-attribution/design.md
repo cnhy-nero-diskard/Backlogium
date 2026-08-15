@@ -178,6 +178,13 @@ No historical gap-bearing rows were present, so a positive gap-correction case c
 not be exercised without seeding synthetic data. This verifies the no-gap negative case:
 the implementation does not invent a streak or alter a dataset with no calendar gap.
 
+On the physical Xiaomi device `9XDQCM6HLB5DO7YH`, the existing data included met days on
+2026-08-07 and 2026-08-09, but 2026-08-08 was an explicit unmet row (26 minutes). Every
+date from 2026-07-23 through 2026-08-15 had a stored row, so this was not a missing-date
+case. The installed branch displayed a `6-day streak` and `Longest: 10`, which is the
+expected unchanged control result: an explicit unmet day already breaks the order-only
+fold, and calendar densification has no missing date to add.
+
 ## What this change deliberately does not do
 
 - Does not change `Gamification.streak()` or any of its expectations.
