@@ -14,7 +14,6 @@ import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
-import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
@@ -38,6 +37,14 @@ import javax.inject.Singleton
  *
  * Used by both a manually imported file and a restored automatic snapshot — there is only one
  * merge code path (tasks.md 2.3, design.md decision 4).
+ *
+ * The raw-data writes below run inside one [transaction] (auditfix-backup-integrity design.md
+ * decision 2): every table commits together, or none does. The gamification recompute runs
+ * strictly after that transaction commits, never inside it — [GamificationUpdater.persist]
+ * suspends on `DataStore` and owns a non-reentrant coordinator, and nesting either inside a Room
+ * transaction risks deadlock. [PlayerProfileDao.markPendingImportRecompute] is written as the
+ * transaction's last step so a crash between the merge commit and the recompute is detected on
+ * the next launch rather than left as a silent stale-aggregate state.
  */
 @Singleton
 class BackupMergeEngine @Inject constructor(
@@ -51,6 +58,7 @@ class BackupMergeEngine @Inject constructor(
     private val gamificationUpdater: GamificationUpdater,
     private val time: TimeProvider,
     private val derivedStateWrites: DerivedStateWriteCoordinator = DerivedStateWriteCoordinator(),
+    private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
 ) {
     /**
      * [config] is the app's currently active [RuleConfig] — never the file's own `ruleConfig`,
@@ -76,35 +84,46 @@ class BackupMergeEngine @Inject constructor(
         config: RuleConfig,
         configVersion: Long,
     ) {
-        // Games first: Session/Achievement/HltbData all carry a FOREIGN KEY on games.appId, so a
-        // fresh-install restore (no games synced yet) needs the skeleton row to exist first.
-        file.games.forEach { mergeGame(it) }
-        file.sessions.forEach { mergeSession(it) }
-        file.dailyProgress.forEach { mergeDailyProgress(it) }
-        file.hltbData.forEach { mergeHltbData(it) }
-        file.achievements.forEach { mergeAchievement(it) }
-        file.collections.forEach { mergeCollection(it) }
-        file.collectionMembers.forEach { mergeCollectionMember(it) }
-
         val importedLongestStreak = file.playerProfile.longestStreak
         val importedBackfilled = file.playerProfile.playtimeBackfilled
 
+        // Every raw-data write commits as one unit (design.md decision 2). No suspension besides
+        // these DAO calls happens in here — no settings, no file access, nothing that hops
+        // threads — so the transaction cannot deadlock or be left holding a connection open.
+        transaction.run {
+            // Games first: Session/Achievement/HltbData all carry a FOREIGN KEY on games.appId, so
+            // a fresh-install restore (no games synced yet) needs the skeleton row to exist first.
+            file.games.forEach { mergeGame(it) }
+            file.sessions.forEach { mergeSession(it) }
+            file.dailyProgress.forEach { mergeDailyProgress(it) }
+            file.hltbData.forEach { mergeHltbData(it) }
+            file.achievements.forEach { mergeAchievement(it) }
+            file.collections.forEach { mergeCollection(it) }
+            file.collectionMembers.forEach { mergeCollectionMember(it) }
+
+            // playtimeBackfilled is a historical fact ("has this account ever backfilled"), not a
+            // derivation — folded in like longestStreak, as a one-way OR rather than a replace, so
+            // an import can never un-flag an import that already happened locally.
+            val storedProfile = playerProfileDao.get()
+            if (storedProfile == null) playerProfileDao.insertIfMissing()
+            if (importedBackfilled && storedProfile?.playtimeBackfilled != true) {
+                playerProfileDao.updatePlaytimeBackfilled(true)
+            }
+
+            // Last write in the transaction: commits atomically with the merged data, so a crash
+            // before the recompute below is detectable on the next launch
+            // (PendingImportRecomputeUseCase) instead of leaving aggregates silently stale.
+            playerProfileDao.markPendingImportRecompute()
+        }
+
+        // Outside the transaction by construction: persist() suspends on DataStore and owns a
+        // coordinator that a Room transaction must never wrap (design.md decision 2).
         val result = gamificationUpdater.compute(time.today(), config)
         gamificationUpdater.persist(
             result.copy(longestStreak = maxOf(result.longestStreak, importedLongestStreak)),
             RecomputeSource.RESTORE,
             configVersion,
         )
-
-        // playtimeBackfilled is a historical fact ("has this account ever backfilled"), not a
-        // derivation — folded in like longestStreak, as a one-way OR rather than a replace, so
-        // an import can never un-flag an import that already happened locally.
-        val storedProfile = playerProfileDao.get()
-        val profile = storedProfile ?: PlayerProfile()
-        if (importedBackfilled && !profile.playtimeBackfilled) {
-            if (storedProfile == null) playerProfileDao.insertIfMissing()
-            playerProfileDao.updatePlaytimeBackfilled(true)
-        }
     }
 
     private suspend fun mergeGame(backupGame: BackupGame) {
@@ -174,6 +193,10 @@ class BackupMergeEngine @Inject constructor(
                 completionistMinutes = backupHltb.completionistMinutes,
                 allStylesMinutes = backupHltb.allStylesMinutes,
                 fetchedAt = time.nowMillis(),
+                // Audited against tasks.md 3.6: forward-compatible tolerance for an enum name the
+                // preflight validator does not check (2.2's categories are dates, timestamps,
+                // appIds, references, and ranges — never enum-name spelling), so this stays a
+                // fallback rather than a preflight bug surfacing.
                 matchStatus = runCatching { HltbMatchStatus.valueOf(backupHltb.matchStatus) }
                     .getOrDefault(HltbMatchStatus.UNMATCHED),
                 candidatesJson = null,
@@ -181,13 +204,27 @@ class BackupMergeEngine @Inject constructor(
         )
     }
 
+    /**
+     * Rarity-snapshot rule (backup-restore spec, "Achievement rarity snapshot is protected during
+     * import"): once frozen locally, a snapshot is retained unless the import carries its own
+     * snapshot for the same achievement with a strictly earlier unlock — the earlier unlock is by
+     * definition nearer the true first unlock, and comparing timestamps rather than trusting
+     * whichever side merges first is what makes import order not matter.
+     */
     private suspend fun mergeAchievement(backupAchievement: BackupAchievement) {
         val existing = achievementDao.getOne(backupAchievement.appId, backupAchievement.apiName)
-        // Once frozen locally, snapshotPercent is never overwritten by an import — the same
-        // invariant the entity already enforces for ordinary syncs (Achievement.kt doc comment).
-        if (existing != null && existing.snapshotPercent != null) return
+        val importedUnlockedAt = backupAchievement.unlockedAt?.iso8601ToEpochMilli()
 
-        val unlockedAt = backupAchievement.unlockedAt?.iso8601ToEpochMilli()
+        if (existing?.snapshotPercent != null) {
+            // Nothing to compare against without an imported snapshot of its own: the local
+            // freeze stands untouched.
+            if (backupAchievement.snapshotPercent == null) return
+            val existingUnlockedAt = existing.unlockedAt
+            val importedIsEarlier = importedUnlockedAt != null &&
+                (existingUnlockedAt == null || importedUnlockedAt < existingUnlockedAt)
+            if (!importedIsEarlier) return
+        }
+
         achievementDao.upsertAll(
             listOf(
                 Achievement(
@@ -196,7 +233,7 @@ class BackupMergeEngine @Inject constructor(
                     displayName = backupAchievement.displayName ?: existing?.displayName,
                     iconUrl = existing?.iconUrl,
                     unlocked = true,
-                    unlockedAt = unlockedAt,
+                    unlockedAt = importedUnlockedAt,
                     globalPercent = existing?.globalPercent,
                     snapshotPercent = backupAchievement.snapshotPercent,
                     fetchedAt = existing?.fetchedAt ?: time.nowMillis(),
@@ -207,8 +244,10 @@ class BackupMergeEngine @Inject constructor(
 
     /**
      * Merge one collection by its id (PK upsert): a row with the same id is overwritten, a new
-     * one is inserted — never a blind replace, never double-adding a member. Mode/sort parse
-     * tolerantly, falling back to the parse-able mode's default sort.
+     * one is inserted — never a blind replace, never double-adding a member. Mode/sort/timeBasis
+     * parse tolerantly, falling back to the parse-able mode's default sort — the same audited
+     * exception as [mergeHltbData]'s `matchStatus`: forward-compatible enum tolerance, not a rule
+     * the preflight validator duplicates.
      */
     private suspend fun mergeCollection(backupCollection: BackupCollection) {
         val mode = runCatching { CollectionMode.valueOf(backupCollection.mode) }
