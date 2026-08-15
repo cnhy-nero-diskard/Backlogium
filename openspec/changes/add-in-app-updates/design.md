@@ -73,6 +73,19 @@ Daily `PeriodicWorkRequest` with a network constraint, plus a Settings button. T
 deliberate: knowing a release exists costs a few kilobytes, and getting it costs tens of megabytes
 and ends with the running app being killed. The first can be automatic; the second cannot be.
 
+**The worker guards on `lastCheckTime`; the `PeriodicWorkRequest` alone does not implement the
+cadence.** A periodic request fires on its own clock, indifferent to manual checks — so a manual
+check at 11:58 followed by the periodic tick at 12:00 issues two requests two minutes apart, which
+is not "about a day since the last check". The worker therefore reads the last check time first and
+returns without a request when it is recent. Manual checks write the same timestamp, so the two
+paths share one notion of when a check last happened.
+
+**The guard is 20 hours, not 24.** WorkManager runs a periodic request somewhere inside its interval
+rather than exactly on it, so a tick arriving at 23h50m after the previous check would be skipped by
+an exact 24-hour guard — and the next tick would be roughly 47 hours later, halving the cadence
+silently. A guard comfortably below the period absorbs that drift while still collapsing a manual
+check and an immediately following tick into one request.
+
 **A declined version stays declined.** Choosing "Later" records the tag. That tag is not notified
 again — but a *newer* tag is, immediately. Without this, a daily check turns into a daily
 notification for an update the user has already considered and rejected, which trains them to ignore

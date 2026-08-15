@@ -21,6 +21,9 @@
 ## 3. Check scheduling and state
 
 - [ ] 3.1 Add `UpdateCheckWorker` and a daily `PeriodicWorkRequest` with a connected-network constraint, enqueued as unique work with `KEEP`
+- [ ] 3.1a Guard the worker on `lastCheckTime`: return success without issuing a request when a check completed within the last 20 hours — the `PeriodicWorkRequest` fires on its own clock and does not by itself implement "about a day since the last check"
+- [ ] 3.1b Use 20 hours rather than 24, with a comment recording why: WorkManager places a periodic run inside its interval, so an exact 24-hour guard would skip a tick arriving slightly early and halve the effective cadence
+- [ ] 3.1c Have both the periodic and the manual path write `lastCheckTime` on completion, so they share one notion of when a check last happened; a manual check bypasses the guard but still updates it
 - [ ] 3.2 Ensure the check is never invoked from app startup or from a screen's composition
 - [ ] 3.3 Add DataStore keys for last check time, last seen release tag, and declined release tag
 - [ ] 3.4 Notify only when the found tag differs from the declined tag
@@ -81,6 +84,7 @@
 - [ ] 9.6 Unit-test SHA-256 verification against a known-good and a corrupted fixture
 - [ ] 9.7 Unit-test that a verification failure deletes the artifact and does not reach the installer
 - [ ] 9.8 Unit-test that rate-limit, 5xx, and connection-failure responses record only the attempt time
+- [ ] 9.8a Unit-test the cadence guard: a periodic run shortly after a manual check issues no request; a periodic run more than 20 hours after the last check issues one; a manual check issues one regardless and updates the timestamp
 - [ ] 9.9 Unit-test that the artifact sweep removes a stale file and keeps the currently offered one
 
 ## 10. Verification

@@ -15,6 +15,15 @@ drafts and pre-releases.
 - **THEN** a check runs immediately regardless of when the last one ran, and its outcome is
   reported
 
+#### Scenario: Manual and automatic checks share one cadence
+- **WHEN** an automatic check is due shortly after a manual check has completed
+- **THEN** no request is issued, because a check has recently happened
+
+#### Scenario: A manual check defers the next automatic one
+- **WHEN** the user checks manually
+- **THEN** the recorded time of the last check advances, so the next automatic check is measured
+  from it
+
 #### Scenario: Pre-release published
 - **WHEN** the newest release is marked as a pre-release or a draft
 - **THEN** it is not considered, and no update is offered on its account
