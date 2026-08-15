@@ -63,7 +63,34 @@ benefit — the app already knows which game it is asking about.
 
 ### 2. The retry schedule is fixed, front-loaded, and terminates on evidence
 
-Attempts at **0s, 1m, 3m, 8m**, then stop.
+Attempts at **T+0s, T+1m, T+3m, T+8m**, where T is the observed session end.
+
+Those are **absolute offsets from T**, and the schedule is realised as a **chain**: each attempt, on
+observing no increase, enqueues the next one with the *difference* between consecutive offsets.
+
+```
+  offsets   T+0    T+1m   T+3m   T+8m
+  delays      └─1m──┘└─2m──┘└─5m──┘        delay[n] = offset[n+1] - offset[n]
+```
+
+Getting this wrong is easy and was wrong in an earlier draft: chaining each attempt with a delay
+equal to the *next offset* rather than the *difference* yields T+0, T+1m, T+4m, T+12m. The delays are
+1m, 2m, 5m — not 1m, 3m, 8m.
+
+**Chained, not all-enqueued-up-front.** Enqueuing four delayed requests at once would mean that
+observing an increase on attempt 2 requires explicitly cancelling attempts 3 and 4 — and since all
+four would share one unique work name, they cannot be distinguished for cancellation without four
+names, at which point "replace this game's schedule" stops being one operation. Chaining makes
+termination the absence of an action: the attempt that succeeds simply does not enqueue a successor.
+
+**One unique work name per app id, with `REPLACE`, and at most one attempt pending under it.** This
+is what makes `REPLACE` safe rather than destructive. `REPLACE` cancels whatever is pending or
+running under the name — with the chain, that is exactly one attempt of one schedule, which is
+precisely what a second quit of the same game should supersede. Had all four been enqueued together,
+`REPLACE` would cancel three siblings that were still wanted.
+
+Cancelling a *running* attempt is also safe: the worker either applies an observation through the
+atomic commit path or does nothing, so there is no partial state for a cancellation to strand.
 
 The immediate attempt is not expected to succeed and is kept anyway: it costs one small request, it
 occasionally does succeed, and it establishes the baseline observation that later attempts compare
@@ -117,13 +144,23 @@ feature exists for is "quit the game, put the phone down" — and on modern Andr
 frequently gone within seconds of that. An in-process timer would drop precisely the sessions it was
 built to catch.
 
-Each attempt is enqueued as a one-time work request with an initial delay, under a unique work name
-derived from the app id, with `REPLACE`. Two consequences, both wanted:
+Concretely, per decision 2: the session-end hook enqueues attempt 0 with no delay under
+`post-play-sync-<appId>` using `ExistingWorkPolicy.REPLACE`. Each attempt that observes no increase
+enqueues attempt n+1 under **the same name**, with `REPLACE`, and an initial delay of
+`offset[n+1] - offset[n]`. At most one request exists under a given name at any instant.
+
+Three consequences, all wanted:
 
 - Starting and quitting the same game twice in ten minutes replaces the first schedule rather than
   running two. The second quit's schedule is the one that matters.
 - Quitting game A and starting game B keeps A's schedule alive under its own name, so A's minutes
   are still collected while B is running.
+- A successful attempt terminates the chain by not enqueuing a successor. Nothing has to be
+  cancelled, so nothing can be cancelled by mistake.
+
+The chain's own use of `REPLACE` is a no-op in the ordinary case — it replaces a name under which
+nothing is pending, since the enqueuing attempt is the one currently running. It matters only when a
+second session end races the chain, which is exactly the case it is there for.
 
 The worker takes no foreground service and sets no expedited flag. It is not urgent enough to
 justify either, and the schedule's own delays make expedited execution meaningless.

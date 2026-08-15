@@ -22,8 +22,9 @@ a short bounded retry that stops as soon as the increase appears, not a single c
   that just stopped.
 - Fetch via `IPlayerService/GetRecentlyPlayedGames` with a count of one — the smallest response that
   answers the question, and a plain GET, unlike `GetOwnedGames`'s `appids_filter`.
-- Retry on a bounded schedule — immediately, then at 1, 3, and 8 minutes — stopping at the first
-  observation that shows the increase, and giving up silently after the last attempt.
+- Retry on a bounded schedule — at 0, 1, 3, and 8 minutes after the session end — realised as a
+  chain in which each attempt enqueues only its successor, stopping at the first observation that
+  shows the increase and giving up silently after the last attempt.
 - Feed the observed playtime through the existing session-synthesis and persistence path, so a
   post-play fetch and a periodic poll produce identical records and cannot double-count.
 - Record each post-play fetch as its own diagnostics run, distinguishable by trigger from a periodic
