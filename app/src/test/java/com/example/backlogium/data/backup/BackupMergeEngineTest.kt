@@ -341,9 +341,9 @@ class BackupMergeEngineTest {
     }
 
     @Test
-    fun achievementSnapshot_neverRefreshedToACurrentValue_equalUnlockRetainsLocal() = runTest {
-        // Not a strictly earlier unlock, so this must read as "the same observation", not a
-        // fresher one to adopt — the invariant is never refreshing to a current value.
+    fun achievementSnapshot_neverRefreshedToACurrentValue_equalUnlockKeepsLowerPercent() = runTest {
+        // Equal unlock timestamps: the lower percentage is the earlier observation (global rarity
+        // only rises), so the local 2.0 stands and the higher imported value is discarded.
         val local = Achievement(
             appId = 1L, apiName = "ACH", unlocked = true, unlockedAt = 100L,
             snapshotPercent = 2.0, fetchedAt = 0L,
@@ -365,6 +365,95 @@ class BackupMergeEngineTest {
 
         val stored = harness.achievementDao.getOne(1L, "ACH")!!
         assertEquals(2.0, stored.snapshotPercent)
+    }
+
+    @Test
+    fun achievementSnapshot_equalUnlockLowerImportedPercent_replacesLocal() = runTest {
+        val local = Achievement(
+            appId = 1L, apiName = "ACH", unlocked = true, unlockedAt = 100L,
+            snapshotPercent = 55.0, fetchedAt = 0L,
+        )
+        val harness = newEngine(
+            games = mutableMapOf(1L to testGame(1L)),
+            achievements = mutableListOf(local),
+        )
+        val file = baseFile(
+            achievements = listOf(
+                BackupAchievement(
+                    appId = 1L, apiName = "ACH", displayName = "Ach",
+                    snapshotPercent = 2.0, unlockedAt = 100L.toIso8601(),
+                ),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        assertEquals(2.0, harness.achievementDao.getOne(1L, "ACH")!!.snapshotPercent)
+    }
+
+    @Test
+    fun achievementSnapshot_equalUnlockDifferentPercents_convergesRegardlessOfOrder() = runTest {
+        // The tie-break is what makes this converge at all: without it, A→B keeps A's value and
+        // B→A keeps B's, contradicting the order-independence the whole rule exists to provide.
+        fun fileWith(percent: Double) = baseFile(
+            achievements = listOf(
+                BackupAchievement(
+                    appId = 1L, apiName = "ACH", displayName = "Ach",
+                    snapshotPercent = percent, unlockedAt = 100L.toIso8601(),
+                ),
+            ),
+        )
+
+        val forward = newEngine(games = mutableMapOf(1L to testGame(1L)))
+        forward.engine.merge(fileWith(55.0), RuleConfig())
+        forward.engine.merge(fileWith(2.0), RuleConfig())
+
+        val reverse = newEngine(games = mutableMapOf(1L to testGame(1L)))
+        reverse.engine.merge(fileWith(2.0), RuleConfig())
+        reverse.engine.merge(fileWith(55.0), RuleConfig())
+
+        assertEquals(2.0, forward.achievementDao.getOne(1L, "ACH")!!.snapshotPercent)
+        assertEquals(
+            forward.achievementDao.getOne(1L, "ACH")!!.snapshotPercent,
+            reverse.achievementDao.getOne(1L, "ACH")!!.snapshotPercent,
+        )
+    }
+
+    @Test
+    fun achievementSnapshot_replacingEarlierUnlock_preservesFieldsAbsentFromBackup() = runTest {
+        // `retired`, `description`, and `hidden` have no representation in the backup format.
+        // Rebuilding the row from scratch would resurrect a retired achievement into the
+        // unlocked/XP queries, which filter on `retired = 0`.
+        val local = Achievement(
+            appId = 1L, apiName = "ACH", unlocked = true, unlockedAt = 500L,
+            snapshotPercent = 2.0, description = "Local description", hidden = true,
+            retired = true, iconUrl = "icon.png", globalPercent = 30.0, fetchedAt = 7L,
+        )
+        val harness = newEngine(
+            games = mutableMapOf(1L to testGame(1L)),
+            achievements = mutableListOf(local),
+        )
+        val file = baseFile(
+            achievements = listOf(
+                BackupAchievement(
+                    appId = 1L, apiName = "ACH", displayName = "Ach",
+                    snapshotPercent = 99.0, unlockedAt = 100L.toIso8601(),
+                ),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        val stored = harness.achievementDao.getOne(1L, "ACH")!!
+        // The backup is authoritative for these:
+        assertEquals(99.0, stored.snapshotPercent)
+        assertEquals(100L, stored.unlockedAt)
+        // These it cannot speak to, so they must survive untouched:
+        assertTrue(stored.retired)
+        assertTrue(stored.hidden)
+        assertEquals("Local description", stored.description)
+        assertEquals("icon.png", stored.iconUrl)
+        assertEquals(30.0, stored.globalPercent)
     }
 
     @Test
@@ -744,6 +833,12 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
 
     override suspend fun markPendingImportRecompute() {
         profile = (profile ?: PlayerProfile()).copy(pendingImportRecompute = true)
+    }
+
+    override suspend fun raiseLongestStreak(longestStreak: Int) {
+        profile = (profile ?: PlayerProfile()).copy(
+            longestStreak = maxOf(profile?.longestStreak ?: 0, longestStreak),
+        )
     }
 }
 

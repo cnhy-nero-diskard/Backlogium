@@ -258,6 +258,12 @@ internal class FakePlayerProfileDao(initial: PlayerProfile? = null) : PlayerProf
     override suspend fun markPendingImportRecompute() {
         state.value = (state.value ?: PlayerProfile()).copy(pendingImportRecompute = true)
     }
+
+    override suspend fun raiseLongestStreak(longestStreak: Int) {
+        state.value = (state.value ?: PlayerProfile()).copy(
+            longestStreak = maxOf(state.value?.longestStreak ?: 0, longestStreak),
+        )
+    }
 }
 
 /** Seeded, read-only stand-in: only [getAllUnlocked] is exercised by the updater. */

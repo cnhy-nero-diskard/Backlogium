@@ -50,10 +50,6 @@ class BackupTransactionalIntegrityTest {
             BacklogiumDatabase::class.java,
         ).allowMainThreadQueries().build()
         transaction = RoomDatabaseTransactionScope(database)
-        val gamificationUpdater = GamificationUpdater(
-            database.sessionDao(), database.dailyProgressDao(), database.playerProfileDao(),
-            database.hltbDataDao(), database.achievementDao(), database.gameDao(),
-        )
         engine = BackupMergeEngine(
             gameDao = database.gameDao(),
             sessionDao = database.sessionDao(),
@@ -62,7 +58,7 @@ class BackupTransactionalIntegrityTest {
             achievementDao = database.achievementDao(),
             playerProfileDao = database.playerProfileDao(),
             collectionDao = database.collectionDao(),
-            gamificationUpdater = gamificationUpdater,
+            gamificationUpdater = newGamificationUpdater(),
             time = FixedTimeProvider(),
             derivedStateWrites = DerivedStateWriteCoordinator(),
             transaction = transaction,
@@ -141,16 +137,68 @@ class BackupTransactionalIntegrityTest {
 
         // "The next attempt": PendingImportRecomputeUseCase's own logic, inlined here since it
         // also needs SettingsDataStore/scope wiring this test does not otherwise require.
-        val gamificationUpdater = GamificationUpdater(
-            database.sessionDao(), database.dailyProgressDao(), database.playerProfileDao(),
-            database.hltbDataDao(), database.achievementDao(), database.gameDao(),
+        newGamificationUpdater().recompute(
+            LocalDate.parse("2026-07-17"), RecomputeSource.RESTORE, RuleConfig(),
         )
-        gamificationUpdater.recompute(LocalDate.parse("2026-07-17"), RecomputeSource.RESTORE, RuleConfig())
 
         val resolved = database.playerProfileDao().get()!!
         assertFalse(resolved.pendingImportRecompute)
         assertTrue("expected aggregates recomputed from the merged session", resolved.totalXp > 0)
     }
+
+    @Test
+    fun importedLongestStreak_survivesACrashBeforeTheRecompute() = runBlocking {
+        database.playerProfileDao().upsert(PlayerProfile(longestStreak = 3))
+
+        // Commit the merge transaction and then die before the post-commit recompute can run —
+        // the exact window pendingImportRecompute exists for. Throwing *after* withTransaction
+        // returns is what makes this a genuine reproduction: the data is durably committed, and
+        // the merge's own `persist()` (which would otherwise fold in the imported high-water
+        // mark) never executes.
+        val crashAfterCommit = object : DatabaseTransactionScope {
+            override suspend fun <R> run(block: suspend () -> R): R {
+                RoomDatabaseTransactionScope(database).run(block)
+                throw CrashAfterCommit()
+            }
+        }
+        val crashingEngine = BackupMergeEngine(
+            gameDao = database.gameDao(),
+            sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(),
+            hltbDataDao = database.hltbDataDao(),
+            achievementDao = database.achievementDao(),
+            playerProfileDao = database.playerProfileDao(),
+            collectionDao = database.collectionDao(),
+            gamificationUpdater = newGamificationUpdater(),
+            time = FixedTimeProvider(),
+            derivedStateWrites = DerivedStateWriteCoordinator(),
+            transaction = crashAfterCommit,
+        )
+
+        // An imported high-water mark that no recompute over this raw data could reconstruct.
+        val file = backupFile(
+            games = listOf(BackupGame(appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0)),
+            longestStreak = 42,
+        )
+        val outcome = runCatching { crashingEngine.merge(file, RuleConfig()) }
+        assertTrue(outcome.exceptionOrNull() is CrashAfterCommit)
+
+        // The merge committed and the recompute never ran, so recovery is pending...
+        val afterCrash = database.playerProfileDao().get()!!
+        assertTrue(afterCrash.pendingImportRecompute)
+        // ...and the imported record must already be durable, not stranded in a dead stack frame.
+        assertEquals(42, afterCrash.longestStreak)
+
+        // The next launch recomputes from Room alone; the record must still survive that.
+        newGamificationUpdater().recompute(
+            LocalDate.parse("2026-07-17"), RecomputeSource.RESTORE, RuleConfig(),
+        )
+        val recovered = database.playerProfileDao().get()!!
+        assertFalse(recovered.pendingImportRecompute)
+        assertEquals(42, recovered.longestStreak)
+    }
+
+    private class CrashAfterCommit : RuntimeException("process died after the merge committed")
 
     @Test
     fun exportSnapshot_concurrentSyncCommit_readsRemainMutuallyConsistent() = runBlocking {
@@ -191,6 +239,11 @@ class BackupTransactionalIntegrityTest {
         assertEquals(sawNewGame, sawNewSession)
     }
 
+    private fun newGamificationUpdater() = GamificationUpdater(
+        database.sessionDao(), database.dailyProgressDao(), database.playerProfileDao(),
+        database.hltbDataDao(), database.achievementDao(), database.gameDao(),
+    )
+
     private fun existingGame(appId: Long, name: String) = Game(
         appId = appId, name = name, iconUrl = "", playtimeForever = 0, playtime2Weeks = 0, lastPlaytime = 0,
     )
@@ -200,6 +253,7 @@ class BackupTransactionalIntegrityTest {
         sessions: List<BackupSession> = emptyList(),
         collections: List<BackupCollection> = emptyList(),
         collectionMembers: List<BackupCollectionMember> = emptyList(),
+        longestStreak: Int = 0,
     ) = BackupFile(
         exportedAt = "2026-07-01T00:00:00Z",
         identity = BackupIdentity(steamId64 = "1"),
@@ -214,7 +268,7 @@ class BackupTransactionalIntegrityTest {
         dailyProgress = emptyList(),
         hltbData = emptyList(),
         librarySortPrefs = BackupLibrarySortPrefs(focus = "NAME", library = "PLAYTIME"),
-        playerProfile = BackupPlayerProfile(totalXp = 0, level = 1, currentStreak = 0, longestStreak = 0, playtimeBackfilled = false),
+        playerProfile = BackupPlayerProfile(totalXp = 0, level = 1, currentStreak = 0, longestStreak = longestStreak, playtimeBackfilled = false),
         computed = BackupComputed(emptyList(), emptyList()),
         collections = collections,
         collectionMembers = collectionMembers,

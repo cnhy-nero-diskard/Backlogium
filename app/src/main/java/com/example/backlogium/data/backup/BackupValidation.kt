@@ -1,6 +1,7 @@
 package com.example.backlogium.data.backup
 
 import java.time.LocalDate
+import java.time.ZoneOffset
 
 /** One preflight problem: which record type and index failed, and why. */
 data class BackupValidationProblem(
@@ -28,6 +29,21 @@ sealed interface BackupValidationResult {
  */
 object BackupValidator {
 
+    /**
+     * Plausibility window for any date/timestamp in a backup. Steam itself launched in 2003 and
+     * this app cannot hold records predating the account it syncs, so anything earlier is
+     * corruption rather than history. The upper bound is deliberately generous — it exists to
+     * stop absurd values, not to police clock skew — and is a fixed constant rather than "today"
+     * so validation stays pure and needs no [com.example.backlogium.domain.TimeProvider].
+     */
+    internal val EARLIEST_PLAUSIBLE_DATE: LocalDate = LocalDate.of(2003, 1, 1)
+    internal val LATEST_PLAUSIBLE_DATE: LocalDate = LocalDate.of(2100, 1, 1)
+
+    private val EARLIEST_PLAUSIBLE_MILLIS: Long =
+        EARLIEST_PLAUSIBLE_DATE.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+    private val LATEST_PLAUSIBLE_MILLIS: Long =
+        LATEST_PLAUSIBLE_DATE.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+
     fun validate(file: BackupFile): BackupValidationResult {
         val problems = mutableListOf<BackupValidationProblem>()
         val gameAppIds = file.games.mapTo(mutableSetOf()) { it.appId }
@@ -46,6 +62,12 @@ object BackupValidator {
                     problems += BackupValidationProblem("session", index, "unparseable startAt '${session.startAt}'")
                 startAt < 0L ->
                     problems += BackupValidationProblem("session", index, "implausible negative startAt")
+                startAt < EARLIEST_PLAUSIBLE_MILLIS || startAt > LATEST_PLAUSIBLE_MILLIS ->
+                    problems += BackupValidationProblem(
+                        "session", index,
+                        "startAt '${session.startAt}' outside the supported range " +
+                            "$EARLIEST_PLAUSIBLE_DATE..$LATEST_PLAUSIBLE_DATE",
+                    )
                 session.endAt != null -> {
                     val endAt = session.endAt.toEpochMilliOrNull()
                     if (endAt == null) {
@@ -58,8 +80,21 @@ object BackupValidator {
         }
 
         file.dailyProgress.forEachIndexed { index, day ->
-            if (runCatching { LocalDate.parse(day.date) }.isFailure) {
-                problems += BackupValidationProblem("dailyProgress", index, "unparseable date '${day.date}'")
+            val parsed = runCatching { LocalDate.parse(day.date) }.getOrNull()
+            when {
+                parsed == null ->
+                    problems += BackupValidationProblem("dailyProgress", index, "unparseable date '${day.date}'")
+                // Parseability alone is not enough: GamificationUpdater.compute() expands the
+                // calendar from the earliest stored day through today, so a syntactically valid
+                // but absurd date (year 0001) would commit and then drive a recompute over
+                // hundreds of thousands of days — which the pending-recompute recovery would
+                // faithfully retry on every subsequent launch.
+                parsed < EARLIEST_PLAUSIBLE_DATE || parsed > LATEST_PLAUSIBLE_DATE ->
+                    problems += BackupValidationProblem(
+                        "dailyProgress", index,
+                        "date '${day.date}' outside the supported range " +
+                            "$EARLIEST_PLAUSIBLE_DATE..$LATEST_PLAUSIBLE_DATE",
+                    )
             }
         }
 

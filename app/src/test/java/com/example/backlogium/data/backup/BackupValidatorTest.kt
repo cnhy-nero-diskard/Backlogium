@@ -45,12 +45,35 @@ class BackupValidatorTest {
 
     @Test
     fun endBeforeStart_rejected() {
+        // Both timestamps are in the supported range, so the ordering rule is what rejects this
+        // rather than the plausibility bound.
         val file = validFile(
             sessions = listOf(
-                BackupSession(appId = 1L, startAt = 2_000L.toIso8601(), endAt = 1_000L.toIso8601(), minutes = 5),
+                BackupSession(
+                    appId = 1L,
+                    startAt = "2026-06-01T11:00:00Z",
+                    endAt = "2026-06-01T10:00:00Z",
+                    minutes = 5,
+                ),
             ),
         )
-        file.assertRejected()
+        val problems = file.assertRejected()
+        assertEquals("endAt precedes startAt", problems.single().detail)
+    }
+
+    @Test
+    fun wellFormedSession_accepted() {
+        val file = validFile(
+            sessions = listOf(
+                BackupSession(
+                    appId = 1L,
+                    startAt = "2026-06-01T10:00:00Z",
+                    endAt = "2026-06-01T11:00:00Z",
+                    minutes = 60,
+                ),
+            ),
+        )
+        assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)
     }
 
     @Test
@@ -60,6 +83,39 @@ class BackupValidatorTest {
         )
         val problems = file.assertRejected()
         assertEquals("dailyProgress", problems.single().recordType)
+    }
+
+    @Test
+    fun parseableButAbsurdlyEarlyDailyProgressDate_rejected() {
+        // Parses fine, but would make GamificationUpdater.compute() expand a calendar spanning
+        // ~740,000 days — and the pending-recompute recovery would retry it every launch.
+        val file = validFile(dailyProgress = listOf(BackupDailyProgress("0001-01-01", 10, 5, false)))
+        val problems = file.assertRejected()
+        assertEquals("dailyProgress", problems.single().recordType)
+        assertTrue(problems.single().detail.contains("outside the supported range"))
+    }
+
+    @Test
+    fun parseableButFarFutureDailyProgressDate_rejected() {
+        val file = validFile(dailyProgress = listOf(BackupDailyProgress("9999-12-31", 10, 5, false)))
+        file.assertRejected()
+    }
+
+    @Test
+    fun dateWithinSupportedRange_accepted() {
+        val file = validFile(dailyProgress = listOf(BackupDailyProgress("2026-06-01", 10, 5, false)))
+        assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)
+    }
+
+    @Test
+    fun parseableButAbsurdSessionStart_rejected() {
+        val file = validFile(
+            sessions = listOf(
+                BackupSession(appId = 1L, startAt = "0001-01-01T00:00:00Z", endAt = null, minutes = 5),
+            ),
+        )
+        val problems = file.assertRejected()
+        assertEquals("session", problems.single().recordType)
     }
 
     @Test

@@ -110,6 +110,11 @@ class BackupMergeEngine @Inject constructor(
                 playerProfileDao.updatePlaytimeBackfilled(true)
             }
 
+            // Also a historical fact, and durable here rather than only in the recompute below:
+            // the recompute cannot reconstruct a record the current rules no longer produce, so
+            // a crash before it runs would otherwise lose the imported high-water mark for good.
+            playerProfileDao.raiseLongestStreak(importedLongestStreak)
+
             // Last write in the transaction: commits atomically with the merged data, so a crash
             // before the recompute below is detectable on the next launch
             // (PendingImportRecomputeUseCase) instead of leaving aggregates silently stale.
@@ -207,7 +212,7 @@ class BackupMergeEngine @Inject constructor(
     /**
      * Rarity-snapshot rule (backup-restore spec, "Achievement rarity snapshot is protected during
      * import"): once frozen locally, a snapshot is retained unless the import carries its own
-     * snapshot for the same achievement with a strictly earlier unlock — the earlier unlock is by
+     * snapshot for the same achievement that wins under [importedWins] — the earlier unlock is by
      * definition nearer the true first unlock, and comparing timestamps rather than trusting
      * whichever side merges first is what makes import order not matter.
      */
@@ -218,28 +223,57 @@ class BackupMergeEngine @Inject constructor(
         if (existing?.snapshotPercent != null) {
             // Nothing to compare against without an imported snapshot of its own: the local
             // freeze stands untouched.
-            if (backupAchievement.snapshotPercent == null) return
-            val existingUnlockedAt = existing.unlockedAt
-            val importedIsEarlier = importedUnlockedAt != null &&
-                (existingUnlockedAt == null || importedUnlockedAt < existingUnlockedAt)
-            if (!importedIsEarlier) return
+            val importedSnapshot = backupAchievement.snapshotPercent ?: return
+            if (!importedWins(importedUnlockedAt, importedSnapshot, existing)) return
         }
 
-        achievementDao.upsertAll(
-            listOf(
-                Achievement(
-                    appId = backupAchievement.appId,
-                    apiName = backupAchievement.apiName,
-                    displayName = backupAchievement.displayName ?: existing?.displayName,
-                    iconUrl = existing?.iconUrl,
-                    unlocked = true,
-                    unlockedAt = importedUnlockedAt,
-                    globalPercent = existing?.globalPercent,
-                    snapshotPercent = backupAchievement.snapshotPercent,
-                    fetchedAt = existing?.fetchedAt ?: time.nowMillis(),
-                ),
-            ),
+        // Carry the stored row forward rather than rebuilding it: `description`, `hidden`, and
+        // especially `retired` have no representation in the backup format, and defaulting them
+        // would resurrect a retired achievement into the unlocked/XP queries (which filter on
+        // `retired = 0`) until a reconciliation pass happened to repair it.
+        val merged = existing?.copy(
+            displayName = backupAchievement.displayName ?: existing.displayName,
+            unlocked = true,
+            unlockedAt = importedUnlockedAt,
+            snapshotPercent = backupAchievement.snapshotPercent,
+        ) ?: Achievement(
+            appId = backupAchievement.appId,
+            apiName = backupAchievement.apiName,
+            displayName = backupAchievement.displayName,
+            iconUrl = null,
+            unlocked = true,
+            unlockedAt = importedUnlockedAt,
+            globalPercent = null,
+            snapshotPercent = backupAchievement.snapshotPercent,
+            fetchedAt = time.nowMillis(),
         )
+        achievementDao.upsertAll(listOf(merged))
+    }
+
+    /**
+     * Whether an imported snapshot displaces the locally frozen one.
+     *
+     * Primary rule is the earlier unlock. Equal unlock timestamps are a real case, not a
+     * degenerate one — two devices can observe the same Steam `unlockedAt` yet freeze different
+     * percentages, because each captures rarity when *it* first sees the unlock. Breaking that tie
+     * on the lower percentage keeps the merge order-independent (the whole reason for
+     * earlier-unlock-wins) and picks the closer observation: an achievement's global rarity only
+     * rises as more players earn it, so the smaller value was seen nearer the true first unlock.
+     */
+    private fun importedWins(
+        importedUnlockedAt: Long?,
+        importedSnapshot: Double,
+        existing: Achievement,
+    ): Boolean {
+        val existingSnapshot = existing.snapshotPercent ?: return true
+        // An import with no unlock time carries no evidence of being earlier.
+        if (importedUnlockedAt == null) return false
+        val existingUnlockedAt = existing.unlockedAt ?: return true
+        return when {
+            importedUnlockedAt < existingUnlockedAt -> true
+            importedUnlockedAt > existingUnlockedAt -> false
+            else -> importedSnapshot < existingSnapshot
+        }
     }
 
     /**

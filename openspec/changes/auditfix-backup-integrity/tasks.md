@@ -54,3 +54,10 @@
 - [x] 7.4 Confirm no conflict with `auditfix-secrets-and-packaging`'s snapshot relocation if that has already landed — checked: that change is still unarchived (`openspec/changes/auditfix-secrets-and-packaging` exists, not in `changes/archive/`), so nothing to reconcile yet; re-check when it lands
 - [x] 7.5 Run `openspec validate auditfix-backup-integrity` — valid
 - [ ] 7.6 Record in the commit message that partially-importable files are now rejected outright, and why a clean refusal beats a half-restore
+
+## 8. PR #67 review follow-ups
+
+- [x] 8.1 [P1] Persist the imported `longestStreak` inside the merge transaction (`PlayerProfileDao.raiseLongestStreak`) — it previously survived only in the merge's stack frame, so a crash in the commit-to-recompute window lost a historical high-water mark the recompute cannot reconstruct. Covered by `importedLongestStreak_survivesACrashBeforeTheRecompute`, which injects a transaction scope that commits then throws; verified to fail without the fix
+- [x] 8.2 [P1] Bound `dailyProgress` dates (and session timestamps) to a plausible range in preflight, not just parseability — a syntactically valid extreme date would otherwise commit and drive an effectively unbounded recompute that the pending-recompute recovery retries every launch
+- [x] 8.3 [P2] Preserve locally stored achievement fields the backup cannot carry (`retired`, `description`, `hidden`, `iconUrl`, `globalPercent`) via `existing.copy(...)` — rebuilding the row resurrected retired achievements into the unlocked/XP queries. Covered by `achievementSnapshot_replacingEarlierUnlock_preservesFieldsAbsentFromBackup`; verified to fail without the fix
+- [x] 8.4 [P2] Close the equal-unlock-timestamp hole in order-independence: owner chose lower-`snapshotPercent`-wins as the tie-break (global rarity only rises, so the lower value is the earlier observation). Spec gains the tie-break rule plus equal-timestamp and retired-field scenarios

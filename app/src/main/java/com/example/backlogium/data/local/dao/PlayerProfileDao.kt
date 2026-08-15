@@ -81,6 +81,19 @@ interface PlayerProfileDao {
     @Query("UPDATE player_profile SET pendingImportRecompute = 1 WHERE id = 0")
     suspend fun markPendingImportRecompute()
 
+    /**
+     * Raise the longest-streak high-water mark, never lower it.
+     *
+     * Written *inside* the merge transaction rather than left to the post-commit recompute:
+     * `longestStreak` is a historical fact an import can legitimately carry beyond anything the
+     * current rules could reconstruct from raw data. If it survived only in the merge's stack
+     * frame, a process death in the merge-commit-to-recompute window — precisely what
+     * `pendingImportRecompute` recovers from — would leave recovery recomputing from Room with no
+     * copy of the imported value, permanently losing it.
+     */
+    @Query("UPDATE player_profile SET longestStreak = MAX(longestStreak, :longestStreak) WHERE id = 0")
+    suspend fun raiseLongestStreak(longestStreak: Int)
+
     /** Historical-import flag only. */
     @Query("UPDATE player_profile SET playtimeBackfilled = :playtimeBackfilled WHERE id = 0")
     suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean)
