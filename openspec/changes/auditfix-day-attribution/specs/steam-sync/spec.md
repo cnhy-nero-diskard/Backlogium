@@ -28,6 +28,19 @@ SHALL NOT be divided across dates.
 - **THEN** that date's quest status is re-evaluated, and a change from unmet to met is
   persisted
 
-#### Scenario: Attribution does not depend on poll timing
-- **WHEN** the same play activity is observed by polls at different times
-- **THEN** the date credited is the same in every case
+#### Scenario: Attribution does not depend on which poll observes it
+- **WHEN** a session's minutes are observed across several polls, on more than one date
+- **THEN** every one of those polls credits the date the session began, regardless of the
+  date on which the poll ran
+
+### Requirement: A session's start is known only to within one poll gap
+A synthesized session's start SHALL be taken as the previous poll's timestamp. The minutes
+a poll observes occurred somewhere in the interval between that poll and the one before it,
+and the app has no evidence of where. The scheduler's period is a floor rather than a
+guarantee — a deferred poll widens that interval without bound — so the credited date MAY
+precede the date on which the play actually occurred.
+
+#### Scenario: Play observed after a deferred poll
+- **WHEN** a poll is deferred well past its scheduled period and then observes new minutes
+- **THEN** the session starts at the previous poll's timestamp, and its credited date is
+  that of the previous poll even if the play itself happened on a later date

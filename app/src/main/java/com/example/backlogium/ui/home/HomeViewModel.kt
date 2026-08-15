@@ -9,10 +9,12 @@ import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CollectionRepository
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
+import com.example.backlogium.data.repo.DayProgress
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.PersonalPaceRepository
+import com.example.backlogium.data.repo.PlayerStats
 import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.ProgressEventRepository
 import com.example.backlogium.data.repo.SettingsRepository
@@ -21,9 +23,10 @@ import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionMemberSignals
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSummary
+import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.ProgressEvent
-import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
+import com.example.backlogium.gamification.RuleConfig
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import javax.inject.Inject
@@ -92,13 +95,35 @@ data class HomeCollectionGame(
     val iconUrl: String?,
 )
 
+/** The two Home fields that describe one calendar day rather than the profile as a whole. */
+internal data class HomeDayFields(
+    val minutesPlayed: Int,
+    val questMet: Boolean,
+)
+
+/**
+ * Resolve [today]'s row out of the stored per-day progress.
+ *
+ * A date with no stored row reads as zero and unmet, never as the nearest row that does exist:
+ * absence of progress is itself the answer, and falling back to a neighbouring day is exactly the
+ * bug this function was extracted to make testable — Home used to hold the previous day's values
+ * past midnight because its date input never changed.
+ */
+internal fun homeDayFields(days: List<DayProgress>, today: LocalDate): HomeDayFields {
+    val row = days.firstOrNull { it.date == today.toString() }
+    return HomeDayFields(
+        minutesPlayed = row?.minutesPlayed ?: 0,
+        questMet = row?.questMet ?: false,
+    )
+}
+
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
     private val liveStatusRepository: LiveStatusRepository,
     private val credentials: CredentialsRepository,
     private val settings: SettingsRepository,
-    private val time: TimeProvider,
+    private val currentDate: CurrentDateProvider,
     private val collectionRepository: CollectionRepository,
     private val gameRepository: GameRepository,
     private val achievementRepository: AchievementRepository,
@@ -106,15 +131,36 @@ class HomeViewModel @Inject constructor(
     private val progressEventRepository: ProgressEventRepository,
 ) : ViewModel() {
 
-    private val baseState: Flow<HomeUiState> = combine(
+    /**
+     * The five data inputs, gathered so the current date can join them as a sixth. Combining in one
+     * step would need the untyped `combine` vararg overload; this keeps the lambda's types.
+     */
+    private data class HomeData(
+        val profile: PlayerStats?,
+        val days: List<DayProgress>,
+        val config: RuleConfig,
+        val credState: CredentialsState,
+        val isSyncing: Boolean,
+    )
+
+    private val homeData: Flow<HomeData> = combine(
         profileRepository.profile,
         profileRepository.dailyProgress,
         settings.ruleConfig,
         credentials.credentialsStateFlow,
         profileRepository.syncInProgress,
     ) { profile, days, config, credState, isSyncing ->
-        val todayKey = time.today().toString()
-        val todayProgress = days.firstOrNull { it.date == todayKey }
+        HomeData(profile, days, config, credState, isSyncing)
+    }
+
+    // The date is an input, not a call inside the lambda: crossing midnight has to re-run this
+    // combine on its own, or the previous day's row stays on screen as the current day's.
+    private val baseState: Flow<HomeUiState> = combine(
+        homeData,
+        currentDate.currentDate,
+    ) { data, today ->
+        val (profile, days, config, credState, isSyncing) = data
+        val dayFields = homeDayFields(days, today)
         val xpState = Gamification.levelState(profile?.totalXp ?: 0, config)
         val configured = credState as? CredentialsState.Configured
         HomeUiState(
@@ -124,8 +170,8 @@ class HomeViewModel @Inject constructor(
             xpIntoLevel = xpState.xpIntoLevel,
             xpForNext = xpState.xpForNext,
             totalXp = xpState.totalXp,
-            questMet = todayProgress?.questMet ?: false,
-            todayMinutes = todayProgress?.minutesPlayed ?: 0,
+            questMet = dayFields.questMet,
+            todayMinutes = dayFields.minutesPlayed,
             questThreshold = config.questThresholdMin,
             currentStreak = profile?.currentStreak ?: 0,
             longestStreak = profile?.longestStreak ?: 0,
@@ -148,13 +194,16 @@ class HomeViewModel @Inject constructor(
             }
         }
 
+    // A mission card's banner counts down to a target date, so it goes stale at midnight for the
+    // same reason the quest tick does — the date joins as an input here too.
     private fun deriveCard(collection: Collection): Flow<HomeCollectionCard> =
         combine(
             collectionRepository.members(collection.id),
             gameRepository.library,
             achievementRepository.counts,
             personalPaceRepository.profile,
-        ) { members, libraryGames, counts, personalPace ->
+            currentDate.currentDate,
+        ) { members, libraryGames, counts, personalPace, today ->
             val gamesById = libraryGames.associateBy { it.appId }
             val signals = members.map { member ->
                 val game = gamesById[member.appId]
@@ -178,7 +227,7 @@ class HomeViewModel @Inject constructor(
                 sort = collection.sort,
                 targetDate = collection.targetDate?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
                 members = signals,
-                today = time.today(),
+                today = today,
                 timeBasis = collection.timeBasis,
                 personalPace = personalPace,
             )

@@ -38,10 +38,18 @@ a read-add-write or duplicating the preceding change.
 **Rejected: split at midnight**, proportionally crediting each date. It is the most
 "correct" answer and the wrong engineering choice here. The app does not know when within
 a poll interval the minutes were played — `SessionDiffer` synthesizes a session from a
-playtime *delta* observed between two polls up to 15 minutes apart, so the minute-level
-distribution inside that window is already an estimate. Splitting an estimate at midnight
-produces two precise-looking numbers from one imprecise one, and it makes a session's
-contribution non-atomic, which every consumer then has to handle.
+playtime *delta* observed between two polls, so the minute-level distribution inside that
+window is already an estimate. Splitting an estimate at midnight produces two
+precise-looking numbers from one imprecise one, and it makes a session's contribution
+non-atomic, which every consumer then has to handle.
+
+**How wide that window really is.** `SyncScheduler.kt:116` requests a 15-minute period,
+but a `PeriodicWorkRequest` period is a floor, not a guarantee: under Doze the OS defers
+work, and an overnight gap between polls can be hours. `SessionDiffer.kt:110` sets a new
+session's `startAt` to `previousPollAt`, so a session opened after such a gap is dated to
+the last poll before the gap — which may be the previous calendar day. **The attributed
+date can therefore be wrong, and this change does not fix that.** It is recorded rather
+than solved, because the fix that first suggests itself does not work; see Decision 5.
 
 **Rejected: attribute to the poll date** (today's behaviour for quests). It makes a
 session's day depend on when the app happened to observe it, so the same play activity
@@ -154,6 +162,68 @@ leave `longestStreak` banked and do not add a corrective migration. The existing
 never-decreases invariant remains intact; only newly recomputed current streaks use the
 corrected calendar sequence.
 
+## Decision 5: The poll-gap start estimate is recorded, not narrowed
+
+**Chosen**: `startAt` stays `previousPollAt`, and the bound is written into the
+`steam-sync` delta spec as a stated limitation.
+
+**Rejected: clamp to `max(previousPollAt, now - addedMinutes)`.** This looks like a
+tightening and is not one. `delta` minutes of play happened somewhere in
+`(previousPollAt, now]`, so the true start lies in `[previousPollAt, now - delta]`:
+`previousPollAt` is the *earliest* feasible start and `now - delta` is the *latest*. The
+clamp does not narrow the interval, it moves to the opposite end of it. Worked against the
+overnight case this change exists to serve — play 23:50–00:00, last poll 21:15, next poll
+02:00 — the current rule credits the correct date and the clamp credits the following one.
+It only wins when play ended immediately before the observing poll, and loses whenever the
+device slept through the evening. Adopting it would regress the common case.
+
+**Rejected: the midpoint of the feasible interval.** Same objection as splitting at
+midnight in Decision 1, one level up: it manufactures a precise-looking timestamp out of an
+interval the app has no evidence about, and it is no more likely to be right than either
+endpoint.
+
+Between two endpoints that are both guesses, `previousPollAt` is kept because it is the
+incumbent, because it is correct for evening play followed by a slept-through night, and
+because changing it would move historical session dates for no gain in accuracy.
+
+**What would actually fix it**: the app already observes presence directly — a foreground
+service polls every 30 seconds while a game is running (`PresenceServiceStarter`,
+`live-status`). Anchoring a session's start to the first presence observation of a game,
+rather than to whenever the owned-games poll next happened to run, would replace the
+estimate with evidence. That is a materially larger change with its own session-identity
+questions, and it belongs to `live-status`, not here. Named so the next reader does not
+re-derive the clamp and re-reject it.
+
+## Decision 6: Home re-resolves the current date on a ticker
+
+`HomeViewModel.kt:116` computes `todayKey = time.today()` *inside* the `combine` of five
+data flows. Nothing in that combine is time-driven, so the lambda only re-runs when the
+profile, daily progress, rule config, credentials, or sync status emits. Cross midnight
+with no sync and `todayKey` is still yesterday, `days.firstOrNull { it.date == todayKey }`
+still resolves yesterday's row, and Home presents yesterday's minutes and yesterday's
+satisfied quest tick as the current day's.
+
+This is a second, independent route to the same user-visible symptom as the attribution
+split — "today's total includes play from before the day change" — which is why it belongs
+in this change rather than a separate one. The two are easily confused when reading the
+screen: poll-time attribution puts pre-midnight *minutes* on the new day's row, while this
+puts the *old day's row* on the new day's screen. Fixing only one leaves the report open.
+
+**Chosen**: add a date flow to the combine — one that emits the current local date and
+re-emits when it changes — and read `todayKey` from it rather than calling `time.today()`
+inside the lambda. The combine then re-runs on a day boundary for the same reason it re-runs
+on a sync.
+
+**Rejected: recompute in the composable.** It would fix the reading but leave the ViewModel
+still producing a state object whose `todayMinutes` and `questMet` describe a stale date,
+which every other consumer of that state would inherit.
+
+**Rejected: a WorkManager job at midnight.** Far too heavy for a display concern, and it
+would not help a screen already open at the boundary.
+
+The emission interval is a design detail for implementation, not a spec concern: the
+`app-ui` requirement states the boundary must be observed, not how often to look.
+
 ## Testing strategy
 
 - midnight-crossing session credits its start date in both History and daily progress
@@ -193,3 +263,7 @@ fold, and calendar densification has no missing date to add.
 - Does not correct `longestStreak` values inflated by the old behaviour, pending the
   owner's call on Decision 4.
 - Does not handle time zone or DST changes mid-session. Known limitation, written down.
+- Does not narrow the poll-gap start estimate. A session opened after a deferred poll is
+  dated to the poll before the gap, which may be the wrong calendar day. Bound stated in
+  the `steam-sync` delta spec; Decision 5 records why the obvious clamp is a regression and
+  what a real fix would require.

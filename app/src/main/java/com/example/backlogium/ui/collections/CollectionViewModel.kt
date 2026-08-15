@@ -22,7 +22,7 @@ import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.PersonalPaceProfile
-import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.defaultSort
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -104,7 +104,7 @@ class CollectionViewModel @Inject constructor(
     private val personalPaceRepository: PersonalPaceRepository,
     private val settings: SettingsRepository,
     private val liveStatusRepository: LiveStatusRepository,
-    private val time: TimeProvider,
+    private val currentDate: CurrentDateProvider,
 ) : ViewModel() {
 
     /** 0 when creating a new collection; otherwise the collection being edited. */
@@ -242,12 +242,15 @@ class CollectionViewModel @Inject constructor(
         LibraryMetrics(emptyList(), emptyMap(), emptyMap(), PersonalPaceProfile.empty()),
     )
 
+    // The date is an input for the same reason as on Home: a target-date banner counts down, and a
+    // countdown resolved only when data changes is wrong from midnight until the next sync.
     val uiState: StateFlow<CollectionUiState> = combine(
         libraryMetrics,
         session,
         settings.collectionDensity,
         liveStatusRepository.nowPlaying,
-    ) { metrics, s, density, nowPlaying ->
+        currentDate.currentDate,
+    ) { metrics, s, density, nowPlaying, today ->
         val gamesById = metrics.games.associateBy { it.appId }
         val playingAppId = (nowPlaying as? NowPlaying.InGame)?.gameId
         val memberSignals = s.memberAppIds.map { appId ->
@@ -270,7 +273,7 @@ class CollectionViewModel @Inject constructor(
             sort = s.draft.sort,
             targetDate = s.draft.targetDate,
             members = memberSignals,
-            today = time.today(),
+            today = today,
             timeBasis = s.draft.timeBasis,
             personalPace = metrics.personalPace,
         )
@@ -287,7 +290,7 @@ class CollectionViewModel @Inject constructor(
             accent = s.draft.accent,
             timeBasis = s.draft.timeBasis,
             banner = banner,
-            today = time.today(),
+            today = today,
             members = s.memberAppIds.map { appId ->
                 val game = gamesById[appId]
                 CollectionMemberUi(
