@@ -399,26 +399,22 @@ class SyncScheduler @Inject constructor(
     }
 
     private fun enqueueHltbRefresh(input: Data) {
-        // A new request starts a fresh offline window, even if an old watchdog was left behind
-        // by a completed or externally-cancelled WorkManager request.
-        hltbOfflineWaitStore.clear()
         val request = OneTimeWorkRequestBuilder<HltbRefreshWorker>()
             .setConstraints(networkConstraints)
             .setInputData(input)
             .build()
 
+        // The offline window is deliberately *not* touched here. Under `KEEP` this call may be a
+        // no-op — a refresh already pending swallows the new request — and resetting the window
+        // from the caller's side cannot tell the two cases apart, so a duplicate tap would hand
+        // the original refresh a fresh 30 seconds. [hltbRefreshStatusSource] is the sole owner:
+        // a genuinely admitted request moves the status (IDLE -> QUEUED/WAITING_FOR_NETWORK) and
+        // the collector in `init` starts the window, while a dropped one changes nothing and so
+        // leaves the running window's remaining time intact.
         workManager.enqueueUniqueWork(
             HltbRefreshWorker.ONE_TIME_NAME,
             ExistingWorkPolicy.KEEP,
             request,
-        )
-
-        synchronizeHltbTimeout(
-            if (context.hasValidatedInternet()) {
-                HltbRefreshStatus.QUEUED
-            } else {
-                HltbRefreshStatus.WAITING_FOR_NETWORK
-            },
         )
     }
 

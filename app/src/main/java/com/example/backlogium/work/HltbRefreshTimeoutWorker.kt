@@ -107,7 +107,7 @@ internal class HltbOfflineWaitStore(context: Context) {
     }
 
     @Synchronized
-    private fun offlineSince(): Long? =
+    fun offlineSince(): Long? =
         if (preferences.contains(KEY_OFFLINE_SINCE)) {
             preferences.getLong(KEY_OFFLINE_SINCE, 0L)
         } else {
