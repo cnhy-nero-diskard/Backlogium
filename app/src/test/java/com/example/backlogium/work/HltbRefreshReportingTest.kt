@@ -6,6 +6,7 @@ import com.example.backlogium.data.repo.HltbBatchResult
 import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.data.repo.HltbRefreshOutcome
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -86,6 +87,32 @@ class HltbRefreshReportingTest {
                     noMatch = 2,
                     failed = 1,
                     failureClasses = setOf(HltbFailureClass.SERVER),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun wholesaleTransientFailureDoesNotNotifyAsComplete() {
+        assertFalse(
+            hltbShouldNotifyComplete(
+                HltbBatchResult(
+                    attempted = 2,
+                    refreshed = 0,
+                    noMatch = 0,
+                    failed = 2,
+                    failureClasses = setOf(HltbFailureClass.TRANSPORT),
+                ),
+            ),
+        )
+        assertTrue(
+            hltbShouldNotifyComplete(
+                HltbBatchResult(
+                    attempted = 2,
+                    refreshed = 0,
+                    noMatch = 2,
+                    failed = 0,
+                    failureClasses = emptySet(),
                 ),
             ),
         )

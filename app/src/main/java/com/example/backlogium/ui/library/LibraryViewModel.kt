@@ -181,7 +181,8 @@ class LibraryViewModel @Inject constructor(
                 runHltbOfflineWaitTimer(
                     onTick = { hltbWaitRemainingSeconds.value = it },
                     onTimeout = {
-                        syncScheduler.cancelHltbRefresh()
+                        // WorkManager owns the persistent cancellation watchdog. This callback
+                        // only clears the screen-local countdown when the UI remains visible.
                         hltbWaitRemainingSeconds.value = null
                     },
                 )

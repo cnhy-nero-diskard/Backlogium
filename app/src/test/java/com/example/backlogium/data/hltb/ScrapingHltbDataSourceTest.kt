@@ -82,6 +82,19 @@ class ScrapingHltbDataSourceTest {
         assertEquals(4, script.callCount)
     }
 
+    @Test
+    fun malformedInitResponseIsParseFailureWithoutRediscovery() = runTest {
+        val script = ScriptedInterceptor(
+            listOf { response(it, 200, "{}") },
+        )
+
+        val failure = runCatching { source(script).search("Portal") }.exceptionOrNull()
+
+        assertTrue(failure is HltbSearchException)
+        assertEquals(HltbFailureClass.PARSE, (failure as HltbSearchException).failureClass)
+        assertEquals(1, script.callCount)
+    }
+
     private fun source(script: ScriptedInterceptor) = ScrapingHltbDataSource(
         client = OkHttpClient.Builder().addInterceptor(script).build(),
         json = Json { ignoreUnknownKeys = true },

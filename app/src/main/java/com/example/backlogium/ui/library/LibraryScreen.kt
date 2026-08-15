@@ -700,6 +700,7 @@ private fun BatchProgressPanel(
                         "Waiting for an internet connection…$waitSuffix"
                     HltbRefreshStatus.RETRYING -> "Retrying HowLongToBeat refresh…"
                     HltbRefreshStatus.IDLE,
+                    HltbRefreshStatus.QUEUED,
                     HltbRefreshStatus.RUNNING,
                     -> "Starting HowLongToBeat refresh…"
                 }

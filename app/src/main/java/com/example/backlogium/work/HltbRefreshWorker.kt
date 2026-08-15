@@ -67,8 +67,14 @@ class HltbRefreshWorker @AssistedInject constructor(
                     ),
                 )
             }
-            notifyComplete(result)
-            if (result.shouldRetry) Result.retry() else Result.success()
+            if (!hltbShouldNotifyComplete(result)) {
+                // A retry is not a completed refresh; avoid posting a misleading completion
+                // notification while WorkManager is backing off for another attempt.
+                Result.retry()
+            } else {
+                notifyComplete(result)
+                Result.success()
+            }
         } catch (cancellation: kotlinx.coroutines.CancellationException) {
             throw cancellation
         } catch (e: Exception) {
@@ -136,3 +142,5 @@ internal fun hltbCompletionText(result: HltbBatchResult): String {
     }
     return parts.joinToString("; ")
 }
+
+internal fun hltbShouldNotifyComplete(result: HltbBatchResult): Boolean = !result.shouldRetry

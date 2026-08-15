@@ -229,5 +229,34 @@ class SyncSchedulerTest {
         assertTrue(scheduler.hltbRefreshInProgress.first())
     }
 
+    @Test
+    fun `first-attempt enqueued work is queued when validated network is available`() {
+        assertEquals(
+            HltbRefreshStatus.QUEUED,
+            hltbRefreshStatusFor(
+                hasRunning = false,
+                hasRetrying = false,
+                hasEnqueued = true,
+                hasValidatedNetwork = true,
+            ),
+        )
+        assertEquals(
+            HltbRefreshStatus.WAITING_FOR_NETWORK,
+            hltbRefreshStatusFor(
+                hasRunning = false,
+                hasRetrying = false,
+                hasEnqueued = true,
+                hasValidatedNetwork = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `persistent timeout only cancels a first attempt that is still offline`() {
+        assertTrue(shouldCancelHltbRefresh(firstAttemptStillQueued = true, hasValidatedNetwork = false))
+        assertFalse(shouldCancelHltbRefresh(firstAttemptStillQueued = true, hasValidatedNetwork = true))
+        assertFalse(shouldCancelHltbRefresh(firstAttemptStillQueued = false, hasValidatedNetwork = false))
+    }
+
     private fun workInfosFor(name: String): List<WorkInfo> = workManager.getWorkInfosForUniqueWork(name).get()
 }

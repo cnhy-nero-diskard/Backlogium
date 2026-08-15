@@ -113,14 +113,38 @@ class ScrapingHltbDataSource @Inject constructor(
         ).also { session = it }
     }
 
-    /** GET the endpoint's `/init` handshake, returning null unless it yields a usable token. */
+    /**
+     * GET the endpoint's `/init` handshake. Transport/HTTP failures return null so endpoint
+     * discovery can try the rotated path; a successful but unusable body is a parse failure and
+     * must reach the repository unchanged.
+     */
     private fun tryInit(endpoint: String): HltbInitResponse? = try {
         val stamp = System.currentTimeMillis()
         val body = httpGet("$BASE_URL$endpoint/init?t=$stamp")
-        json.decodeFromString(HltbInitResponse.serializer(), body)
-            .takeIf { !it.token.isNullOrEmpty() }
+        val response = json.decodeFromString(HltbInitResponse.serializer(), body)
+        if (response.token.isNullOrEmpty()) {
+            throw HltbSearchException(
+                failureClass = HltbFailureClass.PARSE,
+                message = "HLTB init response did not contain a token",
+            )
+        }
+        response
     } catch (cancellation: CancellationException) {
         throw cancellation
+    } catch (failure: HltbSearchException) {
+        throw failure
+    } catch (failure: SerializationException) {
+        throw HltbSearchException(
+            failureClass = HltbFailureClass.PARSE,
+            message = "HLTB init response could not be parsed",
+            cause = failure,
+        )
+    } catch (failure: HltbEmptyBodyException) {
+        throw HltbSearchException(
+            failureClass = HltbFailureClass.PARSE,
+            message = "HLTB init response was empty",
+            cause = failure,
+        )
     } catch (_: Exception) {
         null
     }
