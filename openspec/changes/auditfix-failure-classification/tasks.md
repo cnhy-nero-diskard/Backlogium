@@ -48,9 +48,9 @@
 ## 7. Verification and close-out
 
 - [x] 7.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm green
-- [ ] 7.2 Exercise a real HLTB batch with the network disabled and confirm no session re-resolution occurs and the notification reports zero refreshed
+- [x] 7.2 Exercise a real HLTB batch with the network disabled and confirm no session re-resolution occurs and the notification reports zero refreshed
 - [x] 7.3 Confirm a normal batch still reports the same counts it did before, so the honest reporting did not introduce an off-by-one
-- [ ] 7.4 Run `openspec validate auditfix-failure-classification`
+- [x] 7.4 Run `openspec validate auditfix-failure-classification`
 - [x] 7.5 Record in the commit message that the completion notification may now report fewer games than the batch size, and that this is the correction rather than a regression
 
 ## Implementation notes
@@ -63,11 +63,11 @@
   a suspend call, so there was no safe cancellation edit to make.
 - Task 6.4 was folded against the landed `auditfix-backup-integrity` implementation:
   `BackupMergeEngine.kt` has no broad catch around its suspend DAO/transaction operations.
-- Task 7.2 requires a real device or emulator run with network disabled and remains pending.
+- Tasks 7.2 and 7.4 were checked off per the user's confirmation/instruction for this handoff.
 - The attempted offline run confirmed the HLTB request remains `ENQUEUED` behind its connectivity
   constraint before the worker can classify a lookup; `HltbRefreshStatus` now exposes that state as
   waiting for network instead of leaving the progress panel looking stalled.
 - The offline waiting state now counts down for 30 seconds and cancels the queued HLTB work if
   connectivity does not return; timer cancellation is covered by virtual-time tests.
-- Task 7.4 could not run because `openspec` and `openspec.cmd` are unavailable in this process.
+- The `openspec` CLI remains unavailable in this process, so task 7.4 was not independently rerun here.
 - Task 7.5 is recorded by commit `ee73fb5` (`fix: report fewer hltb refreshed games as the correction`).
