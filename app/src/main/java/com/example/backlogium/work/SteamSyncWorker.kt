@@ -35,6 +35,38 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.ZoneId
+
+/** Minutes credited to one local calendar date by a sync poll. */
+internal data class DailyProgressCredit(
+    val minutesPlayed: Int,
+    val goalMinutesPlayed: Int,
+)
+
+/**
+ * Attribute only newly observed session minutes to each session's start date. A session remains
+ * atomic across midnight; [SessionDiffer.SessionAction.addedMinutes] is the delta for an Extend,
+ * not the session's accumulated total.
+ */
+internal fun attributeDailyProgress(
+    actions: List<SessionDiffer.SessionAction>,
+    goalAppIds: Set<Long>,
+    zone: ZoneId,
+): Map<String, DailyProgressCredit> = actions
+    .asSequence()
+    .filter { it.addedMinutes > 0 }
+    .groupBy { action ->
+        Instant.ofEpochMilli(action.startAt).atZone(zone).toLocalDate().toString()
+    }
+    .mapValues { (_, dayActions) ->
+        DailyProgressCredit(
+            minutesPlayed = dayActions.sumOf { it.addedMinutes },
+            goalMinutesPlayed = dayActions
+                .filter { it.appId in goalAppIds }
+                .sumOf { it.addedMinutes },
+        )
+    }
 
 /**
  * Runs one Steam poll: fetch -> diff into sessions -> persist -> recompute gamification.
@@ -179,7 +211,6 @@ class SteamSyncWorker @AssistedInject constructor(
                     steamLevel = steamLevel,
                     summary = summary,
                     now = now,
-                    today = today,
                     polls = polls,
                     achievementFetch = achievementFetch,
                 )
@@ -222,7 +253,6 @@ class SteamSyncWorker @AssistedInject constructor(
         steamLevel: Int,
         summary: com.example.backlogium.data.remote.dto.PlayerSummaryDto?,
         now: Long,
-        today: java.time.LocalDate,
         polls: List<SessionDiffer.PollGame>,
         achievementFetch: AchievementLibraryFetch,
     ) {
@@ -263,14 +293,10 @@ class SteamSyncWorker @AssistedInject constructor(
         }
 
         val goalIds = existingGames.values.filter { it.isGoal }.mapTo(mutableSetOf()) { it.appId }
-        val addedAny = diff.playedDeltaByAppId.values.sum()
-        val addedGoal = diff.playedDeltaByAppId
-            .filterKeys { it in goalIds }
-            .values
-            .sum()
-        val todayKey = today.toString()
-        dailyProgressDao.ensureDate(todayKey)
-        dailyProgressDao.addMinutes(todayKey, addedAny, addedGoal)
+        attributeDailyProgress(diff.actions, goalIds, time.zone()).forEach { (date, credit) ->
+            dailyProgressDao.ensureDate(date)
+            dailyProgressDao.addMinutes(date, credit.minutesPlayed, credit.goalMinutesPlayed)
+        }
 
         if (profileBefore == null) profileDao.insertIfMissing()
         val currentProfile = profileDao.get() ?: PlayerProfile()
