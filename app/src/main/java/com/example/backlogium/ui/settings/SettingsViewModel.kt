@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.backup.BackupFile
 import com.example.backlogium.data.backup.BackupRepository
+import com.example.backlogium.data.backup.BackupValidationProblem
 import com.example.backlogium.data.backup.ParsedBackup
 import com.example.backlogium.data.backup.SnapshotMeta
 import com.example.backlogium.data.credentials.maskApiKey
@@ -325,6 +326,8 @@ class SettingsViewModel @Inject constructor(
         when (val parsed = backupRepository.parseFrom(source)) {
             ParsedBackup.InvalidFormat ->
                 backupMessage.value = "That file isn't a valid Backlogium backup."
+            is ParsedBackup.Invalid -> backupMessage.value = parsed.problems.describeRejection()
+            is ParsedBackup.TooLarge -> backupMessage.value = parsed.describeTooLarge()
             is ParsedBackup.Valid -> proceedOrWarn(parsed.file)
         }
     }
@@ -333,6 +336,8 @@ class SettingsViewModel @Inject constructor(
     fun onRestoreSnapshot(snapshot: SnapshotMeta) = runBackupOp {
         when (val parsed = backupRepository.parseSnapshot(snapshot.fileName)) {
             ParsedBackup.InvalidFormat -> backupMessage.value = "That snapshot could not be read."
+            is ParsedBackup.Invalid -> backupMessage.value = parsed.problems.describeRejection()
+            is ParsedBackup.TooLarge -> backupMessage.value = parsed.describeTooLarge()
             is ParsedBackup.Valid -> proceedOrWarn(parsed.file)
         }
     }
@@ -401,4 +406,15 @@ class SettingsViewModel @Inject constructor(
     )
 
     private data class Local(val rule: RuleLocal, val backup: BackupLocal)
+}
+
+/** Names what failed and where, rather than reporting only that the import failed (tasks.md 2.5). */
+private fun List<BackupValidationProblem>.describeRejection(): String {
+    val summary = joinToString("; ") { "${it.recordType}[${it.index}]: ${it.detail}" }
+    return "Backup rejected — $summary"
+}
+
+private fun ParsedBackup.TooLarge.describeTooLarge(): String {
+    fun Long.toMb() = this / (1024 * 1024)
+    return "Backup too large: ${actualBytes.toMb()} MB exceeds the ${limitBytes.toMb()} MB limit."
 }
