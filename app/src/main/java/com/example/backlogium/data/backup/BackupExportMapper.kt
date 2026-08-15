@@ -26,10 +26,28 @@ import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** Everything read from Room for one export, captured inside a single [DatabaseTransactionScope.run]. */
+private data class ExportSnapshot(
+    val games: List<Game>,
+    val achievements: List<Achievement>,
+    val sessions: List<Session>,
+    val days: List<DailyProgress>,
+    val hltb: List<com.example.backlogium.data.local.entity.HltbData>,
+    val profile: PlayerProfile,
+    val collections: List<Collection>,
+    val collectionMembers: List<CollectionMember>,
+)
+
 /**
  * Builds a [BackupFile] from the current local state: Room entities + DataStore values, plus an
  * export-time-only `computed` rollup produced by invoking the pure `:gamification` engine
  * (design.md decision 1). Read-only — never writes anything.
+ *
+ * The Room reads run inside one [transaction] (design.md decision 4), so a concurrent sync commit
+ * cannot produce a file combining games from before it with sessions/aggregates from after — Room
+ * gives every read the same consistent snapshot rather than serializing the export against the
+ * sync. `settings`/`credentials` are read *before* opening it: they cannot join a Room transaction,
+ * and they do not participate in the cross-table invariants a hybrid would violate.
  */
 @Singleton
 class BackupExportMapper @Inject constructor(
@@ -43,21 +61,28 @@ class BackupExportMapper @Inject constructor(
     private val settings: SettingsDataStore,
     private val credentials: CredentialsRepository,
     private val time: TimeProvider,
+    private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
 ) {
     suspend fun buildExport(): BackupFile {
         val config = settings.ruleConfigFlow.first()
         val sortPrefs = settings.librarySortFlow.first()
-        val games = gameDao.getAll()
-        val achievements = achievementDao.getAllUnlocked()
-        val sessions = sessionDao.getAll()
-        val days = dailyProgressDao.getAllOrdered()
-        val hltb = hltbDataDao.getAll()
-        val profile = playerProfileDao.get() ?: PlayerProfile()
-        val collections = collectionDao.getAll()
-        val collectionMembers = collectionDao.getAllMembers()
+        val steamId64FromCredentials = (credentials.currentCredentials() as? CredentialsState.Configured)?.steamId
 
-        val steamId64 = (credentials.currentCredentials() as? CredentialsState.Configured)?.steamId
-            ?: profile.steamId
+        val snapshot = transaction.run {
+            ExportSnapshot(
+                games = gameDao.getAll(),
+                achievements = achievementDao.getAllUnlocked(),
+                sessions = sessionDao.getAll(),
+                days = dailyProgressDao.getAllOrdered(),
+                hltb = hltbDataDao.getAll(),
+                profile = playerProfileDao.get() ?: PlayerProfile(),
+                collections = collectionDao.getAll(),
+                collectionMembers = collectionDao.getAllMembers(),
+            )
+        }
+        val (games, achievements, sessions, days, hltb, profile, collections, collectionMembers) = snapshot
+
+        val steamId64 = steamId64FromCredentials ?: profile.steamId
 
         return BackupFile(
             exportedAt = time.nowMillis().toIso8601(),

@@ -1,5 +1,7 @@
 package com.example.backlogium.di
 
+import com.example.backlogium.data.backup.DatabaseTransactionScope
+import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.DataStoreProgressMarksStore
@@ -37,6 +39,10 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindCredentialsProvider(impl: CredentialsRepository): CredentialsProvider
+
+    @Binds
+    @Singleton
+    abstract fun bindDatabaseTransactionScope(impl: RoomDatabaseTransactionScope): DatabaseTransactionScope
 
     companion object {
         /**

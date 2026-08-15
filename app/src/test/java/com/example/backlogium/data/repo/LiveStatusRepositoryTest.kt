@@ -374,6 +374,8 @@ class LiveStatusRepositoryTest {
         override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) = error("not used")
         override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) = error("not used")
         override suspend fun updateLastSyncError(message: String) = error("not used")
+        override suspend fun markPendingImportRecompute() = error("not used")
+        override suspend fun raiseLongestStreak(longestStreak: Int) = error("not used")
     }
 
     /** Configurable player-summary responses; [throwOnNextCall] simulates a transient failure. */

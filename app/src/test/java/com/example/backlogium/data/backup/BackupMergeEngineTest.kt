@@ -24,8 +24,6 @@ import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.TimeProvider
-import com.example.backlogium.gamification.AchievementInput
-import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -50,6 +48,7 @@ class BackupMergeEngineTest {
         val sessionDao: FakeSessionDao,
         val profileDao: FakePlayerProfileDao,
         val collectionDao: FakeCollectionDao,
+        val achievementDao: FakeAchievementDao,
     )
 
     private fun newEngine(
@@ -78,7 +77,7 @@ class BackupMergeEngineTest {
             gameDao, sessionDao, dailyProgressDao, hltbDataDao, achievementDao, profileDao,
             collectionDao, gamificationUpdater, time,
         )
-        return Harness(engine, gameDao, sessionDao, profileDao, collectionDao)
+        return Harness(engine, gameDao, sessionDao, profileDao, collectionDao, achievementDao)
     }
 
     private fun baseFile(
@@ -205,6 +204,7 @@ class BackupMergeEngineTest {
         assertEquals(1, stored.size) // id 1 updated in place, not duplicated
         assertEquals("After", stored.single().name)
         assertEquals(CollectionMode.COMPLETION_GOAL, stored.single().mode)
+    }
 
     @Test
     fun collectionMerge_legacyFileWithoutAccentAndDone_restoresWithDefaults() = runTest {
@@ -257,10 +257,10 @@ class BackupMergeEngineTest {
         assertEquals(true, harness.collectionDao.getMembers(1L).single().done)
     }
 
-    }
-
     @Test
-    fun achievementSnapshot_localAlreadyFrozen_importDiscarded() = runTest {
+    fun achievementSnapshot_importedEarlierUnlock_replacesLocal() = runTest {
+        // Earlier-unlock-wins (auditfix-backup-integrity design.md decision 5): the local
+        // snapshot's unlock (500) is later than the import's (100), so the import replaces it.
         val local = Achievement(
             appId = 1L, apiName = "ACH", unlocked = true, unlockedAt = 500L,
             snapshotPercent = 2.0, fetchedAt = 0L,
@@ -280,13 +280,180 @@ class BackupMergeEngineTest {
 
         harness.engine.merge(file, RuleConfig())
 
-        // The locally frozen 2.0% snapshot must drive the recomputed XP, not the imported 99.0%
-        // — computed independently here via the real engine function, not a guessed tier cutoff.
-        val expectedXp = Gamification.achievementXp(
-            listOf(AchievementInput(id = "ACH", unlocked = true, globalUnlockPercent = 2.0)),
-            RuleConfig(),
+        val stored = harness.achievementDao.getOne(1L, "ACH")!!
+        assertEquals(99.0, stored.snapshotPercent)
+        assertEquals(100L, stored.unlockedAt)
+    }
+
+    @Test
+    fun achievementSnapshot_importedLaterUnlock_localRetained() = runTest {
+        // The local snapshot's unlock (100) is earlier than the import's (500), so local wins.
+        val local = Achievement(
+            appId = 1L, apiName = "ACH", unlocked = true, unlockedAt = 100L,
+            snapshotPercent = 2.0, fetchedAt = 0L,
         )
-        assertEquals(expectedXp, harness.profileDao.get()!!.totalXp)
+        val harness = newEngine(
+            games = mutableMapOf(1L to testGame(1L)),
+            achievements = mutableListOf(local),
+        )
+        val file = baseFile(
+            achievements = listOf(
+                BackupAchievement(
+                    appId = 1L, apiName = "ACH", displayName = "Ach",
+                    snapshotPercent = 99.0, unlockedAt = 500L.toIso8601(),
+                ),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        val stored = harness.achievementDao.getOne(1L, "ACH")!!
+        assertEquals(2.0, stored.snapshotPercent)
+        assertEquals(100L, stored.unlockedAt)
+    }
+
+    @Test
+    fun achievementSnapshot_mergeOrderIndependent_convergesOnEarlierUnlock() = runTest {
+        val gameId = 1L
+        fun freshFile(unlockedAtMillis: Long, snapshotPercent: Double) = baseFile(
+            achievements = listOf(
+                BackupAchievement(
+                    appId = gameId, apiName = "ACH", displayName = "Ach",
+                    snapshotPercent = snapshotPercent, unlockedAt = unlockedAtMillis.toIso8601(),
+                ),
+            ),
+        )
+
+        val forward = newEngine(games = mutableMapOf(gameId to testGame(gameId)))
+        forward.engine.merge(freshFile(500L, 2.0), RuleConfig())
+        forward.engine.merge(freshFile(100L, 99.0), RuleConfig())
+
+        val reverse = newEngine(games = mutableMapOf(gameId to testGame(gameId)))
+        reverse.engine.merge(freshFile(100L, 99.0), RuleConfig())
+        reverse.engine.merge(freshFile(500L, 2.0), RuleConfig())
+
+        val forwardResult = forward.achievementDao.getOne(gameId, "ACH")!!
+        val reverseResult = reverse.achievementDao.getOne(gameId, "ACH")!!
+        assertEquals(100L, forwardResult.unlockedAt)
+        assertEquals(99.0, forwardResult.snapshotPercent)
+        assertEquals(forwardResult.unlockedAt, reverseResult.unlockedAt)
+        assertEquals(forwardResult.snapshotPercent, reverseResult.snapshotPercent)
+    }
+
+    @Test
+    fun achievementSnapshot_neverRefreshedToACurrentValue_equalUnlockKeepsLowerPercent() = runTest {
+        // Equal unlock timestamps: the lower percentage is the earlier observation (global rarity
+        // only rises), so the local 2.0 stands and the higher imported value is discarded.
+        val local = Achievement(
+            appId = 1L, apiName = "ACH", unlocked = true, unlockedAt = 100L,
+            snapshotPercent = 2.0, fetchedAt = 0L,
+        )
+        val harness = newEngine(
+            games = mutableMapOf(1L to testGame(1L)),
+            achievements = mutableListOf(local),
+        )
+        val file = baseFile(
+            achievements = listOf(
+                BackupAchievement(
+                    appId = 1L, apiName = "ACH", displayName = "Ach",
+                    snapshotPercent = 55.0, unlockedAt = 100L.toIso8601(),
+                ),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        val stored = harness.achievementDao.getOne(1L, "ACH")!!
+        assertEquals(2.0, stored.snapshotPercent)
+    }
+
+    @Test
+    fun achievementSnapshot_equalUnlockLowerImportedPercent_replacesLocal() = runTest {
+        val local = Achievement(
+            appId = 1L, apiName = "ACH", unlocked = true, unlockedAt = 100L,
+            snapshotPercent = 55.0, fetchedAt = 0L,
+        )
+        val harness = newEngine(
+            games = mutableMapOf(1L to testGame(1L)),
+            achievements = mutableListOf(local),
+        )
+        val file = baseFile(
+            achievements = listOf(
+                BackupAchievement(
+                    appId = 1L, apiName = "ACH", displayName = "Ach",
+                    snapshotPercent = 2.0, unlockedAt = 100L.toIso8601(),
+                ),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        assertEquals(2.0, harness.achievementDao.getOne(1L, "ACH")!!.snapshotPercent)
+    }
+
+    @Test
+    fun achievementSnapshot_equalUnlockDifferentPercents_convergesRegardlessOfOrder() = runTest {
+        // The tie-break is what makes this converge at all: without it, A→B keeps A's value and
+        // B→A keeps B's, contradicting the order-independence the whole rule exists to provide.
+        fun fileWith(percent: Double) = baseFile(
+            achievements = listOf(
+                BackupAchievement(
+                    appId = 1L, apiName = "ACH", displayName = "Ach",
+                    snapshotPercent = percent, unlockedAt = 100L.toIso8601(),
+                ),
+            ),
+        )
+
+        val forward = newEngine(games = mutableMapOf(1L to testGame(1L)))
+        forward.engine.merge(fileWith(55.0), RuleConfig())
+        forward.engine.merge(fileWith(2.0), RuleConfig())
+
+        val reverse = newEngine(games = mutableMapOf(1L to testGame(1L)))
+        reverse.engine.merge(fileWith(2.0), RuleConfig())
+        reverse.engine.merge(fileWith(55.0), RuleConfig())
+
+        assertEquals(2.0, forward.achievementDao.getOne(1L, "ACH")!!.snapshotPercent)
+        assertEquals(
+            forward.achievementDao.getOne(1L, "ACH")!!.snapshotPercent,
+            reverse.achievementDao.getOne(1L, "ACH")!!.snapshotPercent,
+        )
+    }
+
+    @Test
+    fun achievementSnapshot_replacingEarlierUnlock_preservesFieldsAbsentFromBackup() = runTest {
+        // `retired`, `description`, and `hidden` have no representation in the backup format.
+        // Rebuilding the row from scratch would resurrect a retired achievement into the
+        // unlocked/XP queries, which filter on `retired = 0`.
+        val local = Achievement(
+            appId = 1L, apiName = "ACH", unlocked = true, unlockedAt = 500L,
+            snapshotPercent = 2.0, description = "Local description", hidden = true,
+            retired = true, iconUrl = "icon.png", globalPercent = 30.0, fetchedAt = 7L,
+        )
+        val harness = newEngine(
+            games = mutableMapOf(1L to testGame(1L)),
+            achievements = mutableListOf(local),
+        )
+        val file = baseFile(
+            achievements = listOf(
+                BackupAchievement(
+                    appId = 1L, apiName = "ACH", displayName = "Ach",
+                    snapshotPercent = 99.0, unlockedAt = 100L.toIso8601(),
+                ),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        val stored = harness.achievementDao.getOne(1L, "ACH")!!
+        // The backup is authoritative for these:
+        assertEquals(99.0, stored.snapshotPercent)
+        assertEquals(100L, stored.unlockedAt)
+        // These it cannot speak to, so they must survive untouched:
+        assertTrue(stored.retired)
+        assertTrue(stored.hidden)
+        assertEquals("Local description", stored.description)
+        assertEquals("icon.png", stored.iconUrl)
+        assertEquals(30.0, stored.globalPercent)
     }
 
     @Test
@@ -653,7 +820,7 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
     }
 
     override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {
-        profile = (profile ?: PlayerProfile()).copy(totalXp = totalXp, level = level, currentStreak = currentStreak, longestStreak = maxOf(profile?.longestStreak ?: 0, longestStreak), gamificationConfigVersion = gamificationConfigVersion)
+        profile = (profile ?: PlayerProfile()).copy(totalXp = totalXp, level = level, currentStreak = currentStreak, longestStreak = maxOf(profile?.longestStreak ?: 0, longestStreak), gamificationConfigVersion = gamificationConfigVersion, pendingImportRecompute = false)
     }
 
     override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) {
@@ -662,6 +829,16 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
 
     override suspend fun updateLastSyncError(message: String) {
         profile = (profile ?: PlayerProfile()).copy(lastSyncError = message)
+    }
+
+    override suspend fun markPendingImportRecompute() {
+        profile = (profile ?: PlayerProfile()).copy(pendingImportRecompute = true)
+    }
+
+    override suspend fun raiseLongestStreak(longestStreak: Int) {
+        profile = (profile ?: PlayerProfile()).copy(
+            longestStreak = maxOf(profile?.longestStreak ?: 0, longestStreak),
+        )
     }
 }
 

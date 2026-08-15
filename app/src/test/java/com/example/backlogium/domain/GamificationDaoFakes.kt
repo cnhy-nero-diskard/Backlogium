@@ -244,7 +244,7 @@ internal class FakePlayerProfileDao(initial: PlayerProfile? = null) : PlayerProf
     }
 
     override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {
-        state.value = (state.value ?: PlayerProfile()).copy(totalXp = totalXp, level = level, currentStreak = currentStreak, longestStreak = maxOf(state.value?.longestStreak ?: 0, longestStreak), gamificationConfigVersion = gamificationConfigVersion)
+        state.value = (state.value ?: PlayerProfile()).copy(totalXp = totalXp, level = level, currentStreak = currentStreak, longestStreak = maxOf(state.value?.longestStreak ?: 0, longestStreak), gamificationConfigVersion = gamificationConfigVersion, pendingImportRecompute = false)
     }
 
     override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) {
@@ -253,6 +253,16 @@ internal class FakePlayerProfileDao(initial: PlayerProfile? = null) : PlayerProf
 
     override suspend fun updateLastSyncError(message: String) {
         state.value = (state.value ?: PlayerProfile()).copy(lastSyncError = message)
+    }
+
+    override suspend fun markPendingImportRecompute() {
+        state.value = (state.value ?: PlayerProfile()).copy(pendingImportRecompute = true)
+    }
+
+    override suspend fun raiseLongestStreak(longestStreak: Int) {
+        state.value = (state.value ?: PlayerProfile()).copy(
+            longestStreak = maxOf(state.value?.longestStreak ?: 0, longestStreak),
+        )
     }
 }
 

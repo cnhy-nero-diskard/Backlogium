@@ -8,7 +8,14 @@ current rarity value once set, because its value derives entirely from having be
 first unlock. When both the local database and the imported file hold a snapshot for the same
 achievement, the snapshot associated with the earlier unlock timestamp SHALL be retained,
 including when that is the imported one — the earlier unlock is by definition nearer the true
-first unlock, and this rule makes the merge independent of import order.
+first unlock, and this rule makes the merge independent of import order. When the two unlock
+timestamps are equal, the lower `snapshotPercent` SHALL be retained. This is a canonical
+tie-break rather than a claim about which value was observed first — rarity is a ratio and can
+fall as the player population grows, and the timestamps are equal by definition — but the rule
+must be total and deterministic for order-independence to hold at all.
+
+Merging SHALL preserve locally stored fields the backup format does not carry — including an
+achievement's retired state — rather than resetting them to defaults.
 
 #### Scenario: Imported snapshot has an earlier unlock
 - **WHEN** an imported file includes a snapshot for an achievement whose imported unlock
@@ -31,6 +38,16 @@ first unlock, and this rule makes the merge independent of import order.
   order
 - **THEN** the retained snapshot is the same in both cases
 
+#### Scenario: Equal unlock timestamps
+- **WHEN** the local and imported snapshots for one achievement carry the same unlock timestamp
+  but different rarity percentages
+- **THEN** the lower percentage is retained, whichever side it came from
+
+#### Scenario: Locally stored fields the backup cannot carry
+- **WHEN** an imported snapshot replaces the local one for an achievement that is retired locally
+- **THEN** the achievement remains retired, and other fields absent from the backup format are
+  left as stored rather than reset to defaults
+
 #### Scenario: Snapshot is never refreshed to a current value
 - **WHEN** current global rarity for an already-snapshotted achievement is observed from any
   source
@@ -49,6 +66,13 @@ failed. No part of an invalid file SHALL be applied.
   whose end precedes its start, an out-of-range rarity percentage, a member referencing an
   absent collection, or a duplicate natural key
 - **THEN** the import is rejected before any write occurs, and the stored data is unchanged
+
+#### Scenario: Parseable but implausible date
+- **WHEN** an imported file contains a date that parses correctly but falls outside the supported
+  range the app can have recorded
+- **THEN** the import is rejected, because derived-value recomputation spans the calendar from the
+  earliest stored day and such a date would make that work effectively unbounded on every
+  subsequent attempt
 
 #### Scenario: Rejection identifies the problem
 - **WHEN** an import is rejected by validation

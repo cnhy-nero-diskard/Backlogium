@@ -29,6 +29,15 @@ data class PlayerProfile(
     val personaName: String? = null,
     /** Full-size Steam avatar URL, persisted for the same reason as [personaName]. */
     val avatarUrl: String? = null,
+    /**
+     * True from the moment a backup merge's raw-data transaction commits until the following
+     * gamification recompute finalizes (auditfix-backup-integrity). Room and the recompute's own
+     * write-ahead protocol are two different storage engines with no shared transaction, so a
+     * crash in between would otherwise leave aggregates silently describing the pre-import state
+     * with no record that anything is wrong. Set inside the merge's transaction so it commits
+     * atomically with the raw data; cleared by the next completed recompute regardless of source.
+     */
+    val pendingImportRecompute: Boolean = false,
 ) {
     companion object {
         const val SINGLETON_ID = 0
