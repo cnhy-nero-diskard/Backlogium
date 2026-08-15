@@ -83,14 +83,37 @@ four would share one unique work name, they cannot be distinguished for cancella
 names, at which point "replace this game's schedule" stops being one operation. Chaining makes
 termination the absence of an action: the attempt that succeeds simply does not enqueue a successor.
 
-**One unique work name per app id, with `REPLACE`, and at most one attempt pending under it.** This
-is what makes `REPLACE` safe rather than destructive. `REPLACE` cancels whatever is pending or
-running under the name — with the chain, that is exactly one attempt of one schedule, which is
-precisely what a second quit of the same game should supersede. Had all four been enqueued together,
-`REPLACE` would cancel three siblings that were still wanted.
+**One unique work name per app id, but two different enqueue policies, because the two enqueues mean
+different things.** An earlier draft used `REPLACE` for both and claimed the successor's use of it
+was "a no-op, since the enqueuing attempt is the one currently running". That is exactly backwards:
+`REPLACE` cancels all *unfinished* work under the name, and a running worker is unfinished. Attempt
+N enqueuing attempt N+1 with `REPLACE` would cancel attempt N — the worker issuing the call — while
+it is still executing. A successor must not be able to kill its own predecessor.
 
-Cancelling a *running* attempt is also safe: the worker either applies an observation through the
-atomic commit path or does nothing, so there is no partial state for a cancellation to strand.
+The two operations are separated:
+
+| Enqueue | Meaning | Policy |
+|---|---|---|
+| session-end hook → attempt 0 | a new schedule supersedes any older one for this game | `REPLACE` |
+| attempt N → attempt N+1 | a successor within the schedule already running | `APPEND_OR_REPLACE` |
+
+`REPLACE` is correct and wanted at the hook: quitting the same game again *should* cancel the
+previous schedule, including an attempt of it that happens to be running. Cancelling a running
+attempt is safe there because the worker either applies an observation through the atomic commit
+path or does nothing, so there is no partial state for a cancellation to strand.
+
+`APPEND_OR_REPLACE` is correct for the successor: it chains the new request after the existing work
+under the name instead of cancelling it. `APPEND` alone is not sufficient — if a previous schedule
+under this name ended cancelled (because a newer session superseded it), plain `APPEND` would leave
+the successor blocked behind cancelled prerequisites; `APPEND_OR_REPLACE` starts a fresh sequence in
+that case.
+
+**The consequence for timing, stated honestly:** with `APPEND`-family policies a successor's initial
+delay is measured from when its prerequisite finishes, not from when it was enqueued. Attempts
+therefore land at *approximately* T+0, T+1m, T+3m, T+8m, drifting later by the accumulated execution
+time of the earlier attempts — a few seconds across the whole schedule — plus whatever latency
+WorkManager adds. The offsets are nominal, not guaranteed instants, and nothing in this design
+depends on them being exact.
 
 The immediate attempt is not expected to succeed and is kept anyway: it costs one small request, it
 occasionally does succeed, and it establishes the baseline observation that later attempts compare
@@ -137,6 +160,27 @@ fail or to skip. Correctness lives in the transaction; the mutex only avoids was
 values through the existing recoverable protocol immediately afterwards. Adding a second trigger
 would be a second author, which `CLAUDE.md` forbids.
 
+**The observation carries the time the play happened, not the time the fetch ran.** Where the commit
+path takes an event time — `add-library-recency-signals` makes this explicit, and dormancy is
+evaluated against it — this path must supply one, and the two paths must mean the same thing by it
+or a game's history will disagree with itself depending on which observer saw it.
+
+The right value here is **the session end that triggered the schedule**, captured once by the hook
+and carried through every attempt as work input. It is not the time the attempt ran: attempt 4 runs
+eight minutes after the play, and using its own clock would place the observation eight minutes late
+for no reason.
+
+It is also, unusually, better than what Steam would offer. `GetRecentlyPlayedGames` does not reliably
+carry a last-played timestamp at all, and where a coarse one exists it is a worse estimate than a
+session end the app observed itself seconds earlier. This is the one place in the app where a local
+observation beats Steam's own field, which is why the commit path takes the time as an argument
+rather than reading it from the payload.
+
+**This path does not write `lastPlayedAt`.** It has no Steam-reported value for it, and that field is
+Steam-owned under `steam-sync`'s existing rule. Writing a locally-derived value there would make a
+Steam-owned field sometimes locally authored. The next periodic poll fills it in; nothing depends on
+it in the interim, because dormancy for this observation was already evaluated from the session end.
+
 ### 4. WorkManager, one uniquely-named chain per app id
 
 The schedule is enqueued as WorkManager work rather than held on a coroutine scope. The case this
@@ -146,21 +190,22 @@ built to catch.
 
 Concretely, per decision 2: the session-end hook enqueues attempt 0 with no delay under
 `post-play-sync-<appId>` using `ExistingWorkPolicy.REPLACE`. Each attempt that observes no increase
-enqueues attempt n+1 under **the same name**, with `REPLACE`, and an initial delay of
-`offset[n+1] - offset[n]`. At most one request exists under a given name at any instant.
+enqueues attempt n+1 under **the same name** with `ExistingWorkPolicy.APPEND_OR_REPLACE` and an
+initial delay of `offset[n+1] - offset[n]`.
 
 Three consequences, all wanted:
 
 - Starting and quitting the same game twice in ten minutes replaces the first schedule rather than
-  running two. The second quit's schedule is the one that matters.
+  running two. The second quit's schedule is the one that matters, and the hook's `REPLACE` is what
+  makes that true even if an attempt of the older schedule is mid-flight.
 - Quitting game A and starting game B keeps A's schedule alive under its own name, so A's minutes
   are still collected while B is running.
 - A successful attempt terminates the chain by not enqueuing a successor. Nothing has to be
   cancelled, so nothing can be cancelled by mistake.
 
-The chain's own use of `REPLACE` is a no-op in the ordinary case — it replaces a name under which
-nothing is pending, since the enqueuing attempt is the one currently running. It matters only when a
-second session end races the chain, which is exactly the case it is there for.
+The chain grows to at most four nodes under one name before it ends, which is bounded and
+uninteresting. What matters is that growth happens by appending, so no link in the chain can cancel
+the link that created it.
 
 The worker takes no foreground service and sets no expedited flag. It is not urgent enough to
 justify either, and the schedule's own delays make expedited execution meaningless.

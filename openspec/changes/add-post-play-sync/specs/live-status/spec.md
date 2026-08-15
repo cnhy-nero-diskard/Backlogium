@@ -9,7 +9,8 @@ or library work of its own, and SHALL NOT persist the now-playing state.
 #### Scenario: Stopped game is identified
 - **WHEN** an observation reports that the player is no longer in a game they were previously
   observed in
-- **THEN** the transition is published carrying the identity of the game that stopped
+- **THEN** the transition is published carrying the identity of the game that stopped and the time
+  the session ended, so work acting on it need not substitute its own clock
 
 #### Scenario: Presence remains transient
 - **WHEN** a session-end transition is published

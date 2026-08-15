@@ -87,6 +87,21 @@ values by any separate route.
 - **THEN** the stored session, playtime baseline, and daily progress are identical to what a
   periodic poll observing the same increase would have produced
 
+#### Scenario: The observation carries the time the play ended
+- **WHEN** a targeted fetch commits an observation
+- **THEN** it supplies the session end that triggered its schedule as the time the play occurred,
+  rather than the time the attempt ran
+
+#### Scenario: A later attempt does not report a later play
+- **WHEN** the increase is observed by a late attempt of the schedule rather than the first
+- **THEN** the time the play occurred is the same session end, so the record does not drift later
+  with the attempt that happened to see it
+
+#### Scenario: Steam-owned fields are not locally authored
+- **WHEN** a targeted fetch commits an observation and its response carries no last-played time
+- **THEN** it leaves the stored last-played time unchanged for the next periodic poll to set,
+  rather than writing a locally-derived value into a Steam-owned field
+
 #### Scenario: Derived values keep one author
 - **WHEN** a targeted fetch commits an observation
 - **THEN** derived values are written by the existing on-device path, and no second derivation is

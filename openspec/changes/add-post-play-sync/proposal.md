@@ -26,7 +26,8 @@ a short bounded retry that stops as soon as the increase appears, not a single c
   chain in which each attempt enqueues only its successor, stopping at the first observation that
   shows the increase and giving up silently after the last attempt.
 - Feed the observed playtime through the existing session-synthesis and persistence path, so a
-  post-play fetch and a periodic poll produce identical records and cannot double-count.
+  post-play fetch and a periodic poll produce identical records and cannot double-count, supplying
+  the triggering session end as the time the play occurred rather than the time the attempt ran.
 - Record each post-play fetch as its own diagnostics run, distinguishable by trigger from a periodic
   or manual sync.
 
