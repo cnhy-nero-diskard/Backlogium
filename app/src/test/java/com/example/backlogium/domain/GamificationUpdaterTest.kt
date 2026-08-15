@@ -212,6 +212,78 @@ class GamificationUpdaterTest {
     }
 
     @Test
+    fun recompute_densifiesCalendarGaps_beforeFoldingStreak() = runTest {
+        // Monday, Thursday, and Friday are all met. The synthesized Tuesday and Wednesday break
+        // the old order-only false streak, leaving only Thursday and Friday current.
+        val days = listOf(
+            DailyProgress("2026-07-13", minutesPlayed = 45),
+            DailyProgress("2026-07-16", minutesPlayed = 45),
+            DailyProgress("2026-07-17", minutesPlayed = 45),
+        )
+        val dailyDao = FakeDailyProgressDao(days)
+        val (updater, profileDao) = updaterWith(dailyDao)
+
+        updater.recompute(today = LocalDate.parse("2026-07-17"), config = RuleConfig())
+
+        assertEquals(2, profileDao.get()!!.currentStreak)
+        assertEquals(2, profileDao.get()!!.longestStreak)
+        assertEquals(days.map { it.date }, dailyDao.getAllOrdered().map { it.date })
+    }
+
+    @Test
+    fun recompute_graceCanForgiveOneSynthesizedGap() = runTest {
+        // One missing day is eligible for the configured grace allowance, so Monday through
+        // Thursday remains one continuous three-met-day streak with the forgiven gap.
+        val dailyDao = FakeDailyProgressDao(
+            listOf(
+                DailyProgress("2026-07-13", minutesPlayed = 45),
+                DailyProgress("2026-07-15", minutesPlayed = 45),
+                DailyProgress("2026-07-16", minutesPlayed = 45),
+            ),
+        )
+        val (updater, profileDao) = updaterWith(dailyDao)
+
+        updater.recompute(
+            today = LocalDate.parse("2026-07-16"),
+            config = RuleConfig(streakGraceDays = 1),
+        )
+
+        assertEquals(3, profileDao.get()!!.currentStreak)
+        assertEquals(3, profileDao.get()!!.longestStreak)
+        assertEquals(3, dailyDao.getAllOrdered().size)
+    }
+
+    @Test
+    fun recompute_synthesizedDaysNeverCreateRowsOrChangedDayWrites() = runTest {
+        val storedDays = listOf(
+            DailyProgress("2026-07-10", minutesPlayed = 45, questMet = true),
+            DailyProgress("2026-07-13", minutesPlayed = 45, questMet = true),
+        )
+        val dailyDao = FakeDailyProgressDao(storedDays)
+        val (updater, profileDao) = updaterWith(dailyDao)
+
+        updater.recompute(today = LocalDate.parse("2026-07-13"), config = RuleConfig())
+
+        assertEquals(storedDays.map { it.date }, dailyDao.getAllOrdered().map { it.date })
+        assertEquals(0, dailyDao.questUpdateCount)
+        assertEquals(1, profileDao.get()!!.currentStreak)
+    }
+
+    @Test
+    fun recompute_pastDayCreditReevaluatesAndPersistsQuestStatus() = runTest {
+        val dailyDao = FakeDailyProgressDao(
+            listOf(DailyProgress("2026-07-15", minutesPlayed = 45, questMet = false)),
+        )
+        val (updater, profileDao) = updaterWith(dailyDao)
+
+        updater.recompute(today = LocalDate.parse("2026-07-16"), config = RuleConfig())
+
+        assertTrue(dailyDao.getByDate("2026-07-15")!!.questMet)
+        assertEquals(1, dailyDao.questUpdateCount)
+        assertEquals(1, profileDao.get()!!.currentStreak)
+    }
+
+    @Test
     fun recompute_streakAlreadyBrokenBeforeToday_currentStreakIsZero() = runTest {
         // Yesterday broke the streak (unmet, no grace configured) before today even started.
         // Whether today's row is unmet-so-far or hasn't been created yet, the persisted streak

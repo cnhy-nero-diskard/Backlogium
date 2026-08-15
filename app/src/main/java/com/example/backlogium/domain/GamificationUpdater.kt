@@ -35,7 +35,7 @@ data class QuestStatusUpdate(
  */
 data class GamificationResult(
     val xpState: XpState,
-    /** Per-day quest outcomes for every stored day, oldest first. */
+    /** Per-day quest outcomes, including ephemeral unmet entries synthesized for calendar gaps. */
     val questResults: List<QuestResult>,
     val currentStreak: Int,
     /**
@@ -130,25 +130,39 @@ class GamificationUpdater @Inject constructor(
 
         // Recompute each stored day's quest status; collect (don't write) the rows that changed.
         val days = dailyProgressDao.getAllOrdered()
+        val daysByDate = days.associateBy { LocalDate.parse(it.date) }
         val changedDays = mutableListOf<QuestStatusUpdate>()
-        val questResults = days.map { day ->
-            val result = Gamification.quest(
-                DayInput(
-                    date = LocalDate.parse(day.date),
-                    anyMinutes = day.minutesPlayed,
-                    goalMinutes = day.goalMinutesPlayed,
-                ),
-                config,
-            )
-            if (result.met != day.questMet) {
-                changedDays += QuestStatusUpdate(day.date, result.met)
-            }
-            result
-        }
+        // The pure engine folds by list order, so the caller must make calendar order explicit. Do
+        // not persist these synthesized gaps: they only prevent an offline interval from looking
+        // like adjacent met days, while stored rows remain the sole source of changedDays.
+        val questResults = daysByDate.keys.minOrNull()?.let { firstDate ->
+            val lastDate = maxOf(firstDate, today)
+            generateSequence(firstDate) { date ->
+                date.plusDays(1).takeUnless { it.isAfter(lastDate) }
+            }.map { date ->
+                val day = daysByDate[date]
+                if (day == null) {
+                    QuestResult(date = date, met = false)
+                } else {
+                    val result = Gamification.quest(
+                        DayInput(
+                            date = date,
+                            anyMinutes = day.minutesPlayed,
+                            goalMinutes = day.goalMinutesPlayed,
+                        ),
+                        config,
+                    )
+                    if (result.met != day.questMet) {
+                        changedDays += QuestStatusUpdate(day.date, result.met)
+                    }
+                    result
+                }
+            }.toList()
+        }.orEmpty()
 
         // Split at today: the engine only ever sees completed days, never one still in
-        // progress. Assumes at most one `DailyProgress` row per date (true today: one row
-        // per date, upserted), so at most one entry can match `date == today`.
+        // progress. A missing today is represented by the synthesized unmet entry when there is a
+        // stored history, and still carries the intact past streak forward.
         val pastDays = questResults.filter { it.date < today }
         val todayResult = questResults.firstOrNull { it.date == today }
         val pastStreak = Gamification.streak(pastDays, config)
