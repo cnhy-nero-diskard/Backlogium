@@ -2,11 +2,14 @@ package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.data.hltb.HltbDataSource
+import com.example.backlogium.data.hltb.HltbFailureClass
 import com.example.backlogium.data.hltb.HltbMatcher
+import com.example.backlogium.data.hltb.classifyHltbFailure
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.domain.TimeProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -102,10 +105,9 @@ class HltbRepository @Inject constructor(
      * single resolved endpoint/token (held in the data source for the run).
      *
      * [onProgress] is invoked after each query with the running count, the game just processed,
-     * and its outcome — a `null` outcome meaning the lookup itself failed (transport error), which
-     * [refresh] already distinguishes from a successful search that matched nothing. The outcome
-     * crosses as the domain [HltbMatchState], not the storage enum, so no consumer above `data/`
-     * has to learn about `HltbMatchStatus`.
+     * and its outcome. A failed outcome carries its structured failure class rather than null.
+     * The explicit outcome distinguishes a stored match, a genuine no-match, and a failed lookup;
+     * no consumer above `data/` has to learn about `HltbMatchStatus`.
      *
      * Note it is only called from inside the loop: an empty target set reports nothing at all, so
      * a caller rendering progress must not read "no emissions yet" as a stalled run.
@@ -113,26 +115,60 @@ class HltbRepository @Inject constructor(
     suspend fun refreshBatch(
         games: List<Pair<Long, String>>,
         force: Boolean,
-        onProgress: suspend (done: Int, total: Int, name: String, outcome: HltbMatchState?) -> Unit =
+        onProgress: suspend (done: Int, total: Int, name: String, outcome: HltbRefreshOutcome) -> Unit =
             { _, _, _, _ -> },
-    ) {
+    ): HltbBatchResult {
         val targets = if (force) {
             games
         } else {
             val stale = staleOrMissingAppIds().toSet()
             games.filter { it.first in stale }
         }
+        var refreshed = 0
+        var noMatch = 0
+        var failed = 0
+        val failureClasses = mutableSetOf<HltbFailureClass>()
         targets.forEachIndexed { index, (appId, name) ->
             if (index > 0) delay(INTER_REQUEST_DELAY_MS)
-            val outcome = refresh(appId, name)?.matchStatus?.toDomain()
+            val outcome = queryResult(appId, name).outcome
+            when (outcome) {
+                is HltbRefreshOutcome.Refreshed -> refreshed++
+                HltbRefreshOutcome.NoMatch -> noMatch++
+                is HltbRefreshOutcome.Failed -> {
+                    failed++
+                    failureClasses += outcome.failureClass
+                }
+            }
             onProgress(index + 1, targets.size, name, outcome)
         }
+        return HltbBatchResult(
+            attempted = targets.size,
+            refreshed = refreshed,
+            noMatch = noMatch,
+            failed = failed,
+            failureClasses = failureClasses,
+        )
     }
 
     private suspend fun query(appId: Long, name: String): HltbData? {
-        val candidates = runCatching { dataSource.search(name) }.getOrElse {
-            // Lookup failed: surface via null and leave any last-good cached row intact.
-            return null
+        return queryResult(appId, name).row
+    }
+
+    private data class QueryResult(
+        val row: HltbData?,
+        val outcome: HltbRefreshOutcome,
+    )
+
+    private suspend fun queryResult(appId: Long, name: String): QueryResult {
+        val candidates = try {
+            dataSource.search(name)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            return QueryResult(
+                row = null,
+                outcome = HltbRefreshOutcome.Failed(classifyHltbFailure(failure)),
+            )
         }
 
         val now = time.nowMillis()
@@ -164,7 +200,15 @@ class HltbRepository @Inject constructor(
             )
         }
         hltbDataDao.upsert(row)
-        return row
+        return QueryResult(
+            row = row,
+            outcome = when (row.matchStatus) {
+                HltbMatchStatus.UNMATCHED -> HltbRefreshOutcome.NoMatch
+                HltbMatchStatus.RESOLVED -> HltbRefreshOutcome.Refreshed(HltbMatchState.RESOLVED)
+                HltbMatchStatus.NEEDS_REVIEW ->
+                    HltbRefreshOutcome.Refreshed(HltbMatchState.NEEDS_REVIEW)
+            },
+        )
     }
 
     companion object {

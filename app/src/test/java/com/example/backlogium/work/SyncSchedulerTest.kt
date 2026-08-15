@@ -6,7 +6,11 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -41,6 +45,7 @@ class SyncSchedulerTest {
 
     private lateinit var workManager: WorkManager
     private lateinit var scheduler: SyncScheduler
+    private lateinit var schedulerScope: CoroutineScope
 
     @Before
     fun setUp() {
@@ -50,11 +55,13 @@ class SyncSchedulerTest {
             .build()
         WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
         workManager = WorkManager.getInstance(context)
-        scheduler = SyncScheduler(context)
+        schedulerScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        scheduler = SyncScheduler(context, schedulerScope)
     }
 
     @After
     fun tearDown() {
+        schedulerScope.cancel()
         WorkManagerTestInitHelper.closeWorkDatabase()
     }
 
@@ -219,6 +226,91 @@ class SyncSchedulerTest {
 
         assertEquals(1, workInfosFor(SteamSyncWorker.UNIQUE_PERIODIC_NAME).size)
         assertEquals(1, workInfosFor(SteamSyncWorker.ONE_TIME_NAME).size)
+    }
+
+    @Test
+    fun `hltb refresh exposes that an offline request is waiting for network`() = runTest {
+        scheduler.refreshHltbNow(listOf(440L, 620L))
+
+        assertEquals(HltbRefreshStatus.WAITING_FOR_NETWORK, scheduler.hltbRefreshStatus.first())
+        assertTrue(scheduler.hltbRefreshInProgress.first())
+    }
+
+    @Test
+    fun `first-attempt enqueued work is queued when validated network is available`() {
+        assertEquals(
+            HltbRefreshStatus.QUEUED,
+            hltbRefreshStatusFor(
+                hasRunning = false,
+                hasRetrying = false,
+                hasEnqueued = true,
+                hasValidatedNetwork = true,
+            ),
+        )
+        assertEquals(
+            HltbRefreshStatus.WAITING_FOR_NETWORK,
+            hltbRefreshStatusFor(
+                hasRunning = false,
+                hasRetrying = false,
+                hasEnqueued = true,
+                hasValidatedNetwork = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `persistent timeout only cancels a first attempt that is still offline`() {
+        assertTrue(shouldCancelHltbRefresh(firstAttemptStillQueued = true, hasValidatedNetwork = false))
+        assertFalse(shouldCancelHltbRefresh(firstAttemptStillQueued = true, hasValidatedNetwork = true))
+        assertFalse(shouldCancelHltbRefresh(firstAttemptStillQueued = false, hasValidatedNetwork = false))
+    }
+
+    @Test
+    fun `offline timeout starts at the connectivity transition rather than queue time`() {
+        val offlineSince = 29_000L
+
+        assertEquals(29_000L, hltbTimeoutDelayMillis(30_000L, offlineSince))
+        assertEquals(1L, hltbTimeoutDelayMillis(58_999L, offlineSince))
+        assertEquals(0L, hltbTimeoutDelayMillis(59_000L, offlineSince))
+    }
+
+    /**
+     * A second refresh request while one is already pending is dropped by `KEEP` — and must leave
+     * the offline window alone. Resetting it from the enqueue path used to hand the *original*
+     * refresh a fresh 30 seconds every time the user tapped again, so a repeatedly-tapped refresh
+     * could never time out.
+     */
+    @Test
+    fun `a KEEP-dropped duplicate refresh does not restart the offline window`() = runTest {
+        val context = RuntimeEnvironment.getApplication()
+        scheduler.refreshHltbNow(listOf(440L))
+        val firstId = workInfosFor(HltbRefreshWorker.ONE_TIME_NAME).single().id
+
+        // Robolectric has no validated internet, so the request sits WAITING_FOR_NETWORK and the
+        // window is open. Rewind it by 20s to stand in for 20 seconds of waiting.
+        assertEquals(HltbRefreshStatus.WAITING_FOR_NETWORK, scheduler.hltbRefreshStatus.first())
+        val store = HltbOfflineWaitStore(context)
+        val offlineSince = requireNotNull(store.offlineSince()) - 20_000L
+        store.clear()
+        store.markOffline(offlineSince)
+
+        scheduler.refreshHltbNow(listOf(620L))
+
+        assertEquals(
+            "KEEP must drop the duplicate rather than replace the pending refresh",
+            firstId,
+            workInfosFor(HltbRefreshWorker.ONE_TIME_NAME).single().id,
+        )
+        assertEquals(
+            "the dropped duplicate must not re-anchor the offline window to now",
+            offlineSince,
+            store.offlineSince(),
+        )
+        assertEquals(
+            "the original refresh must keep its remaining ~10s, not get a fresh 30s",
+            10_000L,
+            hltbTimeoutDelayMillis(offlineSince + 20_000L, store.offlineSince()),
+        )
     }
 
     private fun workInfosFor(name: String): List<WorkInfo> = workManager.getWorkInfosForUniqueWork(name).get()

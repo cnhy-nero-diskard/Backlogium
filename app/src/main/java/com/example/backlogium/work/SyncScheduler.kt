@@ -1,6 +1,9 @@
 package com.example.backlogium.work
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.Data
@@ -14,12 +17,20 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkRequest
 import androidx.work.workDataOf
+import com.example.backlogium.di.ApplicationScope
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -32,6 +43,28 @@ enum class GenreEnrichmentStatus {
     RETRYING,
 }
 
+/** User-facing state for the WorkManager-backed HLTB batch refresh. */
+enum class HltbRefreshStatus {
+    IDLE,
+    WAITING_FOR_NETWORK,
+    QUEUED,
+    RUNNING,
+    RETRYING,
+}
+
+internal fun hltbRefreshStatusFor(
+    hasRunning: Boolean,
+    hasRetrying: Boolean,
+    hasEnqueued: Boolean,
+    hasValidatedNetwork: Boolean,
+): HltbRefreshStatus = when {
+    hasRunning -> HltbRefreshStatus.RUNNING
+    hasRetrying -> HltbRefreshStatus.RETRYING
+    hasEnqueued && !hasValidatedNetwork -> HltbRefreshStatus.WAITING_FOR_NETWORK
+    hasEnqueued -> HltbRefreshStatus.QUEUED
+    else -> HltbRefreshStatus.IDLE
+}
+
 /**
  * Owns WorkManager scheduling for [SteamSyncWorker]: a 15-minute periodic poll that
  * requires connectivity and survives restarts/reboots via WorkManager's own persistence,
@@ -40,8 +73,12 @@ enum class GenreEnrichmentStatus {
 @Singleton
 class SyncScheduler @Inject constructor(
     @ApplicationContext private val context: Context,
+    @ApplicationScope private val applicationScope: CoroutineScope,
 ) {
     private val workManager: WorkManager get() = WorkManager.getInstance(context)
+    private val hltbOfflineWaitStore = HltbOfflineWaitStore(context)
+    private val connectivityManager: ConnectivityManager?
+        get() = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
 
     /** Marks a [reconcileNow] request as forced, so a later call can tell it apart from a queued unforced one. */
     private val forcedTag = "reconciliation_forced"
@@ -218,12 +255,93 @@ class SyncScheduler @Inject constructor(
 
     private fun WorkInfo.State.isInFlight() = this == WorkInfo.State.ENQUEUED || this == WorkInfo.State.RUNNING
 
-    /** Emits true while a HowLongToBeat refresh sweep is enqueued or running. */
-    val hltbRefreshInProgress: Flow<Boolean> = workManager
+    private val hltbWorkInfos: Flow<List<WorkInfo>> = workManager
         .getWorkInfosForUniqueWorkFlow(HltbRefreshWorker.ONE_TIME_NAME)
-        .map { infos ->
-            infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
+
+    /** Emits whether the default network currently has validated internet access. */
+    private val hltbNetworkAvailable: Flow<Boolean> = callbackFlow {
+        val manager = connectivityManager
+        if (manager == null) {
+            trySend(false)
+            awaitClose { }
+            return@callbackFlow
         }
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                trySend(manager.hasValidatedInternet())
+            }
+
+            override fun onLost(network: Network) {
+                trySend(manager.hasValidatedInternet())
+            }
+
+            override fun onCapabilitiesChanged(
+                network: Network,
+                networkCapabilities: NetworkCapabilities,
+            ) {
+                trySend(
+                    networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+                )
+            }
+        }
+
+        trySend(manager.hasValidatedInternet())
+        var registered = false
+        try {
+            manager.registerDefaultNetworkCallback(callback)
+            registered = true
+        } catch (_: RuntimeException) {
+            // A missing/unsupported network tracker must not prevent WorkManager observation.
+            trySend(false)
+        } catch (_: LinkageError) {
+            // Older JVM Android shadows may not expose the callback API.
+            trySend(false)
+        }
+
+        awaitClose {
+            if (registered) runCatching { manager.unregisterNetworkCallback(callback) }
+        }
+    }
+        .distinctUntilChanged()
+        .shareIn(applicationScope, SharingStarted.Eagerly, replay = 1)
+
+    /**
+     * User-facing state for the HLTB sweep. An initial `ENQUEUED` work item is waiting for the
+     * connectivity constraint only when the default network lacks validated internet; otherwise
+     * it is simply queued. An enqueued item with attempts already made is backing off after a
+     * transient failure. Keeping these distinct prevents an offline selection from looking like a
+     * worker that has started but stopped reporting progress.
+     */
+    private val hltbRefreshStatusSource: Flow<HltbRefreshStatus> = combine(
+        hltbWorkInfos,
+        hltbNetworkAvailable,
+    ) { infos, hasValidatedNetwork ->
+        hltbRefreshStatusFor(
+            hasRunning = infos.any { it.state == WorkInfo.State.RUNNING },
+            hasRetrying = infos.any {
+                it.state == WorkInfo.State.ENQUEUED && it.runAttemptCount > 0
+            },
+            hasEnqueued = infos.any { it.state == WorkInfo.State.ENQUEUED },
+            hasValidatedNetwork = hasValidatedNetwork,
+        )
+    }
+        .distinctUntilChanged()
+
+    init {
+        // Keep timeout ownership at application scope so the countdown is not lost when the
+        // library screen/ViewModel is destroyed.
+        applicationScope.launch {
+            hltbRefreshStatusSource.collect { status -> synchronizeHltbTimeout(status) }
+        }
+    }
+
+    val hltbRefreshStatus: Flow<HltbRefreshStatus> = hltbRefreshStatusSource
+
+    /** Emits true while a HowLongToBeat refresh sweep is enqueued or running. */
+    val hltbRefreshInProgress: Flow<Boolean> = hltbRefreshStatus
+        .map { it != HltbRefreshStatus.IDLE }
+        .distinctUntilChanged()
 
     /**
      * The running sweep's own progress, or null when nothing is reporting — kept alongside
@@ -275,7 +393,9 @@ class SyncScheduler @Inject constructor(
      * is skipped. Only "Force all" would start over from the beginning.
      */
     fun cancelHltbRefresh() {
+        hltbOfflineWaitStore.clear()
         workManager.cancelUniqueWork(HltbRefreshWorker.ONE_TIME_NAME)
+        workManager.cancelUniqueWork(HltbRefreshTimeoutWorker.UNIQUE_WORK_NAME)
     }
 
     private fun enqueueHltbRefresh(input: Data) {
@@ -284,10 +404,46 @@ class SyncScheduler @Inject constructor(
             .setInputData(input)
             .build()
 
+        // The offline window is deliberately *not* touched here. Under `KEEP` this call may be a
+        // no-op — a refresh already pending swallows the new request — and resetting the window
+        // from the caller's side cannot tell the two cases apart, so a duplicate tap would hand
+        // the original refresh a fresh 30 seconds. [hltbRefreshStatusSource] is the sole owner:
+        // a genuinely admitted request moves the status (IDLE -> QUEUED/WAITING_FOR_NETWORK) and
+        // the collector in `init` starts the window, while a dropped one changes nothing and so
+        // leaves the running window's remaining time intact.
         workManager.enqueueUniqueWork(
             HltbRefreshWorker.ONE_TIME_NAME,
             ExistingWorkPolicy.KEEP,
             request,
         )
+    }
+
+    private fun synchronizeHltbTimeout(status: HltbRefreshStatus) {
+        when (status) {
+            HltbRefreshStatus.WAITING_FOR_NETWORK -> {
+                val now = System.currentTimeMillis()
+                val offlineSince = hltbOfflineWaitStore.markOffline(now)
+                enqueueHltbRefreshTimeout(
+                    workManager,
+                    hltbTimeoutDelayMillis(now, offlineSince),
+                )
+            }
+
+            HltbRefreshStatus.QUEUED -> {
+                hltbOfflineWaitStore.clear()
+                enqueueHltbRefreshTimeout(
+                    workManager,
+                    HltbRefreshTimeoutWorker.WATCHDOG_POLL_MILLIS,
+                )
+            }
+
+            HltbRefreshStatus.IDLE,
+            HltbRefreshStatus.RUNNING,
+            HltbRefreshStatus.RETRYING,
+            -> {
+                hltbOfflineWaitStore.clear()
+                workManager.cancelUniqueWork(HltbRefreshTimeoutWorker.UNIQUE_WORK_NAME)
+            }
+        }
     }
 }

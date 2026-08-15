@@ -2,10 +2,12 @@ package com.example.backlogium.data.hltb
 
 import com.example.backlogium.data.hltb.dto.HltbInitResponse
 import com.example.backlogium.data.hltb.dto.HltbSearchResponse
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -60,12 +62,25 @@ class ScrapingHltbDataSource @Inject constructor(
 
     override suspend fun search(name: String): List<HltbCandidate> = withContext(Dispatchers.IO) {
         val terms = name.trim().split(WHITESPACE).filter { it.isNotBlank() }
-        val body = runCatching { postSearch(terms, resolveSession(force = false)) }
-            .getOrElse {
-                // Rejected (expired token / rotated endpoint): re-resolve once and retry.
-                postSearch(terms, resolveSession(force = true))
-            }
-        HltbBundleParser.mapCandidates(json.decodeFromString(HltbSearchResponse.serializer(), body))
+        val body = try {
+            postSearch(terms, resolveSession(force = false))
+        } catch (failure: HltbHttpException) {
+            // Only a rejected request is evidence that the cached endpoint or token rotated. The
+            // retry is deliberately outside another catch so a second rejection cannot loop.
+            if (failure.statusCode != 401 && failure.statusCode != 403) throw failure
+            postSearch(terms, resolveSession(force = true))
+        }
+        try {
+            HltbBundleParser.mapCandidates(
+                json.decodeFromString(HltbSearchResponse.serializer(), body),
+            )
+        } catch (failure: SerializationException) {
+            throw HltbSearchException(
+                failureClass = HltbFailureClass.PARSE,
+                message = "HLTB search response could not be parsed",
+                cause = failure,
+            )
+        }
     }
 
     private suspend fun resolveSession(force: Boolean): Session = sessionMutex.withLock {
@@ -83,7 +98,10 @@ class ScrapingHltbDataSource @Inject constructor(
         // Known endpoint failed → rediscover the current one from the site bundle, then init.
         if (init == null) {
             endpoint = discoverEndpoint()
-            init = tryInit(endpoint) ?: error("HLTB endpoint/init resolution failed")
+            init = tryInit(endpoint) ?: throw HltbSearchException(
+                failureClass = HltbFailureClass.TRANSPORT,
+                message = "HLTB endpoint/init resolution failed",
+            )
         }
 
         Session(
@@ -95,23 +113,61 @@ class ScrapingHltbDataSource @Inject constructor(
         ).also { session = it }
     }
 
-    /** GET the endpoint's `/init` handshake, returning null unless it yields a usable token. */
-    private fun tryInit(endpoint: String): HltbInitResponse? = runCatching {
+    /**
+     * GET the endpoint's `/init` handshake. Transport/HTTP failures return null so endpoint
+     * discovery can try the rotated path; a successful but unusable body is a parse failure and
+     * must reach the repository unchanged.
+     */
+    private fun tryInit(endpoint: String): HltbInitResponse? = try {
         val stamp = System.currentTimeMillis()
         val body = httpGet("$BASE_URL$endpoint/init?t=$stamp")
-        json.decodeFromString(HltbInitResponse.serializer(), body)
-            .takeIf { !it.token.isNullOrEmpty() }
-    }.getOrNull()
+        val response = json.decodeFromString(HltbInitResponse.serializer(), body)
+        if (response.token.isNullOrEmpty()) {
+            throw HltbSearchException(
+                failureClass = HltbFailureClass.PARSE,
+                message = "HLTB init response did not contain a token",
+            )
+        }
+        response
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (failure: HltbSearchException) {
+        throw failure
+    } catch (failure: SerializationException) {
+        throw HltbSearchException(
+            failureClass = HltbFailureClass.PARSE,
+            message = "HLTB init response could not be parsed",
+            cause = failure,
+        )
+    } catch (failure: HltbEmptyBodyException) {
+        throw HltbSearchException(
+            failureClass = HltbFailureClass.PARSE,
+            message = "HLTB init response was empty",
+            cause = failure,
+        )
+    } catch (_: Exception) {
+        null
+    }
 
     /** Scan the homepage's JS chunks for the current POST search endpoint; fall back if absent. */
-    private fun discoverEndpoint(): String = runCatching {
+    private fun discoverEndpoint(): String = try {
         val chunks = HltbBundleParser.extractChunkPaths(httpGet("$BASE_URL/"))
         for (path in chunks) {
-            val js = runCatching { httpGet("$BASE_URL$path") }.getOrNull() ?: continue
-            HltbBundleParser.extractSearchEndpoint(js)?.let { return@runCatching it }
+            val js = try {
+                httpGet("$BASE_URL$path")
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                continue
+            }
+            HltbBundleParser.extractSearchEndpoint(js)?.let { return it }
         }
         HltbBundleParser.FALLBACK_ENDPOINT
-    }.getOrDefault(HltbBundleParser.FALLBACK_ENDPOINT)
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        HltbBundleParser.FALLBACK_ENDPOINT
+    }
 
     private fun postSearch(terms: List<String>, session: Session): String {
         val payload = buildJsonObject {
@@ -163,17 +219,31 @@ class ScrapingHltbDataSource @Inject constructor(
         session.hpVal?.let { builder.header("x-hp-val", it) }
 
         client.newCall(builder.build()).execute().use { response ->
-            if (!response.isSuccessful) error("HLTB search failed: HTTP ${response.code}")
+            if (!response.isSuccessful) {
+                throw HltbHttpException(
+                    statusCode = response.code,
+                    retryAfter = response.header("Retry-After"),
+                    message = "HLTB search failed: HTTP ${response.code}",
+                )
+            }
             return response.body?.string()?.takeIf { it.isNotBlank() }
-                ?: error("HLTB search returned an empty body")
+                ?: throw HltbEmptyBodyException()
         }
     }
 
     private fun httpGet(url: String): String {
         val request = Request.Builder().url(url).headers(browserHeaders()).get().build()
         client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) error("HLTB GET $url failed: HTTP ${response.code}")
-            return response.body?.string() ?: error("HLTB GET $url returned no body")
+            if (!response.isSuccessful) {
+                throw HltbHttpException(
+                    statusCode = response.code,
+                    retryAfter = response.header("Retry-After"),
+                    message = "HLTB GET $url failed: HTTP ${response.code}",
+                )
+            }
+            return response.body?.string() ?: throw HltbEmptyBodyException(
+                "HLTB GET $url returned no body",
+            )
         }
     }
 
