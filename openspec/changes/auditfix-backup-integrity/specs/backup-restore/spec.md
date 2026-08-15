@@ -9,9 +9,10 @@ first unlock. When both the local database and the imported file hold a snapshot
 achievement, the snapshot associated with the earlier unlock timestamp SHALL be retained,
 including when that is the imported one — the earlier unlock is by definition nearer the true
 first unlock, and this rule makes the merge independent of import order. When the two unlock
-timestamps are equal, the lower `snapshotPercent` SHALL be retained: global rarity only rises as
-more players unlock an achievement, so the lower value is the earlier observation, and a
-deterministic tie-break is required for order-independence to hold at all.
+timestamps are equal, the lower `snapshotPercent` SHALL be retained. This is a canonical
+tie-break rather than a claim about which value was observed first — rarity is a ratio and can
+fall as the player population grows, and the timestamps are equal by definition — but the rule
+must be total and deterministic for order-independence to hold at all.
 
 Merging SHALL preserve locally stored fields the backup format does not carry — including an
 achievement's retired state — rather than resetting them to defaults.

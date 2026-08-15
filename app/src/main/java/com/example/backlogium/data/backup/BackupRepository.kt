@@ -9,10 +9,11 @@ import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import kotlinx.coroutines.flow.first
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -60,31 +61,39 @@ class BackupRepository @Inject constructor(
      * Read and validate a SAF-picked file without modifying any data. The reported size is
      * checked first, but a resolver-reported size is metadata, not a guarantee — the read itself
      * is bounded so an absent or understated size cannot defeat the limit (tasks.md 4.2).
+     *
+     * Decoding streams straight off the [java.io.InputStream] rather than materializing the file.
+     * Buffering it would have cost a `ByteArrayOutputStream`, its `toByteArray()` copy, and a
+     * UTF-16 `String` roughly twice the file's size — several multiples of the limit in peak heap
+     * before the object graph even exists, which made the cap a file-size bound rather than a
+     * memory-safety one.
      */
+    @OptIn(ExperimentalSerializationApi::class)
     suspend fun parseFrom(uri: Uri): ParsedBackup {
         val reportedSize = context.contentResolver.querySize(uri)
         if (reportedSize != null && reportedSize > MAX_IMPORT_BYTES) {
             return ParsedBackup.TooLarge(MAX_IMPORT_BYTES, reportedSize)
         }
-        val bytes = context.contentResolver.openInputStream(uri)
-            ?.use { it.readBytesUpTo(MAX_IMPORT_BYTES) }
-            ?: return ParsedBackup.InvalidFormat
-        if (bytes.size.toLong() > MAX_IMPORT_BYTES) {
-            return ParsedBackup.TooLarge(MAX_IMPORT_BYTES, bytes.size.toLong())
+        val stream = context.contentResolver.openInputStream(uri) ?: return ParsedBackup.InvalidFormat
+        val decoded = stream.use { raw ->
+            val bounded = BoundedInputStream(raw, MAX_IMPORT_BYTES)
+            runCatching { json.decodeFromStream(BackupFile.serializer(), bounded) }
         }
-        return parseText(bytes.decodeToString())
+        val file = decoded.getOrElse { failure ->
+            // The bound is enforced mid-read, so an oversized file surfaces here rather than as a
+            // size check on an already-materialized payload.
+            if (failure is StreamLimitExceededException) {
+                return ParsedBackup.TooLarge(MAX_IMPORT_BYTES, failure.bytesReadAtLeast)
+            }
+            return ParsedBackup.InvalidFormat
+        }
+        if (file.formatVersion != BackupFile.CURRENT_FORMAT_VERSION) return ParsedBackup.InvalidFormat
+        return file.toParsedResult()
     }
 
     /** Read and validate a retained automatic snapshot by its [SnapshotMeta.fileName]. */
     fun parseSnapshot(fileName: String): ParsedBackup {
         val file = snapshotStore.read(fileName) ?: return ParsedBackup.InvalidFormat
-        return file.toParsedResult()
-    }
-
-    private fun parseText(text: String): ParsedBackup {
-        val file = runCatching { json.decodeFromString(BackupFile.serializer(), text) }
-            .getOrNull() ?: return ParsedBackup.InvalidFormat
-        if (file.formatVersion != BackupFile.CURRENT_FORMAT_VERSION) return ParsedBackup.InvalidFormat
         return file.toParsedResult()
     }
 
@@ -136,15 +145,55 @@ class BackupRepository @Inject constructor(
 
     companion object {
         /**
-         * Justified worst case (tasks.md 4.1): 5,000 owned games (a very large Steam library),
-         * each with up to 100 achievements averaging ~300 bytes as JSON (apiName, displayName,
-         * timestamps, snapshot) and a decade of daily sessions (~3,650 rows) averaging ~120
-         * bytes — roughly 5,000*100*300 + 5,000*3,650*120/5,000 ≈ 150M + 2.2M, so achievements
-         * dominate at ~150 MB. Rounded up and given headroom for JSON indentation and every
-         * other table: 256 MB.
+         * Justified worst case (tasks.md 4.1), for a deliberately extreme account:
+         *
+         * - 5,000 owned games × ~80 B  ≈ 0.4 MB
+         * - 20,000 unlocked achievements × ~200 B ≈ 4.0 MB
+         * - 10 years of sessions at 5/day (18,250) × ~130 B ≈ 2.4 MB
+         * - 3,650 daily-progress rows × ~90 B ≈ 0.3 MB
+         * - 5,000 HLTB rows × ~150 B ≈ 0.8 MB
+         * - computed rollups (xpPerGame + xpTimeline) ≈ 0.6 MB
+         *
+         * ≈ 8.5 MB total. A 4× allowance for whitespace, longer names, and growth gives 32 MB.
+         *
+         * This is deliberately far below the previous 256 MB. Even streaming the parse, the
+         * decoded object graph is a multiple of the wire size, and Android heaps are small — a
+         * limit that only bounds the file while permitting an OOM during decode is not a limit.
          */
-        const val MAX_IMPORT_BYTES: Long = 256L * 1024 * 1024
+        const val MAX_IMPORT_BYTES: Long = 32L * 1024 * 1024
     }
+}
+
+/** Raised by [BoundedInputStream] when a read would carry it past its limit. */
+internal class StreamLimitExceededException(val bytesReadAtLeast: Long) :
+    java.io.IOException("backup exceeds the maximum supported size")
+
+/**
+ * Fails the read as soon as the stream passes [maxBytes], so the limit holds no matter what the
+ * content resolver reported — an absent or understated size cannot smuggle a larger payload past
+ * it, and nothing beyond the bound is ever buffered (tasks.md 4.2).
+ */
+internal class BoundedInputStream(
+    private val delegate: InputStream,
+    private val maxBytes: Long,
+) : InputStream() {
+    private var readSoFar = 0L
+
+    private fun countOrThrow(bytes: Int): Int {
+        if (bytes > 0) {
+            readSoFar += bytes
+            if (readSoFar > maxBytes) throw StreamLimitExceededException(readSoFar)
+        }
+        return bytes
+    }
+
+    override fun read(): Int = delegate.read().also { if (it >= 0) countOrThrow(1) }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int = countOrThrow(delegate.read(b, off, len))
+
+    override fun available(): Int = delegate.available()
+
+    override fun close() = delegate.close()
 }
 
 internal fun android.content.ContentResolver.querySize(uri: Uri): Long? =
@@ -157,20 +206,3 @@ internal fun android.content.ContentResolver.querySize(uri: Uri): Long? =
         }
     }
 
-/**
- * Reads in bounded chunks and stops as soon as the running total exceeds [maxBytes] — at most one
- * chunk past the limit, never an unbounded payload — so a reported size that is absent or
- * understates the actual size cannot defeat it (tasks.md 4.2).
- */
-internal fun InputStream.readBytesUpTo(maxBytes: Long): ByteArray {
-    val out = ByteArrayOutputStream()
-    val chunk = ByteArray(8192)
-    var total = 0L
-    while (total <= maxBytes) {
-        val read = read(chunk)
-        if (read < 0) break
-        out.write(chunk, 0, read)
-        total += read
-    }
-    return out.toByteArray()
-}

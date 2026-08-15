@@ -255,10 +255,13 @@ class BackupMergeEngine @Inject constructor(
      *
      * Primary rule is the earlier unlock. Equal unlock timestamps are a real case, not a
      * degenerate one — two devices can observe the same Steam `unlockedAt` yet freeze different
-     * percentages, because each captures rarity when *it* first sees the unlock. Breaking that tie
-     * on the lower percentage keeps the merge order-independent (the whole reason for
-     * earlier-unlock-wins) and picks the closer observation: an achievement's global rarity only
-     * rises as more players earn it, so the smaller value was seen nearer the true first unlock.
+     * percentages, because each captures rarity when *it* first sees the unlock.
+     *
+     * The tie is broken on the lower percentage as a **canonical choice, not as evidence of which
+     * observation came first**: global rarity is a ratio, so it can fall as the player population
+     * grows even while more players unlock the achievement, and the two timestamps here are equal
+     * by definition. What matters is that the rule is total and deterministic — that is what makes
+     * the merge order-independent, which is the whole reason for earlier-unlock-wins.
      */
     private fun importedWins(
         importedUnlockedAt: Long?,

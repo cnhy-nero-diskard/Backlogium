@@ -122,7 +122,7 @@ class BackupValidatorTest {
     fun achievementReferencingAbsentGame_rejected() {
         val file = validFile(
             achievements = listOf(
-                BackupAchievement(appId = 999L, apiName = "ACH", displayName = null, snapshotPercent = 5.0, unlockedAt = 0L.toIso8601()),
+                BackupAchievement(appId = 999L, apiName = "ACH", displayName = null, snapshotPercent = 5.0, unlockedAt = VALID_UNLOCKED_AT),
             ),
         )
         val problems = file.assertRejected()
@@ -130,10 +130,58 @@ class BackupValidatorTest {
     }
 
     @Test
+    fun impossibleAchievementUnlockTimestamp_rejectedBeforeMerge() {
+        // Parses fine, but BackupMergeEngine.importedWins() would read 1970 as "earlier" than any
+        // real local unlock and permanently overwrite a protected rarity snapshot — which ordinary
+        // syncs never repair, since they deliberately do not refresh a frozen snapshot.
+        val file = validFile(
+            achievements = listOf(
+                BackupAchievement(
+                    appId = 1L, apiName = "ACH", displayName = null,
+                    snapshotPercent = 5.0, unlockedAt = 0L.toIso8601(),
+                ),
+            ),
+        )
+        val problems = file.assertRejected()
+        assertEquals("achievement", problems.single().recordType)
+        assertTrue(problems.single().detail.contains("outside the supported range"))
+    }
+
+    @Test
+    fun achievementUnlockTimestampWithinRange_accepted() {
+        val file = validFile(
+            achievements = listOf(
+                BackupAchievement(
+                    appId = 1L, apiName = "ACH", displayName = null,
+                    snapshotPercent = 5.0, unlockedAt = "2026-06-01T12:00:00Z",
+                ),
+            ),
+        )
+        assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)
+    }
+
+    @Test
+    fun sessionEndingFarInTheFuture_rejectedEvenWhenStartIsValid() {
+        val file = validFile(
+            sessions = listOf(
+                BackupSession(
+                    appId = 1L,
+                    startAt = "2026-06-01T10:00:00Z",
+                    endAt = "9999-01-01T00:00:00Z",
+                    minutes = 60,
+                ),
+            ),
+        )
+        val problems = file.assertRejected()
+        assertEquals("session", problems.single().recordType)
+        assertTrue(problems.single().detail.contains("endAt"))
+    }
+
+    @Test
     fun snapshotPercentOutOfRange_rejected() {
         val file = validFile(
             achievements = listOf(
-                BackupAchievement(appId = 1L, apiName = "ACH", displayName = null, snapshotPercent = 150.0, unlockedAt = 0L.toIso8601()),
+                BackupAchievement(appId = 1L, apiName = "ACH", displayName = null, snapshotPercent = 150.0, unlockedAt = VALID_UNLOCKED_AT),
             ),
         )
         file.assertRejected()
@@ -214,4 +262,12 @@ class BackupValidatorTest {
         collections = collections,
         collectionMembers = collectionMembers,
     )
+
+    private companion object {
+        /**
+         * An in-range unlock time for tests whose subject is something *other* than the timestamp
+         * bound, so they keep asserting exactly one problem.
+         */
+        const val VALID_UNLOCKED_AT = "2026-06-01T12:00:00Z"
+    }
 }

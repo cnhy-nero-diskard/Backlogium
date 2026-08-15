@@ -70,10 +70,19 @@ object BackupValidator {
                     )
                 session.endAt != null -> {
                     val endAt = session.endAt.toEpochMilliOrNull()
-                    if (endAt == null) {
-                        problems += BackupValidationProblem("session", index, "unparseable endAt '${session.endAt}'")
-                    } else if (endAt < startAt) {
-                        problems += BackupValidationProblem("session", index, "endAt precedes startAt")
+                    when {
+                        endAt == null ->
+                            problems += BackupValidationProblem("session", index, "unparseable endAt '${session.endAt}'")
+                        endAt < startAt ->
+                            problems += BackupValidationProblem("session", index, "endAt precedes startAt")
+                        // An in-range start does not constrain the end: without this, a session
+                        // starting today could claim to end in year 9999.
+                        endAt > LATEST_PLAUSIBLE_MILLIS ->
+                            problems += BackupValidationProblem(
+                                "session", index,
+                                "endAt '${session.endAt}' outside the supported range " +
+                                    "$EARLIEST_PLAUSIBLE_DATE..$LATEST_PLAUSIBLE_DATE",
+                            )
                     }
                 }
             }
@@ -106,10 +115,22 @@ object BackupValidator {
                 )
             }
             achievement.unlockedAt?.let { unlockedAt ->
-                if (unlockedAt.toEpochMilliOrNull() == null) {
+                val unlockedAtMillis = unlockedAt.toEpochMilliOrNull()
+                // Range, not just parseability: BackupMergeEngine.importedWins() compares this
+                // against the local unlock, so an impossible-but-parseable timestamp (1970) reads
+                // as "earlier" and permanently replaces a protected rarity snapshot. Ordinary
+                // syncs deliberately never refresh a frozen snapshot, so nothing repairs that
+                // afterwards — it has to be refused here.
+                if (unlockedAtMillis == null) {
                     problems += BackupValidationProblem(
                         "achievement", index,
                         "unparseable unlockedAt '$unlockedAt'",
+                    )
+                } else if (unlockedAtMillis !in EARLIEST_PLAUSIBLE_MILLIS..LATEST_PLAUSIBLE_MILLIS) {
+                    problems += BackupValidationProblem(
+                        "achievement", index,
+                        "unlockedAt '$unlockedAt' outside the supported range " +
+                            "$EARLIEST_PLAUSIBLE_DATE..$LATEST_PLAUSIBLE_DATE",
                     )
                 }
             }
