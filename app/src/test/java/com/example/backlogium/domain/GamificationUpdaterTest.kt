@@ -270,6 +270,22 @@ class GamificationUpdaterTest {
     }
 
     @Test
+    fun compute_densificationStartsAtEarliestStoredDate() = runTest {
+        val dailyDao = FakeDailyProgressDao(
+            listOf(DailyProgress("2026-07-10", minutesPlayed = 45)),
+        )
+        val (updater, _) = updaterWith(dailyDao)
+
+        val result = updater.compute(LocalDate.parse("2026-07-13"), RuleConfig())
+
+        assertEquals(
+            listOf("2026-07-10", "2026-07-11", "2026-07-12", "2026-07-13"),
+            result.questResults.map { it.date.toString() },
+        )
+        assertEquals(1, dailyDao.getAllOrdered().size)
+    }
+
+    @Test
     fun recompute_pastDayCreditReevaluatesAndPersistsQuestStatus() = runTest {
         val dailyDao = FakeDailyProgressDao(
             listOf(DailyProgress("2026-07-15", minutesPlayed = 45, questMet = false)),
