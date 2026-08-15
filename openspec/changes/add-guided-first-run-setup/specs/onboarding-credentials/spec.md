@@ -6,6 +6,18 @@ before persisting them, and SHALL distinguish a rejected API key, a SteamID with
 profile, and a failure to reach Steam. A verification that does not succeed SHALL NOT persist the
 credentials.
 
+Verification is a precondition of persisting credentials and SHALL NOT be presented as an optional
+or declinable step of any later flow, since credentials that were not verified are never stored.
+
+#### Scenario: Verification cannot be declined
+- **WHEN** the user reaches the point at which credentials would be persisted
+- **THEN** verification runs, and there is no path that persists credentials without it
+
+#### Scenario: Verification precedes setup
+- **WHEN** first-run setup is presented
+- **THEN** the credentials it will use have already been verified, so no setup stage repeats or
+  depends on verification
+
 #### Scenario: Credentials verified
 - **WHEN** the entered API key and SteamID are accepted by Steam and identify an existing profile
 - **THEN** verification succeeds and the credentials are persisted

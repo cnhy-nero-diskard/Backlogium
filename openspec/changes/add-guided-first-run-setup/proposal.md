@@ -22,15 +22,17 @@ anything.
 
 ## What Changes
 
-- Add a verification step to onboarding that makes one cheap authenticated call before credentials
-  are accepted, distinguishing a bad key from an unreachable profile from a network failure.
+- Add a verification step as the final step of the credential flow, making one cheap authenticated
+  call before credentials are accepted and distinguishing a bad key from an unreachable profile from
+  a network failure. Verification is a precondition of saving credentials, not a setup stage — an
+  unverified credential is never persisted, so there is no state in which it could be one.
 - Add a setup step after verification presenting the available stages as a checklist, each
   independently opt-in, with sync pre-selected and the heavier stages unticked.
 - Define setup as an ordered registry of named stages, each with an opt-in state, progress
-  reporting, an independent terminal outcome, and a retry path — so adding a fifth stage is a
+  reporting, an independent terminal outcome, and a retry path — so adding a fourth stage is a
   registration, not a redesign.
-- Ship four stages: **verify credentials**, **initial Steam sync**, **download Steam assets**, and
-  **fetch completion times**.
+- Ship three stages, every one of them optional: **initial Steam sync**, **download Steam assets**,
+  and **fetch completion times**.
 - Run the initial sync in the setup screen with visible progress; run the later stages detached,
   each reporting its own progress in its own notification, so the user can enter the app while they
   continue.

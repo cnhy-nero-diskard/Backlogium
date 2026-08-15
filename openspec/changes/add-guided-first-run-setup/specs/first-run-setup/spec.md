@@ -33,6 +33,17 @@ The system SHALL let the user select each stage independently before setup start
 stage's declared default selection, and SHALL run only selected stages. The user SHALL be able to
 decline setup entirely.
 
+Every registered stage SHALL be optional. Work that must happen before setup can be presented SHALL
+NOT be modelled as a stage, since a stage that cannot be declined contradicts declining setup.
+
+#### Scenario: No stage is mandatory
+- **WHEN** the registered stages are presented
+- **THEN** every one of them can be deselected
+
+#### Scenario: Preconditions are not stages
+- **WHEN** an operation must have completed before setup is presented
+- **THEN** it is not registered as a stage, and setup does not present it as selectable
+
 #### Scenario: Defaults applied
 - **WHEN** the setup checklist is first presented
 - **THEN** each stage is selected or deselected according to its declared default

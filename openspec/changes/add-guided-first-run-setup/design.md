@@ -21,7 +21,7 @@
 **Goals:**
 
 - A new user reaches a populated app without knowing that Settings exists.
-- Adding a fifth stage is a registration, not a redesign of the screen or its state.
+- Adding a fourth stage is a registration, not a redesign of the screen or its state.
 - No stage is mandatory and none can trap the user in the setup screen.
 - One failing stage cannot cost another its results.
 - Setup owns no work of its own — it schedules and reports work that already exists.
@@ -51,7 +51,7 @@ A stage declares:
 ```
 
 Everything else — the checklist, ordering, persistence, progress display, the failure summary, the
-Settings re-run entry — is derived from the registered list. A fifth stage appears in all of them by
+Settings re-run entry — is derived from the registered list. A fourth stage appears in all of them by
 being registered.
 
 **Stage ids are persisted, so an id is an API.** Renaming one orphans a user's stored opt-in and
@@ -61,24 +61,35 @@ outcome. The registry carries the same warning the app's other persisted-by-name
 reason. This is what lets setup ship before `add-offline-steam-assets`, and what keeps a
 prerequisite change from having to modify this one.
 
-### 2. Four stages, and verification is one of them
+### 2. Verification is the last credential step; setup has three stages
+
+An earlier draft registered verification as a fourth, non-opt-out stage. That gave it three
+incompatible lifecycles at once: `onboarding-credentials` requires it to have *already succeeded*
+before credentials are persisted and before setup is even presented; the registry made it *mandatory
+within* setup; and "Skip setup" makes every stage *skippable*. All three cannot hold, and no ordering
+of the screens rescues them — the contradiction is in what verification is, not when it runs.
+
+It is a **precondition**, not a stage. Credentials that have not been verified are not saved, so
+there is no app state in which an unverified credential and a pending verification stage coexist.
+Verification therefore belongs entirely to the credential flow and is removed from the registry.
 
 ```
-  ┌───────────────────────────────────────────────────────────────┐
-  │ 1  Verify credentials      IN_SCREEN   always, not opt-out    │
-  │ 2  Sync your Steam library IN_SCREEN   ticked by default      │
-  │ 3  Download game artwork   DETACHED    unticked               │
-  │ 4  Fetch completion times  DETACHED    unticked               │
-  └───────────────────────────────────────────────────────────────┘
+  credential flow                    │  setup registry
+  ─────────────────────────────────  │  ────────────────────────────────────────
+  1  API key                         │  1  Sync your Steam library  IN_SCREEN  ✓
+  2  SteamID                         │  2  Download game artwork    DETACHED   ☐
+  3  Verify  ← precondition, not a   │  3  Fetch completion times   DETACHED   ☐
+             stage; blocks saving    │
+                    ↓                │
+              credentials saved ─────┴──▶ setup presented
 ```
 
-**Verification is a stage rather than a validation because it is a network operation that can be
-slow, can fail in several distinguishable ways, and deserves the same progress treatment as
-everything else.** Modelling it as a stage means the setup screen has one way of showing "something
-is happening" rather than two.
+The rationale for making it a stage was cosmetic — one progress mechanism instead of two. That is
+not worth a lifecycle contradiction, and it costs nothing to give up: the credential flow already has
+an inline pending state for vanity-URL resolution, and verification reuses it.
 
-It is the one stage with no opt-in. Declining to verify would mean saving credentials the app has
-reason to believe are wrong.
+Setup therefore has three stages, every one of which is genuinely optional, and "Skip setup" means
+what it says without an exception.
 
 **Verification is one `GetPlayerSummaries` call for the entered SteamID with the entered key.** It
 is the cheapest call that exercises both values at once, and its three outcomes map onto the three
@@ -106,11 +117,11 @@ choose them.
 
 ### 3. The in-screen / detached boundary is drawn at "is the app usable yet"
 
-Stages 1 and 2 run with the setup screen up. Stage 2 is the one that makes the app non-empty, it is
-bounded by library size, and entering the app before it finishes means entering an empty app — the
+The library-sync stage runs with the setup screen up. It is the one that makes the app non-empty, it
+is bounded by library size, and entering the app before it finishes means entering an empty app — the
 exact first impression this change exists to prevent.
 
-Stages 3 and 4 run detached. A full-library HLTB sweep is paced and can run a long time; holding a
+The artwork and completion-time stages run detached. A full-library HLTB sweep is paced and can run a long time; holding a
 new user on a setup screen for it would be worse than the empty library. Each reports progress in
 its own notification, which is what "notification bar progress" was asked for.
 

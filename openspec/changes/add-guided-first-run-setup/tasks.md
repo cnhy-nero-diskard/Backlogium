@@ -11,6 +11,8 @@
 - [ ] 1.5 Persist credentials only after verification succeeds
 - [ ] 1.6 Keep the API key out of every log and error message, including the verification failure paths
 - [ ] 1.7 Do not verify credentials that are already stored
+- [ ] 1.8 Show verification's pending state inline in the credential flow, reusing the existing vanity-resolution pending treatment rather than adding a second progress mechanism
+- [ ] 1.9 Confirm no code path persists credentials without a successful verification
 
 ## 2. Onboarding flow shape
 
@@ -28,14 +30,18 @@
 - [ ] 3.5 Persist per-stage opt-in and outcome in DataStore keyed by stage id, ignoring unrecognized ids rather than failing to render
 - [ ] 3.6 Support a stage being registered but unavailable, with a stated reason, presented disabled and never selectable
 
-## 4. The four stages
+## 4. The three stages
 
-- [ ] 4.1 Register the verification stage: `IN_SCREEN`, always run, not opt-out
-- [ ] 4.2 Register the library-sync stage: `IN_SCREEN`, selected by default, wrapping `SteamSyncWorker`
-- [ ] 4.3 Register the asset stage: `DETACHED`, unselected by default, wrapping the offline-assets worker in its missing-only mode
-- [ ] 4.4 Register the completion-times stage: `DETACHED`, unselected by default, wrapping `HltbRefreshWorker` in its non-forcing whole-library mode
-- [ ] 4.5 Ensure every stage only enqueues and observes — no fetching, no persistence, no derivation in the stage itself
-- [ ] 4.6 Confirm the library-sync stage is the baseline poll, creating no historical sessions, by being that poll rather than reimplementing it
+> Verification is **not** a stage — it is a precondition of persisting credentials, handled in
+> section 1. Registering it would make it simultaneously mandatory (setup requires it) and skippable
+> ("Skip setup" skips every stage), which cannot both hold.
+
+- [ ] 4.1 Register the library-sync stage: `IN_SCREEN`, selected by default, wrapping `SteamSyncWorker`
+- [ ] 4.2 Register the asset stage: `DETACHED`, unselected by default, wrapping the offline-assets worker in its missing-only mode
+- [ ] 4.3 Register the completion-times stage: `DETACHED`, unselected by default, wrapping `HltbRefreshWorker` in its non-forcing whole-library mode
+- [ ] 4.4 Ensure every stage only enqueues and observes — no fetching, no persistence, no derivation in the stage itself
+- [ ] 4.5 Confirm the library-sync stage is the baseline poll, creating no historical sessions, by being that poll rather than reimplementing it
+- [ ] 4.6 Assert in a test that every registered stage is deselectable, so a future non-optional stage cannot be added without the contradiction resurfacing
 
 ## 5. Coordinator
 
@@ -71,7 +77,7 @@
 - [ ] 8.3 Default every stage to unselected
 - [ ] 8.4 Offer per-stage retry, replacing that stage's recorded outcome
 - [ ] 8.5 Explain that credentials are required, rather than starting stages, when none are configured
-- [ ] 8.6 Exclude verification from the re-run checklist — stored credentials have already been verified
+- [ ] 8.6 Confirm the re-run checklist contains only the three stages; verification is not among them because it is not a stage
 
 ## 9. Tests
 
@@ -80,7 +86,7 @@
 - [ ] 9.3 Unit-test that a retry after a network failure persists without re-entry
 - [ ] 9.4 Unit-test that the checklist, run order, and summary are all derived from the registry, by asserting a test-registered stage appears in each without those surfaces changing
 - [ ] 9.5 Unit-test that deselecting a stage records it skipped and does not enqueue its work
-- [ ] 9.6 Unit-test that declining setup records every stage skipped and enqueues nothing
+- [ ] 9.6 Unit-test that declining setup records every stage skipped and enqueues nothing, and that credentials remain verified and stored regardless — declining setup must never invalidate them
 - [ ] 9.7 Unit-test failure isolation: a failing stage leaves later stages running and earlier results intact, and setup completes rather than failing
 - [ ] 9.8 Unit-test that an unavailable stage cannot be selected and does not block the others
 - [ ] 9.9 Unit-test that an unrecognized persisted stage id is ignored rather than failing to render setup
@@ -95,6 +101,6 @@
 - [ ] 10.5 On device in airplane mode: confirm the failure offers retry and does not present the credentials as invalid
 - [ ] 10.6 On device: complete onboarding with all stages selected and confirm sync progress shows in-screen and the two detached stages appear as separate notifications
 - [ ] 10.7 Leave the setup screen mid-way and confirm the detached stages continue and remain observable
-- [ ] 10.8 Force-stop the app during a detached stage and confirm it continues
+- [ ] 10.8 Background the app during a detached stage and kill its process with `adb shell am kill com.example.backlogium`, confirming the stage continues — **not** `am force-stop`, which puts the package in Android's stopped state where WorkManager is suspended until the user relaunches, and therefore tests nothing about ordinary process death
 - [ ] 10.9 Decline setup and confirm the app is fully usable, then run setup from Settings and confirm the same checklist appears with nothing selected
 - [ ] 10.10 Force one stage to fail and confirm the others complete and the summary attributes the failure
