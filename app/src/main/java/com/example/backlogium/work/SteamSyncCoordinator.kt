@@ -6,12 +6,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Process-scoped coordination for Steam sync and achievement reconciliation.
+ * Process-scoped coordination for Steam sync, achievement reconciliation, and historical
+ * daily-progress correction.
  *
- * The mutex serializes Steam poll and reconciliation operations in this process. It is not the
- * correctness boundary: database commits still re-read their baselines, because WorkManager may
- * run work in another process in a future build and tests must not need this lock to prove that
- * concurrent observations cannot double-count.
+ * The mutex serializes operations that read or write the raw session/daily-progress ledger in this
+ * process. Database commits still re-read their baselines, because WorkManager may run work in
+ * another process in a future build and tests must not need this lock to prove that concurrent
+ * observations cannot double-count. The historical backfill shares this boundary so its ledger
+ * snapshot cannot race a sync's session and daily-progress commit.
  */
 @Singleton
 class SteamSyncCoordinator @Inject constructor() {

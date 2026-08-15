@@ -6,6 +6,7 @@ import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.work.SteamSyncCoordinator
 import java.time.Instant
 import java.time.ZoneId
 import javax.inject.Inject
@@ -95,6 +96,7 @@ class DailyProgressBackfillUseCase @Inject constructor(
     private val settings: SettingsDataStore,
     private val gamificationUpdater: GamificationUpdater,
     private val time: TimeProvider,
+    private val syncCoordinator: SteamSyncCoordinator,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
 ) {
 
@@ -104,32 +106,37 @@ class DailyProgressBackfillUseCase @Inject constructor(
      * @return the corrections written, or `null` if this call was a no-op because the backfill had
      *   already been applied.
      */
-    suspend operator fun invoke(): List<DailyProgressCorrection>? = derivedStateWrites.withLock {
+    suspend operator fun invoke(): List<DailyProgressCorrection>? = syncCoordinator.withLock {
         if (settings.dailyProgressBackfilled()) return@withLock null
 
-        val corrections = computeCorrections()
-        corrections.forEach { correction ->
-            dailyProgressDao.ensureDate(correction.date)
-            dailyProgressDao.setMinutes(
-                date = correction.date,
-                minutesPlayed = correction.correctedMinutes,
-                goalMinutesPlayed = correction.correctedGoalMinutes,
-            )
-        }
-        settings.setDailyProgressBackfilled(true)
+        derivedStateWrites.withLock {
+            val corrections = computeCorrections()
+            corrections.forEach { correction ->
+                dailyProgressDao.ensureDate(correction.date)
+                dailyProgressDao.setMinutes(
+                    date = correction.date,
+                    minutesPlayed = correction.correctedMinutes,
+                    goalMinutesPlayed = correction.correctedGoalMinutes,
+                )
+            }
 
-        // Quest status and streaks are derived from the totals just rewritten, so they have to be
-        // re-derived here rather than waiting for the next sync — which may never come offline.
-        // BACKFILL, not SYNC: this transition is a baseline correction, so it must not be delivered
-        // to the player as earned progress.
-        val rules = settings.ruleConfigWithVersionFlow.first()
-        gamificationUpdater.recompute(
-            today = time.today(),
-            source = RecomputeSource.BACKFILL,
-            config = rules.config,
-            configVersion = rules.version,
-        )
-        corrections
+            // Quest status and streaks are derived from the totals just rewritten, so they have to
+            // be re-derived here rather than waiting for the next sync — which may never come
+            // offline. BACKFILL, not SYNC: this transition is a baseline correction, so it must not
+            // be delivered to the player as earned progress.
+            val rules = settings.ruleConfigWithVersionFlow.first()
+            gamificationUpdater.recompute(
+                today = time.today(),
+                source = RecomputeSource.BACKFILL,
+                config = rules.config,
+                configVersion = rules.version,
+            )
+
+            // The guard is the final write: a failed rule read or recompute leaves the correction
+            // retryable on the next launch instead of marking derived state permanently complete.
+            settings.setDailyProgressBackfilled(true)
+            corrections
+        }
     }
 
     /** The corrections this backfill would write, without writing them. */
