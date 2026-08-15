@@ -23,6 +23,8 @@ gaps, which is why they are one change rather than three.
 
 - Record when each game first appeared in the library, and record Steam's last-played timestamp for
   each game by requesting `rtime_last_played` on the owned-games call.
+- Evaluate dormancy inside the poll that ends it — while the pre-return last-played time still
+  exists — and record that a return happened, since the poll's own update destroys the evidence.
 - Derive three mutually exclusive recency states per game — **newly added**, **newly played**, and
   **returned to play** — each with a defined onset, a defined expiry, and a defined precedence.
 - Present the active state as a symbolic corner badge on Library rows and grid cells, on the game
@@ -31,27 +33,28 @@ gaps, which is why they are one change rather than three.
   "no date known".
 - Announce newly acquired games with a dismissible Home banner that names how many arrived, links to
   them, and expires 24 hours after the sync that found them.
-- Baseline the first sync and any restore so that a fresh install badges nothing and announces
-  nothing.
+- Baseline the first sync so that a fresh install badges nothing and announces nothing, and keep a
+  restore from *creating* recency events while still reproducing the ones the backup recorded.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `library-recency`: Defines what is recorded when a game enters the library and when it was last
-  played, the three recency states with their onset, expiry, precedence, and mutual exclusivity,
-  the baselining rules that keep a first sync and a restore silent, and the new-acquisition
-  announcement's lifecycle.
+- `library-recency`: Defines what is recorded when a game enters the library, when it was last
+  played, and when it returned from dormancy; the three recency states with their onset, expiry,
+  precedence, and mutual exclusivity; the baselining rule that keeps a first sync silent; the
+  boundary between recency data a restore carries and recency events a restore must not cause; and
+  the new-acquisition announcement's lifecycle.
 
 ### Modified Capabilities
 
-- `steam-sync`: The owned-games poll requests and persists Steam's last-played timestamp, and stamps
-  first-seen on games it has not seen before — while a baseline poll stamps neither in a way that
-  reads as new.
+- `steam-sync`: The owned-games poll requests and persists Steam's last-played timestamp, stamps
+  first-seen on games it has not seen before, and evaluates dormancy before overwriting the value
+  that evaluation depends on — while a baseline poll does none of it in a way that reads as new.
 - `app-ui`: Game lists and the game detail header carry a symbolic recency badge at every density;
   the game detail summary shows the last-played date; Home carries the new-acquisition banner.
-- `backup-restore`: Both new per-game fields round-trip through export and import, and a restore
-  cannot manufacture recency signals.
+- `backup-restore`: All three new per-game fields round-trip through export and import, and a restore
+  records no arrival, no return, and no announcement of its own.
 
 ## Impact
 
@@ -59,7 +62,7 @@ gaps, which is why they are one change rather than three.
   16→17), `data/remote/dto/OwnedGamesDto.kt`, `data/remote/SteamApi.kt`, the sync persistence path,
   `data/repo` for the state derivation, `ui/library/`, `ui/gamedetail/`, `ui/home/`,
   `data/backup/`.
-- **Storage:** Two nullable columns on `games`. A dismissal timestamp and the last acquisition
+- **Storage:** Three nullable columns on `games`. A dismissal timestamp and the last acquisition
   batch in Preferences DataStore.
 - **Network:** No additional requests. `rtime_last_played` is an extra field on a call the sync
   already makes with `include_appinfo=1`.

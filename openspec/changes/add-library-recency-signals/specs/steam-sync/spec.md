@@ -12,6 +12,11 @@ observes a game not previously stored and is not establishing the library baseli
 NOT write it for a game that already has one, and SHALL NOT write it for any game during a baseline
 poll.
 
+A poll that observes a play increase SHALL evaluate, before overwriting the game's stored last-played
+time, whether the play it observed followed a dormant period, and SHALL record a return where it
+did. This evaluation SHALL happen within the poll because the value it depends on is destroyed by the
+poll's own update.
+
 #### Scenario: Focus toggled during a poll
 - **WHEN** the user changes a game's focus flag while a poll is in progress
 - **THEN** that change survives the poll's persistence
@@ -36,6 +41,15 @@ poll.
 #### Scenario: Last-played time absent from the payload
 - **WHEN** Steam's response omits a last-played time for a game
 - **THEN** that game's stored last-played time is left unknown and the poll does not fail
+
+#### Scenario: Return evaluated before the overwrite
+- **WHEN** a poll observes a play increase for a game
+- **THEN** it evaluates dormancy against the previously stored last-played time before replacing it
+
+#### Scenario: Return recorded in the same commit
+- **WHEN** a poll records a return for a game
+- **THEN** the return is committed in the same unit as the playtime baseline and last-played time it
+  was derived from, so no combination of the three can be observed partially applied
 
 ### Requirement: First-sync baselining
 The system SHALL treat the first successful poll as a baseline, recording current

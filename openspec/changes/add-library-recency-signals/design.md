@@ -38,10 +38,11 @@
 
 ## Decisions
 
-### 1. Two nullable columns, and null means "not known" rather than "zero"
+### 1. Three nullable columns, and null means "not known" rather than "zero"
 
-`firstSeenAt: Long?` and `lastPlayedAt: Long?` on `games`, both nullable, both defaulting to null in
-migration 16→17.
+`firstSeenAt: Long?`, `lastPlayedAt: Long?`, and `returnedToPlayAt: Long?` on `games`, all nullable,
+all defaulting to null in migration 16→17. The third exists for the reason set out in decision 3:
+dormancy is knowable only at the instant it ends, and cannot be recovered afterwards.
 
 Nullability is the whole baselining mechanism, not a convenience:
 
@@ -64,8 +65,11 @@ never-played games and occasionally for very old ones. **Never-played is determi
 
 ### 2. Three states, one slot, resolved by precedence
 
-The states are derived, never stored. Storing them would mean a second author of a derived value and
-a write on every sync to expire things.
+The states themselves are derived, never stored — storing a *state* would mean a second author of a
+derived value and a write on every sync purely to expire things. What is stored is the set of
+timestamped **observations** the derivation reads. The distinction matters and decision 3 turns on
+it: an observation that cannot be reconstructed later must be recorded when it happens; a state that
+follows from observations by arithmetic must not be.
 
 ```
     ┌──────────────────────────────────────────────────────────────┐
@@ -75,8 +79,7 @@ a write on every sync to expire things.
     │ NEWLY_PLAYED  first-ever recorded session for this game,      │
     │               within 7 days                                   │
     ├──────────────────────────────────────────────────────────────┤
-    │ RETURNED      a session within 7 days, preceded by a gap of   │
-    │               30+ days with no play                           │
+    │ RETURNED      returnedToPlayAt within 7 days                  │
     └──────────────────────────────────────────────────────────────┘
                         ↓ precedence, highest first
               NEWLY_PLAYED > RETURNED > NEWLY_ADDED > none
@@ -101,18 +104,49 @@ it overlaps `RETURNED` almost entirely.
 setting here would need a preference, a backup field, and an explanation, for a threshold nobody has
 an opinion about until they have lived with the default.
 
-### 3. Dormancy is computed from sessions, with `lastPlayedAt` only as a fallback
+### 3. Dormancy is recorded when it ends, because afterwards it is gone
 
-`RETURNED` needs the gap *before* the recent session, which `lastPlayedAt` cannot supply — by the
-time it is read, Steam has already advanced it to the session that just happened.
+An earlier draft of this design had dormancy computed at read time from the `sessions` table, falling
+back to "the `lastPlayedAt` value observed on the previous sync". **That fallback is not
+implementable.** There is one `lastPlayedAt` column and the sync overwrites it on every poll, so by
+the time anything reads it, the pre-return value — the only thing that establishes there *was* a gap
+— has already been destroyed by the write that signalled the return. A pure function of stored state
+cannot recover it.
 
-So dormancy reads the `sessions` table: take the most recent session, take the one before it, and
-measure the gap. Where there is no prior session — a game played before install and again now —
-fall back to the `lastPlayedAt` value observed on the *previous* sync. This is the one place the
-feature is imperfect, and it is worth stating plainly: for a game whose only prior play predates the
-install, dormancy is knowable only if a sync happened to observe it before the return.
+The fix is to record the fact at the one moment both halves of it exist. When a poll observes a
+game's playtime increase, it holds the *old* `lastPlayedAt` (about to be overwritten) and the *new*
+one. If the gap between them meets the dormancy threshold, the poll writes
+`returnedToPlayAt = now`. Derivation then reads a single timestamp and asks only whether it is
+within the badge window.
 
-The fallback is best-effort and its failure mode is a missing badge, never a wrong one.
+```
+   poll observes an increase for game G
+            │
+            ├── previousPlayAt = max( end of G's most recent stored session,
+            │                         G's stored lastPlayedAt before this poll )
+            │
+            ├── if now - previousPlayAt >= 30 days  ──▶  returnedToPlayAt = now
+            │
+            └── lastPlayedAt = <new value from Steam>     (safe to overwrite now)
+```
+
+Taking the **max** of the two sources unifies what the earlier draft split into a primary path and a
+fallback. A game with recorded sessions and a game whose only prior play predates the install go
+through the same expression; whichever source knows more wins, and neither needs a special case.
+
+**This is a stored observation, not a stored state.** `returnedToPlayAt` records *that a return
+happened and when* — a fact about a transition, unreconstructable after the fact. Whether the game
+currently *shows* the returned badge is still pure arithmetic against the badge window, so expiry
+still costs no write, and the design's rule that states are never stored is intact.
+
+**Where neither source knows anything, no badge is shown.** A game with no stored sessions and no
+prior `lastPlayedAt` — possible only for a game acquired and first played between two polls — leaves
+`returnedToPlayAt` null. That case is `NEWLY_PLAYED` anyway, which outranks `RETURNED`.
+
+**The threshold is read at write time, not at read time.** If the dormancy constant ever changes,
+already-recorded returns keep the meaning they had when they were observed. That is the honest
+behaviour for a fact about the past, and it is the unavoidable consequence of recording rather than
+deriving.
 
 ### 4. The acquisition announcement is its own state, not a progress event
 
@@ -160,37 +194,70 @@ important than any recency state, and the playing treatment is a border and a te
 than a corner glyph — so they coexist without a rule, but the combination is worth verifying on
 device.
 
-### 6. Restore cannot manufacture signals
+### 6. Restore reproduces a timeline; it does not create events
 
-Both columns round-trip through backup. On import, `firstSeenAt` is taken from the backup where
-present and left null where absent, so an older export imports as "was already here" — correct,
-since it was.
+An earlier draft asserted two things that cannot both hold: that the recency columns round-trip
+through backup, and that a restore leaves every game with no recency state. They contradict — a
+backup taken yesterday carries a `firstSeenAt` from yesterday, and a pure derivation reading it
+correctly yields `NEWLY_ADDED`. There is no signal in the stored data by which the derivation could
+tell "restored" from "observed", and inventing one would mean tagging every restored row.
 
-**The merge engine must not stamp `firstSeenAt` for a game it inserts.** A restore inserting 300
-games is not 300 acquisitions, and the insertion path is the same one a sync uses. This is the
-sharpest edge in the change: the natural implementation of "insert a game that isn't there" is
-exactly what must *not* set the field. It gets its own test.
+The contradiction resolves by dropping the wrong half. **"No badges after a restore" was the wrong
+requirement.** A backup is a snapshot of a timeline, and restoring it is supposed to reproduce that
+timeline — including the fact that a game was acquired two days ago. The badge windows already do
+the discriminating work that a suppression rule would have done clumsily:
 
-The acquisition batch lives in Preferences DataStore and is not exported. A restore should not
-re-announce a purchase from another device or another week.
+| Backup age | Restored `firstSeenAt` | Result |
+|---|---|---|
+| 3 months | 3 months old | already expired — no badge, by arithmetic |
+| yesterday | yesterday | badged — and correctly so; it *was* acquired yesterday |
+| predates the fields | absent → null | "was already here" — no badge, ever |
+
+What must genuinely never happen is narrower and sharper, and it survives unchanged:
+
+- **The merge engine must not stamp `firstSeenAt` for a game it inserts.** A restore inserting 300
+  games is not 300 acquisitions, and the insertion path is the same one a sync uses. This is the
+  sharpest edge in the change: the natural implementation of "insert a game that isn't there" is
+  exactly what must *not* set the field. It gets its own test.
+- **No import produces an acquisition announcement.** The banner is tied to a *poll observing*
+  previously unknown games; an import is not a poll. The batch state lives in Preferences DataStore
+  and is deliberately not exported, so a restore cannot re-announce a purchase from another device
+  or another week.
+
+The distinction throughout is between recency data that a restore *carries* and recency events that
+a restore *causes*. The first is reproduction and is wanted; the second is fabrication and is not.
+
+**The accepted cost:** restoring a recent backup onto a new device reproduces badges the user
+already saw on the old one. That is continuity rather than duplication — the same library in the
+same state — and the alternative, suppressing signals that are still true, would make the restored
+device disagree with the device it was restored from.
+
+The first sync after a restore is *not* a baseline poll: prior playtime is stored, so games Steam
+reports that the backup did not contain are genuine acquisitions and are stamped and announced
+normally. That is correct, and it falls out of the existing baseline rule without a special case.
 
 ## Risks / Trade-offs
 
-- **Dormancy is unknowable for pre-install play with no prior sync observation.** Stated above;
-  fails toward a missing badge.
+- **Dormancy is unknowable when a return is the first thing ever observed for a game.** Stated in
+  decision 3; that case resolves to `NEWLY_PLAYED`, which outranks `RETURNED` anyway.
+- **`returnedToPlayAt` freezes the threshold in effect when it was written.** Changing the dormancy
+  constant later does not retroactively re-judge past returns. Unavoidable once the fact is recorded
+  rather than derived, and recording it is forced by decision 3.
+- **A recent backup restored elsewhere reproduces its badges.** Accepted in decision 6.
 - **`rtime_last_played` is not contractually documented by Valve.** Absent field parses to null and
   the detail row reads "unknown", so the app degrades rather than breaks.
 - **Three badges is close to the limit of a learnable vocabulary.** Mitigated by mutual exclusivity
   — one slot, one meaning at a time — and by `contentDescription`. Adding a fourth should be
   resisted.
-- **Migration 16→17 on a large library.** Two nullable columns with no backfill and no index; the
+- **Migration 16→17 on a large library.** Three nullable columns with no backfill and no index; the
   `ALTER TABLE` is O(1) in SQLite.
 
 ## Migration Plan
 
-Migration 16→17 adds `firstSeenAt INTEGER` and `lastPlayedAt INTEGER`, both nullable, both null for
-existing rows. No backfill: an existing library is by definition not new, and its last-played dates
-fill in on the next sync from Steam.
+Migration 16→17 adds `firstSeenAt INTEGER`, `lastPlayedAt INTEGER`, and `returnedToPlayAt INTEGER`,
+all nullable, all null for existing rows. No backfill: an existing library is by definition not new,
+its last-played dates fill in on the next sync from Steam, and no return has been observed yet
+because nothing was watching.
 
 The first sync after upgrade populates `lastPlayedAt` for every game and stamps `firstSeenAt` for
 none, because every app id it sees is already in `games`. An upgrading user therefore gets last-played

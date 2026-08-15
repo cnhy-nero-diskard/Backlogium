@@ -74,8 +74,7 @@ newly played over returned to play, and returned to play over newly added.
 - **THEN** it does not become newly played again
 
 #### Scenario: Dormant game played again
-- **WHEN** a game is played within the recency window and its previous play was longer ago than the
-  dormancy threshold
+- **WHEN** a return from dormancy was recorded for a game within the recency window
 - **THEN** its state is returned to play
 
 #### Scenario: Game bought and played the same day
@@ -102,38 +101,55 @@ newly played over returned to play, and returned to play over newly added.
 - **WHEN** any game's recency state is derived
 - **THEN** the result is exactly one state or none, never two
 
-### Requirement: Dormancy is measured from prior play, not from the current one
-The system SHALL determine whether a played game was dormant by measuring the gap preceding its most
-recent play, using recorded play history. Where no prior play is recorded, the system SHALL fall
-back to the last-played time observed before the current one, and SHALL treat the gap as unknown
-where neither is available.
+### Requirement: A return from dormancy is recorded when it is observed
+Because the evidence that a game was dormant is destroyed by the same observation that ends the
+dormancy, the system SHALL evaluate dormancy at the moment a poll observes a game's play increase —
+while both the previously known last-play time and the new one are available — and SHALL record that
+a return occurred, and when. The system SHALL NOT attempt to reconstruct a dormancy gap from stored
+state after the fact.
 
-#### Scenario: Gap measured between recorded sessions
-- **WHEN** a game has more than one recorded session
-- **THEN** dormancy is measured between its two most recent sessions
+The previously known last-play time SHALL be the later of the game's most recent recorded session and
+its stored last-played time as it was before that poll's update.
 
-#### Scenario: No prior recorded session
-- **WHEN** a game's only recorded session is its most recent one
-- **THEN** dormancy is measured against the last-played time observed before that session
+#### Scenario: Return recorded on observation
+- **WHEN** a poll observes a play increase for a game whose previously known last-play time is older
+  than the dormancy threshold
+- **THEN** a return is recorded for that game at the time of that poll
 
-#### Scenario: Gap cannot be determined
-- **WHEN** neither a prior session nor a previously observed last-played time is available
-- **THEN** the game is not marked as returned to play, rather than being marked speculatively
+#### Scenario: No return for continuous play
+- **WHEN** a poll observes a play increase for a game whose previously known last-play time is within
+  the dormancy threshold
+- **THEN** no return is recorded and any previously recorded return is left unchanged
 
-#### Scenario: Current play does not conceal the gap
-- **WHEN** a dormant game is played and its last-played time advances
-- **THEN** the dormancy that preceded that play is still measurable
+#### Scenario: Prior play known only from recorded sessions
+- **WHEN** a returning game's most recent recorded session is later than its stored last-played time
+- **THEN** the session's time is used as the previously known last-play time
 
-### Requirement: Baseline and restore produce no recency states
-A first sync against an untracked library, and a restore from backup, SHALL leave every affected
-game with no recency state and SHALL produce no acquisition announcement.
+#### Scenario: Prior play known only from the stored last-played time
+- **WHEN** a returning game has no recorded session earlier than the current play
+- **THEN** its stored last-played time as it stood before this poll is used as the previously known
+  last-play time
+
+#### Scenario: Last-played time is not overwritten before it has been used
+- **WHEN** a poll updates a game's stored last-played time
+- **THEN** the dormancy evaluation for that poll has already read the previous value
+
+#### Scenario: Neither source knows anything
+- **WHEN** a game has no recorded session and no stored last-played time preceding the observed play
+- **THEN** no return is recorded, rather than one being recorded speculatively
+
+#### Scenario: Derivation reads only the recorded return
+- **WHEN** a game's returned-to-play state is derived
+- **THEN** it depends only on whether a recorded return falls within the recency window, and not on
+  any attempt to re-measure the gap
+
+### Requirement: A baseline produces no recency states
+A first sync against an untracked library SHALL leave every game it observes with no recency state
+and SHALL produce no acquisition announcement, so that a library the player already owned is never
+presented as newly acquired.
 
 #### Scenario: Fresh install
 - **WHEN** the first sync completes on a fresh install of a large library
-- **THEN** no game carries a recency state and no acquisition is announced
-
-#### Scenario: Restore from backup
-- **WHEN** a backup is restored, inserting games not currently in the library
 - **THEN** no game carries a recency state and no acquisition is announced
 
 #### Scenario: Upgrade of an existing library
@@ -143,6 +159,43 @@ game with no recency state and SHALL produce no acquisition announcement.
 #### Scenario: First genuine acquisition after baseline
 - **WHEN** a poll after the baseline observes a game the library has no record of
 - **THEN** that game carries a recency state and is announced
+
+### Requirement: A restore reproduces recency data without creating recency events
+A restore SHALL NOT itself record an arrival, record a return, or produce an acquisition
+announcement. Recency data carried by the backup SHALL be restored as recorded, and any state derived
+from it SHALL follow from the recency windows applied to those recorded times, exactly as it would
+have on the device the backup came from.
+
+#### Scenario: Restore records no arrivals of its own
+- **WHEN** a restore inserts games that are not present in the current library
+- **THEN** no arrival time is recorded for them beyond one carried by the backup
+
+#### Scenario: Restore records no returns of its own
+- **WHEN** a restore inserts or updates games
+- **THEN** no return from dormancy is recorded as a consequence of the restore
+
+#### Scenario: Restore produces no announcement
+- **WHEN** a restore inserts previously unknown games
+- **THEN** no acquisition announcement is presented
+
+#### Scenario: Old backup carries expired signals
+- **WHEN** a backup older than the recency window is restored
+- **THEN** no game carries a recency state, because the recorded times have already aged out
+
+#### Scenario: Recent backup carries live signals
+- **WHEN** a backup taken within the recency window is restored, carrying a game recorded as having
+  arrived within that window
+- **THEN** that game carries the corresponding state, since the recorded arrival is still recent
+
+#### Scenario: Backup predating recency tracking
+- **WHEN** a backup written before recency data existed is restored
+- **THEN** the affected games have no recorded arrival and carry no recency state
+
+#### Scenario: Sync after a restore is not a baseline
+- **WHEN** a sync runs after a restore and observes a game neither the backup nor the library
+  contained
+- **THEN** that game is recorded as an arrival and announced, since prior playtime is already stored
+  and the poll is therefore not a baseline
 
 ### Requirement: Newly acquired games are announced for a bounded period
 When a poll observes games the library has no record of, the system SHALL announce them, naming how
