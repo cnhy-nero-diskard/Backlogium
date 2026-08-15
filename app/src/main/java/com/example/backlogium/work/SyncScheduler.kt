@@ -32,6 +32,14 @@ enum class GenreEnrichmentStatus {
     RETRYING,
 }
 
+/** User-facing state for the WorkManager-backed HLTB batch refresh. */
+enum class HltbRefreshStatus {
+    IDLE,
+    WAITING_FOR_NETWORK,
+    RUNNING,
+    RETRYING,
+}
+
 /**
  * Owns WorkManager scheduling for [SteamSyncWorker]: a 15-minute periodic poll that
  * requires connectivity and survives restarts/reboots via WorkManager's own persistence,
@@ -218,12 +226,33 @@ class SyncScheduler @Inject constructor(
 
     private fun WorkInfo.State.isInFlight() = this == WorkInfo.State.ENQUEUED || this == WorkInfo.State.RUNNING
 
-    /** Emits true while a HowLongToBeat refresh sweep is enqueued or running. */
-    val hltbRefreshInProgress: Flow<Boolean> = workManager
+    private val hltbWorkInfos: Flow<List<WorkInfo>> = workManager
         .getWorkInfosForUniqueWorkFlow(HltbRefreshWorker.ONE_TIME_NAME)
+
+    /**
+     * User-facing state for the HLTB sweep. An initial `ENQUEUED` work item is waiting for the
+     * connectivity constraint; an enqueued item with attempts already made is backing off after
+     * a transient failure. Keeping these distinct prevents an offline selection from looking like
+     * a worker that has started but stopped reporting progress.
+     */
+    val hltbRefreshStatus: Flow<HltbRefreshStatus> = hltbWorkInfos
         .map { infos ->
-            infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
+            when {
+                infos.any { it.state == WorkInfo.State.RUNNING } -> HltbRefreshStatus.RUNNING
+                infos.any {
+                    it.state == WorkInfo.State.ENQUEUED && it.runAttemptCount > 0
+                } -> HltbRefreshStatus.RETRYING
+                infos.any { it.state == WorkInfo.State.ENQUEUED } ->
+                    HltbRefreshStatus.WAITING_FOR_NETWORK
+                else -> HltbRefreshStatus.IDLE
+            }
         }
+        .distinctUntilChanged()
+
+    /** Emits true while a HowLongToBeat refresh sweep is enqueued or running. */
+    val hltbRefreshInProgress: Flow<Boolean> = hltbRefreshStatus
+        .map { it != HltbRefreshStatus.IDLE }
+        .distinctUntilChanged()
 
     /**
      * The running sweep's own progress, or null when nothing is reporting — kept alongside

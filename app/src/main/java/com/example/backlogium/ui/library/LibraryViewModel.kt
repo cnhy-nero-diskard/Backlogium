@@ -25,6 +25,7 @@ import com.example.backlogium.domain.LibraryXp
 import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.ui.search.gameSearchMatchTier
 import com.example.backlogium.work.HltbBatchProgress
+import com.example.backlogium.work.HltbRefreshStatus
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -131,6 +132,7 @@ data class LibraryUiState(
      * field that produced it.
      */
     val libraryEmpty: Boolean = true,
+    val hltbRefreshStatus: HltbRefreshStatus = HltbRefreshStatus.IDLE,
     val batchProgress: HltbBatchProgress? = null,
     val batchLog: List<HltbLogEntry> = emptyList(),
 ) {
@@ -219,7 +221,7 @@ class LibraryViewModel @Inject constructor(
      * that resumes from that point; documented behavior, not a bug.
      */
     private val batchState = combine(
-        syncScheduler.hltbRefreshInProgress,
+        syncScheduler.hltbRefreshStatus,
         syncScheduler.hltbRefreshProgress
             .distinctUntilChanged()
             .runningFold(BatchLog()) { acc, next -> acc.accumulate(next) },
@@ -249,7 +251,7 @@ class LibraryViewModel @Inject constructor(
             reviewCount = content.reviewCount,
             hltbCandidatesByAppId = content.hltbCandidatesByAppId,
             pickerStates = view.pickerStates,
-            refreshing = batch.refreshing,
+            refreshing = batch.status != HltbRefreshStatus.IDLE,
             query = view.query,
             focusSort = view.sort.focus,
             librarySort = view.sort.library,
@@ -261,6 +263,7 @@ class LibraryViewModel @Inject constructor(
                 .toList(),
             selection = view.selection,
             libraryEmpty = content.goals.isEmpty() && content.backlog.isEmpty(),
+            hltbRefreshStatus = batch.status,
             batchProgress = batch.log.progress,
             batchLog = batch.log.entries,
         )
@@ -400,7 +403,7 @@ private data class ViewPrefs(
     val density: GameListDensity,
 )
 
-private data class BatchState(val refreshing: Boolean, val log: BatchLog)
+private data class BatchState(val status: HltbRefreshStatus, val log: BatchLog)
 
 /** Progress snapshot plus the entries accumulated from earlier snapshots of the same run. */
 private data class BatchLog(

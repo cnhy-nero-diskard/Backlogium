@@ -221,5 +221,13 @@ class SyncSchedulerTest {
         assertEquals(1, workInfosFor(SteamSyncWorker.ONE_TIME_NAME).size)
     }
 
+    @Test
+    fun `hltb refresh exposes that an offline request is waiting for network`() = runTest {
+        scheduler.refreshHltbNow(listOf(440L, 620L))
+
+        assertEquals(HltbRefreshStatus.WAITING_FOR_NETWORK, scheduler.hltbRefreshStatus.first())
+        assertTrue(scheduler.hltbRefreshInProgress.first())
+    }
+
     private fun workInfosFor(name: String): List<WorkInfo> = workManager.getWorkInfosForUniqueWork(name).get()
 }

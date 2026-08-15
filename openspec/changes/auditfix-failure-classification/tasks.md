@@ -64,5 +64,8 @@
 - Task 6.4 was folded against the landed `auditfix-backup-integrity` implementation:
   `BackupMergeEngine.kt` has no broad catch around its suspend DAO/transaction operations.
 - Task 7.2 requires a real device or emulator run with network disabled and remains pending.
+- The attempted offline run confirmed the HLTB request remains `ENQUEUED` behind its connectivity
+  constraint before the worker can classify a lookup; `HltbRefreshStatus` now exposes that state as
+  waiting for network instead of leaving the progress panel looking stalled.
 - Task 7.4 could not run because `openspec` and `openspec.cmd` are unavailable in this process.
 - Task 7.5 is recorded by commit `ee73fb5` (`fix: report fewer hltb refreshed games as the correction`).
