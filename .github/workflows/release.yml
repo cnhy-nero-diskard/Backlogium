@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       eligible: ${{ steps.check.outputs.eligible }}
+      version_name: ${{ steps.check.outputs.version_name }}
+      version_code: ${{ steps.check.outputs.version_code }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,6 +33,21 @@ jobs:
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          for component_name in major minor patch; do
+            component_value="${!component_name}"
+            if (( 10#$component_value >= 1000 )); then
+              echo "::error::Tag '$TAG' has $component_name component '$component_value'; each component must be below 1000 for the version-code encoding."
+              echo "eligible=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          version_name="${TAG#v}"
+          version_code=$((10#$major * 1000000 + 10#$minor * 1000 + 10#$patch))
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
           # Is the tagged commit reachable from origin/master?
           SHA="$(git rev-list -n 1 "$TAG")"
           if git merge-base --is-ancestor "$SHA" origin/master; then
@@ -76,7 +93,9 @@ jobs:
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease
+          VERSION_NAME: ${{ needs.gate.outputs.version_name }}
+          VERSION_CODE: ${{ needs.gate.outputs.version_code }}
+        run: ./gradlew assembleRelease -PversionName="$VERSION_NAME" -PversionCode="$VERSION_CODE"
 
       - name: Collect APK
         id: apk

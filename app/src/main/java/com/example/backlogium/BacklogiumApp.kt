@@ -10,6 +10,8 @@ import com.example.backlogium.data.repo.LiveStatus
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.data.backup.SnapshotStore
+import com.example.backlogium.data.diagnostics.DiagnosticHistoryMigration
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.domain.DailyProgressBackfillUseCase
 import com.example.backlogium.domain.PendingImportRecomputeUseCase
@@ -87,6 +89,12 @@ class BacklogiumApp : Application(), Configuration.Provider {
     lateinit var pendingImportRecompute: PendingImportRecomputeUseCase
 
     @Inject
+    lateinit var snapshotStore: SnapshotStore
+
+    @Inject
+    lateinit var diagnosticHistoryMigration: DiagnosticHistoryMigration
+
+    @Inject
     @ApplicationScope
     lateinit var scope: CoroutineScope
 
@@ -103,8 +111,16 @@ class BacklogiumApp : Application(), Configuration.Provider {
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }
-        syncScheduler.ensurePeriodicSync()
-        syncScheduler.ensurePeriodicReconciliation()
+        // Complete storage migrations before scheduling work that could list or write snapshots.
+        // Both migrations are idempotent and leave their source data in place when a copy or
+        // database operation fails, so the next process start can retry safely.
+        snapshotStore.migrateLegacySnapshots()
+        scope.launch {
+            runCatching { diagnosticHistoryMigration.purgeLegacyIdentifiersIfNeeded() }
+                .onFailure { Timber.e(it, "Diagnostic history migration failed") }
+            syncScheduler.ensurePeriodicSync()
+            syncScheduler.ensurePeriodicReconciliation()
+        }
         ProcessLifecycleOwner.get().lifecycle.addObserver(ForegroundPresenceCheck())
         correctHistoricalDailyTotals()
         resolvePendingImportRecompute()

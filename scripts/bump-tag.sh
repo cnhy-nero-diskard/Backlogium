@@ -13,6 +13,8 @@
 #
 # All valid vX.Y.Z tags on master trigger the release workflow, including
 # patch bumps. --force is retained so existing release commands remain valid.
+# Release version metadata is derived from the pushed tag in .github/workflows/release.yml;
+# this script creates the tag and must not edit Gradle version fields.
 
 set -euo pipefail
 

@@ -25,6 +25,15 @@ val localProperties = Properties().apply {
 val steamApiKey: String = localProperties.getProperty("steam.apiKey", "").trim()
 val steamId: String = localProperties.getProperty("steam.steamId", "").trim()
 
+val buildVersionName: String = providers.gradleProperty("versionName").orNull ?: "0.0.0-dev"
+val suppliedVersionCode: String? = providers.gradleProperty("versionCode").orNull
+val buildVersionCode: Int = suppliedVersionCode?.toIntOrNull()
+    ?: if (suppliedVersionCode == null) {
+        1
+    } else {
+        error("versionCode must be an integer, but was '$suppliedVersionCode'")
+    }
+
 // Release signing: env vars take precedence (CI), falling back to local.properties
 // (git-ignored) for local release builds. Left unconfigured, `release` builds stay
 // unsigned and will fail to install on-device — see keystore/README.md.
@@ -49,13 +58,11 @@ android {
         applicationId = "com.example.backlogium"
         minSdk = 33
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = buildVersionCode
+        versionName = buildVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        buildConfigField("String", "STEAM_API_KEY", "\"$steamApiKey\"")
-        buildConfigField("String", "STEAM_ID", "\"$steamId\"")
     }
 
     signingConfigs {
@@ -70,7 +77,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("String", "STEAM_API_KEY", "\"$steamApiKey\"")
+            buildConfigField("String", "STEAM_ID", "\"$steamId\"")
+        }
         release {
+            buildConfigField("String", "STEAM_API_KEY", "\"\"")
+            buildConfigField("String", "STEAM_ID", "\"\"")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

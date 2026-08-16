@@ -40,6 +40,8 @@
     already triggered without this switch.
 #>
 
+# Release version metadata is derived from the pushed tag in
+# .github/workflows/release.yml; this script must not edit Gradle version fields.
 [CmdletBinding()]
 param(
     [switch]$Major,

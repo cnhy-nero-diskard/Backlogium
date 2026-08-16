@@ -78,6 +78,10 @@ class SettingsDataStore @Inject constructor(
          */
         val DAILY_PROGRESS_BACKFILLED = booleanPreferencesKey("daily_progress_backfilled")
 
+        /** One-time guard for removing request identifiers written before endpoint normalization. */
+        val DIAGNOSTIC_IDENTIFIERS_NORMALIZED =
+            booleanPreferencesKey("diagnostic_identifiers_normalized")
+
         // Progress-event presentation state, not user-editable settings. These marks are the
         // durable acknowledgement baseline and intentionally live in DataStore, not Room.
         val LAST_CELEBRATED_LEVEL = intPreferencesKey("last_celebrated_level")
@@ -379,6 +383,14 @@ class SettingsDataStore @Inject constructor(
 
     suspend fun setDailyProgressBackfilled(applied: Boolean) {
         context.dataStore.edit { it[Keys.DAILY_PROGRESS_BACKFILLED] = applied }
+    }
+
+    /** Whether old diagnostic request identifiers have been purged after the redaction upgrade. */
+    suspend fun diagnosticIdentifiersNormalized(): Boolean =
+        context.dataStore.data.map { it[Keys.DIAGNOSTIC_IDENTIFIERS_NORMALIZED] ?: false }.first()
+
+    suspend fun markDiagnosticIdentifiersNormalized() {
+        context.dataStore.edit { it[Keys.DIAGNOSTIC_IDENTIFIERS_NORMALIZED] = true }
     }
 
     private fun parseDate(value: String?): LocalDate? =

@@ -8,6 +8,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+    <!--
+        Keep platform backup enabled for inert app state, but make the explicit app export the
+        only backup channel for library data: the XML rules exclude the database, preferences,
+        and automatic snapshots from cloud backup and device transfer.
+    -->
     <application
         android:name=".BacklogiumApp"
         android:allowBackup="true"
