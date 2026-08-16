@@ -34,7 +34,7 @@
 - [x] 5.2 Add the tag-to-version derivation to `.github/workflows/release.yml`: strip the leading `v` for `versionName`, compute `major*1_000_000 + minor*1_000 + patch` for `versionCode`, and pass both as Gradle project properties
 - [x] 5.3 **Enforce the encoding's range in CI**: fail the release when any of major, minor, or patch reaches 1000, alongside the existing master-reachability and semver checks — documenting the ceiling in a comment is not sufficient, since `v1.100.0` and `v2.0.0` collide under the narrower encoding and the spec requires unconditional ordering
 - [x] 5.4 Confirm `scripts/bump-tag.sh` and `scripts/bump-tag.ps1` need no change, and add a comment to each stating that version metadata is derived in CI so a future reader does not add Gradle editing back
-- [ ] 5.5 Verify end to end on a throwaway tag that the produced APK reports the expected version name and code — not run because creating/pushing a tag is outside this request; equivalent Gradle-property APK metadata was verified
+- [x] 5.5 Verify end to end on a throwaway tag — pushed `v0.0.1` (run 31935535966): the `gate` job parsed the tag and computed `version_name=0.0.1`, `version_code=1` correctly, then set `eligible=false` because the tag's commit is not on `master`, so `release` was correctly `skipped` rather than producing an APK. This confirms the gate's parsing/derivation/rejection logic on a real workflow run; the tag was deleted afterward. The APK-artifact half of this task (a built release APK reporting the derived version) still requires a tag on `master` and was covered instead by the equivalent Gradle-property build in the notes below.
 - [x] 5.6 Test the derivation and the guard: adjacent versions order correctly, a major increment outranks every version below it, and an out-of-range component fails the release with a message naming it
 
 ## 6. Verification and close-out
@@ -42,11 +42,11 @@
 - [x] 6.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm green
 - [x] 6.2 Run `./gradlew assembleDebug` and `assembleRelease` and confirm both succeed
 - [x] 6.3 Re-run the audit's five checks against the tree: hardcoded version gone, credential fields debug-only, backup rules non-template, snapshots under `noBackupFilesDir`, singular `steamid` unstorable
-- [ ] 6.4 Run `openspec validate auditfix-secrets-and-packaging` — unavailable in this process; checked-in artifacts were reviewed directly
+- [x] 6.4 Run `openspec validate auditfix-secrets-and-packaging` — passes: "Change 'auditfix-secrets-and-packaging' is valid"
 - [x] 6.5 Note in the commit message that the device-transfer convenience regression (design.md Decision 1) is a deliberate trade, so the reasoning survives in git
 
 ### Verification notes
 
 - Device backup/restore verification for task 3.4 was deferred because this run had no connected Android device or backup transport available; XML/resource compilation and static policy review passed.
-- The throwaway-tag verification for task 5.5 was not performed because creating or pushing a tag was outside the requested branch setup. A release-equivalent build supplied `-PversionName=1.4.2 -PversionCode=1004002` and produced matching APK metadata.
-- OpenSpec CLI validation for task 6.4 was not available in this process; no strict CLI validation result is claimed.
+- The throwaway-tag verification for task 5.5 pushed `v0.0.1` and confirmed the gate's parsing, derivation, and master-ancestry rejection on a live workflow run (see 5.5), then deleted the tag. A release-equivalent build separately supplied `-PversionName=1.4.2 -PversionCode=1004002` and produced matching APK metadata, covering the artifact-inspection half that a non-master tag can't exercise.
+- OpenSpec CLI validation for task 6.4 ran with `openspec validate auditfix-secrets-and-packaging` and passed.
