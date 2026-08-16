@@ -6,5 +6,6 @@
 <full-backup-content>
     <exclude domain="database" path="." />
     <exclude domain="sharedpref" path="." />
+    <exclude domain="file" path="datastore" />
     <exclude domain="file" path="backup_snapshots" />
 </full-backup-content>
