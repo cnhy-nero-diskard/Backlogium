@@ -1,6 +1,7 @@
 package com.example.backlogium.data.diagnostics
 
 import com.example.backlogium.data.local.dao.DiagnosticsDao
+import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.PresenceDecision
 import com.example.backlogium.data.local.entity.RequestBreakdown
 import com.example.backlogium.data.local.entity.SyncRun
@@ -9,16 +10,45 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 object DiagnosticRedaction {
-    private val secretParameters = setOf("key", "steamids")
+    private val safeParameters = listOf("appid", "count", "l", "format")
 
-    fun requestIdentifier(url: okhttp3.HttpUrl): String = url.newBuilder().apply {
-        secretParameters.forEach { parameter ->
-            if (url.queryParameter(parameter) != null) {
-                removeAllQueryParameters(parameter)
-                addQueryParameter(parameter, "[redacted]")
+    /**
+     * Keep only the endpoint path and values for parameters that are explicitly safe to retain.
+     * Steam owns the request surface, so an unknown parameter must disappear by default rather
+     * than relying on this list being kept in sync with every future credential name.
+     */
+    fun requestIdentifier(url: okhttp3.HttpUrl): String {
+        val normalized = url.newBuilder()
+            .query(null)
+            .fragment(null)
+            .apply {
+                safeParameters.forEach { parameter ->
+                    url.queryParameterValues(parameter).forEach { value ->
+                        addQueryParameter(parameter, value)
+                    }
+                }
             }
-        }
-    }.build().toString()
+            .build()
+        return normalized.encodedPath.ifBlank { "/" } +
+            normalized.encodedQuery?.let { "?$it" }.orEmpty()
+    }
+}
+
+/**
+ * Request breakdowns written before endpoint normalization may contain a SteamID. The retention
+ * limit is count-based rather than time-based, so discard the old identifiers once on upgrade
+ * instead of waiting for an unbounded amount of time for those rows to age out.
+ */
+@Singleton
+class DiagnosticHistoryMigration @Inject constructor(
+    private val dao: DiagnosticsDao,
+    private val settings: SettingsDataStore,
+) {
+    suspend fun purgeLegacyIdentifiersIfNeeded() {
+        if (settings.diagnosticIdentifiersNormalized()) return
+        dao.deleteRequestBreakdowns()
+        settings.markDiagnosticIdentifiersNormalized()
+    }
 }
 
 data class RequestMetrics(val count: Int = 0, val durationMs: Long = 0)

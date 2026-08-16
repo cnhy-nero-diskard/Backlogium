@@ -20,5 +20,6 @@ interface DiagnosticsDao {
     @Query("SELECT * FROM presence_decisions ORDER BY at DESC") fun observePresenceDecisions(): Flow<List<PresenceDecision>>
     @Query("DELETE FROM sync_runs WHERE id NOT IN (SELECT id FROM sync_runs ORDER BY startedAt DESC LIMIT :limit)") suspend fun pruneRuns(limit: Int)
     @Query("DELETE FROM presence_decisions WHERE id NOT IN (SELECT id FROM presence_decisions ORDER BY at DESC LIMIT :limit)") suspend fun prunePresenceDecisions(limit: Int)
+    @Query("DELETE FROM request_breakdowns") suspend fun deleteRequestBreakdowns()
     @Transaction suspend fun insertRun(run: SyncRun, breakdowns: List<RequestBreakdown>) { val runId = insertRun(run); insertBreakdowns(breakdowns.map { it.copy(runId = runId) }) }
 }
