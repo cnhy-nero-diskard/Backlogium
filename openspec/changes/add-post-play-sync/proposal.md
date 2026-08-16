@@ -28,6 +28,9 @@ a short bounded retry that stops as soon as the increase appears, not a single c
 - Feed the observed playtime through the existing session-synthesis and persistence path, so a
   post-play fetch and a periodic poll produce identical records and cannot double-count, supplying
   the triggering session end as the time the play occurred rather than the time the attempt ran.
+- Assign each schedule a persisted per-app generation and carry it through every attempt, so a
+  session that supersedes an in-flight schedule makes the old worker a no-op even if WorkManager's
+  cancellation is delayed.
 - Record each post-play fetch as its own diagnostics run, distinguishable by trigger from a periodic
   or manual sync.
 
@@ -36,8 +39,9 @@ a short bounded retry that stops as soon as the increase appears, not a single c
 ### Modified Capabilities
 
 - `steam-sync`: Adds a targeted, play-triggered poll whose scope is a single game, defines its
-  bounded retry schedule and its termination conditions, and requires it to commit through the same
-  exactly-once path as every other poll.
+  bounded retry schedule and its termination conditions, requires it to commit through the same
+  exactly-once path as every other poll, and prevents a superseded schedule from committing or
+  extending the active schedule.
 - `live-status`: The end of an observed session becomes an event other work can act on, without the
   live-status layer itself performing library work or persisting presence.
 - `app-diagnostics`: Post-play fetches are recorded and distinguishable from periodic and manual
@@ -46,10 +50,11 @@ a short bounded retry that stops as soon as the increase appears, not a single c
 ## Impact
 
 - **Affected code:** `data/remote/SteamApi.kt` (one new endpoint), a new DTO, a new WorkManager
-  worker and its scheduler, `data/repo/LiveStatusRepository.kt` or `work/PresenceService.kt` for the
-  transition hook, and the sync persistence path it reuses.
-- **Storage:** No schema change. The fetch writes through the existing games/sessions/daily-progress
-  commit.
+  worker and its scheduler, a persisted per-app generation store plus its serialized ownership
+  coordinator, `data/repo/LiveStatusRepository.kt` or `work/PresenceService.kt` for the transition
+  hook, and the sync persistence path it reuses.
+- **Storage:** No Room schema change. A per-app generation is persisted in Preferences DataStore;
+  the fetch writes through the existing games/sessions/daily-progress commit.
 - **Network:** At most four small requests per completed play session, typically one or two. No
   change to the periodic 15-minute cadence.
 - **Dependencies:** None new. WorkManager, Retrofit, Room, and Hilt are already in use.

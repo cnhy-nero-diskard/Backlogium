@@ -14,14 +14,19 @@
 
 ## 3. The targeted fetch worker
 
-- [ ] 3.1 Add `PostPlaySyncWorker` taking an app id, an attempt index, and the session-end time as input data — the session end is captured once by the hook and carried unchanged through every attempt
+- [ ] 3.1 Add `PostPlaySyncWorker` taking an app id, an attempt index, the session-end time, and the schedule generation as input data — the session end and generation are captured once by the hook and carried unchanged through every attempt
+- [ ] 3.1a Add a persisted per-app generation store in Preferences DataStore, with an atomic increment operation for starting a new schedule and a read operation for checking an attempt's ownership
+- [ ] 3.1b Add `PostPlayGenerationCoordinator` with a per-app mutex that serializes generation advancement, guarded observation commits, and guarded successor enqueues; network requests remain outside the critical section
 - [ ] 3.2 Read the stored `playtimeForever` baseline for that app id before fetching, so "increase" is evaluated against the same value session synthesis will use
+- [ ] 3.2a Check the persisted generation before fetching and return a successful no-op when the attempt is already stale
 - [ ] 3.3 Fetch, and discard the observation when the returned app id is not the one requested
-- [ ] 3.4 On an observed increase, apply it through the existing session synthesis and commit path — do not synthesize sessions, credit daily progress, or write derived values in the worker
+- [ ] 3.4 On an observed increase, ask `PostPlayGenerationCoordinator` to re-check ownership and, only when the generation is active, apply it through the existing session synthesis and commit path — do not synthesize sessions, credit daily progress, or write derived values in the worker
 - [ ] 3.4a Pass the session-end time carried in work input as the commit path's event time, so every attempt of a schedule reports the same play instant regardless of which one observed the increase — never the attempt's own clock
 - [ ] 3.4b Leave the Steam-owned last-played field unchanged; this path has no Steam-reported value for it, and the next periodic poll sets it
-- [ ] 3.5 On no increase and not on the last attempt, enqueue attempt `n+1` through `PostPlaySyncScheduler` with delay `offset[n+1] - offset[n]`; on the last attempt, end without enqueuing and without returning a retry
+- [ ] 3.4c If the generation is no longer active after the fetch, return a successful no-op: do not commit the observation, even when it contains an increase, and do not proceed to successor logic
+- [ ] 3.5 On no increase and not on the last attempt, ask `PostPlayGenerationCoordinator` to re-check ownership and, only when the generation is active, enqueue attempt `n+1` through `PostPlaySyncScheduler` with delay `offset[n+1] - offset[n]`; on the last attempt, end without enqueuing and without returning a retry
 - [ ] 3.5a On an observed increase, enqueue nothing — terminating the chain is the absence of an action, so no cancellation is ever required
+- [ ] 3.5b If the generation is stale before successor enqueue, return a successful no-op and enqueue nothing; a cancelled worker must not append into a newer schedule
 - [ ] 3.6 Take the `SteamSyncCoordinator` mutex opportunistically; never fail or skip on contention
 - [ ] 3.7 Return `Result.success()` for an exhausted schedule so WorkManager does not back off and re-run a concluded schedule
 - [ ] 3.8 Treat a network or API failure as an attempt that observed nothing, continuing the schedule rather than aborting it
@@ -34,6 +39,8 @@
 - [ ] 4.3a Do **not** use `REPLACE` for the successor: it cancels all unfinished work under the name, which includes the running worker issuing the call, so a successor would cancel its own predecessor mid-execution
 - [ ] 4.3b Use `APPEND_OR_REPLACE` rather than plain `APPEND`, so a successor is not left blocked behind a previous schedule's cancelled prerequisites after a supersede
 - [ ] 4.3c Record in a comment that `REPLACE` at the hook is deliberate and cancelling a running attempt of an *older* schedule is the wanted behaviour there
+- [ ] 4.3d Advance and persist the app's generation before the hook enqueues attempt 0, and include that generation in the attempt's input data
+- [ ] 4.3e Route generation advancement, active-generation checks, observation commits, and successor enqueues through the same per-app coordinator lock; treat WorkManager cancellation as cleanup only, not as the stale-worker guard
 - [ ] 4.4 Confirm two different games stopped in the same window keep independent schedules under their own names
 - [ ] 4.5 Take no foreground service and set no expedited flag
 - [ ] 4.6 Subscribe the scheduler to the session-end transition at the presence layer's host
@@ -55,6 +62,8 @@
 - [ ] 6.3c Unit-test that a new session end supersedes a pending schedule for the same game, including one whose attempt is mid-flight
 - [ ] 6.3d Unit-test that a successful attempt enqueues no successor, so termination requires no cancellation
 - [ ] 6.3e Unit-test that every attempt of one schedule commits the same session-end time, so an increase seen on attempt 4 is not recorded eight minutes late
+- [ ] 6.3f Unit-test the supersession race: keep generation A's attempt mid-flight, start generation B with `REPLACE`, then resume A; A must neither commit an observed increase nor enqueue a successor, while B's chain remains intact
+- [ ] 6.3g Unit-test both stale exits independently: a generation mismatch after a fetch suppresses the commit, and a mismatch on the no-increase path suppresses the successor enqueue
 - [ ] 6.4 Unit-test that a response naming a different app id is discarded and attributes no playtime
 - [ ] 6.5 Unit-test that a targeted fetch and a periodic poll observing the same increase credit it exactly once, with the second commit recording no session and no minutes
 - [ ] 6.6 Unit-test that a playtime decrease emits no session and no negative playtime

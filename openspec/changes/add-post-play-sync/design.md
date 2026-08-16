@@ -13,6 +13,9 @@ mostly about *not* disturbing them.
   poll source is therefore safe by construction if — and only if — it commits through that path.
 - `SteamSyncCoordinator` is a process-local mutex. It is an optimization, not the correctness
   mechanism, and this change must not start treating it as one.
+- WorkManager cancellation is cooperative: a replacement can mark a running worker cancelled while
+  its coroutine is still unwinding. Cancellation therefore cannot be the ownership check for a
+  schedule.
 - `SteamApi` currently exposes no way to ask about a subset of games. `GetOwnedGames` takes no
   per-app filter in its present Retrofit form.
 - The `CLAUDE.md` invariant stands: the on-device engine is the sole author of derived values. This
@@ -98,15 +101,53 @@ The two operations are separated:
 | attempt N → attempt N+1 | a successor within the schedule already running | `APPEND_OR_REPLACE` |
 
 `REPLACE` is correct and wanted at the hook: quitting the same game again *should* cancel the
-previous schedule, including an attempt of it that happens to be running. Cancelling a running
-attempt is safe there because the worker either applies an observation through the atomic commit
-path or does nothing, so there is no partial state for a cancellation to strand.
+previous schedule, including an attempt of it that happens to be running. It is only a cleanup
+signal, though, not an ownership proof: a running worker can continue briefly after cancellation.
+Correctness comes from the generation guard below, so an old worker cannot commit or extend the new
+schedule even when cancellation is late.
 
 `APPEND_OR_REPLACE` is correct for the successor: it chains the new request after the existing work
 under the name instead of cancelling it. `APPEND` alone is not sufficient — if a previous schedule
 under this name ended cancelled (because a newer session superseded it), plain `APPEND` would leave
 the successor blocked behind cancelled prerequisites; `APPEND_OR_REPLACE` starts a fresh sequence in
 that case.
+
+**A schedule generation is the ownership guard, not WorkManager cancellation.** Each new session-end
+schedule advances a monotonically increasing `generation` for that app id in a small Preferences
+DataStore record. The `PostPlayGenerationCoordinator` owns a per-app mutex and serializes three
+operations: advancing the generation and starting attempt 0, committing an observation, and
+appending a successor. Every attempt carries `appId`, `generation`, `attempt`, and `sessionEndAt` in
+its WorkManager input.
+
+The coordinator's critical sections are deliberately short — network work happens outside them —
+but the active-generation read and the mutation it protects are in the same section:
+
+```
+  start new session B:
+    lock(appId)
+      generation := persistAndIncrementGeneration(appId)
+      enqueue attempt 0 for generation B with REPLACE
+    unlock
+
+  attempt N after its fetch:
+    lock(appId)
+      if persistedGeneration(appId) != input.generation: return stale/no-op
+      commit observation, or enqueue the successor with APPEND_OR_REPLACE
+    unlock
+```
+
+The commit branch enters the existing database transaction while it holds the coordinator lock;
+the successor branch calls WorkManager while it holds the same lock. Therefore a replacement
+linearizes either before an old attempt's guarded mutation — making that attempt a no-op — or after
+it — in which case the old mutation belonged to the still-active schedule and the replacement then
+cancels its remaining work. There is no interval in which an old attempt can pass its check and
+append into the new schedule. The generation is persisted so the guard survives process death; the
+mutex only serializes concurrent operations in the one app process.
+
+The worker checks the generation before fetching as an inexpensive early exit, and checks it again
+through the coordinator immediately before either committing an increase or appending a successor.
+An attempt that has become stale returns `Result.success()` for WorkManager bookkeeping, records no
+playtime, and enqueues nothing. A cancelled worker that continues briefly is therefore harmless.
 
 **The consequence for timing, stated honestly:** with `APPEND`-family policies a successor's initial
 delay is measured from when its prerequisite finishes, not from when it was enqueued. Attempts
@@ -142,7 +183,8 @@ feature is judged on.
 
 The targeted fetch does not compute or persist anything itself. It supplies an observed
 `(appId, playtimeForever, playtime2Weeks)` to the same session-synthesis and commit path the
-periodic poll uses.
+periodic poll uses. The worker reaches that path only through the generation coordinator's guarded
+commit operation; a stale attempt never reaches the ordinary commit at all.
 
 This is what makes the change safe rather than merely careful. `steam-sync` already requires the
 committed delta to be derived from baselines read inside the committing transaction, explicitly
@@ -188,16 +230,18 @@ feature exists for is "quit the game, put the phone down" — and on modern Andr
 frequently gone within seconds of that. An in-process timer would drop precisely the sessions it was
 built to catch.
 
-Concretely, per decision 2: the session-end hook enqueues attempt 0 with no delay under
-`post-play-sync-<appId>` using `ExistingWorkPolicy.REPLACE`. Each attempt that observes no increase
-enqueues attempt n+1 under **the same name** with `ExistingWorkPolicy.APPEND_OR_REPLACE` and an
-initial delay of `offset[n+1] - offset[n]`.
+Concretely, per decision 2: the session-end hook first advances the app's generation under
+`PostPlayGenerationCoordinator`, then enqueues attempt 0 with no delay under
+`post-play-sync-<appId>` using `ExistingWorkPolicy.REPLACE`. The generation and session-end time
+are work input. Each attempt that observes no increase asks the same coordinator to verify that its
+generation is still active, then enqueues attempt n+1 under **the same name** with
+`ExistingWorkPolicy.APPEND_OR_REPLACE` and an initial delay of `offset[n+1] - offset[n]`.
 
 Three consequences, all wanted:
 
 - Starting and quitting the same game twice in ten minutes replaces the first schedule rather than
-  running two. The second quit's schedule is the one that matters, and the hook's `REPLACE` is what
-  makes that true even if an attempt of the older schedule is mid-flight.
+  running two. The second quit advances the generation and uses `REPLACE` to cancel the old chain;
+  the generation guard makes that true even if an attempt of the older schedule is mid-flight.
 - Quitting game A and starting game B keeps A's schedule alive under its own name, so A's minutes
   are still collected while B is running.
 - A successful attempt terminates the chain by not enqueuing a successor. Nothing has to be
@@ -205,7 +249,7 @@ Three consequences, all wanted:
 
 The chain grows to at most four nodes under one name before it ends, which is bounded and
 uninteresting. What matters is that growth happens by appending, so no link in the chain can cancel
-the link that created it.
+the link that created it, and a stale link cannot append after a newer generation owns the name.
 
 The worker takes no foreground service and sets no expedited flag. It is not urgent enough to
 justify either, and the schedule's own delays make expedited execution meaningless.
@@ -246,14 +290,18 @@ each observed.
   is the current behaviour, not a worse one.
 - **`GetRecentlyPlayedGames` semantics are less rigidly documented than `GetOwnedGames`.** Mitigated
   by verifying the returned app id and discarding a mismatch.
+- **WorkManager cancellation can lag behind a replacement.** Mitigated by the persisted per-app
+  generation and coordinator lock: cancellation improves cleanup, while the generation check owns
+  correctness before both commit and successor enqueue.
 - **A family-shared or refunded game can show a playtime decrease.** `steam-sync` already requires a
   decrease to emit no session and produce no negative playtime; reusing the commit path inherits
   that.
 
 ## Migration Plan
 
-No schema change and no migration. The feature is additive and self-limiting: if the worker never
-runs, behaviour is exactly what it is today.
+No Room schema change and no migration. The feature is additive and self-limiting: if the worker
+never runs, behaviour is exactly what it is today. The generation record is a new Preferences
+DataStore key space and is absent until the first session-end schedule.
 
 ## Open Questions
 

@@ -71,6 +71,35 @@ of attempts, and SHALL treat exhaustion as an ordinary outcome rather than a fai
 - **THEN** previously stored data is unchanged and the schedule continues or ends without affecting
   the periodic poll
 
+### Requirement: Schedule generations own targeted work
+Each play-triggered schedule SHALL have a monotonically increasing generation persisted per app id.
+The generation, app id, attempt index, and triggering session end SHALL be carried in every attempt's
+WorkManager input. Starting a new schedule SHALL advance the generation before enqueueing its first
+attempt. Generation advancement, active-generation checks, observation commits, and successor
+enqueues SHALL be serialized per app id by one coordinator; WorkManager cancellation SHALL be
+treated as cleanup, not as the correctness guard.
+
+Before committing an observation or enqueueing a successor, an attempt SHALL re-read the persisted
+generation while holding that coordinator's critical section. If its input generation is not active,
+the attempt SHALL succeed as a no-op: it SHALL neither commit playtime nor enqueue a successor.
+
+#### Scenario: A newer session supersedes a running attempt
+- **WHEN** generation A is mid-flight, a new session end advances the app to generation B and
+  replaces the WorkManager chain, then generation A resumes
+- **THEN** generation A records no playtime and enqueues no successor, while generation B remains the
+  only active schedule
+
+#### Scenario: A stale attempt observes an increase
+- **WHEN** an attempt from a superseded generation returns an increase after generation B became
+  active
+- **THEN** the increase is discarded, including its old session-end event time, and the ordinary
+  commit path is not called
+
+#### Scenario: A stale attempt observes no increase
+- **WHEN** an attempt from a superseded generation reaches its no-increase path after generation B
+  became active
+- **THEN** it does not append a successor to either chain
+
 ### Requirement: Targeted fetches commit through the ordinary poll path
 A targeted playtime fetch SHALL apply its observation through the same session synthesis and
 persistence path as a periodic poll, deriving its committed delta from baselines read within the
