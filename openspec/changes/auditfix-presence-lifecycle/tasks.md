@@ -16,7 +16,7 @@
 - [x] 2.3 Preserve the existing ordering rationale at `:84-87`: presence stays ahead of `getOwnedGames` so a later failure cannot cost player detection
 - [x] 2.4 Test: a throwing starter still yields `Result.success()` when Steam data was retrieved
 
-> Review follow-up: the worker now calls `recordNotAttempted` directly; only the known foreground entry points call `startFromForeground`. No delayed process-lifecycle visibility check is used as the worker's legality boundary. The background decision preserves `ALREADY_RUNNING`/available when a periodic poll overlaps an active monitor.
+> Review follow-up: the worker now calls `recordNotAttempted` directly; only the known foreground entry points call `startFromForeground`. That method immediately checks the resumed-Activity tracker on the main dispatcher before launching the service, so a delayed process-lifecycle callback cannot authorize a stale foreground request. The background decision preserves `ALREADY_RUNNING`/available when a periodic poll overlaps an active monitor.
 
 ## 3. Record monitoring outcomes
 

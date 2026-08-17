@@ -97,7 +97,9 @@ asks whether `startForegroundService` throws when called from a backgrounded wor
 fix gives the worker only `PresenceServiceStarter.recordNotAttempted`; that decision records
 `monitoring_already_running` when an active service already covers the game, and otherwise records
 `start_not_attempted`. The start-capable `startFromForeground` method is called only by the known
-foreground entry points. Reproducing an illegal worker start would therefore mean temporarily
+foreground entry points and checks an `ActivityLifecycleCallbacks`-backed resumed-Activity tracker
+on the main dispatcher immediately before launching the service. Reproducing an illegal worker
+start would therefore mean temporarily
 reverting the fix under test. The claim is instead supported by the primary-source exemption list
 above, which explicitly excludes WorkManager execution. Historical `presence_decisions` rows for `trigger=sync` are absent entirely in this
 profile's data (no game was active during any of its ~30 historical periodic syncs, so
