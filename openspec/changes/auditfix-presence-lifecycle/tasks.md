@@ -16,6 +16,8 @@
 - [x] 2.3 Preserve the existing ordering rationale at `:84-87`: presence stays ahead of `getOwnedGames` so a later failure cannot cost player detection
 - [x] 2.4 Test: a throwing starter still yields `Result.success()` when Steam data was retrieved
 
+> Review follow-up: the worker now calls `recordNotAttempted` directly; only the known foreground entry points call `startFromForeground`. No delayed process-lifecycle visibility check is used as the worker's legality boundary.
+
 ## 3. Record monitoring outcomes
 
 - [x] 3.1 Extend `PresenceDecision` recording to cover a refused start, a failed start, a start not attempted, and monitoring ended on a runtime budget

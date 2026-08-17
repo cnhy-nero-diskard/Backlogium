@@ -69,7 +69,7 @@ hours per attempt:
    i.e. this app cannot opt out of the timeout even if it wanted to; it is unconditionally subject
    to it. Confirms the fix cannot rely on the budget not applying.
 2. Enabled "Monitor Steam activity" from Settings (the real `onLiveMonitorEnabledChanged` →
-   `presenceServiceStarter.start(trigger = "settings")` path, i.e. Decision 2 option C's actual
+   `presenceServiceStarter.startFromForeground(trigger = "settings")` path, i.e. Decision 2 option C's actual
    foreground-triggered start). `dumpsys activity services` confirmed a real `dataSync` foreground
    service running (`types=0x00000001`, `uidState: TOP`) — the start succeeds cleanly from the
    foreground, as the design requires.
@@ -87,19 +87,20 @@ hours per attempt:
    timestamp, trigger, outcome, appId, retainedPriorState only).
 6. Reopening the app ~12s later produced `outcome=monitoring_started, trigger=foreground_monitor`
    — `BacklogiumApp`'s `ProcessLifecycleOwner` observer (`BacklogiumApp.kt:184-188`) retried
-   `presenceServiceStarter.start(trigger = "foreground_monitor")` automatically and it **succeeded**,
+   `presenceServiceStarter.startFromForeground(trigger = "foreground_monitor")` automatically and it **succeeded**,
    empirically confirming the docs' "timer resets on foreground" claim: recovery after the budget
    is exhausted is automatic on the next foreground visit, not something the user has to
    rediscover the Settings toggle to fix.
 
 **What was not reproduced, and why that's an accepted limitation rather than a gap:** task 1.1
 asks whether `startForegroundService` throws when called from a backgrounded worker. The shipped
-fix (`PresenceServiceStarter.isAppVisible()`) makes that call impossible to reach from a background
-sync — reproducing it would mean temporarily reverting the fix under test. The claim is instead
-supported by the primary-source exemption list above, which explicitly excludes WorkManager
+fix gives the worker only `PresenceServiceStarter.recordNotAttempted`; the start-capable
+`startFromForeground` method is called only by the known foreground entry points. Reproducing an
+illegal worker start would therefore mean temporarily reverting the fix under test. The claim is
+instead supported by the primary-source exemption list above, which explicitly excludes WorkManager
 execution. Historical `presence_decisions` rows for `trigger=sync` are absent entirely in this
 profile's data (no game was active during any of its ~30 historical periodic syncs, so
-`gameDetected` was never true and `startPresence` was never invoked) — this is expected, not
+`gameDetected` was never true and `recordPresenceNotAttempted` was never invoked) — this is expected, not
 evidence either way, and is noted so a future reader doesn't mistake absence for confirmation.
 
 **Oldest supported API level (33, minSdk) — closed without a device, and why that's legitimate
