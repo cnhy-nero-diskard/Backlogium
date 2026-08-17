@@ -82,6 +82,38 @@ describe("presence poller", () => {
     expect(firestore.committedWrites).toHaveLength(0);
   });
 
+  it("normalizes malformed current state on a non-transition poll", async () => {
+    const next = observation(null, "2026-08-14T01:30:00.000Z");
+    const since = { date: new Date("2026-08-13T01:00:00.000Z") };
+    const updatedAt = { date: new Date("2026-08-14T01:00:00.000Z") };
+    firestore.seed("players/test-steam-id", {
+      v: 0,
+      gameid: 440,
+      personastate: 1,
+      gameName: "Old Game",
+      since,
+      updatedAt,
+      lastObservedAt: { date: new Date("2026-08-14T01:15:00.000Z") },
+    });
+
+    await expect(recordObservation("test-steam-id", next)).resolves.toBe("unchanged");
+
+    const playerWrite = firestore.committedWrites.find(
+      (write) => write.path === "players/test-steam-id",
+    );
+    expect(playerWrite?.data.v).toBe(1);
+    expect(playerWrite?.data.gameid).toBeNull();
+    expect(playerWrite?.data.personastate).toBe(1);
+    expect(playerWrite?.data.gameName).toBeNull();
+    expect(playerWrite?.data.since).toBe(since);
+    expect(playerWrite?.data.updatedAt).toBe(updatedAt);
+    expect(
+      firestore.committedWrites.filter((write) =>
+        write.path.startsWith("players/test-steam-id/presence/"),
+      ),
+    ).toHaveLength(0);
+  });
+
   it("game-to-game transition writes both documents and resets since", async () => {
     const next = observation("570", "2026-08-14T01:02:03.000Z");
     firestore.seed("players/test-steam-id", {

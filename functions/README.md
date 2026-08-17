@@ -82,7 +82,8 @@ Log lines worth recognising:
 | `Steam returned no player...` | Wrong Steam ID, or the profile is unreachable by this key. |
 | `Steam request failed` / `error status` | Transient. Stored state deliberately untouched. |
 
-Silence is normal: an unchanged poll logs nothing and writes nothing.
+An unchanged poll logs the `poll ok` heartbeat, refreshes current-state metadata, and
+does not append a presence transition.
 
 ## Rotating the Steam API key
 
@@ -114,5 +115,6 @@ Do not substitute the cheaper signals — both are blind to the likeliest failur
 
 - **Invocation count** stays at a perfect 1,440/day if the Steam API key is
   revoked, because the function still runs and still returns 200.
-- **`players/{steamId}.updatedAt`** only advances on a game change, so a healthy
-  idle poller looks identical to a dead one.
+- **`players/{steamId}.lastObservedAt`** advances after a successful poll, but a
+  log-based absence alert on `poll ok` is cheaper and more direct than polling
+  Firestore and interpreting timestamps.

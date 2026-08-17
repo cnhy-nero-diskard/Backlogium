@@ -128,7 +128,9 @@ export async function recordObservation(
       // roll state backward.
       transaction.set(playerRef, {
         ...(snapshot.data() ?? {}),
+        v: SCHEMA_VERSION,
         personastate: observation.personastate,
+        gameid: observation.gameid,
         gameName: observation.gameName,
         lastObservedAt: observedAt,
       });

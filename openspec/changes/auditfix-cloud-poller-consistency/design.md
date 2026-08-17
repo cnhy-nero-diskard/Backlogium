@@ -36,7 +36,9 @@ await db.runTransaction(async (tx) => {
   if (!isMaterialChange(previous, observation)) {
     tx.set(playerRef, {
       ...snapshot.data(),
+      v: SCHEMA_VERSION,
       personastate: observation.personastate,
+      gameid: observation.gameid,
       gameName: observation.gameName,
       lastObservedAt: observedAt,
     });
@@ -57,8 +59,8 @@ transitions and older observations from rolling the current state backward.
 
 **The `unchanged` path must stay inside the transaction.** Returning early before the
 transaction begins would reintroduce the race for exactly the case that occurs 99% of the
-time (same-game polls). The unchanged path refreshes the raw observed fields and writes
-`lastObservedAt`, while preserving `gameid`, `since`, `updatedAt`, and the transition log. The
+time (same-game polls). The unchanged path refreshes and canonicalizes the raw observed fields
+and writes `lastObservedAt`, while preserving `since`, `updatedAt`, and the transition log. The
 read is the thing that needs isolating, and the read happens on every invocation.
 
 **Cost**: an extra round trip versus a batch and one current-document metadata write per

@@ -59,3 +59,5 @@
 - [x] 8.4 Update the cloud poller design and specifications to document watermark correctness
 - [x] 8.5 Update duplicate-delivery specification wording for equal-timestamp no-op behavior
 - [x] 8.6 Refresh raw observed fields on watermark-only current-state writes
+- [x] 8.7 Refresh liveness rationale after current-state watermark writes
+- [x] 8.8 Normalize malformed game IDs and schema versions on watermark-only writes

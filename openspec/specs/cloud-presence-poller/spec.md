@@ -175,7 +175,7 @@ The system SHALL stamp every document it writes with a schema version field set 
 
 The system SHALL emit a distinct log entry on every poll that completes a successful Steam fetch and a successful Firestore interaction. The entry SHALL NOT be emitted when the Steam fetch fails or the Firestore interaction fails, so that its absence indicates a broken pipeline rather than an idle user.
 
-Invocation count is not a sufficient health signal: a revoked API key leaves the function running and returning success while recording nothing. The current-state document is not sufficient either, because a healthy poller writes nothing while the user is not playing.
+Invocation count is not a sufficient health signal: a revoked API key leaves the function running and returning success while recording nothing. The current-state document now advances `lastObservedAt` after successful polls, but a log-based absence alert is cheaper and more direct to monitor than polling and interpreting a Firestore timestamp.
 
 #### Scenario: Successful poll emits the heartbeat
 
