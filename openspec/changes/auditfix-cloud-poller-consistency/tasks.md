@@ -48,5 +48,5 @@
 - [ ] 7.2 Deploy to `asia-southeast1` and confirm the region matches Firestore's
 - [ ] 7.3 Observe production logs across several polls and confirm the `unchanged` path still dominates, which is the signal that `isMaterialChange` was not disturbed
 - [ ] 7.4 Confirm no TTL policy exists on the presence collection
-- [ ] 7.5 Run `openspec validate auditfix-cloud-poller-consistency`
+- [x] 7.5 Run `openspec validate auditfix-cloud-poller-consistency`
 - [x] 7.6 Record in the commit message that the overlap window came from `timeoutSeconds` equalling the schedule interval, since that is the non-obvious part of the diagnosis
