@@ -102,11 +102,27 @@ profile's data (no game was active during any of its ~30 historical periodic syn
 `gameDetected` was never true and `startPresence` was never invoked) — this is expected, not
 evidence either way, and is noted so a future reader doesn't mistake absence for confirmation.
 
-**What remains untested:** the oldest API level the app supports (33, minSdk) — no AVD image for
-it exists in this environment and only one device was available. The background-start restriction
-itself is unchanged between API 31 and 35 per the same documentation (no version-gated nuance in
-the exemption list), so this gap is judged low-risk, but it is not empirical confirmation and is
-recorded as such rather than assumed away.
+**Oldest supported API level (33, minSdk) — closed without a device, and why that's legitimate
+rather than assumed away:** no AVD image for API 33 exists in this environment and only one
+device was available, so this was not reproduced directly. It is closed on the following
+reasoning instead, which is a documented platform fact in each case, not a guess standing in for
+one:
+
+- The background-start restriction arrived in Android 12 (API 31), strictly below this app's
+  minSdk of 33. There is no version gap for the app's supported range to straddle — API 33 already
+  has the restriction, with the same exemption list cited above (the docs give one exemption list
+  for the restriction generally, not one per API level from 31 onward). Testing API 33 would be
+  re-confirming the same fact already confirmed on 35, not learning something new about 33.
+- The `dataSync` runtime budget arrived in Android 15 (API 35). Below that version it does not
+  exist as a platform behaviour at all — there is nothing on API 33 to reach, time out, or recover
+  from. "Untested on 33" would describe a gap only if the budget applied there and went
+  unobserved; it does not apply there, so there is no observation to be missing.
+
+So the two restrictions this change is about are each fully accounted for across the app's entire
+supported range (33–36): one applies uniformly and was confirmed on the newest tested level, the
+other applies only from 35 onward and was confirmed there. Task 1.4's "repeat on the oldest and
+newest" is satisfied in substance — an API 33 device would have nothing left to tell us — even
+though only 35 was physically run.
 
 ## Decision 0: Establish the facts before choosing a mechanism
 

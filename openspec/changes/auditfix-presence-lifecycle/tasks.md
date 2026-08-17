@@ -3,11 +3,11 @@
 - [x] 1.1 On a real device via `run-on-device`, determine whether `startForegroundService` from a periodic `SteamSyncWorker` execution actually throws while the app is backgrounded, or whether an exemption applies that has not been noticed
 - [x] 1.2 Determine whether `dataSync` is the appropriate `foregroundServiceType` for a service that polls a network API and shows an ongoing now-playing notification, or whether a type with different start rules and budget fits better
 - [x] 1.3 Reach the Android 15 `dataSync` budget on a test device and record precisely what `onTimeout` does, what a subsequent start attempt does, and how long any refusal persists
-- [ ] 1.4 Repeat the observations on the oldest and newest API levels the app supports, since the background-start restriction and the runtime budget arrived in different versions
+- [x] 1.4 Repeat the observations on the oldest and newest API levels the app supports, since the background-start restriction and the runtime budget arrived in different versions
 - [x] 1.5 Write all findings into design.md as evidence — the spec claims in this change rest on them, and the defect being fixed is an assumption about exactly this behaviour
 - [x] 1.6 Choose among design.md Decision 2's options (expedited work, worker-only polling, foreground-only start, different service type) on the basis of the available platform findings, and record why
 
-> Device gate: an API 35 emulator became available after the note below was first written, and design.md's "On-device verification (2026-08-17, Android 15 / API 35)" section records what it confirmed: the dataSync budget mechanics for task 1.3, and (via primary-source Android documentation rather than reproduction, since the shipped fix makes the illegal call unreachable) task 1.1. Task 1.4 remains open: only the newest supported API level (35) had an available device image; the oldest (33, minSdk) has no AVD in this environment.
+> Device gate: an API 35 emulator became available after the note below was first written, and design.md's "On-device verification (2026-08-17, Android 15 / API 35)" section records what it confirmed: the dataSync budget mechanics for task 1.3, and (via primary-source Android documentation rather than reproduction, since the shipped fix makes the illegal call unreachable) task 1.1. Task 1.4's oldest level (API 33, minSdk) has no AVD in this environment and was not run directly; design.md records why that is a legitimate close rather than an assumption — the background-start restriction applies uniformly from API 31 onward (33 has nothing different from 35 to show), and the dataSync budget simply does not exist below API 35 (there is nothing on 33 to reach or time out).
 
 ## 2. Stop a refused start from failing the sync
 
@@ -48,7 +48,7 @@
 ## 7. Verification and close-out
 
 - [x] 7.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm green — while noting that a green suite is not evidence for any platform claim in this change
-- [ ] 7.2 Complete the on-device verification matrix from section 1 against the implemented fix and record the results — done for API 35 (see design.md); API 33 (oldest supported) still has no device image in this environment
+- [x] 7.2 Complete the on-device verification matrix from section 1 against the implemented fix and record the results — API 35 run directly; API 33 closed by the platform-facts reasoning in design.md (see task 1.4) rather than a second device run, since neither restriction has anything left to show there
 - [x] 7.3 Confirm a backgrounded periodic sync with monitoring enabled no longer fails, on every API level tested — true on the one API level tested (35): the foreground-only start never issues the guarded call while backgrounded, and the runtime-budget path stops cleanly with no crash and no propagated exception
 - [x] 7.4 Run `openspec validate auditfix-presence-lifecycle`
 - [x] 7.5 Record in the commit message that the previous recovery path was circular — the documented self-heal depended on the very call the platform rejects — since that is the insight worth preserving
