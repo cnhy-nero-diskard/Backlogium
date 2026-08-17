@@ -36,6 +36,78 @@ the owned-games poll authoritative, and surfaces that fine-grained monitoring mu
 next foreground visit. The selection is evidence-backed from the platform documentation but still
 requires the real-device matrix before the change can be closed.
 
+## On-device verification (2026-08-17, Android 15 / API 35)
+
+An emulator became available in the implementation environment after the findings above were
+recorded (`Medium_Phone_API_35`, Android 15, API 35 — the newest platform version the app
+targets and the one that introduces the `dataSync` budget). This section records what was
+verified against the implemented fix, not what was assumed.
+
+**Primary-source confirmation, not memory.** Before touching the device, the two restrictions'
+exact mechanics were pulled from `developer.android.com` (not recalled):
+[Foreground service timeouts](https://developer.android.com/develop/background-work/services/fgs/timeout)
+and
+[Restrictions on starting a foreground service from the background](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start).
+Both pages document ADB test hooks specifically so this kind of change doesn't have to wait six
+hours per attempt:
+
+- `adb shell device_config put activity_manager data_sync_fgs_timeout_duration <ms>` shortens the
+  `dataSync` budget for testing.
+- The background-start restriction's exemption list is explicit and does **not** include ordinary
+  WorkManager execution (periodic or one-time) — confirming finding #6's premise from the
+  authoritative source rather than from absence-of-evidence.
+- A subsequent `dataSync` start after the budget is exhausted throws
+  `ForegroundServiceStartNotAllowedException` with message `"Time limit already exhausted for
+  foreground service type dataSync"`, and — the detail that matters most for Decision 2 — **the
+  timer resets when the user brings the app to the foreground.**
+
+**What was reproduced on-device (not just documented):**
+
+1. Set `data_sync_fgs_timeout_duration` to `20000` (20s). Attempting
+   `adb shell am compat enable FGS_INTRODUCE_TIME_LIMITS com.example.backlogium` was refused by
+   the platform with "the app's targetSdk (36) is above the change's targetSdk threshold (34)" —
+   i.e. this app cannot opt out of the timeout even if it wanted to; it is unconditionally subject
+   to it. Confirms the fix cannot rely on the budget not applying.
+2. Enabled "Monitor Steam activity" from Settings (the real `onLiveMonitorEnabledChanged` →
+   `presenceServiceStarter.start(trigger = "settings")` path, i.e. Decision 2 option C's actual
+   foreground-triggered start). `dumpsys activity services` confirmed a real `dataSync` foreground
+   service running (`types=0x00000001`, `uidState: TOP`) — the start succeeds cleanly from the
+   foreground, as the design requires.
+3. Backgrounding the app (home button) is the moment the budget clock started, not service start:
+   `ActivityManager` logged `FGS (dataSync) timed out` and `Stop FGS timeout` exactly 20.0s after
+   `VRI[MainActivity] visibilityChanged ... newVisibility=false` — i.e. **the 6-hour/shortened
+   budget accrues only while the app is backgrounded**, not from when the service starts. This is
+   more precise than the developer-docs wording and matters for how the limitation should be
+   described to users: opening the app pauses the clock, it does not just reset it at the end.
+4. No crash: no `RemoteServiceException`, no `FATAL EXCEPTION`, app process survived. Confirms
+   `onTimeout`'s `stopSelf(startId)` ran within the platform's grace period.
+5. Pulled `presence_decisions` from the device (`run-as` + `sqlite-jdbc`, since the emulator has no
+   `sqlite3` binary): row `outcome=runtime_budget_reached, trigger=service` was written at the
+   moment of the timeout, and a diagnostics record read confirms it holds no credential data (id,
+   timestamp, trigger, outcome, appId, retainedPriorState only).
+6. Reopening the app ~12s later produced `outcome=monitoring_started, trigger=foreground_monitor`
+   — `BacklogiumApp`'s `ProcessLifecycleOwner` observer (`BacklogiumApp.kt:184-188`) retried
+   `presenceServiceStarter.start(trigger = "foreground_monitor")` automatically and it **succeeded**,
+   empirically confirming the docs' "timer resets on foreground" claim: recovery after the budget
+   is exhausted is automatic on the next foreground visit, not something the user has to
+   rediscover the Settings toggle to fix.
+
+**What was not reproduced, and why that's an accepted limitation rather than a gap:** task 1.1
+asks whether `startForegroundService` throws when called from a backgrounded worker. The shipped
+fix (`PresenceServiceStarter.isAppVisible()`) makes that call impossible to reach from a background
+sync — reproducing it would mean temporarily reverting the fix under test. The claim is instead
+supported by the primary-source exemption list above, which explicitly excludes WorkManager
+execution. Historical `presence_decisions` rows for `trigger=sync` are absent entirely in this
+profile's data (no game was active during any of its ~30 historical periodic syncs, so
+`gameDetected` was never true and `startPresence` was never invoked) — this is expected, not
+evidence either way, and is noted so a future reader doesn't mistake absence for confirmation.
+
+**What remains untested:** the oldest API level the app supports (33, minSdk) — no AVD image for
+it exists in this environment and only one device was available. The background-start restriction
+itself is unchanged between API 31 and 35 per the same documentation (no version-gated nuance in
+the exemption list), so this gap is judged low-risk, but it is not empirical confirmation and is
+recorded as such rather than assumed away.
+
 ## Decision 0: Establish the facts before choosing a mechanism
 
 This is the first task, not a preamble. The options below all depend on current platform
