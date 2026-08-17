@@ -20,6 +20,41 @@ export type WriteOutcome = "unchanged" | "written";
 
 export interface StoredState {
   gameid?: unknown;
+  updatedAt?: unknown;
+}
+
+function asDate(value: unknown): Date | undefined {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? undefined : value;
+  }
+
+  if (!value || typeof value !== "object") return undefined;
+
+  const timestamp = value as {
+    toDate?: unknown;
+    date?: unknown;
+  };
+
+  if (typeof timestamp.toDate === "function") {
+    const date = timestamp.toDate();
+    return date instanceof Date && !Number.isNaN(date.getTime())
+      ? date
+      : undefined;
+  }
+
+  return timestamp.date instanceof Date && !Number.isNaN(timestamp.date.getTime())
+    ? timestamp.date
+    : undefined;
+}
+
+function isStaleOrEqualObservation(
+  previous: StoredState | undefined,
+  observation: Observation,
+): boolean {
+  const updatedAt = asDate(previous?.updatedAt);
+  return (
+    updatedAt !== undefined && observation.t.getTime() <= updatedAt.getTime()
+  );
 }
 
 /**
@@ -76,6 +111,11 @@ export async function recordObservation(
     const previous = snapshot.exists
       ? (snapshot.data() as StoredState)
       : undefined;
+
+    if (isStaleOrEqualObservation(previous, observation)) {
+      // Never let an older or equal observation overwrite the newest state.
+      return { outcome: "unchanged" as const, first: false };
+    }
 
     if (!isMaterialChange(previous, observation)) {
       // No write at all. `since` and `updatedAt` keep their stored values.

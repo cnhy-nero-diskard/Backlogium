@@ -28,6 +28,8 @@ export const pollPresence = onSchedule(
     secrets: [STEAM_API_KEY],
     memory: "256MiB",
     maxInstances: 1,
+    // Bound both container count and per-instance request concurrency.
+    concurrency: 1,
     // Steam requests are bounded at 15 seconds. A 45-second ceiling leaves
     // margin for the Firestore transaction and cold starts while still
     // ending before the next scheduled poll; a poll that cannot finish in

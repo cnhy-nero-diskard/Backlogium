@@ -42,6 +42,14 @@ interface ReadBarrier {
   readonly resolveRelease: () => void;
 }
 
+interface CommitBarrier {
+  acquired: boolean;
+  readonly ready: Promise<void>;
+  readonly resolveReady: () => void;
+  readonly release: Promise<void>;
+  readonly resolveRelease: () => void;
+}
+
 /**
  * Narrow in-memory Firestore surface used by the presence poller tests.
  * It intentionally models only collection().doc().get(), transactions, and
@@ -54,6 +62,7 @@ export class FakeFirestore {
 
   private readonly documents = new Map<string, VersionedDocument>();
   private readBarrier: ReadBarrier | undefined;
+  private commitBarrier: CommitBarrier | undefined;
 
   collection(name: string): CollectionReference {
     return new FakeCollectionReference(this, name);
@@ -84,7 +93,7 @@ export class FakeFirestore {
       const result = await updateFunction(transaction);
 
       try {
-        this.commitTransaction(transaction);
+        await this.commitTransaction(transaction);
         return result;
       } catch (error) {
         if (!(error instanceof TransactionConflictError) || attempt === 4) {
@@ -131,6 +140,34 @@ export class FakeFirestore {
     this.readBarrier?.resolveRelease();
   }
 
+  /** Hold the next transaction commit until releaseHeldTransactionCommit(). */
+  holdNextTransactionCommit(): void {
+    let resolveReady!: () => void;
+    let resolveRelease!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      resolveRelease = resolve;
+    });
+
+    this.commitBarrier = {
+      acquired: false,
+      ready,
+      resolveReady,
+      release,
+      resolveRelease,
+    };
+  }
+
+  async waitUntilTransactionCommitHeld(): Promise<void> {
+    await this.commitBarrier?.ready;
+  }
+
+  releaseHeldTransactionCommit(): void {
+    this.commitBarrier?.resolveRelease();
+  }
+
   async read(path: string): Promise<DocumentSnapshot> {
     const stored = this.documents.get(path);
     const snapshot: DocumentSnapshot = {
@@ -150,7 +187,15 @@ export class FakeFirestore {
     return snapshot;
   }
 
-  commitTransaction(transaction: FakeTransaction): void {
+  async commitTransaction(transaction: FakeTransaction): Promise<void> {
+    const barrier = this.commitBarrier;
+    if (barrier && !barrier.acquired) {
+      barrier.acquired = true;
+      barrier.resolveReady();
+      await barrier.release;
+      if (this.commitBarrier === barrier) this.commitBarrier = undefined;
+    }
+
     for (const [path, version] of transaction.readVersions) {
       const currentVersion = this.documents.get(path)?.version ?? 0;
       if (currentVersion !== version) {

@@ -55,6 +55,22 @@ describe("presence poller", () => {
     expect(firestore.committedWrites).toHaveLength(0);
   });
 
+  it.each([
+    ["stale", "2026-08-14T00:59:59.000Z"],
+    ["equal", "2026-08-14T01:00:00.000Z"],
+  ])("ignores %s observations before comparing the game", async (_label, timestamp) => {
+    firestore.seed("players/test-steam-id", {
+      gameid: "730",
+      personastate: 1,
+      updatedAt: { date: new Date("2026-08-14T01:00:00.000Z") },
+    });
+
+    await expect(
+      recordObservation("test-steam-id", observation("570", timestamp)),
+    ).resolves.toBe("unchanged");
+    expect(firestore.committedWrites).toHaveLength(0);
+  });
+
   it("game-to-game transition writes both documents and resets since", async () => {
     const next = observation("570", "2026-08-14T01:02:03.000Z");
     firestore.seed("players/test-steam-id", {
@@ -136,6 +152,44 @@ describe("presence poller", () => {
     expect([...outcomes].sort()).toEqual(["unchanged", "written"]);
     expect(firestore.transactionAttempts).toBeGreaterThan(2);
     expect(firestore.committedWrites).toHaveLength(2);
+    expect(
+      firestore.committedWrites.filter((write) =>
+        write.path.startsWith("players/test-steam-id/presence/"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("does not roll state backward when different observations commit out of order", async () => {
+    firestore.seed("players/test-steam-id", {
+      gameid: "440",
+      personastate: 1,
+      updatedAt: { date: new Date("2026-08-14T05:00:00.000Z") },
+    });
+    firestore.holdNextReads(1);
+    firestore.holdNextTransactionCommit();
+
+    const olderPoll = recordObservation(
+      "test-steam-id",
+      observation("570", "2026-08-14T05:01:00.000Z"),
+    );
+    await firestore.waitUntilReadsHeld();
+    firestore.releaseHeldReads();
+    await firestore.waitUntilTransactionCommitHeld();
+
+    const newerPoll = recordObservation(
+      "test-steam-id",
+      observation("730", "2026-08-14T05:02:00.000Z"),
+    );
+    await expect(newerPoll).resolves.toBe("written");
+    firestore.releaseHeldTransactionCommit();
+    await expect(olderPoll).resolves.toBe("unchanged");
+
+    expect(firestore.transactionAttempts).toBe(3);
+    expect(firestore.committedWrites).toHaveLength(2);
+    const playerWrite = firestore.committedWrites.find(
+      (write) => write.path === "players/test-steam-id",
+    );
+    expect(playerWrite?.data.gameid).toBe("730");
     expect(
       firestore.committedWrites.filter((write) =>
         write.path.startsWith("players/test-steam-id/presence/"),
