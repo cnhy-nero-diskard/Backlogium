@@ -13,6 +13,29 @@ Two constraints, both platform-imposed, both currently unhandled:
 
 The code handles neither, and its recovery plan for (2) is a call that violates (1).
 
+## Findings (2026-08-17)
+
+The `run-on-device` workflow was attempted from the implementation worktree, but ADB reported
+no attached devices. The device observations in tasks 1.1, 1.3, and 1.4 therefore remain pending;
+this change does not claim on-device evidence.
+
+The available Android Developers guidance establishes the implementation boundary:
+
+- Android 12+ rejects background foreground-service starts unless a documented exemption applies;
+  an ordinary periodic WorkManager execution is not one of the listed exemptions.
+- Android 15 gives `dataSync` foreground services a cumulative six-hour budget in a rolling
+  24-hour window, calls `onTimeout`, and may reject another `dataSync` start until the user brings
+  the app to the foreground.
+- `dataSync` is the semantically appropriate declared type for fetching data, but the documentation
+  recommends WorkManager or direct user interaction instead of treating it as an unattended,
+  indefinitely running monitor. No alternative foreground-service type matches this polling work.
+
+These findings select Decision 2 option C for this implementation: only a foreground app
+interaction may start `PresenceService`; a background sync records `start_not_attempted`, leaves
+the owned-games poll authoritative, and surfaces that fine-grained monitoring must wait for the
+next foreground visit. The selection is evidence-backed from the platform documentation but still
+requires the real-device matrix before the change can be closed.
+
 ## Decision 0: Establish the facts before choosing a mechanism
 
 This is the first task, not a preamble. The options below all depend on current platform
@@ -66,11 +89,11 @@ Options, to be chosen after Decision 0:
 | **C.** Start only from the foreground | monitoring engages when the app is opened, and after that survives until the platform stops it | unattended detection is lost, which is the feature's main purpose |
 | **D.** Change the service type | a type whose start rules and budget fit better | depends entirely on Decision 0; may not exist for this use case |
 
-**No recommendation here on purpose.** Each option trades away something real, and the
-choice turns on the Decision 0 findings. What this design does commit to is that **whichever
-option is chosen, the spec states what unattended monitoring actually does** — including "it
-does not resume until you open the app", if that is the truth. A documented limitation is
-usable; a false promise of self-healing is not.
+Option C is selected for this change based on the findings above. Each option trades away
+something real, so this is intentionally a limitation rather than a claim that the existing
+unattended capability survives: a background poll still tracks ordinary playtime, but fine-grained
+monitoring does not resume until a foreground interaction starts the service. A documented
+limitation is usable; a false promise of self-healing is not.
 
 **Rejected outright: leaving the current mechanism with a wrapped exception.** That is
 Decision 1 alone, and it converts a loud failure into a silent one. It is a necessary first
