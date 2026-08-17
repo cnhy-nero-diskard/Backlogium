@@ -117,12 +117,10 @@ describe("presence poller", () => {
     expect(firestore.committedWrites).toHaveLength(0);
   });
 
-  it("duplicate delivery currently writes two records, documenting a known defect", async () => {
+  it("overlapping invocations write one transition and retry the stale decision", async () => {
     firestore.seed("players/test-steam-id", { gameid: "440", personastate: 1 });
     firestore.holdNextReads(2);
 
-    // Known defect: auditfix-cloud-poller-consistency will make this expect one record
-    // after moving the read/decision/write sequence into a Firestore transaction.
     const first = recordObservation(
       "test-steam-id",
       observation("570", "2026-08-14T04:00:00.000Z"),
@@ -134,12 +132,15 @@ describe("presence poller", () => {
 
     await firestore.waitUntilReadsHeld();
     firestore.releaseHeldReads();
-    await expect(Promise.all([first, second])).resolves.toEqual(["written", "written"]);
+    const outcomes = await Promise.all([first, second]);
+    expect([...outcomes].sort()).toEqual(["unchanged", "written"]);
+    expect(firestore.transactionAttempts).toBeGreaterThan(2);
+    expect(firestore.committedWrites).toHaveLength(2);
     expect(
       firestore.committedWrites.filter((write) =>
         write.path.startsWith("players/test-steam-id/presence/"),
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 });
 

@@ -27,7 +27,12 @@ export const pollPresence = onSchedule(
     region: "asia-southeast1",
     secrets: [STEAM_API_KEY],
     memory: "256MiB",
-    timeoutSeconds: 60,
+    maxInstances: 1,
+    // Steam requests are bounded at 15 seconds. A 45-second ceiling leaves
+    // margin for the Firestore transaction and cold starts while still
+    // ending before the next scheduled poll; a poll that cannot finish in
+    // time has nothing useful to report.
+    timeoutSeconds: 45,
     // No retries. The next poll is 60 seconds away, so a retry buys nothing
     // and would only record a near-duplicate observation timestamp.
     retryCount: 0,
