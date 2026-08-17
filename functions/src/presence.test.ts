@@ -51,6 +51,7 @@ describe("presence poller", () => {
     firestore.seed("players/test-steam-id", {
       gameid: "440",
       personastate: 1,
+      gameName: "Old Game 440",
       lastObservedAt: { date: new Date("2026-08-13T00:00:00.000Z") },
     });
 
@@ -60,6 +61,8 @@ describe("presence poller", () => {
     expect(
       (firestore.committedWrites[0].data.lastObservedAt as { date: Date }).date,
     ).toEqual(next.t);
+    expect(firestore.committedWrites[0].data.personastate).toBe(1);
+    expect(firestore.committedWrites[0].data.gameName).toBe("Game 440");
   });
 
   it.each([
@@ -120,6 +123,7 @@ describe("presence poller", () => {
     firestore.seed("players/test-steam-id", {
       gameid: "440",
       personastate: 1,
+      gameName: "Old Game 440",
       lastObservedAt: { date: new Date("2026-08-14T02:00:00.000Z") },
     });
 
@@ -134,6 +138,8 @@ describe("presence poller", () => {
     expect(
       (firestore.committedWrites[0].data.lastObservedAt as { date: Date }).date,
     ).toEqual(next.t);
+    expect(firestore.committedWrites[0].data.personastate).toBe(3);
+    expect(firestore.committedWrites[0].data.gameName).toBe("Game 440");
   });
 
   it("Steam errors and timeouts return no observation and write nothing", async () => {

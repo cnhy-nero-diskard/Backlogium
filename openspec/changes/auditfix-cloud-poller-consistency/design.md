@@ -34,7 +34,12 @@ await db.runTransaction(async (tx) => {
   const previous = snapshot.exists ? (snapshot.data() as StoredState) : undefined;
   if (isStaleOrEqualObservation(previous, observation)) return "unchanged";
   if (!isMaterialChange(previous, observation)) {
-    tx.set(playerRef, { ...snapshot.data(), lastObservedAt: observedAt });
+    tx.set(playerRef, {
+      ...snapshot.data(),
+      personastate: observation.personastate,
+      gameName: observation.gameName,
+      lastObservedAt: observedAt,
+    });
     return "unchanged";
   }
   tx.set(playerRef, { ... });
@@ -52,9 +57,9 @@ transitions and older observations from rolling the current state backward.
 
 **The `unchanged` path must stay inside the transaction.** Returning early before the
 transaction begins would reintroduce the race for exactly the case that occurs 99% of the
-time (same-game polls). The unchanged path still writes `lastObservedAt`, while preserving
-`since`, `updatedAt`, and the transition log. The read is the thing that needs isolating, and
-the read happens on every invocation.
+time (same-game polls). The unchanged path refreshes the raw observed fields and writes
+`lastObservedAt`, while preserving `gameid`, `since`, `updatedAt`, and the transition log. The
+read is the thing that needs isolating, and the read happens on every invocation.
 
 **Cost**: an extra round trip versus a batch and one current-document metadata write per
 successful poll. Same-game polls still append no history, so the transition log remains

@@ -57,3 +57,5 @@
 - [x] 8.2 Add a durable `lastObservedAt` watermark for every successful observation
 - [x] 8.3 Test older different-game observations racing newer same-game observations
 - [x] 8.4 Update the cloud poller design and specifications to document watermark correctness
+- [x] 8.5 Update duplicate-delivery specification wording for equal-timestamp no-op behavior
+- [x] 8.6 Refresh raw observed fields on watermark-only current-state writes

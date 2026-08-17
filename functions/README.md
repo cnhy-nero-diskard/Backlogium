@@ -37,7 +37,8 @@ Two things worth understanding before changing anything here:
 
 Transition history writes happen only when the game changes. Every successful poll
 also advances `lastObservedAt` on the current-state document; an unchanged poll
-does not append a presence entry, which keeps the log a record of transitions rather
+refreshes the raw persona/game-name fields but does not append a presence entry or
+reset the transition timestamps. This keeps the log a record of transitions rather
 than 43,200 rows a month of "still playing Hades".
 
 ## Setup

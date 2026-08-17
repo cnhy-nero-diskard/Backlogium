@@ -111,7 +111,8 @@ The system SHALL record each observed transition as a document in the `players/{
 #### Scenario: Duplicate delivery does not duplicate history
 
 - **WHEN** an invocation for an observation timestamp already recorded is retried or delivered more than once
-- **THEN** the existing document for that timestamp is overwritten
+- **THEN** the retry is ignored when its timestamp is equal to `lastObservedAt`
+- **AND** the existing transition document is not rewritten
 - **AND** no additional document is appended
 
 ### Requirement: Failures leave state untouched

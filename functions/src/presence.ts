@@ -122,11 +122,14 @@ export async function recordObservation(
     }
 
     if (!isMaterialChange(previous, observation)) {
-      // No transition write. `since` and `updatedAt` keep their stored values,
-      // while `lastObservedAt` records the newest successful observation so a
-      // stalled older transaction cannot roll state backward.
+      // No transition write. Refresh the raw observed fields while `since` and
+      // `updatedAt` keep their stored values. `lastObservedAt` records the
+      // newest successful observation so a stalled older transaction cannot
+      // roll state backward.
       transaction.set(playerRef, {
         ...(snapshot.data() ?? {}),
+        personastate: observation.personastate,
+        gameName: observation.gameName,
         lastObservedAt: observedAt,
       });
       return { outcome: "unchanged" as const, first: false };
