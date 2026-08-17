@@ -2,6 +2,7 @@ package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.LiveSessionState
+import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
@@ -11,6 +12,7 @@ import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOf
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -96,6 +98,12 @@ interface SettingsRepository {
     val liveMonitorEnabled: Flow<Boolean>
 
     suspend fun setLiveMonitorEnabled(enabled: Boolean)
+
+    /** Durable availability state for the opt-in monitor; old test doubles default to available. */
+    val liveMonitoringAvailability: Flow<PresenceMonitoringAvailability>
+        get() = flowOf(PresenceMonitoringAvailability.AVAILABLE)
+
+    suspend fun setLiveMonitoringAvailability(availability: PresenceMonitoringAvailability) = Unit
 }
 
 /** The only production implementation: a thin pass-through to Preferences DataStore. */
@@ -156,4 +164,10 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun setLiveMonitorEnabled(enabled: Boolean) =
         settings.setLiveMonitorEnabled(enabled)
+
+    override val liveMonitoringAvailability: Flow<PresenceMonitoringAvailability> =
+        settings.liveMonitoringAvailabilityFlow
+
+    override suspend fun setLiveMonitoringAvailability(availability: PresenceMonitoringAvailability) =
+        settings.setLiveMonitoringAvailability(availability)
 }

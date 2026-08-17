@@ -45,6 +45,36 @@ internal data class DailyProgressCredit(
 )
 
 /**
+ * Keep the owned-games poll independent from the optional fine-grained presence decision. A
+ * worker can discover a game while backgrounded, but its callback can only record that a start was
+ * not attempted; the Steam data fetch must still be allowed to complete and determine the worker's
+ * own result.
+ */
+internal suspend fun <T> fetchOwnedGamesAfterPresenceDecision(
+    gameDetected: Boolean,
+    recordPresenceNotAttempted: suspend () -> Unit,
+    fetchOwnedGames: suspend () -> T,
+): kotlin.Result<T> {
+    if (gameDetected) {
+        try {
+            recordPresenceNotAttempted()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Presence is best-effort; the owned-games poll is the sync's source of truth.
+        }
+    }
+
+    return try {
+        kotlin.Result.success(fetchOwnedGames())
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Exception) {
+        kotlin.Result.failure(error)
+    }
+}
+
+/**
  * Attribute only newly observed session minutes to each session's start date. A session remains
  * atomic across midnight; [SessionDiffer.SessionAction.addedMinutes] is the delta for an Extend,
  * not the session's accumulated total.
@@ -122,15 +152,20 @@ class SteamSyncWorker @AssistedInject constructor(
                 steamApi.getPlayerSummaries(apiKey, steamId, scope = scope).response.players.firstOrNull()
             }.getOrNull()
 
-            // The detection path for a game that started while the app was never opened: the
-            // service then owns the 30s poll and stops itself once the game ends. Deliberately
-            // ahead of getOwnedGames — presence doesn't depend on the owned-games list, so neither
-            // a private library nor a failure later in this run may cost the player detection.
-            if (!summary?.gameId.isNullOrBlank()) {
-                presenceServiceStarter.start()
-            }
-
-            val owned = steamApi.getOwnedGames(apiKey, steamId, scope = scope)
+            // The detection path for a game that started while the app was never opened: record
+            // that the foreground-only start was not attempted. Deliberately ahead of
+            // getOwnedGames — presence doesn't depend on the owned-games list, so neither a
+            // private library nor a failure later in this run may cost the player detection.
+            val owned = fetchOwnedGamesAfterPresenceDecision(
+                gameDetected = !summary?.gameId.isNullOrBlank(),
+                recordPresenceNotAttempted = {
+                    presenceServiceStarter.recordNotAttempted(trigger = "sync")
+                    Unit
+                },
+                fetchOwnedGames = {
+                    steamApi.getOwnedGames(apiKey, steamId, scope = scope)
+                },
+            ).getOrThrow()
             val games = owned.response.games
 
             if (games.isEmpty()) {

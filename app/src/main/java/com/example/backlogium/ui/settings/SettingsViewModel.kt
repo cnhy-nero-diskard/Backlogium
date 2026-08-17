@@ -215,7 +215,7 @@ class SettingsViewModel @Inject constructor(
     /** Start only from this visible Settings interaction; disabling is observed by the service. */
     fun onLiveMonitorEnabledChanged(enabled: Boolean) = viewModelScope.launch {
         settings.setLiveMonitorEnabled(enabled)
-        if (enabled) presenceServiceStarter.start()
+        if (enabled) presenceServiceStarter.startFromForeground(trigger = "settings")
     }
 
     fun setAdvancedExpanded(expanded: Boolean) = advancedExpanded.update { expanded }

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
+import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CollectionRepository
@@ -54,6 +55,9 @@ data class HomeUiState(
     val lastSyncError: String? = null,
     /** True while any sync is in flight; disables the error card's retry. */
     val isSyncing: Boolean = false,
+    /** Why opt-in live monitoring is unavailable, if Android stopped or refused it. */
+    val liveMonitoringAvailability: PresenceMonitoringAvailability =
+        PresenceMonitoringAvailability.AVAILABLE,
     val isInGame: Boolean = false,
     val nowPlayingName: String? = null,
     val nowPlayingIconUrl: String? = null,
@@ -141,6 +145,8 @@ class HomeViewModel @Inject constructor(
         val config: RuleConfig,
         val credState: CredentialsState,
         val isSyncing: Boolean,
+        val liveMonitoringAvailability: PresenceMonitoringAvailability =
+            PresenceMonitoringAvailability.AVAILABLE,
     )
 
     private val homeData: Flow<HomeData> = combine(
@@ -151,6 +157,8 @@ class HomeViewModel @Inject constructor(
         profileRepository.syncInProgress,
     ) { profile, days, config, credState, isSyncing ->
         HomeData(profile, days, config, credState, isSyncing)
+    }.combine(settings.liveMonitoringAvailability) { data, availability ->
+        data.copy(liveMonitoringAvailability = availability)
     }
 
     // The date is an input, not a call inside the lambda: crossing midnight has to re-run this
@@ -177,6 +185,7 @@ class HomeViewModel @Inject constructor(
             longestStreak = profile?.longestStreak ?: 0,
             lastSyncError = profile?.lastSyncError,
             isSyncing = isSyncing,
+            liveMonitoringAvailability = data.liveMonitoringAvailability,
         )
     }
 

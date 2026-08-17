@@ -86,6 +86,7 @@ import com.airbnb.lottie.compose.LottieCompositionSpec
 import com.airbnb.lottie.compose.animateLottieCompositionAsState
 import com.airbnb.lottie.compose.rememberLottieComposition
 import com.example.backlogium.R
+import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionPacingState
 import com.example.backlogium.domain.CollectionMode
@@ -265,6 +266,41 @@ private fun InnerHomeContent(
                             Text("Retry")
                         }
                     }
+                }
+            }
+        }
+
+        val monitoringMessage = when (state.liveMonitoringAvailability) {
+            PresenceMonitoringAvailability.AVAILABLE -> null
+            PresenceMonitoringAvailability.FOREGROUND_REQUIRED ->
+                "Android only allows live monitoring to start while Backlogium is open. Open the app to resume live updates."
+            PresenceMonitoringAvailability.RUNTIME_BUDGET_EXHAUSTED ->
+                "Android's daily live-monitoring limit was reached. Open the app to resume live updates."
+            PresenceMonitoringAvailability.START_REFUSED ->
+                "Android refused the live-monitoring start. Open the app to try again."
+            PresenceMonitoringAvailability.START_FAILED ->
+                "Live monitoring could not start. Open the app to try again."
+        }
+        monitoringMessage?.let { message ->
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Live monitoring unavailable",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(text = message)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Periodic playtime tracking continues.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
