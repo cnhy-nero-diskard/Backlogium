@@ -141,9 +141,9 @@ class SyncRunRecorder @Inject constructor(
 }
 
 /**
- * The fixed set of branches presence detection can take, mirroring [LiveStatusRepository.fetch]'s
- * branches one-to-one — the six-way ambiguity that motivated this change in the first place. As
- * with [SyncOutcome], the enum is the enforcement point; [PresenceDecision.outcome] stays a plain
+ * The fixed set of branches presence detection and monitoring lifecycle can take, mirroring
+ * [LiveStatusRepository.fetch]'s observation branches and the service-start outcomes. As with
+ * [SyncOutcome], the enum is the enforcement point; [PresenceDecision.outcome] stays a plain
  * `String` ([value]) to avoid a schema migration.
  */
 enum class PresenceOutcome(val value: String) {
@@ -152,6 +152,11 @@ enum class PresenceOutcome(val value: String) {
     NO_CREDENTIALS("no_credentials"),
     NO_PLAYER("no_player"),
     FAILED("failed"),
+    MONITORING_STARTED("monitoring_started"),
+    START_REFUSED("start_refused"),
+    START_FAILED("start_failed"),
+    START_NOT_ATTEMPTED("start_not_attempted"),
+    RUNTIME_BUDGET_REACHED("runtime_budget_reached"),
 }
 
 @Singleton

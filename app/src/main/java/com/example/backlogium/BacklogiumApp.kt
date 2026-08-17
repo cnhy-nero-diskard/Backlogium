@@ -6,6 +6,7 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.work.Configuration
+import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.data.repo.LiveStatus
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
@@ -38,7 +39,7 @@ internal const val FOREGROUND_PRESENCE_RETRY_MS = 5_000L
  */
 internal suspend fun detectForegroundPresence(
     checkNow: suspend () -> LiveStatus,
-    startPresence: () -> Unit,
+    startPresence: suspend () -> Unit,
     attempts: Int = FOREGROUND_PRESENCE_ATTEMPTS,
     retryDelayMillis: Long = FOREGROUND_PRESENCE_RETRY_MS,
     delayBeforeRetry: suspend (Long) -> Unit = { delay(it) },
@@ -183,12 +184,19 @@ class BacklogiumApp : Application(), Configuration.Provider {
                 // Android may stop a long-running monitor. Re-start it only from this visible
                 // foreground interaction, never from a worker or boot receiver.
                 if (settings.liveMonitorEnabled.first()) {
-                    presenceServiceStarter.start()
+                    presenceServiceStarter.start(trigger = "foreground_monitor")
                 }
-                detectForegroundPresence(
+                val detected = detectForegroundPresence(
                     checkNow = liveStatusRepository::checkNow,
-                    startPresence = presenceServiceStarter::start,
+                    startPresence = {
+                        presenceServiceStarter.start(trigger = "foreground_detection")
+                    },
                 )
+                if (!detected && !settings.liveMonitorEnabled.first()) {
+                    settings.setLiveMonitoringAvailability(
+                        PresenceMonitoringAvailability.AVAILABLE,
+                    )
+                }
             }
         }
 

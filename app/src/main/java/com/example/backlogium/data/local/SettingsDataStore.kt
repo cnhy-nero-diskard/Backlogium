@@ -68,6 +68,7 @@ class SettingsDataStore @Inject constructor(
         val NOTIFICATION_PERMISSION_REQUESTED =
             booleanPreferencesKey("notification_permission_requested")
         val LIVE_MONITOR_ENABLED = booleanPreferencesKey("live_monitor_enabled")
+        val LIVE_MONITORING_AVAILABILITY = stringPreferencesKey("live_monitoring_availability")
         val RULE_CONFIG_VERSION = longPreferencesKey("rule_config_version")
 
         /**
@@ -374,7 +375,31 @@ class SettingsDataStore @Inject constructor(
     }
 
     suspend fun setLiveMonitorEnabled(enabled: Boolean) {
-        context.dataStore.edit { it[Keys.LIVE_MONITOR_ENABLED] = enabled }
+        context.dataStore.edit { prefs ->
+            prefs[Keys.LIVE_MONITOR_ENABLED] = enabled
+            if (!enabled) prefs.remove(Keys.LIVE_MONITORING_AVAILABILITY)
+        }
+    }
+
+    /**
+     * Durable state for a monitor that could not remain available in the background. The absence
+     * of a value is the normal/available state, so old installs and fresh installs stay quiet.
+     */
+    val liveMonitoringAvailabilityFlow: Flow<PresenceMonitoringAvailability> =
+        context.dataStore.data.map { prefs ->
+            prefs[Keys.LIVE_MONITORING_AVAILABILITY]
+                ?.let { raw -> runCatching { PresenceMonitoringAvailability.valueOf(raw) }.getOrNull() }
+                ?: PresenceMonitoringAvailability.AVAILABLE
+        }
+
+    suspend fun setLiveMonitoringAvailability(availability: PresenceMonitoringAvailability) {
+        context.dataStore.edit { prefs ->
+            if (availability == PresenceMonitoringAvailability.AVAILABLE) {
+                prefs.remove(Keys.LIVE_MONITORING_AVAILABILITY)
+            } else {
+                prefs[Keys.LIVE_MONITORING_AVAILABILITY] = availability.name
+            }
+        }
     }
 
     /** Whether the one-time daily-totals correction has already been applied. */
@@ -433,3 +458,12 @@ data class LiveSessionState(
     val appId: Long? = null,
     val startedAt: Long? = null,
 )
+
+/** Why the opt-in live monitor is not currently available, if it is not available. */
+enum class PresenceMonitoringAvailability {
+    AVAILABLE,
+    FOREGROUND_REQUIRED,
+    RUNTIME_BUDGET_EXHAUSTED,
+    START_REFUSED,
+    START_FAILED,
+}
