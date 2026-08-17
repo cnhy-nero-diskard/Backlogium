@@ -94,11 +94,12 @@ hours per attempt:
 
 **What was not reproduced, and why that's an accepted limitation rather than a gap:** task 1.1
 asks whether `startForegroundService` throws when called from a backgrounded worker. The shipped
-fix gives the worker only `PresenceServiceStarter.recordNotAttempted`; the start-capable
-`startFromForeground` method is called only by the known foreground entry points. Reproducing an
-illegal worker start would therefore mean temporarily reverting the fix under test. The claim is
-instead supported by the primary-source exemption list above, which explicitly excludes WorkManager
-execution. Historical `presence_decisions` rows for `trigger=sync` are absent entirely in this
+fix gives the worker only `PresenceServiceStarter.recordNotAttempted`; that decision records
+`monitoring_already_running` when an active service already covers the game, and otherwise records
+`start_not_attempted`. The start-capable `startFromForeground` method is called only by the known
+foreground entry points. Reproducing an illegal worker start would therefore mean temporarily
+reverting the fix under test. The claim is instead supported by the primary-source exemption list
+above, which explicitly excludes WorkManager execution. Historical `presence_decisions` rows for `trigger=sync` are absent entirely in this
 profile's data (no game was active during any of its ~30 historical periodic syncs, so
 `gameDetected` was never true and `recordPresenceNotAttempted` was never invoked) — this is expected, not
 evidence either way, and is noted so a future reader doesn't mistake absence for confirmation.
