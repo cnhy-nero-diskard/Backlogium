@@ -10,7 +10,9 @@ import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.data.repo.SettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,13 +28,15 @@ class PresenceServiceStarter @Inject constructor(
     @ApplicationContext private val context: Context,
     private val settings: SettingsRepository,
     private val diagnostics: PresenceDecisionRecorder,
+    private val activityVisibility: ActivityVisibilityTracker,
 ) {
     /** Start from a foreground interaction such as Settings or the app-foreground observer. */
     suspend fun startFromForeground(trigger: String): PresenceStartOutcome {
-        val outcome = if (PresenceService.isRunning) {
-            PresenceStartOutcome.ALREADY_RUNNING
-        } else {
-            try {
+        val outcome = withContext(Dispatchers.Main.immediate) {
+            foregroundPresenceOutcome(
+                serviceRunning = PresenceService.isRunning,
+                activityVisible = activityVisibility.hasResumedActivity,
+            ) ?: try {
                 ContextCompat.startForegroundService(
                     context,
                     Intent(context, PresenceService::class.java),
@@ -80,6 +84,16 @@ class PresenceServiceStarter @Inject constructor(
             // Diagnostics must not turn a best-effort presence request into a failed sync.
         }
     }
+}
+
+/** Preflight the foreground-only path immediately before any start-capable call. */
+internal fun foregroundPresenceOutcome(
+    serviceRunning: Boolean,
+    activityVisible: Boolean,
+): PresenceStartOutcome? = when {
+    serviceRunning -> PresenceStartOutcome.ALREADY_RUNNING
+    !activityVisible -> PresenceStartOutcome.NOT_ATTEMPTED
+    else -> null
 }
 
 /** Resolve a background poll's decision without ever making it a service-start operation. */

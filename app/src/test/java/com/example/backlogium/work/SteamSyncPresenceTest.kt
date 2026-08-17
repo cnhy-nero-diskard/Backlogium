@@ -20,6 +20,18 @@ class SteamSyncPresenceTest {
     }
 
     @Test
+    fun foregroundStart_afterActivityIsNoLongerVisible_isNotAttempted() {
+        assertEquals(
+            PresenceStartOutcome.NOT_ATTEMPTED,
+            foregroundPresenceOutcome(serviceRunning = false, activityVisible = false),
+        )
+        assertEquals(
+            null,
+            foregroundPresenceOutcome(serviceRunning = false, activityVisible = true),
+        )
+    }
+
+    @Test
     fun backgroundPresenceDecision_doesNotPreventOwnedGamesFetchOrStartAService() = runTest {
         var fetches = 0
         var notAttempted = 0
