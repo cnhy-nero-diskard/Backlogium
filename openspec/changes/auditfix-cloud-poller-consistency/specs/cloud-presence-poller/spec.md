@@ -15,8 +15,8 @@ write nothing, or be retried against it.
 
 #### Scenario: Same-game poll under isolation
 - **WHEN** an observation reports the same game as the stored state
-- **THEN** no write occurs, and the comparison that reached that conclusion was made against
-  state that could not change underneath it
+- **THEN** no transition write occurs, `lastObservedAt` advances, and the comparison that
+  reached that conclusion was made against state that could not change underneath it
 
 #### Scenario: Genuine transition
 - **WHEN** an observation reports a different game than the stored state
@@ -28,14 +28,35 @@ write nothing, or be retried against it.
 - **THEN** that invocation re-evaluates against the new state rather than committing a
   decision made from stale state
 
+### Requirement: Successful observations advance an ordering watermark
+Every successful Steam observation SHALL advance `lastObservedAt` on the current-state
+document, including an observation that reports the same game and appends no transition.
+An observation whose timestamp is older than or equal to `lastObservedAt` SHALL perform no
+write at all. The watermark and transition decision SHALL be read and updated inside the
+same transaction.
+
+#### Scenario: Newer same-game observation establishes the watermark
+- **WHEN** an observation reports the stored game at a later timestamp
+- **THEN** the current-state document's `lastObservedAt` advances
+- **AND** no presence transition document is appended
+- **AND** `since` and `updatedAt` retain their stored values
+
+#### Scenario: Older transition cannot roll state backward
+- **WHEN** an older different-game observation retries after a newer same-game observation
+  has advanced `lastObservedAt`
+- **THEN** the older observation writes nothing
+- **AND** the current-state game and transition log remain at the newer state
+
 ### Requirement: Recording an observation more than once cannot duplicate a transition
 Recording the same logical observation more than once — by overlapping invocation, retry, or
-redelivery — SHALL NOT produce more than one transition record. Any documented claim about
-this guarantee SHALL describe the mechanism that actually provides it.
+redelivery — SHALL NOT produce more than one transition record. A retry MAY update the
+ordering watermark, but SHALL NOT append another transition. Any documented claim about this
+guarantee SHALL describe the mechanism that actually provides it.
 
 #### Scenario: The same observation recorded twice
 - **WHEN** one logical observation is recorded twice
-- **THEN** the transition log contains one entry for it
+- **THEN** the transition log contains one entry for it, and the current-state watermark is
+  at least as new as the observation
 
 #### Scenario: No two adjacent entries share a game
 - **WHEN** the transition log is read

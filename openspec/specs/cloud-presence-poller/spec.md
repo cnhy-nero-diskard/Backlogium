@@ -27,36 +27,58 @@ The system SHALL poll the Steam Web API `GetPlayerSummaries` endpoint for the co
 
 ### Requirement: Current-state document
 
-The system SHALL maintain the `players/{steamId}` document (referred to below as the current-state document) reflecting the most recently observed presence, containing the schema version, the presence state, the app ID and name of any game in progress, the time the present state began, and the time of the most recent state change.
+The system SHALL maintain the `players/{steamId}` document (referred to below as the current-state document) reflecting the most recently observed presence, containing the schema version, the presence state, the app ID and name of any game in progress, the time the present state began, the time of the most recent state change, and the time of the most recent successful observation.
 
 #### Scenario: First observation creates the document
 
 - **WHEN** a poll succeeds and no `current` document exists
 - **THEN** the function creates it with the observed state
-- **AND** `since` and `updatedAt` are both set to the observation time
+- **AND** `since`, `updatedAt`, and `lastObservedAt` are all set to the observation time
 
 #### Scenario: Session duration is derivable
 
 - **WHEN** the user has been in the same game across many consecutive polls
 - **THEN** `since` still holds the time that game was first observed
-- **AND** `updatedAt` holds the most recent observation time
+- **AND** `updatedAt` holds the most recent state-change time
+- **AND** `lastObservedAt` holds the most recent successful observation time
+
+### Requirement: Observation ordering watermark
+
+The system SHALL advance `lastObservedAt` on the current-state document for every successful
+Steam observation, including same-game observations that do not append a transition. An
+observation at or before the stored `lastObservedAt` SHALL be ignored inside the transaction,
+so an older observation cannot overwrite newer state.
+
+#### Scenario: Same-game observation advances the watermark
+
+- **WHEN** a successful poll reports the same game at a newer timestamp
+- **THEN** `lastObservedAt` advances
+- **AND** no presence transition document is appended
+- **AND** `since` and `updatedAt` retain their stored values
+
+#### Scenario: Older observation is ignored
+
+- **WHEN** an observation timestamp is older than or equal to `lastObservedAt`
+- **THEN** the current-state document and presence log remain unchanged
 
 ### Requirement: Write on game change only
 
-The system SHALL write to Firestore only when the observed game ID differs from the stored game ID. A change in persona state alone SHALL NOT constitute a material change and SHALL NOT produce a write. Persona state is still recorded as a field on every document written, so the raw value at each transition is preserved.
+The system SHALL append a presence transition only when the observed game ID differs from the stored game ID. A successful observation MAY update the current-state ordering watermark without appending a transition. A change in persona state alone SHALL NOT constitute a material change or produce a transition. Persona state is still recorded as a field on every transition document written, so the raw value at each transition is preserved.
 
 Persona state is excluded from change detection because Steam moves an idle account between online, away, and snooze automatically. Those transitions carry no information about what is being played, and treating them as material both fills the log with idle churn and splits a single continuous play session into fragments.
 
 #### Scenario: Unchanged game performs no write
 
 - **WHEN** a poll returns the same game ID as the stored current-state document
-- **THEN** no Firestore write occurs
+- **THEN** no presence transition is written
+- **AND** `lastObservedAt` advances
 - **AND** `since` and `updatedAt` retain their stored values
 
 #### Scenario: Idling during a session does not split it
 
 - **WHEN** the persona state changes from online to away while the same game remains in progress
-- **THEN** no Firestore write occurs
+- **THEN** no presence transition is written
+- **AND** `lastObservedAt` advances
 - **AND** `since` continues to mark the time the game was first observed
 
 #### Scenario: Changed game updates current and appends history

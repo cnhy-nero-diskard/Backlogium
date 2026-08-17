@@ -27,7 +27,7 @@
 
 ## 5. Close the overlap window
 
-- [x] 5.1 Set `maxInstances: 1` on the scheduled function in `index.ts`
+- [x] 5.1 Set `maxInstances: 1` and `concurrency: 1` on the scheduled function in `index.ts`
 - [x] 5.2 Reduce `timeoutSeconds` below the 60-second schedule interval, with a comment explaining that a poll which cannot finish in time has nothing useful to report
 - [x] 5.3 Leave `retryCount: 0` and its existing comment alone — the reasoning there is still correct
 - [x] 5.4 Confirm the reduced timeout still accommodates a normal Steam response with margin, using observed latency rather than a guess
@@ -36,8 +36,8 @@
 
 - [x] 6.1 Extend the fake Firestore surface to model transaction retry — a `tx.get` returning stale data once, then fresh — or the concurrency tests assert nothing
 - [x] 6.2 Test: two overlapping invocations observing one transition produce exactly one record, with the second writing nothing
-- [x] 6.3 Test: same-game poll writes nothing; genuine game-to-game transition writes both documents and resets `since`; game-to-offline records a transition
-- [x] 6.4 Test: persona-state-only change writes nothing
+- [x] 6.3 Test: same-game poll writes no transition and advances the watermark; genuine game-to-game transition writes both documents and resets `since`; game-to-offline records a transition
+- [x] 6.4 Test: persona-state-only change writes no transition and advances the watermark
 - [x] 6.5 Test: a Steam error or timeout writes nothing and leaves no partial state
 - [x] 6.6 Test: transaction retry converges rather than looping
 - [x] 6.7 Invert the duplicate-delivery expectation added by `auditfix-verification-coverage` from two records to one, and remove the comment marking it a known defect
@@ -50,3 +50,10 @@
 - [x] 7.4 Confirm no TTL policy exists on the presence collection
 - [x] 7.5 Run `openspec validate auditfix-cloud-poller-consistency`
 - [x] 7.6 Record in the commit message that the overlap window came from `timeoutSeconds` equalling the schedule interval, since that is the non-obvious part of the diagnosis
+
+## 8. Review follow-ups
+
+- [x] 8.1 Bound both Cloud Functions container count and per-instance concurrency
+- [x] 8.2 Add a durable `lastObservedAt` watermark for every successful observation
+- [x] 8.3 Test older different-game observations racing newer same-game observations
+- [x] 8.4 Update the cloud poller design and specifications to document watermark correctness

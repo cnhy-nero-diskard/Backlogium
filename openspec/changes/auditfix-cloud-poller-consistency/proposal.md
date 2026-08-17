@@ -36,6 +36,9 @@ the next person to reason about this file will trust the stated guarantee.
 - **Transition recording becomes a Firestore transaction.** The read of current state and
   the write of the new state become one atomic, isolated operation, so a concurrent
   invocation either sees the committed transition or retries against it.
+- **Successful observations advance a durable ordering watermark.** Same-game polls update
+  `lastObservedAt` without appending history, so a newer unchanged observation can prevent an
+  older stalled transition from rolling the current state backward.
 - **The presence document key stops depending on a fabricated timestamp.** Keyed instead by
   something two invocations observing the same transition agree on, so a duplicate write
   genuinely overwrites rather than appending. Design covers the options and their costs.
@@ -59,7 +62,7 @@ the next person to reason about this file will trust the stated guarantee.
 
 | Path | Change |
 |---|---|
-| `functions/src/presence.ts` | `db.batch()` → `runTransaction`; document key; comment corrected |
+| `functions/src/presence.ts` | `db.batch()` → `runTransaction`; ordering watermark; document key; comment corrected |
 | `functions/src/steam.ts` | observation timestamp semantics, if the key changes |
 | `functions/src/index.ts` | invocation-overlap controls |
 | `functions/src/*.test.ts` | duplicate-delivery expectation inverted |

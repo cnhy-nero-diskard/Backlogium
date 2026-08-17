@@ -19,7 +19,7 @@ not an app backend yet: the Android client has no reader for this data and
 
 ```
 players/{steamId}                 current state — the document's own fields
-  { v, personastate, gameid, gameName, since, updatedAt }
+  { v, personastate, gameid, gameName, since, updatedAt, lastObservedAt }
 
 players/{steamId}/presence/{ISO}  append-only transition log
   { v, t, personastate, gameid, gameName }
@@ -35,9 +35,10 @@ Two things worth understanding before changing anything here:
   is the only record anywhere of *when* you played, and an expired document is
   unrecoverable from any source. There is deliberately no TTL policy.
 
-Writes happen only when presence state or the game changes. An unchanged poll
-writes nothing, which is what keeps the log a record of transitions rather than
-43,200 rows a month of "still playing Hades".
+Transition history writes happen only when the game changes. Every successful poll
+also advances `lastObservedAt` on the current-state document; an unchanged poll
+does not append a presence entry, which keeps the log a record of transitions rather
+than 43,200 rows a month of "still playing Hades".
 
 ## Setup
 

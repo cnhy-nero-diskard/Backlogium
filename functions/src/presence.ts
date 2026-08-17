@@ -20,6 +20,7 @@ export type WriteOutcome = "unchanged" | "written";
 
 export interface StoredState {
   gameid?: unknown;
+  lastObservedAt?: unknown;
   updatedAt?: unknown;
 }
 
@@ -51,9 +52,10 @@ function isStaleOrEqualObservation(
   previous: StoredState | undefined,
   observation: Observation,
 ): boolean {
-  const updatedAt = asDate(previous?.updatedAt);
+  const lastObservedAt = asDate(previous?.lastObservedAt);
   return (
-    updatedAt !== undefined && observation.t.getTime() <= updatedAt.getTime()
+    lastObservedAt !== undefined &&
+    observation.t.getTime() <= lastObservedAt.getTime()
   );
 }
 
@@ -83,7 +85,9 @@ export function isMaterialChange(
 }
 
 /**
- * Record an observation, writing only when something material changed.
+ * Record an observation, appending a transition only when something material
+ * changed. Every successful observation also advances the ordering watermark
+ * on the current-state document.
  *
  * Note what is absent: no session, duration, playtime, or experience value
  * is computed or stored. This records what Steam said and nothing more —
@@ -118,7 +122,13 @@ export async function recordObservation(
     }
 
     if (!isMaterialChange(previous, observation)) {
-      // No write at all. `since` and `updatedAt` keep their stored values.
+      // No transition write. `since` and `updatedAt` keep their stored values,
+      // while `lastObservedAt` records the newest successful observation so a
+      // stalled older transaction cannot roll state backward.
+      transaction.set(playerRef, {
+        ...(snapshot.data() ?? {}),
+        lastObservedAt: observedAt,
+      });
       return { outcome: "unchanged" as const, first: false };
     }
 
@@ -127,6 +137,7 @@ export async function recordObservation(
       personastate: observation.personastate,
       gameid: observation.gameid,
       gameName: observation.gameName,
+      lastObservedAt: observedAt,
       // `since` marks when the present state began, and is reset only on a
       // transition. Without it a consumer cannot tell a three-hour session
       // from a one-minute one.
