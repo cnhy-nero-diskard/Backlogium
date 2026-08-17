@@ -22,6 +22,7 @@ class PresenceDecisionRecorderTest {
         val recorder = PresenceDecisionRecorder(dao, FixedTimeProvider)
         val outcomes = listOf(
             PresenceOutcome.MONITORING_STARTED,
+            PresenceOutcome.MONITORING_ALREADY_RUNNING,
             PresenceOutcome.START_REFUSED,
             PresenceOutcome.START_FAILED,
             PresenceOutcome.START_NOT_ATTEMPTED,

@@ -8,6 +8,18 @@ import org.junit.Test
 class SteamSyncPresenceTest {
 
     @Test
+    fun backgroundPresenceDecision_whenMonitorIsAlreadyRunning_keepsItAvailable() {
+        assertEquals(
+            PresenceStartOutcome.ALREADY_RUNNING,
+            backgroundPresenceOutcome(serviceRunning = true),
+        )
+        assertEquals(
+            PresenceStartOutcome.NOT_ATTEMPTED,
+            backgroundPresenceOutcome(serviceRunning = false),
+        )
+    }
+
+    @Test
     fun backgroundPresenceDecision_doesNotPreventOwnedGamesFetchOrStartAService() = runTest {
         var fetches = 0
         var notAttempted = 0

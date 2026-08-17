@@ -153,6 +153,7 @@ enum class PresenceOutcome(val value: String) {
     NO_PLAYER("no_player"),
     FAILED("failed"),
     MONITORING_STARTED("monitoring_started"),
+    MONITORING_ALREADY_RUNNING("monitoring_already_running"),
     START_REFUSED("start_refused"),
     START_FAILED("start_failed"),
     START_NOT_ATTEMPTED("start_not_attempted"),

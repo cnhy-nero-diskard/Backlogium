@@ -49,9 +49,12 @@ class PresenceServiceStarter @Inject constructor(
         return outcome
     }
 
-    /** Record a background worker's deliberate decision not to issue a service-start request. */
+    /**
+     * Resolve a background worker's decision without issuing a service-start request. If the
+     * service is already active, preserve that available state instead of reporting a refusal.
+     */
     suspend fun recordNotAttempted(trigger: String): PresenceStartOutcome {
-        val outcome = PresenceStartOutcome.NOT_ATTEMPTED
+        val outcome = backgroundPresenceOutcome(PresenceService.isRunning)
         recordOutcome(trigger, outcome)
         return outcome
     }
@@ -79,13 +82,21 @@ class PresenceServiceStarter @Inject constructor(
     }
 }
 
+/** Resolve a background poll's decision without ever making it a service-start operation. */
+internal fun backgroundPresenceOutcome(serviceRunning: Boolean): PresenceStartOutcome =
+    if (serviceRunning) {
+        PresenceStartOutcome.ALREADY_RUNNING
+    } else {
+        PresenceStartOutcome.NOT_ATTEMPTED
+    }
+
 /** The observable result of one request to start the live monitor. */
 enum class PresenceStartOutcome(
     val diagnostic: PresenceOutcome,
     val availability: PresenceMonitoringAvailability,
 ) {
     ALREADY_RUNNING(
-        diagnostic = PresenceOutcome.MONITORING_STARTED,
+        diagnostic = PresenceOutcome.MONITORING_ALREADY_RUNNING,
         availability = PresenceMonitoringAvailability.AVAILABLE,
     ),
     STARTED(
