@@ -30,7 +30,7 @@
 - [x] 5.1 Set `maxInstances: 1` on the scheduled function in `index.ts`
 - [x] 5.2 Reduce `timeoutSeconds` below the 60-second schedule interval, with a comment explaining that a poll which cannot finish in time has nothing useful to report
 - [x] 5.3 Leave `retryCount: 0` and its existing comment alone — the reasoning there is still correct
-- [ ] 5.4 Confirm the reduced timeout still accommodates a normal Steam response with margin, using observed latency rather than a guess
+- [x] 5.4 Confirm the reduced timeout still accommodates a normal Steam response with margin, using observed latency rather than a guess
 
 ## 6. Tests
 
@@ -45,8 +45,8 @@
 ## 7. Deploy and verify
 
 - [x] 7.1 Run `npm --prefix functions run build` and `npm --prefix functions test` and confirm both pass
-- [ ] 7.2 Deploy to `asia-southeast1` and confirm the region matches Firestore's
-- [ ] 7.3 Observe production logs across several polls and confirm the `unchanged` path still dominates, which is the signal that `isMaterialChange` was not disturbed
-- [ ] 7.4 Confirm no TTL policy exists on the presence collection
+- [x] 7.2 Deploy to `asia-southeast1` and confirm the region matches Firestore's
+- [x] 7.3 Observe production logs across several polls and confirm the `unchanged` path still dominates, which is the signal that `isMaterialChange` was not disturbed
+- [x] 7.4 Confirm no TTL policy exists on the presence collection
 - [x] 7.5 Run `openspec validate auditfix-cloud-poller-consistency`
 - [x] 7.6 Record in the commit message that the overlap window came from `timeoutSeconds` equalling the schedule interval, since that is the non-obvious part of the diagnosis
