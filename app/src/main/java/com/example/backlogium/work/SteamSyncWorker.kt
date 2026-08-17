@@ -45,18 +45,19 @@ internal data class DailyProgressCredit(
 )
 
 /**
- * Keep the owned-games poll independent from the optional fine-grained presence start. A worker
- * can discover a game while backgrounded, where the platform may reject the service request; the
- * Steam data fetch must still be allowed to complete and determine the worker's own result.
+ * Keep the owned-games poll independent from the optional fine-grained presence decision. A
+ * worker can discover a game while backgrounded, but its callback can only record that a start was
+ * not attempted; the Steam data fetch must still be allowed to complete and determine the worker's
+ * own result.
  */
-internal suspend fun <T> fetchOwnedGamesAfterPresenceStart(
+internal suspend fun <T> fetchOwnedGamesAfterPresenceDecision(
     gameDetected: Boolean,
-    startPresence: suspend () -> Unit,
+    recordPresenceNotAttempted: suspend () -> Unit,
     fetchOwnedGames: suspend () -> T,
 ): kotlin.Result<T> {
     if (gameDetected) {
         try {
-            startPresence()
+            recordPresenceNotAttempted()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -151,15 +152,14 @@ class SteamSyncWorker @AssistedInject constructor(
                 steamApi.getPlayerSummaries(apiKey, steamId, scope = scope).response.players.firstOrNull()
             }.getOrNull()
 
-            // The detection path for a game that started while the app was never opened: ask the
-            // starter, which records a foreground-required result instead of issuing an illegal
-            // background service start. Deliberately ahead of getOwnedGames — presence doesn't
-            // depend on the owned-games list, so neither a private library nor a failure later in
-            // this run may cost the player detection.
-            val owned = fetchOwnedGamesAfterPresenceStart(
+            // The detection path for a game that started while the app was never opened: record
+            // that the foreground-only start was not attempted. Deliberately ahead of
+            // getOwnedGames — presence doesn't depend on the owned-games list, so neither a
+            // private library nor a failure later in this run may cost the player detection.
+            val owned = fetchOwnedGamesAfterPresenceDecision(
                 gameDetected = !summary?.gameId.isNullOrBlank(),
-                startPresence = {
-                    presenceServiceStarter.start(trigger = "sync")
+                recordPresenceNotAttempted = {
+                    presenceServiceStarter.recordNotAttempted(trigger = "sync")
                     Unit
                 },
                 fetchOwnedGames = {

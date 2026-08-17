@@ -184,12 +184,12 @@ class BacklogiumApp : Application(), Configuration.Provider {
                 // Android may stop a long-running monitor. Re-start it only from this visible
                 // foreground interaction, never from a worker or boot receiver.
                 if (settings.liveMonitorEnabled.first()) {
-                    presenceServiceStarter.start(trigger = "foreground_monitor")
+                    presenceServiceStarter.startFromForeground(trigger = "foreground_monitor")
                 }
                 val detected = detectForegroundPresence(
                     checkNow = liveStatusRepository::checkNow,
                     startPresence = {
-                        presenceServiceStarter.start(trigger = "foreground_detection")
+                        presenceServiceStarter.startFromForeground(trigger = "foreground_detection")
                     },
                 )
                 if (!detected && !settings.liveMonitorEnabled.first()) {

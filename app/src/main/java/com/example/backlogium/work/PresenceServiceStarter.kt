@@ -4,8 +4,6 @@ import android.app.ForegroundServiceStartNotAllowedException
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.ProcessLifecycleOwner
 import com.example.backlogium.data.diagnostics.PresenceDecisionRecorder
 import com.example.backlogium.data.diagnostics.PresenceOutcome
 import com.example.backlogium.data.local.PresenceMonitoringAvailability
@@ -17,12 +15,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Requests [PresenceService] only from a context that Android considers foreground-visible.
+ * Starts [PresenceService] for known foreground entry points and records lifecycle outcomes.
  *
- * A scheduled worker may discover a running game while the process is backgrounded, but it is
- * not an exemption from Android's foreground-service start restriction. In that case this class
- * deliberately does not issue the illegal request: the Steam poll remains authoritative for
- * playtime, and the missed fine-grained monitor is recorded for the next foreground visit.
+ * The scheduled worker must use [recordNotAttempted] instead of this class's start-capable method.
+ * Keeping those operations explicit prevents a delayed process-lifecycle signal from becoming the
+ * legality boundary for a background service start.
  */
 @Singleton
 class PresenceServiceStarter @Inject constructor(
@@ -30,11 +27,10 @@ class PresenceServiceStarter @Inject constructor(
     private val settings: SettingsRepository,
     private val diagnostics: PresenceDecisionRecorder,
 ) {
-    suspend fun start(trigger: String): PresenceStartOutcome {
+    /** Start from a foreground interaction such as Settings or the app-foreground observer. */
+    suspend fun startFromForeground(trigger: String): PresenceStartOutcome {
         val outcome = if (PresenceService.isRunning) {
             PresenceStartOutcome.ALREADY_RUNNING
-        } else if (!isAppVisible()) {
-            PresenceStartOutcome.NOT_ATTEMPTED
         } else {
             try {
                 ContextCompat.startForegroundService(
@@ -49,13 +45,21 @@ class PresenceServiceStarter @Inject constructor(
             }
         }
 
-        updateAvailability(outcome.availability)
-        diagnostics.record(trigger, outcome.diagnostic)
+        recordOutcome(trigger, outcome)
         return outcome
     }
 
-    private fun isAppVisible(): Boolean =
-        ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+    /** Record a background worker's deliberate decision not to issue a service-start request. */
+    suspend fun recordNotAttempted(trigger: String): PresenceStartOutcome {
+        val outcome = PresenceStartOutcome.NOT_ATTEMPTED
+        recordOutcome(trigger, outcome)
+        return outcome
+    }
+
+    private suspend fun recordOutcome(trigger: String, outcome: PresenceStartOutcome) {
+        updateAvailability(outcome.availability)
+        diagnostics.record(trigger, outcome.diagnostic)
+    }
 
     private suspend fun updateAvailability(availability: PresenceMonitoringAvailability) {
         try {

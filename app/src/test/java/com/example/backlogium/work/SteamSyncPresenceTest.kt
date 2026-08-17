@@ -8,12 +8,13 @@ import org.junit.Test
 class SteamSyncPresenceTest {
 
     @Test
-    fun throwingPresenceStarter_doesNotPreventOwnedGamesFetch() = runTest {
+    fun backgroundPresenceDecision_doesNotPreventOwnedGamesFetchOrStartAService() = runTest {
         var fetches = 0
+        var notAttempted = 0
 
-        val result = fetchOwnedGamesAfterPresenceStart(
+        val result = fetchOwnedGamesAfterPresenceDecision(
             gameDetected = true,
-            startPresence = { error("background foreground-service start refused") },
+            recordPresenceNotAttempted = { notAttempted++ },
             fetchOwnedGames = {
                 fetches++
                 "owned-games"
@@ -23,5 +24,6 @@ class SteamSyncPresenceTest {
         assertTrue(result.isSuccess)
         assertEquals("owned-games", result.getOrNull())
         assertEquals(1, fetches)
+        assertEquals(1, notAttempted)
     }
 }
