@@ -46,13 +46,72 @@ describe("presence poller", () => {
     });
   });
 
-  it("same-game poll writes nothing", async () => {
-    firestore.seed("players/test-steam-id", { gameid: "440", personastate: 1 });
+  it("same-game poll records no transition and advances the watermark", async () => {
+    const next = observation("440");
+    firestore.seed("players/test-steam-id", {
+      gameid: "440",
+      personastate: 1,
+      gameName: "Old Game 440",
+      lastObservedAt: { date: new Date("2026-08-13T00:00:00.000Z") },
+    });
 
-    await expect(recordObservation("test-steam-id", observation("440"))).resolves.toBe(
-      "unchanged",
-    );
+    await expect(recordObservation("test-steam-id", next)).resolves.toBe("unchanged");
+    expect(firestore.committedWrites).toHaveLength(1);
+    expect(firestore.committedWrites[0].path).toBe("players/test-steam-id");
+    expect(
+      (firestore.committedWrites[0].data.lastObservedAt as { date: Date }).date,
+    ).toEqual(next.t);
+    expect(firestore.committedWrites[0].data.personastate).toBe(1);
+    expect(firestore.committedWrites[0].data.gameName).toBe("Game 440");
+  });
+
+  it.each([
+    ["stale", "2026-08-14T00:59:59.000Z"],
+    ["equal", "2026-08-14T01:00:00.000Z"],
+  ])("ignores %s observations before comparing the game", async (_label, timestamp) => {
+    firestore.seed("players/test-steam-id", {
+      gameid: "730",
+      personastate: 1,
+      lastObservedAt: { date: new Date("2026-08-14T01:00:00.000Z") },
+      updatedAt: { date: new Date("2026-08-14T01:00:00.000Z") },
+    });
+
+    await expect(
+      recordObservation("test-steam-id", observation("570", timestamp)),
+    ).resolves.toBe("unchanged");
     expect(firestore.committedWrites).toHaveLength(0);
+  });
+
+  it("normalizes malformed current state on a non-transition poll", async () => {
+    const next = observation(null, "2026-08-14T01:30:00.000Z");
+    const since = { date: new Date("2026-08-13T01:00:00.000Z") };
+    const updatedAt = { date: new Date("2026-08-14T01:00:00.000Z") };
+    firestore.seed("players/test-steam-id", {
+      v: 0,
+      gameid: 440,
+      personastate: 1,
+      gameName: "Old Game",
+      since,
+      updatedAt,
+      lastObservedAt: { date: new Date("2026-08-14T01:15:00.000Z") },
+    });
+
+    await expect(recordObservation("test-steam-id", next)).resolves.toBe("unchanged");
+
+    const playerWrite = firestore.committedWrites.find(
+      (write) => write.path === "players/test-steam-id",
+    );
+    expect(playerWrite?.data.v).toBe(1);
+    expect(playerWrite?.data.gameid).toBeNull();
+    expect(playerWrite?.data.personastate).toBe(1);
+    expect(playerWrite?.data.gameName).toBeNull();
+    expect(playerWrite?.data.since).toBe(since);
+    expect(playerWrite?.data.updatedAt).toBe(updatedAt);
+    expect(
+      firestore.committedWrites.filter((write) =>
+        write.path.startsWith("players/test-steam-id/presence/"),
+      ),
+    ).toHaveLength(0);
   });
 
   it("game-to-game transition writes both documents and resets since", async () => {
@@ -92,13 +151,27 @@ describe("presence poller", () => {
     expect(playerWrite?.data.personastate).toBe(1);
   });
 
-  it("persona-state-only change writes nothing", async () => {
-    firestore.seed("players/test-steam-id", { gameid: "440", personastate: 1 });
+  it("persona-state-only change records no transition", async () => {
+    firestore.seed("players/test-steam-id", {
+      gameid: "440",
+      personastate: 1,
+      gameName: "Old Game 440",
+      lastObservedAt: { date: new Date("2026-08-14T02:00:00.000Z") },
+    });
 
+    const next = observation("440", "2026-08-14T03:00:00.000Z", 3);
     await expect(
-      recordObservation("test-steam-id", observation("440", "2026-08-14T03:00:00.000Z", 3)),
+      recordObservation("test-steam-id", next),
     ).resolves.toBe("unchanged");
-    expect(firestore.committedWrites).toHaveLength(0);
+    expect(firestore.committedWrites).toHaveLength(1);
+    expect(
+      firestore.committedWrites[0].path,
+    ).toBe("players/test-steam-id");
+    expect(
+      (firestore.committedWrites[0].data.lastObservedAt as { date: Date }).date,
+    ).toEqual(next.t);
+    expect(firestore.committedWrites[0].data.personastate).toBe(3);
+    expect(firestore.committedWrites[0].data.gameName).toBe("Game 440");
   });
 
   it("Steam errors and timeouts return no observation and write nothing", async () => {
@@ -117,12 +190,10 @@ describe("presence poller", () => {
     expect(firestore.committedWrites).toHaveLength(0);
   });
 
-  it("duplicate delivery currently writes two records, documenting a known defect", async () => {
+  it("overlapping invocations write one transition and advance the retry watermark", async () => {
     firestore.seed("players/test-steam-id", { gameid: "440", personastate: 1 });
     firestore.holdNextReads(2);
 
-    // Known defect: auditfix-cloud-poller-consistency will make this expect one record
-    // after moving the read/decision/write sequence into a Firestore transaction.
     const first = recordObservation(
       "test-steam-id",
       observation("570", "2026-08-14T04:00:00.000Z"),
@@ -134,12 +205,87 @@ describe("presence poller", () => {
 
     await firestore.waitUntilReadsHeld();
     firestore.releaseHeldReads();
-    await expect(Promise.all([first, second])).resolves.toEqual(["written", "written"]);
+    const outcomes = await Promise.all([first, second]);
+    expect([...outcomes].sort()).toEqual(["unchanged", "written"]);
+    expect(firestore.transactionAttempts).toBeGreaterThan(2);
+    expect(firestore.committedWrites).toHaveLength(3);
     expect(
       firestore.committedWrites.filter((write) =>
         write.path.startsWith("players/test-steam-id/presence/"),
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
+  });
+
+  it("does not roll state backward when different observations commit out of order", async () => {
+    firestore.seed("players/test-steam-id", {
+      gameid: "440",
+      personastate: 1,
+      lastObservedAt: { date: new Date("2026-08-14T05:00:00.000Z") },
+      updatedAt: { date: new Date("2026-08-14T05:00:00.000Z") },
+    });
+    firestore.holdNextReads(1);
+    firestore.holdNextTransactionCommit();
+
+    const olderPoll = recordObservation(
+      "test-steam-id",
+      observation("570", "2026-08-14T05:01:00.000Z"),
+    );
+    await firestore.waitUntilReadsHeld();
+    firestore.releaseHeldReads();
+    await firestore.waitUntilTransactionCommitHeld();
+
+    const newerPoll = recordObservation(
+      "test-steam-id",
+      observation("730", "2026-08-14T05:02:00.000Z"),
+    );
+    await expect(newerPoll).resolves.toBe("written");
+    firestore.releaseHeldTransactionCommit();
+    await expect(olderPoll).resolves.toBe("unchanged");
+
+    expect(firestore.transactionAttempts).toBe(3);
+    expect(firestore.committedWrites).toHaveLength(2);
+    const playerWrite = firestore.committedWrites.find(
+      (write) => write.path === "players/test-steam-id",
+    );
+    expect(playerWrite?.data.gameid).toBe("730");
+    expect(
+      firestore.committedWrites.filter((write) =>
+        write.path.startsWith("players/test-steam-id/presence/"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("does not roll state backward when an older transition races a newer same-game poll", async () => {
+    firestore.seed("players/test-steam-id", {
+      gameid: "440",
+      personastate: 1,
+      lastObservedAt: { date: new Date("2026-08-14T06:00:00.000Z") },
+    });
+    firestore.holdNextReads(1);
+    firestore.holdNextTransactionCommit();
+
+    const olderPoll = recordObservation(
+      "test-steam-id",
+      observation("570", "2026-08-14T06:01:00.000Z"),
+    );
+    await firestore.waitUntilReadsHeld();
+    firestore.releaseHeldReads();
+    await firestore.waitUntilTransactionCommitHeld();
+
+    const newerSameGamePoll = recordObservation(
+      "test-steam-id",
+      observation("440", "2026-08-14T06:02:00.000Z"),
+    );
+    await expect(newerSameGamePoll).resolves.toBe("unchanged");
+    firestore.releaseHeldTransactionCommit();
+    await expect(olderPoll).resolves.toBe("unchanged");
+
+    expect(firestore.transactionAttempts).toBe(3);
+    expect(firestore.committedWrites).toHaveLength(1);
+    expect(firestore.committedWrites[0].path).toBe("players/test-steam-id");
+    expect(
+      (firestore.committedWrites[0].data.lastObservedAt as { date: Date }).date,
+    ).toEqual(new Date("2026-08-14T06:02:00.000Z"));
   });
 });
 

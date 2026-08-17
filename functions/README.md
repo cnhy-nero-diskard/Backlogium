@@ -19,7 +19,7 @@ not an app backend yet: the Android client has no reader for this data and
 
 ```
 players/{steamId}                 current state — the document's own fields
-  { v, personastate, gameid, gameName, since, updatedAt }
+  { v, personastate, gameid, gameName, since, updatedAt, lastObservedAt }
 
 players/{steamId}/presence/{ISO}  append-only transition log
   { v, t, personastate, gameid, gameName }
@@ -35,9 +35,11 @@ Two things worth understanding before changing anything here:
   is the only record anywhere of *when* you played, and an expired document is
   unrecoverable from any source. There is deliberately no TTL policy.
 
-Writes happen only when presence state or the game changes. An unchanged poll
-writes nothing, which is what keeps the log a record of transitions rather than
-43,200 rows a month of "still playing Hades".
+Transition history writes happen only when the game changes. Every successful poll
+also advances `lastObservedAt` on the current-state document; an unchanged poll
+refreshes the raw persona/game-name fields but does not append a presence entry or
+reset the transition timestamps. This keeps the log a record of transitions rather
+than 43,200 rows a month of "still playing Hades".
 
 ## Setup
 
@@ -80,7 +82,8 @@ Log lines worth recognising:
 | `Steam returned no player...` | Wrong Steam ID, or the profile is unreachable by this key. |
 | `Steam request failed` / `error status` | Transient. Stored state deliberately untouched. |
 
-Silence is normal: an unchanged poll logs nothing and writes nothing.
+An unchanged poll logs the `poll ok` heartbeat, refreshes current-state metadata, and
+does not append a presence transition.
 
 ## Rotating the Steam API key
 
@@ -112,5 +115,6 @@ Do not substitute the cheaper signals — both are blind to the likeliest failur
 
 - **Invocation count** stays at a perfect 1,440/day if the Steam API key is
   revoked, because the function still runs and still returns 200.
-- **`players/{steamId}.updatedAt`** only advances on a game change, so a healthy
-  idle poller looks identical to a dead one.
+- **`players/{steamId}.lastObservedAt`** advances after a successful poll, but a
+  log-based absence alert on `poll ok` is cheaper and more direct than polling
+  Firestore and interpreting timestamps.

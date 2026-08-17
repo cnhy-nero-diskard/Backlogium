@@ -27,36 +27,139 @@ The system SHALL poll the Steam Web API `GetPlayerSummaries` endpoint for the co
 
 ### Requirement: Current-state document
 
-The system SHALL maintain the `players/{steamId}` document (referred to below as the current-state document) reflecting the most recently observed presence, containing the schema version, the presence state, the app ID and name of any game in progress, the time the present state began, and the time of the most recent state change.
+The system SHALL maintain the `players/{steamId}` document (referred to below as the current-state document) reflecting the most recently observed presence, containing the schema version, the presence state, the app ID and name of any game in progress, the time the present state began, the time of the most recent state change, and the time of the most recent successful observation.
 
 #### Scenario: First observation creates the document
 
 - **WHEN** a poll succeeds and no `current` document exists
 - **THEN** the function creates it with the observed state
-- **AND** `since` and `updatedAt` are both set to the observation time
+- **AND** `since`, `updatedAt`, and `lastObservedAt` are all set to the observation time
 
 #### Scenario: Session duration is derivable
 
 - **WHEN** the user has been in the same game across many consecutive polls
 - **THEN** `since` still holds the time that game was first observed
-- **AND** `updatedAt` holds the most recent observation time
+- **AND** `updatedAt` holds the most recent state-change time
+- **AND** `lastObservedAt` holds the most recent successful observation time
+
+### Requirement: Successful observations advance an ordering watermark
+
+Every successful Steam observation SHALL advance `lastObservedAt` on the current-state
+document, including an observation that reports the same game and appends no transition.
+An observation whose timestamp is older than or equal to `lastObservedAt` SHALL perform no
+write at all. The watermark and transition decision SHALL be read and updated inside the
+same transaction.
+
+#### Scenario: Newer same-game observation establishes the watermark
+
+- **WHEN** an observation reports the stored game at a later timestamp
+- **THEN** the current-state document's `lastObservedAt` advances
+- **AND** no presence transition document is appended
+- **AND** `since` and `updatedAt` retain their stored values
+
+#### Scenario: Older transition cannot roll state backward
+
+- **WHEN** an older different-game observation retries after a newer same-game observation
+  has advanced `lastObservedAt`
+- **THEN** the older observation writes nothing
+- **AND** the current-state game and transition log remain at the newer state
+
+### Requirement: Transition recording is atomic with the state it was decided from
+
+The decision that an observation represents a game change, and the writes that record it,
+SHALL form one atomic and isolated operation against the stored current state. A second
+invocation that observes the same transition SHALL either see the already-recorded state and
+write nothing, or be retried against it.
+
+#### Scenario: Overlapping invocations observing one transition
+
+- **WHEN** two invocations read the same stored state and each independently concludes the
+  same game change is new
+- **THEN** exactly one transition record is written, and the other invocation writes nothing
+
+#### Scenario: Same-game poll under isolation
+
+- **WHEN** an observation reports the same game as the stored state
+- **THEN** no transition write occurs, `lastObservedAt` advances, and the comparison that
+  reached that conclusion was made against state that could not change underneath it
+
+#### Scenario: Genuine transition
+
+- **WHEN** an observation reports a different game than the stored state
+- **THEN** the current state and a transition record are written together, and the marker for
+  when the present state began is reset
+
+#### Scenario: Contention resolves without duplication
+
+- **WHEN** the stored state changes while an invocation is deciding
+- **THEN** that invocation re-evaluates against the new state rather than committing a
+  decision made from stale state
+
+### Requirement: Recording an observation more than once cannot duplicate a transition
+
+Recording the same logical observation more than once — by overlapping invocation, retry, or
+redelivery — SHALL NOT produce more than one transition record. A retry MAY update the
+ordering watermark, but SHALL NOT append another transition. Any documented claim about this
+guarantee SHALL describe the mechanism that actually provides it.
+
+#### Scenario: The same observation recorded twice
+
+- **WHEN** one logical observation is recorded twice
+- **THEN** the transition log contains one entry for it, and the current-state watermark is
+  at least as new as the observation
+
+#### Scenario: No two adjacent entries share a game
+
+- **WHEN** the transition log is read
+- **THEN** no two adjacent entries share a game identifier, so every entry is a genuine game
+  change
+
+#### Scenario: Documented guarantees match the implementation
+
+- **WHEN** the code documents an idempotency or uniqueness guarantee
+- **THEN** that documentation names the mechanism providing it, and does not attribute it to a
+  mechanism that does not
+
+### Requirement: Invocations do not overlap
+
+The scheduled poller SHALL be configured so that one invocation cannot still be running when
+the next begins, bounding concurrency independently of the atomicity guarantee rather than
+relying on it alone.
+
+#### Scenario: A slow observation
+
+- **WHEN** an observation takes longer than usual because the upstream service is slow
+- **THEN** the invocation ends before the next scheduled one begins, recording nothing rather
+  than overlapping
+
+#### Scenario: Concurrency is bounded
+
+- **WHEN** the scheduler fires while an invocation is in flight
+- **THEN** no additional concurrent instance of the poller is started
+
+#### Scenario: A missed poll is not retried
+
+- **WHEN** an invocation ends without recording an observation
+- **THEN** no retry is attempted, because the next scheduled poll supersedes it
 
 ### Requirement: Write on game change only
 
-The system SHALL write to Firestore only when the observed game ID differs from the stored game ID. A change in persona state alone SHALL NOT constitute a material change and SHALL NOT produce a write. Persona state is still recorded as a field on every document written, so the raw value at each transition is preserved.
+The system SHALL append a presence transition only when the observed game ID differs from the stored game ID. A successful observation MAY update the current-state ordering watermark without appending a transition. A change in persona state alone SHALL NOT constitute a material change or produce a transition. Persona state is still recorded as a field on every transition document written, so the raw value at each transition is preserved.
 
 Persona state is excluded from change detection because Steam moves an idle account between online, away, and snooze automatically. Those transitions carry no information about what is being played, and treating them as material both fills the log with idle churn and splits a single continuous play session into fragments.
 
 #### Scenario: Unchanged game performs no write
 
 - **WHEN** a poll returns the same game ID as the stored current-state document
-- **THEN** no Firestore write occurs
+- **THEN** no presence transition is written
+- **AND** `lastObservedAt` advances
 - **AND** `since` and `updatedAt` retain their stored values
 
 #### Scenario: Idling during a session does not split it
 
 - **WHEN** the persona state changes from online to away while the same game remains in progress
-- **THEN** no Firestore write occurs
+- **THEN** no presence transition is written
+- **AND** `lastObservedAt` advances
 - **AND** `since` continues to mark the time the game was first observed
 
 #### Scenario: Changed game updates current and appends history
@@ -89,7 +192,8 @@ The system SHALL record each observed transition as a document in the `players/{
 #### Scenario: Duplicate delivery does not duplicate history
 
 - **WHEN** an invocation for an observation timestamp already recorded is retried or delivered more than once
-- **THEN** the existing document for that timestamp is overwritten
+- **THEN** the retry is ignored when its timestamp is equal to `lastObservedAt`
+- **AND** the existing transition document is not rewritten
 - **AND** no additional document is appended
 
 ### Requirement: Failures leave state untouched
@@ -152,7 +256,7 @@ The system SHALL stamp every document it writes with a schema version field set 
 
 The system SHALL emit a distinct log entry on every poll that completes a successful Steam fetch and a successful Firestore interaction. The entry SHALL NOT be emitted when the Steam fetch fails or the Firestore interaction fails, so that its absence indicates a broken pipeline rather than an idle user.
 
-Invocation count is not a sufficient health signal: a revoked API key leaves the function running and returning success while recording nothing. The current-state document is not sufficient either, because a healthy poller writes nothing while the user is not playing.
+Invocation count is not a sufficient health signal: a revoked API key leaves the function running and returning success while recording nothing. The current-state document now advances `lastObservedAt` after successful polls, but a log-based absence alert is cheaper and more direct to monitor than polling and interpreting a Firestore timestamp.
 
 #### Scenario: Successful poll emits the heartbeat
 

@@ -101,9 +101,11 @@ Constraints that are expensive or impossible to reverse:
   function must be deployed to the same region.
 - **Retention is indefinite by design. Do not add a TTL policy.** Steam exposes no
   historical presence, so a deleted document is unrecoverable from any source.
-- **Writes happen only when `gameid` changes.** Persona state is recorded but never
-  compared — Steam cycles idle accounts through away and snooze on its own, which
-  previously filled the log with churn and split continuous sessions into fragments.
+- **Transition history writes happen only when `gameid` changes.** Every successful
+  observation also advances `lastObservedAt` on the current-state document, but it
+  does not append a transition. Persona state is recorded but never compared — Steam
+  cycles idle accounts through away and snooze on its own, which previously filled
+  the log with churn and split continuous sessions into fragments.
 - **Firestore rules deny all client access.** The poller writes via the Admin SDK,
   which bypasses rules. Any future client reader needs an auth decision first.
 

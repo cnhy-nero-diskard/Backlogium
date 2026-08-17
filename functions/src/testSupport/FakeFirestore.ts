@@ -6,6 +6,7 @@ export interface RecordedWrite {
 interface DocumentSnapshot {
   readonly exists: boolean;
   data(): Record<string, unknown> | undefined;
+  readonly version: number;
 }
 
 interface DocumentReference {
@@ -23,6 +24,16 @@ interface PendingWrite {
   readonly data: Record<string, unknown>;
 }
 
+interface Transaction {
+  get(reference: DocumentReference): Promise<DocumentSnapshot>;
+  set(reference: DocumentReference, data: Record<string, unknown>): void;
+}
+
+interface VersionedDocument {
+  readonly data: Record<string, unknown>;
+  readonly version: number;
+}
+
 interface ReadBarrier {
   remaining: number;
   readonly ready: Promise<void>;
@@ -31,15 +42,27 @@ interface ReadBarrier {
   readonly resolveRelease: () => void;
 }
 
+interface CommitBarrier {
+  acquired: boolean;
+  readonly ready: Promise<void>;
+  readonly resolveReady: () => void;
+  readonly release: Promise<void>;
+  readonly resolveRelease: () => void;
+}
+
 /**
  * Narrow in-memory Firestore surface used by the presence poller tests.
- * It intentionally models only collection().doc().get(), batch().set(), and commit().
+ * It intentionally models only collection().doc().get(), transactions, and
+ * batch().set()/commit(). Transactions use optimistic version checks and
+ * retry a callback when a document read by it changed before commit.
  */
 export class FakeFirestore {
   readonly committedWrites: RecordedWrite[] = [];
+  transactionAttempts = 0;
 
-  private readonly documents = new Map<string, Record<string, unknown>>();
+  private readonly documents = new Map<string, VersionedDocument>();
   private readBarrier: ReadBarrier | undefined;
+  private commitBarrier: CommitBarrier | undefined;
 
   collection(name: string): CollectionReference {
     return new FakeCollectionReference(this, name);
@@ -56,19 +79,35 @@ export class FakeFirestore {
         pending.push({ reference, data });
       },
       commit: async () => {
-        for (const write of pending) {
-          this.committedWrites.push({
-            path: write.reference.path,
-            data: write.data,
-          });
-          this.documents.set(write.reference.path, write.data);
-        }
+        this.commitWrites(pending);
       },
     };
   }
 
+  async runTransaction<T>(
+    updateFunction: (transaction: Transaction) => Promise<T>,
+  ): Promise<T> {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      this.transactionAttempts += 1;
+      const transaction = new FakeTransaction();
+      const result = await updateFunction(transaction);
+
+      try {
+        await this.commitTransaction(transaction);
+        return result;
+      } catch (error) {
+        if (!(error instanceof TransactionConflictError) || attempt === 4) {
+          throw error;
+        }
+      }
+    }
+
+    throw new Error("Transaction retry limit reached");
+  }
+
   seed(path: string, data: Record<string, unknown>): void {
-    this.documents.set(path, data);
+    const version = this.documents.get(path)?.version ?? 0;
+    this.documents.set(path, { data, version: version + 1 });
   }
 
   /** Hold the next N reads until releaseHeldReads() is called. */
@@ -101,11 +140,40 @@ export class FakeFirestore {
     this.readBarrier?.resolveRelease();
   }
 
+  /** Hold the next transaction commit until releaseHeldTransactionCommit(). */
+  holdNextTransactionCommit(): void {
+    let resolveReady!: () => void;
+    let resolveRelease!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      resolveRelease = resolve;
+    });
+
+    this.commitBarrier = {
+      acquired: false,
+      ready,
+      resolveReady,
+      release,
+      resolveRelease,
+    };
+  }
+
+  async waitUntilTransactionCommitHeld(): Promise<void> {
+    await this.commitBarrier?.ready;
+  }
+
+  releaseHeldTransactionCommit(): void {
+    this.commitBarrier?.resolveRelease();
+  }
+
   async read(path: string): Promise<DocumentSnapshot> {
-    const data = this.documents.get(path);
+    const stored = this.documents.get(path);
     const snapshot: DocumentSnapshot = {
-      exists: data !== undefined,
-      data: () => data,
+      exists: stored !== undefined,
+      data: () => stored?.data,
+      version: stored?.version ?? 0,
     };
     const barrier = this.readBarrier;
 
@@ -117,6 +185,61 @@ export class FakeFirestore {
     }
 
     return snapshot;
+  }
+
+  async commitTransaction(transaction: FakeTransaction): Promise<void> {
+    const barrier = this.commitBarrier;
+    if (barrier && !barrier.acquired) {
+      barrier.acquired = true;
+      barrier.resolveReady();
+      await barrier.release;
+      if (this.commitBarrier === barrier) this.commitBarrier = undefined;
+    }
+
+    for (const [path, version] of transaction.readVersions) {
+      const currentVersion = this.documents.get(path)?.version ?? 0;
+      if (currentVersion !== version) {
+        throw new TransactionConflictError();
+      }
+    }
+
+    this.commitWrites(transaction.pendingWrites);
+  }
+
+  private commitWrites(pending: readonly PendingWrite[]): void {
+    for (const write of pending) {
+      this.committedWrites.push({
+        path: write.reference.path,
+        data: write.data,
+      });
+      const version = this.documents.get(write.reference.path)?.version ?? 0;
+      this.documents.set(write.reference.path, {
+        data: write.data,
+        version: version + 1,
+      });
+    }
+  }
+}
+
+class TransactionConflictError extends Error {
+  constructor() {
+    super("Transaction read was stale");
+    this.name = "TransactionConflictError";
+  }
+}
+
+class FakeTransaction implements Transaction {
+  readonly readVersions = new Map<string, number>();
+  readonly pendingWrites: PendingWrite[] = [];
+
+  async get(reference: DocumentReference): Promise<DocumentSnapshot> {
+    const snapshot = await reference.get();
+    this.readVersions.set(reference.path, snapshot.version);
+    return snapshot;
+  }
+
+  set(reference: DocumentReference, data: Record<string, unknown>): void {
+    this.pendingWrites.push({ reference, data });
   }
 }
 

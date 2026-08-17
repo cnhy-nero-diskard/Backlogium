@@ -27,7 +27,14 @@ export const pollPresence = onSchedule(
     region: "asia-southeast1",
     secrets: [STEAM_API_KEY],
     memory: "256MiB",
-    timeoutSeconds: 60,
+    maxInstances: 1,
+    // Bound both container count and per-instance request concurrency.
+    concurrency: 1,
+    // Steam requests are bounded at 15 seconds. A 45-second ceiling leaves
+    // margin for the Firestore transaction and cold starts while still
+    // ending before the next scheduled poll; a poll that cannot finish in
+    // time has nothing useful to report.
+    timeoutSeconds: 45,
     // No retries. The next poll is 60 seconds away, so a retry buys nothing
     // and would only record a near-duplicate observation timestamp.
     retryCount: 0,
@@ -54,10 +61,11 @@ export const pollPresence = onSchedule(
     // successful Firestore interaction, so its absence means the pipeline is
     // broken somewhere — not merely that the user has not played recently.
     //
-    // This exists because the cheap signals do not work. Invocation count
-    // stays at a perfect 1,440/day if the Steam key is revoked, since the
-    // function still runs and still returns 200. And `updatedAt` cannot
-    // report health because a healthy poller writes nothing while idle.
+    // This remains the preferred monitoring hook even though successful polls
+    // now advance `lastObservedAt`: a log-based absence alert is cheaper and
+    // more direct to monitor than polling and interpreting a Firestore document.
+    // Invocation count stays at a perfect 1,440/day if the Steam key is
+    // revoked, since the function still runs and still returns 200.
     //
     // A metric-absence alert on this line is the monitoring hook.
     logger.info("poll ok", { outcome, gameid: observation.gameid });
