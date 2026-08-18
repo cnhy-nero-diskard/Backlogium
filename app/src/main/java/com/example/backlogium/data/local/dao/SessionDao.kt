@@ -51,6 +51,9 @@ interface SessionDao {
     @Query("SELECT * FROM sessions ORDER BY startAt ASC")
     suspend fun getAll(): List<Session>
 
+    @Query("DELETE FROM sessions")
+    suspend fun deleteAll()
+
     /** Earliest tracked session start, used to keep Analytics anchors inside available history. */
     @Query("SELECT MIN(startAt) FROM sessions")
     fun observeEarliestSessionStart(): Flow<Long?>

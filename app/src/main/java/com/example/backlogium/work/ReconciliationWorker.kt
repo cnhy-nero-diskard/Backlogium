@@ -8,6 +8,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.example.backlogium.data.diagnostics.SyncOutcome
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
+import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
@@ -36,10 +37,16 @@ class ReconciliationWorker @AssistedInject constructor(
     private val achievementRepository: AchievementRepository,
     private val diagnostics: SyncRunRecorder,
     private val syncCoordinator: SteamSyncCoordinator,
+    private val accountChangeMarker: AccountChangeMarkerStore,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result =
-        syncCoordinator.withLock { doWorkLocked() }
+        syncCoordinator.withLock {
+            if (accountChangeMarker.pendingSteamId() != null) {
+                return@withLock Result.success()
+            }
+            doWorkLocked()
+        }
 
     private suspend fun doWorkLocked(): Result {
         val creds = credentials.currentCredentials()

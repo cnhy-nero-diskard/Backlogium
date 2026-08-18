@@ -6,6 +6,7 @@ import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.backlogium.data.backup.BackupRepository
+import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.diagnostics.SyncOutcome
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
@@ -124,11 +125,20 @@ class SteamSyncWorker @AssistedInject constructor(
     private val diagnostics: SyncRunRecorder,
     private val time: TimeProvider,
     private val syncCoordinator: SteamSyncCoordinator,
+    private val accountChangeMarker: AccountChangeMarkerStore,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result =
-        syncCoordinator.withLock { doWorkLocked() }
+        syncCoordinator.withLock {
+            // The account-change marker is the durable barrier between old credentials and old
+            // Room state. A worker that arrives after the marker is written must not poll or diff;
+            // the coordinator owns the reset and startup recovery.
+            if (accountChangeMarker.pendingSteamId() != null) {
+                return@withLock Result.success()
+            }
+            doWorkLocked()
+        }
 
     private suspend fun doWorkLocked(): Result {
         val scope = diagnostics.begin(if (runAttemptCount > 0) "retry" else "scheduled")
@@ -145,6 +155,12 @@ class SteamSyncWorker @AssistedInject constructor(
             }
             val apiKey = creds.apiKey
             val steamId = creds.steamId
+            val storedSteamId = profileDao.get()?.steamId?.takeIf { it.isNotBlank() }
+            if (!canDiffAgainstAccount(storedSteamId, steamId)) {
+                recordError("Stored library belongs to a different Steam account; confirm the account change first")
+                outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
+                return Result.success()
+            }
             // Presence first, before any library-scale work. This one request carries both the
             // running game and the profile header identity; best-effort, so a failure yields null
             // and mergePlayerIdentity below keeps the stored values.
@@ -435,3 +451,7 @@ class SteamSyncWorker @AssistedInject constructor(
         const val ONE_TIME_NAME = "steam_sync_now"
     }
 }
+
+/** A stored playtime baseline is usable only for the same configured Steam account. */
+internal fun canDiffAgainstAccount(storedSteamId: String?, pollSteamId: String): Boolean =
+    storedSteamId.isNullOrBlank() || storedSteamId == pollSteamId

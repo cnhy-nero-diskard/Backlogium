@@ -91,6 +91,12 @@ interface CollectionDao {
     @Query("SELECT * FROM collection_members ORDER BY collectionId ASC, orderIndex ASC")
     suspend fun getAllMembers(): List<CollectionMember>
 
+    @Query("DELETE FROM collection_members")
+    suspend fun deleteAllMembers()
+
+    @Query("DELETE FROM collections")
+    suspend fun deleteAll()
+
     /** Persist or clear a member's manual done mark (ordered-queue collections). */
     @Query(
         "UPDATE collection_members SET done = :done " +

@@ -101,4 +101,13 @@ interface PlayerProfileDao {
     /** Failure reporting must not re-assert a stale copy of any other profile field. */
     @Query("UPDATE player_profile SET lastSyncError = :message WHERE id = 0")
     suspend fun updateLastSyncError(message: String)
+
+    /** Reset account-derived profile state while retaining the active rule configuration version. */
+    @Query(
+        "UPDATE player_profile SET steamId = :steamId, steamLevel = 0, totalXp = 0, level = 1, " +
+            "currentStreak = 0, longestStreak = 0, lastSyncAt = 0, lastSyncError = NULL, " +
+            "playtimeBackfilled = 0, personaName = NULL, avatarUrl = NULL, " +
+            "pendingImportRecompute = 0 WHERE id = 0",
+    )
+    suspend fun resetForAccountChange(steamId: String)
 }

@@ -22,6 +22,18 @@ sealed interface CredentialsState {
     data class Configured(val apiKey: String, val steamId: String) : CredentialsState
 }
 
+/** Result of attempting to save credentials at the account boundary. */
+sealed interface CredentialsSaveResult {
+    /** The credentials were written, either for first configuration or the same account. */
+    data object Saved : CredentialsSaveResult
+
+    /** The caller must confirm the account change before anything is written. */
+    data class IdentityChanged(
+        val storedSteamId: String,
+        val incomingSteamId: String,
+    ) : CredentialsSaveResult
+}
+
 /** Typed outcome of resolving raw SteamID input (raw ID, profile URL, or vanity URL). */
 sealed interface SteamIdResolution {
     /** A validated 17-digit SteamID64 ready to store. */
@@ -87,12 +99,28 @@ class CredentialsRepository @Inject constructor(
         return next
     }
 
-    /** Persist new credentials and refresh the observed state. */
-    suspend fun save(apiKey: String, steamId: String) {
-        store.write(apiKey.trim(), steamId.trim())
+    /**
+     * Persist new credentials and refresh the observed state, unless the Steam identity changes.
+     * The repository reports that condition without writing anything: the destructive response
+     * belongs to the confirmed account-change flow, not to a storage primitive.
+     */
+    suspend fun save(apiKey: String, steamId: String): CredentialsSaveResult {
+        val normalizedSteamId = steamId.trim()
+        val current = refresh()
+        if (current is CredentialsState.Configured &&
+            requiresIdentityConfirmation(current.steamId, normalizedSteamId)
+        ) {
+            return CredentialsSaveResult.IdentityChanged(
+                storedSteamId = current.steamId,
+                incomingSteamId = normalizedSteamId,
+            )
+        }
+
+        store.write(apiKey.trim(), normalizedSteamId)
         // The store now holds credentials, so no further BuildConfig seed should ever run.
         seeded = true
         refresh()
+        return CredentialsSaveResult.Saved
     }
 
     /** Read the current API key + SteamID, loading/seeding first if not yet configured. */
@@ -150,6 +178,10 @@ class CredentialsRepository @Inject constructor(
     }
 
     companion object {
+        /** Pure account-boundary decision used by save and its regression tests. */
+        fun requiresIdentityConfirmation(storedSteamId: String?, incomingSteamId: String): Boolean =
+            !storedSteamId.isNullOrBlank() && storedSteamId != incomingSteamId
+
         /**
          * Pure mapping from a `ResolveVanityURL` result to a typed [SteamIdResolution]:
          * `success = 1` with a valid SteamID64 → [Resolved][SteamIdResolution.Resolved];

@@ -43,7 +43,10 @@ object AchievementMerge {
             displayName = schema?.displayName?.takeIf { it.isNotBlank() } ?: prior?.displayName,
             iconUrl = schema?.icon?.takeIf { it.isNotBlank() } ?: prior?.iconUrl,
             unlocked = unlocked,
-            unlockedAt = dto.unlocktime.takeIf { it > 0L },
+            // Steam's GetPlayerAchievements reports unlocktime in epoch seconds; every consumer of
+            // Achievement.unlockedAt (History, backup export/validation, rarity comparisons) expects
+            // epoch millis like every other timestamp in the schema.
+            unlockedAt = dto.unlocktime.takeIf { it > 0L }?.times(1000L),
             globalPercent = globalPercent ?: prior?.globalPercent,
             snapshotPercent = snapshotPercent,
             description = schema?.description?.takeIf { it.isNotBlank() } ?: prior?.description,

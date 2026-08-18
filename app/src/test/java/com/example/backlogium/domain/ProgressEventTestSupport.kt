@@ -62,6 +62,9 @@ internal class GatedPlayerProfileDao(
 
     override suspend fun get(): PlayerProfile? = delegate.get()
 
+    override suspend fun resetForAccountChange(steamId: String) =
+        delegate.resetForAccountChange(steamId)
+
     override suspend fun updateSyncStatus(lastSyncAt: Long, lastSyncError: String?) =
         delegate.updateSyncStatus(lastSyncAt, lastSyncError)
 

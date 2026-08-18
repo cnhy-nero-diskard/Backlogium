@@ -1,5 +1,7 @@
 package com.example.backlogium.ui.onboarding
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +19,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -58,6 +61,9 @@ fun OnboardingScreen(
     viewModel: OnboardingViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val identityExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri -> uri?.let(viewModel::exportIdentityChange) }
 
     LaunchedEffect(state.completed) {
         if (state.completed) onCompleted()
@@ -85,6 +91,20 @@ fun OnboardingScreen(
             OnboardingStep.API_KEY -> ApiKeyStep(state, viewModel)
             OnboardingStep.STEAM_ID -> SteamIdStep(state, viewModel)
         }
+    }
+
+    state.identityChange?.let { identityChange ->
+        IdentityChangeDialog(
+            state = identityChange,
+            applying = state.saving,
+            onExport = {
+                identityExportLauncher.launch(
+                    "backlogium-account-${identityChange.storedSteamId}-${System.currentTimeMillis()}.json",
+                )
+            },
+            onConfirm = viewModel::confirmIdentityChange,
+            onDismiss = viewModel::declineIdentityChange,
+        )
     }
 }
 
@@ -242,4 +262,67 @@ private fun ResolveFeedback(resolve: ResolveState) {
             )
         }
     }
+}
+
+/** Names the destructive consequence and keeps the complete export action beside confirmation. */
+@Composable
+private fun IdentityChangeDialog(
+    state: IdentityChangeUiState,
+    applying: Boolean,
+    onExport: () -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = { if (!applying && !state.exporting) onDismiss() },
+        title = { Text("Switch Steam account?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Your current account is ${state.storedSteamId}, and the new account is " +
+                        "${state.incomingSteamId}.",
+                )
+                Text(
+                    "Switching will discard the current library, sessions, daily progress, " +
+                        "achievements, collections, sync history, and XP/streak profile.",
+                )
+                Text(
+                    "HowLongToBeat data, rules, display preferences, and automatic snapshots " +
+                        "will be kept.",
+                )
+                state.exportMessage?.let { message ->
+                    Text(
+                        text = message,
+                        color = if (message.startsWith("Backup export failed")) {
+                            androidx.compose.material3.MaterialTheme.colorScheme.error
+                        } else {
+                            androidx.compose.material3.MaterialTheme.colorScheme.primary
+                        },
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Column(horizontalAlignment = Alignment.End) {
+                TextButton(
+                    onClick = onExport,
+                    enabled = !applying && !state.exporting,
+                ) {
+                    if (state.exporting) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(if (state.exportMessage == null) "Export backup first" else "Export again")
+                    }
+                }
+                Button(onClick = onConfirm, enabled = !applying && !state.exporting) {
+                    Text("Discard and switch")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !applying && !state.exporting) {
+                Text("Cancel")
+            }
+        },
+    )
 }

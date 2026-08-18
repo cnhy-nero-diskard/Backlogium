@@ -45,7 +45,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         GameGenreCache::class,
         GameAchievementSync::class,
     ],
-    version = 16,
+    version = 18,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -373,5 +373,71 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 )
             }
         }
+
+        /**
+         * v16 -> v17: make HLTB a standalone title cache. Completion estimates belong to a
+         * game title rather than to the current account's ownership, so deleting `games` must not
+         * cascade and discard them during an account reset or an ordinary library removal.
+         */
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `hltb_data_new` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`hltbId` INTEGER, " +
+                        "`mainStoryMinutes` INTEGER, " +
+                        "`mainExtraMinutes` INTEGER, " +
+                        "`completionistMinutes` INTEGER, " +
+                        "`allStylesMinutes` INTEGER, " +
+                        "`fetchedAt` INTEGER NOT NULL, " +
+                        "`matchStatus` TEXT NOT NULL, " +
+                        "`candidatesJson` TEXT, " +
+                        "PRIMARY KEY(`appId`))",
+                )
+                db.execSQL(
+                    "INSERT INTO `hltb_data_new` " +
+                        "(`appId`, `hltbId`, `mainStoryMinutes`, `mainExtraMinutes`, " +
+                        "`completionistMinutes`, `allStylesMinutes`, `fetchedAt`, " +
+                        "`matchStatus`, `candidatesJson`) " +
+                        "SELECT `appId`, `hltbId`, `mainStoryMinutes`, `mainExtraMinutes`, " +
+                        "`completionistMinutes`, `allStylesMinutes`, `fetchedAt`, " +
+                        "`matchStatus`, `candidatesJson` FROM `hltb_data`",
+                )
+                db.execSQL("DROP TABLE `hltb_data`")
+                db.execSQL("ALTER TABLE `hltb_data_new` RENAME TO `hltb_data`")
+            }
+        }
+
+        /**
+         * v17 -> v18: repair `achievements.unlockedAt` rows written by versions before the
+         * `AchievementMerge` fix that stored Steam's `unlocktime` (epoch seconds) directly instead
+         * of converting to epoch millis (auditfix-account-identity review). No schema change —
+         * this is a one-time data-only correction.
+         *
+         * A stored value is unambiguously second-scale, never a legitimate millis timestamp, if
+         * it falls below [com.example.backlogium.data.backup.BackupValidator.EARLIEST_PLAUSIBLE_DATE]
+         * (2003-01-01) expressed in millis: today's date in seconds is still three orders of
+         * magnitude below that bound, and no correctly-converted millis value for an achievement
+         * unlocked after Steam existed can be. Multiplying those rows by 1000 is therefore safe
+         * and idempotent — a row already in millis is always >= the bound and untouched.
+         */
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "UPDATE `achievements` SET `unlockedAt` = `unlockedAt` * 1000 " +
+                        "WHERE `unlockedAt` IS NOT NULL AND `unlockedAt` > 0 " +
+                        "AND `unlockedAt` < $EARLIEST_PLAUSIBLE_UNLOCK_MILLIS",
+                )
+            }
+        }
+
+        /**
+         * 2003-01-01T00:00:00Z in epoch millis — mirrors
+         * [com.example.backlogium.data.backup.BackupValidator.EARLIEST_PLAUSIBLE_DATE]. Kept as a
+         * literal constant here (rather than importing that object) so this migration's behavior
+         * never shifts if the validator's plausibility window is later tuned for an unrelated
+         * reason.
+         */
+        private const val EARLIEST_PLAUSIBLE_UNLOCK_MILLIS = 1_041_379_200_000L
     }
 }

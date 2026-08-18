@@ -23,6 +23,9 @@ interface GameAchievementSyncDao {
     @Upsert
     suspend fun upsertAll(rows: List<GameAchievementSync>)
 
+    @Query("DELETE FROM game_achievement_sync")
+    suspend fun deleteAll()
+
     @Query("DELETE FROM game_achievement_sync WHERE appId = :appId")
     suspend fun delete(appId: Long)
 }

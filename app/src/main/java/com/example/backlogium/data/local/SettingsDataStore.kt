@@ -353,6 +353,28 @@ class SettingsDataStore @Inject constructor(
     }
 
     /**
+     * Clear account-derived DataStore state while retaining rules, UI preferences, backup
+     * settings, and one-time installation migrations. The Room half of an account reset is
+     * protected by the same durable account-change marker, so repeating this operation is safe.
+     */
+    suspend fun clearAccountDerivedState() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.LIVE_SESSION_APP_ID)
+            prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
+            prefs.remove(Keys.LAST_CELEBRATED_LEVEL)
+            prefs.remove(Keys.LAST_CELEBRATED_STREAK_MILESTONE)
+            prefs.remove(Keys.LAST_QUEST_CELEBRATED_DATE)
+            prefs.remove(Keys.LAST_STREAK_BROKEN_DATE)
+            prefs.remove(Keys.PENDING_QUEST_DATES)
+            prefs.remove(Keys.PENDING_TRANSITION_SOURCE)
+            prefs.remove(Keys.PENDING_TRANSITION_LEVEL)
+            prefs.remove(Keys.PENDING_TRANSITION_STREAK)
+            prefs.remove(Keys.PENDING_TRANSITION_QUEST_MET)
+            prefs.remove(Keys.PENDING_TRANSITION_DATE)
+        }
+    }
+
+    /**
      * Whether the runtime notification permission has already been put to the user. Recorded rather
      * than inferred: a plain "not granted" check can't tell never-asked from declined, and Android
      * only stops showing the dialog after the *second* refusal — so without this the user gets
