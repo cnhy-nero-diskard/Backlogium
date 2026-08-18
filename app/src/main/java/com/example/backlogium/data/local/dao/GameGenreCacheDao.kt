@@ -12,6 +12,9 @@ interface GameGenreCacheDao {
     @Upsert
     suspend fun upsert(cache: GameGenreCache)
 
+    @Query("DELETE FROM game_genre_cache")
+    suspend fun deleteAll()
+
     @Query("SELECT * FROM game_genre_cache")
     fun observeAll(): Flow<List<GameGenreCache>>
 

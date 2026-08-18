@@ -79,6 +79,10 @@ interface GameDao {
     @Query("SELECT COUNT(*) FROM games")
     suspend fun count(): Int
 
+    /** Remove the account-owned library; child rows are cleared explicitly by the reset caller. */
+    @Query("DELETE FROM games")
+    suspend fun deleteAll()
+
     /** Freeze one game's historical playtime offset (opt-in Steam-history import). */
     @Query("UPDATE games SET backfillMinutes = :minutes WHERE appId = :appId")
     suspend fun setBackfillMinutes(appId: Long, minutes: Int)

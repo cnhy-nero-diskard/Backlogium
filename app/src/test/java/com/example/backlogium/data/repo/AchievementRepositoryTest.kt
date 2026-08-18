@@ -583,6 +583,7 @@ class AchievementRepositoryTest {
             rows.forEach { store[it.appId] = it }
         }
 
+        override suspend fun deleteAll() = store.clear()
         override suspend fun delete(appId: Long) {
             store.remove(appId)
         }
@@ -605,6 +606,7 @@ class AchievementRepositoryTest {
 
         override fun observeForGame(appId: Long): Flow<List<Achievement>> = flowOf(emptyList())
         override suspend fun getForGame(appId: Long): List<Achievement> = store.filter { it.appId == appId }
+        override suspend fun deleteAll() = store.clear()
         override suspend fun getOne(appId: Long, apiName: String): Achievement? =
             store.firstOrNull { it.appId == appId && it.apiName == apiName }
 
@@ -628,6 +630,7 @@ class AchievementRepositoryTest {
         override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = error("not used")
         override suspend fun setGoalFlag(appId: Long, isGoal: Boolean) = error("not used")
         override suspend fun count(): Int = games.size
+        override suspend fun deleteAll() = error("not used")
         override suspend fun setBackfillMinutes(appId: Long, minutes: Int) = error("not used")
     }
 

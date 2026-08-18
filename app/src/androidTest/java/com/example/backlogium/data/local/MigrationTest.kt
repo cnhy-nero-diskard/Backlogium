@@ -161,6 +161,63 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun v16ToV17_detachesHltbAndKeepsRowsWhenGameIsDeleted() {
+        val databaseName = "migration-v16-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 16)
+        try {
+            database.execSQL(
+                "INSERT INTO games " +
+                    "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+                    "isGoal, targetMinutes, lastSyncedAt, backfillMinutes) VALUES " +
+                    "(440, 'Game', '', 100, 0, 100, 0, NULL, 1700000000000, 0)",
+            )
+            database.execSQL(
+                "INSERT INTO hltb_data " +
+                    "(appId, hltbId, mainStoryMinutes, mainExtraMinutes, completionistMinutes, " +
+                    "allStylesMinutes, fetchedAt, matchStatus, candidatesJson) VALUES " +
+                    "(440, 99, 60, 90, 120, 150, 1700000000000, 'RESOLVED', NULL)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                17,
+                true,
+                BacklogiumDatabase.MIGRATION_16_17,
+            )
+            try {
+                migrated.query("PRAGMA foreign_key_list(`hltb_data`)").use { cursor ->
+                    assertFalse(cursor.moveToFirst())
+                }
+                migrated.execSQL("DELETE FROM games WHERE appId = 440")
+                migrated.query("SELECT COUNT(*) FROM hltb_data WHERE appId = 440").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1, cursor.getInt(0))
+                }
+                assertForeignKeyReferencesGames(migrated, "sessions")
+                assertForeignKeyReferencesGames(migrated, "achievements")
+                assertForeignKeyReferencesGames(migrated, "game_genre_cache")
+                assertForeignKeyReferencesGames(migrated, "game_achievement_sync")
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    private fun assertForeignKeyReferencesGames(database: SupportSQLiteDatabase, table: String) {
+        database.query("PRAGMA foreign_key_list(`$table`)").use { cursor ->
+            val tableIndex = cursor.getColumnIndexOrThrow("table")
+            assertTrue(cursor.moveToFirst())
+            assertEquals("games", cursor.getString(tableIndex))
+        }
+    }
+
     private fun openRawV13Database(databaseName: String): SupportSQLiteOpenHelper {
         val callback = object : SupportSQLiteOpenHelper.Callback(13) {
             override fun onCreate(db: SupportSQLiteDatabase) {

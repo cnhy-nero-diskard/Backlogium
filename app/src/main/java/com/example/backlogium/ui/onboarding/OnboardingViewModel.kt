@@ -1,8 +1,12 @@
 package com.example.backlogium.ui.onboarding
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.backlogium.data.backup.BackupRepository
+import com.example.backlogium.data.repo.AccountChangeCoordinator
 import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.repo.CredentialsSaveResult
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.SteamIdResolution
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -11,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 
 /** The two ordered onboarding steps: API key first (so vanity resolution has a key), then SteamID. */
@@ -36,6 +41,8 @@ data class OnboardingUiState(
     val entryMode: SteamIdEntryMode = SteamIdEntryMode.RAW_ID,
     val resolve: ResolveState = ResolveState.Idle,
     val saving: Boolean = false,
+    /** A changed SteamID is held here until the user confirms or declines its data consequence. */
+    val identityChange: IdentityChangeUiState? = null,
     /** Set once credentials are persisted; the host navigates away / dismisses the takeover. */
     val completed: Boolean = false,
 ) {
@@ -44,6 +51,13 @@ data class OnboardingUiState(
 
     val isResolved: Boolean get() = resolve is ResolveState.Resolved
 }
+
+data class IdentityChangeUiState(
+    val storedSteamId: String,
+    val incomingSteamId: String,
+    val exporting: Boolean = false,
+    val exportMessage: String? = null,
+)
 
 /**
  * Bridges the onboarding flow to [CredentialsRepository]. Holds the typed API key in memory only
@@ -54,10 +68,14 @@ data class OnboardingUiState(
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
     private val credentials: CredentialsRepository,
+    private val backupRepository: BackupRepository,
+    private val accountChange: AccountChangeCoordinator,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
     val uiState: StateFlow<OnboardingUiState> = _uiState.asStateFlow()
+
+    private var pendingAccountChange: PendingAccountChange? = null
 
     init {
         viewModelScope.launch {
@@ -103,19 +121,101 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
-    /** Persist the entered/kept API key and the resolved SteamID. No-op until resolved. */
+    /** Persist the entered/kept API key and the resolved SteamID, or request account confirmation. */
     fun finish() {
         val state = _uiState.value
         val resolved = state.resolve as? ResolveState.Resolved ?: return
-        if (state.saving) return
+        if (state.saving || state.identityChange != null) return
         _uiState.update { it.copy(saving = true) }
         viewModelScope.launch {
             val apiKey = state.apiKey.ifBlank {
                 // Editing with the key field left blank: keep the stored key.
                 (credentials.currentCredentials())?.apiKey.orEmpty()
             }
-            credentials.save(apiKey = apiKey, steamId = resolved.steamId64)
-            _uiState.update { it.copy(saving = false, completed = true) }
+            when (val result = credentials.save(apiKey = apiKey, steamId = resolved.steamId64)) {
+                CredentialsSaveResult.Saved ->
+                    _uiState.update { it.copy(saving = false, completed = true) }
+
+                is CredentialsSaveResult.IdentityChanged -> {
+                    pendingAccountChange = PendingAccountChange(apiKey, result.incomingSteamId)
+                    _uiState.update {
+                        it.copy(
+                            saving = false,
+                            identityChange = IdentityChangeUiState(
+                                storedSteamId = result.storedSteamId,
+                                incomingSteamId = result.incomingSteamId,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /** Declining is a complete no-op: the repository has not written either credential. */
+    fun declineIdentityChange() {
+        pendingAccountChange = null
+        _uiState.update { it.copy(identityChange = null) }
+    }
+
+    /** Export the pre-reset state using the same complete backup path exposed in Settings. */
+    fun exportIdentityChange(uri: Uri) {
+        val pending = pendingAccountChange ?: return
+        if (_uiState.value.identityChange?.exporting == true) return
+        _uiState.update {
+            it.copy(
+                identityChange = it.identityChange?.copy(exporting = true, exportMessage = null),
+            )
+        }
+        viewModelScope.launch {
+            try {
+                backupRepository.exportTo(uri)
+                _uiState.update {
+                    it.copy(
+                        identityChange = it.identityChange?.copy(
+                            exporting = false,
+                            exportMessage = "Backup exported. You can now switch accounts.",
+                        ),
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _uiState.update {
+                    it.copy(
+                        identityChange = it.identityChange?.copy(
+                            exporting = false,
+                            exportMessage = "Backup export failed: ${error.message ?: "try again"}",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    /** Apply the confirmed, resumable reset and promote the staged credentials. */
+    fun confirmIdentityChange() {
+        val pending = pendingAccountChange ?: return
+        if (_uiState.value.saving) return
+        _uiState.update { it.copy(saving = true) }
+        viewModelScope.launch {
+            try {
+                accountChange.apply(apiKey = pending.apiKey, steamId = pending.steamId)
+                credentials.refresh()
+                pendingAccountChange = null
+                _uiState.update { it.copy(saving = false, identityChange = null, completed = true) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _uiState.update {
+                    it.copy(
+                        saving = false,
+                        identityChange = it.identityChange?.copy(
+                            exportMessage = "Account switch is incomplete: ${error.message ?: "try again"}",
+                        ),
+                    )
+                }
+            }
         }
     }
 
@@ -128,4 +228,9 @@ class OnboardingViewModel @Inject constructor(
         SteamIdResolution.NetworkError ->
             ResolveState.Error("Couldn't reach Steam — check your connection and API key, then retry.")
     }
+
+    private data class PendingAccountChange(
+        val apiKey: String,
+        val steamId: String,
+    )
 }

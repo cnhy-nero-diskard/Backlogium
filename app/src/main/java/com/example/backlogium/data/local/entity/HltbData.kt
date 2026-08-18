@@ -1,7 +1,6 @@
 package com.example.backlogium.data.local.entity
 
 import androidx.room.Entity
-import androidx.room.ForeignKey
 import androidx.room.PrimaryKey
 
 /** Outcome of matching a Steam game name to HowLongToBeat entries. */
@@ -27,14 +26,6 @@ enum class HltbMatchStatus {
  */
 @Entity(
     tableName = "hltb_data",
-    foreignKeys = [
-        ForeignKey(
-            entity = Game::class,
-            parentColumns = ["appId"],
-            childColumns = ["appId"],
-            onDelete = ForeignKey.CASCADE,
-        ),
-    ],
 )
 data class HltbData(
     @PrimaryKey val appId: Long,

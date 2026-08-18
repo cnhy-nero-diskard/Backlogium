@@ -45,7 +45,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         GameGenreCache::class,
         GameAchievementSync::class,
     ],
-    version = 16,
+    version = 17,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -371,6 +371,40 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                     "ALTER TABLE `player_profile` " +
                         "ADD COLUMN `pendingImportRecompute` INTEGER NOT NULL DEFAULT 0",
                 )
+            }
+        }
+
+        /**
+         * v16 -> v17: make HLTB a standalone title cache. Completion estimates belong to a
+         * game title rather than to the current account's ownership, so deleting `games` must not
+         * cascade and discard them during an account reset or an ordinary library removal.
+         */
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `hltb_data_new` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`hltbId` INTEGER, " +
+                        "`mainStoryMinutes` INTEGER, " +
+                        "`mainExtraMinutes` INTEGER, " +
+                        "`completionistMinutes` INTEGER, " +
+                        "`allStylesMinutes` INTEGER, " +
+                        "`fetchedAt` INTEGER NOT NULL, " +
+                        "`matchStatus` TEXT NOT NULL, " +
+                        "`candidatesJson` TEXT, " +
+                        "PRIMARY KEY(`appId`))",
+                )
+                db.execSQL(
+                    "INSERT INTO `hltb_data_new` " +
+                        "(`appId`, `hltbId`, `mainStoryMinutes`, `mainExtraMinutes`, " +
+                        "`completionistMinutes`, `allStylesMinutes`, `fetchedAt`, " +
+                        "`matchStatus`, `candidatesJson`) " +
+                        "SELECT `appId`, `hltbId`, `mainStoryMinutes`, `mainExtraMinutes`, " +
+                        "`completionistMinutes`, `allStylesMinutes`, `fetchedAt`, " +
+                        "`matchStatus`, `candidatesJson` FROM `hltb_data`",
+                )
+                db.execSQL("DROP TABLE `hltb_data`")
+                db.execSQL("ALTER TABLE `hltb_data_new` RENAME TO `hltb_data`")
             }
         }
     }

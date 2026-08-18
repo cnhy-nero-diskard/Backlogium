@@ -13,6 +13,7 @@ import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.backup.SnapshotStore
 import com.example.backlogium.data.diagnostics.DiagnosticHistoryMigration
+import com.example.backlogium.data.repo.AccountChangeCoordinator
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.domain.DailyProgressBackfillUseCase
 import com.example.backlogium.domain.PendingImportRecomputeUseCase
@@ -96,6 +97,9 @@ class BacklogiumApp : Application(), Configuration.Provider {
     lateinit var diagnosticHistoryMigration: DiagnosticHistoryMigration
 
     @Inject
+    lateinit var accountChangeCoordinator: AccountChangeCoordinator
+
+    @Inject
     @ApplicationScope
     lateinit var scope: CoroutineScope
 
@@ -117,14 +121,19 @@ class BacklogiumApp : Application(), Configuration.Provider {
         // database operation fails, so the next process start can retry safely.
         snapshotStore.migrateLegacySnapshots()
         scope.launch {
+            val ready = runCatching { accountChangeCoordinator.resumeIfPending() }
+                .onFailure { Timber.e(it, "Account-change recovery failed; sync remains unscheduled") }
+                .isSuccess
+            if (!ready) return@launch
+
             runCatching { diagnosticHistoryMigration.purgeLegacyIdentifiersIfNeeded() }
                 .onFailure { Timber.e(it, "Diagnostic history migration failed") }
+            correctHistoricalDailyTotals()
+            resolvePendingImportRecompute()
             syncScheduler.ensurePeriodicSync()
             syncScheduler.ensurePeriodicReconciliation()
         }
         ProcessLifecycleOwner.get().lifecycle.addObserver(ForegroundPresenceCheck())
-        correctHistoricalDailyTotals()
-        resolvePendingImportRecompute()
     }
 
     /**

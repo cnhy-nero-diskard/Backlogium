@@ -352,6 +352,7 @@ class LiveStatusRepositoryTest {
         override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = error("not used")
         override suspend fun setGoalFlag(appId: Long, isGoal: Boolean) = error("not used")
         override suspend fun count(): Int = error("not used")
+        override suspend fun deleteAll() = error("not used")
         override suspend fun setBackfillMinutes(appId: Long, minutes: Int) = error("not used")
     }
 
@@ -366,6 +367,7 @@ class LiveStatusRepositoryTest {
         }
         override fun observe(): Flow<PlayerProfile?> = error("not used")
         override suspend fun get(): PlayerProfile? = stored
+        override suspend fun resetForAccountChange(steamId: String) = error("not used")
         override suspend fun updateSyncStatus(lastSyncAt: Long, lastSyncError: String?) = error("not used")
         override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?) = error("not used")
         override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?) {

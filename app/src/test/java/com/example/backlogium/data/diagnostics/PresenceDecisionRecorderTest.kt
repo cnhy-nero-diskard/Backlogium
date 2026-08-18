@@ -56,5 +56,7 @@ class PresenceDecisionRecorderTest {
         override suspend fun pruneRuns(limit: Int) = Unit
         override suspend fun prunePresenceDecisions(limit: Int) = Unit
         override suspend fun deleteRequestBreakdowns() = Unit
+        override suspend fun deleteSyncRuns() = Unit
+        override suspend fun deletePresenceDecisions() = Unit
     }
 }

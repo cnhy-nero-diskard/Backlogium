@@ -21,6 +21,9 @@ interface AchievementDao {
     @Query("SELECT * FROM achievements WHERE appId = :appId")
     suspend fun getForGame(appId: Long): List<Achievement>
 
+    @Query("DELETE FROM achievements")
+    suspend fun deleteAll()
+
     /** Single achievement lookup for the backup/restore merge engine (add-backup-restore). */
     @Query("SELECT * FROM achievements WHERE appId = :appId AND apiName = :apiName LIMIT 1")
     suspend fun getOne(appId: Long, apiName: String): Achievement?

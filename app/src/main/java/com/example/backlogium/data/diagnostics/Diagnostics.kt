@@ -65,6 +65,7 @@ enum class SyncOutcome(val value: String) {
     INCOMPLETE("incomplete"),
     SKIPPED_NO_CREDENTIALS("skipped:no_credentials"),
     SKIPPED_EMPTY_OWNED_GAMES("skipped:empty_owned_games"),
+    SKIPPED_ACCOUNT_MISMATCH("skipped:account_mismatch"),
 }
 
 /**

@@ -44,6 +44,7 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
     override fun observeClosedSince(cutoff: Long): Flow<List<Session>> =
         flowOf(sessions.filter { it.startAt >= cutoff && !it.open })
     override suspend fun getAll(): List<Session> = sessions
+    override suspend fun deleteAll() = Unit
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(sessions.minOfOrNull { it.startAt })
     override suspend fun findByNaturalKey(appId: Long, startAt: Long, endAt: Long?): Session? =
         sessions.firstOrNull { it.appId == appId && it.startAt == startAt && it.endAt == endAt }
@@ -149,6 +150,7 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
     override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = Unit
     override suspend fun setGoalFlag(appId: Long, isGoal: Boolean) = Unit
     override suspend fun count(): Int = store.size
+    override suspend fun deleteAll() = store.clear()
     override suspend fun setBackfillMinutes(appId: Long, minutes: Int) {
         store[appId]?.let { store[appId] = it.copy(backfillMinutes = minutes) }
     }
@@ -205,6 +207,8 @@ internal class FakeDailyProgressDao(
         beforeGetAllOrdered?.invoke()
         return snapshot
     }
+
+    override suspend fun deleteAll() = store.clear()
 }
 
 /**
@@ -230,6 +234,9 @@ internal class FakePlayerProfileDao(initial: PlayerProfile? = null) : PlayerProf
 
     override fun observe(): Flow<PlayerProfile?> = state.asStateFlow()
     override suspend fun get(): PlayerProfile? = state.value
+    override suspend fun resetForAccountChange(steamId: String) {
+        state.value = (state.value ?: PlayerProfile()).copy(steamId = steamId)
+    }
 
     override suspend fun updateSyncStatus(lastSyncAt: Long, lastSyncError: String?) {
         state.value = (state.value ?: PlayerProfile()).copy(lastSyncAt = maxOf(state.value?.lastSyncAt ?: 0L, lastSyncAt), lastSyncError = lastSyncError)
@@ -271,6 +278,7 @@ internal class FakeAchievementDao(private val achievements: List<Achievement>) :
     override suspend fun upsertAll(achievements: List<Achievement>) = Unit
     override fun observeForGame(appId: Long): Flow<List<Achievement>> = flowOf(emptyList())
     override suspend fun getForGame(appId: Long): List<Achievement> = emptyList()
+    override suspend fun deleteAll() = Unit
     override suspend fun getOne(appId: Long, apiName: String): Achievement? =
         achievements.firstOrNull { it.appId == appId && it.apiName == apiName }
     override fun observeCounts(): Flow<List<AchievementCounts>> = flowOf(emptyList())

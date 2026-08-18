@@ -651,6 +651,7 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
     }
 
     override suspend fun count(): Int = store.size
+    override suspend fun deleteAll() = store.clear()
     override suspend fun setBackfillMinutes(appId: Long, minutes: Int) {
         store[appId]?.let { store[appId] = it.copy(backfillMinutes = minutes) }
     }
@@ -685,6 +686,7 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     override fun observeClosedSince(cutoff: Long): Flow<List<Session>> =
         flowOf(store.filter { it.startAt >= cutoff && !it.open })
     override suspend fun getAll(): List<Session> = store.sortedBy { it.startAt }
+    override suspend fun deleteAll() = store.clear()
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(store.minOfOrNull { it.startAt })
     override suspend fun findByNaturalKey(appId: Long, startAt: Long, endAt: Long?): Session? =
         store.firstOrNull { it.appId == appId && it.startAt == startAt && it.endAt == endAt }
@@ -745,6 +747,7 @@ private class FakeDailyProgressDao(private val store: MutableMap<String, DailyPr
     override suspend fun getByDate(date: String): DailyProgress? = store[date]
     override fun observeAll(): Flow<List<DailyProgress>> = flowOf(store.values.toList())
     override suspend fun getAllOrdered(): List<DailyProgress> = store.values.sortedBy { it.date }
+    override suspend fun deleteAll() = store.clear()
 }
 
 private class FakeHltbDataDao(private val store: MutableMap<Long, HltbData>) : HltbDataDao {
@@ -770,6 +773,7 @@ private class FakeAchievementDao(private val store: MutableList<Achievement>) : 
     override fun observeForGame(appId: Long): Flow<List<Achievement>> = flowOf(emptyList())
     override suspend fun getForGame(appId: Long): List<Achievement> =
         store.filter { it.appId == appId }
+    override suspend fun deleteAll() = store.clear()
 
     override suspend fun getOne(appId: Long, apiName: String): Achievement? =
         store.firstOrNull { it.appId == appId && it.apiName == apiName }
@@ -798,6 +802,9 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
 
     override fun observe(): Flow<PlayerProfile?> = flowOf(profile)
     override suspend fun get(): PlayerProfile? = profile
+    override suspend fun resetForAccountChange(steamId: String) {
+        profile = (profile ?: PlayerProfile()).copy(steamId = steamId)
+    }
 
     override suspend fun updateSyncStatus(lastSyncAt: Long, lastSyncError: String?) {
         profile = (profile ?: PlayerProfile()).copy(
@@ -908,6 +915,11 @@ private class FakeCollectionDao(
 
     override suspend fun getAllMembers(): List<CollectionMember> =
         membersByCollection.values.flatten().sortedWith(compareBy({ it.collectionId }, { it.orderIndex }))
+    override suspend fun deleteAllMembers() = membersByCollection.clear()
+    override suspend fun deleteAll() {
+        store.clear()
+        membersByCollection.clear()
+    }
 
     override suspend fun setMemberDone(collectionId: Long, appId: Long, done: Boolean) {
         val list = membersByCollection[collectionId] ?: return

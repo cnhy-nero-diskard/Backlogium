@@ -36,6 +36,8 @@ class EncryptedCredentialStore @Inject constructor(
     private object Keys {
         val API_KEY = stringPreferencesKey("api_key")
         val STEAM_ID = stringPreferencesKey("steam_id")
+        val PENDING_API_KEY = stringPreferencesKey("pending_api_key")
+        val PENDING_STEAM_ID = stringPreferencesKey("pending_steam_id")
     }
 
     suspend fun readApiKey(): String? = read(Keys.API_KEY)
@@ -52,6 +54,55 @@ class EncryptedCredentialStore @Inject constructor(
         context.credentialsDataStore.edit { prefs ->
             prefs[Keys.API_KEY] = encApiKey
             prefs[Keys.STEAM_ID] = encSteamId
+            prefs.remove(Keys.PENDING_API_KEY)
+            prefs.remove(Keys.PENDING_STEAM_ID)
+        }
+    }
+
+    /**
+     * Stage the next account's credentials without changing the active credentials. The staged
+     * values are encrypted with the same Keystore key so a reset can resume after process death
+     * without putting the API key in the plain intent marker.
+     */
+    suspend fun stagePending(apiKey: String, steamId: String) {
+        val encApiKey = encrypt(apiKey.trim())
+        val encSteamId = encrypt(steamId.trim())
+        context.credentialsDataStore.edit { prefs ->
+            prefs[Keys.PENDING_API_KEY] = encApiKey
+            prefs[Keys.PENDING_STEAM_ID] = encSteamId
+        }
+    }
+
+    /** Read staged credentials for account-change recovery, or null if the pair is incomplete. */
+    suspend fun readPending(): PendingCredentials? {
+        val prefs = context.credentialsDataStore.data.first()
+        val apiKey = prefs[Keys.PENDING_API_KEY]?.let { runCatching { decrypt(it) }.getOrNull() }
+        val steamId = prefs[Keys.PENDING_STEAM_ID]?.let { runCatching { decrypt(it) }.getOrNull() }
+        return if (!apiKey.isNullOrBlank() && !steamId.isNullOrBlank()) {
+            PendingCredentials(apiKey, steamId)
+        } else {
+            null
+        }
+    }
+
+    /** Promote staged credentials to active credentials in one DataStore edit. */
+    suspend fun commitPending() {
+        val pending = readPending() ?: error("No complete staged credentials are available")
+        val encApiKey = encrypt(pending.apiKey)
+        val encSteamId = encrypt(pending.steamId)
+        context.credentialsDataStore.edit { prefs ->
+            prefs[Keys.API_KEY] = encApiKey
+            prefs[Keys.STEAM_ID] = encSteamId
+            prefs.remove(Keys.PENDING_API_KEY)
+            prefs.remove(Keys.PENDING_STEAM_ID)
+        }
+    }
+
+    /** Remove an orphaned staged pair when no account-change marker exists. */
+    suspend fun clearPending() {
+        context.credentialsDataStore.edit { prefs ->
+            prefs.remove(Keys.PENDING_API_KEY)
+            prefs.remove(Keys.PENDING_STEAM_ID)
         }
     }
 
@@ -110,3 +161,9 @@ class EncryptedCredentialStore @Inject constructor(
         const val GCM_TAG_BITS = 128
     }
 }
+
+/** Encrypted, durable inputs for a resumable account change. */
+data class PendingCredentials(
+    val apiKey: String,
+    val steamId: String,
+)

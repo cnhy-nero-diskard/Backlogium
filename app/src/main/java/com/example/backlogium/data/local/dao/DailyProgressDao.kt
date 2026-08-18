@@ -52,4 +52,7 @@ interface DailyProgressDao {
 
     @Query("SELECT * FROM daily_progress ORDER BY date ASC")
     suspend fun getAllOrdered(): List<DailyProgress>
+
+    @Query("DELETE FROM daily_progress")
+    suspend fun deleteAll()
 }
