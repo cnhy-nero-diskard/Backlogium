@@ -210,6 +210,79 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun v17ToV18_repairsSecondScaleUnlockedAtButLeavesMillisAndNullsAlone() {
+        val databaseName = "migration-v17-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 17)
+        try {
+            database.execSQL(
+                "INSERT INTO games " +
+                    "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+                    "isGoal, targetMinutes, lastSyncedAt, backfillMinutes) VALUES " +
+                    "(440, 'Game', '', 100, 0, 100, 0, NULL, 1700000000000, 0)",
+            )
+            // Written by a pre-fix app version: Steam's unlocktime (seconds) stored verbatim.
+            database.execSQL(
+                "INSERT INTO achievements " +
+                    "(appId, apiName, displayName, iconUrl, unlocked, unlockedAt, globalPercent, " +
+                    "snapshotPercent, description, hidden, retired, fetchedAt) VALUES " +
+                    "(440, 'ACH_SECONDS', 'Win', '', 1, 1700000000, 12.5, 13.75, " +
+                    "'Win', 0, 0, 1700000001000)",
+            )
+            // Already correct (post-fix write, or simply never wrong): must be left untouched.
+            database.execSQL(
+                "INSERT INTO achievements " +
+                    "(appId, apiName, displayName, iconUrl, unlocked, unlockedAt, globalPercent, " +
+                    "snapshotPercent, description, hidden, retired, fetchedAt) VALUES " +
+                    "(440, 'ACH_MILLIS', 'Explore', '', 1, 1700000000000, 5.0, 5.0, " +
+                    "'Explore', 0, 0, 1700000001000)",
+            )
+            // Locked achievement: unlockedAt is null and must stay null, not become 0.
+            database.execSQL(
+                "INSERT INTO achievements " +
+                    "(appId, apiName, displayName, iconUrl, unlocked, unlockedAt, globalPercent, " +
+                    "snapshotPercent, description, hidden, retired, fetchedAt) VALUES " +
+                    "(440, 'ACH_LOCKED', 'Locked', '', 0, NULL, NULL, NULL, NULL, 0, 0, " +
+                    "1700000001000)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                18,
+                true,
+                BacklogiumDatabase.MIGRATION_17_18,
+            )
+            try {
+                migrated.query(
+                    "SELECT unlockedAt FROM achievements WHERE apiName = 'ACH_SECONDS'",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1700000000000L, cursor.getLong(0))
+                }
+                migrated.query(
+                    "SELECT unlockedAt FROM achievements WHERE apiName = 'ACH_MILLIS'",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1700000000000L, cursor.getLong(0))
+                }
+                migrated.query(
+                    "SELECT unlockedAt FROM achievements WHERE apiName = 'ACH_LOCKED'",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertTrue(cursor.isNull(0))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private fun assertForeignKeyReferencesGames(database: SupportSQLiteDatabase, table: String) {
         database.query("PRAGMA foreign_key_list(`$table`)").use { cursor ->
             val tableIndex = cursor.getColumnIndexOrThrow("table")
