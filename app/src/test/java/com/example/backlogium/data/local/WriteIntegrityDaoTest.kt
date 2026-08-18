@@ -2,11 +2,25 @@ package com.example.backlogium.data.local
 
 import androidx.room.Room
 import androidx.room.withTransaction
+import com.example.backlogium.data.local.entity.Achievement
+import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.GameAchievementSync
+import com.example.backlogium.data.local.entity.GameGenreCache
+import com.example.backlogium.data.local.entity.HltbData
+import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.data.local.entity.PresenceDecision
+import com.example.backlogium.data.local.entity.RequestBreakdown
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.SyncRun
+import com.example.backlogium.data.local.entity.Collection as CollectionEntity
+import com.example.backlogium.data.repo.AccountRoomReset
 import com.example.backlogium.domain.SessionDiffer
+import com.example.backlogium.domain.CollectionMode
+import com.example.backlogium.domain.CollectionSort
+import com.example.backlogium.domain.CollectionTimeBasis
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.joinAll
@@ -15,6 +29,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -188,6 +203,126 @@ class WriteIntegrityDaoTest {
         assertEquals(null, stored.lastSyncError)
         assertEquals("steam", stored.steamId)
         assertTrue(stored.playtimeBackfilled)
+    }
+
+    @Test
+    fun accountResetClearsOwnedStateRetainsHltbAndRebaselinesProfile() = runBlocking {
+        val appId = 440L
+        database.gameDao().upsert(
+            Game(
+                appId = appId,
+                name = "Old account game",
+                iconUrl = "icon",
+                playtimeForever = 100,
+                playtime2Weeks = 20,
+                lastPlaytime = 90,
+                isGoal = true,
+                targetMinutes = 240,
+                backfillMinutes = 30,
+            ),
+        )
+        database.hltbDataDao().upsert(
+            HltbData(
+                appId = appId,
+                hltbId = 123L,
+                mainStoryMinutes = 600,
+                fetchedAt = 10L,
+                matchStatus = HltbMatchStatus.RESOLVED,
+            ),
+        )
+        database.sessionDao().insert(Session(appId = appId, startAt = 1L, minutes = 30, open = false))
+        database.dailyProgressDao().upsert(DailyProgress(DATE, minutesPlayed = 30, questMet = true))
+        database.achievementDao().upsertAll(
+            listOf(Achievement(appId = appId, apiName = "WIN", unlocked = true, fetchedAt = 10L)),
+        )
+        database.gameGenreCacheDao().upsert(GameGenreCache(appId, "[\"Action\"]", 10L))
+        database.gameAchievementSyncDao().upsert(
+            GameAchievementSync(appId, 10L, 10L, true, 10L),
+        )
+        val collectionId = database.collectionDao().insert(
+            CollectionEntity(
+                name = "Old queue",
+                mode = CollectionMode.ORDERED_QUEUE,
+                sort = CollectionSort.MANUAL_SEQUENCE,
+                timeBasis = CollectionTimeBasis.COMPLETIONIST,
+                createdAt = 10L,
+            ),
+        )
+        database.collectionDao().upsertMember(CollectionMember(collectionId, appId, 0))
+        val runId = database.diagnosticsDao().insertRun(
+            SyncRun(
+                startedAt = 10L,
+                durationMs = 1L,
+                trigger = "test",
+                requestCount = 1,
+                requestMillis = 1L,
+                gamesExamined = 1,
+                gamesUpdated = 1,
+                outcome = "success",
+                errorMessage = null,
+            ),
+        )
+        database.diagnosticsDao().insertBreakdowns(
+            listOf(RequestBreakdown(runId = runId, endpoint = "test", status = 200, requestCount = 1, durationMs = 1L)),
+        )
+        database.diagnosticsDao().insertPresenceDecision(
+            PresenceDecision(
+                at = 10L,
+                trigger = "test",
+                outcome = "detected",
+                appId = appId,
+                retainedPriorState = false,
+            ),
+        )
+        database.playerProfileDao().upsert(
+            PlayerProfile(
+                steamId = "old-account",
+                steamLevel = 20,
+                totalXp = 900,
+                level = 8,
+                currentStreak = 4,
+                longestStreak = 12,
+                gamificationConfigVersion = 42L,
+                lastSyncAt = 100L,
+                lastSyncError = "old error",
+                playtimeBackfilled = true,
+                personaName = "Old player",
+                avatarUrl = "old-avatar",
+                pendingImportRecompute = true,
+            ),
+        )
+
+        val reset = AccountRoomReset(database)
+        reset.resetForAccountChange("new-account")
+        reset.resetForAccountChange("new-account")
+
+        assertTrue(database.gameDao().getAll().isEmpty())
+        assertTrue(database.sessionDao().getAll().isEmpty())
+        assertTrue(database.dailyProgressDao().getAllOrdered().isEmpty())
+        assertTrue(database.achievementDao().getForGame(appId).isEmpty())
+        assertTrue(database.collectionDao().getAll().isEmpty())
+        assertTrue(database.collectionDao().getAllMembers().isEmpty())
+        assertTrue(database.gameGenreCacheDao().observeAll().first().isEmpty())
+        assertTrue(database.gameAchievementSyncDao().observeAll().first().isEmpty())
+        assertTrue(database.diagnosticsDao().observeRuns().first().isEmpty())
+        assertTrue(database.diagnosticsDao().observePresenceDecisions().first().isEmpty())
+        assertEquals(1, database.hltbDataDao().getAll().size)
+        assertEquals(123L, database.hltbDataDao().getByAppId(appId)?.hltbId)
+
+        val profile = database.playerProfileDao().get()!!
+        assertEquals("new-account", profile.steamId)
+        assertEquals(0, profile.steamLevel)
+        assertEquals(0, profile.totalXp)
+        assertEquals(1, profile.level)
+        assertEquals(0, profile.currentStreak)
+        assertEquals(0, profile.longestStreak)
+        assertEquals(42L, profile.gamificationConfigVersion)
+        assertEquals(0L, profile.lastSyncAt)
+        assertNull(profile.lastSyncError)
+        assertFalse(profile.playtimeBackfilled)
+        assertNull(profile.personaName)
+        assertNull(profile.avatarUrl)
+        assertFalse(profile.pendingImportRecompute)
     }
 
     @Test

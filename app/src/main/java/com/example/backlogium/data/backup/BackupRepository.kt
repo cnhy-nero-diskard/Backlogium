@@ -109,7 +109,7 @@ class BackupRepository @Inject constructor(
     /** Whether [file]'s recorded identity differs from the signed-in account. Warn, don't block. */
     suspend fun isMismatched(file: BackupFile): Boolean {
         val current = currentSteamId() ?: return false
-        return file.identity.steamId64.isNotBlank() && file.identity.steamId64 != current
+        return isCrossAccountBackup(current, file.identity.steamId64)
     }
 
     /** Merge a validated file into the local database — the one import/restore code path. */
@@ -163,6 +163,10 @@ class BackupRepository @Inject constructor(
         const val MAX_IMPORT_BYTES: Long = 32L * 1024 * 1024
     }
 }
+
+/** Pure cross-account warning predicate; importing still remains an explicit, permitted merge. */
+internal fun isCrossAccountBackup(currentSteamId: String?, backupSteamId: String): Boolean =
+    !currentSteamId.isNullOrBlank() && backupSteamId.isNotBlank() && currentSteamId != backupSteamId
 
 /** Raised by [BoundedInputStream] when a read would carry it past its limit. */
 internal class StreamLimitExceededException(val bytesReadAtLeast: Long) :

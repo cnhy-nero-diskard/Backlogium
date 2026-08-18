@@ -718,9 +718,10 @@ private fun MismatchImportDialog(
         title = { Text("Different Steam account") },
         text = {
             Text(
-                "This backup was created for SteamID $backupSteamId, but you're signed in as " +
-                    "$currentSteamId. Importing will merge its history, XP, and streaks into " +
-                    "your current account. Continue?",
+                "This backup belongs to a different Steam account (SteamID $backupSteamId), " +
+                    "while you're signed in as $currentSteamId. Importing will merge its " +
+                    "history, XP, and streaks into your current account; it will not change " +
+                    "the configured SteamID. Continue?",
             )
         },
         confirmButton = { TextButton(onClick = onConfirm) { Text("Import anyway") } },

@@ -1,9 +1,8 @@
 package com.example.backlogium.data.repo
 
-import androidx.room.withTransaction
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.credentials.EncryptedCredentialStore
-import com.example.backlogium.data.local.BacklogiumDatabase
+import com.example.backlogium.data.credentials.PendingCredentials
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.ProgressTransitionCoordinator
@@ -21,7 +20,7 @@ import javax.inject.Singleton
 class AccountChangeCoordinator @Inject constructor(
     private val credentialStore: EncryptedCredentialStore,
     private val markerStore: AccountChangeMarkerStore,
-    private val database: BacklogiumDatabase,
+    private val roomReset: AccountRoomReset,
     private val settings: SettingsDataStore,
     private val syncCoordinator: SteamSyncCoordinator,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
@@ -43,27 +42,35 @@ class AccountChangeCoordinator @Inject constructor(
 
     /** Resume an incomplete change before scheduling or allowing any new account-bound work. */
     suspend fun resumeIfPending(): Boolean {
-        val markerSteamId = markerStore.pendingSteamId() ?: run {
-            // A failed attempt before the marker was written leaves only staged credentials.
-            credentialStore.clearPending()
-            return false
-        }
-
+        val markerSteamId = markerStore.pendingSteamId()
         val pending = credentialStore.readPending()
-        if (pending == null) {
-            // Crash point 3: the active credentials were promoted, but marker cleanup did not
-            // complete. The new identity proves the Room reset has already been completed.
-            if (credentialStore.readSteamId() == markerSteamId) {
-                markerStore.clear()
-                return true
+        val activeSteamId = if (markerSteamId != null && pending == null) {
+            credentialStore.readSteamId()
+        } else {
+            null
+        }
+        return when (accountChangeRecoveryAction(markerSteamId, pending, activeSteamId)) {
+            AccountChangeRecoveryAction.ClearOrphanPending -> {
+                // A failed attempt before the marker was written leaves only staged credentials.
+                credentialStore.clearPending()
+                false
             }
-            error("Account-change marker exists without staged credentials")
+
+            AccountChangeRecoveryAction.ResumePending -> {
+                completePendingChange()
+                true
+            }
+
+            AccountChangeRecoveryAction.ClearCommittedMarker -> {
+                // Crash point 3: the active credentials were promoted, but marker cleanup did
+                // not complete. The new identity proves the Room reset already committed.
+                markerStore.clear()
+                true
+            }
+
+            AccountChangeRecoveryAction.Invalid ->
+                error("Account-change marker and staged credentials are inconsistent")
         }
-        require(pending.steamId == markerSteamId) {
-            "Account-change marker does not match staged credentials"
-        }
-        completePendingChange()
-        return true
     }
 
     private suspend fun completePendingChange() {
@@ -84,19 +91,7 @@ class AccountChangeCoordinator @Inject constructor(
         syncCoordinator.withLock {
             derivedStateWrites.withLock {
                 progressTransitions.withTransition {
-                    database.withTransaction {
-                        database.sessionDao().deleteAll()
-                        database.achievementDao().deleteAll()
-                        database.gameGenreCacheDao().deleteAll()
-                        database.gameAchievementSyncDao().deleteAll()
-                        database.collectionDao().deleteAllMembers()
-                        database.collectionDao().deleteAll()
-                        database.dailyProgressDao().deleteAll()
-                        database.diagnosticsDao().deleteAll()
-                        database.gameDao().deleteAll()
-                        database.playerProfileDao().insertIfMissing()
-                        database.playerProfileDao().resetForAccountChange(markerSteamId)
-                    }
+                    roomReset.resetForAccountChange(markerSteamId)
                     // Rules and UI preferences survive. Progress-event marks and the live
                     // now-playing session belong to the discarded account and do not.
                     settings.clearAccountDerivedState()
@@ -109,4 +104,24 @@ class AccountChangeCoordinator @Inject constructor(
         credentialStore.commitPending()
         markerStore.clear()
     }
+}
+
+/** Recovery branches for the durable marker protocol, kept pure so every crash window is tested. */
+internal enum class AccountChangeRecoveryAction {
+    ClearOrphanPending,
+    ResumePending,
+    ClearCommittedMarker,
+    Invalid,
+}
+
+internal fun accountChangeRecoveryAction(
+    markerSteamId: String?,
+    pending: PendingCredentials?,
+    activeSteamId: String?,
+): AccountChangeRecoveryAction = when {
+    markerSteamId == null -> AccountChangeRecoveryAction.ClearOrphanPending
+    pending?.steamId == markerSteamId -> AccountChangeRecoveryAction.ResumePending
+    pending == null && activeSteamId == markerSteamId ->
+        AccountChangeRecoveryAction.ClearCommittedMarker
+    else -> AccountChangeRecoveryAction.Invalid
 }
