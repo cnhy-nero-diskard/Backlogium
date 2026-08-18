@@ -96,6 +96,16 @@ class AchievementMergeTest {
     }
 
     @Test
+    fun unlockedAtConvertsSteamsEpochSecondsToEpochMillis() {
+        // Steam's GetPlayerAchievements reports unlocktime in seconds; every consumer of
+        // Achievement.unlockedAt (History, backup export/validation, rarity comparisons) expects
+        // millis. A missing *1000 here previously stored unlock dates around 1970.
+        val row = merge(dto = unlocked(), prior = null)
+
+        assertEquals(1_700_000_000_000L, row.unlockedAt)
+    }
+
+    @Test
     fun aLockedAchievementCapturesNoSnapshot() {
         val row = merge(dto = locked(), globalPercent = 42.0, prior = null)
 

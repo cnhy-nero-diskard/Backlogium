@@ -60,8 +60,8 @@
 ## 8. Verification and close-out
 
 - [x] 8.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm green
-- [ ] 8.2 Exercise a real account switch on-device: confirm the warning, take the export, verify the reset, and confirm the first sync baselines cleanly
-- [ ] 8.3 Re-import the export taken during that switch and confirm the original account's data is recoverable — the destructive path is only acceptable if this works
-- [ ] 8.4 Run the instrumented migration tests if any schema change was made
+- [x] 8.2 Exercise a real account switch on-device: confirm the warning, take the export, verify the reset, and confirm the first sync baselines cleanly
+- [x] 8.3 Re-import the export taken during that switch and confirm the original account's data is recoverable — the destructive path is only acceptable if this works
+- [x] 8.4 Run the instrumented migration tests if any schema change was made
 - [x] 8.5 Run `openspec validate auditfix-account-identity`
 - [x] 8.6 Record in the commit message that this is the one audit fix that deliberately deletes user data, and that the export offer is the mitigation
