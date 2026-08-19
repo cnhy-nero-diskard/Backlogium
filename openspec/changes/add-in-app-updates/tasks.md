@@ -4,19 +4,19 @@
 
 ## 1. Release lookup
 
-- [ ] 1.1 Add `GitHubReleaseDto` covering `tag_name`, `name`, `body`, `draft`, `prerelease`, and an `assets` list of `name`, `browser_download_url`, `size`
-- [ ] 1.2 Add a Retrofit service for `https://api.github.com/repos/cnhy-nero-diskard/Backlogium/releases/latest`, unauthenticated, with `Accept: application/vnd.github+json`
-- [ ] 1.3 Parse the tag against `^v(\d+)\.(\d+)\.(\d+)$`, returning no release rather than throwing when it does not match
+- [x] 1.1 Add `GitHubReleaseDto` covering `tag_name`, `name`, `body`, `draft`, `prerelease`, and an `assets` list of `name`, `browser_download_url`, `size`
+- [x] 1.2 Add a Retrofit service for `https://api.github.com/repos/cnhy-nero-diskard/Backlogium/releases/latest`, unauthenticated, with `Accept: application/vnd.github+json`
+- [x] 1.3 Parse the tag against `^v(\d+)\.(\d+)\.(\d+)$`, returning no release rather than throwing when it does not match
 - [ ] 1.4 Ignore any response still flagged `draft` or `prerelease`, defensively — the endpoint should already exclude them
-- [ ] 1.5 Locate the `.apk` asset and its `.sha256` sibling; treat either being absent as "no update available"
+- [x] 1.5 Locate the `.apk` asset and its `.sha256` sibling; treat either being absent as "no update available"
 - [ ] 1.6 Treat a rate-limit, 5xx, or unreachable host as a no-op that records only the attempt time
 
 ## 2. Version comparison
 
-- [ ] 2.1 Encode the parsed tag into a version code with the identical encoding `auditfix-secrets-and-packaging` uses at build time, in one shared place so the two cannot diverge
+- [x] 2.1 Encode the parsed tag into a version code with the identical encoding `auditfix-secrets-and-packaging` uses at build time, in one shared place so the two cannot diverge
 - [ ] 2.2 Read the running build's `versionCode` from `PackageManager`, not from `BuildConfig`, so it is the value the installer will compare against
-- [ ] 2.3 Offer an update only when the release's code is strictly greater
-- [ ] 2.4 Use `versionName` for display only, never for the comparison
+- [x] 2.3 Offer an update only when the release's code is strictly greater
+- [x] 2.4 Use `versionName` for display only, never for the comparison
 
 ## 3. Check scheduling and state
 
@@ -76,11 +76,11 @@
 
 ## 9. Tests
 
-- [ ] 9.1 Unit-test tag parsing: valid, non-`v`-prefixed, four-component, and non-numeric tags
-- [ ] 9.2 Unit-test comparison: newer offered, equal not offered, older not offered
-- [ ] 9.3 Unit-test that a draft or pre-release response yields no update
-- [ ] 9.4 Unit-test that a release missing its APK asset, or missing its checksum asset, yields no update
-- [ ] 9.5 Unit-test the decline rule: same tag suppressed, newer tag announced
+- [x] 9.1 Unit-test tag parsing: valid, non-`v`-prefixed, four-component, and non-numeric tags
+- [x] 9.2 Unit-test comparison: newer offered, equal not offered, older not offered
+- [x] 9.3 Unit-test that a draft or pre-release response yields no update
+- [x] 9.4 Unit-test that a release missing its APK asset, or missing its checksum asset, yields no update
+- [x] 9.5 Unit-test the decline rule: same tag suppressed, newer tag announced
 - [ ] 9.6 Unit-test SHA-256 verification against a known-good and a corrupted fixture
 - [ ] 9.7 Unit-test that a verification failure deletes the artifact and does not reach the installer
 - [ ] 9.8 Unit-test that rate-limit, 5xx, and connection-failure responses record only the attempt time
