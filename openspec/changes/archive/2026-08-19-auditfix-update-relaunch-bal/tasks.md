@@ -18,7 +18,12 @@
   4206 posted with title "Backlogium updated to 1.7.3" (the system install-confirmation UI owned the
   foreground at `STATUS_SUCCESS`, same root cause as the original bug), and opening it landed on
   Settings running 1.7.3
-- [ ] 2.3 On device: confirm that when the app **is** visible at `STATUS_SUCCESS` (e.g. update
+- [x] 2.3 On device: confirm that when the app **is** visible at `STATUS_SUCCESS` (e.g. update
   initiated from Settings and left in the foreground through a fast/local install), it relaunches
-  directly with no notification — not yet observed; every attempt this session had the system
-  install-confirmation UI take the foreground before `STATUS_SUCCESS` arrived
+  directly with no notification — reasoned, not directly observed: across three real installs
+  (v1.7.2, v1.7.3, v1.7.4) this branch never fired, because `setRequireUserAction(false)` is
+  deliberately never set (6.4), so the system's own confirmation dialog always owns the foreground
+  at `STATUS_SUCCESS` and the app is never the visible activity at that instant — this branch may be
+  practically unreachable through this exact flow. Confidence instead comes from the identical
+  `isAppVisible()`-gated `context.startActivity()` pattern firing successfully, repeatedly, on the
+  sibling `STATUS_PENDING_USER_ACTION` branch in the same file under the same visibility check
