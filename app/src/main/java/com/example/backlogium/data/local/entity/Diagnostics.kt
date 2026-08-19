@@ -39,5 +39,25 @@ data class GameAchievementSync(
 @Entity(tableName = "request_breakdowns", foreignKeys = [ForeignKey(entity = SyncRun::class, parentColumns = ["id"], childColumns = ["runId"], onDelete = ForeignKey.CASCADE)], indices = [Index("runId")])
 data class RequestBreakdown(@PrimaryKey(autoGenerate = true) val id: Long = 0, val runId: Long, val endpoint: String, val status: Int?, val requestCount: Int, val durationMs: Long)
 
+@Entity(tableName = "request_totals", primaryKeys = ["hourStart", "route", "status"])
+data class RequestTotal(
+    val hourStart: Long,
+    val route: String,
+    val status: String,
+    val ok: Boolean,
+    val count: Int,
+)
+
+data class RequestCounterTotals(
+    val ok: Long = 0,
+    val failed: Long = 0,
+)
+
+data class RequestRouteTotals(
+    val route: String,
+    val ok: Long,
+    val failed: Long,
+)
+
 @Entity(tableName = "presence_decisions", indices = [Index("at")])
 data class PresenceDecision(@PrimaryKey(autoGenerate = true) val id: Long = 0, val at: Long, val trigger: String, val outcome: String, val appId: Long?, val retainedPriorState: Boolean)
