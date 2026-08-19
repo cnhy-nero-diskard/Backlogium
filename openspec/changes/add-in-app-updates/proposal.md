@@ -56,7 +56,9 @@ release tag, so the prerequisite is satisfied and this change is implementable a
   section, `AndroidManifest.xml` for `REQUEST_INSTALL_PACKAGES`, and
   `.github/workflows/release.yml`.
 - **Storage:** The downloaded APK lives in app-private storage and is deleted after install or
-  failure. A small amount of DataStore state: last check time, last seen release tag, declined tag.
+  failure. A small amount of DataStore state: last check time, last seen release tag, declined tag,
+  and the current install lifecycle status so an asynchronous PackageInstaller failure can be
+  retried.
 - **Network:** One unauthenticated GitHub API request per day plus one per manual check — well
   inside the 60-per-hour anonymous limit. An APK download only on explicit user action.
 - **Permissions:** `REQUEST_INSTALL_PACKAGES`, a normal-install-time permission that still requires

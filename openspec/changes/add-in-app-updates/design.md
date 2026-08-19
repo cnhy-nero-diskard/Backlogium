@@ -161,10 +161,18 @@ API 31+ for subsequent updates. This change does not use it: fully silent instal
 explicitly not wanted, and depending on installer-of-record state would make the flow behave
 differently on the second run than on the first for no benefit.
 
+**The PackageInstaller confirmation is foreground-gated.** When `STATUS_PENDING_USER_ACTION`
+arrives while the process is resumed, the app launches the system-supplied intent directly. When
+the app is not visible, it posts an update notification whose content `PendingIntent` opens that
+same system confirmation screen; a background receiver does not start an Activity unconditionally.
+The install status is persisted by release tag, so `Started` and pending confirmation survive a
+process recreation and a terminal failure (including user cancellation) reaches the update UI as
+a retryable failure while the available release remains present.
+
 **Relaunch is a `PendingIntent` fired on `STATUS_SUCCESS`, launching the main activity.** The app
 process is killed by the update; the pending intent survives it. On any other status, including the
-user cancelling the system dialog, nothing is relaunched, the downloaded file is deleted, and the
-app is left exactly as it was.
+user cancelling the system dialog, the persisted failure is surfaced, nothing is relaunched, the
+downloaded file is deleted, and the available release remains retryable.
 
 ### 7. Release builds only
 
@@ -203,7 +211,8 @@ never during app launch.
 ## Migration Plan
 
 No schema change. New DataStore keys, all absence-tolerant: never checked, nothing seen, nothing
-declined. An existing install begins checking on its next periodic window.
+declined, and no install in progress. An existing install begins checking on its next periodic
+window.
 
 `release.yml`'s checksum step applies to future releases only. Releases published before it cannot
 be offered as updates, since they carry no checksum — acceptable, since the only release anyone

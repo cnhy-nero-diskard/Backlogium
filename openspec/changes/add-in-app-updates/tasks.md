@@ -53,9 +53,11 @@
 - [x] 6.2 Check `PackageManager.canRequestPackageInstalls()` before starting; if absent, explain and send the user to the "install unknown apps" settings screen
 - [x] 6.3 Install through a `PackageInstaller` session, writing the verified APK and committing it
 - [x] 6.4 Do not set `setRequireUserAction(false)`; the first update is user-confirmed by construction and later ones must behave identically
-- [x] 6.5 Handle `STATUS_PENDING_USER_ACTION` by launching the system-supplied intent
+- [x] 6.5 Handle `STATUS_PENDING_USER_ACTION` by launching the system-supplied intent only when
+  the app is resumed; otherwise post a notification whose content `PendingIntent` opens it
 - [x] 6.6 On `STATUS_SUCCESS`, fire a `PendingIntent` that launches the main activity
-- [x] 6.7 On every other status, including user cancellation, leave the app unchanged, delete the artifact, and report
+- [x] 6.7 On every other status, including user cancellation, persist a retryable failure, leave the
+  update available, delete the artifact, and report
 
 ## 7. UI
 
@@ -86,6 +88,8 @@
 - [x] 9.8 Unit-test that rate-limit, 5xx, and connection-failure responses record only the attempt time
 - [x] 9.8a Unit-test the cadence guard: a periodic run shortly after a manual check issues no request; a periodic run more than 20 hours after the last check issues one; a manual check issues one regardless and updates the timestamp
 - [x] 9.9 Unit-test that the artifact sweep removes a stale file and keeps the currently offered one
+- [x] 9.10 Unit-test that a persisted PackageInstaller failure leaves the update available and
+  allows a retry
 
 ## 10. Verification
 
