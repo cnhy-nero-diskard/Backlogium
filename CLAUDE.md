@@ -80,6 +80,19 @@ Known outstanding breach, not an exception: `ui/home/HomeViewModel.kt` imports t
 them across its whole public API. The fix is to map at the repository boundary; it
 is deferred because the collections UI surface is broad. The grep above reports it.
 
+**Haptics have one authority.** `ui/util/Haptics.kt` owns every platform haptic constant and
+`performHapticFeedback` call. UI surfaces name an intent from its closed vocabulary; they do not
+reach the platform directly. Verify the boundary with:
+
+```bash
+grep -rn "performHapticFeedback\|LocalHapticFeedback\|VibrationEffect" app/src/main/java --exclude-dir=util
+```
+
+The command must report only the authority file under `ui/util/`. Silence is the default: navigation,
+list interaction, filtering, sorting, density changes, and newly added controls need no per-site
+declaration. Haptics are reserved for the small set of earned or committed moments named by the
+shared vocabulary, and never replace the visible result.
+
 **The on-device engine is the sole author of derived values.** Sessions, playtime,
 XP, streaks, and levels are computed on the phone, in `:gamification`. The cloud
 poller records raw observations and derives nothing. Two independent session
