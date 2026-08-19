@@ -89,7 +89,7 @@
 
 ## 10. Verification
 
-- [ ] 10.1 `./gradlew :app:testDebugUnitTest :gamification:test`
+- [x] 10.1 `./gradlew :app:testDebugUnitTest :gamification:test`
 - [ ] 10.2 Confirm a debug build performs no check and shows no Updates section
 - [ ] 10.3 Cut a test release through the real workflow and confirm both the APK and its `.sha256` are attached
 - [ ] 10.4 On device with a release build: confirm the notification appears, the sheet shows the correct version pair and notes, and the download reports progress
