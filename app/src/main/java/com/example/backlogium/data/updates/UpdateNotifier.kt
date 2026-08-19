@@ -25,6 +25,9 @@ interface UpdateNotifier {
 
     /** Posts a user-driven PackageInstaller confirmation action when the app is backgrounded. */
     fun notifyInstallConfirmation(confirmation: Intent): Boolean = false
+
+    /** Posts a tap-to-open notification when a successful install could not relaunch the app directly. */
+    fun notifyInstallComplete(versionName: String): Boolean = false
 }
 
 @Singleton
@@ -87,6 +90,34 @@ class AndroidUpdateNotifier @Inject constructor(
         }.getOrDefault(false)
     }
 
+    override fun notifyInstallComplete(versionName: String): Boolean {
+        if (BuildConfig.DEBUG) return false
+        if (!canPostNotifications()) return false
+
+        return runCatching {
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return false
+            ensureChannel(manager)
+            val launchIntent = context.packageManager
+                .getLaunchIntentForPackage(context.packageName)
+                ?: return false
+            val contentIntent = PendingIntent.getActivity(
+                context,
+                INSTALL_COMPLETE_REQUEST_CODE,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle("Backlogium updated to $versionName")
+                .setContentText("Tap to open.")
+                .setContentIntent(contentIntent)
+                .setAutoCancel(true)
+                .build()
+            postNotification(INSTALL_COMPLETE_NOTIFICATION_ID, notification)
+            true
+        }.getOrDefault(false)
+    }
+
     private fun canPostNotifications(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED &&
@@ -115,5 +146,7 @@ class AndroidUpdateNotifier @Inject constructor(
         const val NOTIFICATION_ID = 4202
         const val INSTALL_CONFIRMATION_NOTIFICATION_ID = 4204
         const val INSTALL_CONFIRMATION_REQUEST_CODE = 4205
+        const val INSTALL_COMPLETE_NOTIFICATION_ID = 4206
+        const val INSTALL_COMPLETE_REQUEST_CODE = 4207
     }
 }
