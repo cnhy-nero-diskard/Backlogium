@@ -283,6 +283,72 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun v18ToV19_backfillsRequestTotalsAndDropsMalformedIdentifiers() {
+        val databaseName = "migration-v18-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 18)
+        val startedAt = 1_700_000_001_000L
+        val hourStart = startedAt - Math.floorMod(startedAt, 3_600_000L)
+        try {
+            database.execSQL(
+                "INSERT INTO sync_runs " +
+                    "(id, startedAt, durationMs, trigger, requestCount, requestMillis, " +
+                    "gamesExamined, gamesUpdated, outcome, errorMessage, hotCount, warmCount, " +
+                    "coldCount, neverCount) VALUES " +
+                    "(41, $startedAt, 1000, 'TEST', 10, 100, 1, 1, 'success', NULL, 0, 0, 0, 0)",
+            )
+            database.execSQL(
+                "INSERT INTO request_breakdowns " +
+                    "(id, runId, endpoint, status, requestCount, durationMs) VALUES " +
+                    "(51, 41, 'https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=secret&steamid=76561198000000001&appid=440', 200, 2, 10), " +
+                    "(52, 41, 'https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=secret&steamid=76561198000000002&appid=441', 200, 3, 10), " +
+                    "(53, 41, 'https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=secret&steamid=76561198000000001&appid=440', NULL, 1, 10), " +
+                    "(54, 41, 'https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=secret&steamid=76561198000000001&appid=440', 403, 4, 10), " +
+                    "(55, 41, 'not-a-request-url', 200, 99, 10)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                19,
+                true,
+                BacklogiumDatabase.MIGRATION_18_19,
+            )
+            try {
+                val rows = mutableListOf<List<Any?>>()
+                migrated.query(
+                    "SELECT hourStart, route, status, ok, count " +
+                        "FROM request_totals ORDER BY status",
+                ).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        rows += listOf(
+                            cursor.getLong(0),
+                            cursor.getString(1),
+                            cursor.getString(2),
+                            cursor.getInt(3),
+                            cursor.getInt(4),
+                        )
+                    }
+                }
+                assertEquals(
+                    listOf(
+                        listOf(hourStart, "/IPlayerService/GetOwnedGames/v1/", "200", 1, 5),
+                        listOf(hourStart, "/IPlayerService/GetOwnedGames/v1/", "403", 0, 4),
+                        listOf(hourStart, "/IPlayerService/GetOwnedGames/v1/", "network", 0, 1),
+                    ),
+                    rows,
+                )
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private fun assertForeignKeyReferencesGames(database: SupportSQLiteDatabase, table: String) {
         database.query("PRAGMA foreign_key_list(`$table`)").use { cursor ->
             val tableIndex = cursor.getColumnIndexOrThrow("table")

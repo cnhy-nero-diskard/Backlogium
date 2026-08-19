@@ -5,6 +5,9 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.backlogium.data.diagnostics.NETWORK_REQUEST_STATUS
+import com.example.backlogium.data.diagnostics.REQUEST_COUNTER_HOUR_MILLIS
+import com.example.backlogium.data.diagnostics.requestRoute
 import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
@@ -27,6 +30,7 @@ import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.PresenceDecision
 import com.example.backlogium.data.local.entity.RequestBreakdown
+import com.example.backlogium.data.local.entity.RequestTotal
 import com.example.backlogium.data.local.entity.SyncRun
 
 @Database(
@@ -39,13 +43,14 @@ import com.example.backlogium.data.local.entity.SyncRun
         Achievement::class,
         SyncRun::class,
         RequestBreakdown::class,
+        RequestTotal::class,
         PresenceDecision::class,
         Collection::class,
         CollectionMember::class,
         GameGenreCache::class,
         GameAchievementSync::class,
     ],
-    version = 18,
+    version = 19,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -430,6 +435,56 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 )
             }
         }
+
+        /** v18 -> v19: retain request counts independently of the short raw-run retention. */
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `request_totals` (" +
+                        "`hourStart` INTEGER NOT NULL, " +
+                        "`route` TEXT NOT NULL, " +
+                        "`status` TEXT NOT NULL, " +
+                        "`ok` INTEGER NOT NULL, " +
+                        "`count` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`hourStart`, `route`, `status`))",
+                )
+
+                val totals = linkedMapOf<BackfillKey, Int>()
+                db.query(
+                    "SELECT r.`startedAt`, b.`endpoint`, b.`status`, b.`requestCount` " +
+                        "FROM `sync_runs` r INNER JOIN `request_breakdowns` b ON r.`id` = b.`runId`",
+                ).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val route = requestRoute(cursor.getString(1)) ?: continue
+                        val startedAt = cursor.getLong(0)
+                        val hourStart = startedAt - Math.floorMod(startedAt, REQUEST_COUNTER_HOUR_MILLIS)
+                        val status = if (cursor.isNull(2)) {
+                            NETWORK_REQUEST_STATUS
+                        } else {
+                            cursor.getInt(2).toString()
+                        }
+                        val ok = !cursor.isNull(2) && cursor.getInt(2) in 200..299
+                        val key = BackfillKey(hourStart, route, status, ok)
+                        totals[key] = (totals[key] ?: 0) + cursor.getInt(3)
+                    }
+                }
+
+                totals.forEach { (key, count) ->
+                    db.execSQL(
+                        "INSERT INTO `request_totals` " +
+                            "(`hourStart`, `route`, `status`, `ok`, `count`) VALUES (?, ?, ?, ?, ?)",
+                        arrayOf(key.hourStart, key.route, key.status, if (key.ok) 1 else 0, count),
+                    )
+                }
+            }
+        }
+
+        private data class BackfillKey(
+            val hourStart: Long,
+            val route: String,
+            val status: String,
+            val ok: Boolean,
+        )
 
         /**
          * 2003-01-01T00:00:00Z in epoch millis — mirrors

@@ -3,6 +3,7 @@ package com.example.backlogium.data.diagnostics
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -45,5 +46,19 @@ class DiagnosticRedactionTest {
         )
 
         assertEquals(first, second)
+    }
+
+    @Test fun requestRouteUsesOnlyTheEncodedPath() {
+        val identifier = DiagnosticRedaction.requestIdentifier(
+            "https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/?key=secret&steamid=76561198000000001&appid=620".toHttpUrl(),
+        )
+
+        assertEquals("/ISteamUserStats/GetPlayerAchievements/v1/", requestRoute(identifier))
+        assertFalse(requestRoute(identifier).orEmpty().contains("secret"))
+        assertFalse(requestRoute(identifier).orEmpty().contains("76561198000000001"))
+    }
+
+    @Test fun requestRouteDropsMalformedIdentifiers() {
+        assertNull(requestRoute("not-a-request-url"))
     }
 }
