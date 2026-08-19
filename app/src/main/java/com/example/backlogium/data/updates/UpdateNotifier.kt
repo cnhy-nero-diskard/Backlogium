@@ -1,6 +1,8 @@
 package com.example.backlogium.data.updates
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -55,7 +57,7 @@ class AndroidUpdateNotifier @Inject constructor(
                 .setContentIntent(contentIntent)
                 .setAutoCancel(true)
                 .build()
-            NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
+            postNotification(NOTIFICATION_ID, notification)
             true
         }.getOrDefault(false)
     }
@@ -80,8 +82,7 @@ class AndroidUpdateNotifier @Inject constructor(
                 .setContentIntent(contentIntent)
                 .setAutoCancel(true)
                 .build()
-            NotificationManagerCompat.from(context)
-                .notify(INSTALL_CONFIRMATION_NOTIFICATION_ID, notification)
+            postNotification(INSTALL_CONFIRMATION_NOTIFICATION_ID, notification)
             true
         }.getOrDefault(false)
     }
@@ -89,6 +90,11 @@ class AndroidUpdateNotifier @Inject constructor(
     private fun canPostNotifications(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
+
+    @SuppressLint("MissingPermission")
+    private fun postNotification(notificationId: Int, notification: Notification) {
+        NotificationManagerCompat.from(context).notify(notificationId, notification)
+    }
 
     private fun ensureChannel(manager: NotificationManager) {
         manager.createNotificationChannel(
