@@ -1,6 +1,5 @@
 package com.example.backlogium.data.updates
 
-import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -69,7 +68,7 @@ class UpdateInstallReceiver : BroadcastReceiver() {
 
             PackageInstaller.STATUS_SUCCESS -> {
                 cleanup(artifact)
-                clearAvailableAndRelaunch(context)
+                clearAvailableAndRelaunch(context, tag)
             }
 
             else -> {
@@ -113,7 +112,7 @@ class UpdateInstallReceiver : BroadcastReceiver() {
         artifact?.let { File(it.absolutePath + UPDATE_ARTIFACT_PARTIAL_SUFFIX).delete() }
     }
 
-    private fun clearAvailableAndRelaunch(context: Context) {
+    private fun clearAvailableAndRelaunch(context: Context, tag: String) {
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             runCatching {
@@ -124,21 +123,23 @@ class UpdateInstallReceiver : BroadcastReceiver() {
                 .getLaunchIntentForPackage(context.packageName)
                 ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             if (launchIntent != null) {
-                runCatching {
-                    PendingIntent.getActivity(
-                        context,
-                        RELAUNCH_REQUEST_CODE,
-                        launchIntent,
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                    ).send()
+                // A plain PendingIntent.send() here is a background activity launch: the
+                // system UI that drove the install (not this app) owns the foreground at
+                // this point, and Android blocks BAL from a receiver with no visible window.
+                // Only start the activity directly while this app is actually visible;
+                // otherwise fall back to a tap-to-open notification, which a user tap exempts
+                // from the restriction.
+                val launched = if (isAppVisible()) {
+                    runCatching { context.startActivity(launchIntent) }.isSuccess
+                } else {
+                    false
+                }
+                if (!launched) {
+                    runCatching { notifier.notifyInstallComplete(tag.removePrefix("v")) }
                 }
             }
             pendingResult.finish()
         }
-    }
-
-    private companion object {
-        const val RELAUNCH_REQUEST_CODE = 4203
     }
 }
 
