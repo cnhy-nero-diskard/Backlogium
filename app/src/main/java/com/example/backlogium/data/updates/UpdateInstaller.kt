@@ -20,6 +20,8 @@ interface UpdateInstaller {
     fun openInstallPermissionSettings()
 
     fun install(update: AvailableUpdate, artifact: File): UpdateInstallResult
+
+    fun abandonSession(sessionId: Int)
 }
 
 @Singleton
@@ -77,6 +79,12 @@ class PackageInstallerUpdateInstaller @Inject constructor(
             artifact.delete()
             File(artifact.absolutePath + UPDATE_ARTIFACT_PARTIAL_SUFFIX).delete()
             UpdateInstallResult.Failed(failure.message ?: "The update could not be installed.")
+        }
+    }
+
+    override fun abandonSession(sessionId: Int) {
+        if (sessionId >= 0) {
+            context.packageManager.packageInstaller.abandonSession(sessionId)
         }
     }
 }

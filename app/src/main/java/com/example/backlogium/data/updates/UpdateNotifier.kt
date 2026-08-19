@@ -89,7 +89,11 @@ class AndroidUpdateNotifier @Inject constructor(
 
     private fun canPostNotifications(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
+            PackageManager.PERMISSION_GRANTED &&
+            NotificationManagerCompat.from(context).areNotificationsEnabled() &&
+            context.getSystemService(NotificationManager::class.java)
+                ?.getNotificationChannel(CHANNEL_ID)
+                ?.importance != NotificationManager.IMPORTANCE_NONE
 
     @SuppressLint("MissingPermission")
     private fun postNotification(notificationId: Int, notification: Notification) {

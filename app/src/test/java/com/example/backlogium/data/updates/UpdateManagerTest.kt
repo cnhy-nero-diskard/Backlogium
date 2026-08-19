@@ -75,6 +75,8 @@ class UpdateManagerTest {
             called = true
             return UpdateInstallResult.Started
         }
+
+        override fun abandonSession(sessionId: Int) = Unit
     }
 
     private class FakeUpdateStateStore : UpdateStateStore {

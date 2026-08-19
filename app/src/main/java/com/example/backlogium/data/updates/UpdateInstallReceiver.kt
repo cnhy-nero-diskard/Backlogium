@@ -24,11 +24,15 @@ class UpdateInstallReceiver : BroadcastReceiver() {
     lateinit var notifier: UpdateNotifier
 
     @Inject
+    lateinit var installRecovery: UpdateInstallRecovery
+
+    @Inject
     lateinit var activityVisibility: ActivityVisibilityTracker
 
     override fun onReceive(context: Context, intent: Intent) {
         val artifact = intent.getStringExtra(INSTALL_ARTIFACT_PATH_EXTRA)?.let(::File)
         val tag = intent.getStringExtra(INSTALL_UPDATE_TAG_EXTRA).orEmpty()
+        val sessionId = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
         when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 val confirmation = intent.parcelableExtra<Intent>(Intent.EXTRA_INTENT)
@@ -37,7 +41,6 @@ class UpdateInstallReceiver : BroadcastReceiver() {
                     cleanup(artifact)
                     showFailure(context, tag, message)
                 } else {
-                    persistStatus { updateStateStore.markInstallPending(tag) }
                     val launched = if (isAppVisible()) {
                         runCatching {
                             context.startActivity(confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -46,7 +49,20 @@ class UpdateInstallReceiver : BroadcastReceiver() {
                         false
                     }
                     if (!launched) {
-                        notifier.notifyInstallConfirmation(confirmation)
+                        val notified = runCatching {
+                            notifier.notifyInstallConfirmation(confirmation)
+                        }.getOrDefault(false)
+                        if (notified) {
+                            persistStatus { updateStateStore.markInstallPending(tag) }
+                        } else {
+                            cleanup(artifact)
+                            showFailureToast(context, UPDATE_CONFIRMATION_UNAVAILABLE_MESSAGE)
+                            persistStatus {
+                                installRecovery.recoverFromUnavailableNotification(tag, sessionId)
+                            }
+                        }
+                    } else {
+                        persistStatus { updateStateStore.markInstallPending(tag) }
                     }
                 }
             }
@@ -67,7 +83,7 @@ class UpdateInstallReceiver : BroadcastReceiver() {
     }
 
     private fun showFailure(context: Context, tag: String, message: String) {
-        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        showFailureToast(context, message)
         persistStatus {
             if (tag.isBlank()) {
                 updateStateStore.clearInstallStatus()
@@ -75,6 +91,10 @@ class UpdateInstallReceiver : BroadcastReceiver() {
                 updateStateStore.markInstallFailed(tag, message)
             }
         }
+    }
+
+    private fun showFailureToast(context: Context, message: String) {
+        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
     }
 
     private fun persistStatus(action: suspend () -> Unit) {
