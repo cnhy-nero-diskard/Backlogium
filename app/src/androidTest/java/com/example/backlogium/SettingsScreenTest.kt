@@ -105,6 +105,7 @@ class SettingsScreenTest {
         onExportBackup = {},
         onImportBackup = {},
         onRestoreSnapshot = {},
+        onDeleteSnapshot = {},
         onConfirmMismatchImport = {},
         onDismissMismatchImport = {},
         onDismissBackupMessage = {},
