@@ -72,6 +72,12 @@ class SnapshotStore @Inject constructor(
             .getOrNull()
     }
 
+    /** Delete one retained snapshot, refusing path-like names that did not come from [list]. */
+    fun delete(fileName: String): Boolean {
+        if (fileName != File(fileName).name) return false
+        return File(dir, fileName).delete()
+    }
+
     /** Discard the oldest snapshots beyond [maxCount], keeping the most recent [maxCount]. */
     fun enforceRetention(maxCount: Int) {
         list().drop(maxCount.coerceAtLeast(0)).forEach { File(dir, it.fileName).delete() }

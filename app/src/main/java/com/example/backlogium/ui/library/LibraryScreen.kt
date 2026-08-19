@@ -84,7 +84,9 @@ import com.example.backlogium.ui.collections.GenreFilterChoice
 import com.example.backlogium.ui.collections.genreFilterCatalog
 import com.example.backlogium.ui.theme.overrunExcess
 import com.example.backlogium.ui.theme.playingIndicator
+import com.example.backlogium.ui.util.HapticIntent
 import com.example.backlogium.ui.util.UiFormat
+import com.example.backlogium.ui.util.rememberHaptics
 import com.example.backlogium.work.HltbBatchProgress
 import com.example.backlogium.work.HltbRefreshStatus
 import compose.icons.TablerIcons
@@ -137,6 +139,7 @@ fun LibraryScreen(
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val haptics = rememberHaptics()
     var dialogTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
     var pickerTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
     var selectedGenreIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
@@ -155,6 +158,15 @@ fun LibraryScreen(
         (state.query.isNotBlank() || selectedGenreSet.isNotEmpty()) &&
             visibleGoalGames.isEmpty() &&
             visibleBacklog.isEmpty()
+
+    fun toggleSelection(appId: Long) {
+        val entering = !state.selectionMode
+        val leaving = state.selectionMode && state.selection.size == 1 && appId in state.selection
+        viewModel.toggleSelection(appId)
+        if (entering || leaving) {
+            haptics.play(HapticIntent.Toggle(enabled = entering))
+        }
+    }
 
     // Selection is transient: leaving the Library drops it, so it can never outlive the screen
     // that shows the count.
@@ -194,7 +206,10 @@ fun LibraryScreen(
                 // during a sweep would be dropped with no error — gate it like HltbControls does.
                 refreshing = state.refreshing,
                 onRefreshSelection = viewModel::refreshSelection,
-                onClear = viewModel::clearSelection,
+                onClear = {
+                    haptics.play(HapticIntent.Toggle(enabled = false))
+                    viewModel.clearSelection()
+                },
             )
         }
 
@@ -278,10 +293,10 @@ fun LibraryScreen(
                     selectedIds = state.selection,
                     selectionMode = state.selectionMode,
                     onClick = { game ->
-                        if (state.selectionMode) viewModel.toggleSelection(game.appId)
+                        if (state.selectionMode) toggleSelection(game.appId)
                         else onOpenGameDetail(game.appId)
                     },
-                    onLongClick = { game -> viewModel.toggleSelection(game.appId) },
+                    onLongClick = { game -> toggleSelection(game.appId) },
                     onManageGoal = { game ->
                         dialogTarget = GoalDialogTarget(
                             appId = game.appId,
@@ -308,10 +323,10 @@ fun LibraryScreen(
                     selectedIds = state.selection,
                     selectionMode = state.selectionMode,
                     onClick = { game ->
-                        if (state.selectionMode) viewModel.toggleSelection(game.appId)
+                        if (state.selectionMode) toggleSelection(game.appId)
                         else onOpenGameDetail(game.appId)
                     },
-                    onLongClick = { game -> viewModel.toggleSelection(game.appId) },
+                    onLongClick = { game -> toggleSelection(game.appId) },
                     onManageGoal = { game ->
                         dialogTarget = GoalDialogTarget(
                             appId = game.appId,

@@ -127,6 +127,9 @@ class BackupRepository @Inject constructor(
     /** Retained automatic snapshots, most recent first. */
     fun listSnapshots(): List<SnapshotMeta> = snapshotStore.list()
 
+    /** Delete one retained automatic snapshot and report whether a file was actually removed. */
+    fun deleteSnapshot(fileName: String): Boolean = snapshotStore.delete(fileName)
+
     /**
      * Write an automatic snapshot if enabled and due (design.md decision 4). Hooked into
      * [com.example.backlogium.work.SteamSyncWorker]'s success path, not a separate scheduler —
