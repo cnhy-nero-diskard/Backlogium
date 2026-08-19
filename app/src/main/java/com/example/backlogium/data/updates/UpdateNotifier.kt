@@ -17,11 +17,15 @@ import javax.inject.Singleton
 
 const val OPEN_UPDATE_EXTRA = "com.example.backlogium.OPEN_UPDATE"
 
+interface UpdateNotifier {
+    fun notify(update: AvailableUpdate): Boolean
+}
+
 @Singleton
-class UpdateNotifier @Inject constructor(
+class AndroidUpdateNotifier @Inject constructor(
     @ApplicationContext private val context: Context,
-) {
-    fun notify(update: AvailableUpdate): Boolean {
+) : UpdateNotifier {
+    override fun notify(update: AvailableUpdate): Boolean {
         if (BuildConfig.DEBUG) return false
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED

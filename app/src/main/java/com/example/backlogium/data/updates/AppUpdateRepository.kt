@@ -18,7 +18,7 @@ interface AppUpdateRepository {
 @Singleton
 class DataStoreAppUpdateRepository @Inject constructor(
     private val api: GitHubReleaseApi,
-    private val dataStore: UpdateDataStore,
+    private val dataStore: UpdateStateStore,
     private val installedPackage: InstalledPackageInfoProvider,
     private val notifier: UpdateNotifier,
     private val artifactStore: UpdateArtifactStore,

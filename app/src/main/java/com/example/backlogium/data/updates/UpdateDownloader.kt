@@ -11,16 +11,26 @@ import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
-@Singleton
-class UpdateDownloader @Inject constructor(
-    private val client: OkHttpClient,
-) {
+interface UpdateDownloader {
     suspend fun download(
         url: String,
         destination: File,
         onProgress: suspend (bytesRead: Long, totalBytes: Long?) -> Unit,
+    )
+
+    suspend fun fetchText(url: String): String
+}
+
+@Singleton
+class OkHttpUpdateDownloader @Inject constructor(
+    private val client: OkHttpClient,
+) : UpdateDownloader {
+    override suspend fun download(
+        url: String,
+        destination: File,
+        onProgress: suspend (bytesRead: Long, totalBytes: Long?) -> Unit,
     ) = withContext(Dispatchers.IO) {
-        val partial = File(destination.absolutePath + UpdateArtifactStore.PARTIAL_SUFFIX)
+        val partial = File(destination.absolutePath + UPDATE_ARTIFACT_PARTIAL_SUFFIX)
         destination.parentFile?.mkdirs()
         partial.delete()
         var moved = false
@@ -60,7 +70,7 @@ class UpdateDownloader @Inject constructor(
         }
     }
 
-    suspend fun fetchText(url: String): String = withContext(Dispatchers.IO) {
+    override suspend fun fetchText(url: String): String = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(url).get().build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {

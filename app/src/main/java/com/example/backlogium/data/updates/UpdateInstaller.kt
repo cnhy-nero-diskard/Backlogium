@@ -13,13 +13,21 @@ import javax.inject.Singleton
 
 const val INSTALL_ARTIFACT_PATH_EXTRA = "com.example.backlogium.UPDATE_ARTIFACT_PATH"
 
-@Singleton
-class UpdateInstaller @Inject constructor(
-    @ApplicationContext private val context: Context,
-) {
-    fun canRequestPackageInstalls(): Boolean = context.packageManager.canRequestPackageInstalls()
+interface UpdateInstaller {
+    fun canRequestPackageInstalls(): Boolean
 
-    fun openInstallPermissionSettings() {
+    fun openInstallPermissionSettings()
+
+    fun install(update: AvailableUpdate, artifact: File): UpdateInstallResult
+}
+
+@Singleton
+class PackageInstallerUpdateInstaller @Inject constructor(
+    @ApplicationContext private val context: Context,
+) : UpdateInstaller {
+    override fun canRequestPackageInstalls(): Boolean = context.packageManager.canRequestPackageInstalls()
+
+    override fun openInstallPermissionSettings() {
         context.startActivity(
             Intent(
                 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
@@ -28,7 +36,7 @@ class UpdateInstaller @Inject constructor(
         )
     }
 
-    fun install(update: AvailableUpdate, artifact: File): UpdateInstallResult {
+    override fun install(update: AvailableUpdate, artifact: File): UpdateInstallResult {
         if (!canRequestPackageInstalls()) {
             runCatching { openInstallPermissionSettings() }
             return UpdateInstallResult.PermissionRequired
@@ -65,7 +73,7 @@ class UpdateInstaller @Inject constructor(
             UpdateInstallResult.Started
         } catch (failure: Exception) {
             artifact.delete()
-            File(artifact.absolutePath + UpdateArtifactStore.PARTIAL_SUFFIX).delete()
+            File(artifact.absolutePath + UPDATE_ARTIFACT_PARTIAL_SUFFIX).delete()
             UpdateInstallResult.Failed(failure.message ?: "The update could not be installed.")
         }
     }

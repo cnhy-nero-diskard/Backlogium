@@ -26,13 +26,13 @@ class UpdateInstallReceiver : BroadcastReceiver() {
 
             PackageInstaller.STATUS_SUCCESS -> {
                 artifact?.delete()
-                File(artifact?.absolutePath.orEmpty() + UpdateArtifactStore.PARTIAL_SUFFIX).delete()
+                artifact?.let { File(it.absolutePath + UPDATE_ARTIFACT_PARTIAL_SUFFIX).delete() }
                 clearAvailableAndRelaunch(context)
             }
 
             else -> {
                 artifact?.delete()
-                File(artifact?.absolutePath.orEmpty() + UpdateArtifactStore.PARTIAL_SUFFIX).delete()
+                artifact?.let { File(it.absolutePath + UPDATE_ARTIFACT_PARTIAL_SUFFIX).delete() }
                 val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
                     ?.takeIf { it.isNotBlank() }
                     ?: "The update was not installed."

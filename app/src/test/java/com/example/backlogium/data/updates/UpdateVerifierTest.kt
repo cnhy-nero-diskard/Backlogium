@@ -8,7 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UpdateVerifierTest {
-    private val verifier = UpdateVerifier(
+    private val verifier = PackageUpdateVerifier(
         object : InstalledPackageInfoProvider {
             override fun installed(): InstalledPackageInfo = error("not used")
             override fun archiveSignerDigests(apk: File): Set<String>? = null

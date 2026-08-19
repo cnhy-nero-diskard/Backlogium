@@ -7,15 +7,21 @@ import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 
+interface UpdateVerifier {
+    suspend fun hasMatchingDigest(apk: File, checksumAsset: String): Boolean
+
+    fun hasMatchingSigner(apk: File): Boolean
+}
+
 @Singleton
-class UpdateVerifier @Inject constructor(
+class PackageUpdateVerifier @Inject constructor(
     private val packageInfo: InstalledPackageInfoProvider,
-) {
+) : UpdateVerifier {
     /**
      * The digest proves transfer integrity only; authenticity still rests on the signing key that
      * Android enforces when the package is installed.
      */
-    suspend fun hasMatchingDigest(apk: File, checksumAsset: String): Boolean =
+    override suspend fun hasMatchingDigest(apk: File, checksumAsset: String): Boolean =
         withContext(Dispatchers.IO) {
             val expected = checksumAsset
                 .lineSequence()
@@ -39,7 +45,7 @@ class UpdateVerifier @Inject constructor(
             digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) } == expected
         }
 
-    fun hasMatchingSigner(apk: File): Boolean {
+    override fun hasMatchingSigner(apk: File): Boolean {
         val installed = packageInfo.installed().signerDigests
         val downloaded = packageInfo.archiveSignerDigests(apk) ?: return false
         return installed == downloaded

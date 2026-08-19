@@ -15,11 +15,23 @@ import javax.inject.Singleton
 
 private val Context.updateDataStore by preferencesDataStore(name = "app_updates")
 
+interface UpdateStateStore {
+    val state: Flow<AppUpdateState>
+
+    suspend fun recordAttempt(atMillis: Long)
+
+    suspend fun recordCheck(atMillis: Long, seenTag: String?, available: AvailableUpdate?)
+
+    suspend fun setDeclinedTag(tag: String)
+
+    suspend fun clearAvailable()
+}
+
 /** Small, absence-tolerant persistence for the update surface. */
 @Singleton
 class UpdateDataStore @Inject constructor(
     @ApplicationContext private val context: Context,
-) {
+) : UpdateStateStore {
     private object Keys {
         val LAST_CHECK_AT = longPreferencesKey("last_check_at")
         val LAST_SEEN_TAG = stringPreferencesKey("last_seen_tag")
@@ -34,13 +46,13 @@ class UpdateDataStore @Inject constructor(
         val AVAILABLE_CHECKSUM_URL = stringPreferencesKey("available_checksum_url")
     }
 
-    val state: Flow<AppUpdateState> = context.updateDataStore.data.map(::decode)
+    override val state: Flow<AppUpdateState> = context.updateDataStore.data.map(::decode)
 
-    suspend fun recordAttempt(atMillis: Long) {
+    override suspend fun recordAttempt(atMillis: Long) {
         context.updateDataStore.edit { it[Keys.LAST_CHECK_AT] = atMillis }
     }
 
-    suspend fun recordCheck(
+    override suspend fun recordCheck(
         atMillis: Long,
         seenTag: String?,
         available: AvailableUpdate?,
@@ -63,11 +75,11 @@ class UpdateDataStore @Inject constructor(
         }
     }
 
-    suspend fun setDeclinedTag(tag: String) {
+    override suspend fun setDeclinedTag(tag: String) {
         context.updateDataStore.edit { it[Keys.DECLINED_TAG] = tag }
     }
 
-    suspend fun clearAvailable() {
+    override suspend fun clearAvailable() {
         context.updateDataStore.edit(::clearAvailable)
     }
 

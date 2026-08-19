@@ -81,11 +81,11 @@
 - [x] 9.3 Unit-test that a draft or pre-release response yields no update
 - [x] 9.4 Unit-test that a release missing its APK asset, or missing its checksum asset, yields no update
 - [x] 9.5 Unit-test the decline rule: same tag suppressed, newer tag announced
-- [ ] 9.6 Unit-test SHA-256 verification against a known-good and a corrupted fixture
-- [ ] 9.7 Unit-test that a verification failure deletes the artifact and does not reach the installer
-- [ ] 9.8 Unit-test that rate-limit, 5xx, and connection-failure responses record only the attempt time
-- [ ] 9.8a Unit-test the cadence guard: a periodic run shortly after a manual check issues no request; a periodic run more than 20 hours after the last check issues one; a manual check issues one regardless and updates the timestamp
-- [ ] 9.9 Unit-test that the artifact sweep removes a stale file and keeps the currently offered one
+- [x] 9.6 Unit-test SHA-256 verification against a known-good and a corrupted fixture
+- [x] 9.7 Unit-test that a verification failure deletes the artifact and does not reach the installer
+- [x] 9.8 Unit-test that rate-limit, 5xx, and connection-failure responses record only the attempt time
+- [x] 9.8a Unit-test the cadence guard: a periodic run shortly after a manual check issues no request; a periodic run more than 20 hours after the last check issues one; a manual check issues one regardless and updates the timestamp
+- [x] 9.9 Unit-test that the artifact sweep removes a stale file and keeps the currently offered one
 
 ## 10. Verification
 
