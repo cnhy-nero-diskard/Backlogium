@@ -48,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -159,10 +160,15 @@ fun HomeScreen(
     }
     LaunchedEffect(state.pendingProgressEvent) {
         val event = state.pendingProgressEvent ?: return@LaunchedEffect
+        if (event is ProgressEvent.QuestMet) {
+            // The event-specific card below must have reached a frame before its haptic and
+            // acknowledgement make the earned moment durable as delivered.
+            withFrameNanos { }
+        }
         val intent = event.toHapticIntent()
         haptics.playIfNotSilent(intent)
-        // The quest card is the visible presentation; it has no separate animation or dismiss
-        // affordance, so acknowledge it after the composition that presented the card.
+        // The event-specific quest card is the visible presentation; it has no separate animation
+        // or dismiss affordance, so acknowledge it after that card has reached a frame.
         if (event is ProgressEvent.QuestMet) {
             viewModel.acknowledgeProgressEvent(event)
         }
@@ -336,6 +342,42 @@ private fun InnerHomeContent(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+        }
+
+        (state.pendingProgressEvent as? ProgressEvent.QuestMet)?.let { event ->
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = TablerIcons.CircleCheck,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "Quest completed",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        Text(
+                            text = "Earned on ${event.date}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
                 }
             }
         }

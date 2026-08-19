@@ -168,6 +168,14 @@ fun LibraryScreen(
         }
     }
 
+    fun exitSelectionMode(action: () -> Unit) {
+        val wasInSelectionMode = state.selectionMode
+        action()
+        if (wasInSelectionMode) {
+            haptics.play(HapticIntent.Toggle(enabled = false))
+        }
+    }
+
     // Selection is transient: leaving the Library drops it, so it can never outlive the screen
     // that shows the count.
     DisposableEffect(Unit) {
@@ -205,11 +213,8 @@ fun LibraryScreen(
                 // Both paths enqueue under one unique work name with KEEP, so a selection tapped
                 // during a sweep would be dropped with no error — gate it like HltbControls does.
                 refreshing = state.refreshing,
-                onRefreshSelection = viewModel::refreshSelection,
-                onClear = {
-                    haptics.play(HapticIntent.Toggle(enabled = false))
-                    viewModel.clearSelection()
-                },
+                onRefreshSelection = { exitSelectionMode(viewModel::refreshSelection) },
+                onClear = { exitSelectionMode(viewModel::clearSelection) },
             )
         }
 
