@@ -2,6 +2,8 @@ package com.example.backlogium.data.diagnostics
 
 import com.example.backlogium.data.local.entity.PresenceDecision
 import com.example.backlogium.data.local.entity.RequestBreakdown
+import com.example.backlogium.data.local.entity.RequestCounterTotals
+import com.example.backlogium.data.local.entity.RequestRouteTotals
 import com.example.backlogium.data.local.entity.SyncRun
 import com.example.backlogium.data.local.dao.DiagnosticsDao
 import com.example.backlogium.domain.TimeProvider
@@ -53,10 +55,15 @@ class PresenceDecisionRecorderTest {
         override fun observeRun(runId: Long): Flow<SyncRun?> = emptyFlow()
         override fun observeBreakdowns(runId: Long): Flow<List<RequestBreakdown>> = emptyFlow()
         override fun observePresenceDecisions(): Flow<List<PresenceDecision>> = emptyFlow()
+        override suspend fun incrementRequestTotal(hourStart: Long, route: String, status: String, ok: Boolean, count: Int) = Unit
+        override suspend fun pruneRequestTotals(cutoff: Long) = Unit
+        override fun observeRequestTotals(cutoff: Long): Flow<RequestCounterTotals> = emptyFlow()
+        override fun observeRequestRoutes(cutoff: Long): Flow<List<RequestRouteTotals>> = emptyFlow()
         override suspend fun pruneRuns(limit: Int) = Unit
         override suspend fun prunePresenceDecisions(limit: Int) = Unit
         override suspend fun deleteRequestBreakdowns() = Unit
         override suspend fun deleteSyncRuns() = Unit
         override suspend fun deletePresenceDecisions() = Unit
+        override suspend fun deleteRequestTotals() = Unit
     }
 }

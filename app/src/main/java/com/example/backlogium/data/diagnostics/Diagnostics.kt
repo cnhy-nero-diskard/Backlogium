@@ -4,10 +4,27 @@ import com.example.backlogium.data.local.dao.DiagnosticsDao
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.PresenceDecision
 import com.example.backlogium.data.local.entity.RequestBreakdown
+import com.example.backlogium.data.local.entity.RequestTotal
 import com.example.backlogium.data.local.entity.SyncRun
 import com.example.backlogium.domain.TimeProvider
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
+
+const val NETWORK_REQUEST_STATUS = "network"
+const val REQUEST_COUNTER_HOUR_MILLIS = 3_600_000L
+const val REQUEST_COUNTER_RETENTION_MILLIS = 400L * 24 * 60 * 60 * 1_000L
+
+/** Returns the credential-free encoded path for a stored request identifier. */
+fun requestRoute(identifier: String): String? {
+    val url = when {
+        identifier.startsWith("/") -> ("https://api.steampowered.com" + identifier).toHttpUrlOrNull()
+        identifier.startsWith("http://", ignoreCase = true) || identifier.startsWith("https://", ignoreCase = true) ->
+            identifier.toHttpUrlOrNull()
+        else -> null
+    } ?: return null
+    return url.encodedPath.ifBlank { null }
+}
 
 object DiagnosticRedaction {
     private val safeParameters = listOf("appid", "count", "l", "format")
@@ -109,6 +126,20 @@ class SyncRunRecorder @Inject constructor(
                 RequestBreakdown(0, 0, key.endpoint, key.status, value.count, value.durationMs)
             },
         )
+        val hourStart = scope.startedAt - Math.floorMod(scope.startedAt, REQUEST_COUNTER_HOUR_MILLIS)
+        val totals = scope.metrics.mapNotNull { (key, value) ->
+            requestRoute(key.endpoint)?.let { route ->
+                RequestTotal(
+                    hourStart = hourStart,
+                    route = route,
+                    status = key.status?.toString() ?: NETWORK_REQUEST_STATUS,
+                    ok = key.status?.let { it in 200..299 } == true,
+                    count = value.count,
+                )
+            }
+        }
+        runCatching { dao.incrementRequestTotals(totals) }
+        runCatching { dao.pruneRequestTotals(endedAt - REQUEST_COUNTER_RETENTION_MILLIS) }
         runCatching { dao.pruneRuns(RETAINED_RUNS) }
     }
 
