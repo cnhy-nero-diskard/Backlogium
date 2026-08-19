@@ -155,8 +155,9 @@ cannot reach a player without two deliberate answers — was it earned, and what
   intent is the review-time check; the tier is small enough to hold in one's head.
 
 - **Two changes must land in order.** The earned tier is dead code until `add-progress-events`
-  ships. → The committed tier is fully independent and could ship alone if the first change
-  stalls; the tasks are grouped so that split is available without restructuring.
+  ships. → `add-progress-events` landed on 2026-08-13, so both tiers are buildable together. The
+  committed tier remains fully independent, and the tasks are grouped so that split is still
+  available without restructuring.
 
 - **`ui/util/` becomes the home for a second sensory authority.** → That is the intent. Placing
   `Haptics.kt` beside `ReducedMotion.kt` makes the pattern legible: cross-cutting sensory concerns

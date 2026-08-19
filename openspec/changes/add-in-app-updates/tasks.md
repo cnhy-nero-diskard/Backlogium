@@ -1,6 +1,6 @@
-> **Blocked on `auditfix-secrets-and-packaging`.** Until version metadata is derived from the release
-> tag, every published APK declares `versionCode = 1`: comparison is meaningless and the installer
-> rejects every update as a downgrade. Do not start section 3 before that change has landed.
+> **Unblocked.** `auditfix-secrets-and-packaging` landed on 2026-08-16: version metadata is derived
+> from the release tag, so every APK published since declares a comparable version. Comparison is
+> meaningful, the installer accepts a newer build, and section 3 can start.
 
 ## 1. Release lookup
 

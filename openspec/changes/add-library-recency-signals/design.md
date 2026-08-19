@@ -15,7 +15,7 @@
 - `backup-restore` merges by natural key and must not resurrect state.
 - `progress-events` exists and is tempting for the acquisition banner, but its first rule is
   *"Only earned progress produces events."* Buying a game is not earned progress.
-- Room schema is at version 16.
+- Room schema is at version 18.
 - `StreakBrokenOverlay` is the precedent for a non-modal, dismissible Home announcement: the
   surrounding `Box` has no click handling, so Home stays usable behind it.
 
@@ -41,7 +41,7 @@
 ### 1. Three nullable columns, and null means "not known" rather than "zero"
 
 `firstSeenAt: Long?`, `lastPlayedAt: Long?`, and `returnedToPlayAt: Long?` on `games`, all nullable,
-all defaulting to null in migration 16→17. The third exists for the reason set out in decision 3:
+all defaulting to null in migration 18→19. The third exists for the reason set out in decision 3:
 dormancy is knowable only at the instant it ends, and cannot be recovered afterwards.
 
 Nullability is the whole baselining mechanism, not a convenience:
@@ -289,15 +289,16 @@ normally. That is correct, and it falls out of the existing baseline rule withou
 - **Three badges is close to the limit of a learnable vocabulary.** Mitigated by mutual exclusivity
   — one slot, one meaning at a time — and by `contentDescription`. Adding a fourth should be
   resisted.
-- **Migration 16→17 on a large library.** Three nullable columns with no backfill and no index; the
+- **Migration 18→19 on a large library.** Three nullable columns with no backfill and no index; the
   `ALTER TABLE` is O(1) in SQLite.
 
 ## Migration Plan
 
-Migration 16→17 adds `firstSeenAt INTEGER`, `lastPlayedAt INTEGER`, and `returnedToPlayAt INTEGER`,
+Migration 18→19 adds `firstSeenAt INTEGER`, `lastPlayedAt INTEGER`, and `returnedToPlayAt INTEGER`,
 all nullable, all null for existing rows. No backfill: an existing library is by definition not new,
 its last-played dates fill in on the next sync from Steam, and no return has been observed yet
-because nothing was watching.
+because nothing was watching. The database is at version 18 as of this update — renumber at apply
+time if another schema change lands first.
 
 The first sync after upgrade populates `lastPlayedAt` for every game and stamps `firstSeenAt` for
 none, because every app id it sees is already in `games`. An upgrading user therefore gets last-played

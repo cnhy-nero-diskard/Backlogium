@@ -10,13 +10,12 @@ files, downloading it through the browser, clearing the "install unknown apps" p
 installing — for a version bump. In practice that means updates do not get installed, and the
 installed build drifts arbitrarily far behind `master`.
 
-There is a second, sharper reason this cannot simply be bolted on. `app/build.gradle.kts:52-53`
-hardcodes `versionCode = 1` and `versionName = "1.0"` while the repository is tagged `v1.6.22`.
-**Every release APK ever published declares itself version 1.** An updater has no way to ask "am I
-older than the latest release?", and Android would reject the install as a downgrade even if it
-did. The active `auditfix-secrets-and-packaging` change fixes exactly this by deriving version
-metadata from the release tag. This change is unimplementable before that one lands, and trivial
-after it.
+There was a second, sharper reason this could not simply be bolted on. Until
+`auditfix-secrets-and-packaging` landed, `app/build.gradle.kts` hardcoded `versionCode = 1` and
+`versionName = "1.0"` — **every release APK ever published declared itself version 1.** An updater
+had no way to ask "am I older than the latest release?", and Android would reject the install as a
+downgrade even if it did. That change (archived 2026-08-16) now derives version metadata from the
+release tag, so the prerequisite is satisfied and this change is implementable as specified.
 
 ## What Changes
 
@@ -67,9 +66,10 @@ after it.
 
 ## Depends on
 
-`auditfix-secrets-and-packaging` **must land first.** Until version metadata is derived from the
-release tag, every release APK declares `versionCode = 1`, so version comparison is meaningless and
-Android rejects the install as a downgrade. This is a hard prerequisite, not a preference.
+`auditfix-secrets-and-packaging` **must land first — satisfied.** That change landed on 2026-08-16:
+version metadata is now derived from the release tag (`release.yml` passes `-PversionName` /
+`-PversionCode` to `assembleRelease`), so every APK published since declares a comparable version
+and the installer accepts a newer build. No outstanding prerequisites.
 
 ## Non-goals
 

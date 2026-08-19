@@ -18,7 +18,7 @@ SteamApi request ──► RedactingTimingInterceptor ──► RunScope.recordR
   figures are unreachable in principle: the rows are pruned long before they could be counted.
 - The recorded `endpoint` is the full redacted URL (only `key`/`steamids` stripped), so per-run
   breakdown keys include `appid` variants — hundreds of distinct identifiers per sweep.
-- Room is at `version = 14` with hand-written migrations and no `autoMigration`
+- Room is at `version = 18` with hand-written migrations and no `autoMigration`
   (`BacklogiumDatabase.kt:48`), following the established per-version SQL pattern.
 - The ask, settled during exploration: counters for the **last 24 hours / 30 days / 365 days**
   (rolling), split into **successful vs unsuccessful**, with a **per-API-route** breakdown, and
@@ -50,7 +50,7 @@ SteamApi request ──► RedactingTimingInterceptor ──► RunScope.recordR
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│  request_totals                                  (v14→v15) │
+│  request_totals                                  (v18→v19) │
 │  hourStart  INTEGER   epoch-hour of the run's start        │
 │  route      TEXT      "ISteamUserStats/GetPlayerAchievements/v1/" │
 │  status     TEXT      "200" | "403" | "429" | "network"    │
@@ -129,7 +129,7 @@ can finish simultaneously (sync vs reconciliation), but SQLite serializes writer
 `ON CONFLICT ... DO UPDATE` statement is atomic, so two runs landing in the same bucket both
 increment it.
 
-### D5: `MIGRATION_14_15` with Kotlin-side backfill
+### D5: `MIGRATION_18_19` with Kotlin-side backfill
 
 The migration creates the table and backfills it from the still-retained raw records:
 
@@ -209,11 +209,12 @@ untouched.
 
 ## Migration Plan
 
-`MIGRATION_14_15` is additive: create `request_totals`, backfill from `sync_runs` ×
-`request_breakdowns`. No existing table is altered. Rollback = revert to v14, which drops the
+`MIGRATION_18_19` is additive: create `request_totals`, backfill from `sync_runs` ×
+`request_breakdowns`. No existing table is altered. Rollback = revert to v18, which drops the
 table; the loss is limited to counters that can be partially regenerated from retained raw rows
 and fully rebuilt by future runs. Version bump follows the file's established hand-written
-pattern; no `autoMigration` is introduced.
+pattern; no `autoMigration` is introduced. The database is at version 18 as of this update —
+renumber at apply time if another schema change lands first.
 
 ## Open Questions
 

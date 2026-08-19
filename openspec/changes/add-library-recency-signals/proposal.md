@@ -59,7 +59,7 @@ gaps, which is why they are one change rather than three.
 ## Impact
 
 - **Affected code:** `data/local/entity/Game.kt`, `data/local/BacklogiumDatabase.kt` (migration
-  16→17), `data/remote/dto/OwnedGamesDto.kt`, `data/remote/SteamApi.kt`, the sync persistence path,
+  18→19), `data/remote/dto/OwnedGamesDto.kt`, `data/remote/SteamApi.kt`, the sync persistence path,
   `data/repo` for the state derivation, `ui/library/`, `ui/gamedetail/`, `ui/home/`,
   `data/backup/`.
 - **Storage:** Three nullable columns on `games`. A dismissal timestamp and the last acquisition

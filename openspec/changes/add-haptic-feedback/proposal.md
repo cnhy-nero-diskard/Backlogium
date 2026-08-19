@@ -62,9 +62,10 @@ learning from that is how it gets ignored on the wayside.
 
 ## Impact
 
-- **Depends on `add-progress-events`.** The earned tier consumes that change's `ProgressEvent`
-  stream and its once-only delivery guarantee. Without it the earned intents have no trustworthy
-  trigger, since UI state cannot distinguish a level-up from a level that was always 5.
+- **Depends on `add-progress-events` — satisfied.** That change landed on 2026-08-13, and the
+  earned tier consumes its `ProgressEvent` stream and its once-only delivery guarantee. Without it
+  the earned intents would have no trustworthy trigger, since UI state cannot distinguish a
+  level-up from a level that was always 5.
 - **Affected code (new):** `ui/util/Haptics.kt` (the `HapticIntent` vocabulary, the dispatcher, and
   a `HapticPlayer` seam); `ui/util/ProgressEventHaptics.kt` (the exhaustive event-to-intent
   mapping); a fake player plus unit tests over the mapping.

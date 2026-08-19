@@ -1,7 +1,7 @@
 ## 1. Schema and Steam payload
 
 - [ ] 1.1 Add `firstSeenAt: Long?`, `lastPlayedAt: Long?`, and `returnedToPlayAt: Long?` to the `Game` entity, all nullable, defaulting to null, with KDoc stating that null on `firstSeenAt` means "present before tracking began" and is not the same as unknown
-- [ ] 1.2 Add migration 16→17 adding all three columns as nullable `INTEGER` with no backfill, and bump the database version
+- [ ] 1.2 Add migration 18→19 adding all three columns as nullable `INTEGER` with no backfill, and bump the database version
 - [ ] 1.3 Add `@SerialName("rtime_last_played") val rtimeLastPlayed: Long = 0` to `OwnedGameDto`, tolerating its absence
 - [ ] 1.4 Convert `rtime_last_played` from epoch seconds to epoch milliseconds at the mapping boundary, and treat `0` as unknown rather than as 1970
 
@@ -90,7 +90,7 @@
 - [ ] 8.13 Unit-test a backup round trip preserving all three fields, and an older backup importing with all three absent
 - [ ] 8.14 Unit-test restore timeline semantics: a backup older than the badge window restores to no states; a backup taken inside it restores to the states its recorded times imply
 - [ ] 8.15 Unit-test the announcement lifecycle: shown, dismissed, superseded by a later acquisition, and expired by time alone
-- [ ] 8.16 Migration test: an existing v16 database opens at v17 with all three columns null and no data loss
+- [ ] 8.16 Migration test: an existing v18 database opens at v19 with all three columns null and no data loss
 
 ## 9. Verification
 
