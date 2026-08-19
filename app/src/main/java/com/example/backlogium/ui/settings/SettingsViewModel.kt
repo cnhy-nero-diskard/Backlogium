@@ -19,13 +19,17 @@ import com.example.backlogium.data.updates.UpdateCheckResult
 import com.example.backlogium.domain.UpdateRuleConfigUseCase
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
+import com.example.backlogium.ui.util.HapticIntent
 import com.example.backlogium.work.PresenceServiceStarter
 import com.example.backlogium.work.GenreEnrichmentStatus
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -138,6 +142,8 @@ class SettingsViewModel @Inject constructor(
     private val snapshots = MutableStateFlow<List<SnapshotMeta>>(emptyList())
     private val updateCheckInProgress = MutableStateFlow(false)
     private val updateCheckMessage = MutableStateFlow<String?>(null)
+    private val _hapticIntents = MutableSharedFlow<HapticIntent>(extraBufferCapacity = 4)
+    val hapticIntents: SharedFlow<HapticIntent> = _hapticIntents.asSharedFlow()
 
     init {
         refreshSnapshots()
@@ -263,6 +269,7 @@ class SettingsViewModel @Inject constructor(
     /** Start only from this visible Settings interaction; disabling is observed by the service. */
     fun onLiveMonitorEnabledChanged(enabled: Boolean) = viewModelScope.launch {
         settings.setLiveMonitorEnabled(enabled)
+        _hapticIntents.tryEmit(HapticIntent.Toggle(enabled))
         if (enabled) presenceServiceStarter.startFromForeground(trigger = "settings")
     }
 
@@ -328,6 +335,7 @@ class SettingsViewModel @Inject constructor(
             updateRuleConfig.apply(pending.config)
             // Re-seed the draft from what was persisted, so the screen reflects storage again.
             draftEdit.value = null
+            _hapticIntents.tryEmit(HapticIntent.Confirm)
         }
     }
 
@@ -397,6 +405,7 @@ class SettingsViewModel @Inject constructor(
             backupRepository.importBackup(file)
             backupMessage.value = "Backup imported."
             refreshSnapshots()
+            _hapticIntents.tryEmit(HapticIntent.Confirm)
         }
     }
 
@@ -408,7 +417,19 @@ class SettingsViewModel @Inject constructor(
             backupRepository.importBackup(file)
             backupMessage.value = "Backup imported."
             refreshSnapshots()
+            _hapticIntents.tryEmit(HapticIntent.Confirm)
         }
+    }
+
+    /** Delete one retained automatic snapshot after the user confirms the action in the UI. */
+    fun onDeleteSnapshot(snapshot: SnapshotMeta) = runBackupOp {
+        if (backupRepository.deleteSnapshot(snapshot.fileName)) {
+            backupMessage.value = "Snapshot deleted."
+            _hapticIntents.tryEmit(HapticIntent.Confirm)
+        } else {
+            backupMessage.value = "That snapshot is no longer available."
+        }
+        refreshSnapshots()
     }
 
     fun onDismissMismatchImport() {
