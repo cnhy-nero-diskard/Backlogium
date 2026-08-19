@@ -13,6 +13,7 @@ import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.dao.SteamAssetDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -47,6 +48,7 @@ object DatabaseModule {
                 BacklogiumDatabase.MIGRATION_16_17,
                 BacklogiumDatabase.MIGRATION_17_18,
                 BacklogiumDatabase.MIGRATION_18_19,
+                BacklogiumDatabase.MIGRATION_19_20,
             )
             // Never silently replace a user's database when a branch has an unexpected schema
             // version. A real version bump must ship and register its migration; otherwise the
@@ -82,4 +84,7 @@ object DatabaseModule {
 
     @Provides
     fun provideCollectionDao(db: BacklogiumDatabase): CollectionDao = db.collectionDao()
+
+    @Provides
+    fun provideSteamAssetDao(db: BacklogiumDatabase): SteamAssetDao = db.steamAssetDao()
 }
