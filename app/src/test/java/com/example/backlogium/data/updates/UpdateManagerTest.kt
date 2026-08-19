@@ -1,6 +1,8 @@
 package com.example.backlogium.data.updates
 
 import java.io.File
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -41,6 +43,7 @@ class UpdateManagerTest {
                 override fun hasMatchingSigner(apk: File): Boolean = error("signer must not run")
             },
             installer = installer,
+            updateStateStore = FakeUpdateStateStore(),
         )
 
         val result = manager.downloadAndInstall(update) { }
@@ -72,5 +75,23 @@ class UpdateManagerTest {
             called = true
             return UpdateInstallResult.Started
         }
+    }
+
+    private class FakeUpdateStateStore : UpdateStateStore {
+        private val stateFlow = MutableStateFlow(AppUpdateState())
+        override val state: Flow<AppUpdateState> = stateFlow
+
+        override suspend fun recordAttempt(atMillis: Long) = Unit
+        override suspend fun recordCheck(
+            atMillis: Long,
+            seenTag: String?,
+            available: AvailableUpdate?,
+        ) = Unit
+        override suspend fun setDeclinedTag(tag: String) = Unit
+        override suspend fun clearAvailable() = Unit
+        override suspend fun markInstallStarted(tag: String) = Unit
+        override suspend fun markInstallPending(tag: String) = Unit
+        override suspend fun markInstallFailed(tag: String, message: String) = Unit
+        override suspend fun clearInstallStatus() = Unit
     }
 }

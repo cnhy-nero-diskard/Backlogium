@@ -42,7 +42,16 @@ data class AppUpdateState(
     val lastCheckAtMillis: Long? = null,
     val lastSeenTag: String? = null,
     val declinedTag: String? = null,
+    val installStatus: UpdateInstallStatus = UpdateInstallStatus.Idle,
 )
+
+/** Persisted PackageInstaller lifecycle state shared with the UI process. */
+sealed interface UpdateInstallStatus {
+    data object Idle : UpdateInstallStatus
+    data class Started(val tag: String) : UpdateInstallStatus
+    data class AwaitingUserAction(val tag: String) : UpdateInstallStatus
+    data class Failed(val tag: String, val message: String) : UpdateInstallStatus
+}
 
 sealed interface UpdateCheckResult {
     val update: AvailableUpdate?

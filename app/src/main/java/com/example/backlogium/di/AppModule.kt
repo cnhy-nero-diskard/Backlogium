@@ -11,6 +11,7 @@ import com.example.backlogium.data.updates.AndroidInstalledPackageInfoProvider
 import com.example.backlogium.data.updates.AppUpdateRepository
 import com.example.backlogium.data.updates.DataStoreAppUpdateRepository
 import com.example.backlogium.data.updates.AndroidUpdateNotifier
+import com.example.backlogium.data.updates.AppUpdateManager
 import com.example.backlogium.data.updates.FileUpdateArtifactStore
 import com.example.backlogium.data.updates.InstalledPackageInfoProvider
 import com.example.backlogium.data.updates.OkHttpUpdateDownloader
@@ -21,6 +22,7 @@ import com.example.backlogium.data.updates.UpdateDownloader
 import com.example.backlogium.data.updates.UpdateInstaller
 import com.example.backlogium.data.updates.UpdateNotifier
 import com.example.backlogium.data.updates.UpdateDataStore
+import com.example.backlogium.data.updates.UpdateManager
 import com.example.backlogium.data.updates.UpdateStateStore
 import com.example.backlogium.data.updates.UpdateVerifier
 import com.example.backlogium.domain.ProgressMarksStore
@@ -51,6 +53,10 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindAppUpdateRepository(impl: DataStoreAppUpdateRepository): AppUpdateRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindAppUpdateManager(impl: UpdateManager): AppUpdateManager
 
     @Binds
     @Singleton

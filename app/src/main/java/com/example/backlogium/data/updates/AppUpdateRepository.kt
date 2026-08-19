@@ -78,5 +78,6 @@ class DataStoreAppUpdateRepository @Inject constructor(
 
     override suspend fun decline(tag: String) {
         dataStore.setDeclinedTag(tag)
+        dataStore.clearInstallStatus()
     }
 }

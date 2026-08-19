@@ -25,6 +25,14 @@ interface UpdateStateStore {
     suspend fun setDeclinedTag(tag: String)
 
     suspend fun clearAvailable()
+
+    suspend fun markInstallStarted(tag: String)
+
+    suspend fun markInstallPending(tag: String)
+
+    suspend fun markInstallFailed(tag: String, message: String)
+
+    suspend fun clearInstallStatus()
 }
 
 /** Small, absence-tolerant persistence for the update surface. */
@@ -44,6 +52,9 @@ class UpdateDataStore @Inject constructor(
         val AVAILABLE_APK_NAME = stringPreferencesKey("available_apk_name")
         val AVAILABLE_APK_URL = stringPreferencesKey("available_apk_url")
         val AVAILABLE_CHECKSUM_URL = stringPreferencesKey("available_checksum_url")
+        val INSTALL_STATUS = stringPreferencesKey("install_status")
+        val INSTALL_TAG = stringPreferencesKey("install_tag")
+        val INSTALL_MESSAGE = stringPreferencesKey("install_message")
     }
 
     override val state: Flow<AppUpdateState> = context.updateDataStore.data.map(::decode)
@@ -83,6 +94,34 @@ class UpdateDataStore @Inject constructor(
         context.updateDataStore.edit(::clearAvailable)
     }
 
+    override suspend fun markInstallStarted(tag: String) {
+        context.updateDataStore.edit { prefs ->
+            prefs[Keys.INSTALL_STATUS] = INSTALL_STATUS_STARTED
+            prefs[Keys.INSTALL_TAG] = tag
+            prefs.remove(Keys.INSTALL_MESSAGE)
+        }
+    }
+
+    override suspend fun markInstallPending(tag: String) {
+        context.updateDataStore.edit { prefs ->
+            prefs[Keys.INSTALL_STATUS] = INSTALL_STATUS_PENDING
+            prefs[Keys.INSTALL_TAG] = tag
+            prefs.remove(Keys.INSTALL_MESSAGE)
+        }
+    }
+
+    override suspend fun markInstallFailed(tag: String, message: String) {
+        context.updateDataStore.edit { prefs ->
+            prefs[Keys.INSTALL_STATUS] = INSTALL_STATUS_FAILED
+            prefs[Keys.INSTALL_TAG] = tag
+            prefs[Keys.INSTALL_MESSAGE] = message
+        }
+    }
+
+    override suspend fun clearInstallStatus() {
+        context.updateDataStore.edit(::clearInstallStatus)
+    }
+
     private fun decode(prefs: Preferences): AppUpdateState {
         val tag = prefs[Keys.AVAILABLE_TAG]
         val available = if (tag == null) {
@@ -117,7 +156,23 @@ class UpdateDataStore @Inject constructor(
             lastCheckAtMillis = prefs[Keys.LAST_CHECK_AT],
             lastSeenTag = prefs[Keys.LAST_SEEN_TAG],
             declinedTag = prefs[Keys.DECLINED_TAG],
+            installStatus = decodeInstallStatus(prefs),
         )
+    }
+
+    private fun decodeInstallStatus(prefs: Preferences): UpdateInstallStatus {
+        val tag = prefs[Keys.INSTALL_TAG] ?: return UpdateInstallStatus.Idle
+        return when (prefs[Keys.INSTALL_STATUS]) {
+            INSTALL_STATUS_STARTED -> UpdateInstallStatus.Started(tag)
+            INSTALL_STATUS_PENDING -> UpdateInstallStatus.AwaitingUserAction(tag)
+            INSTALL_STATUS_FAILED -> UpdateInstallStatus.Failed(
+                tag = tag,
+                message = prefs[Keys.INSTALL_MESSAGE].orEmpty().ifBlank {
+                    "The update was not installed."
+                },
+            )
+            else -> UpdateInstallStatus.Idle
+        }
     }
 
     private fun clearAvailable(prefs: MutablePreferences) {
@@ -131,11 +186,23 @@ class UpdateDataStore @Inject constructor(
         prefs.remove(Keys.AVAILABLE_CHECKSUM_URL)
     }
 
+    private fun clearInstallStatus(prefs: MutablePreferences) {
+        prefs.remove(Keys.INSTALL_STATUS)
+        prefs.remove(Keys.INSTALL_TAG)
+        prefs.remove(Keys.INSTALL_MESSAGE)
+    }
+
     private fun <T> writeNullable(
         prefs: MutablePreferences,
         key: Preferences.Key<T>,
         value: T?,
     ) {
         if (value == null) prefs.remove(key) else prefs[key] = value
+    }
+
+    private companion object {
+        const val INSTALL_STATUS_STARTED = "started"
+        const val INSTALL_STATUS_PENDING = "pending"
+        const val INSTALL_STATUS_FAILED = "failed"
     }
 }

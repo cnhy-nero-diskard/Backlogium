@@ -2,10 +2,11 @@ package com.example.backlogium.ui.updates
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.backlogium.data.updates.AppUpdateManager
 import com.example.backlogium.data.updates.AppUpdateRepository
 import com.example.backlogium.data.updates.AvailableUpdate
 import com.example.backlogium.data.updates.UpdateInstallResult
-import com.example.backlogium.data.updates.UpdateManager
+import com.example.backlogium.data.updates.UpdateInstallStatus
 import com.example.backlogium.data.updates.UpdateProgress
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -36,13 +37,16 @@ sealed interface UpdateOperation {
 @HiltViewModel
 class AppUpdateViewModel @Inject constructor(
     private val repository: AppUpdateRepository,
-    private val manager: UpdateManager,
+    private val manager: AppUpdateManager,
 ) : ViewModel() {
     private val operation = MutableStateFlow<UpdateOperation>(UpdateOperation.Idle)
     private var updateJob: Job? = null
 
     val uiState: StateFlow<AppUpdateUiState> = combine(repository.state, operation) { state, current ->
-        AppUpdateUiState(available = state.available, operation = current)
+        AppUpdateUiState(
+            available = state.available,
+            operation = persistedOperation(state.installStatus, state.available, current),
+        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -95,6 +99,28 @@ class AppUpdateViewModel @Inject constructor(
             UpdateProgress.VerifyingDigest -> UpdateOperation.VerifyingDigest
             UpdateProgress.VerifyingSigner -> UpdateOperation.VerifyingSigner
             UpdateProgress.Installing -> UpdateOperation.Installing
+        }
+    }
+
+    private fun persistedOperation(
+        installStatus: UpdateInstallStatus,
+        available: AvailableUpdate?,
+        current: UpdateOperation,
+    ): UpdateOperation {
+        val statusTag = when (installStatus) {
+            UpdateInstallStatus.Idle -> null
+            is UpdateInstallStatus.Started -> installStatus.tag
+            is UpdateInstallStatus.AwaitingUserAction -> installStatus.tag
+            is UpdateInstallStatus.Failed -> installStatus.tag
+        }
+        if (statusTag == null || available?.tag != statusTag) return current
+
+        return when (installStatus) {
+            UpdateInstallStatus.Idle -> current
+            is UpdateInstallStatus.Started,
+            is UpdateInstallStatus.AwaitingUserAction,
+            -> if (current == UpdateOperation.Idle) UpdateOperation.Installing else current
+            is UpdateInstallStatus.Failed -> UpdateOperation.Failed(installStatus.message)
         }
     }
 }

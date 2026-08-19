@@ -149,6 +149,26 @@ class AppUpdateRepositoryTest {
         override suspend fun clearAvailable() {
             stateFlow.value = stateFlow.value.copy(available = null)
         }
+
+        override suspend fun markInstallStarted(tag: String) {
+            stateFlow.value = stateFlow.value.copy(installStatus = UpdateInstallStatus.Started(tag))
+        }
+
+        override suspend fun markInstallPending(tag: String) {
+            stateFlow.value = stateFlow.value.copy(
+                installStatus = UpdateInstallStatus.AwaitingUserAction(tag),
+            )
+        }
+
+        override suspend fun markInstallFailed(tag: String, message: String) {
+            stateFlow.value = stateFlow.value.copy(
+                installStatus = UpdateInstallStatus.Failed(tag, message),
+            )
+        }
+
+        override suspend fun clearInstallStatus() {
+            stateFlow.value = stateFlow.value.copy(installStatus = UpdateInstallStatus.Idle)
+        }
     }
 
     private class FakeInstalledPackageInfoProvider(private val versionCode: Long) :

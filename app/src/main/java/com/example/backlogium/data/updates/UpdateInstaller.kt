@@ -12,6 +12,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 const val INSTALL_ARTIFACT_PATH_EXTRA = "com.example.backlogium.UPDATE_ARTIFACT_PATH"
+const val INSTALL_UPDATE_TAG_EXTRA = "com.example.backlogium.UPDATE_TAG"
 
 interface UpdateInstaller {
     fun canRequestPackageInstalls(): Boolean
@@ -59,6 +60,7 @@ class PackageInstallerUpdateInstaller @Inject constructor(
                 }
                 val statusIntent = Intent(context, UpdateInstallReceiver::class.java).apply {
                     putExtra(INSTALL_ARTIFACT_PATH_EXTRA, artifact.absolutePath)
+                    putExtra(INSTALL_UPDATE_TAG_EXTRA, update.tag)
                 }
                 val statusPendingIntent = PendingIntent.getBroadcast(
                     context,

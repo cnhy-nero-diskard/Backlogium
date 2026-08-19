@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -19,6 +20,9 @@ const val OPEN_UPDATE_EXTRA = "com.example.backlogium.OPEN_UPDATE"
 
 interface UpdateNotifier {
     fun notify(update: AvailableUpdate): Boolean
+
+    /** Posts a user-driven PackageInstaller confirmation action when the app is backgrounded. */
+    fun notifyInstallConfirmation(confirmation: Intent): Boolean = false
 }
 
 @Singleton
@@ -27,21 +31,11 @@ class AndroidUpdateNotifier @Inject constructor(
 ) : UpdateNotifier {
     override fun notify(update: AvailableUpdate): Boolean {
         if (BuildConfig.DEBUG) return false
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            return false
-        }
+        if (!canPostNotifications()) return false
 
         return runCatching {
             val manager = context.getSystemService(NotificationManager::class.java) ?: return false
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    "App updates",
-                    NotificationManager.IMPORTANCE_DEFAULT,
-                ),
-            )
+            ensureChannel(manager)
             val launchIntent = context.packageManager
                 .getLaunchIntentForPackage(context.packageName)
                 ?.putExtra(OPEN_UPDATE_EXTRA, true)
@@ -66,8 +60,50 @@ class AndroidUpdateNotifier @Inject constructor(
         }.getOrDefault(false)
     }
 
+    override fun notifyInstallConfirmation(confirmation: Intent): Boolean {
+        if (BuildConfig.DEBUG) return false
+        if (!canPostNotifications()) return false
+
+        return runCatching {
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return false
+            ensureChannel(manager)
+            val contentIntent = PendingIntent.getActivity(
+                context,
+                INSTALL_CONFIRMATION_REQUEST_CODE,
+                confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle("Confirm Backlogium update")
+                .setContentText("Tap to continue installing the downloaded update.")
+                .setContentIntent(contentIntent)
+                .setAutoCancel(true)
+                .build()
+            NotificationManagerCompat.from(context)
+                .notify(INSTALL_CONFIRMATION_NOTIFICATION_ID, notification)
+            true
+        }.getOrDefault(false)
+    }
+
+    private fun canPostNotifications(): Boolean =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun ensureChannel(manager: NotificationManager) {
+        manager.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_ID,
+                "App updates",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ),
+        )
+    }
+
     private companion object {
         const val CHANNEL_ID = "app_updates"
         const val NOTIFICATION_ID = 4202
+        const val INSTALL_CONFIRMATION_NOTIFICATION_ID = 4204
+        const val INSTALL_CONFIRMATION_REQUEST_CODE = 4205
     }
 }
