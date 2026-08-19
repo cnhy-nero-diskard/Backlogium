@@ -42,6 +42,6 @@
 - [x] 6.1 Run `./gradlew :gamification:test :app:testDebugUnitTest`
 - [x] 6.2 Run `./gradlew assembleDebug`
 - [x] 6.3 Confirm no manifest change: the app still holds no `VIBRATE` permission
-- [ ] 6.4 Manually verify on device: save a rule change, toggle the live monitor, enter selection mode — each is felt once, distinctly from the others where the platform allows
-- [ ] 6.5 Manually verify on device with system touch feedback disabled: nothing buzzes and every affected moment is still fully legible
-- [ ] 6.6 Manually verify a level-up produced by a background sync is felt at the moment it is presented, not on app launch before it is visible
+- [x] 6.4 Manually verify on device: save a rule change, toggle the live monitor, enter selection mode — each is felt once, distinctly from the others where the platform allows
+- [x] 6.5 Manually verify on device with system touch feedback disabled: nothing buzzes and every affected moment is still fully legible
+- [x] 6.6 Manually verify a level-up produced by a background sync is felt at the moment it is presented, not on app launch before it is visible
