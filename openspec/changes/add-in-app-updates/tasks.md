@@ -90,7 +90,16 @@
 ## 10. Verification
 
 - [x] 10.1 `./gradlew :app:testDebugUnitTest :gamification:test`
-- [ ] 10.2 Confirm a debug build performs no check and shows no Updates section
+- [x] 10.2 Confirm a debug build performs no check and shows no Updates section
+
+> **Blocked.** 10.3–10.9 need a release build that actually contains this feature's code to test
+> the round trip against, but `.github/workflows/release.yml`'s gate job only builds tags reachable
+> from `origin/master` (`git merge-base --is-ancestor "$SHA" origin/master`) — tagging this branch
+> now would push a real tag that the workflow silently skips. This branch has to reach `master`
+> (merge/PR) before a real test release can exist. Locally signing a release build is a fallback
+> for 10.4/10.6–10.9 but still leaves 10.3 and true signer-matched install (10.5) open until a real
+> merged release exists. Resume once the branch is merged and a release is cut.
+
 - [ ] 10.3 Cut a test release through the real workflow and confirm both the APK and its `.sha256` are attached
 - [ ] 10.4 On device with a release build: confirm the notification appears, the sheet shows the correct version pair and notes, and the download reports progress
 - [ ] 10.5 Confirm the install completes and the app relaunches on the new version
