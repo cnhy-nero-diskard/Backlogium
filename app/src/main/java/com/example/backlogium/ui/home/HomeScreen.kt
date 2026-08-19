@@ -97,8 +97,12 @@ import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.theme.collectionAccentColor
 import com.example.backlogium.ui.theme.deadlineWarning
 import com.example.backlogium.ui.theme.playingIndicator
+import com.example.backlogium.ui.util.HapticIntent
 import com.example.backlogium.ui.util.UiFormat
+import com.example.backlogium.ui.util.playIfNotSilent
+import com.example.backlogium.ui.util.rememberHaptics
 import com.example.backlogium.ui.util.rememberReducedMotion
+import com.example.backlogium.ui.util.toHapticIntent
 import compose.icons.TablerIcons
 import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.Clock
@@ -124,6 +128,7 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val haptics = rememberHaptics()
 
     val nowPlayingAccent = MaterialTheme.colorScheme.tertiaryContainer
     val inGame = state.isInGame && state.nowPlayingName != null
@@ -145,14 +150,36 @@ fun HomeScreen(
         return
     }
 
-    // Level-up detection (design decision 6): HomeUiState carries no "previous level", so an
-    // increment is detected in Compose state only. Seeding the remembered value from the
-    // *current* level on first composition means a cold start never fires a false increment.
-    var lastLevel by remember { mutableStateOf(state.level) }
+    // Durable progress events, rather than a state-level comparison, decide when an earned moment
+    // is presented. This also covers a level-up produced while the app was closed.
+    val pendingLevelUp = state.pendingProgressEvent as? ProgressEvent.LevelUp
     var playLevelUp by remember { mutableStateOf(false) }
-    LaunchedEffect(state.level) {
-        if (state.level > lastLevel) playLevelUp = true
-        lastLevel = state.level
+    LaunchedEffect(pendingLevelUp) {
+        playLevelUp = pendingLevelUp != null
+    }
+    LaunchedEffect(state.pendingProgressEvent) {
+        val event = state.pendingProgressEvent ?: return@LaunchedEffect
+        val intent = event.toHapticIntent()
+        haptics.playIfNotSilent(intent)
+        // The quest card is the visible presentation; it has no separate animation or dismiss
+        // affordance, so acknowledge it after the composition that presented the card.
+        if (event is ProgressEvent.QuestMet) {
+            viewModel.acknowledgeProgressEvent(event)
+        }
+    }
+
+    // The error card is also used by background syncs. Only a retry initiated from this visible
+    // card arms Reject, so a background failure never produces an unattributable buzz.
+    var manualSyncAttempt by remember { mutableStateOf(false) }
+    var manualSyncInFlight by remember { mutableStateOf(false) }
+    LaunchedEffect(state.isSyncing) {
+        if (state.isSyncing && manualSyncAttempt) {
+            manualSyncInFlight = true
+        } else if (!state.isSyncing && manualSyncAttempt && manualSyncInFlight) {
+            if (state.lastSyncError != null) haptics.playIfNotSilent(HapticIntent.Reject)
+            manualSyncAttempt = false
+            manualSyncInFlight = false
+        }
     }
 
     val scrollState = rememberScrollState()
@@ -195,9 +222,17 @@ fun HomeScreen(
         InnerHomeContent(
             state = state,
             playLevelUp = playLevelUp,
-            onLevelUpFinished = { playLevelUp = false },
+            onLevelUpFinished = {
+                playLevelUp = false
+                pendingLevelUp?.let(viewModel::acknowledgeProgressEvent)
+            },
             onStreakMilestoneFinished = { viewModel.acknowledgeProgressEvent(it) },
-            onSyncNow = viewModel::syncNow,
+            onSyncNow = {
+                if (!state.isSyncing) {
+                    manualSyncAttempt = true
+                    viewModel.syncNow()
+                }
+            },
             onOpenCollection = onOpenCollection,
             onCreateCollection = onCreateCollection,
             scrollState = scrollState,
