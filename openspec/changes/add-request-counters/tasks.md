@@ -25,4 +25,4 @@
 
 - [x] 4.1 Run `openspec validate` for the change and fix any spec or artifact issues
 - [x] 4.2 Run the app unit test suite via Gradle and fix failures
-- [ ] 4.3 Manual smoke check on a device/emulator: trigger a sync, confirm the counters section appears, and confirm counters survive a run prune
+- [x] 4.3 Manual smoke check on a device/emulator: trigger a sync, confirm the counters section appears, and confirm counters survive a run prune
