@@ -211,8 +211,10 @@ controls, separately from the rule-configuration controls.
 
 ### Requirement: Diagnostics section
 The Settings screen SHALL provide access to a diagnostics view listing recent sync runs, with each
-run inspectable to see what it did and how it ended. The view SHALL render from stored records
-without a network call, and SHALL NOT display credential values in any form.
+run inspectable to see what it did and how it ended, and SHALL present request counters for the
+last 24 hours, 30 days, and 365 days, split into successful and unsuccessful requests with a
+per-API-route breakdown. The view SHALL render from stored records without a network call, and
+SHALL NOT display credential values in any form.
 
 #### Scenario: Opening diagnostics
 - **WHEN** the user activates the diagnostics control in Settings
@@ -233,6 +235,26 @@ without a network call, and SHALL NOT display credential values in any form.
 #### Scenario: Credentials absent from diagnostics
 - **WHEN** any diagnostics view or record detail is displayed
 - **THEN** no Steam API key or credential value appears, in masked form or otherwise
+
+#### Scenario: Request counters shown
+- **WHEN** the diagnostics view is opened
+- **THEN** it presents the total requests for the last 24 hours, 30 days, and 365 days, each
+  split into successful and unsuccessful counts
+
+#### Scenario: Endpoint breakdown shown
+- **WHEN** the user views the request counters
+- **THEN** the requests of the selected window are broken down per API route, with successful and
+  unsuccessful counts per route
+
+#### Scenario: Counter window selection
+- **WHEN** the user changes the counter window selector
+- **THEN** the endpoint breakdown recomputes for the chosen window — 24 hours, 30 days, or 365
+  days
+
+#### Scenario: Counters empty state
+- **WHEN** the diagnostics view is opened before any request has been counted
+- **THEN** the counters section presents a neutral empty state rather than an error or a blank
+  area
 
 ### Requirement: Data & Backup section
 The Settings screen SHALL present a "Data & Backup" section, separate from the existing history
