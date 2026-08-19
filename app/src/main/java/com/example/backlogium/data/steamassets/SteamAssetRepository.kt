@@ -1,8 +1,5 @@
 package com.example.backlogium.data.steamassets
 
-import com.example.backlogium.data.local.dao.AchievementDao
-import com.example.backlogium.data.local.dao.GameDao
-import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SteamAssetDao
 import com.example.backlogium.data.local.entity.SteamAssetDownloadState
 import com.example.backlogium.data.local.entity.SteamAssetManifest
@@ -21,9 +18,6 @@ import javax.inject.Singleton
 
 @Singleton
 class SteamAssetRepository @Inject constructor(
-    private val gameDao: GameDao,
-    private val achievementDao: AchievementDao,
-    private val profileDao: PlayerProfileDao,
     private val assetDao: SteamAssetDao,
     private val store: SteamAssetStore,
     private val client: OkHttpClient,
@@ -34,16 +28,16 @@ class SteamAssetRepository @Inject constructor(
             val normalized = url?.trim().orEmpty()
             if (normalized.isNotEmpty()) all.putIfAbsent(store.normalizedUrl(normalized), SteamAssetInventoryItem(normalized, kind))
         }
-        add(profileDao.get()?.avatarUrl, SteamAssetKind.AVATAR)
-        gameDao.getAll().forEach { game ->
+        add(assetDao.profileAvatarUrl(), SteamAssetKind.AVATAR)
+        assetDao.gameImageSources().forEach { game ->
             add(game.iconUrl, SteamAssetKind.GAME_ICON)
             add(SteamIconMapper.headerUrl(game.appId), SteamAssetKind.HEADER)
             add(SteamIconMapper.heroCapsuleUrl(game.appId), SteamAssetKind.HERO_CAPSULE)
             add(SteamIconMapper.libraryHeroUrl(game.appId), SteamAssetKind.LIBRARY_HERO)
             add(SteamIconMapper.libraryCapsuleUrl(game.appId), SteamAssetKind.LIBRARY_CAPSULE)
             add(SteamIconMapper.wideCapsuleUrl(game.appId), SteamAssetKind.WIDE_CAPSULE)
-            achievementDao.getForGame(game.appId).forEach { add(it.iconUrl, SteamAssetKind.ACHIEVEMENT) }
         }
+        assetDao.achievementIconUrls().forEach { add(it, SteamAssetKind.ACHIEVEMENT) }
         return all.values.toList()
     }
 
