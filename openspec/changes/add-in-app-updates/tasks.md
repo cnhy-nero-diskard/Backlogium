@@ -7,29 +7,29 @@
 - [x] 1.1 Add `GitHubReleaseDto` covering `tag_name`, `name`, `body`, `draft`, `prerelease`, and an `assets` list of `name`, `browser_download_url`, `size`
 - [x] 1.2 Add a Retrofit service for `https://api.github.com/repos/cnhy-nero-diskard/Backlogium/releases/latest`, unauthenticated, with `Accept: application/vnd.github+json`
 - [x] 1.3 Parse the tag against `^v(\d+)\.(\d+)\.(\d+)$`, returning no release rather than throwing when it does not match
-- [ ] 1.4 Ignore any response still flagged `draft` or `prerelease`, defensively — the endpoint should already exclude them
+- [x] 1.4 Ignore any response still flagged `draft` or `prerelease`, defensively — the endpoint should already exclude them
 - [x] 1.5 Locate the `.apk` asset and its `.sha256` sibling; treat either being absent as "no update available"
-- [ ] 1.6 Treat a rate-limit, 5xx, or unreachable host as a no-op that records only the attempt time
+- [x] 1.6 Treat a rate-limit, 5xx, or unreachable host as a no-op that records only the attempt time
 
 ## 2. Version comparison
 
 - [x] 2.1 Encode the parsed tag into a version code with the identical encoding `auditfix-secrets-and-packaging` uses at build time, in one shared place so the two cannot diverge
-- [ ] 2.2 Read the running build's `versionCode` from `PackageManager`, not from `BuildConfig`, so it is the value the installer will compare against
+- [x] 2.2 Read the running build's `versionCode` from `PackageManager`, not from `BuildConfig`, so it is the value the installer will compare against
 - [x] 2.3 Offer an update only when the release's code is strictly greater
 - [x] 2.4 Use `versionName` for display only, never for the comparison
 
 ## 3. Check scheduling and state
 
-- [ ] 3.1 Add `UpdateCheckWorker` and a daily `PeriodicWorkRequest` with a connected-network constraint, enqueued as unique work with `KEEP`
-- [ ] 3.1a Guard the worker on `lastCheckTime`: return success without issuing a request when a check completed within the last 20 hours — the `PeriodicWorkRequest` fires on its own clock and does not by itself implement "about a day since the last check"
-- [ ] 3.1b Use 20 hours rather than 24, with a comment recording why: WorkManager places a periodic run inside its interval, so an exact 24-hour guard would skip a tick arriving slightly early and halve the effective cadence
-- [ ] 3.1c Have both the periodic and the manual path write `lastCheckTime` on completion, so they share one notion of when a check last happened; a manual check bypasses the guard but still updates it
-- [ ] 3.2 Ensure the check is never invoked from app startup or from a screen's composition
-- [ ] 3.3 Add DataStore keys for last check time, last seen release tag, and declined release tag
-- [ ] 3.4 Notify only when the found tag differs from the declined tag
-- [ ] 3.5 Post the notification following `HltbRefreshWorker`'s pattern, skipping silently when `POST_NOTIFICATIONS` is not granted
-- [ ] 3.6 Add an update notification channel at `IMPORTANCE_DEFAULT`, separate from the HLTB and now-playing channels
-- [ ] 3.7 Make the notification a plain tap-to-open with no action buttons
+- [x] 3.1 Add `UpdateCheckWorker` and a daily `PeriodicWorkRequest` with a connected-network constraint, enqueued as unique work with `KEEP`
+- [x] 3.1a Guard the worker on `lastCheckTime`: return success without issuing a request when a check completed within the last 20 hours — the `PeriodicWorkRequest` fires on its own clock and does not by itself implement "about a day since the last check"
+- [x] 3.1b Use 20 hours rather than 24, with a comment recording why: WorkManager places a periodic run inside its interval, so an exact 24-hour guard would skip a tick arriving slightly early and halve the effective cadence
+- [x] 3.1c Have both the periodic and the manual path write `lastCheckTime` on completion, so they share one notion of when a check last happened; a manual check bypasses the guard but still updates it
+- [x] 3.2 Ensure the check is never invoked from app startup or from a screen's composition
+- [x] 3.3 Add DataStore keys for last check time, last seen release tag, and declined release tag
+- [x] 3.4 Notify only when the found tag differs from the declined tag
+- [x] 3.5 Post the notification following `HltbRefreshWorker`'s pattern, skipping silently when `POST_NOTIFICATIONS` is not granted
+- [x] 3.6 Add an update notification channel at `IMPORTANCE_DEFAULT`, separate from the HLTB and now-playing channels
+- [x] 3.7 Make the notification a plain tap-to-open with no action buttons
 
 ## 4. Download
 

@@ -7,6 +7,10 @@ import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.DataStoreProgressMarksStore
 import com.example.backlogium.data.repo.DataStoreSettingsRepository
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.data.updates.AndroidInstalledPackageInfoProvider
+import com.example.backlogium.data.updates.AppUpdateRepository
+import com.example.backlogium.data.updates.DataStoreAppUpdateRepository
+import com.example.backlogium.data.updates.InstalledPackageInfoProvider
 import com.example.backlogium.domain.ProgressMarksStore
 import com.example.backlogium.domain.SystemTimeProvider
 import com.example.backlogium.domain.TimeProvider
@@ -31,6 +35,16 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindSettingsRepository(impl: DataStoreSettingsRepository): SettingsRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindAppUpdateRepository(impl: DataStoreAppUpdateRepository): AppUpdateRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindInstalledPackageInfoProvider(
+        impl: AndroidInstalledPackageInfoProvider,
+    ): InstalledPackageInfoProvider
 
     @Binds
     @Singleton

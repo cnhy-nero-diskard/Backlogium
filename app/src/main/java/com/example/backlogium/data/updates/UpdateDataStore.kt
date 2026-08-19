@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -16,7 +17,9 @@ private val Context.updateDataStore by preferencesDataStore(name = "app_updates"
 
 /** Small, absence-tolerant persistence for the update surface. */
 @Singleton
-class UpdateDataStore @Inject constructor(private val context: Context) {
+class UpdateDataStore @Inject constructor(
+    @ApplicationContext private val context: Context,
+) {
     private object Keys {
         val LAST_CHECK_AT = longPreferencesKey("last_check_at")
         val LAST_SEEN_TAG = stringPreferencesKey("last_seen_tag")
