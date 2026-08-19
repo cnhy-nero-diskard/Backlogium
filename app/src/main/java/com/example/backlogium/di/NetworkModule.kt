@@ -17,6 +17,8 @@ import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
+import javax.inject.Named
+import com.example.backlogium.data.updates.GitHubReleaseApi
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -24,6 +26,7 @@ object NetworkModule {
 
     private const val STEAM_BASE_URL = "https://api.steampowered.com/"
     private const val STEAM_STORE_BASE_URL = "https://store.steampowered.com/"
+    private const val GITHUB_BASE_URL = "https://api.github.com/"
 
     @Provides
     @Singleton
@@ -66,6 +69,20 @@ object NetworkModule {
         .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
         .build()
         .create(SteamStoreApi::class.java)
+
+    @Provides
+    @Singleton
+    @Named("githubRetrofit")
+    fun provideGitHubRetrofit(json: Json, client: OkHttpClient): Retrofit = Retrofit.Builder()
+        .baseUrl(GITHUB_BASE_URL)
+        .client(client)
+        .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+        .build()
+
+    @Provides
+    @Singleton
+    fun provideGitHubReleaseApi(@Named("githubRetrofit") retrofit: Retrofit): GitHubReleaseApi =
+        retrofit.create(GitHubReleaseApi::class.java)
 
     /**
      * A separate OkHttp client for HowLongToBeat: the scraper drives raw GET/POST calls with

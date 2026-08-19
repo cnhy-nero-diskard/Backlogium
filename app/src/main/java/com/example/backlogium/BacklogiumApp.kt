@@ -19,6 +19,7 @@ import com.example.backlogium.domain.DailyProgressBackfillUseCase
 import com.example.backlogium.domain.PendingImportRecomputeUseCase
 import com.example.backlogium.work.PresenceServiceStarter
 import com.example.backlogium.work.SyncScheduler
+import com.example.backlogium.work.UpdateScheduler
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -76,6 +77,9 @@ class BacklogiumApp : Application(), Configuration.Provider {
     lateinit var syncScheduler: SyncScheduler
 
     @Inject
+    lateinit var updateScheduler: UpdateScheduler
+
+    @Inject
     lateinit var liveStatusRepository: LiveStatusRepository
 
     @Inject
@@ -115,6 +119,11 @@ class BacklogiumApp : Application(), Configuration.Provider {
         // is planted here in release, so Timber calls are no-ops and nothing reaches logcat.
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
+        }
+        // Scheduling is local and non-blocking; the worker performs discovery only in release
+        // builds and only when WorkManager has a connected network.
+        if (!BuildConfig.DEBUG) {
+            updateScheduler.ensurePeriodicUpdateCheck()
         }
         // Complete storage migrations before scheduling work that could list or write snapshots.
         // Both migrations are idempotent and leave their source data in place when a copy or
