@@ -158,9 +158,14 @@ fun HomeScreen(
     LaunchedEffect(pendingLevelUp) {
         playLevelUp = pendingLevelUp != null
     }
-    LaunchedEffect(state.pendingProgressEvent) {
+    LaunchedEffect(state.pendingProgressEvent, playLevelUp) {
         val event = state.pendingProgressEvent ?: return@LaunchedEffect
-        if (event is ProgressEvent.QuestMet) {
+        if (event is ProgressEvent.LevelUp) {
+            if (!playLevelUp) return@LaunchedEffect
+            // The Lottie presentation is mounted only after playLevelUp becomes true; wait for
+            // that presentation to reach a frame before delivering the earned haptic.
+            withFrameNanos { }
+        } else if (event is ProgressEvent.QuestMet) {
             // The event-specific card below must have reached a frame before its haptic and
             // acknowledgement make the earned moment durable as delivered.
             withFrameNanos { }

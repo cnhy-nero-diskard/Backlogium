@@ -88,8 +88,9 @@ reach the platform directly. Verify the boundary with:
 grep -rn "performHapticFeedback\|LocalHapticFeedback\|VibrationEffect" app/src/main/java --exclude-dir=util
 ```
 
-The command must report only the authority file under `ui/util/`. Silence is the default: navigation,
-list interaction, filtering, sorting, density changes, and newly added controls need no per-site
+The command must produce no output: `--exclude-dir=util` intentionally omits the authority, so any
+match indicates a platform haptic call outside `ui/util/`. Silence is the default: navigation, list
+interaction, filtering, sorting, density changes, and newly added controls need no per-site
 declaration. Haptics are reserved for the small set of earned or committed moments named by the
 shared vocabulary, and never replace the visible result.
 
