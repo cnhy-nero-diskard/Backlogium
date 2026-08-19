@@ -12,14 +12,13 @@
 ## 2. Verification
 
 - [x] 2.1 `./gradlew :app:testDebugUnitTest :gamification:test`
-
-> **Blocked.** 2.2 and 2.3 need a release build containing this fix installed on-device, which
-> needs this branch merged to master and a new release cut first — same constraint as
-> `add-in-app-updates` 10.3. Resume once merged and a release exists.
-
-- [ ] 2.2 On device (release build, real install round trip): confirm that when the app is not visible
+- [x] 2.2 On device (release build, real install round trip): confirm that when the app is not visible
   at `STATUS_SUCCESS`, a "Backlogium updated to `<version>`" notification appears and tapping it opens
-  the app on the new version
+  the app on the new version — confirmed on a real v1.7.2 → v1.7.3 round trip: notification id
+  4206 posted with title "Backlogium updated to 1.7.3" (the system install-confirmation UI owned the
+  foreground at `STATUS_SUCCESS`, same root cause as the original bug), and opening it landed on
+  Settings running 1.7.3
 - [ ] 2.3 On device: confirm that when the app **is** visible at `STATUS_SUCCESS` (e.g. update
   initiated from Settings and left in the foreground through a fast/local install), it relaunches
-  directly with no notification
+  directly with no notification — not yet observed; every attempt this session had the system
+  install-confirmation UI take the foreground before `STATUS_SUCCESS` arrived

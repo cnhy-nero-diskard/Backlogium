@@ -96,18 +96,17 @@
 - [x] 10.1 `./gradlew :app:testDebugUnitTest :gamification:test`
 - [x] 10.2 Confirm a debug build performs no check and shows no Updates section
 
-> **Blocked.** 10.3–10.9 need a release build that actually contains this feature's code to test
-> the round trip against, but `.github/workflows/release.yml`'s gate job only builds tags reachable
-> from `origin/master` (`git merge-base --is-ancestor "$SHA" origin/master`) — tagging this branch
-> now would push a real tag that the workflow silently skips. This branch has to reach `master`
-> (merge/PR) before a real test release can exist. Locally signing a release build is a fallback
-> for 10.4/10.6–10.9 but still leaves 10.3 and true signer-matched install (10.5) open until a real
-> merged release exists. Resume once the branch is merged and a release is cut.
+The branch reached master and three real releases (v1.7.1, v1.7.2, v1.7.3) were cut, unblocking
+10.3–10.9. 10.3–10.5 and 10.9 were verified on-device against that real round trip; the relaunch
+step surfaced a real bug (Android's background-activity-launch restriction blocking the
+post-install relaunch), fixed and released separately as `auditfix-update-relaunch-bal`. 10.6–10.8
+remain: they need scenarios (an explicit system-prompt cancel, a corrupted artifact, airplane mode)
+that weren't exercised by the round trip actually run.
 
-- [ ] 10.3 Cut a test release through the real workflow and confirm both the APK and its `.sha256` are attached
-- [ ] 10.4 On device with a release build: confirm the notification appears, the sheet shows the correct version pair and notes, and the download reports progress
-- [ ] 10.5 Confirm the install completes and the app relaunches on the new version
+- [x] 10.3 Cut a test release through the real workflow and confirm both the APK and its `.sha256` are attached — v1.7.1/v1.7.2/v1.7.3 all published with both assets; checksum verified against the downloaded APK
+- [x] 10.4 On device with a release build: confirm the notification appears, the sheet shows the correct version pair and notes, and the download reports progress — notification titled "Backlogium 1.7.3 is available" on the `app_updates` channel; sheet showed "1.7.2 → 1.7.3" with release notes; progress bar visible during download
+- [x] 10.5 Confirm the install completes and the app relaunches on the new version — versionName/versionCode confirmed bumped after each install; relaunch confirmed via the fixed notification-tap path (see `auditfix-update-relaunch-bal`) landing on Settings running the new version
 - [ ] 10.6 Cancel at the system install prompt and confirm the app is unchanged and the artifact is gone
 - [ ] 10.7 Corrupt a downloaded artifact and confirm verification fails before the installer is reached
 - [ ] 10.8 Airplane mode: confirm checks fail silently and every other feature is unaffected
-- [ ] 10.9 Confirm "Later" suppresses re-notification for that version but not for a newer one
+- [x] 10.9 Confirm "Later" suppresses re-notification for that version but not for a newer one — declined v1.7.2, a subsequent manual check found the same tag again but posted no new notification while Settings still showed and offered it; the newer-version-still-announces half is covered by the existing unit test suite (9.5)
