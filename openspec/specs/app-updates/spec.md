@@ -166,6 +166,13 @@ relaunch the app. Any other outcome SHALL leave the installed app unchanged.
 - **WHEN** a verified artifact is installed successfully
 - **THEN** the app is relaunched on the new version
 
+#### Scenario: Install succeeds while the app is backgrounded
+- **WHEN** a verified artifact is installed successfully and the app has no visible activity at that
+  moment
+- **THEN** the app is not relaunched automatically, and a tap-to-open notification announcing the new
+  version is posted instead, so the platform's background-activity-launch restriction is never
+  attempted against
+
 #### Scenario: Install declined at the system prompt
 - **WHEN** the user cancels the system installation prompt
 - **THEN** the app remains on its current version, is not relaunched, and the artifact is removed
