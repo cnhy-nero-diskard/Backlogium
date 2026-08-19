@@ -1,6 +1,7 @@
 package com.example.backlogium.ui.settings
 
 import android.net.Uri
+import com.example.backlogium.BuildConfig
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -45,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.data.backup.SnapshotMeta
+import com.example.backlogium.data.updates.AppUpdateState
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.work.GenreEnrichmentStatus
@@ -71,6 +73,7 @@ import compose.icons.tablericons.Upload
 fun SettingsScreen(
     onEditCredentials: () -> Unit,
     onOpenDiagnostics: () -> Unit,
+    onOpenUpdate: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -86,6 +89,7 @@ fun SettingsScreen(
         state = state,
         onEditCredentials = onEditCredentials,
         onOpenDiagnostics = onOpenDiagnostics,
+        onOpenUpdate = onOpenUpdate,
         actions = remember(viewModel) {
             SettingsActions(
                 onSyncNow = viewModel::syncNow,
@@ -109,6 +113,8 @@ fun SettingsScreen(
                 onConfirmMismatchImport = viewModel::onConfirmMismatchImport,
                 onDismissMismatchImport = viewModel::onDismissMismatchImport,
                 onDismissBackupMessage = viewModel::onDismissBackupMessage,
+                onCheckForUpdates = viewModel::checkForUpdates,
+                onOpenUpdate = onOpenUpdate,
             )
         },
     )
@@ -137,6 +143,8 @@ data class SettingsActions(
     val onConfirmMismatchImport: () -> Unit,
     val onDismissMismatchImport: () -> Unit,
     val onDismissBackupMessage: () -> Unit,
+    val onCheckForUpdates: () -> Unit = {},
+    val onOpenUpdate: () -> Unit = {},
 )
 
 /** The stateless half: renders [state] and raises [actions]. */
@@ -145,6 +153,7 @@ fun SettingsScreen(
     state: SettingsUiState,
     onEditCredentials: () -> Unit,
     onOpenDiagnostics: () -> Unit = {},
+    onOpenUpdate: () -> Unit = {},
     actions: SettingsActions,
 ) {
     if (state.loading) return
@@ -173,6 +182,17 @@ fun SettingsScreen(
             onSyncNow = actions.onSyncNow,
             onReconcileNow = actions.onReconcileNow,
         )
+
+        if (!BuildConfig.DEBUG) {
+            SectionHeader("Updates")
+            UpdateCard(
+                state = state.appUpdateState,
+                checking = state.updateCheckInProgress,
+                message = state.updateCheckMessage,
+                onCheck = actions.onCheckForUpdates,
+                onOpenUpdate = onOpenUpdate,
+            )
+        }
 
         SectionHeader("Live monitor")
         LiveMonitorCard(
@@ -363,6 +383,52 @@ private fun genreStatusLabel(status: GenreEnrichmentStatus): String = when (stat
     GenreEnrichmentStatus.QUEUED -> "Genres: queued"
     GenreEnrichmentStatus.RUNNING -> "Genres: fetching…"
     GenreEnrichmentStatus.RETRYING -> "Genres: retrying…"
+}
+
+@Composable
+private fun UpdateCard(
+    state: AppUpdateState,
+    checking: Boolean,
+    message: String?,
+    onCheck: () -> Unit,
+    onOpenUpdate: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("updates_section"),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Backlogium ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = state.lastCheckAtMillis?.let { "Last checked: ${UiFormat.dateTime(it)}" }
+                    ?: "Never checked",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (state.available != null) {
+                Text(
+                    text = "Version ${state.available.versionName} is available",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedButton(onClick = onOpenUpdate) { Text("Review update") }
+            } else if (message != null) {
+                Text(message, style = MaterialTheme.typography.bodySmall)
+            } else if (state.lastCheckAtMillis != null) {
+                Text("No update available", style = MaterialTheme.typography.bodySmall)
+            }
+            Button(onClick = onCheck, enabled = !checking) {
+                if (checking) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(if (checking) "Checking…" else "Check for updates")
+            }
+        }
+    }
 }
 
 /** Explicitly armed background presence polling, separate from the periodic full Steam sync. */

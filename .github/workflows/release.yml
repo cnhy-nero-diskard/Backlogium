@@ -33,19 +33,12 @@ jobs:
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          major="${BASH_REMATCH[1]}"
-          minor="${BASH_REMATCH[2]}"
-          patch="${BASH_REMATCH[3]}"
-          for component_name in major minor patch; do
-            component_value="${!component_name}"
-            if (( 10#$component_value >= 1000 )); then
-              echo "::error::Tag '$TAG' has $component_name component '$component_value'; each component must be below 1000 for the version-code encoding."
-              echo "eligible=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          done
           version_name="${TAG#v}"
-          version_code=$((10#$major * 1000000 + 10#$minor * 1000 + 10#$patch))
+          if ! version_code="$(bash scripts/encode-version.sh "$TAG")"; then
+            echo "::error::Tag '$TAG' cannot be encoded as an Android version code."
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
           echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
           # Is the tagged commit reachable from origin/master?
@@ -108,10 +101,22 @@ jobs:
           fi
           echo "path=$APK" >> "$GITHUB_OUTPUT"
 
+      - name: Create APK checksum
+        id: checksum
+        run: |
+          set -euo pipefail
+          APK="${{ steps.apk.outputs.path }}"
+          CHECKSUM="${APK}.sha256"
+          sha256sum "$APK" | awk '{print $1}' > "$CHECKSUM"
+          test "$(wc -c < "$CHECKSUM")" -eq 65
+          echo "path=$CHECKSUM" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
-          files: ${{ steps.apk.outputs.path }}
+          files: |
+            ${{ steps.apk.outputs.path }}
+            ${{ steps.checksum.outputs.path }}

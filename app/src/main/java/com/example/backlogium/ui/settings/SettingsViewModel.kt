@@ -13,6 +13,9 @@ import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.data.updates.AppUpdateRepository
+import com.example.backlogium.data.updates.AppUpdateState
+import com.example.backlogium.data.updates.UpdateCheckResult
 import com.example.backlogium.domain.UpdateRuleConfigUseCase
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
@@ -26,6 +29,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -84,6 +88,9 @@ data class SettingsUiState(
     val mismatchImportPending: Boolean = false,
     /** The mismatched backup's recorded SteamID64, for the warning dialog's text. */
     val mismatchImportSteamId: String = "",
+    val appUpdateState: AppUpdateState = AppUpdateState(),
+    val updateCheckInProgress: Boolean = false,
+    val updateCheckMessage: String? = null,
 ) {
     /** The candidate config, or null while any field is invalid. */
     val candidate: RuleConfig? get() = draft.toConfig(savedConfig)
@@ -113,6 +120,7 @@ class SettingsViewModel @Inject constructor(
     private val backupRepository: BackupRepository,
     private val presenceServiceStarter: PresenceServiceStarter,
     private val syncScheduler: SyncScheduler,
+    private val appUpdates: AppUpdateRepository,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -128,6 +136,8 @@ class SettingsViewModel @Inject constructor(
     private val backupMessage = MutableStateFlow<String?>(null)
     private val pendingMismatchImport = MutableStateFlow<BackupFile?>(null)
     private val snapshots = MutableStateFlow<List<SnapshotMeta>>(emptyList())
+    private val updateCheckInProgress = MutableStateFlow(false)
+    private val updateCheckMessage = MutableStateFlow<String?>(null)
 
     init {
         refreshSnapshots()
@@ -186,18 +196,30 @@ class SettingsViewModel @Inject constructor(
         Local(rule, backup)
     }
 
-    val uiState: StateFlow<SettingsUiState> = combine(storedState, localState) { stored, local ->
-        stored.copy(
-            draft = local.rule.draft ?: stored.draft,
-            advancedExpanded = local.rule.advancedExpanded,
-            previewing = local.rule.previewing,
-            confirmation = local.rule.confirmation,
-            isImportingHistory = local.rule.importing,
-            backupBusy = local.backup.busy,
-            backupMessage = local.backup.message,
-            snapshots = local.backup.snapshots,
-            mismatchImportPending = local.backup.pendingMismatch != null,
-            mismatchImportSteamId = local.backup.pendingMismatch?.identity?.steamId64 ?: "",
+    val uiState: StateFlow<SettingsUiState> = combine(
+        combine(storedState, localState) { stored, local ->
+            stored.copy(
+                draft = local.rule.draft ?: stored.draft,
+                advancedExpanded = local.rule.advancedExpanded,
+                previewing = local.rule.previewing,
+                confirmation = local.rule.confirmation,
+                isImportingHistory = local.rule.importing,
+                backupBusy = local.backup.busy,
+                backupMessage = local.backup.message,
+                snapshots = local.backup.snapshots,
+                mismatchImportPending = local.backup.pendingMismatch != null,
+                mismatchImportSteamId = local.backup.pendingMismatch?.identity?.steamId64 ?: "",
+            )
+        },
+        appUpdates.state,
+        combine(updateCheckInProgress, updateCheckMessage) { inProgress, message ->
+            inProgress to message
+        },
+    ) { state, updates, updateLocal ->
+        state.copy(
+            appUpdateState = updates,
+            updateCheckInProgress = updateLocal.first,
+            updateCheckMessage = updateLocal.second,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -206,6 +228,32 @@ class SettingsViewModel @Inject constructor(
     )
 
     fun syncNow() = profileRepository.syncNow()
+
+    /** Manual checks bypass the worker cadence but persist the same last-attempt timestamp. */
+    fun checkForUpdates() {
+        if (updateCheckInProgress.value) return
+        viewModelScope.launch {
+            updateCheckInProgress.value = true
+            updateCheckMessage.value = null
+            try {
+                when (appUpdates.check(force = true)) {
+                    is UpdateCheckResult.Available -> Unit
+                    is UpdateCheckResult.NoUpdate,
+                    is UpdateCheckResult.SkippedRecent,
+                    -> updateCheckMessage.value = "You're up to date."
+                    is UpdateCheckResult.Failed -> {
+                        updateCheckMessage.value = "Check did not complete. Try again later."
+                    }
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                updateCheckMessage.value = "Check did not complete. Try again later."
+            } finally {
+                updateCheckInProgress.value = false
+            }
+        }
+    }
 
     /** Enqueue a one-time full achievement refresh, regardless of charging/wifi conditions. */
     fun reconcileNow() {

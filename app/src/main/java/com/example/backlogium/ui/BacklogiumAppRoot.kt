@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -43,6 +44,13 @@ import com.example.backlogium.ui.navigation.Destination
 import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.review.HltbReviewScreen
 import com.example.backlogium.ui.settings.SettingsScreen
+import com.example.backlogium.BuildConfig
+import com.example.backlogium.ui.updates.AppUpdateSheet
+import com.example.backlogium.ui.updates.AppUpdateViewModel
+import androidx.hilt.navigation.compose.hiltViewModel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.emptyFlow
 
 /** Route for the HLTB match-review surface — a sub-destination reached from the Library. */
 private const val ROUTE_HLTB_REVIEW = "hltb_review"
@@ -67,7 +75,16 @@ private fun collectionRoute(collectionId: Long) = "collection/$collectionId"
 
 /** App shell: bottom navigation between Home, Library, History, Analytics, and Settings. */
 @Composable
-fun BacklogiumAppRoot() {
+fun BacklogiumAppRoot(
+    initialOpenUpdate: Boolean = false,
+    openUpdateRequests: Flow<Unit> = emptyFlow(),
+) {
+    val updateViewModel: AppUpdateViewModel = hiltViewModel()
+    val updateState by updateViewModel.uiState.collectAsStateWithLifecycle()
+    var updateSheetVisible by remember { mutableStateOf(initialOpenUpdate) }
+    LaunchedEffect(openUpdateRequests) {
+        openUpdateRequests.collect { updateSheetVisible = true }
+    }
     val navController = rememberNavController()
     val destinations = Destination.entries
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -175,6 +192,7 @@ fun BacklogiumAppRoot() {
                     SettingsScreen(
                         onEditCredentials = { navController.navigate(ROUTE_ONBOARDING) },
                         onOpenDiagnostics = { navController.navigate(ROUTE_DIAGNOSTICS) },
+                        onOpenUpdate = { updateSheetVisible = true },
                     )
                 }
                 composable(ROUTE_DIAGNOSTICS) { DiagnosticsScreen() }
@@ -195,6 +213,21 @@ fun BacklogiumAppRoot() {
                     CollectionScreen(onDone = { navController.popBackStack() })
                 }
             }
+        }
+        if (!BuildConfig.DEBUG && updateSheetVisible && updateState.available != null) {
+            AppUpdateSheet(
+                state = updateState,
+                onUpdate = updateViewModel::startUpdate,
+                onLater = {
+                    updateViewModel.decline()
+                    updateSheetVisible = false
+                },
+                onCancel = updateViewModel::cancelDownload,
+                onDismiss = {
+                    updateViewModel.cancelDownload()
+                    updateSheetVisible = false
+                },
+            )
         }
     }
 }
