@@ -25,6 +25,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import com.example.backlogium.data.diagnostics.REQUEST_COUNTER_HOUR_MILLIS
 import com.example.backlogium.data.local.dao.DiagnosticsDao
 import com.example.backlogium.data.local.entity.PresenceDecision
 import com.example.backlogium.data.local.entity.RequestCounterTotals
@@ -35,11 +36,17 @@ import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.ui.util.UiFormat
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 
@@ -60,18 +67,34 @@ class DiagnosticsViewModel @Inject constructor(
     private val dao: DiagnosticsDao,
     time: TimeProvider,
 ) : ViewModel() {
-    private val nowMillis = time.nowMillis()
-    val totals24h: StateFlow<RequestCounterTotals> = dao.observeRequestTotals(RequestCounterWindow.HOURS_24.cutoff(nowMillis))
+    private val counterRefreshes = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val counterNowMillis: StateFlow<Long> = merge(
+        flowOf(Unit),
+        flow {
+            while (true) {
+                delay(REQUEST_COUNTER_HOUR_MILLIS)
+                emit(Unit)
+            }
+        },
+        counterRefreshes,
+    ).map { time.nowMillis() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), time.nowMillis())
+
+    val totals24h: StateFlow<RequestCounterTotals> = counterNowMillis
+        .flatMapLatest { nowMillis -> dao.observeRequestTotals(RequestCounterWindow.HOURS_24.cutoff(nowMillis)) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RequestCounterTotals())
-    val totals30d: StateFlow<RequestCounterTotals> = dao.observeRequestTotals(RequestCounterWindow.DAYS_30.cutoff(nowMillis))
+    val totals30d: StateFlow<RequestCounterTotals> = counterNowMillis
+        .flatMapLatest { nowMillis -> dao.observeRequestTotals(RequestCounterWindow.DAYS_30.cutoff(nowMillis)) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RequestCounterTotals())
-    val totals365d: StateFlow<RequestCounterTotals> = dao.observeRequestTotals(RequestCounterWindow.DAYS_365.cutoff(nowMillis))
+    val totals365d: StateFlow<RequestCounterTotals> = counterNowMillis
+        .flatMapLatest { nowMillis -> dao.observeRequestTotals(RequestCounterWindow.DAYS_365.cutoff(nowMillis)) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RequestCounterTotals())
 
     private val selectedCounterWindowState = MutableStateFlow(RequestCounterWindow.HOURS_24)
     val selectedCounterWindow: StateFlow<RequestCounterWindow> = selectedCounterWindowState
-    val endpointBreakdown: StateFlow<List<RequestRouteTotals>> = selectedCounterWindowState
-        .flatMapLatest { window -> dao.observeRequestRoutes(window.cutoff(nowMillis)) }
+    val endpointBreakdown: StateFlow<List<RequestRouteTotals>> = combine(selectedCounterWindowState, counterNowMillis) { window, nowMillis ->
+        window to nowMillis
+    }.flatMapLatest { (window, nowMillis) -> dao.observeRequestRoutes(window.cutoff(nowMillis)) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val state: StateFlow<DiagnosticsUiState> = combine(dao.observeRuns(), dao.observePresenceDecisions()) { runs, decisions ->
@@ -82,6 +105,11 @@ class DiagnosticsViewModel @Inject constructor(
 
     fun selectCounterWindow(window: RequestCounterWindow) {
         selectedCounterWindowState.value = window
+    }
+
+    /** Refreshes rolling-window cutoffs immediately; the normal screen also refreshes hourly. */
+    fun refreshCounterWindows() {
+        counterRefreshes.tryEmit(Unit)
     }
 }
 
