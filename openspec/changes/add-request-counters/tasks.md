@@ -1,10 +1,10 @@
 ## 1. Schema and migration
 
 - [ ] 1.1 Add a `RequestTotal` entity in `entity/Diagnostics.kt` for table `request_totals` with composite primary key (hourStart, route, status), the write-time `ok` flag, and `count`
-- [ ] 1.2 Bump `BacklogiumDatabase` to version 15 and write `MIGRATION_14_15` creating `request_totals`, following the file's hand-written SQL pattern (no autoMigration)
+- [ ] 1.2 Bump `BacklogiumDatabase` to version 19 and write `MIGRATION_18_19` creating `request_totals`, following the file's hand-written SQL pattern (no autoMigration)
 - [ ] 1.3 Backfill inside the migration: walk retained `sync_runs` × `request_breakdowns` via cursor, bucket by the run's start hour, derive route from the stored URL path with a tolerant parser (drop unparseable rows, never fail the migration), map null status to the `"network"` sentinel, classify `ok` from 2xx
-- [ ] 1.4 Register `MIGRATION_14_15` in `DatabaseModule` alongside the existing migrations
-- [ ] 1.5 Test the migration: seed a v14 database with runs and breakdowns (including a null-status row and a malformed URL), migrate to 15, and assert the bucket contents and the tolerant-parse behavior
+- [ ] 1.4 Register `MIGRATION_18_19` in `DatabaseModule` alongside the existing migrations
+- [ ] 1.5 Test the migration: seed a v18 database with runs and breakdowns (including a null-status row and a malformed URL), migrate to 19, and assert the bucket contents and the tolerant-parse behavior
 
 ## 2. Recording path
 

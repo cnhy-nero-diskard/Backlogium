@@ -7,14 +7,14 @@ yearly figures unreachable in principle — the rows are pruned before they can 
 
 ## What Changes
 
-- A new `request_totals` rollup table (Room v14 → v15) accumulating request counts in epoch-hour
+- A new `request_totals` rollup table (Room v18 → v19) accumulating request counts in epoch-hour
   buckets keyed by (hour, API route, status), written at each sync run's finish — before raw run
   rows are pruned — so counters survive the existing 200-run retention.
 - Each rollup row classifies requests as successful (2xx) or unsuccessful at write time and keeps
   the exact status code (`200`, `403`, `429`, `network` for transport failures) so long-term data
   retains its diagnostic value.
 - The rollup itself is bounded: buckets older than 400 days are pruned alongside run pruning.
-- `MIGRATION_14_15` backfills the rollup from the still-retained `sync_runs` and
+- `MIGRATION_18_19` backfills the rollup from the still-retained `sync_runs` and
   `request_breakdowns` rows, so existing installs start with ~2 days of real history instead of
   zero.
 - The diagnostics screen gains a "Request counters" section: rolling 24h / 30d / 365d totals split
@@ -38,8 +38,9 @@ None.
 
 ## Impact
 
-- `BacklogiumDatabase`: version 14 → 15, hand-written `MIGRATION_14_15` following the established
-  pattern, including the backfill of the new table from retained diagnostic rows.
+- `BacklogiumDatabase`: version 18 → 19, hand-written `MIGRATION_18_19` following the established
+  pattern, including the backfill of the new table from retained diagnostic rows. The database is
+  at version 18 as of this update — renumber at apply time if another schema change lands first.
 - New `RequestTotal` entity and `DiagnosticsDao` methods: an incrementing upsert (SQLite
   `ON CONFLICT DO UPDATE`), windowed aggregation queries exposed as Flows, and rollup pruning.
 - `SyncRunRecorder.finish()`: derives route + hour bucket + success flag from each run's metrics

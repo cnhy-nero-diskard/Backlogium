@@ -4,8 +4,11 @@
   tests, decodes the release keystore from secrets, assembles a signed release APK, and publishes it
   with `generate_release_notes: true`. The publishing half needs one addition; the gating half needs
   none.
-- `app/build.gradle.kts:52-53` hardcodes `versionCode = 1` / `versionName = "1.0"`. Tags reach
-  `v1.6.22`. Every published APK therefore declares itself version 1.
+- Version metadata is derived from the release tag (`auditfix-secrets-and-packaging`, landed
+  2026-08-16): `app/build.gradle.kts` reads `versionName` / `versionCode` Gradle properties that
+  `release.yml` supplies from the tag, falling back locally to `versionCode = 1` /
+  `versionName = "0.0.0-dev"`. Tags reach `v1.7.0`; every APK published from v1.7.0 on declares a
+  real, comparable version.
 - Release signing is conditional on `hasReleaseSigningConfig`; CI supplies the keystore through
   environment variables. A locally-built release without those is unsigned.
 - `CLAUDE.md`: "The app must work with no network and no cloud."
@@ -33,17 +36,19 @@
 
 ## Decisions
 
-### 1. This change is blocked, and saying so is part of the design
+### 1. The former blocker has landed, and consuming it is part of the design
 
-Version comparison rests entirely on the running build knowing its own version. Today it does not:
-`versionCode = 1` in every published APK. Two independent failures follow — the updater cannot tell
-whether the latest release is newer than itself, and `PackageInstaller` refuses a same-or-lower
-`versionCode` as a downgrade regardless of what the app believes.
+Version comparison rests entirely on the running build knowing its own version. Since
+`auditfix-secrets-and-packaging` landed, it does: release builds carry a tag-derived
+`versionCode`. The two failures that made this change unimplementable before — the updater unable
+to tell whether the latest release is newer than itself, and `PackageInstaller` refusing a
+same-or-lower `versionCode` as a downgrade regardless of what the app believes — are resolved by
+that derivation.
 
 No workaround belongs here. Comparing `versionName` strings instead would leave the installer
 rejecting the install anyway. Embedding the tag in a `BuildConfig` field would be a second version
-number to keep in sync with the first. `auditfix-secrets-and-packaging` already specifies the right
-fix — version derived from the validated tag, with a documented encoding whose ordering holds across
+number to keep in sync with the first. `auditfix-secrets-and-packaging` landed the right fix —
+version derived from the validated tag, with a documented encoding whose ordering holds across
 a major increment — and this change consumes it.
 
 **The comparison is on `versionCode`, and the tag is parsed only to produce one.** `versionName` is
