@@ -42,6 +42,7 @@ import com.example.backlogium.ui.home.HomeRoute
 import com.example.backlogium.ui.library.LibraryScreen
 import com.example.backlogium.ui.navigation.Destination
 import com.example.backlogium.ui.onboarding.OnboardingScreen
+import com.example.backlogium.ui.setup.SetupScreen
 import com.example.backlogium.ui.review.HltbReviewScreen
 import com.example.backlogium.ui.settings.SettingsScreen
 import com.example.backlogium.BuildConfig
@@ -58,6 +59,9 @@ private const val ROUTE_HLTB_REVIEW = "hltb_review"
 /** Route for the credentials onboarding flow — reached from the Settings account section. */
 private const val ROUTE_ONBOARDING = "onboarding"
 private const val ROUTE_DIAGNOSTICS = "diagnostics"
+
+/** Route for re-running first-run setup — reached from the Settings setup section. */
+private const val ROUTE_SETUP = "setup"
 
 /** Route for the per-game detail screen — a sub-destination reached from the Library. */
 private const val ROUTE_GAME_DETAIL = "game_detail/{appId}"
@@ -191,11 +195,13 @@ fun BacklogiumAppRoot(
                 composable(Destination.SETTINGS.route) {
                     SettingsScreen(
                         onEditCredentials = { navController.navigate(ROUTE_ONBOARDING) },
+                        onOpenSetup = { navController.navigate(ROUTE_SETUP) },
                         onOpenDiagnostics = { navController.navigate(ROUTE_DIAGNOSTICS) },
                         onOpenUpdate = { updateSheetVisible = true },
                     )
                 }
                 composable(ROUTE_DIAGNOSTICS) { DiagnosticsScreen() }
+                composable(ROUTE_SETUP) { SetupScreen() }
                 composable(ROUTE_ONBOARDING) {
                     OnboardingScreen(onCompleted = { navController.popBackStack() })
                 }

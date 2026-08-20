@@ -66,6 +66,7 @@ class HltbRefreshWorker @AssistedInject constructor(
                         KEY_OUTCOME to encodeHltbOutcome(outcome),
                     ),
                 )
+                notifyProgress(done, total, name)
             }
             if (!hltbShouldNotifyComplete(result)) {
                 // A retry is not a completed refresh; avoid posting a misleading completion
@@ -80,7 +81,85 @@ class HltbRefreshWorker @AssistedInject constructor(
         } catch (e: Exception) {
             // Transient failure: keep cached data, let WorkManager back off and retry.
             Result.retry()
+        } finally {
+            // The ongoing notification is not a completion notice: it must go whichever way the
+            // sweep ended, including cancellation and a retry that will post its own later.
+            clearProgressNotification()
         }
+    }
+
+    /**
+     * Ongoing progress in the notification bar, on its own channel and its own id.
+     *
+     * The sweep is paced and can run for a long time, so first-run setup starts it detached and lets
+     * the user into the app while it continues — which only works if it reports where it has got to
+     * somewhere the user can see without the app open. Its own id keeps it separate from the asset
+     * download's, so two detached stages never overwrite each other's progress.
+     *
+     * A plain ongoing notification rather than a foreground service: the sweep is deferrable work
+     * that WorkManager already schedules correctly, and promoting it would change how it runs in
+     * order to change how it looks.
+     *
+     * Absent the runtime grant this skips silently, exactly as [notifyComplete] does — the Library's
+     * batch panel and the setup surface both still show progress, and a declined permission is not a
+     * failure of the sweep.
+     */
+    private fun notifyProgress(done: Int, total: Int, name: String) {
+        // Lint cannot infer the permission from the manager helper; keep the guard beside
+        // the compat notify call, and tolerate a revocation between check and post.
+        if (ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+
+        val manager = progressNotificationManager() ?: return
+        manager.createNotificationChannel(
+            NotificationChannel(
+                PROGRESS_CHANNEL_ID,
+                "HowLongToBeat progress",
+                NotificationManager.IMPORTANCE_LOW,
+            ),
+        )
+        val notification = NotificationCompat.Builder(applicationContext, PROGRESS_CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("Fetching completion times")
+            .setContentText(if (name.isBlank()) "$done / $total" else "$done / $total — $name")
+            .setProgress(total, done, total <= 0)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            // The system clears this if nothing refreshes it within the window. [clearProgressNotification]
+            // handles every ordinary ending, but it runs in a `finally`, and abrupt process death
+            // executes no `finally` — observed on device, where a SIGKILL mid-sweep left a "48 / 306"
+            // ongoing notification standing with no work behind it. Every processed item re-posts
+            // this, so the window is continuously renewed while the sweep is actually alive.
+            .setTimeoutAfter(PROGRESS_STALE_AFTER_MS)
+            .build()
+        try {
+            NotificationManagerCompat.from(applicationContext)
+                .notify(PROGRESS_NOTIFICATION_ID, notification)
+        } catch (_: SecurityException) {
+            // The permission can be revoked after the check above.
+        }
+    }
+
+    private fun clearProgressNotification() {
+        if (progressNotificationManager() == null) return
+        NotificationManagerCompat.from(applicationContext).cancel(PROGRESS_NOTIFICATION_ID)
+    }
+
+    /** The system service, or null when posting is not permitted — the silent-skip gate. */
+    private fun progressNotificationManager(): NotificationManager? {
+        if (ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return null
+        }
+        return applicationContext.getSystemService(NotificationManager::class.java)
     }
 
     private fun notifyComplete(result: HltbBatchResult) {
@@ -127,6 +206,19 @@ class HltbRefreshWorker @AssistedInject constructor(
 
         private const val CHANNEL_ID = "hltb_refresh"
         private const val NOTIFICATION_ID = 4201
+
+        /** Own channel and own id, so no other stage's progress can overwrite this one's. */
+        private const val PROGRESS_CHANNEL_ID = "hltb_refresh_progress"
+        private const val PROGRESS_NOTIFICATION_ID = 4202
+
+        /**
+         * How long the progress notification may go unrefreshed before the system clears it.
+         *
+         * Comfortably longer than the repository's inter-request pacing, so a slow lookup never
+         * makes a live sweep's notification vanish, and short enough that one orphaned by process
+         * death does not sit there misreporting for long.
+         */
+        private const val PROGRESS_STALE_AFTER_MS = 3 * 60 * 1000L
     }
 }
 

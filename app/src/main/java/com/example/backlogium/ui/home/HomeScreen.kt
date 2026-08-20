@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -143,11 +144,22 @@ fun HomeScreen(
 
     if (state.loading) return
 
-    if (!state.configured) {
+    // The takeover latches on the first unconfigured composition and is released by the flow
+    // itself, not by `configured` flipping. Saving credentials flips it *mid-flow* — the flow
+    // continues into first-run setup afterwards — so tearing the takeover down there would
+    // dismantle the setup step in the same frame it appeared.
+    //
+    // Two latches, because one cannot cover both windows. `state.firstRunSetupActive` is durable and
+    // is what restores the takeover on a cold launch after the process is killed mid-setup, when
+    // credentials are already stored. It is written asynchronously as they are stored, so the
+    // saved-instance latch below holds the surface across an Activity recreation in the gap before
+    // that write lands — and across the gap after it is cleared, before `completed` is reported.
+    var onboardingActive by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state.configured) { if (!state.configured) onboardingActive = true }
+
+    if (!state.configured || state.firstRunSetupActive || onboardingActive) {
         // Full-screen onboarding takeover replaces the old dead-end "not configured" message.
-        // Completion flips credentialsStateFlow, so this screen recomposes to the configured
-        // content automatically — no explicit navigation needed here.
-        OnboardingScreen(onCompleted = {})
+        OnboardingScreen(onCompleted = { onboardingActive = false })
         return
     }
 
