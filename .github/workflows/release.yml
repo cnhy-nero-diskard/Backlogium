@@ -61,6 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # required to create the GitHub Release
+      pull-requests: read  # collect_release_metadata.py reads commits/{sha}/pulls
     steps:
       - uses: actions/checkout@v4
         with:

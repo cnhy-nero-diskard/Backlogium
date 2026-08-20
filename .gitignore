@@ -27,3 +27,6 @@ ui-debug.log
 *.log
 logs/
 *.logs
+
+# Scratch Gradle project caches from local review builds
+.gradle-project-cache*/
