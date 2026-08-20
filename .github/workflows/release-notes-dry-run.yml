@@ -1,0 +1,56 @@
+name: Release notes dry run
+
+on:
+  workflow_dispatch:
+    inputs:
+      current_tag:
+        description: Tag-shaped version used by the composer fixture
+        required: true
+        default: v1.8.0
+      previous_tag:
+        description: Previous published tag used for the comparison fixture
+        required: true
+        default: v1.7.0
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    name: Check release-note package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Compose and inspect representative release
+        env:
+          CURRENT_TAG: ${{ inputs.current_tag }}
+          PREVIOUS_TAG: ${{ inputs.previous_tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${CURRENT_TAG#v}"
+          MARKDOWN_PATH="$RUNNER_TEMP/Backlogium-${VERSION}-release-notes.md"
+          JSON_PATH="$RUNNER_TEMP/Backlogium-${VERSION}-release-notes.json"
+          python scripts/release_notes.py compose \
+            --current-tag "$CURRENT_TAG" \
+            --previous-tag "$PREVIOUS_TAG" \
+            --current-sha dry-run-current \
+            --previous-sha dry-run-previous \
+            --prs-file scripts/fixtures/release-notes/feature.json \
+            --markdown-output "$MARKDOWN_PATH" \
+            --json-output "$JSON_PATH"
+          python scripts/release_notes.py validate \
+            --expected-tag "$CURRENT_TAG" \
+            --markdown-input "$MARKDOWN_PATH" \
+            --json-input "$JSON_PATH"
+          test -f "$MARKDOWN_PATH"
+          test -f "$JSON_PATH"
+          grep -q "Backlogium ${VERSION}" "$MARKDOWN_PATH"
+          grep -q '"schema_version": 1' "$JSON_PATH"
+          echo "Expected APK: Backlogium-${VERSION}.apk"
+          echo "Expected checksum: Backlogium-${VERSION}.apk.sha256"
+          echo "Expected structured notes: Backlogium-${VERSION}-release-notes.json"

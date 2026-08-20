@@ -51,12 +51,12 @@ class AndroidUpdateNotifier @Inject constructor(
                 launchIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
-            val notes = update.releaseNotes.ifBlank { "Open Settings to review this update." }
+            val summary = update.releaseSummary()
             val notification = NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle("Backlogium ${update.versionName} is available")
-                .setContentText(update.releaseName)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(notes))
+                .setContentText(summary)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(summary))
                 .setContentIntent(contentIntent)
                 .setAutoCancel(true)
                 .build()

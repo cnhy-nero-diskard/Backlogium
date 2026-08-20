@@ -1,0 +1,20 @@
+[
+  {
+    "number": 101,
+    "title": "feat: add a weekly play summary",
+    "body": "## Release note\n\n- See your weekly play summary at a glance.\n",
+    "html_url": "https://github.com/cnhy-nero-diskard/Backlogium/pull/101"
+  },
+  {
+    "number": 102,
+    "title": "fix(sync): keep offline progress",
+    "body": "## Release note\n\n- Offline progress is retained until the next sync.\n",
+    "html_url": "https://github.com/cnhy-nero-diskard/Backlogium/pull/102"
+  },
+  {
+    "number": 103,
+    "title": "perf: speed up the library",
+    "body": "## Release note\n\n- The library opens faster on large collections.\n",
+    "html_url": "https://github.com/cnhy-nero-diskard/Backlogium/pull/103"
+  }
+]

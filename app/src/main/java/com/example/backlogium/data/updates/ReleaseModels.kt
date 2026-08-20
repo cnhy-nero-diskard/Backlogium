@@ -31,6 +31,10 @@ data class AvailableUpdate(
     val apkName: String,
     val apkUrl: String,
     val checksumUrl: String,
+    /** Versioned release-note asset URL; it is never needed for an offline install retry. */
+    val structuredNotesUrl: String? = null,
+    /** Optional, validated presentation metadata persisted alongside the offer. */
+    val structuredNotes: ReleaseNotesPresentation? = null,
 ) {
     /** A stable, private filename; an asset name is never used as a filesystem path. */
     val artifactFileName: String

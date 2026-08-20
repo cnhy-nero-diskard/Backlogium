@@ -10,10 +10,14 @@ import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
 
 private val Context.updateDataStore by preferencesDataStore(name = "app_updates")
+private val updateStateJson = Json { ignoreUnknownKeys = true }
 
 interface UpdateStateStore {
     val state: Flow<AppUpdateState>
@@ -49,6 +53,7 @@ class UpdateDataStore @Inject constructor(
         val AVAILABLE_VERSION_CODE = longPreferencesKey("available_version_code")
         val AVAILABLE_RELEASE_NAME = stringPreferencesKey("available_release_name")
         val AVAILABLE_RELEASE_NOTES = stringPreferencesKey("available_release_notes")
+        val AVAILABLE_STRUCTURED_NOTES = stringPreferencesKey("available_structured_notes")
         val AVAILABLE_APK_NAME = stringPreferencesKey("available_apk_name")
         val AVAILABLE_APK_URL = stringPreferencesKey("available_apk_url")
         val AVAILABLE_CHECKSUM_URL = stringPreferencesKey("available_checksum_url")
@@ -79,6 +84,12 @@ class UpdateDataStore @Inject constructor(
                 prefs[Keys.AVAILABLE_VERSION_CODE] = available.versionCode
                 prefs[Keys.AVAILABLE_RELEASE_NAME] = available.releaseName
                 prefs[Keys.AVAILABLE_RELEASE_NOTES] = available.releaseNotes
+                if (available.structuredNotes == null) {
+                    prefs.remove(Keys.AVAILABLE_STRUCTURED_NOTES)
+                } else {
+                    prefs[Keys.AVAILABLE_STRUCTURED_NOTES] =
+                        updateStateJson.encodeToString(available.structuredNotes)
+                }
                 prefs[Keys.AVAILABLE_APK_NAME] = available.apkName
                 prefs[Keys.AVAILABLE_APK_URL] = available.apkUrl
                 prefs[Keys.AVAILABLE_CHECKSUM_URL] = available.checksumUrl
@@ -131,6 +142,12 @@ class UpdateDataStore @Inject constructor(
             val versionCode = prefs[Keys.AVAILABLE_VERSION_CODE]
             val releaseName = prefs[Keys.AVAILABLE_RELEASE_NAME]
             val releaseNotes = prefs[Keys.AVAILABLE_RELEASE_NOTES]
+            val structuredNotes = prefs[Keys.AVAILABLE_STRUCTURED_NOTES]?.let { encoded ->
+                runCatching {
+                    updateStateJson.decodeFromString<ReleaseNotesPresentation>(encoded)
+                        .validatedFor(tag)
+                }.getOrNull()
+            }
             val apkName = prefs[Keys.AVAILABLE_APK_NAME]
             val apkUrl = prefs[Keys.AVAILABLE_APK_URL]
             val checksumUrl = prefs[Keys.AVAILABLE_CHECKSUM_URL]
@@ -144,10 +161,11 @@ class UpdateDataStore @Inject constructor(
                     versionName = versionName,
                     versionCode = versionCode,
                     releaseName = releaseName,
-                    releaseNotes = releaseNotes,
+                    releaseNotes = sanitizeLegacyReleaseBody(releaseNotes),
                     apkName = apkName,
                     apkUrl = apkUrl,
                     checksumUrl = checksumUrl,
+                    structuredNotes = structuredNotes,
                 )
             }
         }
@@ -181,6 +199,7 @@ class UpdateDataStore @Inject constructor(
         prefs.remove(Keys.AVAILABLE_VERSION_CODE)
         prefs.remove(Keys.AVAILABLE_RELEASE_NAME)
         prefs.remove(Keys.AVAILABLE_RELEASE_NOTES)
+        prefs.remove(Keys.AVAILABLE_STRUCTURED_NOTES)
         prefs.remove(Keys.AVAILABLE_APK_NAME)
         prefs.remove(Keys.AVAILABLE_APK_URL)
         prefs.remove(Keys.AVAILABLE_CHECKSUM_URL)

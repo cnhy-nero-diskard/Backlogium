@@ -12,16 +12,21 @@ fun GitHubReleaseDto.toAvailableUpdate(installedVersionCode: Long): AvailableUpd
     val checksum = assets.firstOrNull { asset ->
         asset.name == "${apk.name}.sha256" && asset.browserDownloadUrl.isNotBlank()
     } ?: return null
+    val structuredNotes = assets.firstOrNull { asset ->
+        asset.name == "Backlogium-${version.versionName}-release-notes.json" &&
+            asset.browserDownloadUrl.isNotBlank()
+    }
 
     return AvailableUpdate(
         tag = version.tag,
         versionName = version.versionName,
         versionCode = version.versionCode,
         releaseName = name.orEmpty().ifBlank { version.versionName },
-        releaseNotes = body.orEmpty(),
+        releaseNotes = sanitizeLegacyReleaseBody(body.orEmpty()),
         apkName = apk.name,
         apkUrl = apk.browserDownloadUrl,
         checksumUrl = checksum.browserDownloadUrl,
+        structuredNotesUrl = structuredNotes?.browserDownloadUrl,
     )
 }
 

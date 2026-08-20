@@ -1,0 +1,8 @@
+[
+  {
+    "number": 301,
+    "title": "feat: stale notes must not repeat",
+    "body": "## Release note\n\n- This must be ignored for a same-commit release.\n",
+    "html_url": "https://github.com/cnhy-nero-diskard/Backlogium/pull/301"
+  }
+]
