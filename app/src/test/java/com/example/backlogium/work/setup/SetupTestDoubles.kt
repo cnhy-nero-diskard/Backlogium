@@ -1,0 +1,85 @@
+package com.example.backlogium.work.setup
+
+import com.example.backlogium.data.setup.SetupStateStore
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+
+/** In-memory [SetupStateStore]: the coordinator's persistence, observable by a test. */
+class FakeSetupStateStore(
+    private val initialOutcomes: MutableMap<String, SetupOutcome> = mutableMapOf(),
+    private val initialOptIns: MutableMap<String, Boolean> = mutableMapOf(),
+) : SetupStateStore {
+
+    private val completedState = MutableStateFlow(false)
+
+    val outcomes: Map<String, SetupOutcome> get() = initialOutcomes
+    val optIns: Map<String, Boolean> get() = initialOptIns
+    val completed: Boolean get() = completedState.value
+
+    override val completedFlow: Flow<Boolean> = completedState
+
+    override suspend fun storedOutcomes(): Map<String, SetupOutcome> = initialOutcomes.toMap()
+
+    override suspend fun storedOptIns(): Map<String, Boolean> = initialOptIns.toMap()
+
+    override suspend fun writeOutcome(stageId: String, outcome: SetupOutcome) {
+        initialOutcomes[stageId] = outcome
+    }
+
+    override suspend fun writeOptIn(stageId: String, optIn: Boolean) {
+        initialOptIns[stageId] = optIn
+    }
+
+    override suspend fun markCompleted() {
+        completedState.value = true
+    }
+}
+
+/**
+ * A stage whose work is a latch a test releases, so the ordering the coordinator is supposed to
+ * guarantee is observable rather than inferred from timing.
+ */
+class FakeStageRunner(
+    private val outcome: SetupOutcome = SetupOutcome.Succeeded,
+    private val throws: Exception? = null,
+) : SetupStageRunner {
+    /** Completed by the test to let this stage finish. Auto-completed when [autoComplete]. */
+    val gate = CompletableDeferred<Unit>()
+    var started = false
+        private set
+    private val progressToEmit = mutableListOf<SetupStageProgress>()
+
+    var autoComplete = true
+
+    fun emitting(vararg progress: SetupStageProgress): FakeStageRunner {
+        progressToEmit += progress
+        return this
+    }
+
+    override suspend fun run(onProgress: (SetupStageProgress) -> Unit): SetupOutcome {
+        started = true
+        progressToEmit.forEach(onProgress)
+        if (!autoComplete) gate.await()
+        throws?.let { throw it }
+        return outcome
+    }
+}
+
+fun fakeStage(
+    id: String,
+    runner: SetupStageRunner = FakeStageRunner(),
+    defaultOptIn: Boolean = false,
+    execution: SetupStageExecution = SetupStageExecution.IN_SCREEN,
+    unavailableReason: String? = null,
+): SetupStage = SetupStage(
+    id = id,
+    title = "Stage $id",
+    detail = "What $id does",
+    defaultOptIn = defaultOptIn,
+    execution = execution,
+    unavailableReason = unavailableReason,
+    run = runner,
+)
+
+class FakeStageSource(override val stages: List<SetupStage>) : SetupStageSource

@@ -5,7 +5,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.repo.AccountChangeCoordinator
-import com.example.backlogium.data.repo.CredentialVerification
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsSaveResult
 import com.example.backlogium.data.repo.CredentialsState
@@ -206,29 +205,12 @@ class OnboardingViewModel @Inject constructor(
                 // Editing with the key field left blank: keep the stored key.
                 (credentials.currentCredentials())?.apiKey.orEmpty()
             }
-            when (credentials.verify(apiKey = apiKey, steamId = resolved.steamId64)) {
-                CredentialVerification.Verified -> persist(apiKey, resolved.steamId64)
-
-                CredentialVerification.KeyRejected -> _uiState.update {
-                    it.copy(
-                        step = OnboardingStep.API_KEY,
-                        verify = VerifyState.Rejected("Steam did not accept this API key."),
-                    )
-                }
-
-                CredentialVerification.NoProfile -> _uiState.update {
-                    it.copy(
-                        step = OnboardingStep.STEAM_ID,
-                        verify = VerifyState.Rejected("No Steam profile found for that ID."),
-                    )
-                }
-
-                // Neither value is implicated and neither is cleared, so retrying persists without
-                // anything being re-entered.
-                CredentialVerification.Unreachable -> _uiState.update {
-                    it.copy(step = OnboardingStep.STEAM_ID, verify = VerifyState.Unreachable)
-                }
-            }
+            val decision = decideVerification(
+                credentials.verify(apiKey = apiKey, steamId = resolved.steamId64),
+            )
+            _uiState.update { it.applying(decision) }
+            // The sole call into persistence, behind the sole decision that admits it.
+            if (decision == VerificationDecision.Persist) persist(apiKey, resolved.steamId64)
         }
     }
 
@@ -236,7 +218,7 @@ class OnboardingViewModel @Inject constructor(
     fun retryVerification() = finish()
 
     private suspend fun persist(apiKey: String, steamId: String) {
-        _uiState.update { it.copy(saving = true, verify = VerifyState.Idle) }
+        _uiState.update { it.copy(saving = true) }
         when (val result = credentials.save(apiKey = apiKey, steamId = steamId)) {
             CredentialsSaveResult.Saved -> _uiState.update { it.afterCredentialsSaved() }
 
