@@ -836,7 +836,9 @@ always a strict subset of a less dense one:
 2. playtime SHALL be shown at every density except the densest;
 3. completion progress against a HowLongToBeat length SHALL be shown in the list and the least dense
    grid;
-4. achievement and XP badges SHALL be shown in the list only.
+4. the count of unlocked achievements out of a game's total SHALL be shown in the list and the least
+   dense grid;
+5. the contributed-XP badge SHALL be shown in the list only.
 
 A game's currently-playing state SHALL remain visible at every density, since it is a live signal
 rather than detail.
@@ -867,6 +869,14 @@ rather than detail.
 - **WHEN** a game is currently being played and its list is shown at the densest setting
 - **THEN** that game is still distinguishable as currently playing
 
+#### Scenario: Achievement count survives into the least dense grid
+- **WHEN** a game with stored achievement data is shown in the least dense grid
+- **THEN** its unlocked-of-total count is shown, and its contributed-XP badge is not
+
+#### Scenario: Densest grid carries neither badge
+- **WHEN** a game with stored achievement data is shown at the densest setting
+- **THEN** neither its achievement count nor its contributed-XP badge is shown
+
 #### Scenario: Selection available at every density
 - **WHEN** a list supports selecting games and is shown at any density
 - **THEN** games can still be selected and the selected state is visible
@@ -874,6 +884,30 @@ rather than detail.
 #### Scenario: Unrecognized stored density
 - **WHEN** a stored density value cannot be recognized
 - **THEN** the list falls back to its default density rather than failing to render
+
+### Requirement: The display-density control is identified by symbol
+The control that changes a game list's display density SHALL identify the active density by a
+symbol rather than by its name, and SHALL occupy the same width whichever density is active, so
+that changing density does not change the size of any control beside it. The control SHALL remain
+identifiable without sight of the symbol, and the density names SHALL remain visible where the
+choice is made.
+
+#### Scenario: Control width is independent of the active density
+- **WHEN** the user changes the display density
+- **THEN** the density control occupies the same width as before, and every control sharing its row
+  keeps the width it had
+
+#### Scenario: Densest setting does not shrink the search field
+- **WHEN** a game list is shown at its densest setting
+- **THEN** the search field beside the density control is no narrower than at any other density
+
+#### Scenario: Choosing a density still names it
+- **WHEN** the user opens the density control to change the density
+- **THEN** each available density is presented by name, and the active one is marked
+
+#### Scenario: Active density is announced
+- **WHEN** the density control is reached by an accessibility service
+- **THEN** the active density is announced by name
 
 ### Requirement: Library screen
 The system SHALL provide a Library screen separating a curated, actively-tracked set of games from
@@ -945,6 +979,12 @@ The system SHALL let the user choose the sort order of each Library list indepen
 least playtime, name, recent activity, and contributed XP, and SHALL remember each list's chosen order
 between visits.
 
+The system SHALL additionally let the user reverse each list's sort direction, independently of the
+other list and independently of the chosen key, and SHALL remember each list's chosen direction
+between visits. Each key SHALL have a default direction, and a list with no stored direction SHALL
+use its key's default, so a list the user has never reversed is ordered as it was before directions
+existed.
+
 #### Scenario: Sorting a list
 - **WHEN** the user chooses a sort order for a Library list
 - **THEN** that list is reordered accordingly and the other list's order is unaffected
@@ -976,7 +1016,26 @@ between visits.
 
 #### Scenario: Chosen sort restored when search is cleared
 - **WHEN** the user clears an active search
-- **THEN** each list returns to being ordered solely by its chosen sort order
+- **THEN** each list returns to being ordered solely by its chosen sort order and direction
+
+#### Scenario: Reversing a list
+- **WHEN** the user reverses a Library list's sort direction
+- **THEN** that list is presented in the opposite order under the same key, and the other list's
+  direction is unaffected
+
+#### Scenario: Direction is independent of the key
+- **WHEN** the user reverses a list and then changes its sort key
+- **THEN** the reversed direction still applies, under the newly chosen key
+
+#### Scenario: Games missing the sort key under a reversed direction
+- **WHEN** a list sorted by a key that some games have no value for is reversed
+- **THEN** those games are ordered first, consistently with the reversal, rather than being omitted
+  or held in place
+
+#### Scenario: Reversal does not invert search relevance
+- **WHEN** a search filter is active and the list's direction is reversed
+- **THEN** the strongest matches are still presented first, and only the ordering within an equally
+  matched group is reversed
 
 ### Requirement: Library search
 The system SHALL provide a search that filters the Library by game name or any known genre label,
@@ -1477,6 +1536,24 @@ using the same percentage that determined that achievement's rarity tier so the 
 - **WHEN** achievements are sorted by rarity
 - **THEN** the order follows the same percentages the rows display
 
+### Requirement: The achievement-rarity total never wraps
+The achievement-rarity breakdown's header SHALL present its count of unlocked achievements on a
+single line for any magnitude of that count. Where the header cannot fit all of its contents, the
+optional expansion control SHALL yield space before the count does.
+
+#### Scenario: Four-digit unlocked count
+- **WHEN** the player's unlocked achievement count reaches four or more digits
+- **THEN** the header presents the count on one line, with no part of its wording broken across
+  lines
+
+#### Scenario: Header is too narrow for all of its contents
+- **WHEN** the header's title, expansion control, and count cannot all fit
+- **THEN** the expansion control is the element that is truncated, and the count is presented in full
+
+#### Scenario: Count is not abbreviated
+- **WHEN** the unlocked count is large
+- **THEN** it is presented as its exact figure rather than rounded or abbreviated
+
 ### Requirement: Rarity Standing section
 The achievements UI SHALL present a Rarity Standing section stating the player's provable standing
 among owners of that game, their unlocked count against the average owner's, and the caveat that the
@@ -1549,26 +1626,41 @@ known, and SHALL indicate when an achievement is hidden by Steam rather than sho
 - **THEN** the description is displayed normally
 
 ### Requirement: Per-game achievement count on Library rows
-The system SHALL display, on each Library game row that has stored achievement data, a
-compact count of unlocked achievements out of that game's total.
+The system SHALL display, on each Library game row and on each game cell in the least dense grid
+that has stored achievement data, a compact count of unlocked achievements out of that game's total.
 
 #### Scenario: Row shows unlocked-of-total count
 - **WHEN** the Library shows a game with stored achievement data
 - **THEN** the row displays how many of the game's achievements are unlocked out of its total
 
+#### Scenario: Grid cell shows unlocked-of-total count
+- **WHEN** the Library shows a game with stored achievement data in the least dense grid
+- **THEN** the cell displays how many of the game's achievements are unlocked out of its total
+
 #### Scenario: Row without achievement data
 - **WHEN** the Library shows a game with no stored achievement data
 - **THEN** the row shows no achievement count and is otherwise unchanged
 
+#### Scenario: Grid cell without achievement data
+- **WHEN** the Library shows a game with no stored achievement data in the least dense grid
+- **THEN** the cell shows no achievement count and its layout is otherwise unchanged
+
 ### Requirement: Distinct visual signal for a fully-completed game
 The system SHALL visually distinguish a game whose achievements are all unlocked from one
-that is merely in progress, both on its Library row and on its detail screen.
+that is merely in progress, both on its Library row and on its detail screen. Where a game's
+unlocked-of-total count is shown in the least dense grid, the same distinction SHALL apply there.
 
 #### Scenario: Fully-completed game stands out on the Library row
 - **WHEN** the Library shows a game whose unlocked achievement count equals its total (and
   that total is greater than zero)
 - **THEN** the row displays a distinct "100% Completed" indicator in place of the plain
   unlocked-of-total count
+
+#### Scenario: Fully-completed game stands out in the least dense grid
+- **WHEN** the least dense grid shows a game whose unlocked achievement count equals its total (and
+  that total is greater than zero)
+- **THEN** the cell displays the same completion indicator in place of the plain unlocked-of-total
+  count
 
 #### Scenario: Fully-completed game is announced on its detail screen
 - **WHEN** the user opens the detail screen for a game whose achievements are all unlocked
@@ -1577,7 +1669,8 @@ that is merely in progress, both on its Library row and on its detail screen.
 
 #### Scenario: In-progress game shows no completion signal
 - **WHEN** a game has stored achievement data but its unlocked count is less than its total
-- **THEN** neither the Library row nor the detail screen displays the completion indicator
+- **THEN** neither the Library row, nor its grid cell, nor the detail screen displays the completion
+  indicator
 
 ### Requirement: History screen
 The system SHALL provide a History screen presenting play history grouped by day, where each day
