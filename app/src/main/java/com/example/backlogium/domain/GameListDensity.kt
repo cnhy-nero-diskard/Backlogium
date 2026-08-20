@@ -21,7 +21,8 @@ enum class GameListDensity(
             GameListField.IDENTITY,
             GameListField.PLAYTIME,
             GameListField.COMPLETION_PROGRESS,
-            GameListField.BADGES,
+            GameListField.ACHIEVEMENT_COUNT,
+            GameListField.XP_CONTRIBUTION,
             GameListField.CURRENTLY_PLAYING,
         ),
     ),
@@ -33,6 +34,7 @@ enum class GameListDensity(
             GameListField.IDENTITY,
             GameListField.PLAYTIME,
             GameListField.COMPLETION_PROGRESS,
+            GameListField.ACHIEVEMENT_COUNT,
             GameListField.CURRENTLY_PLAYING,
         ),
     ),
@@ -50,7 +52,10 @@ enum class GameListDensity(
     val showsPlaytime: Boolean get() = GameListField.PLAYTIME in visibleFields
     val showsCompletionProgress: Boolean
         get() = GameListField.COMPLETION_PROGRESS in visibleFields
-    val showsBadges: Boolean get() = GameListField.BADGES in visibleFields
+    val showsAchievementCount: Boolean
+        get() = GameListField.ACHIEVEMENT_COUNT in visibleFields
+    val showsXpContribution: Boolean
+        get() = GameListField.XP_CONTRIBUTION in visibleFields
 
     companion object {
         /** Unknown or absent preference values must preserve the current full-detail rendering. */
@@ -59,12 +64,20 @@ enum class GameListDensity(
     }
 }
 
-/** Information categories used to prove the density ladder is monotonic. */
+/**
+ * Information categories used to prove the density ladder is monotonic.
+ *
+ * The achievement count and the XP badge are separate rungs rather than one "badges" field: the
+ * count is what a completionist scans for and a grid cell has room for it, while the XP figure is
+ * the quietest signal in the app and stays list-only. Splitting them is what lets the count reach
+ * [GameListDensity.GRID] without breaking the strict-subset chain.
+ */
 enum class GameListField {
     IDENTITY,
     PLAYTIME,
     COMPLETION_PROGRESS,
-    BADGES,
+    ACHIEVEMENT_COUNT,
+    XP_CONTRIBUTION,
     CURRENTLY_PLAYING,
 }
 

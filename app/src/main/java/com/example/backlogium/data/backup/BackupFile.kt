@@ -1,5 +1,8 @@
 package com.example.backlogium.data.backup
 
+import com.example.backlogium.domain.LibrarySortPrefs
+import com.example.backlogium.domain.librarySortDirectionOrNull
+import com.example.backlogium.domain.librarySortKeyOrNull
 import kotlinx.serialization.Serializable
 
 /**
@@ -103,8 +106,41 @@ data class BackupHltbData(
     val matchStatus: String,
 )
 
+/**
+ * The two Library sort selections as exported.
+ *
+ * The direction fields are optional and default to null so that an export written before
+ * directions existed still deserializes: a null means "this list had no stored direction", which
+ * resolves on read to its key's [com.example.backlogium.domain.LibrarySortKey.defaultDirection] —
+ * the fixed direction that older export actually meant.
+ */
 @Serializable
-data class BackupLibrarySortPrefs(val focus: String, val library: String)
+data class BackupLibrarySortPrefs(
+    val focus: String,
+    val library: String,
+    val focusDirection: String? = null,
+    val libraryDirection: String? = null,
+)
+
+/**
+ * Read an exported sort block back as the domain type.
+ *
+ * An absent or unrecognized direction resolves to the *key's* own default rather than to some
+ * stored one, which is exactly what an export written before directions existed meant — so an
+ * older backup restores the ordering it was taken under.
+ */
+fun BackupLibrarySortPrefs.toDomain(): LibrarySortPrefs {
+    val defaults = LibrarySortPrefs()
+    val focusKey = librarySortKeyOrNull(focus) ?: defaults.focus
+    val libraryKey = librarySortKeyOrNull(library) ?: defaults.library
+    return LibrarySortPrefs(
+        focus = focusKey,
+        library = libraryKey,
+        focusDirection = librarySortDirectionOrNull(focusDirection) ?: focusKey.defaultDirection,
+        libraryDirection = librarySortDirectionOrNull(libraryDirection)
+            ?: libraryKey.defaultDirection,
+    )
+}
 
 /**
  * The player aggregates. `totalXp`/`level`/`currentStreak` are exported for legibility only —

@@ -169,6 +169,14 @@ class UpdateRuleConfigUseCaseTest {
             sort.value = sort.value.copy(library = key)
         }
 
+        override suspend fun setFocusSortDirection(direction: LibrarySortDirection) {
+            sort.value = sort.value.copy(focusDirection = direction)
+        }
+
+        override suspend fun setLibrarySortDirection(direction: LibrarySortDirection) {
+            sort.value = sort.value.copy(libraryDirection = direction)
+        }
+
         override val libraryDensity: Flow<GameListDensity> = MutableStateFlow(GameListDensity.LIST)
         override suspend fun setLibraryDensity(density: GameListDensity) = Unit
         override val collectionDensity: Flow<GameListDensity> = MutableStateFlow(GameListDensity.LIST)

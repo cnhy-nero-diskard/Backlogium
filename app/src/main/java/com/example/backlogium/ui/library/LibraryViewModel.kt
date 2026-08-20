@@ -20,6 +20,7 @@ import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.GameXpInput
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
+import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.domain.LibraryXp
 import com.example.backlogium.gamification.RuleConfig
@@ -120,6 +121,8 @@ data class LibraryUiState(
     val query: String = "",
     val focusSort: LibrarySortKey = LibrarySortKey.NAME,
     val librarySort: LibrarySortKey = LibrarySortKey.PLAYTIME,
+    val focusSortDirection: LibrarySortDirection = focusSort.defaultDirection,
+    val librarySortDirection: LibrarySortDirection = librarySort.defaultDirection,
     val density: GameListDensity = GameListDensity.LIST,
     /** All known genres, kept unfiltered so the transient Library catalog remains usable while searching. */
     val availableGenres: List<GameGenre> = emptyList(),
@@ -264,11 +267,19 @@ class LibraryViewModel @Inject constructor(
         val goals = content.goals
             .map { it.toGoalUi(xp, counts, view.ops, content.playingAppId) }
             .matching(view.query)
-            .sortedFor(view.sort.focus, view.query)
+            .sortedFor(
+                key = view.sort.focus,
+                direction = view.sort.focusDirection,
+                query = view.query,
+            )
         val backlog = content.backlog
             .map { it.toBacklogUi(xp, counts, view.ops, content.playingAppId) }
             .matching(view.query)
-            .sortedFor(view.sort.library, view.query)
+            .sortedFor(
+                key = view.sort.library,
+                direction = view.sort.libraryDirection,
+                query = view.query,
+            )
         LibraryUiState(
             loading = false,
             configured = content.configured,
@@ -281,6 +292,8 @@ class LibraryViewModel @Inject constructor(
             query = view.query,
             focusSort = view.sort.focus,
             librarySort = view.sort.library,
+            focusSortDirection = view.sort.focusDirection,
+            librarySortDirection = view.sort.libraryDirection,
             density = view.density,
             availableGenres = content.goals
                 .asSequence()
@@ -322,6 +335,14 @@ class LibraryViewModel @Inject constructor(
 
     fun setLibrarySort(key: LibrarySortKey) = viewModelScope.launch {
         settings.setLibrarySort(key)
+    }
+
+    fun setFocusSortDirection(direction: LibrarySortDirection) = viewModelScope.launch {
+        settings.setFocusSortDirection(direction)
+    }
+
+    fun setLibrarySortDirection(direction: LibrarySortDirection) = viewModelScope.launch {
+        settings.setLibrarySortDirection(direction)
     }
 
     fun setDensity(density: GameListDensity) = viewModelScope.launch {

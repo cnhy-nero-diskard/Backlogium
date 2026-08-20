@@ -1,39 +1,39 @@
 ## 1. Display-density control becomes symbolic
 
-- [ ] 1.1 Add an `icon` property to `GameListDensity`, mapping `LIST` to a stacked-rows glyph, `GRID` to a 2×2 grid glyph, and `COMPACT_GRID` to a denser grid glyph from the Tabler set already in use
-- [ ] 1.2 Replace `Text(density.label)` in `GameListDensityControl` with an `Icon`, keeping the button's tap target at the Material minimum
-- [ ] 1.3 Set the button's `contentDescription` to the active density's `label`, so the name is still announced
-- [ ] 1.4 Add each density's icon as the `leadingIcon` of its `DropdownMenuItem`, keeping the existing label text and trailing check mark
-- [ ] 1.5 Confirm the collection overview (`CollectionScreen.kt:382`), which shares this control, renders correctly with the icon form
+- [x] 1.1 Add an `icon` property to `GameListDensity`, mapping `LIST` to a stacked-rows glyph, `GRID` to a 2×2 grid glyph, and `COMPACT_GRID` to a denser grid glyph from the Tabler set already in use
+- [x] 1.2 Replace `Text(density.label)` in `GameListDensityControl` with an `Icon`, keeping the button's tap target at the Material minimum
+- [x] 1.3 Set the button's `contentDescription` to the active density's `label`, so the name is still announced
+- [x] 1.4 Add each density's icon as the `leadingIcon` of its `DropdownMenuItem`, keeping the existing label text and trailing check mark
+- [x] 1.5 Confirm the collection overview (`CollectionScreen.kt:382`), which shares this control, renders correctly with the icon form
 
 ## 2. Library sort direction
 
-- [ ] 2.1 Add a `LibrarySortDirection` enum (`ASCENDING`, `DESCENDING`) in `domain/`, persisted by constant name, with the same rename warning the existing sort enums carry
-- [ ] 2.2 Add `LibrarySortKey.defaultDirection`: `ASCENDING` for `NAME`, `DESCENDING` for `PLAYTIME`, `RECENT_ACTIVITY`, and `XP_CONTRIBUTED` — matching today's fixed behaviour exactly
-- [ ] 2.3 Extend `LibrarySortPrefs` with `focusDirection` and `libraryDirection`, each defaulting to its key's default direction
-- [ ] 2.4 Add two Preferences DataStore keys in `SettingsDataStore` and a setter per list; absence reads as the key's default direction
-- [ ] 2.5 Rewrite `comparatorFor` to build the ascending comparator per key, and apply the direction at the one place that composes it — never by duplicating the four comparators
-- [ ] 2.6 Keep the `thenBy { appId }` tie-break stable under reversal so equal rows do not shuffle when direction flips
-- [ ] 2.7 In `sortedFor`, apply direction to the sort comparator only, leaving the relevance tier comparator ascending, so reversal never inverts search ranking
-- [ ] 2.8 Add a direction chevron to `SortControl` beside the existing `ArrowsSort` icon; tapping it flips direction without opening the menu
-- [ ] 2.9 Give the chevron a `contentDescription` naming both the current direction and what tapping it will do
-- [ ] 2.10 Wire `setFocusSortDirection` / `setLibrarySortDirection` through `LibraryViewModel` to both `SectionHeader` call sites
-- [ ] 2.11 Add optional `focusDirection` / `libraryDirection` fields to the backup file's `librarySort` block, tolerating their absence on import by applying the key's default
+- [x] 2.1 Add a `LibrarySortDirection` enum (`ASCENDING`, `DESCENDING`) in `domain/`, persisted by constant name, with the same rename warning the existing sort enums carry
+- [x] 2.2 Add `LibrarySortKey.defaultDirection`: `ASCENDING` for `NAME`, `DESCENDING` for `PLAYTIME`, `RECENT_ACTIVITY`, and `XP_CONTRIBUTED` — matching today's fixed behaviour exactly
+- [x] 2.3 Extend `LibrarySortPrefs` with `focusDirection` and `libraryDirection`, each defaulting to its key's default direction
+- [x] 2.4 Add two Preferences DataStore keys in `SettingsDataStore` and a setter per list; absence reads as the key's default direction
+- [x] 2.5 Rewrite `comparatorFor` to build the ascending comparator per key, and apply the direction at the one place that composes it — never by duplicating the four comparators
+- [x] 2.6 Keep the `thenBy { appId }` tie-break stable under reversal so equal rows do not shuffle when direction flips
+- [x] 2.7 In `sortedFor`, apply direction to the sort comparator only, leaving the relevance tier comparator ascending, so reversal never inverts search ranking
+- [x] 2.8 Add a direction chevron to `SortControl` beside the existing `ArrowsSort` icon; tapping it flips direction without opening the menu
+- [x] 2.9 Give the chevron a `contentDescription` naming both the current direction and what tapping it will do
+- [x] 2.10 Wire `setFocusSortDirection` / `setLibrarySortDirection` through `LibraryViewModel` to both `SectionHeader` call sites
+- [x] 2.11 Add optional `focusDirection` / `libraryDirection` fields to the backup file's `librarySort` block, tolerating their absence on import by applying the key's default
 
 ## 3. Achievement counts in the least dense grid
 
-- [ ] 3.1 Split `GameListField.BADGES` into `ACHIEVEMENT_COUNT` and `XP_CONTRIBUTION`
-- [ ] 3.2 Give `LIST` both fields; give `GRID` `ACHIEVEMENT_COUNT` only; give `COMPACT_GRID` neither
-- [ ] 3.3 Replace `showsBadges` with `showsAchievementCount` and `showsXpContribution`, updating both `LibraryGameRow` call sites
-- [ ] 3.4 Render `AchievementCountLabel` in `LibraryGameCell` under the game name, gated on `density.showsAchievementCount`, so the existing "100% Completed" pill carries into the grid unchanged
-- [ ] 3.5 Confirm the cell's fixed `aspectRatio` still accommodates the added line at `GRID`, adjusting the ratio rather than truncating the name if it does not
-- [ ] 3.6 Confirm `isStrictSubsetOf` still holds across the ladder after the field split
+- [x] 3.1 Split `GameListField.BADGES` into `ACHIEVEMENT_COUNT` and `XP_CONTRIBUTION`
+- [x] 3.2 Give `LIST` both fields; give `GRID` `ACHIEVEMENT_COUNT` only; give `COMPACT_GRID` neither
+- [x] 3.3 Replace `showsBadges` with `showsAchievementCount` and `showsXpContribution`, updating both `LibraryGameRow` call sites
+- [x] 3.4 Render `AchievementCountLabel` in `LibraryGameCell` under the game name, gated on `density.showsAchievementCount`, so the existing "100% Completed" pill carries into the grid unchanged
+- [x] 3.5 Confirm the cell's fixed `aspectRatio` still accommodates the added line at `GRID`, adjusting the ratio rather than truncating the name if it does not
+- [x] 3.6 Confirm `isStrictSubsetOf` still holds across the ladder after the field split
 
 ## 4. Achievement-rarity header
 
-- [ ] 4.1 In `RarityBreakdownCard`'s header `Row`, give the count `Text` `maxLines = 1` and `softWrap = false`
-- [ ] 4.2 Give the optional "Show rarest" `TextButton` `Modifier.weight(1f, fill = false)` so it yields first, matching the technique `GameBadges` already uses
-- [ ] 4.3 Leave the count unabbreviated — no thousands rounding
+- [x] 4.1 In `RarityBreakdownCard`'s header `Row`, give the count `Text` `maxLines = 1` and `softWrap = false`
+- [x] 4.2 Give the optional "Show rarest" `TextButton` `Modifier.weight(1f, fill = false)` so it yields first, matching the technique `GameBadges` already uses
+- [x] 4.3 Leave the count unabbreviated — no thousands rounding
 
 ## 5. Settings Sync card layout
 
@@ -49,16 +49,16 @@
 
 ## 6. Tests
 
-- [ ] 6.1 Unit-test that each sort key reversed produces the exact reverse of its ascending order, tie-break included
-- [ ] 6.2 Unit-test that reversal under an active search leaves relevance tiers in ascending order and reverses only within a tier
-- [ ] 6.3 Unit-test that games with no value for a key are ordered last ascending and first reversed
-- [ ] 6.4 Unit-test that an absent stored direction resolves to the key's default, reproducing pre-change ordering for all four keys
-- [ ] 6.5 Unit-test that a backup written without direction fields imports to the per-key defaults
-- [ ] 6.6 Extend the existing density-ladder test to cover the split `ACHIEVEMENT_COUNT` / `XP_CONTRIBUTION` fields and assert the ladder is still a strict subset chain
+- [x] 6.1 Unit-test that each sort key reversed produces the exact reverse of its ascending order, tie-break included
+- [x] 6.2 Unit-test that reversal under an active search leaves relevance tiers in ascending order and reverses only within a tier
+- [x] 6.3 Unit-test that games with no value for a key are ordered last ascending and first reversed
+- [x] 6.4 Unit-test that an absent stored direction resolves to the key's default, reproducing pre-change ordering for all four keys
+- [x] 6.5 Unit-test that a backup written without direction fields imports to the per-key defaults
+- [x] 6.6 Extend the existing density-ladder test to cover the split `ACHIEVEMENT_COUNT` / `XP_CONTRIBUTION` fields and assert the ladder is still a strict subset chain
 
 ## 7. Verification
 
-- [ ] 7.1 `./gradlew :app:testDebugUnitTest :gamification:test`
+- [x] 7.1 `./gradlew :app:testDebugUnitTest :gamification:test`
 - [ ] 7.2 On device: confirm the search field is the same width at all three densities, and that changing density does not reflow the header row
 - [ ] 7.3 On device: reverse each Library list independently, leave and return, and confirm both directions persisted and did not affect each other
 - [ ] 7.4 On device: switch to the least dense grid and confirm achievement counts appear, including the "100% Completed" pill on a fully-completed game

@@ -106,6 +106,8 @@ class BackupExportMapper @Inject constructor(
             librarySortPrefs = BackupLibrarySortPrefs(
                 focus = sortPrefs.focus.name,
                 library = sortPrefs.library.name,
+                focusDirection = sortPrefs.focusDirection.name,
+                libraryDirection = sortPrefs.libraryDirection.name,
             ),
             playerProfile = BackupPlayerProfile(
                 totalXp = profile.totalXp,

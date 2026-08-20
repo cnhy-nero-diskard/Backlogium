@@ -12,12 +12,14 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
+import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.domain.PendingStreakBreak
 import com.example.backlogium.domain.PendingTransition
 import com.example.backlogium.domain.ProgressMarks
 import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.VersionedRuleConfig
+import com.example.backlogium.domain.librarySortDirectionOrNull
 import com.example.backlogium.domain.librarySortKeyOrNull
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
@@ -58,6 +60,8 @@ class SettingsDataStore @Inject constructor(
         val LEGENDARY_ACHIEVEMENT_XP = intPreferencesKey("legendary_achievement_xp")
         val LIBRARY_FOCUS_SORT = stringPreferencesKey("library_focus_sort")
         val LIBRARY_ALL_SORT = stringPreferencesKey("library_all_sort")
+        val LIBRARY_FOCUS_SORT_DIRECTION = stringPreferencesKey("library_focus_sort_direction")
+        val LIBRARY_ALL_SORT_DIRECTION = stringPreferencesKey("library_all_sort_direction")
         val LIBRARY_DENSITY = stringPreferencesKey("library_density")
         val COLLECTION_DENSITY = stringPreferencesKey("collection_density")
         val AUTO_SNAPSHOT_ENABLED = booleanPreferencesKey("auto_snapshot_enabled")
@@ -264,14 +268,23 @@ class SettingsDataStore @Inject constructor(
     }
 
     /**
-     * The two Library sort selections. Unset keys resolve to [LibrarySortPrefs]'s defaults, which
-     * reproduce the DAO's own ordering — so an upgrade renders exactly as before.
+     * The two Library sort selections, key and direction each. Unset keys resolve to
+     * [LibrarySortPrefs]'s defaults, which reproduce the DAO's own ordering — so an upgrade renders
+     * exactly as before. An absent *direction* resolves to whichever key is in effect, not to a
+     * stored one, so changing the key of a list the user never reversed keeps it on that key's
+     * natural end.
      */
     val librarySortFlow: Flow<LibrarySortPrefs> = context.dataStore.data.map { prefs ->
         val defaults = LibrarySortPrefs()
+        val focus = librarySortKeyOrNull(prefs[Keys.LIBRARY_FOCUS_SORT]) ?: defaults.focus
+        val library = librarySortKeyOrNull(prefs[Keys.LIBRARY_ALL_SORT]) ?: defaults.library
         LibrarySortPrefs(
-            focus = librarySortKeyOrNull(prefs[Keys.LIBRARY_FOCUS_SORT]) ?: defaults.focus,
-            library = librarySortKeyOrNull(prefs[Keys.LIBRARY_ALL_SORT]) ?: defaults.library,
+            focus = focus,
+            library = library,
+            focusDirection = librarySortDirectionOrNull(prefs[Keys.LIBRARY_FOCUS_SORT_DIRECTION])
+                ?: focus.defaultDirection,
+            libraryDirection = librarySortDirectionOrNull(prefs[Keys.LIBRARY_ALL_SORT_DIRECTION])
+                ?: library.defaultDirection,
         )
     }
 
@@ -281,6 +294,14 @@ class SettingsDataStore @Inject constructor(
 
     suspend fun setLibrarySort(key: LibrarySortKey) {
         context.dataStore.edit { it[Keys.LIBRARY_ALL_SORT] = key.name }
+    }
+
+    suspend fun setFocusSortDirection(direction: LibrarySortDirection) {
+        context.dataStore.edit { it[Keys.LIBRARY_FOCUS_SORT_DIRECTION] = direction.name }
+    }
+
+    suspend fun setLibrarySortDirection(direction: LibrarySortDirection) {
+        context.dataStore.edit { it[Keys.LIBRARY_ALL_SORT_DIRECTION] = direction.name }
     }
 
     /** Each surface owns its presentation preference; an unset or stale value is the old list. */

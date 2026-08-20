@@ -1,5 +1,7 @@
 package com.example.backlogium.data.backup
 
+import com.example.backlogium.domain.LibrarySortDirection
+import com.example.backlogium.domain.LibrarySortKey
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -63,5 +65,41 @@ class BackupFileRoundTripTest {
         val decoded = json.decodeFromString(BackupFile.serializer(), encoded)
 
         assertEquals(original, decoded)
+    }
+
+    /**
+     * An export written before sort directions existed carries no direction fields at all. It must
+     * still decode, and each list must resolve to its *key's* default direction — the fixed
+     * direction that older file actually meant — rather than to a global default that would
+     * reverse one of the two lists on restore.
+     */
+    @Test
+    fun sortBlockWithoutDirections_resolvesToEachKeysDefault() {
+        val legacy = """{"focus":"NAME","library":"PLAYTIME"}"""
+
+        val decoded = json.decodeFromString(BackupLibrarySortPrefs.serializer(), legacy)
+        assertEquals(null, decoded.focusDirection)
+        assertEquals(null, decoded.libraryDirection)
+
+        val prefs = decoded.toDomain()
+        assertEquals(LibrarySortKey.NAME, prefs.focus)
+        assertEquals(LibrarySortKey.PLAYTIME, prefs.library)
+        assertEquals(LibrarySortDirection.ASCENDING, prefs.focusDirection)
+        assertEquals(LibrarySortDirection.DESCENDING, prefs.libraryDirection)
+    }
+
+    /** A direction a future build wrote and this one does not know is the key's default, not a crash. */
+    @Test
+    fun unrecognizedStoredDirection_fallsBackToTheKeysDefault() {
+        val prefs = BackupLibrarySortPrefs(
+            focus = "NAME",
+            library = "PLAYTIME",
+            focusDirection = "SIDEWAYS",
+            libraryDirection = "ASCENDING",
+        ).toDomain()
+
+        assertEquals(LibrarySortDirection.ASCENDING, prefs.focusDirection)
+        // A recognized value is honoured even when it is not the default.
+        assertEquals(LibrarySortDirection.ASCENDING, prefs.libraryDirection)
     }
 }
