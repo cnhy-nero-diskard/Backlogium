@@ -1,8 +1,5 @@
 package com.example.backlogium.data.backup
 
-import com.example.backlogium.domain.LibrarySortPrefs
-import com.example.backlogium.domain.librarySortDirectionOrNull
-import com.example.backlogium.domain.librarySortKeyOrNull
 import kotlinx.serialization.Serializable
 
 /**
@@ -109,10 +106,13 @@ data class BackupHltbData(
 /**
  * The two Library sort selections as exported.
  *
- * The direction fields are optional and default to null so that an export written before
- * directions existed still deserializes: a null means "this list had no stored direction", which
- * resolves on read to its key's [com.example.backlogium.domain.LibrarySortKey.defaultDirection] —
- * the fixed direction that older export actually meant.
+ * **Export-only, like [BackupFile.ruleConfig] and [BackupFile.computed]** — see [BackupFile]'s doc.
+ * Nothing reads this block back into the app, so the directions recorded here document what the
+ * library looked like when the file was written; they do not restore it.
+ *
+ * The direction fields are nullable purely so that an export written before directions existed
+ * still deserializes. A null means "this file predates directions", which is a statement about the
+ * file and not an instruction to the app.
  */
 @Serializable
 data class BackupLibrarySortPrefs(
@@ -121,26 +121,6 @@ data class BackupLibrarySortPrefs(
     val focusDirection: String? = null,
     val libraryDirection: String? = null,
 )
-
-/**
- * Read an exported sort block back as the domain type.
- *
- * An absent or unrecognized direction resolves to the *key's* own default rather than to some
- * stored one, which is exactly what an export written before directions existed meant — so an
- * older backup restores the ordering it was taken under.
- */
-fun BackupLibrarySortPrefs.toDomain(): LibrarySortPrefs {
-    val defaults = LibrarySortPrefs()
-    val focusKey = librarySortKeyOrNull(focus) ?: defaults.focus
-    val libraryKey = librarySortKeyOrNull(library) ?: defaults.library
-    return LibrarySortPrefs(
-        focus = focusKey,
-        library = libraryKey,
-        focusDirection = librarySortDirectionOrNull(focusDirection) ?: focusKey.defaultDirection,
-        libraryDirection = librarySortDirectionOrNull(libraryDirection)
-            ?: libraryKey.defaultDirection,
-    )
-}
 
 /**
  * The player aggregates. `totalXp`/`level`/`currentStreak` are exported for legibility only —

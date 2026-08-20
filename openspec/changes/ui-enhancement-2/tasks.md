@@ -18,7 +18,7 @@
 - [x] 2.8 Add a direction chevron to `SortControl` beside the existing `ArrowsSort` icon; tapping it flips direction without opening the menu
 - [x] 2.9 Give the chevron a `contentDescription` naming both the current direction and what tapping it will do
 - [x] 2.10 Wire `setFocusSortDirection` / `setLibrarySortDirection` through `LibraryViewModel` to both `SectionHeader` call sites
-- [x] 2.11 Add optional `focusDirection` / `libraryDirection` fields to the backup file's `librarySort` block, tolerating their absence on import by applying the key's default
+- [x] 2.11 Add optional `focusDirection` / `libraryDirection` fields to the backup file's `librarySort` block, tolerating their absence when an older file is decoded. (Corrected during review: this block is export-only — `BackupFile`'s doc and `add-backup-restore`'s design.md exclude `ruleConfig`, `librarySortPrefs`, and `computed` from the merge engine entirely — so there is no import path to apply a default *to*. Restoring sort preferences would be a change to `add-backup-restore`'s decision, not a task here.)
 
 ## 3. Achievement counts in the least dense grid
 
@@ -53,7 +53,7 @@
 - [x] 6.2 Unit-test that reversal under an active search leaves relevance tiers in ascending order and reverses only within a tier
 - [x] 6.3 Unit-test that games with no value for a key are ordered last ascending and first reversed
 - [x] 6.4 Unit-test that an absent stored direction resolves to the key's default, reproducing pre-change ordering for all four keys
-- [x] 6.5 Unit-test that a backup written without direction fields imports to the per-key defaults
+- [x] 6.5 Unit-test that a backup written without direction fields still decodes, and that a file carrying directions round-trips them verbatim. (Corrected during review: the original wording assumed an import path for this block; see 2.11.)
 - [x] 6.6 Extend the existing density-ladder test to cover the split `ACHIEVEMENT_COUNT` / `XP_CONTRIBUTION` fields and assert the ladder is still a strict subset chain
 
 ## 7. Verification
