@@ -199,7 +199,11 @@ class SetupCoordinator @Inject constructor(
      */
     suspend fun claimFirstRunSetup() = store.setFirstRunSetupActive(true)
 
-    /** Release the takeover once the user leaves the first-run setup surface, run or declined. */
+    /**
+     * Release the takeover when the user leaves the first-run setup surface. Idempotent, and
+     * ordinarily redundant: a completed run has already released it. It is what covers leaving
+     * mid-run — "Skip setup" while stages are still going — where no completion is coming soon.
+     */
     suspend fun releaseFirstRunSetup() = store.setFirstRunSetupActive(false)
 
     /**
@@ -333,6 +337,13 @@ class SetupCoordinator @Inject constructor(
     }
 
     private suspend fun completeRun() {
+        // Released here and not only when the surface is dismissed. A run that has reached its
+        // summary owes the user nothing further, and keeping the claim past that point made the
+        // resumed surface actively harmful: a cold launch after a completed run reopened the
+        // checklist with no run in flight, so the only exit offered was "Skip setup" — which
+        // records every stage skipped and would have overwritten the outcomes that had just
+        // succeeded. Death *during* a run, which is what the claim exists for, still keeps it.
+        store.setFirstRunSetupActive(false)
         store.clearActiveStage()
         store.markCompleted()
         _state.update {

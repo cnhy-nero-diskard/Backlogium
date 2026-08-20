@@ -379,14 +379,33 @@ class SetupCoordinatorTest {
             subject.claimFirstRunSetup()
             assertTrue(subject.firstRunSetupActive.first())
 
-            // Completing the run is not dismissing the surface: the user still has to leave it, and
-            // a process killed on the finished summary must come back to it.
+            // A completed run owes the user nothing further. Holding the claim past this point
+            // would reopen the checklist on the next cold launch with no run in flight, where the
+            // only exit is "Skip setup" — overwriting the outcomes that just succeeded.
             subject.start(setOf("a"))
             advanceUntilIdle()
-            assertTrue(subject.firstRunSetupActive.first())
+            assertFalse(subject.firstRunSetupActive.first())
+        }
 
+    @Test
+    fun leavingMidRunReleasesTheTakeoverWithoutWaitingForTheRunToFinish() =
+        runTest(StandardTestDispatcher()) {
+            val held = FakeStageRunner().also { it.autoComplete = false }
+            val store = FakeSetupStateStore()
+            val subject = coordinator(listOf(fakeStage("a", held)), store, this)
+
+            subject.claimFirstRunSetup()
+            subject.start(setOf("a"))
+            advanceUntilIdle()
+            assertTrue("the run is still going", subject.state.value.running)
+
+            // "Skip setup" while a stage runs: the run is deliberately not cancelled, so nothing
+            // else would release the claim for minutes.
             subject.releaseFirstRunSetup()
             assertFalse(subject.firstRunSetupActive.first())
+
+            held.gate.complete(Unit)
+            advanceUntilIdle()
         }
 
 }
