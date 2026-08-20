@@ -11,6 +11,7 @@ import com.example.backlogium.data.backup.SnapshotMeta
 import com.example.backlogium.data.credentials.maskApiKey
 import com.example.backlogium.data.local.dao.SteamAssetDao
 import com.example.backlogium.data.local.entity.SteamAssetDownloadState
+import com.example.backlogium.data.local.dao.SteamAssetStoredSummary
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.data.repo.CredentialsState
@@ -76,6 +77,7 @@ data class SettingsUiState(
     val storedSteamAssetCount: Int = 0,
     val storedSteamAssetBytes: Long = 0L,
     val lastSteamAssetRun: SteamAssetDownloadState? = null,
+    val hasSteamAssetInventory: Boolean = false,
     /** Explicit opt-in to poll Steam every 30 seconds before a game is detected. */
     val liveMonitorEnabled: Boolean = false,
     /** True once historical Steam playtime has been imported (one-time). */
@@ -160,8 +162,12 @@ class SettingsViewModel @Inject constructor(
         refreshSnapshots()
     }
 
-    private val assetStoredState = combine(steamAssetDao.observeStoredSummary(), steamAssetDao.observeLastRun()) { summary, lastRun ->
-        summary to lastRun
+    private val assetStoredState = combine(
+        steamAssetDao.observeStoredSummary(),
+        steamAssetDao.observeLastRun(),
+        steamAssetDao.observeHasInventory(),
+    ) { summary, lastRun, hasInventory ->
+        AssetStoredState(summary, lastRun, hasInventory)
     }
     private val assetWorkState = combine(syncScheduler.steamAssetDownloadStatus, syncScheduler.steamAssetDownloadProgress) { status, progress ->
         status to progress
@@ -197,9 +203,10 @@ class SettingsViewModel @Inject constructor(
         state.copy(isReconciling = reconciling)
     }.combine(assetStoredState) { state, asset ->
         state.copy(
-            storedSteamAssetCount = asset.first.count,
-            storedSteamAssetBytes = asset.first.bytes,
-            lastSteamAssetRun = asset.second,
+            storedSteamAssetCount = asset.summary.count,
+            storedSteamAssetBytes = asset.summary.bytes,
+            hasSteamAssetInventory = asset.hasInventory,
+            lastSteamAssetRun = asset.lastRun,
         )
     }.combine(assetWorkState) { state, asset ->
         state.copy(steamAssetStatus = asset.first, steamAssetProgress = asset.second)
@@ -506,6 +513,12 @@ class SettingsViewModel @Inject constructor(
 
     private data class Local(val rule: RuleLocal, val backup: BackupLocal)
 }
+    private data class AssetStoredState(
+        val summary: SteamAssetStoredSummary,
+        val lastRun: SteamAssetDownloadState?,
+        val hasInventory: Boolean,
+    )
+
 
 /** Names what failed and where, rather than reporting only that the import failed (tasks.md 2.5). */
 private fun List<BackupValidationProblem>.describeRejection(): String {

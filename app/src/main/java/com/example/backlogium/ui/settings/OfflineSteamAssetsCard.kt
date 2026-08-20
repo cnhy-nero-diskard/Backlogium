@@ -74,12 +74,12 @@ internal fun OfflineSteamAssetsCard(
                 }
                 TextButton(onClick = onCancel) { Text("Stop download") }
             } else {
-                if (!state.configured) {
+                if (!state.hasSteamAssetInventory) {
                     Text("Sync a Steam library first to discover images.", style = MaterialTheme.typography.bodySmall)
                 }
                 OutlinedButton(
                     onClick = { choosingMode = true },
-                    enabled = state.configured,
+                    enabled = state.hasSteamAssetInventory,
                 ) { Text("Download Steam assets") }
             }
         }

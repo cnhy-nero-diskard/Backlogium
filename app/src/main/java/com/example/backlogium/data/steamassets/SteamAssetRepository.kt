@@ -47,6 +47,9 @@ class SteamAssetRepository @Inject constructor(
         onProgress: suspend (processed: Int, total: Int, label: String, counts: SteamAssetRunCounts) -> Unit,
     ): SteamAssetRunCounts = coroutineScope {
         store.deleteTemporaryFiles()
+        assetDao.getAll()
+            .filter { it.state == SteamAssetManifestState.STORED.name && !store.isValid(it) }
+            .forEach { assetDao.invalidate(it.normalizedUrl) }
         val items = inventory()
         val permits = Semaphore(MAX_CONCURRENCY)
         var counts = SteamAssetRunCounts()
@@ -82,7 +85,11 @@ class SteamAssetRepository @Inject constructor(
                 val now = System.currentTimeMillis()
                 when (response.code) {
                     404, 410 -> {
-                        assetDao.upsert(SteamAssetManifest(normalized, item.kind.name, state = SteamAssetManifestState.UNAVAILABLE.name, lastCheckedAt = now))
+                        if (existing?.state == SteamAssetManifestState.STORED.name && store.isValid(existing)) {
+                            assetDao.upsert(existing.copy(lastCheckedAt = now))
+                        } else {
+                            assetDao.upsert(SteamAssetManifest(normalized, item.kind.name, state = SteamAssetManifestState.UNAVAILABLE.name, lastCheckedAt = now))
+                        }
                         SteamAssetOutcome.UNAVAILABLE
                     }
                     in 200..299 -> {

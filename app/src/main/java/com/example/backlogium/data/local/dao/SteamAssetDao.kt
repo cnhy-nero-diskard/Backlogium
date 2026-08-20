@@ -26,6 +26,9 @@ interface SteamAssetDao {
     @Query("SELECT COUNT(*) AS count, COALESCE(SUM(byteCount), 0) AS bytes FROM steam_asset_manifest WHERE state = 'STORED'")
     fun observeStoredSummary(): Flow<SteamAssetStoredSummary>
 
+    @Query("SELECT EXISTS(SELECT 1 FROM games UNION SELECT 1 FROM player_profile WHERE avatarUrl IS NOT NULL AND TRIM(avatarUrl) != '' UNION SELECT 1 FROM achievements WHERE retired = 0 AND iconUrl IS NOT NULL AND TRIM(iconUrl) != '')")
+    fun observeHasInventory(): Flow<Boolean>
+
     @Query("SELECT * FROM steam_asset_download_state WHERE id = 0")
     fun observeLastRun(): Flow<SteamAssetDownloadState?>
 
