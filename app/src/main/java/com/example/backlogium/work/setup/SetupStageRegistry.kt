@@ -67,7 +67,11 @@ class SetupStageRegistry @Inject constructor(
                     SetupStageProgress(
                         processed = data.getInt(SteamAssetDownloadWorker.KEY_PROCESSED, 0),
                         total = data.getInt(SteamAssetDownloadWorker.KEY_TOTAL, 0),
-                        label = data.getString(SteamAssetDownloadWorker.KEY_CURRENT_LABEL).orEmpty(),
+                        // No label: this worker's own is the asset's CDN URL, which is not
+                        // something to show a user — on device it wrapped to three lines of
+                        // `media.steampowered.com/...jpg` and told them nothing. The count is the
+                        // part that means anything here; the Settings asset card is where the
+                        // per-item detail belongs.
                     )
                 },
                 failureReason = "The artwork download didn't finish. Re-run it from Settings.",

@@ -99,8 +99,8 @@
 - [x] 10.3 On device: onboard with a deliberately wrong API key and confirm the message names the key, not the SteamID
 - [ ] 10.4 On device: onboard with a valid key and a nonexistent SteamID and confirm the message names the profile
 - [x] 10.5 On device in airplane mode: confirm the failure offers retry and does not present the credentials as invalid
-- [ ] 10.6 On device: complete onboarding with all stages selected and confirm sync progress shows in-screen and the two detached stages appear as separate notifications
-- [ ] 10.7 Leave the setup screen mid-way and confirm the detached stages continue and remain observable
-- [ ] 10.8 Background the app during a detached stage and kill its process with `adb shell am kill com.example.backlogium`, confirming the stage continues — **not** `am force-stop`, which puts the package in Android's stopped state where WorkManager is suspended until the user relaunches, and therefore tests nothing about ordinary process death
+- [x] 10.6 On device: complete onboarding with all stages selected and confirm sync progress shows in-screen and the two detached stages appear as separate notifications
+- [x] 10.7 Leave the setup screen mid-way and confirm the detached stages continue and remain observable
+- [x] 10.8 Background the app during a detached stage and kill its process with `adb shell am kill com.example.backlogium`, confirming the stage continues — **not** `am force-stop`, which puts the package in Android's stopped state where WorkManager is suspended until the user relaunches, and therefore tests nothing about ordinary process death
 - [ ] 10.9 Decline setup and confirm the app is fully usable, then run setup from Settings and confirm the same checklist appears with nothing selected
-- [ ] 10.10 Force one stage to fail and confirm the others complete and the summary attributes the failure
+- [x] 10.10 Force one stage to fail and confirm the others complete and the summary attributes the failure

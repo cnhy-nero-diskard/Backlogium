@@ -120,6 +120,12 @@ class HltbRefreshWorker @AssistedInject constructor(
             .setProgress(total, done, total <= 0)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            // The system clears this if nothing refreshes it within the window. [clearProgressNotification]
+            // handles every ordinary ending, but it runs in a `finally`, and abrupt process death
+            // executes no `finally` — observed on device, where a SIGKILL mid-sweep left a "48 / 306"
+            // ongoing notification standing with no work behind it. Every processed item re-posts
+            // this, so the window is continuously renewed while the sweep is actually alive.
+            .setTimeoutAfter(PROGRESS_STALE_AFTER_MS)
             .build()
         NotificationManagerCompat.from(applicationContext).notify(PROGRESS_NOTIFICATION_ID, notification)
     }
@@ -189,6 +195,15 @@ class HltbRefreshWorker @AssistedInject constructor(
         /** Own channel and own id, so no other stage's progress can overwrite this one's. */
         private const val PROGRESS_CHANNEL_ID = "hltb_refresh_progress"
         private const val PROGRESS_NOTIFICATION_ID = 4202
+
+        /**
+         * How long the progress notification may go unrefreshed before the system clears it.
+         *
+         * Comfortably longer than the repository's inter-request pacing, so a slow lookup never
+         * makes a live sweep's notification vanish, and short enough that one orphaned by process
+         * death does not sit there misreporting for long.
+         */
+        private const val PROGRESS_STALE_AFTER_MS = 3 * 60 * 1000L
     }
 }
 

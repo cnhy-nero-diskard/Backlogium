@@ -192,17 +192,27 @@ private fun OutcomeBadge(stage: SetupStageUi) {
     }
 }
 
-/** The per-stage completion summary. Never "setup failed" — the stages are unrelated. */
+/**
+ * The per-stage completion summary. Never "setup failed" — the stages are unrelated, and at most one
+ * of them is what went wrong.
+ *
+ * The per-stage lines appear only once the run has finished. Rendering them mid-run listed every
+ * unstarted stage as "not run" beneath rows that were already showing the same thing live, which on
+ * device read as a summary of nothing. While stages are still going, the note that they continue in
+ * the background is the only part worth saying.
+ */
 @Composable
 fun SetupSummary(state: SetupUiState, modifier: Modifier = Modifier) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            text = if (state.detachedStillRunning) "Setup started" else "Setup complete",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-        )
-        setupSummaryLines(state.stages).forEach { line ->
-            Text(text = line, style = MaterialTheme.typography.bodySmall)
+        if (state.finished) {
+            Text(
+                text = "Setup complete",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            setupSummaryLines(state.stages).forEach { line ->
+                Text(text = line, style = MaterialTheme.typography.bodySmall)
+            }
         }
         if (state.detachedStillRunning) {
             Text(
