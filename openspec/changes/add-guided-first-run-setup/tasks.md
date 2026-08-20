@@ -97,7 +97,7 @@
 - [x] 10.1 `./gradlew :app:testDebugUnitTest :gamification:test`
 - [x] 10.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
 - [x] 10.3 On device: onboard with a deliberately wrong API key and confirm the message names the key, not the SteamID
-- [ ] 10.4 On device: onboard with a valid key and a nonexistent SteamID and confirm the message names the profile
+- [x] 10.4 On device: onboard with a valid key and a nonexistent SteamID and confirm the message names the profile
 - [x] 10.5 On device in airplane mode: confirm the failure offers retry and does not present the credentials as invalid
 - [x] 10.6 On device: complete onboarding with all stages selected and confirm sync progress shows in-screen and the two detached stages appear as separate notifications
 - [x] 10.7 Leave the setup screen mid-way and confirm the detached stages continue and remain observable
