@@ -9,10 +9,12 @@ import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsSaveResult
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.SteamIdResolution
+import com.example.backlogium.work.setup.SetupCoordinator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
@@ -121,6 +123,7 @@ class OnboardingViewModel @Inject constructor(
     private val credentials: CredentialsRepository,
     private val backupRepository: BackupRepository,
     private val accountChange: AccountChangeCoordinator,
+    private val setup: SetupCoordinator,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
@@ -143,10 +146,16 @@ class OnboardingViewModel @Inject constructor(
         viewModelScope.launch {
             val current = credentials.currentCredentials()
             if (current is CredentialsState.Configured) {
+                // Configured *and* still owing setup means this flow is a first run resumed after
+                // the process died on the setup step — not an edit. Sending it back to step 1 would
+                // ask a user who has already verified their credentials to re-enter them.
+                val resumingFirstRun = setup.firstRunSetupActive.first()
+                presentsSetup = resumingFirstRun
                 _uiState.update {
                     it.copy(
                         hasExistingKey = true,
                         steamIdInput = current.steamId,
+                        step = if (resumingFirstRun) OnboardingStep.SETUP else it.step,
                     )
                 }
             } else {
@@ -227,7 +236,7 @@ class OnboardingViewModel @Inject constructor(
     private suspend fun persist(apiKey: String, steamId: String) {
         _uiState.update { it.copy(saving = true) }
         when (val result = credentials.save(apiKey = apiKey, steamId = steamId)) {
-            CredentialsSaveResult.Saved -> _uiState.update { it.afterCredentialsSaved() }
+            CredentialsSaveResult.Saved -> moveOnFromCredentials()
 
             is CredentialsSaveResult.IdentityChanged -> {
                 pendingAccountChange = PendingAccountChange(apiKey, result.incomingSteamId)
@@ -247,19 +256,34 @@ class OnboardingViewModel @Inject constructor(
     /**
      * Where the flow goes once credentials are stored: into setup on a first configuration, so a
      * newly configured install is populated rather than empty, and straight out on an edit.
+     *
+     * On a first configuration the takeover is claimed durably *before* the step is shown. From this
+     * point on the install is configured, so `configured == false` no longer holds the onboarding
+     * surface up, and a process killed on the setup step would otherwise cold-launch straight into
+     * an empty app with the setup it was midway through silently dropped.
      */
-    private fun OnboardingUiState.afterCredentialsSaved(): OnboardingUiState =
+    private suspend fun moveOnFromCredentials() {
         if (presentsSetup) {
-            copy(saving = false, step = OnboardingStep.SETUP)
+            setup.claimFirstRunSetup()
+            _uiState.update { it.copy(saving = false, step = OnboardingStep.SETUP) }
         } else {
-            copy(saving = false, completed = true)
+            _uiState.update { it.copy(saving = false, completed = true) }
         }
+    }
 
     /**
      * Leave the flow after setup has completed or been declined. Credentials stay verified and
      * stored either way — declining setup must never invalidate them.
+     *
+     * The durable claim is released before `completed` is reported, not alongside it: the host reads
+     * both, and clearing them out of order would flash Home behind a takeover that is still up.
      */
-    fun onSetupDone() = _uiState.update { it.copy(completed = true) }
+    fun onSetupDone() {
+        viewModelScope.launch {
+            setup.releaseFirstRunSetup()
+            _uiState.update { it.copy(completed = true) }
+        }
+    }
 
     /** Declining is a complete no-op: the repository has not written either credential. */
     fun declineIdentityChange() {
@@ -312,7 +336,8 @@ class OnboardingViewModel @Inject constructor(
                 accountChange.apply(apiKey = pending.apiKey, steamId = pending.steamId)
                 credentials.refresh()
                 pendingAccountChange = null
-                _uiState.update { it.copy(identityChange = null).afterCredentialsSaved() }
+                _uiState.update { it.copy(identityChange = null) }
+                moveOnFromCredentials()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {

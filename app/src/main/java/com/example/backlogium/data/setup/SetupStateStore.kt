@@ -34,6 +34,17 @@ interface SetupStateStore {
     /** True once setup has been completed or declined at least once. Gates nothing; informational. */
     val completedFlow: Flow<Boolean>
 
+    /**
+     * True from the moment a first configuration persists its credentials until the first-run setup
+     * surface is dismissed. This is the durable half of the onboarding takeover: saved-instance
+     * state survives rotation but not abrupt process death, and after credentials are stored a cold
+     * launch has no other way to tell "configured, setup still owed" from "configured long ago".
+     *
+     * Absent for every install that predates this flag, which is the right answer for them: they are
+     * configured and were never shown a setup step, so they must not be sent to one.
+     */
+    val firstRunSetupActiveFlow: Flow<Boolean>
+
     /** Every stored per-stage outcome, keyed by stage id, including ids this build may not know. */
     suspend fun storedOutcomes(): Map<String, SetupOutcome>
 
@@ -45,6 +56,18 @@ interface SetupStateStore {
     suspend fun storedOptIns(): Map<String, Boolean>
     /** The stage whose WorkManager job may still be running after process death. */
     suspend fun storedActiveStage(): ActiveSetupStage?
+
+    /**
+     * Opens a run: marks [firstStageId] active and resets *every* stage in [selectedStageIds] to
+     * [SetupOutcome.NeverRun], in one edit.
+     *
+     * Resetting the whole selection rather than only the first stage is what makes recovery after
+     * process death correct. Recovery skips a selected stage whose stored outcome is already
+     * terminal, so a stage left `Succeeded` by an earlier run would be read as "already done in this
+     * run" and silently never re-run — a Settings re-run of two stages that died during the first
+     * would drop the second.
+     */
+    suspend fun beginRun(firstStageId: String, selectedStageIds: Set<String>)
 
     /** Atomically marks a new stage attempt and clears any previous WorkManager id. */
     suspend fun markStageStarted(
@@ -62,6 +85,8 @@ interface SetupStateStore {
     suspend fun writeOptIn(stageId: String, optIn: Boolean)
 
     suspend fun markCompleted()
+
+    suspend fun setFirstRunSetupActive(active: Boolean)
 }
 
 private val Context.setupDataStore by preferencesDataStore(name = "setup")
@@ -83,6 +108,10 @@ class DataStoreSetupStateStore @Inject constructor(
 
     override val completedFlow: Flow<Boolean> = context.setupDataStore.data.map { prefs ->
         prefs[COMPLETED_KEY] ?: false
+    }
+
+    override val firstRunSetupActiveFlow: Flow<Boolean> = context.setupDataStore.data.map { prefs ->
+        prefs[FIRST_RUN_ACTIVE_KEY] ?: false
     }
 
     override suspend fun storedOutcomes(): Map<String, SetupOutcome> {
@@ -115,6 +144,16 @@ class DataStoreSetupStateStore @Inject constructor(
             workId = prefs[ACTIVE_WORK_KEY],
             selectedStageIds = prefs[ACTIVE_SELECTION_KEY].orEmpty(),
         )
+    }
+
+    override suspend fun beginRun(firstStageId: String, selectedStageIds: Set<String>) {
+        context.setupDataStore.edit { prefs ->
+            prefs[ACTIVE_STAGE_KEY] = firstStageId
+            prefs[ACTIVE_SELECTION_KEY] = selectedStageIds
+            prefs.remove(ACTIVE_WORK_KEY)
+            val encodedNeverRun = encodeSetupOutcome(SetupOutcome.NeverRun)
+            selectedStageIds.forEach { id -> prefs[outcomeKey(id)] = encodedNeverRun }
+        }
     }
 
     override suspend fun markStageStarted(
@@ -157,6 +196,12 @@ class DataStoreSetupStateStore @Inject constructor(
         context.setupDataStore.edit { prefs -> prefs[COMPLETED_KEY] = true }
     }
 
+    override suspend fun setFirstRunSetupActive(active: Boolean) {
+        context.setupDataStore.edit { prefs ->
+            if (active) prefs[FIRST_RUN_ACTIVE_KEY] = true else prefs.remove(FIRST_RUN_ACTIVE_KEY)
+        }
+    }
+
     private companion object {
         const val OUTCOME_PREFIX = "stage_outcome_"
         const val OPT_IN_PREFIX = "stage_opt_in_"
@@ -164,6 +209,7 @@ class DataStoreSetupStateStore @Inject constructor(
         val ACTIVE_SELECTION_KEY = stringSetPreferencesKey("active_stage_selection")
         val ACTIVE_WORK_KEY = stringPreferencesKey("active_work_id")
         val COMPLETED_KEY = booleanPreferencesKey("setup_completed")
+        val FIRST_RUN_ACTIVE_KEY = booleanPreferencesKey("first_run_setup_active")
 
         fun outcomeKey(stageId: String): Preferences.Key<String> =
             stringPreferencesKey(OUTCOME_PREFIX + stageId)

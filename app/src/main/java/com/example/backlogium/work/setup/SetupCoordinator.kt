@@ -6,6 +6,7 @@ import com.example.backlogium.di.ApplicationScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -63,6 +64,13 @@ class SetupCoordinator @Inject constructor(
 ) {
     private val _state = MutableStateFlow(SetupRunState())
     val state: StateFlow<SetupRunState> = _state.asStateFlow()
+
+    /**
+     * Whether the app still owes the user a first-run setup surface. Durable, so the takeover is
+     * restored on a cold launch after the process is killed mid-setup — at which point credentials
+     * are already stored and nothing else distinguishes that install from a long-configured one.
+     */
+    val firstRunSetupActive: Flow<Boolean> = store.firstRunSetupActiveFlow
 
     /** Serializes runs so two surfaces cannot drive the loop at the same time. */
     private val runLock = Mutex()
@@ -140,7 +148,10 @@ class SetupCoordinator @Inject constructor(
                 }
                 if (toRun.isNotEmpty()) {
                     // Establish the durable recovery point before the first enqueue can happen.
-                    store.markStageStarted(toRun.first().id, runIds)
+                    // Every stage in the run is reset here, not just the first: recovery skips a
+                    // selected stage that already holds a terminal outcome, so a stage left
+                    // `Succeeded` by an earlier run would be mistaken for one this run finished.
+                    store.beginRun(toRun.first().id, runIds)
                 } else {
                     store.clearActiveStage()
                 }
@@ -180,6 +191,16 @@ class SetupCoordinator @Inject constructor(
 
     /** Decline setup: nothing runs, every stage is recorded skipped, and the app is fully usable. */
     fun skipAll() = start(emptySet(), recordUnselectedAsSkipped = true)
+
+    /**
+     * Claim the first-run takeover, as credentials are persisted on a first configuration. Suspends
+     * so the caller can advance the flow only once the claim is durable — otherwise a kill in the
+     * gap would leave a configured install with no record that setup was still owed.
+     */
+    suspend fun claimFirstRunSetup() = store.setFirstRunSetupActive(true)
+
+    /** Release the takeover once the user leaves the first-run setup surface, run or declined. */
+    suspend fun releaseFirstRunSetup() = store.setFirstRunSetupActive(false)
 
     /**
      * Reconcile the stage marker left by an older process, then continue any later selected stages

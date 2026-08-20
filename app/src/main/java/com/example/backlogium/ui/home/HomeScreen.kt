@@ -148,12 +148,16 @@ fun HomeScreen(
     // itself, not by `configured` flipping. Saving credentials flips it *mid-flow* — the flow
     // continues into first-run setup afterwards — so tearing the takeover down there would
     // dismantle the setup step in the same frame it appeared.
-    // This takeover must survive Activity recreation after credentials become configured. A plain
-    // remember would reset in that window and expose the app before the setup run is finished.
+    //
+    // Two latches, because one cannot cover both windows. `state.firstRunSetupActive` is durable and
+    // is what restores the takeover on a cold launch after the process is killed mid-setup, when
+    // credentials are already stored. It is written asynchronously as they are stored, so the
+    // saved-instance latch below holds the surface across an Activity recreation in the gap before
+    // that write lands — and across the gap after it is cleared, before `completed` is reported.
     var onboardingActive by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(state.configured) { if (!state.configured) onboardingActive = true }
 
-    if (!state.configured || onboardingActive) {
+    if (!state.configured || state.firstRunSetupActive || onboardingActive) {
         // Full-screen onboarding takeover replaces the old dead-end "not configured" message.
         OnboardingScreen(onCompleted = { onboardingActive = false })
         return

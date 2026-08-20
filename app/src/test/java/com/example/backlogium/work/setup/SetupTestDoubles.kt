@@ -14,6 +14,7 @@ class FakeSetupStateStore(
 ) : SetupStateStore {
 
     private val completedState = MutableStateFlow(false)
+    private val firstRunActiveState = MutableStateFlow(false)
 
     val outcomes: Map<String, SetupOutcome> get() = initialOutcomes
     val optIns: Map<String, Boolean> get() = initialOptIns
@@ -22,11 +23,20 @@ class FakeSetupStateStore(
 
     override val completedFlow: Flow<Boolean> = completedState
 
+    override val firstRunSetupActiveFlow: Flow<Boolean> = firstRunActiveState
+
+    val firstRunSetupActive: Boolean get() = firstRunActiveState.value
+
     override suspend fun storedOutcomes(): Map<String, SetupOutcome> = initialOutcomes.toMap()
 
     override suspend fun storedOptIns(): Map<String, Boolean> = initialOptIns.toMap()
 
     override suspend fun storedActiveStage(): ActiveSetupStage? = activeStage
+
+    override suspend fun beginRun(firstStageId: String, selectedStageIds: Set<String>) {
+        activeStage = ActiveSetupStage(firstStageId, null, selectedStageIds)
+        selectedStageIds.forEach { initialOutcomes[it] = SetupOutcome.NeverRun }
+    }
 
     override suspend fun markStageStarted(
         stageId: String,
@@ -54,6 +64,10 @@ class FakeSetupStateStore(
 
     override suspend fun markCompleted() {
         completedState.value = true
+    }
+
+    override suspend fun setFirstRunSetupActive(active: Boolean) {
+        firstRunActiveState.value = active
     }
 }
 

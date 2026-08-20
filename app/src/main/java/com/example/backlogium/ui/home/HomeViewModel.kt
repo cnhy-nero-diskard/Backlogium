@@ -28,6 +28,7 @@ import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.ProgressEvent
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RuleConfig
+import com.example.backlogium.work.setup.SetupCoordinator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import javax.inject.Inject
@@ -43,6 +44,12 @@ import kotlinx.coroutines.launch
 data class HomeUiState(
     val loading: Boolean = true,
     val configured: Boolean = true,
+    /**
+     * True while a first configuration still owes the user the setup step. Durable state, so the
+     * onboarding takeover is restored after an abrupt process death — by then credentials are stored
+     * and [configured] alone can no longer tell a half-finished first run from a settled install.
+     */
+    val firstRunSetupActive: Boolean = false,
     val level: Int = 1,
     val xpIntoLevel: Int = 0,
     val xpForNext: Int = 0,
@@ -133,6 +140,7 @@ class HomeViewModel @Inject constructor(
     private val achievementRepository: AchievementRepository,
     private val personalPaceRepository: PersonalPaceRepository,
     private val progressEventRepository: ProgressEventRepository,
+    private val setupCoordinator: SetupCoordinator,
 ) : ViewModel() {
 
     /**
@@ -187,6 +195,8 @@ class HomeViewModel @Inject constructor(
             isSyncing = isSyncing,
             liveMonitoringAvailability = data.liveMonitoringAvailability,
         )
+    }.combine(setupCoordinator.firstRunSetupActive) { state, firstRunActive ->
+        state.copy(firstRunSetupActive = firstRunActive)
     }
 
     /**

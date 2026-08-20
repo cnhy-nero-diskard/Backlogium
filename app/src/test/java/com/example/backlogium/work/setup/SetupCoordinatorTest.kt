@@ -2,6 +2,8 @@ package com.example.backlogium.work.setup
 
 import com.example.backlogium.data.setup.ActiveSetupStage
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -294,6 +296,97 @@ class SetupCoordinatorTest {
             assertEquals(SetupOutcome.Succeeded, store.outcomes["assets"])
             assertNull(store.active)
             assertTrue(subject.state.value.finished)
+        }
+
+    @Test
+    fun aRunResetsEveryStagesStoredOutcomeBeforeTheFirstOneStarts() =
+        runTest(StandardTestDispatcher()) {
+            val held = FakeStageRunner().also { it.autoComplete = false }
+            val store = FakeSetupStateStore(
+                initialOutcomes = mutableMapOf(
+                    "a" to SetupOutcome.Succeeded,
+                    "b" to SetupOutcome.Succeeded,
+                ),
+            )
+            val subject = coordinator(
+                listOf(fakeStage("a", held), fakeStage("b")),
+                store,
+                this,
+            )
+
+            subject.start(setOf("a", "b"), recordUnselectedAsSkipped = false)
+            advanceUntilIdle()
+
+            // Both selected stages are durably NeverRun while the first is still going. A stale
+            // `Succeeded` left on "b" here is what recovery would read as "already done this run".
+            assertEquals(SetupOutcome.NeverRun, store.outcomes["a"])
+            assertEquals(SetupOutcome.NeverRun, store.outcomes["b"])
+
+            held.gate.complete(Unit)
+            advanceUntilIdle()
+        }
+
+    @Test
+    fun recoveryRunsALaterSelectedStageThatSucceededInAnEarlierRun() =
+        runTest(StandardTestDispatcher()) {
+            val store = FakeSetupStateStore(
+                initialOutcomes = mutableMapOf(
+                    "a" to SetupOutcome.Succeeded,
+                    "b" to SetupOutcome.Succeeded,
+                ),
+            )
+
+            // The process that starts the re-run and dies while the first stage is still going.
+            val dyingProcess = TestScope(StandardTestDispatcher(testScheduler))
+            val held = FakeStageRunner().also { it.autoComplete = false }
+            SetupCoordinator(
+                FakeStageSource(listOf(fakeStage("a", held), fakeStage("b"))),
+                store,
+                dyingProcess,
+            ).start(setOf("a", "b"), recordUnselectedAsSkipped = false)
+            advanceUntilIdle()
+            dyingProcess.cancel()
+
+            val recoveredA = FakeStageRunner()
+            val recoveredB = FakeStageRunner()
+            val next = coordinator(
+                listOf(fakeStage("a", recoveredA), fakeStage("b", recoveredB)),
+                store,
+                this,
+            )
+            next.ensureLoaded()
+            advanceUntilIdle()
+
+            assertTrue("the stage the old process died on is resumed", recoveredA.started)
+            // The reported defect: "b" still held its previous run's Succeeded, so recovery read it
+            // as complete and the re-run silently dropped it.
+            assertTrue("a later selected stage is not skipped by a stale outcome", recoveredB.started)
+            assertEquals(SetupOutcome.Succeeded, store.outcomes["b"])
+            assertTrue(next.state.value.finished)
+        }
+
+    @Test
+    fun theFirstRunTakeoverIsClaimedDurablyAndReleasedOnlyWhenDismissed() =
+        runTest(StandardTestDispatcher()) {
+            val store = FakeSetupStateStore()
+            val subject = coordinator(listOf(fakeStage("a")), store, this)
+
+            assertFalse(
+                "an install that predates the flag is not sent to setup",
+                subject.firstRunSetupActive.first(),
+            )
+
+            subject.claimFirstRunSetup()
+            assertTrue(subject.firstRunSetupActive.first())
+
+            // Completing the run is not dismissing the surface: the user still has to leave it, and
+            // a process killed on the finished summary must come back to it.
+            subject.start(setOf("a"))
+            advanceUntilIdle()
+            assertTrue(subject.firstRunSetupActive.first())
+
+            subject.releaseFirstRunSetup()
+            assertFalse(subject.firstRunSetupActive.first())
         }
 
 }
