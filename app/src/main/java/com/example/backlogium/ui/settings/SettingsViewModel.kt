@@ -9,7 +9,11 @@ import com.example.backlogium.data.backup.BackupValidationProblem
 import com.example.backlogium.data.backup.ParsedBackup
 import com.example.backlogium.data.backup.SnapshotMeta
 import com.example.backlogium.data.credentials.maskApiKey
+import com.example.backlogium.data.local.dao.SteamAssetDao
+import com.example.backlogium.data.local.entity.SteamAssetDownloadState
+import com.example.backlogium.data.local.dao.SteamAssetStoredSummary
 import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.SettingsRepository
@@ -19,13 +23,19 @@ import com.example.backlogium.data.updates.UpdateCheckResult
 import com.example.backlogium.domain.UpdateRuleConfigUseCase
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
+import com.example.backlogium.ui.util.HapticIntent
 import com.example.backlogium.work.PresenceServiceStarter
 import com.example.backlogium.work.GenreEnrichmentStatus
+import com.example.backlogium.work.SteamAssetDownloadProgress
+import com.example.backlogium.work.SteamAssetDownloadStatus
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -62,6 +72,12 @@ data class SettingsUiState(
     val isSyncing: Boolean = false,
     val isReconciling: Boolean = false,
     val genreEnrichmentStatus: GenreEnrichmentStatus = GenreEnrichmentStatus.IDLE,
+    val steamAssetStatus: SteamAssetDownloadStatus = SteamAssetDownloadStatus.IDLE,
+    val steamAssetProgress: SteamAssetDownloadProgress? = null,
+    val storedSteamAssetCount: Int = 0,
+    val storedSteamAssetBytes: Long = 0L,
+    val lastSteamAssetRun: SteamAssetDownloadState? = null,
+    val hasSteamAssetInventory: Boolean = false,
     /** Explicit opt-in to poll Steam every 30 seconds before a game is detected. */
     val liveMonitorEnabled: Boolean = false,
     /** True once historical Steam playtime has been imported (one-time). */
@@ -121,6 +137,7 @@ class SettingsViewModel @Inject constructor(
     private val presenceServiceStarter: PresenceServiceStarter,
     private val syncScheduler: SyncScheduler,
     private val appUpdates: AppUpdateRepository,
+    private val steamAssetDao: SteamAssetDao,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -138,9 +155,22 @@ class SettingsViewModel @Inject constructor(
     private val snapshots = MutableStateFlow<List<SnapshotMeta>>(emptyList())
     private val updateCheckInProgress = MutableStateFlow(false)
     private val updateCheckMessage = MutableStateFlow<String?>(null)
+    private val _hapticIntents = MutableSharedFlow<HapticIntent>(extraBufferCapacity = 4)
+    val hapticIntents: SharedFlow<HapticIntent> = _hapticIntents.asSharedFlow()
 
     init {
         refreshSnapshots()
+    }
+
+    private val assetStoredState = combine(
+        steamAssetDao.observeStoredSummary(),
+        steamAssetDao.observeLastRun(),
+        steamAssetDao.observeHasInventory(),
+    ) { summary, lastRun, hasInventory ->
+        AssetStoredState(summary, lastRun, hasInventory)
+    }
+    private val assetWorkState = combine(syncScheduler.steamAssetDownloadStatus, syncScheduler.steamAssetDownloadProgress) { status, progress ->
+        status to progress
     }
 
     private val storedState = combine(
@@ -171,6 +201,15 @@ class SettingsViewModel @Inject constructor(
         state.copy(genreEnrichmentStatus = genreStatus)
     }.combine(profileRepository.reconciliationInProgress) { state, reconciling ->
         state.copy(isReconciling = reconciling)
+    }.combine(assetStoredState) { state, asset ->
+        state.copy(
+            storedSteamAssetCount = asset.summary.count,
+            storedSteamAssetBytes = asset.summary.bytes,
+            hasSteamAssetInventory = asset.hasInventory,
+            lastSteamAssetRun = asset.lastRun,
+        )
+    }.combine(assetWorkState) { state, asset ->
+        state.copy(steamAssetStatus = asset.first, steamAssetProgress = asset.second)
     }
 
     private val ruleLocalState = combine(
@@ -229,6 +268,10 @@ class SettingsViewModel @Inject constructor(
 
     fun syncNow() = profileRepository.syncNow()
 
+    fun downloadSteamAssets(mode: SteamAssetDownloadMode) = syncScheduler.downloadSteamAssets(mode)
+
+    fun cancelSteamAssetDownload() = syncScheduler.cancelSteamAssetDownload()
+
     /** Manual checks bypass the worker cadence but persist the same last-attempt timestamp. */
     fun checkForUpdates() {
         if (updateCheckInProgress.value) return
@@ -263,6 +306,7 @@ class SettingsViewModel @Inject constructor(
     /** Start only from this visible Settings interaction; disabling is observed by the service. */
     fun onLiveMonitorEnabledChanged(enabled: Boolean) = viewModelScope.launch {
         settings.setLiveMonitorEnabled(enabled)
+        _hapticIntents.tryEmit(HapticIntent.Toggle(enabled))
         if (enabled) presenceServiceStarter.startFromForeground(trigger = "settings")
     }
 
@@ -328,6 +372,7 @@ class SettingsViewModel @Inject constructor(
             updateRuleConfig.apply(pending.config)
             // Re-seed the draft from what was persisted, so the screen reflects storage again.
             draftEdit.value = null
+            _hapticIntents.tryEmit(HapticIntent.Confirm)
         }
     }
 
@@ -397,6 +442,7 @@ class SettingsViewModel @Inject constructor(
             backupRepository.importBackup(file)
             backupMessage.value = "Backup imported."
             refreshSnapshots()
+            _hapticIntents.tryEmit(HapticIntent.Confirm)
         }
     }
 
@@ -408,7 +454,19 @@ class SettingsViewModel @Inject constructor(
             backupRepository.importBackup(file)
             backupMessage.value = "Backup imported."
             refreshSnapshots()
+            _hapticIntents.tryEmit(HapticIntent.Confirm)
         }
+    }
+
+    /** Delete one retained automatic snapshot after the user confirms the action in the UI. */
+    fun onDeleteSnapshot(snapshot: SnapshotMeta) = runBackupOp {
+        if (backupRepository.deleteSnapshot(snapshot.fileName)) {
+            backupMessage.value = "Snapshot deleted."
+            _hapticIntents.tryEmit(HapticIntent.Confirm)
+        } else {
+            backupMessage.value = "That snapshot is no longer available."
+        }
+        refreshSnapshots()
     }
 
     fun onDismissMismatchImport() {
@@ -455,6 +513,12 @@ class SettingsViewModel @Inject constructor(
 
     private data class Local(val rule: RuleLocal, val backup: BackupLocal)
 }
+    private data class AssetStoredState(
+        val summary: SteamAssetStoredSummary,
+        val lastRun: SteamAssetDownloadState?,
+        val hasInventory: Boolean,
+    )
+
 
 /** Names what failed and where, rather than reporting only that the import failed (tasks.md 2.5). */
 private fun List<BackupValidationProblem>.describeRejection(): String {

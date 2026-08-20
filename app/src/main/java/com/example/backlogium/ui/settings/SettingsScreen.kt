@@ -29,10 +29,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,8 +50,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.data.backup.SnapshotMeta
 import com.example.backlogium.data.updates.AppUpdateState
 import com.example.backlogium.gamification.QuestMode
+import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.ui.util.UiFormat
+import com.example.backlogium.ui.util.playIfNotSilent
+import com.example.backlogium.ui.util.rememberHaptics
 import com.example.backlogium.work.GenreEnrichmentStatus
+import com.example.backlogium.work.SteamAssetDownloadStatus
 import compose.icons.TablerIcons
 import compose.icons.tablericons.BrandSteam
 import compose.icons.tablericons.ChevronDown
@@ -58,6 +64,7 @@ import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.Download
 import compose.icons.tablericons.Pencil
 import compose.icons.tablericons.Upload
+import kotlinx.coroutines.flow.collect
 
 /**
  * The app's administration surface: the Steam account, sync, data, and rule-configuration
@@ -77,6 +84,11 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val haptics = rememberHaptics()
+
+    LaunchedEffect(viewModel, haptics) {
+        viewModel.hapticIntents.collect(haptics::playIfNotSilent)
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
@@ -94,6 +106,8 @@ fun SettingsScreen(
             SettingsActions(
                 onSyncNow = viewModel::syncNow,
                 onReconcileNow = viewModel::reconcileNow,
+                onDownloadSteamAssets = viewModel::downloadSteamAssets,
+                onCancelSteamAssetDownload = viewModel::cancelSteamAssetDownload,
                 onLiveMonitorEnabledChanged = viewModel::onLiveMonitorEnabledChanged,
                 onFieldChanged = viewModel::onFieldChanged,
                 onQuestModeChanged = viewModel::onQuestModeChanged,
@@ -110,6 +124,7 @@ fun SettingsScreen(
                 onExportBackup = { exportLauncher.launch("backlogium-backup-${System.currentTimeMillis()}.json") },
                 onImportBackup = { importLauncher.launch(arrayOf("application/json")) },
                 onRestoreSnapshot = viewModel::onRestoreSnapshot,
+                onDeleteSnapshot = viewModel::onDeleteSnapshot,
                 onConfirmMismatchImport = viewModel::onConfirmMismatchImport,
                 onDismissMismatchImport = viewModel::onDismissMismatchImport,
                 onDismissBackupMessage = viewModel::onDismissBackupMessage,
@@ -124,6 +139,8 @@ fun SettingsScreen(
 data class SettingsActions(
     val onSyncNow: () -> Unit,
     val onReconcileNow: () -> Unit,
+    val onDownloadSteamAssets: (SteamAssetDownloadMode) -> Unit = {},
+    val onCancelSteamAssetDownload: () -> Unit = {},
     val onLiveMonitorEnabledChanged: (Boolean) -> Unit,
     val onFieldChanged: (RuleField, String) -> Unit,
     val onQuestModeChanged: (QuestMode) -> Unit,
@@ -140,6 +157,7 @@ data class SettingsActions(
     val onExportBackup: () -> Unit,
     val onImportBackup: () -> Unit,
     val onRestoreSnapshot: (SnapshotMeta) -> Unit,
+    val onDeleteSnapshot: (SnapshotMeta) -> Unit,
     val onConfirmMismatchImport: () -> Unit,
     val onDismissMismatchImport: () -> Unit,
     val onDismissBackupMessage: () -> Unit,
@@ -181,6 +199,13 @@ fun SettingsScreen(
             genreStatus = state.genreEnrichmentStatus,
             onSyncNow = actions.onSyncNow,
             onReconcileNow = actions.onReconcileNow,
+        )
+
+        SectionHeader("Offline Steam assets")
+        OfflineSteamAssetsCard(
+            state = state,
+            onStart = actions.onDownloadSteamAssets,
+            onCancel = actions.onCancelSteamAssetDownload,
         )
 
         if (!BuildConfig.DEBUG) {
@@ -657,6 +682,8 @@ private fun RuleChangeDialog(
  */
 @Composable
 private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
+    var deleteTarget by remember { mutableStateOf<SnapshotMeta?>(null) }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -718,11 +745,19 @@ private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
                             text = UiFormat.dateTime(snapshot.writtenAtMillis),
                             style = MaterialTheme.typography.bodySmall,
                         )
-                        TextButton(
-                            onClick = { actions.onRestoreSnapshot(snapshot) },
-                            enabled = !state.backupBusy,
-                        ) {
-                            Text("Restore")
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton(
+                                onClick = { actions.onRestoreSnapshot(snapshot) },
+                                enabled = !state.backupBusy,
+                            ) {
+                                Text("Restore")
+                            }
+                            TextButton(
+                                onClick = { deleteTarget = snapshot },
+                                enabled = !state.backupBusy,
+                            ) {
+                                Text("Delete")
+                            }
                         }
                     }
                 }
@@ -764,6 +799,27 @@ private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
             }
         }
+    }
+
+    deleteTarget?.let { snapshot ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Delete snapshot?") },
+            text = { Text("The snapshot from ${UiFormat.dateTime(snapshot.writtenAtMillis)} will be removed.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        deleteTarget = null
+                        actions.onDeleteSnapshot(snapshot)
+                    },
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
+            },
+        )
     }
 }
 

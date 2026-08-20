@@ -278,9 +278,10 @@ class HomeViewModel @Inject constructor(
                 )
             },
             pendingProgressEvent = pendingEvents.firstOrNull(),
-            pendingStreakBreak = pendingEvents.filterIsInstance<ProgressEvent.StreakBroken>().firstOrNull(),
-            pendingStreakMilestone = pendingEvents.filterIsInstance<ProgressEvent.StreakMilestone>()
-                .firstOrNull(),
+            // Present one durable event at a time. This keeps a queue of simultaneous events from
+            // producing concurrent overlays/animations or more than one haptic for one moment.
+            pendingStreakBreak = pendingEvents.firstOrNull() as? ProgressEvent.StreakBroken,
+            pendingStreakMilestone = pendingEvents.firstOrNull() as? ProgressEvent.StreakMilestone,
         )
         when (val nowPlaying = live.nowPlaying) {
             is NowPlaying.InGame -> withCards.copy(

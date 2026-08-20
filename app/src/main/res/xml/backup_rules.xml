@@ -8,4 +8,5 @@
     <exclude domain="sharedpref" path="." />
     <exclude domain="file" path="datastore" />
     <exclude domain="file" path="backup_snapshots" />
+    <exclude domain="file" path="steam_assets" />
 </full-backup-content>
