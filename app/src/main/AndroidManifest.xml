@@ -49,6 +49,11 @@
             android:foregroundServiceType="dataSync" />
 
         <!-- Receives PackageInstaller status and cleans the private APK after every terminal path. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
         <receiver
             android:name=".data.updates.UpdateInstallReceiver"
             android:exported="false" />
