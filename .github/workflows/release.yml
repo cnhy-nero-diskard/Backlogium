@@ -1,5 +1,7 @@
 name: Release
 
+run-name: Backlogium release ${{ github.ref_name }}
+
 on:
   push:
     tags:
@@ -11,6 +13,7 @@ jobs:
   #   2. the tag must be a valid vX.Y.Z version.
   # A tag push carries no branch, so we resolve branch membership from history.
   gate:
+    name: Validate Backlogium release ${{ github.ref_name }}
     runs-on: ubuntu-latest
     outputs:
       eligible: ${{ steps.check.outputs.eligible }}
@@ -52,6 +55,7 @@ jobs:
           fi
 
   release:
+    name: Publish Backlogium release ${{ github.ref_name }}
     needs: gate
     if: needs.gate.outputs.eligible == 'true'
     runs-on: ubuntu-latest
@@ -59,6 +63,51 @@ jobs:
       contents: write  # required to create the GitHub Release
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve previous release and collect pull requests
+        id: metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/collect_release_metadata.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --current-tag "$GITHUB_REF_NAME" \
+            --current-sha "$(git rev-list -n 1 "$GITHUB_REF_NAME")" \
+            --output "$RUNNER_TEMP/release-pull-requests.json" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Compose and validate release notes
+        id: notes
+        env:
+          CURRENT_TAG: ${{ github.ref_name }}
+          PREVIOUS_TAG: ${{ steps.metadata.outputs.previous_tag }}
+        run: |
+          set -euo pipefail
+          CURRENT_SHA="$(git rev-list -n 1 "$CURRENT_TAG")"
+          PREVIOUS_SHA=""
+          if [[ -n "$PREVIOUS_TAG" ]]; then
+            PREVIOUS_SHA="$(git rev-list -n 1 "$PREVIOUS_TAG")"
+          fi
+          VERSION_NAME="${CURRENT_TAG#v}"
+          MARKDOWN_PATH="$RUNNER_TEMP/Backlogium-${VERSION_NAME}-release-notes.md"
+          JSON_PATH="$RUNNER_TEMP/Backlogium-${VERSION_NAME}-release-notes.json"
+          python3 scripts/release_notes.py compose \
+            --current-tag "$CURRENT_TAG" \
+            --previous-tag "$PREVIOUS_TAG" \
+            --current-sha "$CURRENT_SHA" \
+            --previous-sha "$PREVIOUS_SHA" \
+            --prs-file "$RUNNER_TEMP/release-pull-requests.json" \
+            --markdown-output "$MARKDOWN_PATH" \
+            --json-output "$JSON_PATH"
+          python3 scripts/release_notes.py validate \
+            --expected-tag "$CURRENT_TAG" \
+            --markdown-input "$MARKDOWN_PATH" \
+            --json-input "$JSON_PATH"
+          echo "markdown_path=$MARKDOWN_PATH" >> "$GITHUB_OUTPUT"
+          echo "json_path=$JSON_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -99,7 +148,9 @@ jobs:
             echo "No release APK found." >&2
             exit 1
           fi
-          echo "path=$APK" >> "$GITHUB_OUTPUT"
+          VERSIONED_APK="$RUNNER_TEMP/Backlogium-${{ needs.gate.outputs.version_name }}.apk"
+          mv "$APK" "$VERSIONED_APK"
+          echo "path=$VERSIONED_APK" >> "$GITHUB_OUTPUT"
 
       - name: Create APK checksum
         id: checksum
@@ -114,9 +165,10 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.ref_name }}
+          name: Backlogium ${{ needs.gate.outputs.version_name }}
           tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
+          body_path: ${{ steps.notes.outputs.markdown_path }}
           files: |
             ${{ steps.apk.outputs.path }}
             ${{ steps.checksum.outputs.path }}
+            ${{ steps.notes.outputs.json_path }}
