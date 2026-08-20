@@ -90,6 +90,40 @@ class AppUpdateRepositoryTest {
         assertEquals((first as UpdateCheckResult.Available).update, second.update)
     }
 
+    @Test
+    fun validStructuredNotesEnhanceAnOtherwiseOfferableUpdate() = runTest {
+        val api = FakeReleaseApi().apply {
+            response = release("v1.8.0", includeStructuredNotes = true)
+            notesResponse = Response.success(notesJson().toResponseBody())
+        }
+        val store = FakeUpdateStateStore()
+
+        val result = repository(api, store, FakeTime(10_000L)).check(force = true)
+
+        val update = (result as UpdateCheckResult.Available).update
+        assertEquals("A readable update.", update.structuredNotes?.firstUserFacingItem())
+        assertEquals(update, store.state.first().available)
+    }
+
+    @Test
+    fun malformedOrOversizedStructuredNotesKeepTheLegacyOffer() = runTest {
+        listOf(
+            "not json".toResponseBody(),
+            "x".repeat(ReleaseNotesContract.MAX_DOWNLOAD_BYTES + 1).toResponseBody(),
+        ).forEach { notes ->
+            val api = FakeReleaseApi().apply {
+                response = release("v1.8.0", includeStructuredNotes = true)
+                notesResponse = Response.success(notes)
+            }
+
+            val result = repository(api, FakeUpdateStateStore(), FakeTime(10_000L)).check(force = true)
+
+            val update = (result as UpdateCheckResult.Available).update
+            assertEquals(null, update.structuredNotes)
+            assertEquals("Release notes", update.releaseNotes)
+        }
+    }
+
     private fun repository(
         api: FakeReleaseApi,
         store: FakeUpdateStateStore,
@@ -104,27 +138,55 @@ class AppUpdateRepositoryTest {
         time = time,
     )
 
-    private fun release(tag: String) = GitHubReleaseDto(
+    private fun release(tag: String, includeStructuredNotes: Boolean = false) = GitHubReleaseDto(
         tagName = tag,
         name = "Backlogium $tag",
         body = "Release notes",
-        assets = listOf(
-            GitHubReleaseAssetDto("app-release.apk", "https://example.test/app.apk", 10L),
-            GitHubReleaseAssetDto("app-release.apk.sha256", "https://example.test/app.sha256", 64L),
-        ),
+        assets = buildList {
+            add(GitHubReleaseAssetDto("app-release.apk", "https://example.test/app.apk", 10L))
+            add(GitHubReleaseAssetDto("app-release.apk.sha256", "https://example.test/app.sha256", 64L))
+            if (includeStructuredNotes) {
+                add(
+                    GitHubReleaseAssetDto(
+                        "Backlogium-${tag.removePrefix("v")}-release-notes.json",
+                        "https://example.test/notes.json",
+                        512L,
+                    ),
+                )
+            }
+        },
     )
 
     private inner class FakeReleaseApi : GitHubReleaseApi {
         var calls = 0
         var response: GitHubReleaseDto = release("v1.0.0")
         var failure: Throwable? = null
+        var notesResponse: Response<okhttp3.ResponseBody> = Response.success("".toResponseBody())
 
         override suspend fun latestRelease(): GitHubReleaseDto {
             calls++
             failure?.let { throw it }
             return response
         }
+
+        override suspend fun structuredNotes(url: String): Response<okhttp3.ResponseBody> =
+            notesResponse
     }
+
+    private fun notesJson() = """
+        {
+          "schema_version": 1,
+          "tag": "v1.8.0",
+          "sections": [
+            {"key":"features","title":"Features","items":["A readable update."]},
+            {"key":"fixes","title":"Fixes","items":[]},
+            {"key":"performance","title":"Performance","items":[]},
+            {"key":"maintenance","title":"Maintenance","items":[]}
+          ],
+          "technical_details": [],
+          "full_changelog_url": null
+        }
+    """.trimIndent()
 
     private class FakeUpdateStateStore(initial: AppUpdateState = AppUpdateState()) : UpdateStateStore {
         private val stateFlow = MutableStateFlow(initial)

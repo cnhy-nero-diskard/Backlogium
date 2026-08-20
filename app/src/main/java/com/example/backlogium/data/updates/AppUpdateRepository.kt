@@ -1,9 +1,14 @@
 package com.example.backlogium.data.updates
 
 import com.example.backlogium.domain.TimeProvider
+import java.io.ByteArrayOutputStream
+import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
+import okhttp3.ResponseBody
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -47,6 +52,7 @@ class DataStoreAppUpdateRepository @Inject constructor(
             val response = api.latestRelease()
             val parsed = ReleaseVersion.parse(response.tagName)
             val available = response.toAvailableUpdate(installed.versionCode)
+                ?.let { enrichWithStructuredNotes(it) }
             val reason = when {
                 response.draft || response.prerelease -> NoUpdateReason.DRAFT_OR_PRERELEASE
                 parsed == null -> NoUpdateReason.INVALID_RELEASE
@@ -79,5 +85,42 @@ class DataStoreAppUpdateRepository @Inject constructor(
     override suspend fun decline(tag: String) {
         dataStore.setDeclinedTag(tag)
         dataStore.clearInstallStatus()
+    }
+
+    private suspend fun enrichWithStructuredNotes(update: AvailableUpdate): AvailableUpdate {
+        val url = update.structuredNotesUrl ?: return update
+        return try {
+            val response = api.structuredNotes(url)
+            if (!response.isSuccessful) return update
+            val body = response.body() ?: return update
+            if (body.contentLength() > ReleaseNotesContract.MAX_DOWNLOAD_BYTES) return update
+            val raw = readBounded(body) ?: return update
+            val notes = parseStructuredReleaseNotes(raw, update.tag) ?: return update
+            update.copy(structuredNotes = notes)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            // Notes are presentation enhancement only; APK/checksum availability is unchanged.
+            update
+        }
+    }
+
+    private suspend fun readBounded(body: ResponseBody): String? = withContext(Dispatchers.IO) {
+        body.use { responseBody ->
+            responseBody.byteStream().use { input ->
+                val output = ByteArrayOutputStream(ReleaseNotesContract.MAX_DOWNLOAD_BYTES)
+                val buffer = ByteArray(8 * 1024)
+                var total = 0
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    if (count == 0) continue
+                    total += count
+                    if (total > ReleaseNotesContract.MAX_DOWNLOAD_BYTES) return@withContext null
+                    output.write(buffer, 0, count)
+                }
+                output.toByteArray().toString(StandardCharsets.UTF_8)
+            }
+        }
     }
 }
