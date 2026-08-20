@@ -2,9 +2,7 @@ package com.example.backlogium.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -88,19 +86,15 @@ internal fun OfflineSteamAssetsCard(
         AlertDialog(
             onDismissRequest = { choosingMode = false },
             title = { Text("Download Steam assets") },
-            text = { Text("Choose whether to keep valid files or re-download every known Steam image.") },
+            text = { Text("Choose a mode. Refresh all re-downloads every known image.") },
             confirmButton = {
                 TextButton(onClick = { choosingMode = false; onStart(SteamAssetDownloadMode.DOWNLOAD_MISSING) }) {
                     Text("Download missing assets")
                 }
             },
             dismissButton = {
-                Column {
-                    TextButton(onClick = { choosingMode = false; onStart(SteamAssetDownloadMode.REFRESH_ALL) }) {
-                        Text("Refresh all assets")
-                    }
-                    Spacer(Modifier.height(2.dp))
-                    TextButton(onClick = { choosingMode = false }) { Text("Cancel") }
+                TextButton(onClick = { choosingMode = false; onStart(SteamAssetDownloadMode.REFRESH_ALL) }) {
+                    Text("Refresh all assets")
                 }
             },
         )
