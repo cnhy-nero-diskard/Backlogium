@@ -7,6 +7,12 @@
 <!-- Bullet the notable changes -->
 -
 
+## Release note
+
+<!-- Add 1-2 short bullets describing the user-visible result in plain language. Do not mention
+implementation details. If this PR changes nothing users see, write exactly `None`. -->
+-
+
 ## Testing
 
 <!-- How was this verified? -->
