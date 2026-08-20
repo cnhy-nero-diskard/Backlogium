@@ -71,6 +71,7 @@ import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.data.repo.HltbRefreshOutcome
+import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.gamification.Gamification
@@ -94,6 +95,8 @@ import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.Bolt
 import compose.icons.tablericons.Check
 import compose.icons.tablericons.Checkbox
+import compose.icons.tablericons.ChevronDown
+import compose.icons.tablericons.ChevronUp
 import compose.icons.tablericons.Clock
 import compose.icons.tablericons.DotsVertical
 import compose.icons.tablericons.PlayerPlay
@@ -289,7 +292,9 @@ fun LibraryScreen(
                     SectionHeader(
                         text = "Focus",
                         sort = state.focusSort,
+                        direction = state.focusSortDirection,
                         onSortChange = viewModel::setFocusSort,
+                        onDirectionChange = viewModel::setFocusSortDirection,
                     )
                 }
                 libraryGameItems(
@@ -319,7 +324,9 @@ fun LibraryScreen(
                     SectionHeader(
                         text = "Your games",
                         sort = state.librarySort,
+                        direction = state.librarySortDirection,
                         onSortChange = viewModel::setLibrarySort,
+                        onDirectionChange = viewModel::setLibrarySortDirection,
                     )
                 }
                 libraryGameItems(
@@ -842,7 +849,9 @@ private fun SelectionBar(
 private fun SectionHeader(
     text: String,
     sort: LibrarySortKey,
+    direction: LibrarySortDirection,
     onSortChange: (LibrarySortKey) -> Unit,
+    onDirectionChange: (LibrarySortDirection) -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -856,43 +865,80 @@ private fun SectionHeader(
             fontWeight = FontWeight.Bold,
             modifier = Modifier.weight(1f),
         )
-        SortControl(sort = sort, onSortChange = onSortChange)
+        SortControl(
+            sort = sort,
+            direction = direction,
+            onSortChange = onSortChange,
+            onDirectionChange = onDirectionChange,
+        )
     }
 }
 
-/** Compact menu showing the active key by name — the sort labels name what they order by. */
+/**
+ * Compact menu showing the active key by name — the sort labels name what they order by — plus a
+ * separate toggle for which end comes first.
+ *
+ * The two are distinct controls rather than one menu of eight options: the menu answers "by what",
+ * the chevron answers "which end first". Folding the second into the first would make "Name" and
+ * "Name (Z→A)" peers in a list where they are not, and would cost two taps to do what one does.
+ */
 @Composable
-private fun SortControl(sort: LibrarySortKey, onSortChange: (LibrarySortKey) -> Unit) {
+private fun SortControl(
+    sort: LibrarySortKey,
+    direction: LibrarySortDirection,
+    onSortChange: (LibrarySortKey) -> Unit,
+    onDirectionChange: (LibrarySortDirection) -> Unit,
+) {
     var expanded by remember { mutableStateOf(false) }
-    Box {
-        TextButton(onClick = { expanded = true }) {
-            Icon(
-                imageVector = TablerIcons.ArrowsSort,
-                contentDescription = "Change sort order",
-                modifier = Modifier.size(16.dp),
-            )
-            Spacer(Modifier.width(4.dp))
-            Text(librarySortLabel(sort), style = MaterialTheme.typography.labelLarge)
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            LibrarySortKey.entries.forEach { key ->
-                DropdownMenuItem(
-                    text = { Text(librarySortLabel(key)) },
-                    onClick = {
-                        onSortChange(key)
-                        expanded = false
-                    },
-                    trailingIcon = {
-                        if (key == sort) {
-                            Icon(
-                                imageVector = TablerIcons.Check,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
-                    },
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box {
+            TextButton(onClick = { expanded = true }) {
+                Icon(
+                    imageVector = TablerIcons.ArrowsSort,
+                    contentDescription = "Change sort order",
+                    modifier = Modifier.size(16.dp),
                 )
+                Spacer(Modifier.width(4.dp))
+                Text(librarySortLabel(sort), style = MaterialTheme.typography.labelLarge)
             }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                LibrarySortKey.entries.forEach { key ->
+                    DropdownMenuItem(
+                        text = { Text(librarySortLabel(key)) },
+                        onClick = {
+                            onSortChange(key)
+                            expanded = false
+                        },
+                        trailingIcon = {
+                            if (key == sort) {
+                                Icon(
+                                    imageVector = TablerIcons.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        },
+                    )
+                }
+            }
+        }
+        // Tapping flips without opening the menu: reversing a list is one gesture, not a
+        // trip through a picker.
+        IconButton(
+            onClick = { onDirectionChange(direction.flipped()) },
+            modifier = Modifier.size(32.dp),
+        ) {
+            Icon(
+                imageVector = when (direction) {
+                    LibrarySortDirection.ASCENDING -> TablerIcons.ChevronUp
+                    LibrarySortDirection.DESCENDING -> TablerIcons.ChevronDown
+                },
+                // Names where the list stands *and* what the tap will do — a bare chevron on its
+                // own says neither.
+                contentDescription = "Sorted ${librarySortDirectionLabel(sort, direction)}; " +
+                    "tap for ${librarySortDirectionLabel(sort, direction.flipped())}",
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }
@@ -1038,7 +1084,9 @@ private fun LibraryGameRow(
             status = game.hltbStatus,
             op = game.fetchOp,
             isCurrentlyPlaying = game.isCurrentlyPlaying,
-            showHltbStatus = density.showsBadges,
+            // The HLTB match badge is part of the completion picture rather than a score badge,
+            // so it rides the same rung as the progress bar below the name.
+            showHltbStatus = density.showsCompletionProgress,
         )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -1058,11 +1106,13 @@ private fun LibraryGameRow(
                     completionistMinutes = game.completionistMinutes,
                 )
             }
-            if (density.showsBadges) {
+            if (density.showsAchievementCount || density.showsXpContribution) {
                 GameBadges(
                     unlocked = game.achievementUnlocked,
                     total = game.achievementTotal,
                     xpContributed = game.xpContributed,
+                    showAchievementCount = density.showsAchievementCount,
+                    showXpContribution = density.showsXpContribution,
                 )
             }
         }
@@ -1101,7 +1151,10 @@ private fun LibraryGameCell(
     Card(
         modifier = modifier
             .padding(vertical = 4.dp)
-            .aspectRatio(if (compact) 0.62f else 0.60f)
+            // GRID is slightly taller than it was: its body gained the achievement-count line, and
+            // the hero capsule holds the remaining weight — so the tile grows rather than the
+            // artwork shrinking or the name truncating.
+            .aspectRatio(if (compact) 0.62f else 0.56f)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         shape = tileShape,
         border = BorderStroke(if (selected) 2.dp else 1.dp, borderColor),
@@ -1172,6 +1225,15 @@ private fun LibraryGameCell(
                     CompletionProgress(
                         playtimeMinutes = game.playtimeForever,
                         completionistMinutes = game.completionistMinutes,
+                    )
+                }
+                // The same label the list row carries, including its gold "100% Completed" pill —
+                // a completionist's scan target is the one badge worth the grid cell's last line.
+                if (density.showsAchievementCount) {
+                    AchievementCountLabel(
+                        unlocked = game.achievementUnlocked,
+                        total = game.achievementTotal,
+                        modifier = Modifier.padding(top = 3.dp),
                     )
                 }
             }
@@ -1559,7 +1621,13 @@ private fun selectionBorder(selected: Boolean): BorderStroke? =
  * every row can now also carry a progress bar.
  */
 @Composable
-private fun GameBadges(unlocked: Int?, total: Int?, xpContributed: Int) {
+private fun GameBadges(
+    unlocked: Int?,
+    total: Int?,
+    xpContributed: Int,
+    showAchievementCount: Boolean = true,
+    showXpContribution: Boolean = true,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1568,13 +1636,19 @@ private fun GameBadges(unlocked: Int?, total: Int?, xpContributed: Int) {
     ) {
         // fill = false: the achievement badge takes only what it needs, so a game with no
         // achievement data leaves the XP figure at the left rather than pushed to the far edge.
-        AchievementCountLabel(
-            unlocked = unlocked,
-            total = total,
-            modifier = Modifier.weight(1f, fill = false),
-        )
-        if (unlocked != null && total != null) Spacer(Modifier.width(8.dp))
-        XpContributionLabel(xpContributed)
+        if (showAchievementCount) {
+            AchievementCountLabel(
+                unlocked = unlocked,
+                total = total,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+        }
+        if (showXpContribution) {
+            if (showAchievementCount && unlocked != null && total != null) {
+                Spacer(Modifier.width(8.dp))
+            }
+            XpContributionLabel(xpContributed)
+        }
     }
 }
 

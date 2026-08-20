@@ -64,4 +64,40 @@ class BackupFileRoundTripTest {
 
         assertEquals(original, decoded)
     }
+
+    /**
+     * An export written before sort directions existed carries no direction fields at all, and must
+     * still decode rather than failing the whole import over an absent optional.
+     *
+     * That is the entire guarantee here. This block is export-only — see [BackupFile]'s doc — so
+     * there is deliberately no assertion about the app adopting these values on import: nothing
+     * reads them back, and a test claiming otherwise would document behaviour that does not exist.
+     */
+    @Test
+    fun sortBlockWithoutDirections_stillDecodes() {
+        val legacy = """{"focus":"NAME","library":"PLAYTIME"}"""
+
+        val decoded = json.decodeFromString(BackupLibrarySortPrefs.serializer(), legacy)
+
+        assertEquals("NAME", decoded.focus)
+        assertEquals("PLAYTIME", decoded.library)
+        assertEquals(null, decoded.focusDirection)
+        assertEquals(null, decoded.libraryDirection)
+    }
+
+    /** A direction present in the file survives the round trip verbatim, since it is a record. */
+    @Test
+    fun sortBlockWithDirections_roundTripsVerbatim() {
+        val original = BackupLibrarySortPrefs(
+            focus = "NAME",
+            library = "PLAYTIME",
+            focusDirection = "DESCENDING",
+            libraryDirection = "ASCENDING",
+        )
+
+        val encoded = json.encodeToString(BackupLibrarySortPrefs.serializer(), original)
+        val decoded = json.decodeFromString(BackupLibrarySortPrefs.serializer(), encoded)
+
+        assertEquals(original, decoded)
+    }
 }

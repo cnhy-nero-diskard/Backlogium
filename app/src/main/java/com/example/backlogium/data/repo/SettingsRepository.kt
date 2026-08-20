@@ -6,6 +6,7 @@ import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
+import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.domain.VersionedRuleConfig
 import com.example.backlogium.gamification.RuleConfig
@@ -60,6 +61,10 @@ interface SettingsRepository {
     suspend fun setFocusSort(key: LibrarySortKey)
 
     suspend fun setLibrarySort(key: LibrarySortKey)
+
+    suspend fun setFocusSortDirection(direction: LibrarySortDirection)
+
+    suspend fun setLibrarySortDirection(direction: LibrarySortDirection)
 
     /** Presentation preferences for the Library and collection overview, independently stored. */
     val libraryDensity: Flow<GameListDensity>
@@ -125,6 +130,12 @@ class DataStoreSettingsRepository @Inject constructor(
     override suspend fun setFocusSort(key: LibrarySortKey) = settings.setFocusSort(key)
 
     override suspend fun setLibrarySort(key: LibrarySortKey) = settings.setLibrarySort(key)
+
+    override suspend fun setFocusSortDirection(direction: LibrarySortDirection) =
+        settings.setFocusSortDirection(direction)
+
+    override suspend fun setLibrarySortDirection(direction: LibrarySortDirection) =
+        settings.setLibrarySortDirection(direction)
 
     override val libraryDensity: Flow<GameListDensity> = settings.libraryDensityFlow
 

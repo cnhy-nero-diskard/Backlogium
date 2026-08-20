@@ -53,8 +53,11 @@ unreachable.
   `ui/analytics/AnalyticsScreen.kt`, `ui/settings/SettingsScreen.kt`.
 - **Storage:** Two new Preferences DataStore keys for the per-list sort direction. No Room schema
   change, no migration.
-- **Backup:** `BackupFile`'s `librarySort` block gains two optional direction fields. Absent fields
-  restore as the existing fixed directions, so an older backup imports unchanged.
+- **Backup:** `BackupFile`'s `librarySort` block gains two optional direction fields, so an export
+  records which way each list was pointed. The block is export-only — `add-backup-restore` excludes
+  `ruleConfig`, `librarySortPrefs`, and `computed` from the merge engine deliberately — so absent
+  fields simply decode as absent; there is no restore path for this block to change. Making sort
+  preferences survive a restore is a change to that decision, not part of this one.
 - **Dependencies:** None. The density icons come from the Tabler set already in use.
 
 ## Non-goals

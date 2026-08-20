@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -50,6 +51,8 @@ import com.example.backlogium.ui.theme.rarityHalo
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.Bolt
+import compose.icons.tablericons.ChevronDown
+import compose.icons.tablericons.ChevronUp
 import compose.icons.tablericons.Clock
 import compose.icons.tablericons.Flame
 import compose.icons.tablericons.Trophy
@@ -846,15 +849,42 @@ private fun RarityBreakdownCard(
                 Spacer(Modifier.width(8.dp))
                 Text("Achievement rarity", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.weight(1f))
+                // A glyph rather than a word, for the same reason the display-density control is
+                // one: what is left of this row after the title and a four-digit count is about
+                // fifty dp, and any label yields to it. "Show rarest" ellipsized to "Sh…", and
+                // shortening it to "Rarest" only bought "Ra…" — a truncated word says nothing,
+                // while a chevron at a fixed size cannot be truncated at all. The count is the
+                // child that must survive intact, so the control is the one that gives way, and
+                // giving way now costs it nothing.
                 if (achievements.isNotEmpty()) {
-                    TextButton(onClick = { expanded = !expanded }) {
-                        Text(if (expanded) "Hide rarest" else "Show rarest")
+                    IconButton(
+                        onClick = { expanded = !expanded },
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (expanded) {
+                                TablerIcons.ChevronUp
+                            } else {
+                                TablerIcons.ChevronDown
+                            },
+                            contentDescription = if (expanded) {
+                                "Hide the rarest achievements"
+                            } else {
+                                "Show the rarest achievements"
+                            },
+                            modifier = Modifier.size(18.dp),
+                        )
                     }
                 }
                 Text(
+                    // A lifetime total a player might screenshot: pinned to one line and left
+                    // unabbreviated, since rounding it to fix a layout bug would smuggle a
+                    // presentation change in as a fix.
                     text = "${breakdown.total} unlocked",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false,
                 )
             }
             Text(

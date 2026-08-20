@@ -13,6 +13,7 @@ import com.example.backlogium.data.local.entity.RequestRouteTotals
 import com.example.backlogium.data.local.entity.SyncRun
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.GameListDensity
+import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.domain.TimeProvider
@@ -126,6 +127,11 @@ class PresenceServiceLifecycleTest {
         override val librarySort: Flow<LibrarySortPrefs> = MutableStateFlow(LibrarySortPrefs())
         override suspend fun setFocusSort(key: LibrarySortKey) = error("not used")
         override suspend fun setLibrarySort(key: LibrarySortKey) = error("not used")
+        override suspend fun setFocusSortDirection(direction: LibrarySortDirection) =
+            error("not used")
+
+        override suspend fun setLibrarySortDirection(direction: LibrarySortDirection) =
+            error("not used")
         override val libraryDensity: Flow<GameListDensity> = MutableStateFlow(GameListDensity.LIST)
         override suspend fun setLibraryDensity(density: GameListDensity) = error("not used")
         override val collectionDensity: Flow<GameListDensity> = MutableStateFlow(GameListDensity.LIST)

@@ -103,8 +103,24 @@ data class BackupHltbData(
     val matchStatus: String,
 )
 
+/**
+ * The two Library sort selections as exported.
+ *
+ * **Export-only, like [BackupFile.ruleConfig] and [BackupFile.computed]** — see [BackupFile]'s doc.
+ * Nothing reads this block back into the app, so the directions recorded here document what the
+ * library looked like when the file was written; they do not restore it.
+ *
+ * The direction fields are nullable purely so that an export written before directions existed
+ * still deserializes. A null means "this file predates directions", which is a statement about the
+ * file and not an instruction to the app.
+ */
 @Serializable
-data class BackupLibrarySortPrefs(val focus: String, val library: String)
+data class BackupLibrarySortPrefs(
+    val focus: String,
+    val library: String,
+    val focusDirection: String? = null,
+    val libraryDirection: String? = null,
+)
 
 /**
  * The player aggregates. `totalXp`/`level`/`currentStreak` are exported for legibility only —

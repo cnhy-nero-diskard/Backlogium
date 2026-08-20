@@ -18,6 +18,7 @@ import com.example.backlogium.data.remote.dto.PlayerSummaryDto
 import com.example.backlogium.data.remote.dto.PlayerSummariesResult
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
+import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.domain.GameListDensity
@@ -469,6 +470,11 @@ class LiveStatusRepositoryTest {
         override val librarySort: Flow<LibrarySortPrefs> = MutableStateFlow(LibrarySortPrefs())
         override suspend fun setFocusSort(key: LibrarySortKey) = error("not used")
         override suspend fun setLibrarySort(key: LibrarySortKey) = error("not used")
+        override suspend fun setFocusSortDirection(direction: LibrarySortDirection) =
+            error("not used")
+
+        override suspend fun setLibrarySortDirection(direction: LibrarySortDirection) =
+            error("not used")
         override val libraryDensity: Flow<GameListDensity> = MutableStateFlow(GameListDensity.LIST)
         override suspend fun setLibraryDensity(density: GameListDensity) = error("not used")
         override val collectionDensity: Flow<GameListDensity> = MutableStateFlow(GameListDensity.LIST)

@@ -878,7 +878,7 @@ private fun CollectionGameCard(
                         if (density.showsCompletionProgress) {
                             CollectionCompletionProgress(member)
                         }
-                        if (density.showsBadges) {
+                        if (density.showsAchievementCount) {
                             TrophyLabel(member = member, accentColor = accentColor)
                         }
                         if (showQueuePosition) {
@@ -916,7 +916,9 @@ private fun CollectionGameTile(
         onClick = { onOpenGameDetail(member.appId) },
         modifier = modifier
             .padding(vertical = 4.dp)
-            .aspectRatio(if (compact) 0.62f else 0.60f)
+            // Matches the Library tile: GRID grew by the achievement-count line rather than
+            // squeezing the hero capsule or the name.
+            .aspectRatio(if (compact) 0.62f else 0.56f)
             .semantics {
                 contentDescription = "Open ${member.name} details"
             },
@@ -969,6 +971,12 @@ private fun CollectionGameTile(
                 }
                 if (density.showsCompletionProgress) {
                     CollectionCompletionProgress(member)
+                }
+                // The ladder is a property of the density, not of the surface: the achievement
+                // count reaches the least dense grid here for the same reason it does in the
+                // Library.
+                if (density.showsAchievementCount) {
+                    TrophyLabel(member = member, accentColor = accentColor)
                 }
                 if (showQueuePosition) {
                     Text(
