@@ -260,6 +260,30 @@ class SteamAssetInterceptorTest {
     }
 
     @Test
+    fun mediaSteamIconHost_servesPersistedLocalFile() = runBlocking {
+        val store = newStore()
+        val dao = FakeSteamAssetDao()
+        val url = "https://media.steampowered.com/steamcommunity/public/images/apps/10/icon-hash.jpg"
+        val manifest = storedManifest(store, url)
+        dao.seed(manifest)
+        val resolver = SteamAssetLocalResolver(dao, store, unconfinedScope())
+        val interceptor = SteamAssetInterceptor(resolver)
+        val originalRequest = request(url)
+        var remoteCalls = 0
+        val chain = FakeChain(originalRequest) { req ->
+            if (req.data is File) success(req, DataSource.DISK) else { remoteCalls++; success(req, DataSource.NETWORK) }
+        }
+
+        val result = interceptor.intercept(chain)
+
+        assertEquals(1, chain.proceededWith.size)
+        assertEquals(store.fileFor(manifest), chain.proceededWith.single().data)
+        assertEquals(0, remoteCalls)
+        assertTrue(result is SuccessResult)
+        assertEquals(DataSource.DISK, (result as SuccessResult).dataSource)
+    }
+
+    @Test
     fun remoteMiss_proceedsWithOriginalRequestUnchanged() = runBlocking {
         val store = newStore()
         val dao = FakeSteamAssetDao() // nothing seeded: no manifest for this url

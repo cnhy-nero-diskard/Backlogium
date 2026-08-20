@@ -63,7 +63,6 @@ class SteamAssetInterceptor @Inject constructor(
 ) : Interceptor {
     override suspend fun intercept(chain: Interceptor.Chain): ImageResult {
         val url = chain.request.data as? String ?: return chain.proceed(chain.request)
-        if (!url.startsWith("https://") || !isSteamAssetUrl(url)) return chain.proceed(chain.request)
         val local = resolver.localData(url) ?: return chain.proceed(chain.request)
         val localResult = chain.proceed(chain.request.newBuilder().data(local).build())
         return if (localResult is ErrorResult) {
@@ -73,7 +72,4 @@ class SteamAssetInterceptor @Inject constructor(
             localResult
         }
     }
-
-    private fun isSteamAssetUrl(url: String): Boolean =
-        url.contains("steamcommunity.com/") || url.contains("steamstatic.com/")
 }
