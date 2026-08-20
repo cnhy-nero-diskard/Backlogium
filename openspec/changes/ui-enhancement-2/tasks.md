@@ -59,9 +59,9 @@
 ## 7. Verification
 
 - [x] 7.1 `./gradlew :app:testDebugUnitTest :gamification:test`
-- [ ] 7.2 On device: confirm the search field is the same width at all three densities, and that changing density does not reflow the header row
+- [x] 7.2 On device: confirm the search field is the same width at all three densities, and that changing density does not reflow the header row
 - [ ] 7.3 On device: reverse each Library list independently, leave and return, and confirm both directions persisted and did not affect each other
-- [ ] 7.4 On device: switch to the least dense grid and confirm achievement counts appear, including the "100% Completed" pill on a fully-completed game
-- [ ] 7.5 On device: confirm the densest grid gained nothing
-- [ ] 7.6 Verify the rarity header renders on one line with a simulated four-digit unlocked total
+- [x] 7.4 On device: switch to the least dense grid and confirm achievement counts appear, including the "100% Completed" pill on a fully-completed game
+- [x] 7.5 On device: confirm the densest grid gained nothing
+- [x] 7.6 Verify the rarity header renders on one line with a simulated four-digit unlocked total
 - [ ] 7.7 On device: confirm the Sync section pairs each status with its own action and that both controls still disable while their work runs
