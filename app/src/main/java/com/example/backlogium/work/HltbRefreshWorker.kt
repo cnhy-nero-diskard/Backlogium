@@ -105,6 +105,16 @@ class HltbRefreshWorker @AssistedInject constructor(
      * failure of the sweep.
      */
     private fun notifyProgress(done: Int, total: Int, name: String) {
+        // Lint cannot infer the permission from the manager helper; keep the guard beside
+        // the compat notify call, and tolerate a revocation between check and post.
+        if (ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+
         val manager = progressNotificationManager() ?: return
         manager.createNotificationChannel(
             NotificationChannel(
@@ -127,7 +137,12 @@ class HltbRefreshWorker @AssistedInject constructor(
             // this, so the window is continuously renewed while the sweep is actually alive.
             .setTimeoutAfter(PROGRESS_STALE_AFTER_MS)
             .build()
-        NotificationManagerCompat.from(applicationContext).notify(PROGRESS_NOTIFICATION_ID, notification)
+        try {
+            NotificationManagerCompat.from(applicationContext)
+                .notify(PROGRESS_NOTIFICATION_ID, notification)
+        } catch (_: SecurityException) {
+            // The permission can be revoked after the check above.
+        }
     }
 
     private fun clearProgressNotification() {

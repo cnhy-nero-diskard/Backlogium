@@ -3,6 +3,7 @@ package com.example.backlogium.work.setup
 import androidx.work.Data
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import java.util.UUID
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 
@@ -30,38 +31,59 @@ class WorkStageRunner(
     private val failureReason: String,
 ) : SetupStageRunner {
 
-    override suspend fun run(onProgress: (SetupStageProgress) -> Unit): SetupOutcome {
-        // WorkManager keeps a finished work item's record under its unique name until the name is
-        // reused. Without this, a stage re-run would read the *previous* run's terminal state as
-        // its own and return before the new work had even started.
-        val alreadyFinished = workManager.getWorkInfosForUniqueWorkFlow(uniqueWorkName)
+    override suspend fun run(onProgress: (SetupStageProgress) -> Unit): SetupOutcome =
+        run(onProgress, onWorkStarted = {})
+
+    override suspend fun run(
+        onProgress: (SetupStageProgress) -> Unit,
+        onWorkStarted: suspend (workId: String) -> Unit,
+    ): SetupOutcome {
+        // Finished records under a unique name may belong to a previous run. The new work is the
+        // first id that was not present before this trigger; if KEEP admits an existing live job,
+        // that live id is the one the stage must observe instead.
+        val existingIds = workManager.getWorkInfosForUniqueWorkFlow(uniqueWorkName)
             .first()
-            .filter { it.state.isFinished }
             .map { it.id }
             .toSet()
-
         trigger()
 
+        var observedId: UUID? = null
         return workManager.getWorkInfosForUniqueWorkFlow(uniqueWorkName)
-            .mapNotNull { infos -> settle(infos, alreadyFinished, onProgress) }
+            .mapNotNull { infos ->
+                val candidate = observedId?.let { id -> infos.firstOrNull { it.id == id } }
+                    ?: selectWork(infos, existingIds)
+                    ?: return@mapNotNull null
+                if (observedId == null) {
+                    observedId = candidate.id
+                    onWorkStarted(candidate.id.toString())
+                }
+                val info = infos.firstOrNull { it.id == observedId } ?: return@mapNotNull null
+                progressOf(info.progress)?.let(onProgress)
+                terminalWhileBackingOff(info) ?: info.takeIf { it.state.isFinished }?.let(::outcomeOf)
+            }
             .first()
     }
 
-    private fun settle(
-        infos: List<WorkInfo>,
-        alreadyFinished: Set<java.util.UUID>,
+    override suspend fun recover(
+        workId: String,
         onProgress: (SetupStageProgress) -> Unit,
     ): SetupOutcome? {
-        val live = infos.filterNot { it.id in alreadyFinished }
-        // Nothing under this name yet: the enqueue has not been observed. Keep waiting rather than
-        // reporting an outcome the work never reached.
-        val inFlight = live.firstOrNull { !it.state.isFinished }
-        if (inFlight != null) {
-            progressOf(inFlight.progress)?.let(onProgress)
-            return terminalWhileBackingOff(inFlight)
-        }
-        return live.firstOrNull()?.let(::outcomeOf)
+        val id = runCatching { UUID.fromString(workId) }.getOrNull() ?: return null
+        val initial = workManager.getWorkInfosForUniqueWorkFlow(uniqueWorkName).first()
+        if (initial.none { it.id == id }) return null
+
+        return workManager.getWorkInfosForUniqueWorkFlow(uniqueWorkName)
+            .mapNotNull { infos ->
+                val info = infos.firstOrNull { it.id == id } ?: return@mapNotNull null
+                progressOf(info.progress)?.let(onProgress)
+                terminalWhileBackingOff(info) ?: info.takeIf { it.state.isFinished }?.let(::outcomeOf)
+            }
+            .first()
     }
+
+    private fun selectWork(infos: List<WorkInfo>, existingIds: Set<UUID>): WorkInfo? =
+        infos.firstOrNull { it.id !in existingIds }
+            ?: infos.firstOrNull { !it.state.isFinished }
 
     /**
      * Treat a work item that has dropped back to `ENQUEUED` with attempts behind it as terminal for

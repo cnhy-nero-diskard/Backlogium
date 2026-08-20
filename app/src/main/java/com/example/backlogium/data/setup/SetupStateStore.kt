@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.backlogium.work.setup.SetupOutcome
 import com.example.backlogium.work.setup.decodeSetupOutcome
@@ -23,6 +24,12 @@ import javax.inject.Singleton
  * Read and written only through [SetupStateRepository] — no UI touches this type, per the
  * repository boundary the app keeps everywhere else.
  */
+data class ActiveSetupStage(
+    val stageId: String,
+    val workId: String?,
+    val selectedStageIds: Set<String> = emptySet(),
+)
+
 interface SetupStateStore {
     /** True once setup has been completed or declined at least once. Gates nothing; informational. */
     val completedFlow: Flow<Boolean>
@@ -36,6 +43,19 @@ interface SetupStateStore {
      * setup was killed — still reports which stages the run covered rather than an empty selection.
      */
     suspend fun storedOptIns(): Map<String, Boolean>
+    /** The stage whose WorkManager job may still be running after process death. */
+    suspend fun storedActiveStage(): ActiveSetupStage?
+
+    /** Atomically marks a new stage attempt and clears any previous WorkManager id. */
+    suspend fun markStageStarted(
+        stageId: String,
+        selectedStageIds: Set<String> = setOf(stageId),
+    )
+
+    /** Associates the exact WorkManager job observed for the active stage. */
+    suspend fun markStageWorkStarted(stageId: String, workId: String)
+
+    suspend fun clearActiveStage()
 
     suspend fun writeOutcome(stageId: String, outcome: SetupOutcome)
 
@@ -87,6 +107,42 @@ class DataStoreSetupStateStore @Inject constructor(
             .toMap()
     }
 
+    override suspend fun storedActiveStage(): ActiveSetupStage? {
+        val prefs = context.setupDataStore.data.first()
+        val stageId = prefs[ACTIVE_STAGE_KEY] ?: return null
+        return ActiveSetupStage(
+            stageId = stageId,
+            workId = prefs[ACTIVE_WORK_KEY],
+            selectedStageIds = prefs[ACTIVE_SELECTION_KEY].orEmpty(),
+        )
+    }
+
+    override suspend fun markStageStarted(
+        stageId: String,
+        selectedStageIds: Set<String>,
+    ) {
+        context.setupDataStore.edit { prefs ->
+            prefs[ACTIVE_STAGE_KEY] = stageId
+            prefs[ACTIVE_SELECTION_KEY] = selectedStageIds
+            prefs.remove(ACTIVE_WORK_KEY)
+            prefs[outcomeKey(stageId)] = encodeSetupOutcome(SetupOutcome.NeverRun)
+        }
+    }
+
+    override suspend fun markStageWorkStarted(stageId: String, workId: String) {
+        context.setupDataStore.edit { prefs ->
+            if (prefs[ACTIVE_STAGE_KEY] == stageId) prefs[ACTIVE_WORK_KEY] = workId
+        }
+    }
+
+    override suspend fun clearActiveStage() {
+        context.setupDataStore.edit { prefs ->
+            prefs.remove(ACTIVE_STAGE_KEY)
+            prefs.remove(ACTIVE_SELECTION_KEY)
+            prefs.remove(ACTIVE_WORK_KEY)
+        }
+    }
+
     override suspend fun writeOutcome(stageId: String, outcome: SetupOutcome) {
         context.setupDataStore.edit { prefs ->
             prefs[outcomeKey(stageId)] = encodeSetupOutcome(outcome)
@@ -104,6 +160,9 @@ class DataStoreSetupStateStore @Inject constructor(
     private companion object {
         const val OUTCOME_PREFIX = "stage_outcome_"
         const val OPT_IN_PREFIX = "stage_opt_in_"
+        val ACTIVE_STAGE_KEY = stringPreferencesKey("active_stage_id")
+        val ACTIVE_SELECTION_KEY = stringSetPreferencesKey("active_stage_selection")
+        val ACTIVE_WORK_KEY = stringPreferencesKey("active_work_id")
         val COMPLETED_KEY = booleanPreferencesKey("setup_completed")
 
         fun outcomeKey(stageId: String): Preferences.Key<String> =

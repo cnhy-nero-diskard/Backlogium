@@ -1,5 +1,6 @@
 package com.example.backlogium.work.setup
 
+import com.example.backlogium.data.setup.ActiveSetupStage
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -7,6 +8,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -240,4 +242,58 @@ class SetupCoordinatorTest {
 
             assertEquals(setOf("a"), subject.state.value.selected)
         }
+
+    @Test
+    fun recoversDetachedWorkAndContinuesTheRemainingStages() =
+        runTest(StandardTestDispatcher()) {
+            var recoveredWorkId: String? = null
+            val recovering = object : SetupStageRunner {
+                override suspend fun run(
+                    onProgress: (SetupStageProgress) -> Unit,
+                ): SetupOutcome = error("recovery should not enqueue a new job")
+
+                override suspend fun recover(
+                    workId: String,
+                    onProgress: (SetupStageProgress) -> Unit,
+                ): SetupOutcome {
+                    recoveredWorkId = workId
+                    return SetupOutcome.Succeeded
+                }
+            }
+            val later = FakeStageRunner()
+            val store = FakeSetupStateStore(
+                initialOutcomes = mutableMapOf(
+                    "sync" to SetupOutcome.NeverRun,
+                    "assets" to SetupOutcome.NeverRun,
+                ),
+                initialOptIns = mutableMapOf(
+                    "sync" to true,
+                    "assets" to true,
+                ),
+                activeStage = ActiveSetupStage(
+                    stageId = "sync",
+                    workId = "detached-work-id",
+                    selectedStageIds = setOf("sync", "assets"),
+                ),
+            )
+            val subject = coordinator(
+                listOf(
+                    fakeStage("sync", recovering),
+                    fakeStage("assets", later, execution = SetupStageExecution.DETACHED),
+                ),
+                store,
+                this
+            )
+
+            subject.ensureLoaded()
+            advanceUntilIdle()
+
+            assertEquals("detached-work-id", recoveredWorkId)
+            assertEquals(SetupOutcome.Succeeded, store.outcomes["sync"])
+            assertTrue(later.started)
+            assertEquals(SetupOutcome.Succeeded, store.outcomes["assets"])
+            assertNull(store.active)
+            assertTrue(subject.state.value.finished)
+        }
+
 }

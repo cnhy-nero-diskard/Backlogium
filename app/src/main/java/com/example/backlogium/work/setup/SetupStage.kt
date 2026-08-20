@@ -74,6 +74,18 @@ data class SetupStageProgress(
  */
 fun interface SetupStageRunner {
     suspend fun run(onProgress: (SetupStageProgress) -> Unit): SetupOutcome
+
+    /** Runs while reporting the exact WorkManager job admitted for this attempt. */
+    suspend fun run(
+        onProgress: (SetupStageProgress) -> Unit,
+        onWorkStarted: suspend (workId: String) -> Unit,
+    ): SetupOutcome = run(onProgress)
+
+    /** Reattaches to an already-started job without enqueueing another one. */
+    suspend fun recover(
+        workId: String,
+        onProgress: (SetupStageProgress) -> Unit,
+    ): SetupOutcome? = null
 }
 
 /** The ordered stages setup is built from. An interface so tests can register their own. */

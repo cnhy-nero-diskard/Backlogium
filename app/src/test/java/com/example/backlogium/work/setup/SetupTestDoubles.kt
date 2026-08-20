@@ -1,5 +1,6 @@
 package com.example.backlogium.work.setup
 
+import com.example.backlogium.data.setup.ActiveSetupStage
 import com.example.backlogium.data.setup.SetupStateStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
@@ -9,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 class FakeSetupStateStore(
     private val initialOutcomes: MutableMap<String, SetupOutcome> = mutableMapOf(),
     private val initialOptIns: MutableMap<String, Boolean> = mutableMapOf(),
+    private var activeStage: ActiveSetupStage? = null,
 ) : SetupStateStore {
 
     private val completedState = MutableStateFlow(false)
@@ -16,12 +18,31 @@ class FakeSetupStateStore(
     val outcomes: Map<String, SetupOutcome> get() = initialOutcomes
     val optIns: Map<String, Boolean> get() = initialOptIns
     val completed: Boolean get() = completedState.value
+    val active: ActiveSetupStage? get() = activeStage
 
     override val completedFlow: Flow<Boolean> = completedState
 
     override suspend fun storedOutcomes(): Map<String, SetupOutcome> = initialOutcomes.toMap()
 
     override suspend fun storedOptIns(): Map<String, Boolean> = initialOptIns.toMap()
+
+    override suspend fun storedActiveStage(): ActiveSetupStage? = activeStage
+
+    override suspend fun markStageStarted(
+        stageId: String,
+        selectedStageIds: Set<String>,
+    ) {
+        activeStage = ActiveSetupStage(stageId, null, selectedStageIds)
+        initialOutcomes[stageId] = SetupOutcome.NeverRun
+    }
+
+    override suspend fun markStageWorkStarted(stageId: String, workId: String) {
+        if (activeStage?.stageId == stageId) activeStage = activeStage?.copy(workId = workId)
+    }
+
+    override suspend fun clearActiveStage() {
+        activeStage = null
+    }
 
     override suspend fun writeOutcome(stageId: String, outcome: SetupOutcome) {
         initialOutcomes[stageId] = outcome

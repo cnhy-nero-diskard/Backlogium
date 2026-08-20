@@ -1,5 +1,6 @@
 package com.example.backlogium.work.setup
 
+import com.example.backlogium.data.setup.ActiveSetupStage
 import com.example.backlogium.data.setup.SetupStateStore
 import com.example.backlogium.di.ApplicationScope
 import kotlinx.coroutines.CoroutineScope
@@ -67,24 +68,47 @@ class SetupCoordinator @Inject constructor(
     private val runLock = Mutex()
     private var loadJob: Job? = null
 
-    /** Read stored outcomes and opt-ins once, so a surface opened later starts from the truth. */
+    /**
+     * Read stored state once. If the process died during a run, the active stage and exact
+     * WorkManager id are recovered before the surface is allowed to report a finished run.
+     */
     fun ensureLoaded() {
         if (_state.value.loaded || loadJob?.isActive == true) return
         loadJob = scope.launch {
-            val registeredIds = source.stages.map { it.id }
+            val stages = source.stages
+            val registeredIds = stages.map { it.id }
             val outcomes = projectSetupOutcomes(store.storedOutcomes(), registeredIds)
             val optIns = store.storedOptIns()
+            val storedActive = store.storedActiveStage()
+            val persistedSelection = storedActive?.selectedStageIds
+                ?.takeIf { it.isNotEmpty() }
+                ?: registeredIds.filter { optIns[it] == true }.toSet()
+            val selectedIds = persistedSelection.intersect(registeredIds.toSet())
+            val selectedStages = stages.filter { it.isAvailable && it.id in selectedIds }
+            val active = storedActive?.takeIf { marker ->
+                selectedStages.any { it.id == marker.stageId }
+            }
+
+            // A marker for a stage that no longer exists or is no longer available cannot be resumed.
+            if (storedActive != null && active == null) store.clearActiveStage()
+
             _state.update { current ->
                 if (current.loaded) {
                     current
                 } else {
                     current.copy(
                         loaded = true,
+                        running = active != null,
+                        currentStageId = active?.stageId,
                         outcomes = outcomes,
-                        selected = registeredIds.filter { optIns[it] == true }.toSet(),
+                        selected = selectedIds,
+                        inScreenSettled = inScreenStagesSettled(selectedStages, outcomes),
+                        finished = false,
                     )
                 }
             }
+
+            active?.let { recoverRun(it, selectedStages) }
         }
     }
 
@@ -113,6 +137,12 @@ class SetupCoordinator @Inject constructor(
                     if (stage.id in runIds || recordUnselectedAsSkipped) {
                         store.writeOptIn(stage.id, stage.id in runIds)
                     }
+                }
+                if (toRun.isNotEmpty()) {
+                    // Establish the durable recovery point before the first enqueue can happen.
+                    store.markStageStarted(toRun.first().id, runIds)
+                } else {
+                    store.clearActiveStage()
                 }
                 _state.update { current ->
                     current.copy(
@@ -143,17 +173,7 @@ class SetupCoordinator @Inject constructor(
                 }
 
                 toRun.forEach { stage -> runStage(stage, remaining = toRun) }
-
-                store.markCompleted()
-                _state.update {
-                    it.copy(
-                        running = false,
-                        currentStageId = null,
-                        progress = null,
-                        inScreenSettled = true,
-                        finished = true,
-                    )
-                }
+                completeRun()
             }
         }
     }
@@ -161,16 +181,110 @@ class SetupCoordinator @Inject constructor(
     /** Decline setup: nothing runs, every stage is recorded skipped, and the app is fully usable. */
     fun skipAll() = start(emptySet(), recordUnselectedAsSkipped = true)
 
-    private suspend fun runStage(stage: SetupStage, remaining: List<SetupStage>) {
-        _state.update { it.copy(currentStageId = stage.id, progress = null) }
-        val outcome = try {
-            stage.run.run { progress ->
-                _state.update { current ->
-                    // A late progress callback from a stage we have already moved past must not
-                    // overwrite the current one's bar.
-                    if (current.currentStageId == stage.id) current.copy(progress = progress) else current
+    /**
+     * Reconcile the stage marker left by an older process, then continue any later selected stages
+     * that had not started yet.
+     */
+    private suspend fun recoverRun(
+        active: ActiveSetupStage,
+        selectedStages: List<SetupStage>,
+    ) {
+        runLock.withLock {
+            val activeIndex = selectedStages.indexOfFirst { it.id == active.stageId }
+            if (activeIndex < 0) {
+                store.clearActiveStage()
+                _state.update {
+                    it.copy(
+                        running = false,
+                        currentStageId = null,
+                        progress = null,
+                    )
+                }
+                return
+            }
+
+            for (stage in selectedStages.drop(activeIndex)) {
+                val storedOutcome = _state.value.outcomes[stage.id] ?: SetupOutcome.NeverRun
+                if (storedOutcome !is SetupOutcome.NeverRun) continue
+
+                val recovered = if (stage.id == active.stageId && active.workId != null) {
+                    recoverStage(stage, active.workId)
+                } else {
+                    null
+                }
+                if (recovered != null) {
+                    recordOutcome(stage, recovered, selectedStages)
+                } else {
+                    // No persisted job id (or a pruned job) means the trigger was not admitted;
+                    // run the stage normally and capture the new exact id.
+                    runStage(stage, selectedStages)
                 }
             }
+            completeRun()
+        }
+    }
+
+    private suspend fun recoverStage(
+        stage: SetupStage,
+        workId: String,
+    ): SetupOutcome? {
+        _state.update {
+            it.copy(
+                running = true,
+                finished = false,
+                currentStageId = stage.id,
+                progress = null,
+            )
+        }
+        return try {
+            stage.run.recover(
+                workId = workId,
+                onProgress = { progress ->
+                    _state.update { current ->
+                        if (current.currentStageId == stage.id) {
+                            current.copy(progress = progress)
+                        } else {
+                            current
+                        }
+                    }
+                },
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            SetupOutcome.Failed(error.message ?: "Didn't finish")
+        }
+    }
+
+    private suspend fun runStage(stage: SetupStage, remaining: List<SetupStage>) {
+        // This is atomic with the persisted NeverRun outcome, so a new process knows this attempt
+        // is incomplete even if it ends before WorkManager reports its id.
+        store.markStageStarted(stage.id, remaining.map { it.id }.toSet())
+        _state.update {
+            it.copy(
+                running = true,
+                finished = false,
+                currentStageId = stage.id,
+                progress = null,
+            )
+        }
+        val outcome = try {
+            stage.run.run(
+                onProgress = { progress ->
+                    _state.update { current ->
+                        // A late progress callback from a stage we have already moved past must not
+                        // overwrite the current one's bar.
+                        if (current.currentStageId == stage.id) {
+                            current.copy(progress = progress)
+                        } else {
+                            current
+                        }
+                    }
+                },
+                onWorkStarted = { workId ->
+                    store.markStageWorkStarted(stage.id, workId)
+                },
+            )
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -178,16 +292,44 @@ class SetupCoordinator @Inject constructor(
             // still reaches every remaining stage.
             SetupOutcome.Failed(error.message ?: "Didn't finish")
         }
+        recordOutcome(stage, outcome, remaining)
+    }
+
+    private suspend fun recordOutcome(
+        stage: SetupStage,
+        outcome: SetupOutcome,
+        remaining: List<SetupStage>,
+    ) {
         store.writeOutcome(stage.id, outcome)
         _state.update { current ->
             val outcomes = current.outcomes + (stage.id to outcome)
             current.copy(
                 outcomes = outcomes,
                 progress = null,
-                inScreenSettled = remaining
-                    .filter { it.execution == SetupStageExecution.IN_SCREEN }
-                    .all { outcomes[it.id] !is SetupOutcome.NeverRun },
+                inScreenSettled = inScreenStagesSettled(remaining, outcomes),
             )
         }
+    }
+
+    private suspend fun completeRun() {
+        store.clearActiveStage()
+        store.markCompleted()
+        _state.update {
+            it.copy(
+                running = false,
+                currentStageId = null,
+                progress = null,
+                inScreenSettled = true,
+                finished = true,
+            )
+        }
+    }
+
+    private fun inScreenStagesSettled(
+        stages: List<SetupStage>,
+        outcomes: Map<String, SetupOutcome>,
+    ): Boolean = stages.none {
+        it.execution == SetupStageExecution.IN_SCREEN &&
+            outcomes[it.id] is SetupOutcome.NeverRun
     }
 }

@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -147,7 +148,9 @@ fun HomeScreen(
     // itself, not by `configured` flipping. Saving credentials flips it *mid-flow* — the flow
     // continues into first-run setup afterwards — so tearing the takeover down there would
     // dismantle the setup step in the same frame it appeared.
-    var onboardingActive by remember { mutableStateOf(false) }
+    // This takeover must survive Activity recreation after credentials become configured. A plain
+    // remember would reset in that window and expose the app before the setup run is finished.
+    var onboardingActive by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(state.configured) { if (!state.configured) onboardingActive = true }
 
     if (!state.configured || onboardingActive) {

@@ -12,8 +12,10 @@ import androidx.work.WorkManager
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -76,6 +78,27 @@ class WorkStageRunnerTest {
         assertEquals(SetupOutcome.Failed("Cancelled before it finished"), outcome)
     }
 
+    @Test
+    fun recoveryObservesThePersistedWorkIdWithoutTriggeringAnotherJob() = runTest {
+        workManager.enqueueUniqueWork(
+            NAME_RECOVER,
+            ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<SucceedingWorker>().build(),
+        )
+        val workId = workManager.getWorkInfosForUniqueWorkFlow(NAME_RECOVER)
+            .first { infos -> infos.isNotEmpty() }
+            .single()
+            .id
+        var triggered = false
+        val runner = runnerFor(NAME_RECOVER) { triggered = true }
+
+        assertEquals(
+            SetupOutcome.Succeeded,
+            runner.recover(workId.toString()) { }
+        )
+        assertFalse("recovery must not enqueue a duplicate job", triggered)
+    }
+
     private fun runnerFor(name: String, trigger: suspend () -> Unit) = WorkStageRunner(
         workManager = workManager,
         uniqueWorkName = name,
@@ -96,6 +119,7 @@ class WorkStageRunnerTest {
         const val NAME_OK = "runner_test_ok"
         const val NAME_BAD = "runner_test_bad"
         const val NAME_CANCELLED = "runner_test_cancelled"
+        const val NAME_RECOVER = "runner_test_recover"
         const val REASON = "the stage's own reason"
     }
 }
