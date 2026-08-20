@@ -51,8 +51,10 @@ internal fun OnboardingUiState.applying(decision: VerificationDecision): Onboard
     when (decision) {
         VerificationDecision.Persist -> copy(verify = VerifyState.Idle)
 
-        is VerificationDecision.Correct ->
-            copy(step = decision.step, verify = VerifyState.Rejected(decision.message))
+        is VerificationDecision.Correct -> copy(
+            step = decision.step,
+            verify = VerifyState.Rejected(decision.step, decision.message),
+        )
 
         VerificationDecision.OfferRetry ->
             copy(step = OnboardingStep.STEAM_ID, verify = VerifyState.Unreachable)

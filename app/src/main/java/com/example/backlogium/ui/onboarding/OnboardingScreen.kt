@@ -148,9 +148,11 @@ private fun ApiKeyStep(state: OnboardingUiState, viewModel: OnboardingViewModel)
         modifier = Modifier.fillMaxWidth(),
     )
 
-    // A key Steam rejected sends the user back here; the message names the key, so it belongs
-    // beside the field it is about rather than on the step the user was on when it failed.
-    (state.verify as? VerifyState.Rejected)?.let { rejected -> VerifyMessage(rejected.message) }
+    // A key Steam rejected sends the user back here, and the message belongs beside the field it is
+    // about — hence the step check, not just the state check.
+    (state.verify as? VerifyState.Rejected)
+        ?.takeIf { it.step == OnboardingStep.API_KEY }
+        ?.let { rejected -> VerifyMessage(rejected.message) }
 
     TextButton(onClick = { uriHandler.openUri(STEAM_API_KEY_URL) }) {
         Icon(TablerIcons.ExternalLink, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -294,7 +296,10 @@ private fun ResolveFeedback(resolve: ResolveState) {
 private fun VerifyFeedback(verify: VerifyState, onRetry: () -> Unit) {
     when (verify) {
         VerifyState.Idle, VerifyState.Verifying -> Unit
-        is VerifyState.Rejected -> VerifyMessage(verify.message)
+        // Only the rejection this step's own value caused. A key rejection is rendered by the key
+        // step; repeating it here would point the user at the value Steam did not object to.
+        is VerifyState.Rejected ->
+            if (verify.step == OnboardingStep.STEAM_ID) VerifyMessage(verify.message) else Unit
         // A failure to reach Steam is not a verdict on the credentials, so it gets a retry rather
         // than an error that implies something needs correcting.
         VerifyState.Unreachable -> Column {

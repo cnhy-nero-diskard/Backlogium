@@ -68,7 +68,14 @@ sealed interface ResolveState {
 sealed interface VerifyState {
     data object Idle : VerifyState
     data object Verifying : VerifyState
-    data class Rejected(val message: String) : VerifyState
+
+    /**
+     * Steam objected to one of the two entered values. [step] is the one it objected to, and only
+     * that step renders this message: "Steam did not accept this API key" shown under the SteamID
+     * field points at the wrong value, which is the opposite of what verifying both at once buys.
+     */
+    data class Rejected(val step: OnboardingStep, val message: String) : VerifyState
+
     data object Unreachable : VerifyState
 }
 

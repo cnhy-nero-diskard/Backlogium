@@ -92,6 +92,24 @@ class VerificationDecisionTest {
     }
 
     @Test
+    fun aRejectionIsAttributedToTheStepWhoseValueCausedIt() {
+        // Found on device: the message rendered under *both* fields, so "Steam did not accept this
+        // API key" appeared beneath the SteamID box — pointing at the one value Steam had not
+        // objected to, which is the opposite of what verifying both at once is for.
+        val keyRejected = entered.applying(decideVerification(CredentialVerification.KeyRejected))
+        assertEquals(
+            OnboardingStep.API_KEY,
+            (keyRejected.verify as VerifyState.Rejected).step,
+        )
+
+        val noProfile = entered.applying(decideVerification(CredentialVerification.NoProfile))
+        assertEquals(
+            OnboardingStep.STEAM_ID,
+            (noProfile.verify as VerifyState.Rejected).step,
+        )
+    }
+
+    @Test
     fun aCorrectionKeepsTheOtherEnteredValue() {
         // Sent back to the key: the SteamID they already resolved must still be there when they
         // come forward again, or the flow makes them redo work Steam never objected to.
