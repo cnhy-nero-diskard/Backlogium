@@ -80,6 +80,7 @@ import kotlinx.coroutines.flow.collect
 fun SettingsScreen(
     onEditCredentials: () -> Unit,
     onOpenDiagnostics: () -> Unit,
+    onOpenSetup: () -> Unit = {},
     onOpenUpdate: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
@@ -101,6 +102,7 @@ fun SettingsScreen(
         state = state,
         onEditCredentials = onEditCredentials,
         onOpenDiagnostics = onOpenDiagnostics,
+        onOpenSetup = onOpenSetup,
         onOpenUpdate = onOpenUpdate,
         actions = remember(viewModel) {
             SettingsActions(
@@ -171,6 +173,7 @@ fun SettingsScreen(
     state: SettingsUiState,
     onEditCredentials: () -> Unit,
     onOpenDiagnostics: () -> Unit = {},
+    onOpenSetup: () -> Unit = {},
     onOpenUpdate: () -> Unit = {},
     actions: SettingsActions,
 ) {
@@ -190,6 +193,9 @@ fun SettingsScreen(
             apiKeyMasked = state.apiKeyMasked,
             onEdit = onEditCredentials,
         )
+
+        SectionHeader("Setup")
+        RunSetupCard(configured = state.configured, onOpenSetup = onOpenSetup)
 
         SectionHeader("Sync")
         SyncCard(
@@ -280,6 +286,30 @@ fun SettingsScreen(
                 TextButton(onClick = actions.onDismissBackupMessage) { Text("OK") }
             },
         )
+    }
+}
+
+/**
+ * The way back into first-run setup. Skipping setup during onboarding is a legitimate choice, and
+ * making it unrecoverable except by clearing credentials would turn a reasonable "not now" into a
+ * trap. Present whether or not setup has ever run; the checklist itself shows each stage's last
+ * outcome and explains the missing-credentials case rather than starting stages that cannot succeed.
+ */
+@Composable
+private fun RunSetupCard(configured: Boolean, onOpenSetup: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth().clickable { onOpenSetup() }) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Run setup", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = if (configured) {
+                    "Sync your library, download artwork, or fetch completion times"
+                } else {
+                    "Connect your Steam account first — every step needs it"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

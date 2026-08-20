@@ -89,12 +89,17 @@ class SetupCoordinator @Inject constructor(
     }
 
     /**
-     * Start [selectedIds], in registered order, skipping everything else.
+     * Start [selectedIds], in registered order.
      *
-     * Nothing selected is a complete answer, not an error: setup finishes immediately with every
-     * stage recorded as skipped, which is also exactly what declining does.
+     * Nothing selected is a complete answer, not an error: setup finishes immediately, which with
+     * [recordUnselectedAsSkipped] is exactly what declining setup does.
+     *
+     * [recordUnselectedAsSkipped] separates the two surfaces that start a run. Going through the
+     * onboarding checklist is a decision about *every* stage, so the ones left unticked are recorded
+     * skipped. Re-running one stage from Settings is a decision about that stage alone — recording
+     * the rest skipped there would erase the outcomes the Settings list exists to show.
      */
-    fun start(selectedIds: Set<String>) {
+    fun start(selectedIds: Set<String>, recordUnselectedAsSkipped: Boolean = true) {
         scope.launch {
             runLock.withLock {
                 val stages = source.stages
@@ -102,23 +107,29 @@ class SetupCoordinator @Inject constructor(
                 // handed in from a recreated one must not slip past that.
                 val toRun = stages.filter { it.isAvailable && it.id in selectedIds }
                 val runIds = toRun.map { it.id }.toSet()
+                val previous = _state.value.outcomes
 
-                stages.forEach { store.writeOptIn(it.id, it.id in runIds) }
-                _state.update {
-                    it.copy(
+                stages.forEach { stage ->
+                    if (stage.id in runIds || recordUnselectedAsSkipped) {
+                        store.writeOptIn(stage.id, stage.id in runIds)
+                    }
+                }
+                _state.update { current ->
+                    current.copy(
                         loaded = true,
                         running = runIds.isNotEmpty(),
                         selected = runIds,
                         finished = false,
                         currentStageId = null,
                         progress = null,
-                        // Anything not in this run is skipped *for this run*; the stages that are in
-                        // it start from a clean slate rather than showing a previous verdict.
+                        // A stage in this run starts from a clean slate rather than showing a
+                        // previous verdict; one outside it keeps whatever it last recorded, unless
+                        // this run is the decision that it was skipped.
                         outcomes = stages.associate { stage ->
-                            stage.id to if (stage.id in runIds) {
-                                SetupOutcome.NeverRun
-                            } else {
-                                SetupOutcome.Skipped
+                            stage.id to when {
+                                stage.id in runIds -> SetupOutcome.NeverRun
+                                recordUnselectedAsSkipped -> SetupOutcome.Skipped
+                                else -> previous[stage.id] ?: SetupOutcome.NeverRun
                             }
                         },
                         inScreenSettled = toRun.none {
@@ -126,8 +137,10 @@ class SetupCoordinator @Inject constructor(
                         },
                     )
                 }
-                stages.filterNot { it.id in runIds }
-                    .forEach { store.writeOutcome(it.id, SetupOutcome.Skipped) }
+                if (recordUnselectedAsSkipped) {
+                    stages.filterNot { it.id in runIds }
+                        .forEach { store.writeOutcome(it.id, SetupOutcome.Skipped) }
+                }
 
                 toRun.forEach { stage -> runStage(stage, remaining = toRun) }
 
@@ -146,7 +159,7 @@ class SetupCoordinator @Inject constructor(
     }
 
     /** Decline setup: nothing runs, every stage is recorded skipped, and the app is fully usable. */
-    fun skipAll() = start(emptySet())
+    fun skipAll() = start(emptySet(), recordUnselectedAsSkipped = true)
 
     private suspend fun runStage(stage: SetupStage, remaining: List<SetupStage>) {
         _state.update { it.copy(currentStageId = stage.id, progress = null) }

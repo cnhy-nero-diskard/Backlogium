@@ -40,6 +40,10 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.backlogium.ui.setup.SetupActions
+import com.example.backlogium.ui.setup.SetupChecklist
+import com.example.backlogium.ui.setup.SetupSummary
+import com.example.backlogium.ui.setup.SetupViewModel
 import compose.icons.TablerIcons
 import compose.icons.tablericons.AlertCircle
 import compose.icons.tablericons.CircleCheck
@@ -77,19 +81,30 @@ fun OnboardingScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(
-            text = "Connect your Steam account",
+            text = if (state.step == OnboardingStep.SETUP) {
+                "Set up your library"
+            } else {
+                "Connect your Steam account"
+            },
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
         )
-        Text(
-            text = "Step ${if (state.step == OnboardingStep.API_KEY) 1 else 2} of 2",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-        )
+        // Derived from the flow rather than a hardcoded total, so adding a credential step cannot
+        // leave the count lying about how many there are.
+        state.step.credentialStepNumber?.let { number ->
+            Text(
+                text = "Step $number of ${OnboardingStep.credentialStepCount}",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
 
         when (state.step) {
             OnboardingStep.API_KEY -> ApiKeyStep(state, viewModel)
-            OnboardingStep.STEAM_ID -> SteamIdStep(state, viewModel)
+            // Verification has no surface of its own: it is the pending state of the SteamID step's
+            // final action, using that step's existing inline treatment.
+            OnboardingStep.STEAM_ID, OnboardingStep.VERIFY -> SteamIdStep(state, viewModel)
+            OnboardingStep.SETUP -> SetupStep(onDone = viewModel::onSetupDone)
         }
     }
 
@@ -132,6 +147,10 @@ private fun ApiKeyStep(state: OnboardingUiState, viewModel: OnboardingViewModel)
         },
         modifier = Modifier.fillMaxWidth(),
     )
+
+    // A key Steam rejected sends the user back here; the message names the key, so it belongs
+    // beside the field it is about rather than on the step the user was on when it failed.
+    (state.verify as? VerifyState.Rejected)?.let { rejected -> VerifyMessage(rejected.message) }
 
     TextButton(onClick = { uriHandler.openUri(STEAM_API_KEY_URL) }) {
         Icon(TablerIcons.ExternalLink, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -186,6 +205,7 @@ private fun SteamIdStep(state: OnboardingUiState, viewModel: OnboardingViewModel
     )
 
     ResolveFeedback(state.resolve)
+    VerifyFeedback(state.verify, onRetry = viewModel::retryVerification)
 
     Spacer(Modifier.height(8.dp))
     Row(
@@ -197,10 +217,10 @@ private fun SteamIdStep(state: OnboardingUiState, viewModel: OnboardingViewModel
         if (state.isResolved) {
             Button(
                 onClick = viewModel::finish,
-                enabled = !state.saving,
+                enabled = !state.busy,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                if (state.saving) {
+                if (state.busy) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(18.dp),
                         strokeWidth = 2.dp,
@@ -261,6 +281,105 @@ private fun ResolveFeedback(resolve: ResolveState) {
                 color = MaterialTheme.colorScheme.error,
             )
         }
+    }
+}
+
+/**
+ * Verification's inline feedback on the SteamID step.
+ *
+ * The pending state is deliberately absent here: it is already the Finish button's spinner, and a
+ * second progress mechanism for the same wait would be two things to keep in agreement.
+ */
+@Composable
+private fun VerifyFeedback(verify: VerifyState, onRetry: () -> Unit) {
+    when (verify) {
+        VerifyState.Idle, VerifyState.Verifying -> Unit
+        is VerifyState.Rejected -> VerifyMessage(verify.message)
+        // A failure to reach Steam is not a verdict on the credentials, so it gets a retry rather
+        // than an error that implies something needs correcting.
+        VerifyState.Unreachable -> Column {
+            VerifyMessage("Couldn't reach Steam. Check your connection.")
+            TextButton(onClick = onRetry) { Text("Try again") }
+        }
+    }
+}
+
+@Composable
+private fun VerifyMessage(message: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            TablerIcons.AlertCircle,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+}
+
+/**
+ * The staged setup checklist, as the last step of a first run.
+ *
+ * The same composable the Settings entry uses, with each stage's declared default applied — so a
+ * stage registered later appears here without this file being touched. Entry into the app is offered
+ * as soon as every in-screen stage has settled; detached stages keep going in their own
+ * notifications, and "Skip setup" is available throughout so the step can never become a trap.
+ */
+@Composable
+private fun SetupStep(onDone: () -> Unit) {
+    val viewModel: SetupViewModel = hiltViewModel()
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    LaunchedEffect(viewModel) { viewModel.prepare(applyDefaults = true) }
+
+    Text(
+        text = "Your account is connected. These steps fill the app with your library — pick the " +
+            "ones you want now, and run the rest later from Settings.",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+
+    SetupChecklist(
+        state = state,
+        onToggle = viewModel::toggle,
+        onRetry = viewModel::retry,
+        // Nothing has an outcome worth retrying until this run has finished, and the summary below
+        // plus the Settings entry are where a retry belongs.
+        showRetry = false,
+    )
+
+    if (state.finished || state.running) SetupSummary(state)
+
+    Spacer(Modifier.height(8.dp))
+    val started = state.running || state.finished
+    if (started && state.inScreenSettled) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
+                Text(if (state.detachedStillRunning) "Continue to the app" else "Done")
+            }
+        }
+    } else {
+        SetupActions(
+            state = state,
+            startLabel = if (state.running) "Setting up…" else "Start setup",
+            onStart = viewModel::start,
+            // Offered before the run and during it, so the step can never hold anyone. Before
+            // anything has started it records every stage skipped, which is then the truth. Once a
+            // run is under way it only leaves — relabelling a stage that is actually running as
+            // "skipped" would put a false outcome in front of the Settings list that reads them.
+            onSkip = {
+                if (!started) viewModel.skip()
+                onDone()
+            },
+        )
     }
 }
 

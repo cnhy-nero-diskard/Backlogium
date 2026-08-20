@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.repo.AccountChangeCoordinator
+import com.example.backlogium.data.repo.CredentialVerification
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsSaveResult
 import com.example.backlogium.data.repo.CredentialsState
@@ -18,8 +19,33 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 
-/** The two ordered onboarding steps: API key first (so vanity resolution has a key), then SteamID. */
-enum class OnboardingStep { API_KEY, STEAM_ID }
+/**
+ * The ordered steps of the onboarding flow.
+ *
+ * The first three are the credential flow: API key first (so vanity resolution has a key), then
+ * SteamID, then verifying the pair against Steam. [SETUP] is past the credential flow entirely —
+ * credentials are already persisted by the time it is shown — so it carries no credential step
+ * number, and the header's step count is derived from [credentialStepCount] rather than hardcoded.
+ */
+enum class OnboardingStep(val credentialStepNumber: Int?) {
+    API_KEY(1),
+    STEAM_ID(2),
+
+    /**
+     * Verification. Rendered on the SteamID surface rather than a screen of its own: it reuses that
+     * step's existing inline pending treatment instead of adding a second progress mechanism.
+     */
+    VERIFY(3),
+
+    /** The staged setup checklist. Presented only on a first configuration. */
+    SETUP(null),
+    ;
+
+    companion object {
+        /** How many steps the credential flow actually has, for `"Step N of M"`. */
+        val credentialStepCount: Int = entries.count { it.credentialStepNumber != null }
+    }
+}
 
 /** SteamID entry path chosen by the user in Step 2. */
 enum class SteamIdEntryMode { RAW_ID, PROFILE_URL }
@@ -32,6 +58,21 @@ sealed interface ResolveState {
     data class Error(val message: String) : ResolveState
 }
 
+/**
+ * Verification state, shown inline on the step whose value it implicates.
+ *
+ * A network failure is deliberately *not* an [ResolveState.Error]-shaped validation message: it is
+ * [Unreachable], which offers a retry and leaves both entered values in place, because telling
+ * someone their correct key is wrong because their train went into a tunnel is the worst answer the
+ * flow could give.
+ */
+sealed interface VerifyState {
+    data object Idle : VerifyState
+    data object Verifying : VerifyState
+    data class Rejected(val message: String) : VerifyState
+    data object Unreachable : VerifyState
+}
+
 data class OnboardingUiState(
     val step: OnboardingStep = OnboardingStep.API_KEY,
     val apiKey: String = "",
@@ -40,6 +81,7 @@ data class OnboardingUiState(
     val steamIdInput: String = "",
     val entryMode: SteamIdEntryMode = SteamIdEntryMode.RAW_ID,
     val resolve: ResolveState = ResolveState.Idle,
+    val verify: VerifyState = VerifyState.Idle,
     val saving: Boolean = false,
     /** A changed SteamID is held here until the user confirms or declines its data consequence. */
     val identityChange: IdentityChangeUiState? = null,
@@ -50,6 +92,9 @@ data class OnboardingUiState(
     val canAdvanceFromApiKey: Boolean get() = apiKey.isNotBlank() || hasExistingKey
 
     val isResolved: Boolean get() = resolve is ResolveState.Resolved
+
+    /** Verification and the final save share one pending treatment; neither is cancellable. */
+    val busy: Boolean get() = saving || verify is VerifyState.Verifying
 }
 
 data class IdentityChangeUiState(
@@ -77,6 +122,17 @@ class OnboardingViewModel @Inject constructor(
 
     private var pendingAccountChange: PendingAccountChange? = null
 
+    /**
+     * Whether this flow ends in setup. Fixed from the credential state the flow *opened* with, not
+     * the live one: saving credentials makes the account configured, and re-reading it afterwards
+     * would conclude that every first run was an edit.
+     *
+     * An already-configured user reopening the flow from Settings to change credentials gets the
+     * credential steps and nothing more — their new credentials are verified, but setup is not
+     * presented again unprompted, and Settings has its own entry for it.
+     */
+    private var presentsSetup = false
+
     init {
         viewModelScope.launch {
             val current = credentials.currentCredentials()
@@ -87,25 +143,34 @@ class OnboardingViewModel @Inject constructor(
                         steamIdInput = current.steamId,
                     )
                 }
+            } else {
+                presentsSetup = true
             }
         }
     }
 
-    fun onApiKeyChange(value: String) = _uiState.update { it.copy(apiKey = value) }
+    fun onApiKeyChange(value: String) =
+        _uiState.update { it.copy(apiKey = value, verify = VerifyState.Idle) }
 
     fun advanceToSteamId() {
         if (!_uiState.value.canAdvanceFromApiKey) return
         _uiState.update { it.copy(step = OnboardingStep.STEAM_ID) }
     }
 
-    fun backToApiKey() = _uiState.update { it.copy(step = OnboardingStep.API_KEY) }
+    fun backToApiKey() =
+        _uiState.update { it.copy(step = OnboardingStep.API_KEY, verify = VerifyState.Idle) }
 
     fun setEntryMode(mode: SteamIdEntryMode) =
-        _uiState.update { it.copy(entryMode = mode, resolve = ResolveState.Idle) }
+        _uiState.update {
+            it.copy(entryMode = mode, resolve = ResolveState.Idle, verify = VerifyState.Idle)
+        }
 
     fun onSteamIdInputChange(value: String) =
-        // Any edit invalidates a prior resolution so the user must re-resolve before saving.
-        _uiState.update { it.copy(steamIdInput = value, resolve = ResolveState.Idle) }
+        // Any edit invalidates a prior resolution so the user must re-resolve before saving, and
+        // any prior verification with it.
+        _uiState.update {
+            it.copy(steamIdInput = value, resolve = ResolveState.Idle, verify = VerifyState.Idle)
+        }
 
     /** Resolve the current SteamID input (local for raw/`profiles`, network for vanity). */
     fun resolveSteamId() {
@@ -121,36 +186,91 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
-    /** Persist the entered/kept API key and the resolved SteamID, or request account confirmation. */
+    /**
+     * Verify the entered credentials against Steam and, only if that succeeds, persist them.
+     *
+     * Verification is the last credential step and a precondition of saving — this is the sole path
+     * to [CredentialsRepository.save] from the flow, so there is no state in which an unverified
+     * credential is stored. That is also why verification is not one of setup's stages: a stage can
+     * be declined, and this cannot be.
+     */
     fun finish() {
         val state = _uiState.value
         val resolved = state.resolve as? ResolveState.Resolved ?: return
-        if (state.saving || state.identityChange != null) return
-        _uiState.update { it.copy(saving = true) }
+        if (state.busy || state.identityChange != null) return
+        _uiState.update {
+            it.copy(step = OnboardingStep.VERIFY, verify = VerifyState.Verifying)
+        }
         viewModelScope.launch {
             val apiKey = state.apiKey.ifBlank {
                 // Editing with the key field left blank: keep the stored key.
                 (credentials.currentCredentials())?.apiKey.orEmpty()
             }
-            when (val result = credentials.save(apiKey = apiKey, steamId = resolved.steamId64)) {
-                CredentialsSaveResult.Saved ->
-                    _uiState.update { it.copy(saving = false, completed = true) }
+            when (credentials.verify(apiKey = apiKey, steamId = resolved.steamId64)) {
+                CredentialVerification.Verified -> persist(apiKey, resolved.steamId64)
 
-                is CredentialsSaveResult.IdentityChanged -> {
-                    pendingAccountChange = PendingAccountChange(apiKey, result.incomingSteamId)
-                    _uiState.update {
-                        it.copy(
-                            saving = false,
-                            identityChange = IdentityChangeUiState(
-                                storedSteamId = result.storedSteamId,
-                                incomingSteamId = result.incomingSteamId,
-                            ),
-                        )
-                    }
+                CredentialVerification.KeyRejected -> _uiState.update {
+                    it.copy(
+                        step = OnboardingStep.API_KEY,
+                        verify = VerifyState.Rejected("Steam did not accept this API key."),
+                    )
+                }
+
+                CredentialVerification.NoProfile -> _uiState.update {
+                    it.copy(
+                        step = OnboardingStep.STEAM_ID,
+                        verify = VerifyState.Rejected("No Steam profile found for that ID."),
+                    )
+                }
+
+                // Neither value is implicated and neither is cleared, so retrying persists without
+                // anything being re-entered.
+                CredentialVerification.Unreachable -> _uiState.update {
+                    it.copy(step = OnboardingStep.STEAM_ID, verify = VerifyState.Unreachable)
                 }
             }
         }
     }
+
+    /** Try verification again after a network failure, with both entered values still in place. */
+    fun retryVerification() = finish()
+
+    private suspend fun persist(apiKey: String, steamId: String) {
+        _uiState.update { it.copy(saving = true, verify = VerifyState.Idle) }
+        when (val result = credentials.save(apiKey = apiKey, steamId = steamId)) {
+            CredentialsSaveResult.Saved -> _uiState.update { it.afterCredentialsSaved() }
+
+            is CredentialsSaveResult.IdentityChanged -> {
+                pendingAccountChange = PendingAccountChange(apiKey, result.incomingSteamId)
+                _uiState.update {
+                    it.copy(
+                        saving = false,
+                        identityChange = IdentityChangeUiState(
+                            storedSteamId = result.storedSteamId,
+                            incomingSteamId = result.incomingSteamId,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Where the flow goes once credentials are stored: into setup on a first configuration, so a
+     * newly configured install is populated rather than empty, and straight out on an edit.
+     */
+    private fun OnboardingUiState.afterCredentialsSaved(): OnboardingUiState =
+        if (presentsSetup) {
+            copy(saving = false, step = OnboardingStep.SETUP)
+        } else {
+            copy(saving = false, completed = true)
+        }
+
+    /**
+     * Leave the flow after setup has completed or been declined. Credentials stay verified and
+     * stored either way — declining setup must never invalidate them.
+     */
+    fun onSetupDone() = _uiState.update { it.copy(completed = true) }
 
     /** Declining is a complete no-op: the repository has not written either credential. */
     fun declineIdentityChange() {
@@ -203,7 +323,7 @@ class OnboardingViewModel @Inject constructor(
                 accountChange.apply(apiKey = pending.apiKey, steamId = pending.steamId)
                 credentials.refresh()
                 pendingAccountChange = null
-                _uiState.update { it.copy(saving = false, identityChange = null, completed = true) }
+                _uiState.update { it.copy(identityChange = null).afterCredentialsSaved() }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {

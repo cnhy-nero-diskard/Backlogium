@@ -143,11 +143,16 @@ fun HomeScreen(
 
     if (state.loading) return
 
-    if (!state.configured) {
+    // The takeover latches on the first unconfigured composition and is released by the flow
+    // itself, not by `configured` flipping. Saving credentials flips it *mid-flow* — the flow
+    // continues into first-run setup afterwards — so tearing the takeover down there would
+    // dismantle the setup step in the same frame it appeared.
+    var onboardingActive by remember { mutableStateOf(false) }
+    LaunchedEffect(state.configured) { if (!state.configured) onboardingActive = true }
+
+    if (!state.configured || onboardingActive) {
         // Full-screen onboarding takeover replaces the old dead-end "not configured" message.
-        // Completion flips credentialsStateFlow, so this screen recomposes to the configured
-        // content automatically — no explicit navigation needed here.
-        OnboardingScreen(onCompleted = {})
+        OnboardingScreen(onCompleted = { onboardingActive = false })
         return
     }
 
