@@ -20,14 +20,11 @@ class SteamAssetStore @Inject constructor(@ApplicationContext context: Context) 
 
     fun normalizedUrl(url: String): String = url.trim().substringBefore('#')
 
-    fun fileFor(manifest: SteamAssetManifest): File? = manifest.relativePath
-        ?.takeUnless { it.contains("..") }
-        ?.let { File(directory, it) }
+    fun fileFor(manifest: SteamAssetManifest): File? = manifest.relativePath?.let(::fileForPath)
 
     suspend fun isValid(manifest: SteamAssetManifest): Boolean = withContext(Dispatchers.IO) {
-        val path = manifest.relativePath ?: return@withContext false
-        if (manifest.state != SteamAssetManifestState.STORED.name || path.contains("..")) return@withContext false
-        val file = File(directory, path)
+        if (manifest.state != SteamAssetManifestState.STORED.name) return@withContext false
+        val file = fileFor(manifest) ?: return@withContext false
         file.isFile && file.length() == manifest.byteCount && checksum(file) == manifest.checksum
     }
 
@@ -54,6 +51,26 @@ class SteamAssetStore @Inject constructor(@ApplicationContext context: Context) 
 
     suspend fun deleteTemporaryFiles() = withContext(Dispatchers.IO) {
         directory.listFiles { file -> file.name.endsWith(".tmp") }?.forEach(File::delete)
+    }
+
+    suspend fun delete(relativePath: String) = withContext(Dispatchers.IO) {
+        fileForPath(relativePath)
+            ?.takeIf { it.extension == "img" }
+            ?.delete()
+    }
+
+    suspend fun deleteOrphanFiles(referencedPaths: Set<String>) = withContext(Dispatchers.IO) {
+        directory.listFiles { file ->
+            file.isFile && file.extension == "img" && file.name !in referencedPaths
+        }?.forEach(File::delete)
+    }
+
+    private fun fileForPath(relativePath: String): File? {
+        if (relativePath.isBlank()) return null
+        return runCatching {
+            val root = directory.canonicalFile
+            File(root, relativePath).canonicalFile.takeIf { it.parentFile == root }
+        }.getOrNull()
     }
 
     private fun checksum(file: File): String = file.inputStream().use { stream ->

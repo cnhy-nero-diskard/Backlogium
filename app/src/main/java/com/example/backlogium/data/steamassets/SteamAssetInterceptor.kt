@@ -7,10 +7,10 @@ import com.example.backlogium.data.local.dao.SteamAssetDao
 import com.example.backlogium.data.local.entity.SteamAssetManifest
 import com.example.backlogium.di.ApplicationScope
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.io.File
-import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -21,20 +21,31 @@ class SteamAssetLocalResolver @Inject constructor(
     private val store: SteamAssetStore,
     @ApplicationScope scope: CoroutineScope,
 ) {
-    private val manifests = ConcurrentHashMap<String, SteamAssetManifest>()
+    @Volatile
+    private var manifests: Map<String, SteamAssetManifest> = emptyMap()
+    private val initialSnapshotReady = CompletableDeferred<Unit>()
 
     init {
         scope.launch {
             assetDao.observeAll().collect { rows ->
-                manifests.clear()
-                rows.filter { it.state == SteamAssetManifestState.STORED.name }
-                    .forEach { manifests[it.normalizedUrl] = it }
+                manifests = rows
+                    .asSequence()
+                    .filter { it.state == SteamAssetManifestState.STORED.name }
+                    .associateBy { it.normalizedUrl }
+                initialSnapshotReady.complete(Unit)
             }
         }
     }
 
     suspend fun localData(url: String): Any? {
-        val manifest = manifests[store.normalizedUrl(url)] ?: return null
+        val normalizedUrl = store.normalizedUrl(url)
+        val manifest = if (initialSnapshotReady.isCompleted) {
+            manifests[normalizedUrl]
+        } else {
+            // The Room observer is asynchronous on a cold process start. Fall back to the
+            // durable row until its first emission so offline requests do not race an empty map.
+            assetDao.get(normalizedUrl)?.takeIf { it.state == SteamAssetManifestState.STORED.name }
+        } ?: return null
         if (!store.isValid(manifest)) {
             assetDao.invalidate(manifest.normalizedUrl)
             return null

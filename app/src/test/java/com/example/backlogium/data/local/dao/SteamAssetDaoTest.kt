@@ -236,7 +236,7 @@ class SteamAssetDaoTest {
     }
 
     @Test
-    fun gameImageSources_excludesBlankAndWhitespaceOnlyIconUrls() = runBlocking {
+    fun gameImageSources_includesAllAppIdsForDerivedArtwork() = runBlocking {
         gameDao.upsertAll(
             listOf(
                 Game(appId = 1L, name = "Empty", iconUrl = "", playtimeForever = 0, playtime2Weeks = 0, lastPlaytime = 0),
@@ -246,7 +246,10 @@ class SteamAssetDaoTest {
         )
 
         val sources = dao.gameImageSources()
-        assertEquals(listOf(3L to "hash-3"), sources.map { it.appId to it.iconUrl })
+        assertEquals(
+            listOf(1L to "", 2L to "   ", 3L to "hash-3"),
+            sources.map { it.appId to it.iconUrl },
+        )
     }
 
     @Test

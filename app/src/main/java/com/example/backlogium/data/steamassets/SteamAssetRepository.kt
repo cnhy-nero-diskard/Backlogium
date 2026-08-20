@@ -51,6 +51,7 @@ class SteamAssetRepository @Inject constructor(
             .filter { it.state == SteamAssetManifestState.STORED.name && !store.isValid(it) }
             .forEach { assetDao.invalidate(it.normalizedUrl) }
         val items = inventory()
+        reconcileStaleManifests(items)
         val permits = Semaphore(MAX_CONCURRENCY)
         var counts = SteamAssetRunCounts()
         var processed = 0
@@ -74,6 +75,29 @@ class SteamAssetRepository @Inject constructor(
             ),
         )
         counts
+    }
+
+    private suspend fun reconcileStaleManifests(items: List<SteamAssetInventoryItem>) {
+        val currentUrls = items
+            .asSequence()
+            .map { store.normalizedUrl(it.url) }
+            .toSet()
+        val manifests = assetDao.getAll()
+        val retainedPaths = manifests
+            .asSequence()
+            .filter { it.normalizedUrl in currentUrls }
+            .mapNotNull { it.relativePath }
+            .toSet()
+
+        manifests
+            .filter { it.normalizedUrl !in currentUrls }
+            .forEach { stale ->
+                assetDao.invalidate(stale.normalizedUrl)
+                stale.relativePath
+                    ?.takeUnless { it in retainedPaths }
+                    ?.let { store.delete(it) }
+            }
+        store.deleteOrphanFiles(retainedPaths)
     }
 
     private suspend fun process(item: SteamAssetInventoryItem, mode: SteamAssetDownloadMode, startedAt: Long): SteamAssetOutcome {

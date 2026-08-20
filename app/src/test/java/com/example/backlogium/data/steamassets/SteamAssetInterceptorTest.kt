@@ -16,6 +16,7 @@ import com.example.backlogium.data.local.entity.SteamAssetManifest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -92,7 +93,9 @@ class SteamAssetInterceptorTest {
     }
 
     /** Hand-written `SteamAssetDao` fake: this module has no interface-mocking library (grepped, none found). */
-    private class FakeSteamAssetDao : SteamAssetDao {
+    private class FakeSteamAssetDao(
+        private val observeFlow: Flow<List<SteamAssetManifest>>? = null,
+    ) : SteamAssetDao {
         private val rows = linkedMapOf<String, SteamAssetManifest>()
         private val state = MutableStateFlow<List<SteamAssetManifest>>(emptyList())
         val invalidated = mutableListOf<String>()
@@ -108,7 +111,7 @@ class SteamAssetInterceptorTest {
         }
 
         override suspend fun get(url: String): SteamAssetManifest? = rows[url]
-        override fun observeAll(): Flow<List<SteamAssetManifest>> = state
+        override fun observeAll(): Flow<List<SteamAssetManifest>> = observeFlow ?: state
         override suspend fun getAll(): List<SteamAssetManifest> = rows.values.toList()
 
         override suspend fun upsert(manifest: SteamAssetManifest) {
@@ -160,6 +163,19 @@ class SteamAssetInterceptorTest {
         assertEquals(store.fileFor(manifest), file)
         assertTrue((file as File).isFile)
         assertTrue(dao.invalidated.isEmpty())
+    }
+
+    @Test
+    fun localData_fallsBackToDaoBeforeInitialSnapshot() = runBlocking {
+        val store = newStore()
+        val url = "https://steamcommunity.com/public/images/apps/9/cold-start.jpg"
+        val dao = FakeSteamAssetDao(observeFlow = emptyFlow<List<SteamAssetManifest>>())
+        val manifest = storedManifest(store, url)
+        dao.seed(manifest)
+
+        val resolver = SteamAssetLocalResolver(dao, store, unconfinedScope())
+
+        assertEquals(store.fileFor(manifest), resolver.localData(url))
     }
 
     @Test

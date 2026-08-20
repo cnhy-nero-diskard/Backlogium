@@ -137,6 +137,9 @@ class SteamAssetRepositoryTest {
         gameDao.upsert(
             Game(appId = 441L, name = "Other", iconUrl = "https://example.test/icon-440.jpg", playtimeForever = 0, playtime2Weeks = 0, lastPlaytime = 0),
         )
+        gameDao.upsert(
+            Game(appId = 442L, name = "No icon hash", iconUrl = "", playtimeForever = 0, playtime2Weeks = 0, lastPlaytime = 0),
+        )
         playerProfileDao.upsert(PlayerProfile(avatarUrl = "https://example.test/avatar.jpg"))
         achievementDao.upsertAll(listOf(Achievement(appId = 440L, apiName = "ACH", iconUrl = "https://example.test/ach.jpg", retired = false, fetchedAt = 1L)))
 
@@ -156,6 +159,7 @@ class SteamAssetRepositoryTest {
         // Artwork variants are derived per-appId, so both games contribute independently.
         assertTrue(byUrl.containsKey(SteamIconMapper.headerUrl(440L)))
         assertTrue(byUrl.containsKey(SteamIconMapper.headerUrl(441L)))
+        assertTrue(byUrl.containsKey(SteamIconMapper.headerUrl(442L)))
         assertEquals(SteamAssetKind.HEADER, byUrl[SteamIconMapper.headerUrl(440L)]?.kind)
         assertTrue(byUrl.containsKey(SteamIconMapper.heroCapsuleUrl(440L)))
         assertTrue(byUrl.containsKey(SteamIconMapper.libraryHeroUrl(440L)))
@@ -314,9 +318,46 @@ class SteamAssetRepositoryTest {
         assertTrue(afterRun != null && store.isValid(afterRun))
     }
 
-    // ---- bounded concurrency ----
+    // ---- stale-manifest reconciliation ----
 
     @Test
+    fun run_reconcilesStaleManifestRowsAndOrphanFilesWithoutDeletingCurrentAsset() = runBlocking {
+        val currentUrl = "https://example.test/current.jpg"
+        val staleUrl = "https://example.test/stale.jpg"
+        playerProfileDao.upsert(PlayerProfile(avatarUrl = currentUrl))
+
+        val currentSaved = checkNotNull(store.write(currentUrl, "image/png", validPngBytes()))
+        val staleSaved = checkNotNull(store.write(staleUrl, "image/png", validPngBytes()))
+        val currentManifest = SteamAssetManifest(
+            normalizedUrl = store.normalizedUrl(currentUrl),
+            kind = SteamAssetKind.AVATAR.name,
+            relativePath = currentSaved.relativePath,
+            byteCount = currentSaved.bytes,
+            checksum = currentSaved.checksum,
+            state = SteamAssetManifestState.STORED.name,
+            lastSuccessAt = 1_000L,
+            lastCheckedAt = 1_000L,
+        )
+        val staleManifest = currentManifest.copy(
+            normalizedUrl = store.normalizedUrl(staleUrl),
+            relativePath = staleSaved.relativePath,
+            byteCount = staleSaved.bytes,
+            checksum = staleSaved.checksum,
+        )
+        assetDao.upsert(currentManifest)
+        assetDao.upsert(staleManifest)
+
+        val repository = repositoryWith(Interceptor { throw IOException("current asset should be skipped") })
+        val counts = repository.run(SteamAssetDownloadMode.DOWNLOAD_MISSING, System.currentTimeMillis(), ::noopProgress)
+
+        assertEquals(1, counts.alreadyPresent)
+        assertNull(assetDao.get(staleManifest.normalizedUrl))
+        assertTrue(store.isValid(currentManifest))
+        assertTrue(store.fileFor(staleManifest)?.exists() != true)
+    }
+
+    @Test
+    // ---- bounded concurrency ----
     fun run_boundsConcurrentInFlightRequestsToFour() = runBlocking(Dispatchers.Default) {
         // Enough distinct URLs (achievement icons, one per row) to exceed MAX_CONCURRENCY if
         // requests ran unbounded.

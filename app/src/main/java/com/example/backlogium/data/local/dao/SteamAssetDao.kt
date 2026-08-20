@@ -32,7 +32,7 @@ interface SteamAssetDao {
     @Query("SELECT * FROM steam_asset_download_state WHERE id = 0")
     fun observeLastRun(): Flow<SteamAssetDownloadState?>
 
-    @Query("SELECT appId, iconUrl FROM games WHERE TRIM(iconUrl) != ''")
+    @Query("SELECT appId, iconUrl FROM games")
     suspend fun gameImageSources(): List<SteamGameImageSource>
 
     @Query("SELECT avatarUrl FROM player_profile WHERE id = 0 AND avatarUrl IS NOT NULL AND TRIM(avatarUrl) != ''")
@@ -45,4 +45,4 @@ interface SteamAssetDao {
 }
 
 data class SteamAssetStoredSummary(val count: Int, val bytes: Long)
-data class SteamGameImageSource(val appId: Long, val iconUrl: String)
+data class SteamGameImageSource(val appId: Long, val iconUrl: String?)
