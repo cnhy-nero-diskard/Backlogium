@@ -1,5 +1,7 @@
 package com.example.backlogium.ui.updates
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,8 +22,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.example.backlogium.BuildConfig
+import com.example.backlogium.data.updates.releaseNoteSections
+import com.example.backlogium.data.updates.validatedFullChangelogUrl
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,26 +41,71 @@ fun AppUpdateSheet(
     onDismiss: () -> Unit,
 ) {
     val update = state.available ?: return
+    val context = LocalContext.current
+    val sections = update.releaseNoteSections()
+    val fullChangelogUrl = update.validatedFullChangelogUrl()
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
+                .testTag("app-update-sheet-content")
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Update available", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                "Backlogium",
+                modifier = Modifier.testTag("app-update-product-heading"),
+                style = MaterialTheme.typography.headlineSmall,
+            )
+            Text("Update available", style = MaterialTheme.typography.titleLarge)
             Text(
                 "${BuildConfig.VERSION_NAME} → ${update.versionName}",
+                modifier = Modifier.testTag("app-update-version-transition"),
                 style = MaterialTheme.typography.titleMedium,
             )
-            if (update.releaseName.isNotBlank()) {
-                Text(update.releaseName, style = MaterialTheme.typography.bodyLarge)
+            if (sections.isEmpty()) {
+                Text(
+                    "This is a maintenance update with no user-visible changes.",
+                    modifier = Modifier.testTag("app-update-maintenance-message"),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                sections.forEach { section ->
+                    Text(
+                        section.title,
+                        modifier = Modifier
+                            .testTag("app-update-section-${section.key}")
+                            .semantics { heading() },
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    section.items.forEach { item ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("app-update-item-${section.key}"),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text("•", style = MaterialTheme.typography.bodyMedium)
+                            Text(item, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
             }
-            Text(
-                update.releaseNotes.ifBlank { "No release notes were provided." },
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            if (fullChangelogUrl != null) {
+                TextButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(fullChangelogUrl)),
+                            )
+                        }
+                    },
+                    modifier = Modifier.testTag("app-update-full-changelog"),
+                ) {
+                    Text("View full changelog")
+                }
+            }
 
             when (val operation = state.operation) {
                 is UpdateOperation.Downloading -> {
