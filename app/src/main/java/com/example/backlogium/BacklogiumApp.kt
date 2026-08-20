@@ -3,6 +3,8 @@ package com.example.backlogium
 import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.lifecycle.DefaultLifecycleObserver
+import coil.ImageLoader
+import coil.ImageLoaderFactory
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.work.Configuration
@@ -14,6 +16,7 @@ import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.backup.SnapshotStore
 import com.example.backlogium.data.diagnostics.DiagnosticHistoryMigration
 import com.example.backlogium.data.repo.AccountChangeCoordinator
+import com.example.backlogium.data.steamassets.SteamAssetInterceptor
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.domain.DailyProgressBackfillUseCase
 import com.example.backlogium.domain.PendingImportRecomputeUseCase
@@ -68,13 +71,16 @@ internal suspend fun detectForegroundPresence(
  * every time the app is foregrounded.
  */
 @HiltAndroidApp
-class BacklogiumApp : Application(), Configuration.Provider {
+class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory {
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
 
     @Inject
     lateinit var syncScheduler: SyncScheduler
+
+    @Inject
+    lateinit var steamAssetInterceptor: SteamAssetInterceptor
 
     @Inject
     lateinit var updateScheduler: UpdateScheduler
@@ -111,6 +117,10 @@ class BacklogiumApp : Application(), Configuration.Provider {
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
             .build()
+
+    override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this)
+        .components { add(steamAssetInterceptor) }
+        .build()
 
     override fun onCreate() {
         super.onCreate()

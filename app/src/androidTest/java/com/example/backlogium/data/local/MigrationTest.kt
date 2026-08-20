@@ -349,6 +349,104 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun v19ToV20_addsSteamAssetTablesAndLeavesExistingDataUntouched() {
+        val databaseName = "migration-v19-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 19)
+        try {
+            database.execSQL(
+                "INSERT INTO games " +
+                    "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+                    "isGoal, targetMinutes, lastSyncedAt, backfillMinutes) VALUES " +
+                    "(440, 'Game', 'icon-hash', 100, 0, 100, 0, NULL, 1700000000000, 0)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                20,
+                true,
+                BacklogiumDatabase.MIGRATION_19_20,
+            )
+            try {
+                assertTableInfo(
+                    migrated,
+                    "steam_asset_manifest",
+                    listOf(
+                        ColumnInfo("normalizedUrl", "TEXT", notNull = true, pk = 1),
+                        ColumnInfo("kind", "TEXT", notNull = true, pk = 0),
+                        ColumnInfo("relativePath", "TEXT", notNull = false, pk = 0),
+                        ColumnInfo("byteCount", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("checksum", "TEXT", notNull = false, pk = 0),
+                        ColumnInfo("state", "TEXT", notNull = true, pk = 0),
+                        ColumnInfo("lastSuccessAt", "INTEGER", notNull = false, pk = 0),
+                        ColumnInfo("lastCheckedAt", "INTEGER", notNull = true, pk = 0),
+                    ),
+                )
+                assertTableInfo(
+                    migrated,
+                    "steam_asset_download_state",
+                    listOf(
+                        ColumnInfo("id", "INTEGER", notNull = true, pk = 1),
+                        ColumnInfo("mode", "TEXT", notNull = true, pk = 0),
+                        ColumnInfo("completedAt", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("storedCount", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("alreadyPresentCount", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("unavailableCount", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("failedCount", "INTEGER", notNull = true, pk = 0),
+                    ),
+                )
+
+                // The migration only adds tables; a pre-existing row must survive untouched.
+                migrated.query("SELECT appId, name, iconUrl FROM games").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(440L, cursor.getLong(0))
+                    assertEquals("Game", cursor.getString(1))
+                    assertEquals("icon-hash", cursor.getString(2))
+                    assertFalse(cursor.moveToNext())
+                }
+
+                // Both new tables start empty.
+                migrated.query("SELECT COUNT(*) FROM steam_asset_manifest").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+                migrated.query("SELECT COUNT(*) FROM steam_asset_download_state").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    private data class ColumnInfo(val name: String, val type: String, val notNull: Boolean, val pk: Int)
+
+    private fun assertTableInfo(database: SupportSQLiteDatabase, table: String, expected: List<ColumnInfo>) {
+        val actual = mutableListOf<ColumnInfo>()
+        database.query("PRAGMA table_info(`$table`)").use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            val typeIndex = cursor.getColumnIndexOrThrow("type")
+            val notNullIndex = cursor.getColumnIndexOrThrow("notnull")
+            val pkIndex = cursor.getColumnIndexOrThrow("pk")
+            while (cursor.moveToNext()) {
+                actual += ColumnInfo(
+                    cursor.getString(nameIndex),
+                    cursor.getString(typeIndex),
+                    cursor.getInt(notNullIndex) != 0,
+                    cursor.getInt(pkIndex),
+                )
+            }
+        }
+        assertEquals(expected, actual)
+    }
+
     private fun assertForeignKeyReferencesGames(database: SupportSQLiteDatabase, table: String) {
         database.query("PRAGMA foreign_key_list(`$table`)").use { cursor ->
             val tableIndex = cursor.getColumnIndexOrThrow("table")

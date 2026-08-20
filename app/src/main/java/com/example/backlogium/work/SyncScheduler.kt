@@ -52,6 +52,28 @@ enum class HltbRefreshStatus {
     RETRYING,
 }
 
+/** Dedicated state for the manual offline Steam artwork batch. */
+enum class SteamAssetDownloadStatus { IDLE, QUEUED, PREPARING, RUNNING, FAILED, CANCELLED }
+
+data class SteamAssetDownloadProgress(
+    val processed: Int,
+    val total: Int,
+    val label: String,
+    val stored: Int,
+    val alreadyPresent: Int,
+    val unavailable: Int,
+    val failed: Int,
+)
+
+internal fun steamAssetStatusFor(infos: List<WorkInfo>): SteamAssetDownloadStatus = when {
+    infos.any { it.state == WorkInfo.State.RUNNING && it.progress.getInt(SteamAssetDownloadWorker.KEY_TOTAL, 0) > 0 } -> SteamAssetDownloadStatus.RUNNING
+    infos.any { it.state == WorkInfo.State.RUNNING } -> SteamAssetDownloadStatus.PREPARING
+    infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED } -> SteamAssetDownloadStatus.QUEUED
+    infos.firstOrNull()?.state == WorkInfo.State.FAILED -> SteamAssetDownloadStatus.FAILED
+    infos.firstOrNull()?.state == WorkInfo.State.CANCELLED -> SteamAssetDownloadStatus.CANCELLED
+    else -> SteamAssetDownloadStatus.IDLE
+}
+
 internal fun hltbRefreshStatusFor(
     hasRunning: Boolean,
     hasRetrying: Boolean,
@@ -148,6 +170,27 @@ class SyncScheduler @Inject constructor(
         }
         .distinctUntilChanged()
 
+    private val assetWorkInfos: Flow<List<WorkInfo>> = workManager
+        .getWorkInfosForUniqueWorkFlow(SteamAssetDownloadWorker.UNIQUE_WORK_NAME)
+
+    val steamAssetDownloadStatus: Flow<SteamAssetDownloadStatus> = assetWorkInfos
+        .map(::steamAssetStatusFor)
+        .distinctUntilChanged()
+
+    val steamAssetDownloadProgress: Flow<SteamAssetDownloadProgress?> = assetWorkInfos.map { infos ->
+        infos.firstOrNull { it.state == WorkInfo.State.RUNNING }?.progress?.let { progress ->
+            val total = progress.getInt(SteamAssetDownloadWorker.KEY_TOTAL, 0)
+            if (total <= 0) null else SteamAssetDownloadProgress(
+                progress.getInt(SteamAssetDownloadWorker.KEY_PROCESSED, 0), total,
+                progress.getString(SteamAssetDownloadWorker.KEY_CURRENT_LABEL).orEmpty(),
+                progress.getInt(SteamAssetDownloadWorker.KEY_STORED, 0),
+                progress.getInt(SteamAssetDownloadWorker.KEY_ALREADY_PRESENT, 0),
+                progress.getInt(SteamAssetDownloadWorker.KEY_UNAVAILABLE, 0),
+                progress.getInt(SteamAssetDownloadWorker.KEY_FAILED, 0),
+            )
+        }
+    }
+
     /** Enqueue the periodic poll, keeping any already-scheduled work. Idempotent. */
     fun ensurePeriodicSync() {
         val request = PeriodicWorkRequestBuilder<SteamSyncWorker>(15, TimeUnit.MINUTES)
@@ -200,6 +243,24 @@ class SyncScheduler @Inject constructor(
             request,
         )
     }
+
+    /** Starts the independent asset worker; duplicate taps keep the admitted job. */
+    fun downloadSteamAssets(mode: com.example.backlogium.data.steamassets.SteamAssetDownloadMode) {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .setRequiresStorageNotLow(true)
+            .build()
+        val request = OneTimeWorkRequestBuilder<SteamAssetDownloadWorker>()
+            .setConstraints(constraints)
+            .setInputData(workDataOf(
+                SteamAssetDownloadWorker.KEY_MODE to mode.name,
+                SteamAssetDownloadWorker.KEY_STARTED_AT to System.currentTimeMillis(),
+            ))
+            .build()
+        workManager.enqueueUniqueWork(SteamAssetDownloadWorker.UNIQUE_WORK_NAME, ExistingWorkPolicy.KEEP, request)
+    }
+
+    fun cancelSteamAssetDownload() = workManager.cancelUniqueWork(SteamAssetDownloadWorker.UNIQUE_WORK_NAME)
 
     /**
      * Enqueue a one-time reconciliation pass. [force] bypasses the charging/unmetered

@@ -18,6 +18,7 @@ import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.dao.SteamAssetDao
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
@@ -31,6 +32,8 @@ import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.PresenceDecision
 import com.example.backlogium.data.local.entity.RequestBreakdown
 import com.example.backlogium.data.local.entity.RequestTotal
+import com.example.backlogium.data.local.entity.SteamAssetDownloadState
+import com.example.backlogium.data.local.entity.SteamAssetManifest
 import com.example.backlogium.data.local.entity.SyncRun
 
 @Database(
@@ -48,9 +51,11 @@ import com.example.backlogium.data.local.entity.SyncRun
         Collection::class,
         CollectionMember::class,
         GameGenreCache::class,
+        SteamAssetManifest::class,
+        SteamAssetDownloadState::class,
         GameAchievementSync::class,
     ],
-    version = 19,
+    version = 20,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -65,6 +70,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun collectionDao(): CollectionDao
     abstract fun gameGenreCacheDao(): GameGenreCacheDao
     abstract fun gameAchievementSyncDao(): GameAchievementSyncDao
+    abstract fun steamAssetDao(): SteamAssetDao
 
     companion object {
         const val NAME = "backlogium.db"
@@ -476,6 +482,14 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         arrayOf(key.hourStart, key.route, key.status, if (key.ok) 1 else 0, count),
                     )
                 }
+            }
+        }
+
+        /** v19 -> v20: durable, derived Steam CDN asset manifest and last-run summary. */
+        val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `steam_asset_manifest` (`normalizedUrl` TEXT NOT NULL, `kind` TEXT NOT NULL, `relativePath` TEXT, `byteCount` INTEGER NOT NULL, `checksum` TEXT, `state` TEXT NOT NULL, `lastSuccessAt` INTEGER, `lastCheckedAt` INTEGER NOT NULL, PRIMARY KEY(`normalizedUrl`))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `steam_asset_download_state` (`id` INTEGER NOT NULL, `mode` TEXT NOT NULL, `completedAt` INTEGER NOT NULL, `storedCount` INTEGER NOT NULL, `alreadyPresentCount` INTEGER NOT NULL, `unavailableCount` INTEGER NOT NULL, `failedCount` INTEGER NOT NULL, PRIMARY KEY(`id`))")
             }
         }
 

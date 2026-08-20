@@ -29,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -49,10 +50,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.data.backup.SnapshotMeta
 import com.example.backlogium.data.updates.AppUpdateState
 import com.example.backlogium.gamification.QuestMode
+import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.ui.util.playIfNotSilent
 import com.example.backlogium.ui.util.rememberHaptics
 import com.example.backlogium.work.GenreEnrichmentStatus
+import com.example.backlogium.work.SteamAssetDownloadStatus
 import compose.icons.TablerIcons
 import compose.icons.tablericons.BrandSteam
 import compose.icons.tablericons.ChevronDown
@@ -103,6 +106,8 @@ fun SettingsScreen(
             SettingsActions(
                 onSyncNow = viewModel::syncNow,
                 onReconcileNow = viewModel::reconcileNow,
+                onDownloadSteamAssets = viewModel::downloadSteamAssets,
+                onCancelSteamAssetDownload = viewModel::cancelSteamAssetDownload,
                 onLiveMonitorEnabledChanged = viewModel::onLiveMonitorEnabledChanged,
                 onFieldChanged = viewModel::onFieldChanged,
                 onQuestModeChanged = viewModel::onQuestModeChanged,
@@ -134,6 +139,8 @@ fun SettingsScreen(
 data class SettingsActions(
     val onSyncNow: () -> Unit,
     val onReconcileNow: () -> Unit,
+    val onDownloadSteamAssets: (SteamAssetDownloadMode) -> Unit = {},
+    val onCancelSteamAssetDownload: () -> Unit = {},
     val onLiveMonitorEnabledChanged: (Boolean) -> Unit,
     val onFieldChanged: (RuleField, String) -> Unit,
     val onQuestModeChanged: (QuestMode) -> Unit,
@@ -192,6 +199,13 @@ fun SettingsScreen(
             genreStatus = state.genreEnrichmentStatus,
             onSyncNow = actions.onSyncNow,
             onReconcileNow = actions.onReconcileNow,
+        )
+
+        SectionHeader("Offline Steam assets")
+        OfflineSteamAssetsCard(
+            state = state,
+            onStart = actions.onDownloadSteamAssets,
+            onCancel = actions.onCancelSteamAssetDownload,
         )
 
         if (!BuildConfig.DEBUG) {

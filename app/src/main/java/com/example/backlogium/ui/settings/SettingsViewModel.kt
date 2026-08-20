@@ -9,7 +9,11 @@ import com.example.backlogium.data.backup.BackupValidationProblem
 import com.example.backlogium.data.backup.ParsedBackup
 import com.example.backlogium.data.backup.SnapshotMeta
 import com.example.backlogium.data.credentials.maskApiKey
+import com.example.backlogium.data.local.dao.SteamAssetDao
+import com.example.backlogium.data.local.entity.SteamAssetDownloadState
+import com.example.backlogium.data.local.dao.SteamAssetStoredSummary
 import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.SettingsRepository
@@ -22,6 +26,8 @@ import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.ui.util.HapticIntent
 import com.example.backlogium.work.PresenceServiceStarter
 import com.example.backlogium.work.GenreEnrichmentStatus
+import com.example.backlogium.work.SteamAssetDownloadProgress
+import com.example.backlogium.work.SteamAssetDownloadStatus
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,6 +72,12 @@ data class SettingsUiState(
     val isSyncing: Boolean = false,
     val isReconciling: Boolean = false,
     val genreEnrichmentStatus: GenreEnrichmentStatus = GenreEnrichmentStatus.IDLE,
+    val steamAssetStatus: SteamAssetDownloadStatus = SteamAssetDownloadStatus.IDLE,
+    val steamAssetProgress: SteamAssetDownloadProgress? = null,
+    val storedSteamAssetCount: Int = 0,
+    val storedSteamAssetBytes: Long = 0L,
+    val lastSteamAssetRun: SteamAssetDownloadState? = null,
+    val hasSteamAssetInventory: Boolean = false,
     /** Explicit opt-in to poll Steam every 30 seconds before a game is detected. */
     val liveMonitorEnabled: Boolean = false,
     /** True once historical Steam playtime has been imported (one-time). */
@@ -125,6 +137,7 @@ class SettingsViewModel @Inject constructor(
     private val presenceServiceStarter: PresenceServiceStarter,
     private val syncScheduler: SyncScheduler,
     private val appUpdates: AppUpdateRepository,
+    private val steamAssetDao: SteamAssetDao,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -147,6 +160,17 @@ class SettingsViewModel @Inject constructor(
 
     init {
         refreshSnapshots()
+    }
+
+    private val assetStoredState = combine(
+        steamAssetDao.observeStoredSummary(),
+        steamAssetDao.observeLastRun(),
+        steamAssetDao.observeHasInventory(),
+    ) { summary, lastRun, hasInventory ->
+        AssetStoredState(summary, lastRun, hasInventory)
+    }
+    private val assetWorkState = combine(syncScheduler.steamAssetDownloadStatus, syncScheduler.steamAssetDownloadProgress) { status, progress ->
+        status to progress
     }
 
     private val storedState = combine(
@@ -177,6 +201,15 @@ class SettingsViewModel @Inject constructor(
         state.copy(genreEnrichmentStatus = genreStatus)
     }.combine(profileRepository.reconciliationInProgress) { state, reconciling ->
         state.copy(isReconciling = reconciling)
+    }.combine(assetStoredState) { state, asset ->
+        state.copy(
+            storedSteamAssetCount = asset.summary.count,
+            storedSteamAssetBytes = asset.summary.bytes,
+            hasSteamAssetInventory = asset.hasInventory,
+            lastSteamAssetRun = asset.lastRun,
+        )
+    }.combine(assetWorkState) { state, asset ->
+        state.copy(steamAssetStatus = asset.first, steamAssetProgress = asset.second)
     }
 
     private val ruleLocalState = combine(
@@ -234,6 +267,10 @@ class SettingsViewModel @Inject constructor(
     )
 
     fun syncNow() = profileRepository.syncNow()
+
+    fun downloadSteamAssets(mode: SteamAssetDownloadMode) = syncScheduler.downloadSteamAssets(mode)
+
+    fun cancelSteamAssetDownload() = syncScheduler.cancelSteamAssetDownload()
 
     /** Manual checks bypass the worker cadence but persist the same last-attempt timestamp. */
     fun checkForUpdates() {
@@ -476,6 +513,12 @@ class SettingsViewModel @Inject constructor(
 
     private data class Local(val rule: RuleLocal, val backup: BackupLocal)
 }
+    private data class AssetStoredState(
+        val summary: SteamAssetStoredSummary,
+        val lastRun: SteamAssetDownloadState?,
+        val hasInventory: Boolean,
+    )
+
 
 /** Names what failed and where, rather than reporting only that the import failed (tasks.md 2.5). */
 private fun List<BackupValidationProblem>.describeRejection(): String {
