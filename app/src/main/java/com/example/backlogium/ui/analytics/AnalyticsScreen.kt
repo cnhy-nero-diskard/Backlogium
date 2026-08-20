@@ -846,15 +846,31 @@ private fun RarityBreakdownCard(
                 Spacer(Modifier.width(8.dp))
                 Text("Achievement rarity", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.weight(1f))
+                // fill = false so the optional expander takes only what it needs and ellipsizes
+                // first — the same technique the Library's badge line uses. Without a weight here
+                // the count, which is the shortest and least compressible child, was the one that
+                // gave way, breaking "unlocked" mid-word once the total reached four digits.
                 if (achievements.isNotEmpty()) {
-                    TextButton(onClick = { expanded = !expanded }) {
-                        Text(if (expanded) "Hide rarest" else "Show rarest")
+                    TextButton(
+                        onClick = { expanded = !expanded },
+                        modifier = Modifier.weight(1f, fill = false),
+                    ) {
+                        Text(
+                            text = if (expanded) "Hide rarest" else "Show rarest",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
                 Text(
+                    // A lifetime total a player might screenshot: pinned to one line and left
+                    // unabbreviated, since rounding it to fix a layout bug would smuggle a
+                    // presentation change in as a fix.
                     text = "${breakdown.total} unlocked",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false,
                 )
             }
             Text(
