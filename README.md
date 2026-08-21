@@ -11,29 +11,37 @@ local backup. An independent presence poller records server-side observations to
 Firestore while the phone is asleep; the app itself does not read that data yet,
 and works entirely without it. An OBS overlay remains a roadmap item.
 
-## Status snapshot — 2026-08-15
+## Status snapshot — 2026-08-21
 
 The current branch contains the implemented offline-first Android product loop,
-including the sync write-integrity hardening merged on August 15 (atomic poll
-persistence, database-serialized concurrent polls, field-scoped Steam/app column
-ownership, versioned rule-config provenance, and tombstoned achievement removal),
-the collection UI behavior fixes merged on August 12, and the tiered
-achievement-sync optimization merged on August 11. The source is actively
-maintained; it is not presented here as a claim that every device-only check or
-future cloud consumer is complete.
+including the guided first-run setup, in-app updates, offline Steam asset download,
+haptic-feedback, and diagnostics/UI refinements merged through August 21, on top of
+the sync write-integrity hardening merged on August 15 (atomic poll persistence,
+database-serialized concurrent polls, field-scoped Steam/app column ownership,
+versioned rule-config provenance, and tombstoned achievement removal) and the
+collection UI behavior fixes (August 12) and tiered achievement-sync optimization
+(August 11) that preceded it. The source is actively maintained; it is not presented
+here as a claim that every device-only check or future cloud consumer is complete.
 
 | Area | Current state |
 |---|---|
-| Android client | Five top-level destinations: Home, Library, History, Analytics, and Settings, with onboarding, game detail, HLTB review, collections, and diagnostics as pushed surfaces. |
-| Local product loop | Implemented: Steam onboarding/sync, local sessions and XP, quests/streaks, HLTB data, genres, custom collections, analytics, live monitoring, backups, and settings. |
+| Android client | Five top-level destinations — Home, Library, History, Analytics, and Settings — with onboarding (and its guided first-run setup takeover), game detail, HLTB review, collections, and diagnostics as pushed surfaces. |
+| Local product loop | Implemented: Steam onboarding/sync, credential verification, local sessions and XP, quests/streaks, HLTB data, genres, custom collections, analytics, live monitoring, backups, and settings. |
+| First-run setup | Credentials are verified against Steam before they are accepted. A guided setup then offers an opt-in checklist — initial sync, offline Steam asset download, and HLTB completion fetch — each with its own progress, failure isolation, and retry; any stage can be re-run later from Settings. |
+| In-app updates | Release builds discover newer GitHub Releases (≈ daily, plus on demand), present readable categorized release notes, and install after two-stage verification. The whole path is absent from builds a published release cannot upgrade. |
+| Offline Steam assets | A manually triggered, one-time asset download (game icons / headers / hero art, profile avatar, achievement icons) stored in app-private storage with an integrity-checked manifest; it never chains off sync or any schedule. |
 | Sync write integrity | A poll's raw persistence (sessions, playtime baselines, daily progress, profile fields) commits as one atomic unit; concurrent polls re-read baselines at commit so an increase is never double-counted; the sync writes only Steam-owned game/profile columns, never app-owned ones; rule-config changes are versioned and compared at commit so derived values can't persist under superseded rules. |
 | Achievement sync | Tiered hot/warm/cold/never selection is merged. Normal sync is bounded; cold-tier reconciliation runs weekly on charging + unmetered network or from the forced Settings action. Reconciliation and the sync's in-line refresh are serialized against each other, and achievements Steam stops returning are tombstoned rather than deleted or left to drift. |
 | Cloud presence | The one-minute Firebase Admin writer and Firestore transition log are implemented. The Android app and OBS do not consume that log yet; client access is denied by the current Firestore rules. |
-| Verification | Kotlin/JVM tests, Android unit tests, instrumentation tests, compile checks, and function builds are available, including a schema v14→v15 migration test and dedicated write-integrity/versioned-persistence coverage. Four hardware-dependent achievement-sync checks remain tracked in [#52](https://github.com/cnhy-nero-diskard/Backlogium/issues/52). |
+| Diagnostics & haptics | Sync run records, per-request timing, presence decisions, and rolling request counters (24h / 30d / 365d, surviving run pruning) are recorded and readable in release builds. A single haptics authority owns every platform haptic on the earned/committed moments. Library density/visual and per-list sort-direction refinements shipped. |
+| Verification | Kotlin/JVM tests, Android unit tests, instrumentation tests, compile checks, and function builds are available, including legacy and structured release-note presentation tests. Four hardware-dependent achievement-sync checks remain tracked in [#52](https://github.com/cnhy-nero-diskard/Backlogium/issues/52). |
 
 ## What Works Today
 
-- Steam onboarding from inside the app: API key, SteamID64, or profile URL.
+- Steam onboarding from inside the app — API key, SteamID64, or profile URL — verified
+  against Steam before they are saved, then an optional guided first-run setup
+  (initial sync, offline Steam asset download, HLTB completion fetch) with per-stage
+  progress and retry.
 - Library sync from Steam Web API, including owned games, recent playtime, profile
   summary, player level, achievements, achievement schema, and live presence.
 - HowLongToBeat lookups with batch refresh, ambiguous-match review, and per-game
@@ -51,8 +59,12 @@ future cloud consumer is complete.
   detected.
 - Local backup and restore for the app's tracked data, including optional rolling automatic
   snapshots.
-- Sync diagnostics with persisted run timing, request breakdowns, presence decisions, and
-  achievement-refresh tier counts.
+- Offline Steam asset download (game icons, header/hero art, profile avatar, achievement icons)
+  stored locally with an integrity-checked manifest; never triggered by sync or a schedule.
+- In-app update discovery from GitHub Releases with readable release notes and a
+  two-stage-verified install (release builds only).
+- Sync diagnostics with persisted run timing, per-request breakdowns, presence decisions,
+  achievement-refresh tier counts, and rolling request counters (last 24h / 30d / 365d).
 - Crash-safe, concurrency-safe sync persistence: atomic commit of a poll's sessions,
   playtime baselines, daily progress, and profile fields; no double-counting when a manual
   sync overlaps a scheduled one; and versioned rule configuration so gamification values
@@ -219,12 +231,20 @@ unlocks are worth more.
 ### Steam Credentials
 
 You do not need to edit any files or rebuild to connect a Steam account. On first
-launch, the app shows a two-step onboarding flow:
+launch, the app shows an onboarding takeover that asks for your credentials and
+verifies them against Steam before saving:
 
 1. **API key:** paste a Steam Web API key from
    <https://steamcommunity.com/dev/apikey>.
 2. **SteamID:** paste a raw 17-digit SteamID64 or a Steam profile URL. Vanity URLs
    are resolved through the Steam Web API.
+3. **Verification:** the app makes one authenticated Steam call to confirm the key
+   works and the profile is public before persisting anything.
+
+After credentials are accepted, an optional guided first-run setup offers an opt-in
+checklist — initial Steam sync, offline Steam asset download, and HLTB completion
+fetch — each stage with its own progress, failure isolation, and retry. You can
+decline setup entirely and run it later from Settings.
 
 Credentials are encrypted at rest with an Android Keystore-backed key and stored
 in encrypted DataStore. The API key is masked wherever it is displayed.

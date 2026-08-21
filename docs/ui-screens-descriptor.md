@@ -4,7 +4,8 @@ Source: `app/src/main/java/com/example/backlogium/ui/**`. Android app, Material 
 using a custom "Steam-native dark" identity with dynamic (wallpaper-derived) color turned
 off, so the look is identical across devices. Bottom navigation with 5 destinations (Home /
 Library / History / Analytics / Settings), plus five pushed sub-destinations reached from
-them: **Onboarding** (from Settings, or as a first-run takeover), **Game detail** (from
+them: **Onboarding + guided first-run setup** (from Settings, or as a first-run takeover
+  that verifies credentials and offers an opt-in setup checklist), **Game detail** (from
 Library), **HowLongToBeat review** (from Library), **Collection** (from Home), and
 **Diagnostics** (from Settings). Every screen renders from local state only (offline-first)
 and has an "empty" / "nothing to show" variant where the surface has no data.
