@@ -1,6 +1,6 @@
 # Backlogium architecture map
 
-Status snapshot: 2026-08-15
+Status snapshot: 2026-08-21
 
 This is a source-oriented map of the current repository. It describes the Android
 client and the independent cloud presence writer as they exist on the current
@@ -23,7 +23,7 @@ branch; it is not a proposed replacement architecture.
 |                         |                          |                    |
 |                  top-level navigation       pushed routes              |
 |                         |                          |                    |
-|          Home | Library | History |       Onboarding                    |
+|          Home | Library | History |       Onboarding / Setup                    |
 |          Analytics | Settings             Game detail                  |
 |                                               HLTB review               |
 |                                               Collection                |
