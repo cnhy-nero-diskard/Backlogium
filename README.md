@@ -115,9 +115,11 @@ boundaries, see the [ASCII architecture map](docs/architecture-map.md).
 
 ### Data-Source Boundary
 
-Repositories expose domain models. Room entities stay inside `data/`. Nothing
-under `ui/` imports a storage type: no `data.local.entity.*`, and no
-`SettingsDataStore` in a ViewModel. Settings go through `SettingsRepository`.
+Repositories expose domain models. Room entities stay inside `data/`. As a rule,
+nothing under `ui/` imports a storage type — no `data.local.entity.*`, and no
+`SettingsDataStore` in a ViewModel. The items below are the known exceptions to that
+rule; every other surface maps at the repository boundary, and Settings otherwise go
+through `SettingsRepository`.
 
 Checkable from a shell — matching on `import` skips prose mentions in KDoc, and
 `--exclude-dir` skips the documented diagnostics exception:
@@ -137,9 +139,15 @@ Two deliberate exceptions:
   look-alike domain models would only add a layer that can misrepresent what is being
   debugged. Scoped to this package; writes still go through `SyncRunRecorder`.
 
-`ui/home/HomeViewModel.kt` is a known outstanding breach rather than an exception —
-`CollectionRepository` exposes entities across its public API, and mapping at that
-boundary is deferred work. See `CLAUDE.md` for the detail.
+Two known outstanding breaches (deferred boundary mapping), not deliberate exceptions:
+
+- `ui/settings/SettingsViewModel.kt` imports `data.local.entity.SteamAssetDownloadState`
+  and depends directly on `SteamAssetDao` to surface the offline-asset download state
+  (stored count, bytes, last run). Introduced with offline Steam assets (PR #81); the
+  fix is to map at the repository boundary.
+- `ui/home/HomeViewModel.kt` imports the `CollectionRepository` entities across its
+  public API, and mapping at that boundary is deferred work. See `CLAUDE.md` for the
+  detail.
 
 ## Visual Identity
 
@@ -239,7 +247,7 @@ verifies them against Steam before saving:
 2. **SteamID:** paste a raw 17-digit SteamID64 or a Steam profile URL. Vanity URLs
    are resolved through the Steam Web API.
 3. **Verification:** the app makes one authenticated Steam call to confirm the key
-   works and the profile is public before persisting anything.
+   works and the SteamID names an existing profile before persisting anything.
 
 After credentials are accepted, an optional guided first-run setup offers an opt-in
 checklist — initial Steam sync, offline Steam asset download, and HLTB completion
