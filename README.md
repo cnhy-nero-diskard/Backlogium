@@ -143,7 +143,7 @@ Two known outstanding breaches (deferred boundary mapping), not deliberate excep
 
 - `ui/settings/SettingsViewModel.kt` imports `data.local.entity.SteamAssetDownloadState`
   and depends directly on `SteamAssetDao` to surface the offline-asset download state
-  (stored count, bytes, last run). Introduced with offline Steam assets (PR #81); the
+  (stored count, bytes, last run). Introduced with offline Steam assets (PR #79); the
   fix is to map at the repository boundary.
 - `ui/home/HomeViewModel.kt` imports the `CollectionRepository` entities across its
   public API, and mapping at that boundary is deferred work. See `CLAUDE.md` for the
