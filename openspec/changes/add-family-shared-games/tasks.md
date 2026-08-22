@@ -1,42 +1,42 @@
 ## 1. Source on the game model
 
-- [ ] 1.1 Add a `GameSource` enum in `domain/` with `STEAM_OWNED` and `FAMILY_SHARED`, documented so that adding a third value later surfaces as a compile error at each branch rather than a silent default
-- [ ] 1.2 Add a `source` column to `Game` with a Room migration defaulting existing rows to `STEAM_OWNED` — a widening with no data movement
-- [ ] 1.3 Add an excluded-app-ids table for removed shared games, with its migration
-- [ ] 1.4 Expose source on the domain game model and through the repositories, keeping entities inside `data/`
+- [x] 1.1 Add a `GameSource` enum in `domain/` with `STEAM_OWNED` and `FAMILY_SHARED`, documented so that adding a third value later surfaces as a compile error at each branch rather than a silent default
+- [x] 1.2 Add a `source` column to `Game` with a Room migration defaulting existing rows to `STEAM_OWNED` — a widening with no data movement
+- [x] 1.3 Add an excluded-app-ids table for removed shared games, with its migration
+- [x] 1.4 Expose source on the domain game model and through the repositories, keeping entities inside `data/`
 
 ## 2. Presence-derived sessions
 
-- [ ] 2.1 Add `domain/PresenceSessionDeriver.kt`: a pure function over observed `(appId, observedAt)` samples plus open-session state, returning the same session-action shape `SessionDiffer` returns; no Room types, no Android
-- [ ] 2.2 Derive an open session on first observation, extend it across successive observations, and close it once the game is no longer observed
-- [ ] 2.3 Decide and document the gap tolerance that closes a session when observations stop, and record the reasoning in the deriver's KDoc
+- [x] 2.1 Add `domain/PresenceSessionDeriver.kt`: a pure function over observed `(appId, observedAt)` samples plus open-session state, returning the same session-action shape `SessionDiffer` returns; no Room types, no Android
+- [x] 2.2 Derive an open session on first observation, extend it across successive observations, and close it once the game is no longer observed
+- [x] 2.3 Decide and document the gap tolerance that closes a session when observations stop, and record the reasoning in the deriver's KDoc
 - [ ] 2.4 Add JVM unit tests as a table of observation sequences: continuous play, a gap, a switch between games, an app restart mid-session, and observation resuming after a long silence
-- [ ] 2.5 Persist derived sessions through the same path as diffed sessions, so they are indistinguishable downstream
+- [x] 2.5 Persist derived sessions through the same path as diffed sessions, so they are indistinguishable downstream
 
 ## 3. Partition the two mechanisms
 
-- [ ] 3.1 Feed `SessionDiffer` only games whose source is `STEAM_OWNED`, so the partition is a property of the wiring rather than a runtime check
-- [ ] 3.2 Feed the presence deriver only games with no Steam-reported playtime
+- [x] 3.1 Feed `SessionDiffer` only games whose source is `STEAM_OWNED`, so the partition is a property of the wiring rather than a runtime check
+- [x] 3.2 Feed the presence deriver only games with no Steam-reported playtime
 - [ ] 3.3 Add a test asserting no game can receive session actions from both mechanisms in one cycle
 - [ ] 3.4 Verify that XP, quest, and streak computation are unchanged for owned games
 
 ## 4. Admission
 
-- [ ] 4.1 In `LiveStatusRepository`, detect a presence app id with no row in `games` and no exclusion
-- [ ] 4.2 Require that a successful sync has completed since the app id was first observed before considering admission, so an unsynced owned game is never mistaken for a borrowed one
-- [ ] 4.3 Verify via Steam's store that the app id is a game; do not admit when the store cannot be reached, and reconsider on a later observation
-- [ ] 4.4 Admit with name, artwork, and genres resolved from the app id, source `FAMILY_SHARED`
-- [ ] 4.5 Ensure a second observation of an admitted game creates no duplicate
-- [ ] 4.6 Notify the player once, naming the game, when a game is admitted
+- [x] 4.1 In `LiveStatusRepository`, detect a presence app id with no row in `games` and no exclusion
+- [x] 4.2 Require that a successful sync has completed since the app id was first observed before considering admission, so an unsynced owned game is never mistaken for a borrowed one
+- [x] 4.3 Verify via Steam's store that the app id is a game; do not admit when the store cannot be reached, and reconsider on a later observation
+- [x] 4.4 Admit with name, artwork, and genres resolved from the app id, source `FAMILY_SHARED`
+- [x] 4.5 Ensure a second observation of an admitted game creates no duplicate
+- [x] 4.6 Notify the player once, naming the game, when a game is admitted
 - [ ] 4.7 Add tests for each rejection path: already tracked, excluded, no completed sync, not a game, store unreachable
 
 ## 5. Removal and conversion
 
 - [ ] 5.1 Offer removal on a family-shared game and not on an owned one
-- [ ] 5.2 On removal, record the exclusion so the game is not re-admitted on subsequent play
+- [x] 5.2 On removal, record the exclusion so the game is not re-admitted on subsequent play
 - [ ] 5.3 Add the removed-games section to Settings, hidden when empty, with reversal
-- [ ] 5.4 On sync, convert an admitted shared game to `STEAM_OWNED` when it appears in the library, retaining its sessions
-- [ ] 5.5 Store the reported lifetime playtime as the diffing baseline at conversion and create no sessions from it — mirroring first-sync baselining
+- [x] 5.4 On sync, convert an admitted shared game to `STEAM_OWNED` when it appears in the library, retaining its sessions
+- [x] 5.5 Store the reported lifetime playtime as the diffing baseline at conversion and create no sessions from it — mirroring first-sync baselining
 - [ ] 5.6 Add tests for conversion: source changes, sessions retained, no phantom session, diffing resumes on the next increase
 
 ## 6. Surfaces

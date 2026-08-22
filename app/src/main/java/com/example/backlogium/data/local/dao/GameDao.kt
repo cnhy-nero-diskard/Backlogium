@@ -16,13 +16,17 @@ interface GameDao {
     @Upsert
     suspend fun upsert(game: Game)
 
-    /** Insert a new row only; an existing row's app-owned fields are never replaced. */
+    /**
+     * Insert a new row only; an existing row's app-owned fields are never replaced. Reached only
+     * from the owned-games sync, so the source is written as owned literally rather than left to
+     * the column default — a game Steam reports in the library is owned by definition.
+     */
     @Query(
         "INSERT OR IGNORE INTO games " +
             "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
-            "isGoal, targetMinutes, lastSyncedAt, backfillMinutes) " +
+            "isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source) " +
             "VALUES (:appId, :name, :iconUrl, :playtimeForever, :playtime2Weeks, " +
-            ":lastPlaytime, 0, NULL, :lastSyncedAt, 0)",
+            ":lastPlaytime, 0, NULL, :lastSyncedAt, 0, 'STEAM_OWNED')",
     )
     suspend fun insertSteamGameIfMissing(
         appId: Long,
@@ -59,9 +63,66 @@ interface GameDao {
     @Query("SELECT * FROM games WHERE isGoal = 0 ORDER BY playtimeForever DESC, name ASC")
     fun observeBacklog(): Flow<List<Game>>
 
-    /** Every owned game's app id — the achievement sync's full-library scope. */
+    /** Every tracked game's app id — the achievement sync's full-library scope. */
     @Query("SELECT appId FROM games")
     suspend fun allAppIds(): List<Long>
+
+    /**
+     * Insert a family-shared game admitted from observed presence. `INSERT OR IGNORE`, so a second
+     * observation of an already-admitted game is a no-op rather than a duplicate or an overwrite.
+     *
+     * Playtime columns stay at 0: Steam reports no `playtime_forever` for a borrowed game, and a
+     * zero here is the literal truth rather than a placeholder. The row is deliberately absent from
+     * the diffing scope ([ownedGamesForDiffing]) for exactly that reason.
+     */
+    @Query(
+        "INSERT OR IGNORE INTO games " +
+            "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+            "isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source) " +
+            "VALUES (:appId, :name, :iconUrl, 0, 0, 0, 0, NULL, :admittedAt, 0, 'FAMILY_SHARED')",
+    )
+    suspend fun insertSharedGameIfMissing(
+        appId: Long,
+        name: String,
+        iconUrl: String,
+        admittedAt: Long,
+    )
+
+    /**
+     * The playtime-diffing scope: only games for which Steam reports playtime. Feeding
+     * [com.example.backlogium.domain.SessionDiffer] from this query rather than from every row is
+     * what keeps the two session mechanisms partitioned by wiring instead of by a runtime check
+     * somewhere inside the differ.
+     */
+    @Query("SELECT * FROM games WHERE source = 'STEAM_OWNED'")
+    suspend fun ownedGamesForDiffing(): List<Game>
+
+    /** The presence-derivation scope: games with no Steam-reported playtime to diff. */
+    @Query("SELECT * FROM games WHERE source = 'FAMILY_SHARED'")
+    suspend fun sharedGames(): List<Game>
+
+    /**
+     * Convert an admitted shared game to owned, storing the reported lifetime total as the diffing
+     * baseline. Both playtime columns and `lastPlaytime` move together so the next poll sees no
+     * delta — the hours played while borrowing are already recorded as sessions, and diffing them
+     * again would synthesize one enormous phantom session over time already counted. This mirrors
+     * first-sync baselining, and the game's existing sessions are deliberately untouched.
+     */
+    @Query(
+        "UPDATE games SET source = 'STEAM_OWNED', playtimeForever = :playtimeForever, " +
+            "playtime2Weeks = :playtime2Weeks, lastPlaytime = :playtimeForever, " +
+            "lastSyncedAt = :convertedAt WHERE appId = :appId AND source = 'FAMILY_SHARED'",
+    )
+    suspend fun convertSharedToOwned(
+        appId: Long,
+        playtimeForever: Int,
+        playtime2Weeks: Int,
+        convertedAt: Long,
+    ): Int
+
+    /** Remove one game row; child rows cascade. Used only for removing a family-shared game. */
+    @Query("DELETE FROM games WHERE appId = :appId AND source = 'FAMILY_SHARED'")
+    suspend fun deleteSharedGame(appId: Long): Int
 
     @Query("SELECT * FROM games")
     suspend fun getAll(): List<Game>

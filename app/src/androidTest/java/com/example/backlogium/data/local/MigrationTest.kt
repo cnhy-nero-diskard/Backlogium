@@ -426,6 +426,62 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun v20ToV21_addsSourceColumnAndExclusionTableAndDefaultsExistingRowsToOwned() {
+        val databaseName = "migration-v20-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 20)
+        try {
+            database.execSQL(
+                "INSERT INTO games " +
+                    "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+                    "isGoal, targetMinutes, lastSyncedAt, backfillMinutes) VALUES " +
+                    "(440, 'Game', 'icon-hash', 100, 0, 100, 0, NULL, 1700000000000, 0)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                21,
+                true,
+                BacklogiumDatabase.MIGRATION_20_21,
+            )
+            try {
+                assertTableInfo(
+                    migrated,
+                    "excluded_shared_games",
+                    listOf(
+                        ColumnInfo("appId", "INTEGER", notNull = true, pk = 1),
+                        ColumnInfo("name", "TEXT", notNull = true, pk = 0),
+                        ColumnInfo("excludedAt", "INTEGER", notNull = true, pk = 0),
+                    ),
+                )
+
+                // Every pre-migration row is an owned game: the owned-games sync was the only
+                // path that could create one.
+                migrated.query("SELECT appId, name, playtimeForever, source FROM games").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(440L, cursor.getLong(0))
+                    assertEquals("Game", cursor.getString(1))
+                    assertEquals(100, cursor.getInt(2))
+                    assertEquals("STEAM_OWNED", cursor.getString(3))
+                    assertFalse(cursor.moveToNext())
+                }
+
+                migrated.query("SELECT COUNT(*) FROM excluded_shared_games").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private data class ColumnInfo(val name: String, val type: String, val notNull: Boolean, val pk: Int)
 
     private fun assertTableInfo(database: SupportSQLiteDatabase, table: String, expected: List<ColumnInfo>) {

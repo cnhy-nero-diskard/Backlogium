@@ -6,6 +6,7 @@ import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamIconMapper
+import com.example.backlogium.domain.GameSource
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
@@ -65,6 +66,12 @@ data class LibraryGame(
     val isGoal: Boolean = false,
     /** Ordered Steam Store genres; empty while unknown, unavailable, or malformed in cache. */
     val genres: List<GameGenre> = emptyList(),
+    /**
+     * How the app came to track this game. Carried so surfaces can mark a family-shared game and
+     * disclose that its playtime is observed rather than a Steam total; owned is the overwhelming
+     * majority and the default, so an existing consumer that ignores this field stays correct.
+     */
+    val source: GameSource = GameSource.STEAM_OWNED,
 )
 
 /** Read/write access to the game library, exposing domain models as observable [Flow]s. */
@@ -135,6 +142,7 @@ private fun Game.toDomain(hltb: HltbData?, genres: List<GameGenre>) = LibraryGam
     hltbMatchState = hltb?.matchStatus?.toDomain(),
     isGoal = isGoal,
     genres = genres,
+    source = source,
 )
 
 /** Storage → domain status mapping; internal so [HltbRepository] can report batch outcomes. */

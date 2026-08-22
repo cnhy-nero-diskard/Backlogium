@@ -69,6 +69,9 @@ class SettingsDataStore @Inject constructor(
         val SNAPSHOT_INTERVAL_HOURS = intPreferencesKey("snapshot_interval_hours")
         val LIVE_SESSION_APP_ID = longPreferencesKey("live_session_app_id")
         val LIVE_SESSION_STARTED_AT = longPreferencesKey("live_session_started_at")
+        val SHARED_CANDIDATE_APP_ID = longPreferencesKey("shared_candidate_app_id")
+        val SHARED_CANDIDATE_FIRST_OBSERVED_AT =
+            longPreferencesKey("shared_candidate_first_observed_at")
         val NOTIFICATION_PERMISSION_REQUESTED =
             booleanPreferencesKey("notification_permission_requested")
         val LIVE_MONITOR_ENABLED = booleanPreferencesKey("live_monitor_enabled")
@@ -374,6 +377,41 @@ class SettingsDataStore @Inject constructor(
     }
 
     /**
+     * The unrecognised app id currently under consideration for admission as family-shared, and
+     * when it was first observed (add-family-shared-games).
+     *
+     * Persisted rather than held in memory because the admission rule spans a sync: an app id is
+     * only considered once a *successful sync has completed since it was first observed*, which is
+     * what tells a genuinely borrowed game apart from an owned one the app has simply not synced
+     * yet. Holding the first-observation time in memory would reset that clock on every process
+     * death and could leave a borrowed game never admitted.
+     *
+     * One candidate, not a set: Steam reports one running game at a time, and a candidate the
+     * player has moved on from is worth nothing — it is reconsidered from scratch the next time it
+     * is observed.
+     */
+    val sharedGameCandidateFlow: Flow<SharedGameCandidate?> = context.dataStore.data.map { prefs ->
+        val appId = prefs[Keys.SHARED_CANDIDATE_APP_ID]
+        val firstObservedAt = prefs[Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT]
+        if (appId == null || firstObservedAt == null) null
+        else SharedGameCandidate(appId, firstObservedAt)
+    }
+
+    suspend fun setSharedGameCandidate(appId: Long, firstObservedAt: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.SHARED_CANDIDATE_APP_ID] = appId
+            prefs[Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT] = firstObservedAt
+        }
+    }
+
+    suspend fun clearSharedGameCandidate() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.SHARED_CANDIDATE_APP_ID)
+            prefs.remove(Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT)
+        }
+    }
+
+    /**
      * Clear account-derived DataStore state while retaining rules, UI preferences, backup
      * settings, and one-time installation migrations. The Room half of an account reset is
      * protected by the same durable account-change marker, so repeating this operation is safe.
@@ -382,6 +420,8 @@ class SettingsDataStore @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs.remove(Keys.LIVE_SESSION_APP_ID)
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
+            prefs.remove(Keys.SHARED_CANDIDATE_APP_ID)
+            prefs.remove(Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT)
             prefs.remove(Keys.LAST_CELEBRATED_LEVEL)
             prefs.remove(Keys.LAST_CELEBRATED_STREAK_MILESTONE)
             prefs.remove(Keys.LAST_QUEST_CELEBRATED_DATE)
@@ -497,6 +537,12 @@ data class AutoSnapshotSettings(
  * The persisted live now-playing session: which game (Steam appId, possibly unresolved) and when
  * it was first observed running. Both null means no session is currently tracked.
  */
+/** An unrecognised app id awaiting the sync that will confirm it is genuinely not owned. */
+data class SharedGameCandidate(
+    val appId: Long,
+    val firstObservedAt: Long,
+)
+
 data class LiveSessionState(
     val appId: Long? = null,
     val startedAt: Long? = null,

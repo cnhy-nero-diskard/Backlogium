@@ -49,6 +49,14 @@ class GameGenreRepository @Inject constructor(
         return GenreEnrichmentBatch(appIds.size, hasMore, transientFailure)
     }
 
+    /**
+     * Seed the cache for a game admitted from presence, whose genres the store already answered for
+     * during admission. Writing them here rather than leaving the game to background enrichment
+     * means a newly admitted game arrives with its genres already resolved, and costs no extra
+     * request — the admission lookup returned them anyway.
+     */
+    suspend fun storeGenres(appId: Long, genres: List<GameGenre>) = write(appId, genres)
+
     private suspend fun write(appId: Long, genres: List<GameGenre>) {
         cacheDao.upsert(
             GameGenreCache(
