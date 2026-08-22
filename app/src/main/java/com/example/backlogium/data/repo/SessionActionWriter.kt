@@ -1,6 +1,7 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.dao.DailyProgressDao
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.domain.SessionDiffer
@@ -25,6 +26,7 @@ import javax.inject.Singleton
 class SessionActionWriter @Inject constructor(
     private val sessionDao: SessionDao,
     private val dailyProgressDao: DailyProgressDao,
+    private val hiddenGameDao: HiddenGameDao,
     private val time: TimeProvider,
     private val transaction: DatabaseTransactionScope = com.example.backlogium.data.backup.PassThroughTransactionScope,
 ) {
@@ -88,7 +90,8 @@ class SessionActionWriter @Inject constructor(
         actions: List<SessionDiffer.SessionAction>,
         goalAppIds: Set<Long>,
     ) {
-        attributeDailyProgress(actions, goalAppIds, time.zone()).forEach { (date, credit) ->
+        val hiddenIds = hiddenGameDao.hiddenAppIds().toSet()
+        attributeDailyProgress(actions, goalAppIds, time.zone(), hiddenIds).forEach { (date, credit) ->
             dailyProgressDao.ensureDate(date)
             dailyProgressDao.addMinutes(date, credit.minutesPlayed, credit.goalMinutesPlayed)
         }

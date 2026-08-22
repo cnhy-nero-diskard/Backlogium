@@ -244,6 +244,7 @@ class BackupTransactionalIntegrityTest {
     private fun newGamificationUpdater() = GamificationUpdater(
         database.sessionDao(), database.dailyProgressDao(), database.playerProfileDao(),
         database.hltbDataDao(), database.achievementDao(), database.gameDao(),
+        database.hiddenGameDao(),
     )
 
     private fun existingGame(appId: Long, name: String) = Game(

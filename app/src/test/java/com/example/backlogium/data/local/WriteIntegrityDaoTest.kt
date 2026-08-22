@@ -751,6 +751,7 @@ class WriteIntegrityDaoTest {
     private fun writer() = SessionActionWriter(
         sessionDao = database.sessionDao(),
         dailyProgressDao = database.dailyProgressDao(),
+        hiddenGameDao = database.hiddenGameDao(),
         time = FixedTimeProvider,
     )
 

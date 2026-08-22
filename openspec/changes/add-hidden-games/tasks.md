@@ -17,11 +17,11 @@
 
 ## 3. Derived values
 
-- [ ] 3.1 Exclude hidden games from the XP input built in `GamificationUpdater.compute`
-- [ ] 3.2 Exclude hidden games from daily-progress attribution in `SteamSyncWorker` going forward
-- [ ] 3.3 Leave stored `DailyProgress` rows, quest results, and streaks untouched when a game is hidden; add a test pinning that a past met day stays met
-- [ ] 3.4 Add a `RecomputeSource` value for hiding and unhiding, declared as not earned, so it emits no progress events and reseeds the baseline including downward
-- [ ] 3.5 Add a test asserting unhiding restores exactly the XP and level that would have applied had the game never been hidden
+- [x] 3.1 Exclude hidden games from the XP input built in `GamificationUpdater.compute`
+- [x] 3.2 Exclude hidden games from daily-progress attribution in `SteamSyncWorker` going forward
+- [x] 3.3 Leave stored `DailyProgress` rows, quest results, and streaks untouched when a game is hidden; add a test pinning that a past met day stays met
+- [x] 3.4 Add a `RecomputeSource` value for hiding and unhiding, declared as not earned, so it emits no progress events and reseeds the baseline including downward
+- [x] 3.5 Add a test asserting unhiding restores exactly the XP and level that would have applied had the game never been hidden
 
 ## 4. Disclosure and the hide action
 

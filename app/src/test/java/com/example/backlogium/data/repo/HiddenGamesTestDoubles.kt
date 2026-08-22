@@ -3,9 +3,7 @@ package com.example.backlogium.data.repo
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.data.hltb.HltbDataSource
-import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.entity.Game
-import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.CurrentPlayersResponse
@@ -18,46 +16,11 @@ import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.dto.StoreAppDetails
 import com.example.backlogium.domain.FakeGameDao
+import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.TimeProvider
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.map
 import retrofit2.Response
 import java.time.LocalDate
 import java.time.ZoneId
-
-/**
- * In-memory stand-ins for the hidden set, shared by the tests of every repository that now
- * excludes hidden games. Observable, so a test can hide a game and assert the surfaces react
- * rather than only asserting a fixed starting state.
- */
-internal class FakeHiddenGameDao(hidden: Set<Long> = emptySet()) : HiddenGameDao {
-    private val rows = MutableStateFlow(
-        hidden.associateWith { HiddenGame(appId = it, hiddenAt = 0L) },
-    )
-
-    override suspend fun upsertAll(hidden: List<HiddenGame>) {
-        rows.value = rows.value + hidden.associateBy { it.appId }
-    }
-
-    override fun observeAll(): Flow<List<HiddenGame>> =
-        rows.map { it.values.sortedByDescending(HiddenGame::hiddenAt) }
-
-    override suspend fun getAll(): List<HiddenGame> =
-        rows.value.values.sortedByDescending(HiddenGame::hiddenAt)
-
-    override suspend fun hiddenAppIds(): List<Long> = rows.value.keys.toList()
-
-    override suspend fun isHidden(appId: Long): Boolean = appId in rows.value
-
-    override suspend fun delete(appIds: List<Long>) {
-        rows.value = rows.value - appIds.toSet()
-    }
-
-    override suspend fun deleteAll() {
-        rows.value = emptyMap()
-    }
-}
 
 /** A [HiddenGamesRepository] over [FakeHiddenGameDao], for tests that only need the hidden set. */
 internal fun fakeHiddenGamesRepository(

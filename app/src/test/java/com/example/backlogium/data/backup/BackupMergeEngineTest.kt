@@ -30,6 +30,7 @@ import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
+import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.RuleConfig
@@ -83,6 +84,7 @@ class BackupMergeEngineTest {
         val time = FixedTimeProvider(today, nowMillis)
         val gamificationUpdater = GamificationUpdater(
             sessionDao, dailyProgressDao, profileDao, hltbDataDao, achievementDao, gameDao,
+            FakeHiddenGameDao(),
         )
         val engine = BackupMergeEngine(
             gameDao, sessionDao, dailyProgressDao, hltbDataDao, achievementDao, profileDao,

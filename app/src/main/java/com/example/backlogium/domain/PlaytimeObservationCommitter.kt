@@ -2,6 +2,7 @@ package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.repo.SessionActionWriter
@@ -27,6 +28,7 @@ class PlaytimeObservationCommitter @Inject constructor(
     private val sessionDao: SessionDao,
     private val dailyProgressDao: DailyProgressDao,
     private val profileDao: PlayerProfileDao,
+    private val hiddenGameDao: HiddenGameDao,
     private val differ: SessionDiffer,
     private val time: TimeProvider,
     private val sessionActionWriter: SessionActionWriter,
@@ -145,7 +147,8 @@ class PlaytimeObservationCommitter @Inject constructor(
         }
 
         val goalIds = existingGames.values.filter { it.isGoal }.mapTo(mutableSetOf()) { it.appId }
-        attributeDailyProgress(diff.actions, goalIds, time.zone()).forEach { (date, credit) ->
+        val hiddenIds = hiddenGameDao.hiddenAppIds().toSet()
+        attributeDailyProgress(diff.actions, goalIds, time.zone(), hiddenIds).forEach { (date, credit) ->
             dailyProgressDao.ensureDate(date)
             dailyProgressDao.addMinutes(date, credit.minutesPlayed, credit.goalMinutesPlayed)
         }
