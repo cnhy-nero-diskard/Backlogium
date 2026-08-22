@@ -632,6 +632,7 @@ class AchievementRepositoryTest {
         override suspend fun count(): Int = games.size
         override suspend fun deleteAll() = error("not used")
         override suspend fun setBackfillMinutes(appId: Long, minutes: Int) = error("not used")
+        override suspend fun setRecencyFromBackup(appId: Long, firstSeenAt: Long?, lastPlayedAt: Long?, returnedToPlayAt: Long?) = error("not used")
     }
 
     private class FixedTimeProvider(private val now: Long) : TimeProvider {

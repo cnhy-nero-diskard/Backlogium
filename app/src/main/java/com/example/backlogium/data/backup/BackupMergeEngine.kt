@@ -131,6 +131,20 @@ class BackupMergeEngine @Inject constructor(
         )
     }
 
+    /**
+     * Restore one game's app-owned state.
+     *
+     * **The insert path must not stamp an arrival**, and this is the sharpest edge in the recency
+     * work: the natural implementation of "insert a game that isn't there" is exactly the thing
+     * that must not happen here, because a restore of 300 games is not 300 acquisitions. What the
+     * row carries is whatever the *backup* recorded — a value, or an explicit absence — and nothing
+     * this method has access to could stand in for one.
+     *
+     * It likewise runs no dormancy evaluation. Restoring play history is not observing play, so
+     * there is no observation to evaluate and no return to record. Nor can it produce an
+     * acquisition announcement: that state is a poll's, and this engine has no dependency through
+     * which to reach it — structural rather than remembered.
+     */
     private suspend fun mergeGame(backupGame: BackupGame) {
         val existing = gameDao.getById(backupGame.appId)
         if (existing == null) {
@@ -146,11 +160,20 @@ class BackupMergeEngine @Inject constructor(
                     lastPlaytime = 0,
                     isGoal = backupGame.isGoal,
                     backfillMinutes = backupGame.backfillMinutes,
+                    firstSeenAt = backupGame.firstSeenAt?.iso8601ToEpochMilli(),
+                    lastPlayedAt = backupGame.lastPlayedAt?.iso8601ToEpochMilli(),
+                    returnedToPlayAt = backupGame.returnedToPlayAt?.iso8601ToEpochMilli(),
                 ),
             )
         } else {
             gameDao.setGoalFlag(backupGame.appId, backupGame.isGoal)
             gameDao.setBackfillMinutes(backupGame.appId, backupGame.backfillMinutes)
+            gameDao.setRecencyFromBackup(
+                appId = backupGame.appId,
+                firstSeenAt = backupGame.firstSeenAt?.iso8601ToEpochMilli(),
+                lastPlayedAt = backupGame.lastPlayedAt?.iso8601ToEpochMilli(),
+                returnedToPlayAt = backupGame.returnedToPlayAt?.iso8601ToEpochMilli(),
+            )
         }
     }
 

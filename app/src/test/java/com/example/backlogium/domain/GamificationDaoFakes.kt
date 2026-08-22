@@ -176,6 +176,21 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
     override suspend fun setBackfillMinutes(appId: Long, minutes: Int) {
         store[appId]?.let { store[appId] = it.copy(backfillMinutes = minutes) }
     }
+
+    override suspend fun setRecencyFromBackup(
+        appId: Long,
+        firstSeenAt: Long?,
+        lastPlayedAt: Long?,
+        returnedToPlayAt: Long?,
+    ) {
+        store[appId]?.let {
+            store[appId] = it.copy(
+                firstSeenAt = firstSeenAt ?: it.firstSeenAt,
+                lastPlayedAt = lastPlayedAt ?: it.lastPlayedAt,
+                returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt,
+            )
+        }
+    }
 }
 
 internal class FakeDailyProgressDao(

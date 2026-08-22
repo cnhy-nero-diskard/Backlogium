@@ -109,6 +109,31 @@ interface GameDao {
     @Query("DELETE FROM games")
     suspend fun deleteAll()
 
+    /**
+     * Restore one existing game's recency timestamps from a backup (add-library-recency-signals).
+     *
+     * `COALESCE` in the *argument* position, so a value the backup carries is restored and an
+     * absence leaves the stored value alone. Both halves matter: an older backup must not erase an
+     * arrival this device observed after it was taken, and an import must write nothing beyond what
+     * the backup actually recorded.
+     *
+     * Separate from [updateSteamFields] deliberately — that path is a poll's, and a poll and a
+     * restore have opposite rules about `firstSeenAt`.
+     */
+    @Query(
+        "UPDATE games SET " +
+            "firstSeenAt = COALESCE(:firstSeenAt, firstSeenAt), " +
+            "lastPlayedAt = COALESCE(:lastPlayedAt, lastPlayedAt), " +
+            "returnedToPlayAt = COALESCE(:returnedToPlayAt, returnedToPlayAt) " +
+            "WHERE appId = :appId",
+    )
+    suspend fun setRecencyFromBackup(
+        appId: Long,
+        firstSeenAt: Long?,
+        lastPlayedAt: Long?,
+        returnedToPlayAt: Long?,
+    )
+
     /** Freeze one game's historical playtime offset (opt-in Steam-history import). */
     @Query("UPDATE games SET backfillMinutes = :minutes WHERE appId = :appId")
     suspend fun setBackfillMinutes(appId: Long, minutes: Int)

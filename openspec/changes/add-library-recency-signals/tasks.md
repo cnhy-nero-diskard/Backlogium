@@ -61,12 +61,12 @@
 
 ## 7. Backup
 
-- [ ] 7.1 Add optional `firstSeenAt`, `lastPlayedAt`, and `returnedToPlayAt` to the backup file's game shape
-- [ ] 7.2 Export all three, writing an explicit absence where unknown
-- [ ] 7.3 Import all three as recorded, leaving them absent when the backup predates the fields
-- [ ] 7.4 Ensure `BackupMergeEngine`'s game-insert path does **not** stamp `firstSeenAt` — a restore of 300 games is not 300 acquisitions
-- [ ] 7.5 Ensure the import path does **not** run the dormancy evaluation — restoring play history is not observing play
-- [ ] 7.6 Ensure an import writes nothing to the acquisition announcement state
+- [x] 7.1 Add optional `firstSeenAt`, `lastPlayedAt`, and `returnedToPlayAt` to the backup file's game shape
+- [x] 7.2 Export all three, writing an explicit absence where unknown
+- [x] 7.3 Import all three as recorded, leaving them absent when the backup predates the fields
+- [x] 7.4 Ensure `BackupMergeEngine`'s game-insert path does **not** stamp `firstSeenAt` — a restore of 300 games is not 300 acquisitions
+- [x] 7.5 Ensure the import path does **not** run the dormancy evaluation — restoring play history is not observing play
+- [x] 7.6 Ensure an import writes nothing to the acquisition announcement state
 
 ## 8. Tests
 
@@ -86,9 +86,9 @@
 - [x] 8.9 Unit-test that a second poll observing a new app id stamps exactly that one
 - [x] 8.10 Unit-test that a poll never overwrites an existing `firstSeenAt`
 - [x] 8.11 Unit-test that `rtime_last_played` of `0` reads as unknown, and that an absent field parses without failing
-- [ ] 8.12 Unit-test that a restore inserting unknown games stamps no arrivals, records no returns, and produces no announcement
-- [ ] 8.13 Unit-test a backup round trip preserving all three fields, and an older backup importing with all three absent
-- [ ] 8.14 Unit-test restore timeline semantics: a backup older than the badge window restores to no states; a backup taken inside it restores to the states its recorded times imply
+- [x] 8.12 Unit-test that a restore inserting unknown games stamps no arrivals, records no returns, and produces no announcement
+- [x] 8.13 Unit-test a backup round trip preserving all three fields, and an older backup importing with all three absent
+- [x] 8.14 Unit-test restore timeline semantics: a backup older than the badge window restores to no states; a backup taken inside it restores to the states its recorded times imply
 - [x] 8.15 Unit-test the announcement lifecycle: shown, dismissed, superseded by a later acquisition, and expired by time alone
 - [x] 8.16 Migration test: an existing v18 database opens at v19 with all three columns null and no data loss
 
