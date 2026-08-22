@@ -8,6 +8,7 @@ import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameSessionCounts
+import com.example.backlogium.data.local.dao.GameSessionInstant
 import com.example.backlogium.data.local.dao.GameTrackedMinutes
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -601,6 +602,8 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
         playtime2Weeks: Int,
         lastPlaytime: Int,
         lastSyncedAt: Long,
+        firstSeenAt: Long?,
+        lastPlayedAt: Long?,
     ) {
         if (appId !in store) {
             store[appId] = Game(
@@ -611,6 +614,8 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
                 playtime2Weeks = playtime2Weeks,
                 lastPlaytime = lastPlaytime,
                 lastSyncedAt = lastSyncedAt,
+                firstSeenAt = firstSeenAt,
+                lastPlayedAt = lastPlayedAt,
             )
         }
     }
@@ -623,6 +628,8 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
         playtime2Weeks: Int,
         lastPlaytime: Int,
         lastSyncedAt: Long,
+        lastPlayedAt: Long?,
+        returnedToPlayAt: Long?,
     ) {
         store[appId]?.let {
             store[appId] = it.copy(
@@ -632,6 +639,9 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
                 playtime2Weeks = playtime2Weeks,
                 lastPlaytime = lastPlaytime,
                 lastSyncedAt = lastSyncedAt,
+                lastPlayedAt = lastPlayedAt,
+                // Mirrors the real query's COALESCE: a null verdict never erases a stored return.
+                returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt,
             )
         }
     }
@@ -712,6 +722,14 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     )
 
     override fun observeSessionCountsByGame(): Flow<List<GameSessionCounts>> = flowOf(emptyList())
+
+    override fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>> = flowOf(
+        store.groupBy { it.appId }.map { (appId, s) -> GameSessionInstant(appId, s.minOf { it.startAt }) },
+    )
+
+    override suspend fun latestSessionInstantByGame(): List<GameSessionInstant> =
+        store.groupBy { it.appId }
+            .map { (appId, s) -> GameSessionInstant(appId, s.maxOf { it.endAt ?: it.startAt }) }
 }
 
 private class FakeDailyProgressDao(private val store: MutableMap<String, DailyProgress>) : DailyProgressDao {

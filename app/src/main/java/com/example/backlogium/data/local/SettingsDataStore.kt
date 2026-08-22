@@ -108,6 +108,15 @@ class SettingsDataStore @Inject constructor(
         val PENDING_TRANSITION_STREAK = intPreferencesKey("pending_transition_streak")
         val PENDING_TRANSITION_QUEST_MET = booleanPreferencesKey("pending_transition_quest_met")
         val PENDING_TRANSITION_DATE = stringPreferencesKey("pending_transition_date")
+
+        // The most recent acquiring poll's announcement (add-library-recency-signals). One batch,
+        // replaced rather than accumulated: buying more games is new information, and a dismissal
+        // twenty hours ago was about different games. In DataStore rather than as a progress event
+        // because `progress-events` is restricted to earned progress, and buying a game is not
+        // earned progress.
+        val ACQUIRED_AT = longPreferencesKey("acquired_batch_at")
+        val ACQUIRED_APP_IDS = stringSetPreferencesKey("acquired_batch_app_ids")
+        val ACQUIRED_DISMISSED = booleanPreferencesKey("acquired_batch_dismissed")
     }
 
     val ruleConfigWithVersionFlow: Flow<VersionedRuleConfig> = context.dataStore.data.map { prefs ->
@@ -374,6 +383,41 @@ class SettingsDataStore @Inject constructor(
     }
 
     /**
+     * The most recent acquiring poll's announcement batch. Absent by default, so a fresh install
+     * and an install that has never acquired anything both read as "nothing to announce".
+     *
+     * Deliberately not exported in a backup: the banner belongs to a poll that observed previously
+     * unknown games on *this* device, so a restore must not re-announce another device's purchase
+     * or last week's.
+     */
+    val acquiredGamesFlow: Flow<AcquiredGamesAnnouncement> = context.dataStore.data.map { prefs ->
+        AcquiredGamesAnnouncement(
+            appIds = prefs[Keys.ACQUIRED_APP_IDS].orEmpty().mapNotNull(String::toLongOrNull).toSet(),
+            acquiredAt = prefs[Keys.ACQUIRED_AT] ?: 0L,
+            dismissed = prefs[Keys.ACQUIRED_DISMISSED] ?: false,
+        )
+    }
+
+    /**
+     * Replace the announcement with a later poll's arrivals, clearing the dismissal along with it.
+     *
+     * Callers must not invoke this for a poll that stamped no arrivals: an empty batch would
+     * overwrite a live announcement the player has not seen yet with nothing to show.
+     */
+    suspend fun setAcquiredGames(appIds: Set<Long>, acquiredAt: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.ACQUIRED_APP_IDS] = appIds.mapTo(mutableSetOf(), Long::toString)
+            prefs[Keys.ACQUIRED_AT] = acquiredAt
+            prefs[Keys.ACQUIRED_DISMISSED] = false
+        }
+    }
+
+    /** Dismiss the current batch. The flag is per-batch: a later acquisition clears it again. */
+    suspend fun setAcquiredGamesDismissed() {
+        context.dataStore.edit { it[Keys.ACQUIRED_DISMISSED] = true }
+    }
+
+    /**
      * Clear account-derived DataStore state while retaining rules, UI preferences, backup
      * settings, and one-time installation migrations. The Room half of an account reset is
      * protected by the same durable account-change marker, so repeating this operation is safe.
@@ -392,6 +436,9 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.PENDING_TRANSITION_STREAK)
             prefs.remove(Keys.PENDING_TRANSITION_QUEST_MET)
             prefs.remove(Keys.PENDING_TRANSITION_DATE)
+            prefs.remove(Keys.ACQUIRED_APP_IDS)
+            prefs.remove(Keys.ACQUIRED_AT)
+            prefs.remove(Keys.ACQUIRED_DISMISSED)
         }
     }
 
@@ -492,6 +539,29 @@ data class AutoSnapshotSettings(
     val retentionCount: Int = 7,
     val intervalHours: Int = 24,
 )
+
+/**
+ * The newly-acquired-games announcement: the app ids the most recent acquiring poll stamped as
+ * arrivals, when that poll ran, and whether the player has dismissed it.
+ *
+ * Expiry is [isLive] — arithmetic against a supplied instant, with no worker and no scheduled
+ * alarm — so the announcement is correctly absent after any period of the app being closed rather
+ * than reappearing because nothing ran to retire it.
+ */
+data class AcquiredGamesAnnouncement(
+    val appIds: Set<Long> = emptySet(),
+    val acquiredAt: Long = 0L,
+    val dismissed: Boolean = false,
+) {
+    /** Whether this announcement should still be presented at [now]. */
+    fun isLive(now: Long): Boolean =
+        appIds.isNotEmpty() && !dismissed && now - acquiredAt < LIFETIME_MILLIS
+
+    companion object {
+        /** How long an announcement lasts: a purchase stops being news within a day. */
+        const val LIFETIME_MILLIS: Long = 24L * 60 * 60 * 1_000
+    }
+}
 
 /**
  * The persisted live now-playing session: which game (Steam appId, possibly unresolved) and when
