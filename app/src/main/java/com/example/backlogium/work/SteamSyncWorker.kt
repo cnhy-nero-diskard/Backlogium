@@ -204,16 +204,30 @@ class SteamSyncWorker @AssistedInject constructor(
 
         // Achievement requests are part of fetch, never the Room commit. Their payload is merged
         // below only after the raw playtime transaction has acquired its database boundary.
+        // Achievement progress on a borrowed game is recorded against the player's own account, so
+        // a family-shared game belongs in this scope exactly like an owned one — GetPlayerAchievements
+        // keys on app id, not on ownership. Its tiering input is the playtime the app actually knows
+        // (tracked session minutes), since Steam reports none: that puts a newly admitted game in
+        // the cold tier with no stored metadata, which the missing-data override picks up promptly,
+        // and leaves it on ordinary cold rotation afterwards.
+        val trackedByAppId = sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes }
+        val achievementScope = games.map {
+            com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
+                appId = it.appid,
+                playtimeForever = it.playtimeForever.toLong(),
+                playtime2Weeks = it.playtime2Weeks.toLong(),
+            )
+        } + gameDao.sharedGames().map { shared ->
+            com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
+                appId = shared.appId,
+                playtimeForever = (trackedByAppId[shared.appId] ?: 0).toLong(),
+                playtime2Weeks = 0L,
+            )
+        }
         val achievementFetch = achievementRepository.fetchLibraryGames(
             apiKey = apiKey,
             steamId = steamId,
-            ownedGames = games.map {
-                com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
-                    appId = it.appid,
-                    playtimeForever = it.playtimeForever.toLong(),
-                    playtime2Weeks = it.playtime2Weeks.toLong(),
-                )
-            },
+            ownedGames = achievementScope,
             playtimeDeltaByAppId = provisionalDiff.playedDeltaByAppId,
             scope = scope,
         )

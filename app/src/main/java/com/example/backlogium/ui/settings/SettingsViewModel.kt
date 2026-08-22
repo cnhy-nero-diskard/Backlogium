@@ -15,7 +15,9 @@ import com.example.backlogium.data.local.dao.SteamAssetStoredSummary
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.data.repo.CredentialsState
+import com.example.backlogium.data.repo.FamilySharedGameRepository
 import com.example.backlogium.data.repo.ProfileRepository
+import com.example.backlogium.data.repo.RemovedSharedGame
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.updates.AppUpdateRepository
 import com.example.backlogium.data.updates.AppUpdateState
@@ -107,6 +109,12 @@ data class SettingsUiState(
     val appUpdateState: AppUpdateState = AppUpdateState(),
     val updateCheckInProgress: Boolean = false,
     val updateCheckMessage: String? = null,
+    /**
+     * Family-shared games the player removed, newest first. Empty means nothing was ever removed,
+     * and the section is not shown at all — a permanently empty list would be a standing
+     * explanation of a feature most players never touch.
+     */
+    val removedSharedGames: List<RemovedSharedGame> = emptyList(),
 ) {
     /** The candidate config, or null while any field is invalid. */
     val candidate: RuleConfig? get() = draft.toConfig(savedConfig)
@@ -138,6 +146,7 @@ class SettingsViewModel @Inject constructor(
     private val syncScheduler: SyncScheduler,
     private val appUpdates: AppUpdateRepository,
     private val steamAssetDao: SteamAssetDao,
+    private val sharedGames: FamilySharedGameRepository,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -210,6 +219,8 @@ class SettingsViewModel @Inject constructor(
         )
     }.combine(assetWorkState) { state, asset ->
         state.copy(steamAssetStatus = asset.first, steamAssetProgress = asset.second)
+    }.combine(sharedGames.removedGames) { state, removed ->
+        state.copy(removedSharedGames = removed)
     }
 
     private val ruleLocalState = combine(
@@ -475,6 +486,15 @@ class SettingsViewModel @Inject constructor(
 
     fun onDismissBackupMessage() {
         backupMessage.value = null
+    }
+
+    /**
+     * Undo a removal. The game is not recreated here: it becomes eligible for admission again and
+     * arrives the next time it is observed being played, by the same path that admitted it
+     * originally. Recreating the row directly would invent a tracked game from a list entry.
+     */
+    fun restoreSharedGame(appId: Long) {
+        viewModelScope.launch { sharedGames.reverseRemoval(appId) }
     }
 
     private fun refreshSnapshots() {

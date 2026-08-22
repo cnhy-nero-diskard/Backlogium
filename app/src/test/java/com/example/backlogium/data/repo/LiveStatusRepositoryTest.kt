@@ -327,8 +327,19 @@ class LiveStatusRepositoryTest {
         credentials = FakeCredentialsProvider(),
         settings = settings,
         time = time,
+        // The observation side-effect is exercised in its own tests; here it only has to not
+        // interfere with the live-status emissions under test.
+        presenceObserver = RecordingPresenceObserver(),
         scope = scope,
     )
+
+    /** Records observations so the live path can be asserted to hand each fetch on exactly once. */
+    private class RecordingPresenceObserver : PresenceObserver {
+        val observations = mutableListOf<Pair<Long?, Long>>()
+        override suspend fun onObservation(appId: Long?, observedAt: Long) {
+            observations += appId to observedAt
+        }
+    }
 
     private class FakeCredentialsProvider : CredentialsProvider {
         override suspend fun currentCredentials() =
@@ -355,6 +366,11 @@ class LiveStatusRepositoryTest {
         override suspend fun count(): Int = error("not used")
         override suspend fun deleteAll() = error("not used")
         override suspend fun setBackfillMinutes(appId: Long, minutes: Int) = error("not used")
+        override suspend fun insertSharedGameIfMissing(appId: Long, name: String, iconUrl: String, admittedAt: Long) = error("not used")
+        override suspend fun ownedGamesForDiffing(): List<Game> = error("not used")
+        override suspend fun sharedGames(): List<Game> = error("not used")
+        override suspend fun convertSharedToOwned(appId: Long, playtimeForever: Int, playtime2Weeks: Int, convertedAt: Long) = error("not used")
+        override suspend fun deleteSharedGame(appId: Long) = error("not used")
     }
 
     /** In-memory single-row profile, matching the real DAO's "id = 0 singleton" contract. */
