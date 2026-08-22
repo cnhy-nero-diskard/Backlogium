@@ -171,6 +171,7 @@ class GameVisibilityUseCaseTest {
         val hidden = HiddenGamesRepository(
             hiddenGameDao = hiddenDao,
             gameDao = gameDao,
+            storeCacheDao = com.example.backlogium.data.repo.FakeStoreCacheDao(),
             time = FixedTime,
         )
         return Fixture(

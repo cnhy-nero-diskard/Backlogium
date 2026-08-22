@@ -65,6 +65,7 @@ class GameRepositoryGenreJoinTest {
         val hidden = HiddenGamesRepository(
             hiddenGameDao = db.hiddenGameDao(),
             gameDao = db.gameDao(),
+            storeCacheDao = db.gameGenreCacheDao(),
             time = OfflineTime,
         )
         repository = GameRepository(

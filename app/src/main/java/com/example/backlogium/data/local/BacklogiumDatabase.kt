@@ -73,7 +73,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         WishlistPriceObservation::class,
         HiddenGame::class,
     ],
-    version = 31,
+    version = 32,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -754,6 +754,18 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "`fromBulkAction` INTEGER NOT NULL, " +
                         "PRIMARY KEY(`appId`))",
                 )
+            }
+        }
+
+        /**
+         * v31 -> v32: additive only — `game_genre_cache` gains the app's store `type`
+         * (add-hidden-games). Deliberately not backfilled: the value arrives with each game's next
+         * natural store-enrichment pass, and a null type means *unknown*, which the non-game review
+         * treats as "not offered" rather than guessing either way.
+         */
+        val MIGRATION_31_32 = object : Migration(31, 32) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `game_genre_cache` ADD COLUMN `appType` TEXT")
             }
         }
 

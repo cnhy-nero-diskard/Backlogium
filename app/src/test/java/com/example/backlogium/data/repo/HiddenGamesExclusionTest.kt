@@ -53,6 +53,7 @@ class HiddenGamesExclusionTest {
         hidden = HiddenGamesRepository(
             hiddenGameDao = db.hiddenGameDao(),
             gameDao = db.gameDao(),
+            storeCacheDao = db.gameGenreCacheDao(),
             time = HiddenGamesTestTime,
         )
         games = GameRepository(

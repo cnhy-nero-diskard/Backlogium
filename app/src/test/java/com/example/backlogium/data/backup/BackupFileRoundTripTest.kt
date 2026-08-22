@@ -69,6 +69,9 @@ class BackupFileRoundTripTest {
             excludedSharedGames = listOf(
                 BackupExcludedSharedGame(appId = 620L, name = "Portal 2", excludedAt = "2026-06-20T12:00:00Z"),
             ),
+            hiddenGames = listOf(
+                BackupHiddenGame(appId = 431960L, hiddenAt = "2026-06-02T09:00:00Z", fromBulkAction = true),
+            ),
         )
 
         val encoded = json.encodeToString(BackupFile.serializer(), original)
