@@ -18,11 +18,17 @@ interface GameGenreCacheDao {
     @Query("SELECT * FROM game_genre_cache")
     fun observeAll(): Flow<List<GameGenreCache>>
 
-    /** Missing rows come first, then the oldest stale rows, so a new library backfills promptly. */
+    /**
+     * Missing rows come first, then the oldest stale rows, so a new library backfills promptly.
+     * Hidden games are excluded: enrichment is a request budget spent on games the player can see
+     * (add-hidden-games). Unhiding makes a game eligible again with no extra bookkeeping, because
+     * eligibility is this query rather than a stored flag.
+     */
     @Query(
         "SELECT games.appId FROM games " +
             "LEFT JOIN game_genre_cache ON games.appId = game_genre_cache.appId " +
-            "WHERE game_genre_cache.appId IS NULL OR game_genre_cache.checkedAt < :staleBefore " +
+            "WHERE games.appId NOT IN (SELECT appId FROM hidden_games) " +
+            "AND (game_genre_cache.appId IS NULL OR game_genre_cache.checkedAt < :staleBefore) " +
             "ORDER BY CASE WHEN game_genre_cache.appId IS NULL THEN 0 ELSE 1 END, " +
             "game_genre_cache.checkedAt ASC LIMIT :limit",
     )
@@ -31,7 +37,8 @@ interface GameGenreCacheDao {
     @Query(
         "SELECT COUNT(*) FROM games " +
             "LEFT JOIN game_genre_cache ON games.appId = game_genre_cache.appId " +
-            "WHERE game_genre_cache.appId IS NULL OR game_genre_cache.checkedAt < :staleBefore",
+            "WHERE games.appId NOT IN (SELECT appId FROM hidden_games) " +
+            "AND (game_genre_cache.appId IS NULL OR game_genre_cache.checkedAt < :staleBefore)",
     )
     suspend fun eligibleCount(staleBefore: Long): Int
 }

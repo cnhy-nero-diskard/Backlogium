@@ -7,6 +7,7 @@ import com.example.backlogium.data.hltb.HltbMatcher
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
+import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -45,6 +46,42 @@ class HltbRepositoryTest {
         assertEquals(2, candidates.size)
         assertEquals("Portal", candidates.first().name)
         assertTrue(candidates.first().confidence >= HltbMatcher.CONFIDENT_THRESHOLD)
+    }
+
+    /**
+     * A hidden game costs no HowLongToBeat request, on the batch path or the individual one, and
+     * its cached row is left exactly as it was (add-hidden-games).
+     */
+    @Test
+    fun refreshBatch_skipsHiddenGamesEntirely() = runTest {
+        val dao = FakeHltbDataDao()
+        val repository = repository(
+            dao = dao,
+            results = mapOf("Portal" to listOf(candidate("Portal")), "Wallpaper Engine" to listOf(candidate("Wallpaper Engine"))),
+            hidden = setOf(2L),
+        )
+
+        val result = repository.refreshBatch(
+            games = listOf(1L to "Portal", 2L to "Wallpaper Engine"),
+            force = true,
+        )
+
+        assertEquals(1, result.attempted)
+        assertEquals(1, result.refreshed)
+        assertNull("no row may be written for a hidden game", dao.getByAppId(2L))
+    }
+
+    @Test
+    fun fetchForGame_makesNoRequestForAHiddenGame() = runTest {
+        val dao = FakeHltbDataDao()
+        val repository = repository(
+            dao = dao,
+            results = mapOf("Wallpaper Engine" to listOf(candidate("Wallpaper Engine"))),
+            hidden = setOf(2L),
+        )
+
+        assertNull(repository.fetchForGame(appId = 2L, name = "Wallpaper Engine"))
+        assertNull(dao.getByAppId(2L))
     }
 
     @Test
@@ -207,9 +244,11 @@ class HltbRepositoryTest {
         results: Map<String, List<HltbCandidate>> = emptyMap(),
         failing: Set<String> = emptySet(),
         cancellation: Set<String> = emptySet(),
+        hidden: Set<Long> = emptySet(),
     ) = HltbRepository(
         dataSource = FakeHltbDataSource(results, failing, cancellation),
         hltbDataDao = dao,
+        hiddenGameDao = FakeHiddenGameDao(hidden),
         json = Json,
         time = FixedTime,
     )

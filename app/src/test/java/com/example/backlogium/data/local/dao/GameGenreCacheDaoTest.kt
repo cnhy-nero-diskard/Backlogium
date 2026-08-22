@@ -4,6 +4,7 @@ import androidx.room.Room
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameGenreCache
+import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.data.repo.GameGenreCodec
 import kotlinx.coroutines.flow.first
@@ -48,6 +49,24 @@ class GameGenreCacheDaoTest {
         cacheDao.upsert(GameGenreCache(3, "[]", checkedAt = 10))
 
         assertEquals(listOf(2L, 3L), cacheDao.eligibleAppIds(staleBefore = 50, limit = 25))
+        assertEquals(2, cacheDao.eligibleCount(staleBefore = 50))
+    }
+
+    /**
+     * A hidden game is not enriched: the store request budget belongs to games the player can see
+     * (add-hidden-games). Eligibility is this query rather than a stored decision, so unhiding
+     * makes the game eligible again with no extra bookkeeping.
+     */
+    @Test fun hiddenGames_areNotEligibleForEnrichment() = runBlocking {
+        gameDao.upsertAll(listOf(game(1), game(2)))
+        db.hiddenGameDao().upsertAll(listOf(HiddenGame(appId = 2, hiddenAt = 0L)))
+
+        assertEquals(listOf(1L), cacheDao.eligibleAppIds(staleBefore = 50, limit = 25))
+        assertEquals(1, cacheDao.eligibleCount(staleBefore = 50))
+
+        db.hiddenGameDao().delete(listOf(2L))
+
+        assertEquals(listOf(1L, 2L), cacheDao.eligibleAppIds(staleBefore = 50, limit = 25))
         assertEquals(2, cacheDao.eligibleCount(staleBefore = 50))
     }
 

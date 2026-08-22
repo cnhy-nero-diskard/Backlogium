@@ -344,7 +344,8 @@ class AchievementRepository @Inject constructor(
     }
 
     /**
-     * Fetches [appIds] **serially** — one request in flight at a time.
+     * Fetches [appIds] **serially** — one request in flight at a time. Hidden games are skipped
+     * before any request is made.
      *
      * This is deliberate, not a missing optimisation. Tiering is what made fetch volume small: a
      * steady-state sync now selects a handful of played games, so a typical inline pass is a few
@@ -371,9 +372,13 @@ class AchievementRepository @Inject constructor(
         onGameDone: ((refreshedSoFar: Int) -> Unit)? = null,
         fullReconciliation: Boolean = false,
     ): List<AchievementRefresh> {
+        // Hidden games are dropped here rather than at each caller: this is the only place any
+        // achievement, schema, or global-percentage request is issued, so one check covers the
+        // inline sync, the reconciliation sweep, and anything added later (add-hidden-games).
+        val hidden = hiddenGamesRepository.hiddenAppIdSet()
         val refreshes = mutableListOf<AchievementRefresh>()
         var refreshedSoFar = 0
-        for (appId in appIds) {
+        for (appId in appIds.filterNot { it in hidden }) {
             val refresh = try {
                 fetchGame(
                     apiKey = apiKey,

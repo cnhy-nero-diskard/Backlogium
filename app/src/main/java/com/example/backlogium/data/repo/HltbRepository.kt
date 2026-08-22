@@ -5,6 +5,7 @@ import com.example.backlogium.data.hltb.HltbDataSource
 import com.example.backlogium.data.hltb.HltbFailureClass
 import com.example.backlogium.data.hltb.HltbMatcher
 import com.example.backlogium.data.hltb.classifyHltbFailure
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
@@ -34,11 +35,16 @@ data class HltbReviewGame(
  *
  * A lookup failure never overwrites or clears the affected game's cached row — failures are
  * surfaced by returning null so last-good data survives.
+ *
+ * Hidden games are skipped in [queryResult], the single funnel every lookup passes through, so the
+ * individual and batch paths are both covered by one check (add-hidden-games). Their cached rows
+ * are left exactly as they are — hiding destroys nothing — they simply stop being refreshed.
  */
 @Singleton
 class HltbRepository @Inject constructor(
     private val dataSource: HltbDataSource,
     private val hltbDataDao: HltbDataDao,
+    private val hiddenGameDao: HiddenGameDao,
     private val json: Json,
     private val time: TimeProvider,
 ) {
@@ -111,6 +117,8 @@ class HltbRepository @Inject constructor(
      *
      * Note it is only called from inside the loop: an empty target set reports nothing at all, so
      * a caller rendering progress must not read "no emissions yet" as a stalled run.
+     *
+     * Hidden games are excluded from [games] before anything else (add-hidden-games).
      */
     suspend fun refreshBatch(
         games: List<Pair<Long, String>>,
@@ -118,11 +126,15 @@ class HltbRepository @Inject constructor(
         onProgress: suspend (done: Int, total: Int, name: String, outcome: HltbRefreshOutcome) -> Unit =
             { _, _, _, _ -> },
     ): HltbBatchResult {
+        // Hidden games are removed from the target set, not merely skipped inside the loop, so the
+        // progress totals a caller renders describe the work actually being done.
+        val hidden = hiddenGameDao.hiddenAppIds().toSet()
+        val visible = games.filterNot { it.first in hidden }
         val targets = if (force) {
-            games
+            visible
         } else {
             val stale = staleOrMissingAppIds().toSet()
-            games.filter { it.first in stale }
+            visible.filter { it.first in stale }
         }
         var refreshed = 0
         var noMatch = 0
@@ -160,6 +172,11 @@ class HltbRepository @Inject constructor(
     )
 
     private suspend fun queryResult(appId: Long, name: String): QueryResult {
+        // A hidden game costs no requests. Reported as a no-match rather than a failure: nothing
+        // went wrong, and a failure outcome would make a batch look like it hit a transport error.
+        if (hiddenGameDao.isHidden(appId)) {
+            return QueryResult(row = hltbDataDao.getByAppId(appId), outcome = HltbRefreshOutcome.NoMatch)
+        }
         val candidates = try {
             dataSource.search(name)
         } catch (cancellation: CancellationException) {

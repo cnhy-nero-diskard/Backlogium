@@ -60,6 +60,7 @@ class HiddenGamesExclusionTest {
             hltbRepository = HltbRepository(
                 dataSource = OfflineHltbSource,
                 hltbDataDao = db.hltbDataDao(),
+                hiddenGameDao = db.hiddenGameDao(),
                 json = Json,
                 time = HiddenGamesTestTime,
             ),

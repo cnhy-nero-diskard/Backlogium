@@ -43,11 +43,11 @@
 
 ## 6. Remote work exclusion
 
-- [ ] 6.1 Exclude hidden games from achievement, schema, and global-percentage fetching
-- [ ] 6.2 Exclude hidden games from HowLongToBeat matching, individual and batch
-- [ ] 6.3 Exclude hidden games from store enrichment scheduling
-- [ ] 6.4 Confirm unhiding makes a game eligible for every enrichment path again
-- [ ] 6.5 Add tests asserting no request is issued for a hidden game on each path
+- [x] 6.1 Exclude hidden games from achievement, schema, and global-percentage fetching
+- [x] 6.2 Exclude hidden games from HowLongToBeat matching, individual and batch
+- [x] 6.3 Exclude hidden games from store enrichment scheduling
+- [x] 6.4 Confirm unhiding makes a game eligible for every enrichment path again
+- [x] 6.5 Add tests asserting no request is issued for a hidden game on each path
 
 ## 7. Non-game bulk hide
 
