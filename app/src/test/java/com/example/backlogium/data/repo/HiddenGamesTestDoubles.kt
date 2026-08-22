@@ -3,7 +3,10 @@ package com.example.backlogium.data.repo
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.data.hltb.HltbDataSource
+import com.example.backlogium.data.local.dao.GameGenreCacheDao
+import com.example.backlogium.data.local.dao.NonGameCandidateRow
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.GameGenreCache
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.CurrentPlayersResponse
@@ -18,6 +21,8 @@ import com.example.backlogium.data.remote.dto.StoreAppDetails
 import com.example.backlogium.domain.FakeGameDao
 import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.TimeProvider
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import retrofit2.Response
 import java.time.LocalDate
 import java.time.ZoneId
@@ -27,11 +32,25 @@ internal fun fakeHiddenGamesRepository(
     hidden: Set<Long> = emptySet(),
     games: List<Game> = emptyList(),
     dao: FakeHiddenGameDao = FakeHiddenGameDao(hidden),
+    nonGameCandidates: List<NonGameCandidateRow> = emptyList(),
 ): HiddenGamesRepository = HiddenGamesRepository(
     hiddenGameDao = dao,
     gameDao = FakeGameDao(games),
+    storeCacheDao = FakeStoreCacheDao(nonGameCandidates),
     time = HiddenGamesTestTime,
 )
+
+/** Only the non-game candidate projection is exercised through this fake; the rest is inert. */
+internal class FakeStoreCacheDao(
+    private val candidates: List<NonGameCandidateRow> = emptyList(),
+) : GameGenreCacheDao {
+    override suspend fun upsert(cache: GameGenreCache) = Unit
+    override suspend fun deleteAll() = Unit
+    override fun observeAll(): Flow<List<GameGenreCache>> = flowOf(emptyList())
+    override suspend fun eligibleAppIds(staleBefore: Long, limit: Int): List<Long> = emptyList()
+    override suspend fun eligibleCount(staleBefore: Long): Int = 0
+    override fun observeNonGameCandidates(): Flow<List<NonGameCandidateRow>> = flowOf(candidates)
+}
 
 internal object HiddenGamesTestTime : TimeProvider {
     override fun nowMillis(): Long = 1_700_000_000_000L

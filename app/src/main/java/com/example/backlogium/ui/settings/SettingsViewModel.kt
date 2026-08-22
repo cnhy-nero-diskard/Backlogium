@@ -13,6 +13,7 @@ import com.example.backlogium.data.local.dao.SteamAssetDao
 import com.example.backlogium.data.local.entity.SteamAssetDownloadState
 import com.example.backlogium.data.local.dao.SteamAssetStoredSummary
 import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.repo.HiddenGamesRepository
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.ProfileRepository
@@ -104,6 +105,10 @@ data class SettingsUiState(
     val mismatchImportPending: Boolean = false,
     /** The mismatched backup's recorded SteamID64, for the warning dialog's text. */
     val mismatchImportSteamId: String = "",
+    /** How many games are hidden, for the section's summary line (add-hidden-games). */
+    val hiddenGameCount: Int = 0,
+    /** How many library items the store reports as non-games and that are not hidden yet. */
+    val nonGameCandidateCount: Int = 0,
     val appUpdateState: AppUpdateState = AppUpdateState(),
     val updateCheckInProgress: Boolean = false,
     val updateCheckMessage: String? = null,
@@ -138,6 +143,7 @@ class SettingsViewModel @Inject constructor(
     private val syncScheduler: SyncScheduler,
     private val appUpdates: AppUpdateRepository,
     private val steamAssetDao: SteamAssetDao,
+    hiddenGames: HiddenGamesRepository,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -210,7 +216,15 @@ class SettingsViewModel @Inject constructor(
         )
     }.combine(assetWorkState) { state, asset ->
         state.copy(steamAssetStatus = asset.first, steamAssetProgress = asset.second)
+    }.combine(hiddenState) { state, hidden ->
+        state.copy(hiddenGameCount = hidden.first, nonGameCandidateCount = hidden.second)
     }
+
+    // Counts only: the section itself owns the list and every mutation (HiddenGamesViewModel).
+    private val hiddenState = combine(
+        hiddenGames.hiddenGames,
+        hiddenGames.nonGameCandidates,
+    ) { hidden, candidates -> hidden.size to candidates.size }
 
     private val ruleLocalState = combine(
         draftEdit,

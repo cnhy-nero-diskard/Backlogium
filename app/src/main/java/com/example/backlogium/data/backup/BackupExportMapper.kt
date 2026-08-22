@@ -5,6 +5,7 @@ import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
@@ -13,10 +14,10 @@ import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
-import com.example.backlogium.data.repo.CredentialsRepository
-import com.example.backlogium.data.repo.CredentialsState
+import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.AchievementInput
 import com.example.backlogium.gamification.GamePlaytimeInput
@@ -36,6 +37,7 @@ private data class ExportSnapshot(
     val profile: PlayerProfile,
     val collections: List<Collection>,
     val collectionMembers: List<CollectionMember>,
+    val hiddenGames: List<HiddenGame>,
 )
 
 /**
@@ -58,15 +60,21 @@ class BackupExportMapper @Inject constructor(
     private val hltbDataDao: HltbDataDao,
     private val playerProfileDao: PlayerProfileDao,
     private val collectionDao: CollectionDao,
+    private val hiddenGameDao: HiddenGameDao,
     private val settings: SettingsDataStore,
-    private val credentials: CredentialsRepository,
+    /**
+     * Narrowed to the provider interface: the export reads the configured SteamID64 and nothing
+     * else, and depending on the full repository would drag credential *writing* into a read-only
+     * mapper (and out of reach of a plain JVM test).
+     */
+    private val credentials: CredentialsProvider,
     private val time: TimeProvider,
     private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
 ) {
     suspend fun buildExport(): BackupFile {
         val config = settings.ruleConfigFlow.first()
         val sortPrefs = settings.librarySortFlow.first()
-        val steamId64FromCredentials = (credentials.currentCredentials() as? CredentialsState.Configured)?.steamId
+        val steamId64FromCredentials = credentials.currentCredentials()?.steamId
 
         val snapshot = transaction.run {
             ExportSnapshot(
@@ -78,6 +86,7 @@ class BackupExportMapper @Inject constructor(
                 profile = playerProfileDao.get() ?: PlayerProfile(),
                 collections = collectionDao.getAll(),
                 collectionMembers = collectionDao.getAllMembers(),
+                hiddenGames = hiddenGameDao.getAll(),
             )
         }
         val (games, achievements, sessions, days, hltb, profile, collections, collectionMembers) = snapshot
@@ -119,6 +128,7 @@ class BackupExportMapper @Inject constructor(
             computed = buildComputed(games, achievements, sessions, days, hltb, config),
             collections = collections.map { it.toBackup() },
             collectionMembers = collectionMembers.map { it.toBackup() },
+            hiddenGames = snapshot.hiddenGames.map { it.toBackup() },
         )
     }
 
@@ -237,6 +247,12 @@ private fun Collection.toBackup() = BackupCollection(
     timeBasis = timeBasis.name,
     description = description,
     displayOrder = displayOrder,
+)
+
+private fun HiddenGame.toBackup() = BackupHiddenGame(
+    appId = appId,
+    hiddenAt = hiddenAt.toIso8601(),
+    fromBulkAction = fromBulkAction,
 )
 
 private fun CollectionMember.toBackup() = BackupCollectionMember(

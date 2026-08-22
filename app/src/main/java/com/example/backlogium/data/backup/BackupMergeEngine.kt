@@ -4,6 +4,7 @@ import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
@@ -12,6 +13,7 @@ import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.Session
@@ -55,6 +57,7 @@ class BackupMergeEngine @Inject constructor(
     private val achievementDao: AchievementDao,
     private val playerProfileDao: PlayerProfileDao,
     private val collectionDao: CollectionDao,
+    private val hiddenGameDao: HiddenGameDao,
     private val gamificationUpdater: GamificationUpdater,
     private val time: TimeProvider,
     private val derivedStateWrites: DerivedStateWriteCoordinator = DerivedStateWriteCoordinator(),
@@ -100,6 +103,9 @@ class BackupMergeEngine @Inject constructor(
             file.achievements.forEach { mergeAchievement(it) }
             file.collections.forEach { mergeCollection(it) }
             file.collectionMembers.forEach { mergeCollectionMember(it) }
+            // Applied before the recompute below, so the restored XP already excludes the games the
+            // file records as hidden rather than briefly counting them and then correcting.
+            mergeHiddenGames(file.hiddenGames)
 
             // playtimeBackfilled is a historical fact ("has this account ever backfilled"), not a
             // derivation — folded in like longestStreak, as a one-way OR rather than a replace, so
@@ -312,6 +318,25 @@ class BackupMergeEngine @Inject constructor(
                 displayOrder = displayOrder,
             ),
         )
+    }
+
+    /**
+     * Union, never a replace: a game hidden locally stays hidden even if the file predates the
+     * hide, matching how `playtimeBackfilled` and `longestStreak` are folded in. An import cannot
+     * un-hide something, which keeps the merge order-independent and never surprises the player
+     * with a game they removed from view reappearing.
+     */
+    private suspend fun mergeHiddenGames(hidden: List<BackupHiddenGame>) {
+        if (hidden.isEmpty()) return
+        val stored = hiddenGameDao.hiddenAppIds().toSet()
+        val rows = hidden.filterNot { it.appId in stored }.map {
+            HiddenGame(
+                appId = it.appId,
+                hiddenAt = it.hiddenAt.iso8601ToEpochMilli(),
+                fromBulkAction = it.fromBulkAction,
+            )
+        }
+        hiddenGameDao.upsertAll(rows)
     }
 
     private suspend fun mergeCollectionMember(backupMember: BackupCollectionMember) {

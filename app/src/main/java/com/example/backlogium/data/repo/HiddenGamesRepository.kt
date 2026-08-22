@@ -1,6 +1,7 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.domain.TimeProvider
@@ -27,6 +28,18 @@ data class HiddenGameEntry(
 )
 
 /**
+ * One library item the store reports as something other than a game — the shape the bulk review
+ * offers for confirmation. [typeLabel] is the store's own word for it, shown so the player can see
+ * *why* it was proposed rather than being asked to trust a classification.
+ */
+data class NonGameCandidate(
+    val appId: Long,
+    val name: String,
+    val iconUrl: String,
+    val typeLabel: String,
+)
+
+/**
  * The hidden set and the only writes that change it (add-hidden-games).
  *
  * Every other read path in the app excludes hidden games by consuming [hiddenAppIds] at its own
@@ -42,6 +55,7 @@ data class HiddenGameEntry(
 class HiddenGamesRepository @Inject constructor(
     private val hiddenGameDao: HiddenGameDao,
     private val gameDao: GameDao,
+    private val storeCacheDao: GameGenreCacheDao,
     private val time: TimeProvider,
 ) {
     /** Every hidden app id, as the exclusion joins consume it. */
@@ -60,6 +74,23 @@ class HiddenGamesRepository @Inject constructor(
                     iconUrl = game?.iconUrl.orEmpty(),
                     hiddenAt = row.hiddenAt,
                     fromBulkAction = row.fromBulkAction,
+                )
+            }
+        }
+
+    /**
+     * Visible library items whose recorded store type is not a game. Items whose type has not been
+     * retrieved are absent — never assumed to be a game or a non-game — and nothing here is hidden
+     * until the player confirms it.
+     */
+    val nonGameCandidates: Flow<List<NonGameCandidate>> =
+        storeCacheDao.observeNonGameCandidates().map { rows ->
+            rows.map { row ->
+                NonGameCandidate(
+                    appId = row.appId,
+                    name = row.name.takeIf { it.isNotBlank() } ?: "App ${row.appId}",
+                    iconUrl = row.iconUrl,
+                    typeLabel = row.appType,
                 )
             }
         }

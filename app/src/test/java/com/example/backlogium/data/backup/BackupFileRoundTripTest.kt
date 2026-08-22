@@ -57,6 +57,9 @@ class BackupFileRoundTripTest {
                 ),
             ),
             collectionMembers = listOf(BackupCollectionMember(collectionId = 1L, appId = 440L, orderIndex = 0, done = false)),
+            hiddenGames = listOf(
+                BackupHiddenGame(appId = 431960L, hiddenAt = "2026-06-02T09:00:00Z", fromBulkAction = true),
+            ),
         )
 
         val encoded = json.encodeToString(BackupFile.serializer(), original)

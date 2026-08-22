@@ -144,6 +144,31 @@ object BackupValidator {
             }
         }
 
+        // Hidden entries carry no foreign key by design (a hide outlives a game leaving the
+        // library), so only the app id and the timestamp are checkable. An unparseable hiddenAt is
+        // refused rather than silently stored as an epoch-zero hide date (add-hidden-games).
+        file.hiddenGames.forEachIndexed { index, hidden ->
+            if (hidden.appId <= 0L) {
+                problems += BackupValidationProblem(
+                    "hiddenGame", index,
+                    "malformed appId ${hidden.appId}",
+                )
+            }
+            val hiddenAtMillis = hidden.hiddenAt.toEpochMilliOrNull()
+            if (hiddenAtMillis == null) {
+                problems += BackupValidationProblem(
+                    "hiddenGame", index,
+                    "unparseable hiddenAt '${hidden.hiddenAt}'",
+                )
+            } else if (hiddenAtMillis !in EARLIEST_PLAUSIBLE_MILLIS..LATEST_PLAUSIBLE_MILLIS) {
+                problems += BackupValidationProblem(
+                    "hiddenGame", index,
+                    "hiddenAt '${hidden.hiddenAt}' outside the supported range " +
+                        "$EARLIEST_PLAUSIBLE_DATE..$LATEST_PLAUSIBLE_DATE",
+                )
+            }
+        }
+
         file.collectionMembers.forEachIndexed { index, member ->
             if (member.collectionId !in collectionIds) {
                 problems += BackupValidationProblem(

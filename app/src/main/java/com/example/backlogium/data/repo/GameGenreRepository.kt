@@ -15,7 +15,11 @@ data class GenreEnrichmentBatch(
     val transientFailure: Boolean,
 )
 
-/** Owns the local genre cache and the bounded, best-effort Store refresh policy. */
+/**
+ * Owns the local store-metadata cache and the bounded, best-effort Store refresh policy. Genres
+ * are what most consumers read; the same response's app type is recorded alongside them for the
+ * non-game review (add-hidden-games), which is why one fetch serves both.
+ */
 @Singleton
 class GameGenreRepository @Inject constructor(
     private val cacheDao: GameGenreCacheDao,
@@ -38,8 +42,7 @@ class GameGenreRepository @Inject constructor(
         for ((index, appId) in appIds.withIndex()) {
             if (index > 0) delay(MIN_REQUEST_SPACING_MILLIS)
             when (val result = store.genresFor(appId)) {
-                is StoreGenreResult.Genres -> write(appId, result.values)
-                StoreGenreResult.Empty -> write(appId, emptyList())
+                is StoreGenreResult.Details -> write(appId, result.genres, result.appType)
                 is StoreGenreResult.TransientFailure -> transientFailure = true
             }
             if (transientFailure) break
@@ -49,12 +52,13 @@ class GameGenreRepository @Inject constructor(
         return GenreEnrichmentBatch(appIds.size, hasMore, transientFailure)
     }
 
-    private suspend fun write(appId: Long, genres: List<GameGenre>) {
+    private suspend fun write(appId: Long, genres: List<GameGenre>, appType: String?) {
         cacheDao.upsert(
             GameGenreCache(
                 appId = appId,
                 genresJson = GameGenreCodec.encode(genres),
                 checkedAt = time.nowMillis(),
+                appType = appType,
             ),
         )
     }

@@ -21,15 +21,35 @@ class SteamStoreGenreDataSourceTest {
         )))).genresFor(7)
 
         assertEquals(
-            StoreGenreResult.Genres(listOf(GameGenre("1", "Action"), GameGenre("23", "Indie"))),
+            StoreGenreResult.Details(
+                listOf(GameGenre("1", "Action"), GameGenre("23", "Indie")),
+                appType = null,
+            ),
             result,
         )
     }
 
     @Test fun emptyUnavailableAndMissingEnvelope_areDefinitiveEmpty() = runBlocking {
-        assertEquals(StoreGenreResult.Empty, source(Response.success(details(7, false))).genresFor(7))
-        assertEquals(StoreGenreResult.Empty, source(Response.success(emptyMap())).genresFor(7))
-        assertEquals(StoreGenreResult.Empty, source(Response.success(details(7, true))).genresFor(7))
+        val empty = StoreGenreResult.Details(emptyList(), appType = null)
+        assertEquals(empty, source(Response.success(details(7, false))).genresFor(7))
+        assertEquals(empty, source(Response.success(emptyMap())).genresFor(7))
+        assertEquals(empty, source(Response.success(details(7, true))).genresFor(7))
+    }
+
+    /**
+     * The app type rides along on the response the genre fetch already makes, normalized to lower
+     * case so the non-game review's comparison is a plain equality check (add-hidden-games).
+     */
+    @Test fun appType_isCarriedAndNormalized() = runBlocking {
+        assertEquals(
+            StoreGenreResult.Details(emptyList(), appType = "application"),
+            source(Response.success(details(7, true, type = " Application "))).genresFor(7),
+        )
+        // A blank or absent type stays unknown rather than becoming an empty-string classification.
+        assertEquals(
+            StoreGenreResult.Details(emptyList(), appType = null),
+            source(Response.success(details(7, true, type = "  "))).genresFor(7),
+        )
     }
 
     @Test fun throttlingServerAndNetworkErrors_areTransient() = runBlocking {
@@ -40,8 +60,12 @@ class SteamStoreGenreDataSourceTest {
         }).genresFor(7) is StoreGenreResult.TransientFailure)
     }
 
-    private fun details(appId: Long, success: Boolean, genres: List<StoreGenreDto> = emptyList()) =
-        mapOf(appId.toString() to StoreAppDetails(success, StoreAppData(genres)))
+    private fun details(
+        appId: Long,
+        success: Boolean,
+        genres: List<StoreGenreDto> = emptyList(),
+        type: String? = null,
+    ) = mapOf(appId.toString() to StoreAppDetails(success, StoreAppData(type, genres)))
 
     private fun source(response: Response<Map<String, StoreAppDetails>>) =
         SteamStoreGenreDataSource(object : SteamStoreApi {

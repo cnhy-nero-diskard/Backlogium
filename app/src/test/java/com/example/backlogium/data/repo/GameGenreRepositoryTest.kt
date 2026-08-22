@@ -235,7 +235,7 @@ class GameGenreRepositoryTest {
                 return Response.error(429, "slow down".toResponseBody("text/plain".toMediaType()))
             }
             val dtos = genres[appId].orEmpty().map { StoreGenreDto(it.id, it.label) }
-            return Response.success(mapOf(appId.toString() to StoreAppDetails(true, StoreAppData(dtos))))
+            return Response.success(mapOf(appId.toString() to StoreAppDetails(true, StoreAppData(genres = dtos))))
         }
     }
 

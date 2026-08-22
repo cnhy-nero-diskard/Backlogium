@@ -51,24 +51,24 @@
 
 ## 7. Non-game bulk hide
 
-- [ ] 7.1 Deserialize the app `type` from the `appdetails` response into `StoreAppData` — it is already returned and currently discarded
-- [ ] 7.2 Record the type alongside the existing store enrichment result, adding no new request
-- [ ] 7.3 Add the migration for the stored type
-- [ ] 7.4 Identify library items whose recorded type is not a game; exclude items whose type has not been retrieved
-- [ ] 7.5 Present the candidates by name for review, hiding nothing without confirmation
-- [ ] 7.6 Disclose the combined XP and level effect for the group before confirming
-- [ ] 7.7 Ensure each bulk-hidden item can be unhidden individually
-- [ ] 7.8 Add tests: unknown types are never offered, nothing is hidden without confirmation, and a confirmed group is hidden together
+- [x] 7.1 Deserialize the app `type` from the `appdetails` response into `StoreAppData` — it is already returned and currently discarded
+- [x] 7.2 Record the type alongside the existing store enrichment result, adding no new request
+- [x] 7.3 Add the migration for the stored type
+- [x] 7.4 Identify library items whose recorded type is not a game; exclude items whose type has not been retrieved
+- [x] 7.5 Present the candidates by name for review, hiding nothing without confirmation
+- [x] 7.6 Disclose the combined XP and level effect for the group before confirming
+- [x] 7.7 Ensure each bulk-hidden item can be unhidden individually
+- [x] 7.8 Add tests: unknown types are never offered, nothing is hidden without confirmation, and a confirmed group is hidden together
 
 ## 8. Settings and backup
 
-- [ ] 8.1 Add the hidden-games section listing each hidden game with when it was hidden
-- [ ] 8.2 Offer unhide individually and unhide all, each disclosing its effect
-- [ ] 8.3 Offer the non-game review from the same section
-- [ ] 8.4 State plainly when nothing is hidden, rather than showing an unexplained empty list
-- [ ] 8.5 Keep the section reachable even when every game in the library is hidden
-- [ ] 8.6 Include the hidden set in backup export and apply it on restore
-- [ ] 8.7 Add a round-trip test: export with games hidden, restore, confirm they are hidden and their playtime has not re-entered XP
+- [x] 8.1 Add the hidden-games section listing each hidden game with when it was hidden
+- [x] 8.2 Offer unhide individually and unhide all, each disclosing its effect
+- [x] 8.3 Offer the non-game review from the same section
+- [x] 8.4 State plainly when nothing is hidden, rather than showing an unexplained empty list
+- [x] 8.5 Keep the section reachable even when every game in the library is hidden
+- [x] 8.6 Include the hidden set in backup export and apply it on restore
+- [x] 8.7 Add a round-trip test: export with games hidden, restore, confirm they are hidden and their playtime has not re-entered XP
 
 ## 9. Verification
 

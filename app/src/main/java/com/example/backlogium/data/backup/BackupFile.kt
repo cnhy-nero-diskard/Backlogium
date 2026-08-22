@@ -31,6 +31,12 @@ data class BackupFile(
     /** Custom collections and their memberships (add-custom-collections) — app-owned state. */
     val collections: List<BackupCollection> = emptyList(),
     val collectionMembers: List<BackupCollectionMember> = emptyList(),
+    /**
+     * The hidden set (add-hidden-games) — app-owned state Steam cannot re-supply. Without it a
+     * restore would silently unhide everything and re-apply XP the player deliberately removed.
+     * Absent in files written before hiding existed, which correctly restores as nothing hidden.
+     */
+    val hiddenGames: List<BackupHiddenGame> = emptyList(),
 ) {
     companion object {
         const val CURRENT_FORMAT_VERSION = 1
@@ -174,6 +180,18 @@ data class BackupCollection(
     val timeBasis: String = "COMPLETIONIST",
     val description: String? = null,
     val displayOrder: Int? = null,
+)
+
+/**
+ * One hidden game. [hiddenAt] is ISO-8601 like every other timestamp in this file, and
+ * [fromBulkAction] records that the hide came from the non-game review — a note the hidden list
+ * shows, never something that changes how the hide behaves.
+ */
+@Serializable
+data class BackupHiddenGame(
+    val appId: Long,
+    val hiddenAt: String,
+    val fromBulkAction: Boolean = false,
 )
 
 /** One collection membership, keyed by collection id + app id with its sequence order. */

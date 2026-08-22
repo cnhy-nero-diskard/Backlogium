@@ -11,6 +11,12 @@ data class StoreAppDetails(
 
 @Serializable
 data class StoreAppData(
+    /**
+     * The store's own app kind — `game`, `application`, `tool`, `demo`, `music`, … Already present
+     * in every `appdetails` response and previously discarded; recording it is what makes the
+     * non-game bulk review possible without a single extra request (add-hidden-games).
+     */
+    val type: String? = null,
     val genres: List<StoreGenreDto> = emptyList(),
 )
 

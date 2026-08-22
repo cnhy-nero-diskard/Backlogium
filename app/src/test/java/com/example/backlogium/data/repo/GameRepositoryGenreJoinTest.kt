@@ -75,6 +75,7 @@ class GameRepositoryGenreJoinTest {
             hiddenGamesRepository = HiddenGamesRepository(
                 hiddenGameDao = db.hiddenGameDao(),
                 gameDao = db.gameDao(),
+                storeCacheDao = db.gameGenreCacheDao(),
                 time = OfflineTime,
             ),
             steamApi = OfflineSteamApi,
