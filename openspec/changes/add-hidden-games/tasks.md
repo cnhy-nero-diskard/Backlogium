@@ -35,11 +35,11 @@
 
 ## 5. Live status
 
-- [ ] 5.1 Resolve the in-game state to not-in-game in `LiveStatusRepository` when the reported game is hidden, so one resolution point governs every surface
-- [ ] 5.2 Verify the now-playing card, profile header presence line, and Library live indicator all follow from it without separate filtering
-- [ ] 5.3 Suppress the ongoing now-playing notification for a hidden game
-- [ ] 5.4 Confirm sessions are still recorded for a hidden game that is played
-- [ ] 5.5 Add a test asserting presence for a hidden game resolves to not-in-game
+- [x] 5.1 Resolve the in-game state to not-in-game in `LiveStatusRepository` when the reported game is hidden, so one resolution point governs every surface
+- [x] 5.2 Verify the now-playing card, profile header presence line, and Library live indicator all follow from it without separate filtering
+- [x] 5.3 Suppress the ongoing now-playing notification for a hidden game
+- [x] 5.4 Confirm sessions are still recorded for a hidden game that is played
+- [x] 5.5 Add a test asserting presence for a hidden game resolves to not-in-game
 
 ## 6. Remote work exclusion
 

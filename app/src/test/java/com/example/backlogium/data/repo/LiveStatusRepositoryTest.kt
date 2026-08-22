@@ -18,6 +18,7 @@ import com.example.backlogium.data.remote.dto.PlayerSummaryDto
 import com.example.backlogium.data.remote.dto.PlayerSummariesResult
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
+import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
@@ -160,6 +161,54 @@ class LiveStatusRepositoryTest {
         )
         assertEquals(LivePresence.IN_GAME, status.presence)
         assertEquals(1_000L, status.sessionStartedAt)
+    }
+
+    /**
+     * A hidden game that is running reads as not running (add-hidden-games). Resolving it here is
+     * what makes every derived surface — the now-playing card, the profile header's presence line,
+     * the Library indicator, the ongoing notification — silent without any of them knowing about
+     * hidden games.
+     */
+    @Test
+    fun inAHiddenGame_resolvesToNotPlaying() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = FakeTimeProvider(1_000L),
+            scope = this,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Wallpaper Engine", iconUrl = "icon://we")),
+            hidden = setOf(10L),
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Wallpaper Engine")
+        val status = repo.checkNow()
+
+        assertEquals(NowPlaying.NotPlaying, status.nowPlaying)
+        // The player is still around; presence just does not say what they are in.
+        assertEquals(LivePresence.ONLINE, status.presence)
+        // No session is recorded for a game no surface may present as running.
+        assertEquals(null, status.sessionStartedAt)
+        assertEquals(LiveSessionState(), settings.session.value)
+    }
+
+    @Test
+    fun construction_withAHiddenRecordedSession_seedsNothing() = runTest {
+        val settings = FakeSettingsRepository()
+        settings.session.value = LiveSessionState(appId = 10L, startedAt = 1_000L)
+
+        val repo = repository(
+            steamApi = FakeSteamApi(),
+            settings = settings,
+            time = FakeTimeProvider(31_000L),
+            scope = this,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Wallpaper Engine", iconUrl = "icon://we")),
+            hidden = setOf(10L),
+        )
+        runCurrent()
+
+        assertEquals(LiveStatus(), repo.liveStatus.value)
     }
 
     @Test
@@ -320,9 +369,11 @@ class LiveStatusRepositoryTest {
         time: FakeTimeProvider,
         scope: CoroutineScope,
         gameDao: GameDao = FakeGameDao(),
+        hidden: Set<Long> = emptySet(),
     ) = LiveStatusRepository(
         steamApi = steamApi,
         gameDao = gameDao,
+        hiddenGameDao = FakeHiddenGameDao(hidden),
         profileDao = FakePlayerProfileDao(),
         credentials = FakeCredentialsProvider(),
         settings = settings,

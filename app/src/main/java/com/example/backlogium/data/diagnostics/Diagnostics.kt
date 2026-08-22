@@ -79,6 +79,14 @@ data class RequestMetrics(val count: Int = 0, val durationMs: Long = 0)
 enum class SyncOutcome(val value: String) {
     SUCCESS("success"),
     FAILED("failed"),
+
+    /**
+     * Steam reported a running game that the player has hidden, so presence resolved to
+     * not-in-game (add-hidden-games). Distinct from [NOT_PLAYING] only here, in the
+     * developer-facing decision log: no product surface may distinguish the two, or the hidden
+     * game would be observable by the difference.
+     */
+    HIDDEN_GAME("hidden_game"),
     INCOMPLETE("incomplete"),
     SKIPPED_NO_CREDENTIALS("skipped:no_credentials"),
     SKIPPED_EMPTY_OWNED_GAMES("skipped:empty_owned_games"),
@@ -184,6 +192,14 @@ enum class PresenceOutcome(val value: String) {
     NO_CREDENTIALS("no_credentials"),
     NO_PLAYER("no_player"),
     FAILED("failed"),
+
+    /**
+     * Steam reported a running game that the player has hidden, so presence resolved to
+     * not-in-game (add-hidden-games). Distinct from [NOT_PLAYING] only here, in the
+     * developer-facing decision log: no product surface may distinguish the two, or the hidden
+     * game would be observable by the difference.
+     */
+    HIDDEN_GAME("hidden_game"),
     MONITORING_STARTED("monitoring_started"),
     MONITORING_ALREADY_RUNNING("monitoring_already_running"),
     START_REFUSED("start_refused"),
