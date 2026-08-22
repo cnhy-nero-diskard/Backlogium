@@ -95,9 +95,37 @@
 ## 9. Verification
 
 - [ ] 9.1 `./gradlew :app:testDebugUnitTest :gamification:test`
-- [ ] 9.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
+- [x] 9.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
 - [ ] 9.3 On device: upgrade an existing install and confirm no badges appear, no banner appears, and last-played dates populate after one sync
 - [ ] 9.4 On device: confirm a game with playtime but no Steam date reads "Unknown", and a zero-playtime game reads "Never played"
 - [ ] 9.5 On device: check the badge at all three densities, including that it survives compact grid and coexists with selection mode
 - [ ] 9.6 On device: restore a backup older than the badge window containing games absent from the current library, and confirm no badges and no banner
 - [ ] 9.7 On device: restore a backup taken within the badge window and confirm its recorded signals reappear as they stood, and that no banner is shown
+
+## Verification status
+
+Recorded here because this change was applied in an environment that cannot reach
+`dl.google.com`, so the Android Gradle Plugin does not resolve and no Gradle task can run.
+
+Verified:
+
+- 9.2's repository-boundary grep reports only the two pre-existing breaches CLAUDE.md already
+  documents (`HomeViewModel`'s `Collection`/`CollectionMember`, plus `SettingsViewModel`'s
+  `SteamAssetDownloadState` from `fix: reconcile offline steam assets`). The haptics-authority grep
+  is silent.
+- Every source file under `app/src/main`, `app/src/test`, `app/src/androidTest`, and
+  `gamification/src/main` parses cleanly under kotlinc 2.2.10.
+- 51 of the new unit tests were compiled and executed against a standalone Kotlin compiler and
+  JUnit: `LibraryRecencyTest` (23), `SteamSyncRecencyTest` (15, including the `rtime_last_played`
+  payload cases against the real serializer), `AcquiredGamesAnnouncementTest` (9), and
+  `GameSummaryLastPlayedTest` (4). All pass.
+
+Deferred to a machine with the Android toolchain:
+
+- 9.1, and the Room/Robolectric tests that need it: `WriteIntegrityDaoTest`'s three new cases,
+  `BackupMergeEngineTest`'s four new cases plus the restore-timeline case, `BackupFileRoundTripTest`,
+  and `MigrationTest.v20ToV21_*`.
+- `app/schemas/com.example.backlogium.data.local.BacklogiumDatabase/21.json`. Room's processor emits
+  it during a build; it could not be hand-written, since its `identityHash` is computed by the
+  processor. `MigrationTest` will fail until one build has generated it.
+- 9.3 through 9.7, which are on-device by definition.
