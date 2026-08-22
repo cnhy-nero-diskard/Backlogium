@@ -1,6 +1,8 @@
 package com.example.backlogium.work
 
+import com.example.backlogium.domain.DailyProgressCredit
 import com.example.backlogium.domain.SessionDiffer
+import com.example.backlogium.domain.attributeDailyProgress
 import com.example.backlogium.domain.SessionDiffer.GameDiffState
 import com.example.backlogium.domain.SessionDiffer.OpenSession
 import com.example.backlogium.domain.SessionDiffer.PollGame

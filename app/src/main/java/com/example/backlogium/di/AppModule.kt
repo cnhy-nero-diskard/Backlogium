@@ -25,6 +25,8 @@ import com.example.backlogium.data.updates.UpdateDataStore
 import com.example.backlogium.data.updates.UpdateManager
 import com.example.backlogium.data.updates.UpdateStateStore
 import com.example.backlogium.data.updates.UpdateVerifier
+import com.example.backlogium.data.local.PostPlayGenerationStore
+import com.example.backlogium.domain.PostPlayGenerations
 import com.example.backlogium.domain.ProgressMarksStore
 import com.example.backlogium.domain.SystemTimeProvider
 import com.example.backlogium.domain.TimeProvider
@@ -91,6 +93,10 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindProgressMarksStore(impl: DataStoreProgressMarksStore): ProgressMarksStore
+
+    @Binds
+    @Singleton
+    abstract fun bindPostPlayGenerations(impl: PostPlayGenerationStore): PostPlayGenerations
 
     @Binds
     @Singleton

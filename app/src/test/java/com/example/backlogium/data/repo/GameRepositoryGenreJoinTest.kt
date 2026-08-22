@@ -14,6 +14,7 @@ import com.example.backlogium.data.remote.dto.GlobalAchievementPercentagesRespon
 import com.example.backlogium.data.remote.dto.OwnedGamesResponse
 import com.example.backlogium.data.remote.dto.PlayerAchievementsResponse
 import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
+import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.SteamStoreApi
@@ -156,6 +157,13 @@ class GameRepositoryGenreJoinTest {
             includePlayedFreeGames: Int,
             scope: SyncRunRecorder.RunScope?,
         ): OwnedGamesResponse = error("the library join must not call Steam")
+
+        override suspend fun getRecentlyPlayedGames(
+            key: String,
+            steamId: String,
+            count: Int,
+            scope: SyncRunRecorder.RunScope?,
+        ): RecentlyPlayedGamesResponse = error("the library join must not call Steam")
 
         override suspend fun getSteamLevel(
             key: String,

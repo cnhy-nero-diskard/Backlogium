@@ -20,6 +20,7 @@ import com.example.backlogium.data.steamassets.SteamAssetInterceptor
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.domain.DailyProgressBackfillUseCase
 import com.example.backlogium.domain.PendingImportRecomputeUseCase
+import com.example.backlogium.work.PostPlaySyncScheduler
 import com.example.backlogium.work.PresenceServiceStarter
 import com.example.backlogium.work.SyncScheduler
 import com.example.backlogium.work.UpdateScheduler
@@ -92,6 +93,9 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
     lateinit var presenceServiceStarter: PresenceServiceStarter
 
     @Inject
+    lateinit var postPlaySyncScheduler: PostPlaySyncScheduler
+
+    @Inject
     lateinit var settings: SettingsRepository
 
     @Inject
@@ -139,6 +143,11 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
         // Both migrations are idempotent and leave their source data in place when a copy or
         // database operation fails, so the next process start can retry safely.
         snapshotStore.migrateLegacySnapshots()
+        // Subscribed here, application-scoped, because a session end is observed by whichever
+        // caller happens to poll presence — the foreground check and the sync worker as much as
+        // PresenceService, which stops itself on the very observation that ends a session. Enqueues
+        // WorkManager work and nothing else, so it costs a launch nothing until a game stops.
+        postPlaySyncScheduler.observeSessionEnds()
         scope.launch {
             val ready = runCatching { accountChangeCoordinator.resumeIfPending() }
                 .onFailure { Timber.e(it, "Account-change recovery failed; sync remains unscheduled") }

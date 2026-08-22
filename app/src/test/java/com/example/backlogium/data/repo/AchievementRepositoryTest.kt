@@ -22,6 +22,7 @@ import com.example.backlogium.data.remote.dto.PlayerAchievementDto
 import com.example.backlogium.data.remote.dto.PlayerAchievementsResponse
 import com.example.backlogium.data.remote.dto.PlayerAchievementsResult
 import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
+import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.domain.TimeProvider
@@ -546,6 +547,13 @@ class AchievementRepositoryTest {
             includePlayedFreeGames: Int,
             scope: SyncRunRecorder.RunScope?,
         ): OwnedGamesResponse = error("not used")
+
+        override suspend fun getRecentlyPlayedGames(
+            key: String,
+            steamId: String,
+            count: Int,
+            scope: SyncRunRecorder.RunScope?,
+        ): RecentlyPlayedGamesResponse = error("not used")
 
         override suspend fun getSteamLevel(
             key: String,
