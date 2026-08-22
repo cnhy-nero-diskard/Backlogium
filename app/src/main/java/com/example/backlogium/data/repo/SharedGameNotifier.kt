@@ -1,6 +1,8 @@
 package com.example.backlogium.data.repo
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -53,7 +55,7 @@ class AndroidSharedGameNotifier @Inject constructor(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val text = "Played through Family Sharing. Tracked time is what Backlogium observes."
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        val notification: Notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("Now tracking $name")
             .setContentText(text)
@@ -62,14 +64,23 @@ class AndroidSharedGameNotifier @Inject constructor(
             .setAutoCancel(true)
             .build()
         // Per-game id: admitting a second game must not overwrite the first announcement.
-        NotificationManagerCompat.from(context)
-            .notify(NOTIFICATION_ID_BASE + appId.toInt(), notification)
+        postNotification(NOTIFICATION_ID_BASE + appId.toInt(), notification)
         true
     }.getOrDefault(false)
 
     private fun canPostNotifications(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
+
+    /**
+     * The permission is checked in [canPostNotifications] before this is reached, which lint cannot
+     * follow across the call. Suppressed at the one call site rather than baselined, mirroring
+     * [com.example.backlogium.data.updates.AndroidUpdateNotifier].
+     */
+    @SuppressLint("MissingPermission")
+    private fun postNotification(notificationId: Int, notification: Notification) {
+        NotificationManagerCompat.from(context).notify(notificationId, notification)
+    }
 
     private companion object {
         const val CHANNEL_ID = "shared_games"
