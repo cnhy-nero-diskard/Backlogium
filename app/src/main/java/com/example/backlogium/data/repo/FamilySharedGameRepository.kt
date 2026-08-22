@@ -66,10 +66,8 @@ class FamilySharedGameRepository @Inject constructor(
         val candidate = settings.sharedGameCandidateFlow.first()
         // A new app id restarts the clock: the sync that matters is one that completed after *this*
         // id was first seen, and the previous candidate is worth nothing once play has moved on.
-        val firstObservedAt = if (candidate?.appId == appId) candidate.firstObservedAt else {
-            settings.setSharedGameCandidate(appId, observedAt)
-            observedAt
-        }
+        val firstObservedAt = candidate?.takeIf { it.appId == appId }?.firstObservedAt
+            ?: observedAt.also { settings.setSharedGameCandidate(appId, it) }
 
         val facts = AdmissionFacts(
             appId = appId,

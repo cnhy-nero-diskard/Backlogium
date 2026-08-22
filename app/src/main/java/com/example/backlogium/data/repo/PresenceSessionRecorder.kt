@@ -60,6 +60,9 @@ class PresenceSessionRecorder @Inject constructor(
         val trackedSharedAppId = resolveSharedGame(appId, observedAt)
 
         val sharedAppIds = gameDao.sharedGames().mapTo(mutableSetOf()) { it.appId }
+        // The common case, for every library with no shared games: nothing to derive and nothing
+        // that could be open, so this stops before reading the sessions table on every 30s poll.
+        if (trackedSharedAppId == null && sharedAppIds.isEmpty()) return
         // Only sessions belonging to shared games are the deriver's to close. An owned game's open
         // session belongs to the differ, and closing it here would end it at a presence timestamp
         // rather than at its last playtime increase.
@@ -83,11 +86,31 @@ class PresenceSessionRecorder @Inject constructor(
         val goalAppIds = gameDao.getAll().filter { it.isGoal }.mapTo(mutableSetOf()) { it.appId }
         sessionActionWriter.apply(result.actions, goalAppIds)
 
-        // Recompute only when the stored record actually moved. An extend that adds no whole minute
-        // is written (it keeps the session's end current) but changes nothing derived, and a
-        // library-wide recompute every 30 seconds for that would be pure cost.
-        if (result.actions.any { it.addedMinutes > 0 || it is SessionDiffer.SessionAction.Close }) {
-            recompute()
+        if (shouldRecompute(result.actions)) recompute()
+    }
+
+    /**
+     * Whether these actions are worth a recompute — a library-scale read of every session, game and
+     * HLTB row, and the write-ahead protocol around persisting the result.
+     *
+     * A closed session always earns one: that is the end of a stretch of play, and the point at
+     * which the player looks for what it was worth. An open session that gained minutes earns one
+     * only on crossing a [RECOMPUTE_EVERY_MINUTES] boundary. Recomputing on every gained minute
+     * would run this fifteen times more often than the periodic sync does for owned games
+     * (`SteamSyncWorker` is scheduled every 15 minutes), for a total that is still climbing — a real
+     * cost on a phone that is at that moment also streaming a game session.
+     *
+     * An extend that added no whole minute is still *written* — it keeps the session's end current,
+     * which is what the gap tolerance is measured from — but it changes nothing derived.
+     */
+    private fun shouldRecompute(actions: List<SessionDiffer.SessionAction>): Boolean = actions.any {
+        when (it) {
+            is SessionDiffer.SessionAction.Close -> true
+            is SessionDiffer.SessionAction.Open -> false
+            is SessionDiffer.SessionAction.Extend ->
+                it.addedMinutes > 0 &&
+                    it.minutes / RECOMPUTE_EVERY_MINUTES >
+                    (it.minutes - it.addedMinutes) / RECOMPUTE_EVERY_MINUTES
         }
     }
 
@@ -125,5 +148,14 @@ class PresenceSessionRecorder @Inject constructor(
                 configVersion = rules.version,
             )
         }
+    }
+
+    private companion object {
+        /**
+         * Minutes of continued play between recomputes while a session is still open. Five keeps a
+         * live daily-quest reading close enough to be believed without recomputing the library on
+         * every poll.
+         */
+        const val RECOMPUTE_EVERY_MINUTES = 5
     }
 }

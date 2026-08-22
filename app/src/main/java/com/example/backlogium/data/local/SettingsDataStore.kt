@@ -393,8 +393,11 @@ class SettingsDataStore @Inject constructor(
     val sharedGameCandidateFlow: Flow<SharedGameCandidate?> = context.dataStore.data.map { prefs ->
         val appId = prefs[Keys.SHARED_CANDIDATE_APP_ID]
         val firstObservedAt = prefs[Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT]
-        if (appId == null || firstObservedAt == null) null
-        else SharedGameCandidate(appId, firstObservedAt)
+        if (appId != null && firstObservedAt != null) {
+            SharedGameCandidate(appId, firstObservedAt)
+        } else {
+            null
+        }
     }
 
     suspend fun setSharedGameCandidate(appId: Long, firstObservedAt: Long) {
