@@ -7,6 +7,7 @@ import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.FamilySharedGameRepository
 import com.example.backlogium.data.repo.GameAchievement
 import com.example.backlogium.data.repo.GameRepository
+import com.example.backlogium.data.repo.HiddenGamesRepository
 import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.SessionRepository
@@ -168,6 +169,12 @@ sealed interface LastPlayed {
 
 data class GameDetailUiState(
     val loading: Boolean = true,
+    /**
+     * True once this game is hidden, so the surface it is displayed on closes itself. A hidden
+     * game is not reachable by navigation, and a screen already open on one is the same case
+     * arriving from the other direction (add-hidden-games).
+     */
+    val dismissed: Boolean = false,
     val gameName: String = "",
     val summary: GameSummaryUi = GameSummaryUi(),
     val rarityStanding: RarityStanding.Result? = null,
@@ -195,6 +202,7 @@ class GameDetailViewModel @Inject constructor(
     private val setSharedGamePlaytime: SetSharedGamePlaytimeUseCase,
     sessionRepository: SessionRepository,
     settings: SettingsRepository,
+    private val hiddenGamesRepository: HiddenGamesRepository,
 ) : ViewModel() {
 
     private val appIdState = MutableStateFlow<Long?>(savedStateHandle["appId"])
@@ -233,7 +241,8 @@ class GameDetailViewModel @Inject constructor(
                 },
                 settings.ruleConfig,
                 settings.liveMonitorEnabled,
-            ) { inputs, config, liveMonitorEnabled ->
+                hiddenGamesRepository.hiddenAppIds,
+            ) { inputs, config, liveMonitorEnabled, hidden ->
                 Content(
                     inputs.games.firstOrNull { it.appId == appId },
                     inputs.achievements,
@@ -241,6 +250,7 @@ class GameDetailViewModel @Inject constructor(
                     inputs.latestByGame[appId],
                     config,
                     liveMonitorEnabled,
+                    appId in hidden,
                 )
             }
         }
@@ -254,6 +264,7 @@ class GameDetailViewModel @Inject constructor(
         val rows = content.achievements.map { it.toUi(content.config) }
         GameDetailUiState(
             loading = false,
+            dismissed = content.hidden,
             gameName = content.game?.name ?: "",
             summary = content.toSummary(rows, activePlayers),
             rarityStanding = content.toRarityStanding(),
@@ -418,6 +429,8 @@ internal data class Content(
     val config: RuleConfig,
     /** Only consulted for a family-shared game, as the remedy its disclosure points at. */
     val liveMonitorEnabled: Boolean = false,
+    /** True while this game is hidden — the surface showing it closes rather than emptying out. */
+    val hidden: Boolean = false,
 )
 
 /**

@@ -119,6 +119,11 @@ sealed interface SingleGameRefresh {
  * A per-game failure (private profile, no stats, transport error) never fails the caller —
  * it is skipped and any previously stored rows for that game are left intact.
  * [CancellationException] is rethrown so WorkManager stops promptly.
+ *
+ * Hidden games are excluded on both halves (add-hidden-games): their stored rows are filtered out
+ * of every observed projection, and [fetchGames] — the single funnel every fetch path goes
+ * through — drops them before a request is issued, so hiding a game genuinely stops costing
+ * requests rather than merely hiding their results.
  */
 @Singleton
 class AchievementRepository @Inject constructor(
@@ -126,6 +131,7 @@ class AchievementRepository @Inject constructor(
     private val achievementDao: AchievementDao,
     private val gameAchievementSyncDao: GameAchievementSyncDao,
     private val gameDao: GameDao,
+    private val hiddenGamesRepository: HiddenGamesRepository,
     private val time: TimeProvider,
 ) {
 
@@ -139,6 +145,7 @@ class AchievementRepository @Inject constructor(
     /** Unlocked/total achievement counts, keyed by appId — feeds the Library row badge. */
     val counts: Flow<Map<Long, AchievementCountSummary>> = achievementDao.observeCounts()
         .map { rows -> rows.associate { row -> row.appId to row.toDomain() } }
+        .visibleKeys()
 
     /**
      * Completion inputs for derived collections. A sync row with `hasAchievements = false` is a
@@ -164,7 +171,7 @@ class AchievementRepository @Inject constructor(
                 null -> SmartCollectionAchievementSignals()
             }
         }
-    }
+    }.visibleKeys()
 
     /**
      * Per-game rarity snapshots of unlocked achievements, keyed by appId — the achievement half of
@@ -173,6 +180,7 @@ class AchievementRepository @Inject constructor(
      */
     val unlockedRarityByGame: Flow<Map<Long, List<Double?>>> = achievementDao.observeUnlockedRarity()
         .map { rows -> rows.groupBy(AchievementRarity::appId) { it.snapshotPercent } }
+        .visibleKeys()
 
     /**
      * Detailed all-time rarity rows for Analytics. The existing grouped percent flow remains
@@ -182,9 +190,10 @@ class AchievementRepository @Inject constructor(
     val unlockedRarityDetails: Flow<List<UnlockedAchievementRarity>> = combine(
         achievementDao.observeUnlockedRarity(),
         gameDao.observeLibrary(),
-    ) { rows, games ->
+        hiddenGamesRepository.hiddenAppIds,
+    ) { rows, games, hidden ->
         val gameNames = games.associate { it.appId to it.name }
-        rows.mapNotNull { row ->
+        rows.filterNot { it.appId in hidden }.mapNotNull { row ->
             row.snapshotPercent?.let { percent ->
                 UnlockedAchievementRarity(
                     appId = row.appId,
@@ -201,7 +210,16 @@ class AchievementRepository @Inject constructor(
      * screen's per-day thumbnail row (regroup-history).
      */
     fun unlockedSince(cutoffMillis: Long): Flow<List<AchievementUnlockSummary>> =
-        achievementDao.observeUnlockedSince(cutoffMillis).map { rows -> rows.map(AchievementUnlock::toDomain) }
+        combine(
+            achievementDao.observeUnlockedSince(cutoffMillis),
+            hiddenGamesRepository.hiddenAppIds,
+        ) { rows, hidden -> rows.filterNot { it.appId in hidden }.map(AchievementUnlock::toDomain) }
+
+    /** Drops hidden games from a per-game projection, so no surface has to filter them itself. */
+    private fun <T> Flow<Map<Long, T>>.visibleKeys(): Flow<Map<Long, T>> =
+        combine(hiddenGamesRepository.hiddenAppIds) { byAppId, hidden ->
+            if (hidden.isEmpty()) byAppId else byAppId.filterKeys { it !in hidden }
+        }
 
     /**
      * Fetches achievements for games selected by tier: hot (playtime delta), warm (recent play),
@@ -251,7 +269,22 @@ class AchievementRepository @Inject constructor(
             )
         }
 
-        val metadataByAppId = gameAchievementSyncDao.getAll(ownedGames.map { it.appId }.toSet())
+        val hidden = hiddenGamesRepository.hiddenAppIdSet()
+        val visibleGames = if (hidden.isEmpty()) ownedGames else ownedGames.filterNot { it.appId in hidden }
+        if (visibleGames.isEmpty()) {
+            return AchievementLibraryFetch(
+                selection = AchievementFreshness.Result(
+                    emptyList(),
+                    emptyList(),
+                    emptyList(),
+                    emptyList(),
+                    emptyList(),
+                ),
+                refreshes = emptyList(),
+            )
+        }
+
+        val metadataByAppId = gameAchievementSyncDao.getAll(visibleGames.map { it.appId }.toSet())
             .associateBy { it.appId }
             .mapValues {
                 AchievementFreshness.SyncMetadata(
@@ -263,7 +296,7 @@ class AchievementRepository @Inject constructor(
 
         val selection = AchievementFreshness.selectByTier(
             now = time.nowMillis(),
-            ownedGames = ownedGames,
+            ownedGames = visibleGames,
             playtimeDeltaByAppId = playtimeDeltaByAppId,
             metadataByAppId = metadataByAppId,
         )
@@ -296,6 +329,9 @@ class AchievementRepository @Inject constructor(
      *
      * Persists through the same [applyRefresh] merge path a normal sync uses, so the caller never
      * needs to touch [AchievementMerge] or the DAOs directly.
+     *
+     * Hidden games never reach the network: a hidden [appId] returns [SingleGameRefresh.NoUsableData]
+     * without issuing a request, matching the fetch funnel's guarantee for batched paths.
      */
     suspend fun refreshOne(
         apiKey: String,
@@ -303,6 +339,7 @@ class AchievementRepository @Inject constructor(
         appId: Long,
         scope: SyncRunRecorder.RunScope? = null,
     ): SingleGameRefresh {
+        if (hiddenGamesRepository.isHidden(appId)) return SingleGameRefresh.NoUsableData
         val metadata = gameAchievementSyncDao.get(appId)
         val refresh = try {
             fetchGame(
@@ -384,10 +421,14 @@ class AchievementRepository @Inject constructor(
         val games = gameDao.getAll()
         if (games.isEmpty()) return ReconciliationFetch(refreshed = 0, total = 0)
 
-        val metadataByAppId = gameAchievementSyncDao.getAll(games.map { it.appId }.toSet())
+        val hidden = hiddenGamesRepository.hiddenAppIdSet()
+        val visibleGames = if (hidden.isEmpty()) games else games.filterNot { it.appId in hidden }
+        if (visibleGames.isEmpty()) return ReconciliationFetch(refreshed = 0, total = 0)
+
+        val metadataByAppId = gameAchievementSyncDao.getAll(visibleGames.map { it.appId }.toSet())
             .associateBy { it.appId }
 
-        val ownedGames = games.map {
+        val ownedGames = visibleGames.map {
             AchievementFreshness.OwnedGame(
                 appId = it.appId,
                 playtimeForever = it.playtimeForever.toLong(),
@@ -441,6 +482,9 @@ class AchievementRepository @Inject constructor(
      * [CancellationException] is always rethrown so callers stop promptly. [onGameDone], if given,
      * fires after every game [syncGame] actually updates — not merely attempted — with the
      * running refreshed count.
+     *
+     * Hidden games are dropped before any request is issued, so hiding a game stops costing
+     * requests rather than merely hiding their results.
      */
     private suspend fun fetchGames(
         apiKey: String,
@@ -452,9 +496,11 @@ class AchievementRepository @Inject constructor(
         onGameDone: ((refreshedSoFar: Int) -> Unit)? = null,
         fullReconciliation: Boolean = false,
     ): List<AchievementRefresh> {
+        val hidden = hiddenGamesRepository.hiddenAppIdSet()
+        val visibleAppIds = if (hidden.isEmpty()) appIds else appIds.filterNot { it in hidden }
         val refreshes = mutableListOf<AchievementRefresh>()
         var refreshedSoFar = 0
-        for (appId in appIds) {
+        for (appId in visibleAppIds) {
             val refresh = try {
                 fetchGame(
                     apiKey = apiKey,

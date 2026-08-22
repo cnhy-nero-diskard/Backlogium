@@ -254,6 +254,7 @@ fun BacklogiumAppRoot(
                     GameDetailScreen(
                         onAccentColorChanged = { accentColor = it },
                         onRemoved = { navController.popBackStack() },
+                        onDismiss = { navController.popBackStack() },
                     )
                 }
                 composable(ROUTE_COLLECTIONS) {

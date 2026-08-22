@@ -12,6 +12,7 @@ import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.repo.CollectionRepository
 import com.example.backlogium.data.repo.CollectionSaveDraft
+import com.example.backlogium.data.repo.fakeHiddenGamesRepository
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionTimeBasis
@@ -84,6 +85,7 @@ class CollectionDaoTest {
         transaction: DatabaseTransactionScope = RoomDatabaseTransactionScope(db),
     ) = CollectionRepository(
         collectionDao = collectionDao,
+        hiddenGamesRepository = fakeHiddenGamesRepository(),
         time = object : TimeProvider {
             override fun nowMillis(): Long = 100L
             override fun zone(): ZoneId = ZoneId.of("UTC")
