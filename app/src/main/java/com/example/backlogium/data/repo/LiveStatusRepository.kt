@@ -1,6 +1,7 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.diagnostics.PresenceDecisionRecorder
 import com.example.backlogium.data.diagnostics.PresenceOutcome
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -85,11 +86,18 @@ private data class PresenceFetch(
  * mid-session shows the panel immediately rather than after a network round-trip. This repository
  * also opportunistically writes the player's identity when a poll observes a newer persona name or
  * avatar than the last sync stored.
+ *
+ * A running game the player has hidden resolves to [NowPlaying.NotPlaying] here, at the single
+ * point every surface derives from (add-hidden-games). The now-playing card, the profile header's
+ * presence line, the Library's live indicator, and the ongoing notification all follow from this
+ * one resolution rather than each filtering hidden games themselves — a hiding feature that names
+ * the hidden game in a notification the moment it launches has not hidden it.
  */
 @Singleton
 class LiveStatusRepository @Inject constructor(
     private val steamApi: SteamApi,
     private val gameDao: GameDao,
+    private val hiddenGameDao: HiddenGameDao,
     private val profileDao: PlayerProfileDao,
     private val credentials: CredentialsProvider,
     private val settings: SettingsRepository,
@@ -130,6 +138,8 @@ class LiveStatusRepository @Inject constructor(
             val session = settings.liveSession.first()
             val appId = session.appId ?: return@launch
             val startedAt = session.startedAt ?: return@launch
+            // A session recorded before the game was hidden must not be presented after it.
+            if (hiddenGameDao.isHidden(appId)) return@launch
             val game = gameDao.getById(appId)
             val seeded = LiveStatus(
                 nowPlaying = NowPlaying.InGame(
@@ -274,19 +284,24 @@ class LiveStatusRepository @Inject constructor(
 
         // No gameid → not in a game (or profile too private to expose it).
         if (player.gameId.isNullOrBlank()) {
-            val presence = if (player.personaState == PERSONA_STATE_OFFLINE) {
-                LivePresence.OFFLINE
-            } else {
-                LivePresence.ONLINE
-            }
             return PresenceFetch(
-                LiveStatus(NowPlaying.NotPlaying, presence),
+                LiveStatus(NowPlaying.NotPlaying, presenceOf(player)),
                 PresenceOutcome.NOT_PLAYING,
                 steamId = steamId,
             )
         }
 
         val gameId = player.gameId.toLongOrNull()
+        // The one resolution point: a hidden game reads exactly as no game at all. Presence still
+        // reports the player as around, because they are — it just does not say what they are in.
+        if (gameId != null && hiddenGameDao.isHidden(gameId)) {
+            return PresenceFetch(
+                LiveStatus(NowPlaying.NotPlaying, presenceOf(player)),
+                PresenceOutcome.HIDDEN_GAME,
+                appId = gameId,
+                steamId = steamId,
+            )
+        }
         val name = player.gameExtraInfo?.takeIf { it.isNotBlank() }
             ?: gameId?.let { "App $it" }
             ?: "In game"
@@ -305,6 +320,12 @@ class LiveStatusRepository @Inject constructor(
             steamId = steamId,
         )
     }
+
+    /** Around-ness without a game: the same reading a player with no `gameid` at all gets. */
+    private fun presenceOf(
+        player: com.example.backlogium.data.remote.dto.PlayerSummaryDto,
+    ): LivePresence =
+        if (player.personaState == PERSONA_STATE_OFFLINE) LivePresence.OFFLINE else LivePresence.ONLINE
 
     /**
      * Keep the persisted header identity current within a session. The periodic sync owns the
