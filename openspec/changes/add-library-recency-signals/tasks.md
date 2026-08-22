@@ -1,9 +1,9 @@
 ## 1. Schema and Steam payload
 
-- [ ] 1.1 Add `firstSeenAt: Long?`, `lastPlayedAt: Long?`, and `returnedToPlayAt: Long?` to the `Game` entity, all nullable, defaulting to null, with KDoc stating that null on `firstSeenAt` means "present before tracking began" and is not the same as unknown
-- [ ] 1.2 Add migration 18→19 adding all three columns as nullable `INTEGER` with no backfill, and bump the database version
-- [ ] 1.3 Add `@SerialName("rtime_last_played") val rtimeLastPlayed: Long = 0` to `OwnedGameDto`, tolerating its absence
-- [ ] 1.4 Convert `rtime_last_played` from epoch seconds to epoch milliseconds at the mapping boundary, and treat `0` as unknown rather than as 1970
+- [x] 1.1 Add `firstSeenAt: Long?`, `lastPlayedAt: Long?`, and `returnedToPlayAt: Long?` to the `Game` entity, all nullable, defaulting to null, with KDoc stating that null on `firstSeenAt` means "present before tracking began" and is not the same as unknown
+- [x] 1.2 Add migration 18→19 adding all three columns as nullable `INTEGER` with no backfill, and bump the database version
+- [x] 1.3 Add `@SerialName("rtime_last_played") val rtimeLastPlayed: Long = 0` to `OwnedGameDto`, tolerating its absence
+- [x] 1.4 Convert `rtime_last_played` from epoch seconds to epoch milliseconds at the mapping boundary, and treat `0` as unknown rather than as 1970
 
 ## 2. Sync-side recording
 

@@ -55,7 +55,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         SteamAssetDownloadState::class,
         GameAchievementSync::class,
     ],
-    version = 20,
+    version = 21,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -490,6 +490,31 @@ abstract class BacklogiumDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS `steam_asset_manifest` (`normalizedUrl` TEXT NOT NULL, `kind` TEXT NOT NULL, `relativePath` TEXT, `byteCount` INTEGER NOT NULL, `checksum` TEXT, `state` TEXT NOT NULL, `lastSuccessAt` INTEGER, `lastCheckedAt` INTEGER NOT NULL, PRIMARY KEY(`normalizedUrl`))")
                 db.execSQL("CREATE TABLE IF NOT EXISTS `steam_asset_download_state` (`id` INTEGER NOT NULL, `mode` TEXT NOT NULL, `completedAt` INTEGER NOT NULL, `storedCount` INTEGER NOT NULL, `alreadyPresentCount` INTEGER NOT NULL, `unavailableCount` INTEGER NOT NULL, `failedCount` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+            }
+        }
+
+        /**
+         * v20 → v21: additive only — `games` gains the three recency observation columns
+         * (add-library-recency-signals). All nullable, all null for existing rows, deliberately
+         * not backfilled:
+         *
+         * - `firstSeenAt` null is the *correct* value for an existing library, not a gap. Every
+         *   game already stored was present before tracking began, so none of them is new and
+         *   none may ever be badged as new. Stamping the migration time here — with a separate
+         *   "baselined at" marker to suppress the badges — would need two facts to stay
+         *   consistent forever; one nullable column cannot be misread.
+         * - `lastPlayedAt` fills in from Steam on the next poll, which is the only source for it.
+         * - `returnedToPlayAt` null because no return has been observed: dormancy is knowable
+         *   only at the instant it ends, and nothing was watching before now.
+         *
+         * Three nullable columns with no index; the `ALTER TABLE`s are O(1) in SQLite, so this is
+         * cheap on a large library.
+         */
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `games` ADD COLUMN `firstSeenAt` INTEGER")
+                db.execSQL("ALTER TABLE `games` ADD COLUMN `lastPlayedAt` INTEGER")
+                db.execSQL("ALTER TABLE `games` ADD COLUMN `returnedToPlayAt` INTEGER")
             }
         }
 
