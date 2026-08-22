@@ -53,6 +53,14 @@ interface GameDao {
     @Query("SELECT * FROM games ORDER BY playtime2Weeks DESC, name ASC")
     fun observeLibrary(): Flow<List<Game>>
 
+    /**
+     * Every stored game, in no particular order and *including hidden ones*. Only the
+     * hidden-games list itself has a use for this: it is the one surface that must name a game
+     * the rest of the app is excluding.
+     */
+    @Query("SELECT * FROM games")
+    fun observeAllGames(): Flow<List<Game>>
+
     @Query("SELECT * FROM games WHERE isGoal = 1 ORDER BY name ASC")
     fun observeGoalGames(): Flow<List<Game>>
 

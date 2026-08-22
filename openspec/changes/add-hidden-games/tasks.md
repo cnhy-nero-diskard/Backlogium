@@ -1,9 +1,9 @@
 ## 1. Storage
 
-- [ ] 1.1 Add a `hidden_games` table keyed by app id, with a hidden-at timestamp and whether the hide came from the bulk action, and **no foreign key to `games`**
-- [ ] 1.2 Document in the entity's KDoc why it is a table rather than a `Game` column: `SteamSyncWorker` rebuilds each row from the Steam DTO and copies app-owned fields back by hand, and a missed line silently reverts the flag on the next sync — the same failure its `backfillMinutes` comment records
-- [ ] 1.3 Add the migration
-- [ ] 1.4 Add a DAO and a repository exposing the hidden set as domain models, keeping entities inside `data/`
+- [x] 1.1 Add a `hidden_games` table keyed by app id, with a hidden-at timestamp and whether the hide came from the bulk action, and **no foreign key to `games`**
+- [x] 1.2 Document in the entity's KDoc why it is a table rather than a `Game` column: `SteamSyncWorker` rebuilds each row from the Steam DTO and copies app-owned fields back by hand, and a missed line silently reverts the flag on the next sync — the same failure its `backfillMinutes` comment records
+- [x] 1.3 Add the migration
+- [x] 1.4 Add a DAO and a repository exposing the hidden set as domain models, keeping entities inside `data/`
 
 ## 2. Exclusion at the repository boundary
 

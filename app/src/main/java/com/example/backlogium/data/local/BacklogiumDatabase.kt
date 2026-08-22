@@ -15,6 +15,7 @@ import com.example.backlogium.data.local.dao.DiagnosticsDao
 import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
@@ -26,6 +27,7 @@ import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.local.entity.GameGenreCache
+import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
@@ -54,8 +56,9 @@ import com.example.backlogium.data.local.entity.SyncRun
         SteamAssetManifest::class,
         SteamAssetDownloadState::class,
         GameAchievementSync::class,
+        HiddenGame::class,
     ],
-    version = 20,
+    version = 21,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -71,6 +74,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun gameGenreCacheDao(): GameGenreCacheDao
     abstract fun gameAchievementSyncDao(): GameAchievementSyncDao
     abstract fun steamAssetDao(): SteamAssetDao
+    abstract fun hiddenGameDao(): HiddenGameDao
 
     companion object {
         const val NAME = "backlogium.db"
@@ -490,6 +494,24 @@ abstract class BacklogiumDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS `steam_asset_manifest` (`normalizedUrl` TEXT NOT NULL, `kind` TEXT NOT NULL, `relativePath` TEXT, `byteCount` INTEGER NOT NULL, `checksum` TEXT, `state` TEXT NOT NULL, `lastSuccessAt` INTEGER, `lastCheckedAt` INTEGER NOT NULL, PRIMARY KEY(`normalizedUrl`))")
                 db.execSQL("CREATE TABLE IF NOT EXISTS `steam_asset_download_state` (`id` INTEGER NOT NULL, `mode` TEXT NOT NULL, `completedAt` INTEGER NOT NULL, `storedCount` INTEGER NOT NULL, `alreadyPresentCount` INTEGER NOT NULL, `unavailableCount` INTEGER NOT NULL, `failedCount` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+            }
+        }
+
+        /**
+         * v20 -> v21: additive only — create the `hidden_games` table (add-hidden-games). No
+         * existing row is altered: an upgrade starts with nothing hidden, which is the previous
+         * behaviour exactly. Deliberately no foreign key to `games`, so a hide outlives a game
+         * temporarily leaving the library and is never cascade-deleted by an ownership change.
+         */
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `hidden_games` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`hiddenAt` INTEGER NOT NULL, " +
+                        "`fromBulkAction` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`))",
+                )
             }
         }
 
