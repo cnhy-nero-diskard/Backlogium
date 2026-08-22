@@ -204,6 +204,7 @@ class SteamSyncWorker @AssistedInject constructor(
 
         // Achievement requests are part of fetch, never the Room commit. Their payload is merged
         // below only after the raw playtime transaction has acquired its database boundary.
+        //
         // Achievement progress on a borrowed game is recorded against the player's own account, so
         // a family-shared game belongs in this scope exactly like an owned one — GetPlayerAchievements
         // keys on app id, not on ownership. Its tiering input is the playtime the app actually knows

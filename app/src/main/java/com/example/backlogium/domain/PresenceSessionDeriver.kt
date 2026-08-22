@@ -128,30 +128,6 @@ class PresenceSessionDeriver @Inject constructor() {
         )
     }
 
-    /**
-     * Close an open session without an observation to fold in — the reconciliation path for a
-     * session left open by a process that died mid-play. The session ends where it was last
-     * observed, never at "now": the app cannot vouch for a minute it did not see.
-     */
-    fun closeStale(
-        openSession: OpenSession,
-        now: Long,
-        gapToleranceMillis: Long = DEFAULT_GAP_TOLERANCE_MILLIS,
-    ): DerivationResult {
-        val silence = now - openSession.lastObservedAt
-        if (silence in 0..gapToleranceMillis) return DerivationResult(emptyList(), openSession)
-        return DerivationResult(
-            listOf(
-                SessionDiffer.SessionAction.Close(
-                    appId = openSession.appId,
-                    startAt = openSession.startAt,
-                    endAt = openSession.lastObservedAt,
-                ),
-            ),
-            openSession = null,
-        )
-    }
-
     companion object {
         private const val MILLIS_PER_MINUTE = 60_000L
 

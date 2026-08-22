@@ -165,37 +165,33 @@ class PresenceSessionDeriverTest {
 
     @Test
     fun extendNeverReducesStoredMinutes() {
-        val stored = OpenSession(game, startAt = at(0), minutes = 9, lastObservedAt = at(9))
+        // A stored row can hold more minutes than its own span implies -- a restored backup, or a
+        // clock that jumped forward and back while the session was open. The next observation is
+        // still in order (later than the last one), so this is an extend, and an extend must not
+        // walk a recorded total backwards.
+        val stored = OpenSession(game, startAt = at(0), minutes = 9, lastObservedAt = at(3))
 
-        // A recorded row can hold more minutes than the span implies (a restored backup, a clock
-        // adjustment). Extending must not walk a total backwards.
         val extended = deriver
-            .derive(Observation(game, at(3)), stored)
+            .derive(Observation(game, at(4)), stored)
             .actions
             .single() as SessionAction.Extend
 
         assertEquals(9, extended.minutes)
         assertEquals(0, extended.addedMinutes)
+        assertEquals(at(4), extended.endAt)
     }
 
     @Test
-    fun closeStale_leavesARecentlyObservedSessionOpen() {
-        val open = OpenSession(game, startAt = 0L, minutes = 1, lastObservedAt = at(1))
+    fun aNotPlayingObservationAlwaysClosesAnOpenSharedSession() {
+        // The reconciliation path in practice: a session left open by a process that died is closed
+        // by the next observation of any kind, because "not in a game" is a different game than the
+        // one that is open. Nothing else has to sweep for abandoned sessions.
+        val stored = OpenSession(game, startAt = at(0), minutes = 3, lastObservedAt = at(3))
 
-        val result = deriver.closeStale(open, now = at(2))
-
-        assertTrue(result.actions.isEmpty())
-        assertEquals(open, result.openSession)
-    }
-
-    @Test
-    fun closeStale_closesASessionAbandonedBeyondTolerance() {
-        val open = OpenSession(game, startAt = 0L, minutes = 1, lastObservedAt = at(1))
-
-        val result = deriver.closeStale(open, now = at(1) + tolerance + 1)
+        val result = deriver.derive(Observation(appId = null, at = at(4)), stored)
 
         val closed = result.actions.single() as SessionAction.Close
-        assertEquals(at(1), closed.endAt)
+        assertEquals(at(3), closed.endAt)
         assertNull(result.openSession)
     }
 }

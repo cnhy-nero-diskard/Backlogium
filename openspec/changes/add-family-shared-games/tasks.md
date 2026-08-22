@@ -46,8 +46,8 @@
 - [x] 6.3 Disclose that a shared game's tracked playtime is what the app observed, not a Steam total, wherever that playtime is shown
 - [x] 6.4 Point the disclosure at the background presence monitoring setting when it is not enabled
 - [x] 6.5 Include shared games in Analytics totals and make their contribution distinguishable
-- [ ] 6.6 Exclude games from metrics they cannot support rather than contributing a zero
-- [ ] 6.7 Confirm owned games are presented exactly as they are today, with no source marking anywhere
+- [x] 6.6 Exclude games from metrics they cannot support rather than contributing a zero
+- [x] 6.7 Confirm owned games are presented exactly as they are today, with no source marking anywhere
 
 ## 7. Achievements
 
@@ -58,8 +58,31 @@
 ## 8. Verification
 
 - [ ] 8.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and `./gradlew assembleDebug`
-- [ ] 8.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
+- [x] 8.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
 - [ ] 8.3 Manually verify admission end to end: play a borrowed game, confirm the notification, the new entry, its artwork and genres
 - [ ] 8.4 Manually verify a derived session earns XP and counts toward the daily quest
 - [ ] 8.5 Manually verify removal, that further play does not re-admit, and that reversal works
 - [ ] 8.6 Manually verify that owned-game sync, sessions, and XP are unchanged throughout
+
+## Verification not possible in the implementation environment
+
+The remaining unchecked items all need something the cloud environment used for this work does not
+have. They are listed here so the next session on hardware knows exactly what is outstanding rather
+than re-deriving it.
+
+- **8.1** — the Android Gradle Plugin cannot be fetched (`dl.google.com` is denied by the network
+  policy) and no Android SDK is installed, so neither `assembleDebug` nor the Gradle unit-test tasks
+  can run. As a partial substitute, the pure-JVM subset was compiled and run with a standalone
+  Kotlin compiler and JUnit: `SessionDiffer`, `PresenceSessionDeriver`,
+  `SharedGameAdmissionPolicy`, `DailyProgressAttribution` and their tests — 33 tests, all passing,
+  including the pre-existing `SessionDifferTest` and `SteamSyncDayAttributionTest`, which is what
+  establishes that the owned-game diffing path and day attribution are unchanged. Everything
+  touching Room, Compose, or Hilt is unverified by compilation.
+- **3.4** — `GamificationUpdaterTest` and the rest of the engine suite are the real evidence here
+  and could not be run (they depend on Room entities). By inspection the owned path is untouched:
+  the engine reads tracked session minutes plus `backfillMinutes`, neither of which this change
+  alters, and the diffing scope narrowed from every row to `source = 'STEAM_OWNED'`, which is the
+  same set for any library with no shared games.
+- **7.1** — needs a real borrowed game on a real Steam account. See `design.md`, decision 7, for
+  what was implemented in the absence of the answer and why nothing depends on it.
+- **8.3 – 8.6** — on-device manual verification.
