@@ -75,10 +75,12 @@ import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.gamification.RarityStanding
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.components.SteamArtworkWithFallback
+import com.example.backlogium.ui.components.VisibilityChangeDialog
 import com.example.backlogium.ui.theme.rarityHalo
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.CircleCheck
+import compose.icons.tablericons.CircleMinus
 import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.ExternalLink
 import compose.icons.tablericons.Trophy
@@ -134,6 +136,14 @@ fun GameDetailScreen(
     }
     LaunchedEffect(state.dismissed) {
         if (state.dismissed) onDismiss()
+    }
+
+    state.hideEffect?.let { effect ->
+        VisibilityChangeDialog(
+            effect = effect,
+            onConfirm = viewModel::confirmHide,
+            onDismiss = viewModel::dismissHide,
+        )
     }
     DisposableEffect(viewModel) {
         onDispose { viewModel.stopPolling() }
@@ -207,6 +217,8 @@ private fun GameDetailList(
                 appId = appId,
                 artworkFallbackUrls = artworkFallbackUrls,
                 summary = state.summary,
+                hidePending = state.hidePreviewing,
+                onHide = viewModel::requestHide,
             )
         }
         state.rarityStanding?.let { standing ->
@@ -318,9 +330,12 @@ private fun GameSummarySection(
     appId: Long,
     artworkFallbackUrls: List<String>,
     summary: GameSummaryUi,
+    hidePending: Boolean = false,
+    onHide: () -> Unit = {},
 ) {
     val uriHandler = LocalUriHandler.current
     val linkLabel = name.takeIf { it.isNotBlank() }?.let { "Open $it on Steam" } ?: "Open game on Steam"
+    val hideLabel = name.takeIf { it.isNotBlank() }?.let { "Hide $it" } ?: "Hide this game"
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column {
@@ -367,6 +382,25 @@ private fun GameSummarySection(
                     )
                     Spacer(Modifier.width(8.dp))
                     Text("View on Steam")
+                }
+                // Hiding is reachable from the game's own surface, which is where the player is
+                // when they decide a thing is not a game they want to see. The action is never
+                // offered for an already-hidden game, since that game is not reachable.
+                TextButton(
+                    onClick = onHide,
+                    enabled = !hidePending,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentDescription = hideLabel },
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+                ) {
+                    Icon(
+                        imageVector = TablerIcons.CircleMinus,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (hidePending) "Checking effect…" else "Hide this game")
                 }
             }
         }

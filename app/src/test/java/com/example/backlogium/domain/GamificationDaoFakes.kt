@@ -151,8 +151,13 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
     override suspend fun allAppIds(): List<Long> = store.keys.toList()
     override suspend fun getAll(): List<Game> = store.values.toList()
     override suspend fun getById(appId: Long): Game? = store[appId]
-    override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = Unit
-    override suspend fun setGoalFlag(appId: Long, isGoal: Boolean) = Unit
+    override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) {
+        store[appId]?.let { store[appId] = it.copy(isGoal = isGoal, targetMinutes = targetMinutes) }
+    }
+
+    override suspend fun setGoalFlag(appId: Long, isGoal: Boolean) {
+        store[appId]?.let { store[appId] = it.copy(isGoal = isGoal) }
+    }
     override suspend fun count(): Int = store.size
     override suspend fun deleteAll() = store.clear()
     override suspend fun setBackfillMinutes(appId: Long, minutes: Int) {

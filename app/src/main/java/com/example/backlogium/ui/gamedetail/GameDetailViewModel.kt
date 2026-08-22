@@ -11,6 +11,8 @@ import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.domain.GameVisibilityUseCase
+import com.example.backlogium.domain.VisibilityChangeEffect
 import com.example.backlogium.domain.GameXpInput
 import com.example.backlogium.domain.LibraryXp
 import com.example.backlogium.gamification.AchievementInput
@@ -116,6 +118,10 @@ data class GameDetailUiState(
      * arriving from the other direction (add-hidden-games).
      */
     val dismissed: Boolean = false,
+    /** True while the hide preview's real recompute is running. */
+    val hidePreviewing: Boolean = false,
+    /** The disclosed effect awaiting confirmation; null when no hide has been requested. */
+    val hideEffect: VisibilityChangeEffect? = null,
     val gameName: String = "",
     val summary: GameSummaryUi = GameSummaryUi(),
     val rarityStanding: RarityStanding.Result? = null,
@@ -142,6 +148,7 @@ class GameDetailViewModel @Inject constructor(
     sessionRepository: SessionRepository,
     settings: SettingsRepository,
     private val hiddenGamesRepository: HiddenGamesRepository,
+    private val gameVisibility: GameVisibilityUseCase,
 ) : ViewModel() {
 
     private val appIdState = MutableStateFlow<Long?>(savedStateHandle["appId"])
@@ -162,6 +169,9 @@ class GameDetailViewModel @Inject constructor(
     private val activePlayers = MutableStateFlow<Int?>(null)
     private val refreshingPlayerCount = MutableStateFlow(false)
     private var activePlayersPollingJob: Job? = null
+
+    private val hidePreviewing = MutableStateFlow(false)
+    private val hideEffect = MutableStateFlow<VisibilityChangeEffect?>(null)
 
     private val content = appIdState
         .filterNotNull()
@@ -184,12 +194,17 @@ class GameDetailViewModel @Inject constructor(
             }
         }
 
+    private val hideState = combine(hidePreviewing, hideEffect) { previewing, effect ->
+        previewing to effect
+    }
+
     val uiState: StateFlow<GameDetailUiState> = combine(
         content,
         sort,
         activePlayers,
         refreshingPlayerCount,
-    ) { content, sort, activePlayers, isRefreshingPlayerCount ->
+        hideState,
+    ) { content, sort, activePlayers, isRefreshingPlayerCount, hide ->
         val rows = content.achievements.map { it.toUi(content.config) }
         GameDetailUiState(
             loading = false,
@@ -200,6 +215,8 @@ class GameDetailViewModel @Inject constructor(
             achievements = rows.sortedWith(sort.comparator()),
             sort = sort,
             isRefreshingPlayerCount = isRefreshingPlayerCount,
+            hidePreviewing = hide.first,
+            hideEffect = hide.second,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -259,6 +276,36 @@ class GameDetailViewModel @Inject constructor(
 
     fun setSort(value: AchievementSort) {
         sort.value = value
+    }
+
+    /**
+     * Ask what hiding this game would do. The preview runs the real recompute, so the dialog can
+     * state the resulting XP and level rather than an estimate of them; nothing is written until
+     * [confirmHide].
+     */
+    fun requestHide() {
+        val appId = appIdState.value ?: return
+        if (hidePreviewing.value || hideEffect.value != null) return
+        hidePreviewing.value = true
+        viewModelScope.launch {
+            try {
+                hideEffect.value = gameVisibility.previewHide(listOf(appId))
+            } finally {
+                hidePreviewing.value = false
+            }
+        }
+    }
+
+    /** Apply the disclosed hide. The screen then closes itself, the game having left the library. */
+    fun confirmHide() {
+        val effect = hideEffect.value ?: return
+        hideEffect.value = null
+        viewModelScope.launch { gameVisibility.hide(effect.appIds) }
+    }
+
+    /** Decline: nothing is hidden, no derived value changes, and no goal is cleared. */
+    fun dismissHide() {
+        hideEffect.value = null
     }
 
     private companion object {

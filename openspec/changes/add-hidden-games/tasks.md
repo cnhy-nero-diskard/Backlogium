@@ -25,13 +25,13 @@
 
 ## 4. Disclosure and the hide action
 
-- [ ] 4.1 Build the hide preview on `GamificationUpdater.compute`, running the real computation with the game excluded rather than estimating
-- [ ] 4.2 Present current and resulting XP and level, calling out a level drop explicitly
-- [ ] 4.3 State that a goal designation will be cleared, where it applies
-- [ ] 4.4 Clear the goal flag on hide; do not restore it on unhide
-- [ ] 4.5 Apply nothing when the confirmation is declined
-- [ ] 4.6 Disclose the same effect on unhide
-- [ ] 4.7 Add the hide action to game detail, returning the player to where they came from afterwards
+- [x] 4.1 Build the hide preview on `GamificationUpdater.compute`, running the real computation with the game excluded rather than estimating
+- [x] 4.2 Present current and resulting XP and level, calling out a level drop explicitly
+- [x] 4.3 State that a goal designation will be cleared, where it applies
+- [x] 4.4 Clear the goal flag on hide; do not restore it on unhide
+- [x] 4.5 Apply nothing when the confirmation is declined
+- [x] 4.6 Disclose the same effect on unhide
+- [x] 4.7 Add the hide action to game detail, returning the player to where they came from afterwards
 
 ## 5. Live status
 
