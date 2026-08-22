@@ -1,6 +1,7 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
+import com.example.backlogium.data.local.AcquiredGamesAnnouncement
 import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.dao.GameDao
@@ -463,6 +464,9 @@ class LiveStatusRepositoryTest {
         override suspend fun setNotificationPermissionRequested() = Unit
 
         override val liveMonitorEnabled: Flow<Boolean> = MutableStateFlow(false)
+        override val acquiredGames: Flow<AcquiredGamesAnnouncement> =
+            MutableStateFlow(AcquiredGamesAnnouncement())
+        override suspend fun setAcquiredGamesDismissed() = Unit
         override suspend fun setLiveMonitorEnabled(enabled: Boolean) = Unit
 
         override val ruleConfig: Flow<RuleConfig> = MutableStateFlow(RuleConfig())

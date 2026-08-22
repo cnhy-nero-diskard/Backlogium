@@ -3,6 +3,7 @@ package com.example.backlogium.data.repo
 import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.PresenceMonitoringAvailability
+import com.example.backlogium.data.local.AcquiredGamesAnnouncement
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
@@ -105,6 +106,16 @@ interface SettingsRepository {
     suspend fun setLiveMonitorEnabled(enabled: Boolean)
 
     /** Durable availability state for the opt-in monitor; old test doubles default to available. */
+    /**
+     * The newly-acquired-games announcement written by the most recent acquiring poll. Read-only
+     * apart from the dismissal: only a poll may create one, so a restore cannot manufacture an
+     * announcement and neither can a UI surface.
+     */
+    val acquiredGames: Flow<AcquiredGamesAnnouncement>
+
+    /** Dismiss the current announcement. Per-batch: a later acquisition clears the flag again. */
+    suspend fun setAcquiredGamesDismissed()
+
     val liveMonitoringAvailability: Flow<PresenceMonitoringAvailability>
         get() = flowOf(PresenceMonitoringAvailability.AVAILABLE)
 
@@ -175,6 +186,10 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun setLiveMonitorEnabled(enabled: Boolean) =
         settings.setLiveMonitorEnabled(enabled)
+
+    override val acquiredGames: Flow<AcquiredGamesAnnouncement> = settings.acquiredGamesFlow
+
+    override suspend fun setAcquiredGamesDismissed() = settings.setAcquiredGamesDismissed()
 
     override val liveMonitoringAvailability: Flow<PresenceMonitoringAvailability> =
         settings.liveMonitoringAvailabilityFlow

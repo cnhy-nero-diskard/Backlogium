@@ -2,6 +2,7 @@ package com.example.backlogium.work
 
 import com.example.backlogium.data.diagnostics.PresenceDecisionRecorder
 import com.example.backlogium.data.diagnostics.PresenceOutcome
+import com.example.backlogium.data.local.AcquiredGamesAnnouncement
 import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.PresenceMonitoringAvailability
@@ -120,6 +121,9 @@ class PresenceServiceLifecycleTest {
         override suspend fun setNotificationPermissionRequested() = error("not used")
 
         override val liveMonitorEnabled: Flow<Boolean> = MutableStateFlow(false)
+        override val acquiredGames: Flow<AcquiredGamesAnnouncement> =
+            MutableStateFlow(AcquiredGamesAnnouncement())
+        override suspend fun setAcquiredGamesDismissed() = Unit
         override suspend fun setLiveMonitorEnabled(enabled: Boolean) = error("not used")
 
         override val ruleConfig: Flow<RuleConfig> = MutableStateFlow(RuleConfig())

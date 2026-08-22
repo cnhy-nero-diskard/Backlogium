@@ -54,10 +54,10 @@
 - [x] 6.2 Write it only when a non-baseline poll stamped at least one arrival; a poll with no arrivals leaves it untouched
 - [x] 6.3 Replace the whole batch and clear the dismissed flag when a later poll acquires more games
 - [x] 6.4 Compute visibility as `batch non-empty && now - timestamp < 24h && !dismissed` — no worker and no scheduled expiry
-- [ ] 6.5 Build the Home banner following the `StreakBrokenOverlay` precedent: non-modal, Home usable behind it
-- [ ] 6.6 Name up to three games and report the count of the rest
-- [ ] 6.7 Wire the view action to open the Library, and the dismiss action to set the flag
-- [ ] 6.8 Exclude this state from backup export
+- [x] 6.5 Build the Home banner following the `StreakBrokenOverlay` precedent: non-modal, Home usable behind it
+- [x] 6.6 Name up to three games and report the count of the rest
+- [x] 6.7 Wire the view action to open the Library, and the dismiss action to set the flag
+- [x] 6.8 Exclude this state from backup export
 
 ## 7. Backup
 
@@ -89,7 +89,7 @@
 - [ ] 8.12 Unit-test that a restore inserting unknown games stamps no arrivals, records no returns, and produces no announcement
 - [ ] 8.13 Unit-test a backup round trip preserving all three fields, and an older backup importing with all three absent
 - [ ] 8.14 Unit-test restore timeline semantics: a backup older than the badge window restores to no states; a backup taken inside it restores to the states its recorded times imply
-- [ ] 8.15 Unit-test the announcement lifecycle: shown, dismissed, superseded by a later acquisition, and expired by time alone
+- [x] 8.15 Unit-test the announcement lifecycle: shown, dismissed, superseded by a later acquisition, and expired by time alone
 - [x] 8.16 Migration test: an existing v18 database opens at v19 with all three columns null and no data loss
 
 ## 9. Verification

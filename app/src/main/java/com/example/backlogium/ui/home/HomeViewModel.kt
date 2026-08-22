@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
+import com.example.backlogium.data.local.AcquiredGamesAnnouncement
 import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.AchievementRepository
@@ -27,6 +28,7 @@ import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.ProgressEvent
+import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.work.setup.SetupCoordinator
@@ -91,9 +93,48 @@ data class HomeUiState(
     val pendingStreakBreak: ProgressEvent.StreakBroken? = null,
     /** Dedicated streak-milestone delivery so an unrelated pending event cannot hide the animation. */
     val pendingStreakMilestone: ProgressEvent.StreakMilestone? = null,
+    /** The unexpired, undismissed newly-acquired-games announcement, or null when there is none. */
+    val acquiredGames: AcquiredGamesUi? = null,
 ) {
     val xpFraction: Float
         get() = if (xpForNext > 0) (xpIntoLevel.toFloat() / xpForNext).coerceIn(0f, 1f) else 0f
+}
+
+/**
+ * The newly-acquired-games banner's content: the names it can show and how many arrived beyond
+ * them.
+ *
+ * Names rather than ids, resolved against the library the ViewModel already holds. The common case
+ * (one or two games) then reads concretely, and a sale reads as a number — which is what a banner
+ * announcing eight games should say rather than listing all eight.
+ */
+data class AcquiredGamesUi(
+    val namedGames: List<String>,
+    val unnamedCount: Int,
+) {
+    val totalCount: Int get() = namedGames.size + unnamedCount
+}
+
+/**
+ * How many games the banner names individually before it starts counting instead. Three keeps the
+ * common case (one or two purchases) concrete without a sale turning the banner into a list.
+ */
+private const val MAX_NAMED_ACQUIRED_GAMES = 3
+
+/**
+ * The banner's content for this announcement, or null when there is nothing to present.
+ *
+ * A game the backup or the library no longer knows the name of is *counted* rather than dropped:
+ * the count is the announcement's load-bearing claim ("eight games arrived"), and silently omitting
+ * an unnamed one would make the banner understate what happened.
+ */
+internal fun AcquiredGamesAnnouncement.toUi(
+    namesByAppId: Map<Long, String>,
+    now: Long,
+): AcquiredGamesUi? {
+    if (!isLive(now)) return null
+    val named = appIds.mapNotNull(namesByAppId::get).sorted().take(MAX_NAMED_ACQUIRED_GAMES)
+    return AcquiredGamesUi(namedGames = named, unnamedCount = appIds.size - named.size)
 }
 
 /** One collection's Home mission card: its identity plus its freshly derived mode banner. */
@@ -148,6 +189,7 @@ class HomeViewModel @Inject constructor(
     private val personalPaceRepository: PersonalPaceRepository,
     private val progressEventRepository: ProgressEventRepository,
     private val setupCoordinator: SetupCoordinator,
+    private val time: TimeProvider,
 ) : ViewModel() {
 
     /**
@@ -274,6 +316,27 @@ class HomeViewModel @Inject constructor(
             )
         }
 
+    /**
+     * The acquisition banner's content, or null when there is nothing to announce.
+     *
+     * Expiry is computed here rather than scheduled — no worker, no alarm — which is what makes it
+     * correct after any period of the app being closed rather than reappearing because nothing ran
+     * to retire it. `currentDate` joins as an input for the same reason it does elsewhere on Home,
+     * so a day boundary re-evaluates the window; a Home left open continuously across the
+     * announcement's own expiry keeps it until something else re-emits, which is the accepted cost
+     * of having no scheduled work.
+     *
+     * Names are resolved from the library the ViewModel already collects, so the stored batch needs
+     * to carry only app ids and no second query is issued for them.
+     */
+    private val acquiredGames: Flow<AcquiredGamesUi?> = combine(
+        settings.acquiredGames,
+        gameRepository.library,
+        currentDate.currentDate,
+    ) { announcement, library, _ ->
+        announcement.toUi(library.associate { it.appId to it.name }, time.nowMillis())
+    }
+
     // A plain observer: PresenceService owns the poll, and BacklogiumApp's foreground observer owns
     // the one-off re-check, so collecting liveStatus here never starts or extends anything — Home
     // just reflects whatever the last poll found, degraded (no live card) but not broken while
@@ -283,8 +346,8 @@ class HomeViewModel @Inject constructor(
         liveStatusRepository.liveStatus,
         collectionCards,
         progressEventRepository.pendingEvents,
-        gameRepository.library,
-    ) { state, live, cards, pendingEvents, library ->
+        combine(gameRepository.library, acquiredGames) { library, acquired -> library to acquired },
+    ) { state, live, cards, pendingEvents, (library, acquired) ->
         val playingAppId = (live.nowPlaying as? NowPlaying.InGame)?.gameId
         val withCards = state.copy(
             collections = cards.map { card ->
@@ -300,6 +363,7 @@ class HomeViewModel @Inject constructor(
             // producing concurrent overlays/animations or more than one haptic for one moment.
             pendingStreakBreak = pendingEvents.firstOrNull() as? ProgressEvent.StreakBroken,
             pendingStreakMilestone = pendingEvents.firstOrNull() as? ProgressEvent.StreakMilestone,
+            acquiredGames = acquired,
         )
         when (val nowPlaying = live.nowPlaying) {
             is NowPlaying.InGame -> withCards.copy(
@@ -324,6 +388,11 @@ class HomeViewModel @Inject constructor(
 
     /** Retry a failed sync from the Home error card; the manual trigger lives in Settings. */
     fun syncNow() = profileRepository.syncNow()
+
+    /** Dismiss the acquisition banner. Scoped to this batch: a later purchase announces again. */
+    fun dismissAcquiredGames() {
+        viewModelScope.launch { settings.setAcquiredGamesDismissed() }
+    }
 
     /** Acknowledge only after the corresponding progress event has actually been presented. */
     fun acknowledgeProgressEvent(event: ProgressEvent) {
