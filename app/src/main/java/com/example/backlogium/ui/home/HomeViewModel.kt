@@ -25,6 +25,7 @@ import com.example.backlogium.domain.CollectionMemberSignals
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CurrentDateProvider
+import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.ProgressEvent
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RuleConfig
@@ -76,6 +77,12 @@ data class HomeUiState(
     val nowPlayingHeaderUrl: String? = null,
     /** When the current session was first observed, for the card's elapsed-time ticker. */
     val nowPlayingSessionStartedAt: Long? = null,
+    /**
+     * The running game's recency state, if it carries one. Home's one genuine game surface, so
+     * this is where the badge appears here — the collection cards' 26dp thumbnail strip is both
+     * too small for a legible glyph and a collection member list, which this change excludes.
+     */
+    val nowPlayingRecencyState: GameRecencyState? = null,
     /** Mission cards derived from the player's custom collections; empty when none exist. */
     val collections: List<HomeCollectionCard> = emptyList(),
     /** Highest-priority durable progress transition waiting for a Home consumer. */
@@ -276,7 +283,8 @@ class HomeViewModel @Inject constructor(
         liveStatusRepository.liveStatus,
         collectionCards,
         progressEventRepository.pendingEvents,
-    ) { state, live, cards, pendingEvents ->
+        gameRepository.library,
+    ) { state, live, cards, pendingEvents, library ->
         val playingAppId = (live.nowPlaying as? NowPlaying.InGame)?.gameId
         val withCards = state.copy(
             collections = cards.map { card ->
@@ -300,6 +308,11 @@ class HomeViewModel @Inject constructor(
                 nowPlayingIconUrl = nowPlaying.iconUrl,
                 nowPlayingHeaderUrl = nowPlaying.gameId?.let(SteamIconMapper::headerUrl),
                 nowPlayingSessionStartedAt = live.sessionStartedAt,
+                // Already derived by the repository, so Home neither re-implements the precedence
+                // nor needs its own clock to expire it.
+                nowPlayingRecencyState = library
+                    .firstOrNull { it.appId == nowPlaying.gameId }
+                    ?.recencyState,
             )
             NowPlaying.NotPlaying -> withCards
         }

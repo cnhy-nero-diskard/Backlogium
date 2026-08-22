@@ -74,6 +74,7 @@ import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.gamification.RarityStanding
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.components.RecencyBadge
 import com.example.backlogium.ui.components.SteamArtworkWithFallback
 import com.example.backlogium.ui.theme.rarityHalo
 import com.example.backlogium.ui.util.UiFormat
@@ -336,8 +337,16 @@ private fun GameSummarySection(
                         )
                         PlaytimeLine(summary)
                     }
+                    // Beside the title rather than over the header art: art is absent for some
+                    // games and 404s for others, and a badge that comes and goes with the artwork
+                    // would read as a glitch rather than as a signal.
+                    RecencyBadge(
+                        state = summary.recencyState,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
                 }
                 CompletionLine(summary)
+                LastPlayedLine(summary)
                 ActivePlayersLine(summary)
                 GenreTiles(summary.genres)
                 if (summary.hasHltb) {
@@ -446,6 +455,31 @@ private fun CompletionLine(summary: GameSummaryUi) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 8.dp),
+    )
+}
+
+/**
+ * When the game was last played — the single most common question about a backlog, and one the
+ * summary previously could not answer at all: it showed a total and a completion length but no date,
+ * so forty hours gave no hint whether that was last week or four years ago.
+ *
+ * All three cases render, none of them as a blank or a dash. "Never played" and "date unknown" are
+ * deliberately different sentences: conflating them would tell a player they had never played a
+ * game they have hours in.
+ */
+@Composable
+private fun LastPlayedLine(summary: GameSummaryUi) {
+    val text = when (val lastPlayed = summary.lastPlayed) {
+        LastPlayed.Never -> "Never played"
+        LastPlayed.Unknown -> "Last played: unknown"
+        // Formatted through UiFormat like every other date in the app, rather than introducing a
+        // second date format on one row.
+        is LastPlayed.At -> "Last played ${UiFormat.dateTime(lastPlayed.epochMillis)}"
+    }
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 

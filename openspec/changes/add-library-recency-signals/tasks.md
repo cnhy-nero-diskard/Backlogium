@@ -29,24 +29,24 @@
 - [x] 3.5 Derive `NEWLY_PLAYED` from the game's earliest recorded session, so it can fire only once per game for life
 - [x] 3.6 Derive `RETURNED` solely from `returnedToPlayAt` falling within the badge window — no gap is re-measured at read time
 - [x] 3.7 Add a bounded DAO query supplying the earliest session timestamp per game, so derivation does not become one query per row
-- [ ] 3.8 Expose the state as a domain field on the existing Library, Home, and game-detail read models — no storage type crosses into `ui/`
+- [x] 3.8 Expose the state as a domain field on the existing Library, Home, and game-detail read models — no storage type crosses into `ui/`
 
 ## 4. Badge presentation
 
-- [ ] 4.1 Add three Tabler glyphs and a state→glyph mapping in one place: sparkle for newly added, play-triangle for newly played, rotate arrow for returned
-- [ ] 4.2 Render the badge in `LibraryGameCell` at `Alignment.TopEnd`, since `TileSelectionIndicator` holds `TopStart`
-- [ ] 4.3 Render the badge on `LibraryGameRow`, checking it does not collide with the existing HLTB status badge on the game icon
-- [ ] 4.4 Render the badge at every density including `COMPACT_GRID`, without joining the `GameListField` ladder — recency is a live signal like currently-playing, not detail
-- [ ] 4.5 Render the badge on the game detail header
-- [ ] 4.6 Render the badge on Home's game surfaces
-- [ ] 4.7 Give every badge a `contentDescription` naming its state
+- [x] 4.1 Add three Tabler glyphs and a state→glyph mapping in one place: sparkle for newly added, play-triangle for newly played, rotate arrow for returned
+- [x] 4.2 Render the badge in `LibraryGameCell` at `Alignment.TopEnd`, since `TileSelectionIndicator` holds `TopStart`
+- [x] 4.3 Render the badge on `LibraryGameRow`, checking it does not collide with the existing HLTB status badge on the game icon
+- [x] 4.4 Render the badge at every density including `COMPACT_GRID`, without joining the `GameListField` ladder — recency is a live signal like currently-playing, not detail
+- [x] 4.5 Render the badge on the game detail header
+- [x] 4.6 Render the badge on Home's game surfaces
+- [x] 4.7 Give every badge a `contentDescription` naming its state
 - [ ] 4.8 Verify the badge does not weaken the currently-playing border or text colour on any surface
 
 ## 5. Last played on game detail
 
-- [ ] 5.1 Add a last-played row to the game summary section
-- [ ] 5.2 Render three distinct cases: a formatted date, "Never played" when `playtimeForever == 0`, and "Unknown" when playtime exists but no date does
-- [ ] 5.3 Format via `UiFormat` consistently with the rest of the app rather than introducing a new date format
+- [x] 5.1 Add a last-played row to the game summary section
+- [x] 5.2 Render three distinct cases: a formatted date, "Never played" when `playtimeForever == 0`, and "Unknown" when playtime exists but no date does
+- [x] 5.3 Format via `UiFormat` consistently with the rest of the app rather than introducing a new date format
 
 ## 6. New-acquisition announcement
 

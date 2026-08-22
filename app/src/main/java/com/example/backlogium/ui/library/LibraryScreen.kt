@@ -90,6 +90,8 @@ import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.ui.util.rememberHaptics
 import com.example.backlogium.work.HltbBatchProgress
 import com.example.backlogium.work.HltbRefreshStatus
+import com.example.backlogium.domain.GameRecencyState
+import com.example.backlogium.ui.components.RecencyBadge
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.Bolt
@@ -132,6 +134,7 @@ private data class LibraryDisplayGame(
     val achievementTotal: Int?,
     val xpContributed: Int,
     val isCurrentlyPlaying: Boolean,
+    val recencyState: GameRecencyState?,
 )
 
 @Composable
@@ -989,6 +992,7 @@ private fun GoalGameUi.toDisplayGame() = LibraryDisplayGame(
     achievementTotal = achievementTotal,
     xpContributed = xpContributed,
     isCurrentlyPlaying = isCurrentlyPlaying,
+    recencyState = recencyState,
 )
 
 private fun BacklogGameUi.toDisplayGame() = LibraryDisplayGame(
@@ -1005,6 +1009,7 @@ private fun BacklogGameUi.toDisplayGame() = LibraryDisplayGame(
     achievementTotal = achievementTotal,
     xpContributed = xpContributed,
     isCurrentlyPlaying = isCurrentlyPlaying,
+    recencyState = recencyState,
 )
 
 /** Emit one lazy item per row in list mode, or one lazy item per grid row in grid modes. */
@@ -1087,6 +1092,7 @@ private fun LibraryGameRow(
             // The HLTB match badge is part of the completion picture rather than a score badge,
             // so it rides the same rung as the progress bar below the name.
             showHltbStatus = density.showsCompletionProgress,
+            recencyState = game.recencyState,
         )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -1188,6 +1194,16 @@ private fun LibraryGameCell(
                         modifier = Modifier.align(Alignment.TopStart),
                     )
                 }
+
+                // `TopEnd` because `TileSelectionIndicator` owns `TopStart` — the two coexist in
+                // selection mode rather than one hiding the other. Drawn at every density,
+                // including the compact grid: recency is a live signal, not detail.
+                RecencyBadge(
+                    state = game.recencyState,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp),
+                )
             }
 
             Column(
@@ -1565,9 +1581,18 @@ private fun GameIconWithHltbBadge(
     isCurrentlyPlaying: Boolean,
     iconSize: Dp = 40.dp,
     showHltbStatus: Boolean = true,
+    recencyState: GameRecencyState? = null,
 ) {
     Box {
         GameIcon(iconUrl, iconSize = iconSize)
+        // `TopStart` is the icon's one free corner: the currently-playing dot holds `TopEnd` and
+        // the HowLongToBeat status holds `BottomEnd`, and the recency badge must displace neither.
+        // Smaller than on a grid tile, because it sits on a 40dp icon rather than over artwork.
+        RecencyBadge(
+            state = recencyState,
+            size = 16.dp,
+            modifier = Modifier.align(Alignment.TopStart),
+        )
         if (showHltbStatus) {
             Box(
                 modifier = Modifier
