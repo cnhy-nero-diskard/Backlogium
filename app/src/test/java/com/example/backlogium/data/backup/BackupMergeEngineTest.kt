@@ -7,6 +7,7 @@ import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.domain.GameSource
 import com.example.backlogium.data.local.dao.GameSessionCounts
 import com.example.backlogium.data.local.dao.GameTrackedMinutes
 import com.example.backlogium.data.local.dao.HltbDataDao
@@ -655,6 +656,58 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
     override suspend fun setBackfillMinutes(appId: Long, minutes: Int) {
         store[appId]?.let { store[appId] = it.copy(backfillMinutes = minutes) }
     }
+
+    override suspend fun insertSharedGameIfMissing(
+        appId: Long,
+        name: String,
+        iconUrl: String,
+        admittedAt: Long,
+    ) {
+        store.putIfAbsent(
+            appId,
+            Game(
+                appId = appId,
+                name = name,
+                iconUrl = iconUrl,
+                playtimeForever = 0,
+                playtime2Weeks = 0,
+                lastPlaytime = 0,
+                lastSyncedAt = admittedAt,
+                source = GameSource.FAMILY_SHARED,
+            ),
+        )
+    }
+
+    override suspend fun ownedGamesForDiffing(): List<Game> =
+        store.values.filter { it.source == GameSource.STEAM_OWNED }
+
+    override suspend fun sharedGames(): List<Game> =
+        store.values.filter { it.source == GameSource.FAMILY_SHARED }
+
+    override suspend fun convertSharedToOwned(
+        appId: Long,
+        playtimeForever: Int,
+        playtime2Weeks: Int,
+        convertedAt: Long,
+    ): Int {
+        val existing = store[appId]?.takeIf { it.source == GameSource.FAMILY_SHARED } ?: return 0
+        store[appId] = existing.copy(
+            source = GameSource.STEAM_OWNED,
+            playtimeForever = playtimeForever,
+            playtime2Weeks = playtime2Weeks,
+            lastPlaytime = playtimeForever,
+            lastSyncedAt = convertedAt,
+        )
+        return 1
+    }
+
+    override suspend fun deleteSharedGame(appId: Long): Int =
+        if (store[appId]?.source == GameSource.FAMILY_SHARED) {
+            store.remove(appId)
+            1
+        } else {
+            0
+        }
 }
 
 private class FakeSessionDao(private val store: MutableList<Session>) : SessionDao {

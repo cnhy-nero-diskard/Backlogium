@@ -154,6 +154,39 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
     override suspend fun setBackfillMinutes(appId: Long, minutes: Int) {
         store[appId]?.let { store[appId] = it.copy(backfillMinutes = minutes) }
     }
+
+    override suspend fun insertSharedGameIfMissing(appId: Long, name: String, iconUrl: String, admittedAt: Long) {
+        store.putIfAbsent(
+            appId,
+            Game(appId, name, iconUrl, 0, 0, 0, lastSyncedAt = admittedAt, source = GameSource.FAMILY_SHARED),
+        )
+    }
+
+    override suspend fun ownedGamesForDiffing(): List<Game> =
+        store.values.filter { it.source == GameSource.STEAM_OWNED }
+
+    override suspend fun sharedGames(): List<Game> =
+        store.values.filter { it.source == GameSource.FAMILY_SHARED }
+
+    override suspend fun convertSharedToOwned(appId: Long, playtimeForever: Int, playtime2Weeks: Int, convertedAt: Long): Int {
+        val existing = store[appId]?.takeIf { it.source == GameSource.FAMILY_SHARED } ?: return 0
+        store[appId] = existing.copy(
+            source = GameSource.STEAM_OWNED,
+            playtimeForever = playtimeForever,
+            playtime2Weeks = playtime2Weeks,
+            lastPlaytime = playtimeForever,
+            lastSyncedAt = convertedAt,
+        )
+        return 1
+    }
+
+    override suspend fun deleteSharedGame(appId: Long): Int =
+        if (store[appId]?.source == GameSource.FAMILY_SHARED) {
+            store.remove(appId)
+            1
+        } else {
+            0
+        }
 }
 
 internal class FakeDailyProgressDao(

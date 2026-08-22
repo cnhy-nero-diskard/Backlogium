@@ -24,6 +24,9 @@ class AccountRoomReset @Inject constructor(
             database.dailyProgressDao().deleteAll()
             database.diagnosticsDao().deleteAll()
             database.gameDao().deleteAll()
+            // Which shared games were removed is a decision about one person's borrowed library;
+            // carrying it to another account would silently refuse to admit their games.
+            database.excludedSharedGameDao().deleteAll()
             database.playerProfileDao().insertIfMissing()
             // longestStreak is a historical fact only within one Steam identity. Carrying it to
             // another person would attribute the old account's record to the new account.

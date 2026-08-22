@@ -12,6 +12,7 @@ import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.DiagnosticsDao
+import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
@@ -23,6 +24,7 @@ import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
+import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.local.entity.GameGenreCache
@@ -54,8 +56,9 @@ import com.example.backlogium.data.local.entity.SyncRun
         SteamAssetManifest::class,
         SteamAssetDownloadState::class,
         GameAchievementSync::class,
+        ExcludedSharedGame::class,
     ],
-    version = 20,
+    version = 21,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -71,6 +74,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun gameGenreCacheDao(): GameGenreCacheDao
     abstract fun gameAchievementSyncDao(): GameAchievementSyncDao
     abstract fun steamAssetDao(): SteamAssetDao
+    abstract fun excludedSharedGameDao(): ExcludedSharedGameDao
 
     companion object {
         const val NAME = "backlogium.db"
@@ -490,6 +494,33 @@ abstract class BacklogiumDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS `steam_asset_manifest` (`normalizedUrl` TEXT NOT NULL, `kind` TEXT NOT NULL, `relativePath` TEXT, `byteCount` INTEGER NOT NULL, `checksum` TEXT, `state` TEXT NOT NULL, `lastSuccessAt` INTEGER, `lastCheckedAt` INTEGER NOT NULL, PRIMARY KEY(`normalizedUrl`))")
                 db.execSQL("CREATE TABLE IF NOT EXISTS `steam_asset_download_state` (`id` INTEGER NOT NULL, `mode` TEXT NOT NULL, `completedAt` INTEGER NOT NULL, `storedCount` INTEGER NOT NULL, `alreadyPresentCount` INTEGER NOT NULL, `unavailableCount` INTEGER NOT NULL, `failedCount` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+            }
+        }
+
+        /**
+         * v20 -> v21: family-shared games (add-family-shared-games).
+         *
+         * - `games` gains `source`, defaulting to `STEAM_OWNED`. A widening with no data movement:
+         *   every existing row *is* an owned game, since the owned-games sync was until now the
+         *   only path that could create one. Stored as the enum name, matching `Converters`.
+         * - `excluded_shared_games` records app ids the player removed after admission, so a
+         *   removal survives further play. Deliberately no foreign key to `games` — the row exists
+         *   precisely because the game row does not — and `name` is carried so Settings can list a
+         *   removal with nothing else left to read it from.
+         */
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `games` ADD COLUMN `source` TEXT NOT NULL " +
+                        "DEFAULT 'STEAM_OWNED'",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `excluded_shared_games` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`name` TEXT NOT NULL, " +
+                        "`excludedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`))",
+                )
             }
         }
 
