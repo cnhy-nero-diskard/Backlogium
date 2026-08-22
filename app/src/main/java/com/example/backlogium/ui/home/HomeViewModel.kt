@@ -317,25 +317,21 @@ class HomeViewModel @Inject constructor(
         }
 
     /**
-     * The acquisition banner's content, or null when there is nothing to announce.
+     * The stored acquisition batch, re-emitted on a day boundary so its window is re-evaluated.
      *
-     * Expiry is computed here rather than scheduled — no worker, no alarm — which is what makes it
-     * correct after any period of the app being closed rather than reappearing because nothing ran
-     * to retire it. `currentDate` joins as an input for the same reason it does elsewhere on Home,
-     * so a day boundary re-evaluates the window; a Home left open continuously across the
-     * announcement's own expiry keeps it until something else re-emits, which is the accepted cost
-     * of having no scheduled work.
+     * Expiry is computed rather than scheduled — no worker, no alarm — which is what makes the
+     * banner correctly absent after any period of the app being closed rather than reappearing
+     * because nothing ran to retire it. The date joins as an input for the same reason it does
+     * elsewhere on Home; a Home left open continuously across the 24-hour boundary keeps the banner
+     * until something else re-emits, which is the accepted cost of having no scheduled work.
      *
-     * Names are resolved from the library the ViewModel already collects, so the stored batch needs
-     * to carry only app ids and no second query is issued for them.
+     * The game *names* are resolved downstream, against the library the ui-state combine already
+     * collects, so the stored batch carries only app ids and the library is subscribed to once.
      */
-    private val acquiredGames: Flow<AcquiredGamesUi?> = combine(
+    private val acquiredBatch: Flow<AcquiredGamesAnnouncement> = combine(
         settings.acquiredGames,
-        gameRepository.library,
         currentDate.currentDate,
-    ) { announcement, library, _ ->
-        announcement.toUi(library.associate { it.appId to it.name }, time.nowMillis())
-    }
+    ) { announcement, _ -> announcement }
 
     // A plain observer: PresenceService owns the poll, and BacklogiumApp's foreground observer owns
     // the one-off re-check, so collecting liveStatus here never starts or extends anything — Home
@@ -346,9 +342,10 @@ class HomeViewModel @Inject constructor(
         liveStatusRepository.liveStatus,
         collectionCards,
         progressEventRepository.pendingEvents,
-        combine(gameRepository.library, acquiredGames) { library, acquired -> library to acquired },
-    ) { state, live, cards, pendingEvents, (library, acquired) ->
+        combine(gameRepository.library, acquiredBatch) { library, batch -> library to batch },
+    ) { state, live, cards, pendingEvents, (library, batch) ->
         val playingAppId = (live.nowPlaying as? NowPlaying.InGame)?.gameId
+        val acquired = batch.toUi(library.associate { it.appId to it.name }, time.nowMillis())
         val withCards = state.copy(
             collections = cards.map { card ->
                 card.copy(

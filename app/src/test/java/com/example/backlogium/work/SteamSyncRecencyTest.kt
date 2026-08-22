@@ -74,6 +74,38 @@ class SteamSyncRecencyTest {
     }
 
     @Test
+    fun `a poll over a known library stamps only the app ids it does not recognise`() {
+        // The upgrade and post-restore cases, which are the same case: the library is known, so the
+        // poll is not a baseline, and every id already stored is left alone while a genuinely new
+        // one is stamped.
+        val known = recencyPollWrite(
+            isBaseline = false,
+            isNewToLibrary = false,
+            hadPlayIncrease = false,
+            storedLastPlayedAt = null,
+            mostRecentSessionEndAt = null,
+            reportedPlayAt = daysAgo(400),
+            observedPlayAt = daysAgo(400),
+            now = now,
+        )
+        val arrival = recencyPollWrite(
+            isBaseline = false,
+            isNewToLibrary = true,
+            hadPlayIncrease = false,
+            storedLastPlayedAt = null,
+            mostRecentSessionEndAt = null,
+            reportedPlayAt = null,
+            observedPlayAt = now,
+            now = now,
+        )
+        assertNull(known.firstSeenAt)
+        assertEquals(now, arrival.firstSeenAt)
+        // The known game's last-played time still fills in, which is how an upgrading library gets
+        // dates immediately without getting badges.
+        assertEquals(daysAgo(400), known.lastPlayedAt)
+    }
+
+    @Test
     fun `a poll with no play increase records no return`() {
         val write = recencyPollWrite(
             isBaseline = false,

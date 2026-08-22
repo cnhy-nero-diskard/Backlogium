@@ -124,6 +124,10 @@ internal data class RecencyPollWrite(
  * writes and its `lastPlayedAt` update, because each of those destroys the evidence that there was
  * a gap at all.
  *
+ * @param isBaseline whether this poll is establishing the library rather than observing a change to
+ *   one — meaning it found no stored library at all. Deliberately not "is this the first sync":
+ *   an upgrade and a restore both leave a known library behind, and neither may present the games
+ *   it already contains as newly acquired while still stamping genuine new ones.
  * @param observedPlayAt when the play happened, as the caller knows it — Steam's newly reported
  *   last-played time for a periodic poll, falling back to the caller's own observation instant
  *   where the source reported none. Never derived here: see [LibraryRecency.evaluateReturn].
@@ -383,7 +387,18 @@ class SteamSyncWorker @AssistedInject constructor(
         val existingGames = gameDao.getAll().associateBy { it.appId }
         val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
         val lastSyncAt = profileBefore?.lastSyncAt ?: 0L
-        val isBaseline = lastSyncAt == 0L
+        // The recency baseline is "the library was not known before this poll", which is a
+        // different question from the session differ's baseline ("is there a playtime baseline to
+        // diff against", keyed on `lastSyncAt`) and must not be conflated with it.
+        //
+        // Keyed on the stored library because that is what the rule is actually for: never present
+        // games the player already owned as newly acquired. It gets two cases right that the
+        // sync-timestamp reading does not. An upgrade of an existing library is not a baseline, and
+        // needs no special case — every app id it sees is already stored, so nothing is stamped
+        // anyway. And the first poll after a restore is not a baseline either: the restored games
+        // are known, so a game Steam reports that the backup did not contain is a genuine
+        // acquisition and is announced as one, even though `lastSyncAt` is still zero.
+        val isLibraryBaseline = existingGames.isEmpty()
         // Read before `applySessionActions`, deliberately. Both of this poll's own writes — the
         // session it is about to open or extend, and the `lastPlayedAt` it is about to overwrite —
         // destroy the only evidence that the play it observed followed a dormant period. Reading
@@ -406,7 +421,7 @@ class SteamSyncWorker @AssistedInject constructor(
             val iconUrl = SteamIconMapper.iconUrl(dto.appid, dto.imgIconUrl)
             val reportedPlayAt = dto.lastPlayedAtMillis
             val recency = recencyPollWrite(
-                isBaseline = isBaseline,
+                isBaseline = isLibraryBaseline,
                 isNewToLibrary = dto.appid !in existingGames,
                 hadPlayIncrease = (diff.playedDeltaByAppId[dto.appid] ?: 0) > 0,
                 storedLastPlayedAt = existingGames[dto.appid]?.lastPlayedAt,
