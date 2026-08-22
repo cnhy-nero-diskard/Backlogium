@@ -3,6 +3,7 @@ package com.example.backlogium.domain
 import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
@@ -62,6 +63,12 @@ data class GamificationResult(
  *   correctly bounded XP with no engine change.
  * - **Goal progress** is fed each game's total `playtimeForever` and is derived in the UI
  *   layer via [com.example.backlogium.gamification.Gamification.goalProgress].
+ *
+ * Hidden games are excluded from both XP inputs (add-hidden-games). The hidden set is read here,
+ * once, rather than supplied by each caller: a recompute that silently re-included hidden games
+ * because one call site forgot to pass the set would be indistinguishable from the feature not
+ * working. [compute] accepts an override only so a hide can be *previewed* — running the real
+ * computation against a candidate hidden set is what lets the confirmation state a real number.
  */
 class GamificationUpdater @Inject constructor(
     private val sessionDao: SessionDao,
@@ -70,6 +77,7 @@ class GamificationUpdater @Inject constructor(
     private val hltbDataDao: HltbDataDao,
     private val achievementDao: AchievementDao,
     private val gameDao: GameDao,
+    private val hiddenGameDao: HiddenGameDao,
     private val progressMarksStore: ProgressMarksStore = InMemoryProgressMarksStore(),
     /**
      * Serializes [persist] against every other participant in the transition protocol. The default
@@ -98,7 +106,14 @@ class GamificationUpdater @Inject constructor(
      * want the values stored hand the result to [persist]; callers previewing a candidate
      * [config] simply discard it. Progress-event marks are intentionally untouched here.
      */
-    suspend fun compute(today: LocalDate, config: RuleConfig = RuleConfig()): GamificationResult {
+    suspend fun compute(
+        today: LocalDate,
+        config: RuleConfig = RuleConfig(),
+        hiddenAppIds: Set<Long>? = null,
+    ): GamificationResult {
+        // Null means "whatever is hidden now". A caller passing a set is previewing a candidate
+        // visibility change, and gets the same computation the applied change will perform.
+        val hidden = hiddenAppIds ?: hiddenGameDao.hiddenAppIds().toSet()
         // XP/level from each game's cumulative minutes = frozen backfill offset (0 unless the
         // player opted in to importing Steam history) + tracked session minutes, tapered
         // against that game's HLTB completionist average. Games with no HLTB row resolve to
@@ -107,6 +122,7 @@ class GamificationUpdater @Inject constructor(
         val backfillByGame = gameDao.getAll().associate { it.appId to it.backfillMinutes }
         val hltbByGame = hltbDataDao.getAll().associateBy { it.appId }
         val games = (trackedByGame.keys + backfillByGame.keys)
+            .filterNot { appId -> appId in hidden }
             .map { appId -> appId to (backfillByGame[appId] ?: 0) + (trackedByGame[appId] ?: 0) }
             .filter { (_, minutes) -> minutes > 0 }
             .map { (appId, minutes) ->
@@ -119,7 +135,9 @@ class GamificationUpdater @Inject constructor(
         // Unlocked achievements, rarity-tiered by their first-unlock snapshot percent (never the
         // live one — see the add-steam-achievements rarity-drift policy). Locked/un-snapshotted
         // achievements are excluded here and would contribute 0 XP anyway.
-        val achievements = achievementDao.getAllUnlocked().map { row ->
+        // Achievements of a hidden game are excluded for the same reason its minutes are: the
+        // level has to be explicable from the library the player can see.
+        val achievements = achievementDao.getAllUnlocked().filterNot { it.appId in hidden }.map { row ->
             AchievementInput(
                 id = row.apiName,
                 unlocked = row.unlocked,
@@ -128,7 +146,11 @@ class GamificationUpdater @Inject constructor(
         }
         val xpState = Gamification.xp(games, achievements, cfg = config)
 
-        // Recompute each stored day's quest status; collect (don't write) the rows that changed.
+        // Stored daily rows are read exactly as they are. Hiding never rewrites them: XP is an
+        // all-time aggregate and is recomputed, while a day's quest result is a dated fact about a
+        // day that happened, and a bookkeeping preference expressed today does not unmake it. Going
+        // forward, SteamSyncWorker keeps a hidden game out of daily attribution, so the divergence
+        // does not grow (add-hidden-games design decision 3).
         val days = dailyProgressDao.getAllOrdered()
         val daysByDate = days.associateBy { LocalDate.parse(it.date) }
         val changedDays = mutableListOf<QuestStatusUpdate>()

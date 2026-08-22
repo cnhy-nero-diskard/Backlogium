@@ -44,6 +44,7 @@ class GamificationUpdaterTest {
             FakeHltbDataDao(),
             FakeAchievementDao(emptyList()),
             FakeGameDao(emptyList()),
+            FakeHiddenGameDao(),
         )
 
         val computed = async { updater.compute(LocalDate.parse(date), RuleConfig()) }
@@ -85,7 +86,10 @@ class GamificationUpdaterTest {
         val gameDao = FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 0)))
 
         val updater =
-            GamificationUpdater(sessionDao, dailyDao, profileDao, hltbDao, achievementDao, gameDao)
+            GamificationUpdater(
+                sessionDao, dailyDao, profileDao, hltbDao, achievementDao, gameDao,
+                FakeHiddenGameDao(),
+            )
         updater.recompute(today = LocalDate.parse("2026-07-17"), config = RuleConfig())
 
         val profile = profileDao.get()!!
@@ -130,7 +134,10 @@ class GamificationUpdaterTest {
         val gameDao = FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 0)))
 
         val updater =
-            GamificationUpdater(sessionDao, dailyDao, profileDao, hltbDao, achievementDao, gameDao)
+            GamificationUpdater(
+                sessionDao, dailyDao, profileDao, hltbDao, achievementDao, gameDao,
+                FakeHiddenGameDao(),
+            )
         updater.recompute(today = LocalDate.parse("2026-07-17"), config = RuleConfig())
 
         assertEquals(340, profileDao.get()!!.totalXp)
@@ -151,7 +158,10 @@ class GamificationUpdaterTest {
         val gameDao = FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 5000)))
 
         val updater =
-            GamificationUpdater(sessionDao, dailyDao, profileDao, hltbDao, achievementDao, gameDao)
+            GamificationUpdater(
+                sessionDao, dailyDao, profileDao, hltbDao, achievementDao, gameDao,
+                FakeHiddenGameDao(),
+            )
         updater.recompute(today = LocalDate.parse("2026-07-17"), config = RuleConfig())
 
         assertEquals(400, profileDao.get()!!.totalXp)
@@ -168,6 +178,7 @@ class GamificationUpdaterTest {
             hltbDataDao = hltbDao,
             achievementDao = FakeAchievementDao(emptyList()),
             gameDao = FakeGameDao(appIds.map { testGame(appId = it, backfillMinutes = 0) }),
+            hiddenGameDao = FakeHiddenGameDao(),
         )
 
         updater.compute(LocalDate.parse("2026-07-17"), RuleConfig())
@@ -403,6 +414,7 @@ class GamificationUpdaterTest {
             FakeHltbDataDao(),
             FakeAchievementDao(emptyList()),
             FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 0))),
+            FakeHiddenGameDao(),
         )
 
         val result = updater.compute(today = LocalDate.parse("2026-07-16"), config = RuleConfig())
@@ -482,6 +494,7 @@ class GamificationUpdaterTest {
             FakeHltbDataDao(),
             FakeAchievementDao(emptyList()),
             FakeGameDao(emptyList()),
+            FakeHiddenGameDao(),
         )
         updater.recompute(today = LocalDate.parse("2026-07-16"), config = RuleConfig())
 
@@ -499,6 +512,7 @@ class GamificationUpdaterTest {
             FakeHltbDataDao(),
             FakeAchievementDao(emptyList()),
             FakeGameDao(emptyList()),
+            FakeHiddenGameDao(),
         )
         return updater to profileDao
     }

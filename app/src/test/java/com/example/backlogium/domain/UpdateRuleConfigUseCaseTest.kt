@@ -133,6 +133,7 @@ class UpdateRuleConfigUseCaseTest {
             FakeHltbDataDao(),
             FakeAchievementDao(emptyList()),
             FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 0))),
+            FakeHiddenGameDao(),
         )
         return Fixture(
             useCase = UpdateRuleConfigUseCase(settings, updater, FixedTimeProvider(today)),

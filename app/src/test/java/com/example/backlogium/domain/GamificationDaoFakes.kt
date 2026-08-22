@@ -8,12 +8,14 @@ import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameSessionCounts
 import com.example.backlogium.data.local.dao.GameTrackedMinutes
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
@@ -311,3 +313,36 @@ internal fun testGame(appId: Long, backfillMinutes: Int) = Game(
     lastPlaytime = 0,
     backfillMinutes = backfillMinutes,
 )
+
+/**
+ * In-memory stand-ins for the hidden set, shared by the tests of every repository that now
+ * excludes hidden games. Observable, so a test can hide a game and assert the surfaces react
+ * rather than only asserting a fixed starting state.
+ */
+internal class FakeHiddenGameDao(hidden: Set<Long> = emptySet()) : HiddenGameDao {
+    private val rows = MutableStateFlow(
+        hidden.associateWith { HiddenGame(appId = it, hiddenAt = 0L) },
+    )
+
+    override suspend fun upsertAll(hidden: List<HiddenGame>) {
+        rows.value = rows.value + hidden.associateBy { it.appId }
+    }
+
+    override fun observeAll(): Flow<List<HiddenGame>> =
+        rows.map { it.values.sortedByDescending(HiddenGame::hiddenAt) }
+
+    override suspend fun getAll(): List<HiddenGame> =
+        rows.value.values.sortedByDescending(HiddenGame::hiddenAt)
+
+    override suspend fun hiddenAppIds(): List<Long> = rows.value.keys.toList()
+
+    override suspend fun isHidden(appId: Long): Boolean = appId in rows.value
+
+    override suspend fun delete(appIds: List<Long>) {
+        rows.value = rows.value - appIds.toSet()
+    }
+
+    override suspend fun deleteAll() {
+        rows.value = emptyMap()
+    }
+}

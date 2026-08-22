@@ -84,6 +84,39 @@ class SteamSyncDayAttributionTest {
         )
     }
 
+    /**
+     * A hidden game's minutes stop counting toward the day's quest from the moment it is hidden
+     * (add-hidden-games). Its session is still diffed and recorded — hiding destroys nothing —
+     * so the action is present here and simply earns no credit.
+     */
+    @Test
+    fun hiddenGame_isNotCreditedToTheDay() {
+        val result = differ.diff(
+            polls = listOf(
+                PollGame(appId = 1L, playtimeForever = 140),
+                PollGame(appId = 2L, playtimeForever = 260),
+            ),
+            priorStates = mapOf(
+                1L to GameDiffState(lastPlaytime = 130),
+                2L to GameDiffState(lastPlaytime = 200),
+            ),
+            now = atUtc(2026, 7, 26, 12, 10),
+            previousPollAt = atUtc(2026, 7, 26, 12, 0),
+        )
+
+        // Both games produced session actions; only the visible one reaches the day.
+        assertEquals(2, result.actions.count { it.addedMinutes > 0 })
+        assertEquals(
+            mapOf("2026-07-26" to DailyProgressCredit(minutesPlayed = 10, goalMinutesPlayed = 10)),
+            attributeDailyProgress(
+                result.actions,
+                goalAppIds = setOf(1L, 2L),
+                zone = zone,
+                hiddenAppIds = setOf(2L),
+            ),
+        )
+    }
+
     private fun atUtc(year: Int, month: Int, day: Int, hour: Int, minute: Int): Long =
         Instant.parse("%04d-%02d-%02dT%02d:%02d:00Z".format(year, month, day, hour, minute)).toEpochMilli()
 }

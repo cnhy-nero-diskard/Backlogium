@@ -12,4 +12,12 @@ enum class RecomputeSource {
     RULE_CHANGE,
     BACKFILL,
     RESTORE,
+
+    /**
+     * A game was hidden or unhidden (add-hidden-games). Not earned, so it emits no progress
+     * events and reseeds the baseline — **including downward**, which is the point: hiding a
+     * heavily-played game lowers the level, and a stale high-water mark left behind would
+     * swallow the next genuine level-up.
+     */
+    VISIBILITY_CHANGE,
 }
