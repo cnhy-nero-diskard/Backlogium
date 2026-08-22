@@ -46,6 +46,7 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
     override suspend fun getAll(): List<Session> = sessions
     override suspend fun deleteAll() = Unit
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(sessions.minOfOrNull { it.startAt })
+    override fun observeEarliestVisibleSessionStart(): Flow<Long?> = flowOf(sessions.minOfOrNull { it.startAt })
     override suspend fun findByNaturalKey(appId: Long, startAt: Long, endAt: Long?): Session? =
         sessions.firstOrNull { it.appId == appId && it.startAt == startAt && it.endAt == endAt }
 
@@ -142,6 +143,7 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
     }
 
     override fun observeLibrary(): Flow<List<Game>> = flowOf(store.values.toList())
+    override fun observeAllGames(): Flow<List<Game>> = flowOf(store.values.toList())
     override fun observeGoalGames(): Flow<List<Game>> = flowOf(emptyList())
     override fun observeBacklog(): Flow<List<Game>> = flowOf(emptyList())
     override suspend fun allAppIds(): List<Long> = store.keys.toList()

@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.GameAchievement
 import com.example.backlogium.data.repo.GameRepository
+import com.example.backlogium.data.repo.HiddenGamesRepository
 import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.SessionRepository
@@ -109,6 +110,12 @@ data class GameSummaryUi(
 
 data class GameDetailUiState(
     val loading: Boolean = true,
+    /**
+     * True once this game is hidden, so the surface it is displayed on closes itself. A hidden
+     * game is not reachable by navigation, and a screen already open on one is the same case
+     * arriving from the other direction (add-hidden-games).
+     */
+    val dismissed: Boolean = false,
     val gameName: String = "",
     val summary: GameSummaryUi = GameSummaryUi(),
     val rarityStanding: RarityStanding.Result? = null,
@@ -134,6 +141,7 @@ class GameDetailViewModel @Inject constructor(
     private val gameRepository: GameRepository,
     sessionRepository: SessionRepository,
     settings: SettingsRepository,
+    private val hiddenGamesRepository: HiddenGamesRepository,
 ) : ViewModel() {
 
     private val appIdState = MutableStateFlow<Long?>(savedStateHandle["appId"])
@@ -164,12 +172,14 @@ class GameDetailViewModel @Inject constructor(
                 achievementRepository.observeForGame(appId),
                 sessionRepository.trackedMinutesByGame,
                 settings.ruleConfig,
-            ) { games, achievements, trackedByGame, config ->
+                hiddenGamesRepository.hiddenAppIds,
+            ) { games, achievements, trackedByGame, config, hidden ->
                 Content(
                     games.firstOrNull { it.appId == appId },
                     achievements,
                     trackedByGame[appId] ?: 0,
                     config,
+                    appId in hidden,
                 )
             }
         }
@@ -183,6 +193,7 @@ class GameDetailViewModel @Inject constructor(
         val rows = content.achievements.map { it.toUi(content.config) }
         GameDetailUiState(
             loading = false,
+            dismissed = content.hidden,
             gameName = content.game?.name ?: "",
             summary = content.toSummary(rows, activePlayers),
             rarityStanding = content.toRarityStanding(),
@@ -273,12 +284,14 @@ internal suspend fun refreshPlayerCountOnce(
     }
 }
 
-/** The four flows the screen derives from, gathered before any per-row work. */
+/** The flows the screen derives from, gathered before any per-row work. */
 internal data class Content(
     val game: LibraryGame?,
     val achievements: List<GameAchievement>,
     val trackedMinutes: Int,
     val config: RuleConfig,
+    /** True while this game is hidden — the surface showing it closes rather than emptying out. */
+    val hidden: Boolean = false,
 )
 
 /**

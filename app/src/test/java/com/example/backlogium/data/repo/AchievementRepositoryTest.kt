@@ -421,11 +421,13 @@ class AchievementRepositoryTest {
         gameDao: GameDao = FakeGameDao(),
         syncDao: GameAchievementSyncDao = FakeGameAchievementSyncDao(),
         achievementDao: FakeAchievementDao = FakeAchievementDao(),
+        hidden: Set<Long> = emptySet(),
     ) = AchievementRepository(
         steamApi = api,
         achievementDao = achievementDao,
         gameAchievementSyncDao = syncDao,
         gameDao = gameDao,
+        hiddenGamesRepository = fakeHiddenGamesRepository(hidden),
         time = FixedTimeProvider(NOW),
     )
 
@@ -622,6 +624,7 @@ class AchievementRepositoryTest {
         override suspend fun insertSteamGameIfMissing(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long) = error("not used")
         override suspend fun updateSteamFields(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long) = error("not used")
         override fun observeLibrary(): Flow<List<Game>> = flowOf(games.toList())
+        override fun observeAllGames(): Flow<List<Game>> = flowOf(games.toList())
         override fun observeGoalGames(): Flow<List<Game>> = error("not used")
         override fun observeBacklog(): Flow<List<Game>> = error("not used")
         override suspend fun allAppIds(): List<Long> = games.map { it.appId }

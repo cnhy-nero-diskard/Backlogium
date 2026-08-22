@@ -86,6 +86,11 @@ data class AchievementLibraryFetch(
  * A per-game failure (private profile, no stats, transport error) never fails the caller —
  * it is skipped and any previously stored rows for that game are left intact.
  * [CancellationException] is rethrown so WorkManager stops promptly.
+ *
+ * Hidden games are excluded on both halves (add-hidden-games): their stored rows are filtered out
+ * of every observed projection, and [fetchGames] — the single funnel every fetch path goes
+ * through — drops them before a request is issued, so hiding a game genuinely stops costing
+ * requests rather than merely hiding their results.
  */
 @Singleton
 class AchievementRepository @Inject constructor(
@@ -93,6 +98,7 @@ class AchievementRepository @Inject constructor(
     private val achievementDao: AchievementDao,
     private val gameAchievementSyncDao: GameAchievementSyncDao,
     private val gameDao: GameDao,
+    private val hiddenGamesRepository: HiddenGamesRepository,
     private val time: TimeProvider,
 ) {
 
@@ -105,6 +111,7 @@ class AchievementRepository @Inject constructor(
     /** Unlocked/total achievement counts, keyed by appId — feeds the Library row badge. */
     val counts: Flow<Map<Long, AchievementCounts>> = achievementDao.observeCounts()
         .map { it.associateBy(AchievementCounts::appId) }
+        .visibleKeys()
 
     /**
      * Per-game rarity snapshots of unlocked achievements, keyed by appId — the achievement half of
@@ -113,6 +120,7 @@ class AchievementRepository @Inject constructor(
      */
     val unlockedRarityByGame: Flow<Map<Long, List<Double?>>> = achievementDao.observeUnlockedRarity()
         .map { rows -> rows.groupBy(AchievementRarity::appId) { it.snapshotPercent } }
+        .visibleKeys()
 
     /**
      * Detailed all-time rarity rows for Analytics. The existing grouped percent flow remains
@@ -122,9 +130,10 @@ class AchievementRepository @Inject constructor(
     val unlockedRarityDetails: Flow<List<UnlockedAchievementRarity>> = combine(
         achievementDao.observeUnlockedRarity(),
         gameDao.observeLibrary(),
-    ) { rows, games ->
+        hiddenGamesRepository.hiddenAppIds,
+    ) { rows, games, hidden ->
         val gameNames = games.associate { it.appId to it.name }
-        rows.mapNotNull { row ->
+        rows.filterNot { it.appId in hidden }.mapNotNull { row ->
             row.snapshotPercent?.let { percent ->
                 UnlockedAchievementRarity(
                     appId = row.appId,
@@ -141,7 +150,16 @@ class AchievementRepository @Inject constructor(
      * screen's per-day thumbnail row (regroup-history).
      */
     fun unlockedSince(cutoffMillis: Long): Flow<List<AchievementUnlock>> =
-        achievementDao.observeUnlockedSince(cutoffMillis)
+        combine(
+            achievementDao.observeUnlockedSince(cutoffMillis),
+            hiddenGamesRepository.hiddenAppIds,
+        ) { unlocks, hidden -> unlocks.filterNot { it.appId in hidden } }
+
+    /** Drops hidden games from a per-game projection, so no surface has to filter them itself. */
+    private fun <T> Flow<Map<Long, T>>.visibleKeys(): Flow<Map<Long, T>> =
+        combine(hiddenGamesRepository.hiddenAppIds) { byAppId, hidden ->
+            if (hidden.isEmpty()) byAppId else byAppId.filterKeys { it !in hidden }
+        }
 
     /**
      * Fetches achievements for games selected by tier: hot (playtime delta), warm (recent play),

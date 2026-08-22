@@ -9,6 +9,7 @@ import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.repo.CollectionRepository
+import com.example.backlogium.data.repo.fakeHiddenGamesRepository
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionTimeBasis
@@ -218,6 +219,7 @@ class CollectionDaoTest {
         val second = dao.insert(collection(name = "Second", displayOrder = 9))
         val repository = CollectionRepository(
             collectionDao = dao,
+            hiddenGamesRepository = fakeHiddenGamesRepository(),
             time = object : TimeProvider {
                 override fun nowMillis(): Long = 100L
                 override fun zone(): ZoneId = ZoneId.of("UTC")

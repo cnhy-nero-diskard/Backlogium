@@ -7,13 +7,13 @@
 
 ## 2. Exclusion at the repository boundary
 
-- [ ] 2.1 Filter hidden games centrally in the repository layer so surfaces receive already-filtered data and cannot forget
-- [ ] 2.2 Exclude from library lists and search
-- [ ] 2.3 Exclude from custom collection contents, member counts, and summaries, retaining the membership rows
-- [ ] 2.4 Exclude from derived collections
-- [ ] 2.5 Exclude from analytics and history
-- [ ] 2.6 Make a hidden game unreachable by navigation to game detail
-- [ ] 2.7 Add tests asserting a hidden game is absent from every read path, including one per surface
+- [x] 2.1 Filter hidden games centrally in the repository layer so surfaces receive already-filtered data and cannot forget
+- [x] 2.2 Exclude from library lists and search
+- [x] 2.3 Exclude from custom collection contents, member counts, and summaries, retaining the membership rows
+- [x] 2.4 Exclude from derived collections
+- [x] 2.5 Exclude from analytics and history
+- [x] 2.6 Make a hidden game unreachable by navigation to game detail
+- [x] 2.7 Add tests asserting a hidden game is absent from every read path, including one per surface
 
 ## 3. Derived values
 

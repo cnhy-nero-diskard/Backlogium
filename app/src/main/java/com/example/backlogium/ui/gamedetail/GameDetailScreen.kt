@@ -109,6 +109,12 @@ fun GameDetailScreen(
     presentation: GameDetailPresentation = GameDetailPresentation.FULL_DESTINATION,
     viewModel: GameDetailViewModel = hiltViewModel(),
     onAccentColorChanged: (Color?) -> Unit = {},
+    /**
+     * Leave this surface. Raised when the game becomes hidden — from this screen's own hide
+     * action, or from anywhere else while it happens to be open — so the player lands back where
+     * they came from rather than on a detail screen for a game that is no longer in the library.
+     */
+    onDismiss: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val overlay = presentation == GameDetailPresentation.COLLECTION_OVERLAY
@@ -125,6 +131,9 @@ fun GameDetailScreen(
     LaunchedEffect(viewModel, appId) {
         appId?.let(viewModel::setAppId)
         viewModel.startPolling()
+    }
+    LaunchedEffect(state.dismissed) {
+        if (state.dismissed) onDismiss()
     }
     DisposableEffect(viewModel) {
         onDispose { viewModel.stopPolling() }

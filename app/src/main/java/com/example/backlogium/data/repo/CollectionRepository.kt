@@ -10,6 +10,7 @@ import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.defaultSort
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -17,23 +18,36 @@ import javax.inject.Singleton
  * Read/write access to custom collections and their members (add-custom-collections).
  * Collections are app-owned state persisted in Room — never touched by the Steam sync worker —
  * so every flow here is a plain local observer and every mutation is a plain Room write.
+ *
+ * Membership of a hidden game is **retained and filtered on read** (add-hidden-games): the row
+ * stays, so unhiding restores the game to the collections it was in rather than asking the player
+ * to re-add it, while every member read — contents, counts, and the derived banner built from
+ * them — behaves as though the collection never contained it.
  */
 @Singleton
 class CollectionRepository @Inject constructor(
     private val collectionDao: CollectionDao,
+    private val hiddenGamesRepository: HiddenGamesRepository,
     private val time: TimeProvider,
 ) {
     val collections: Flow<List<Collection>> = collectionDao.observeCollections()
 
-    val allMembers: Flow<List<CollectionMember>> = collectionDao.observeAllMembers()
+    val allMembers: Flow<List<CollectionMember>> = collectionDao.observeAllMembers().visibleMembers()
 
     fun members(collectionId: Long): Flow<List<CollectionMember>> =
-        collectionDao.observeMembers(collectionId)
+        collectionDao.observeMembers(collectionId).visibleMembers()
 
     suspend fun getById(id: Long): Collection? = collectionDao.getById(id)
 
-    suspend fun getMembers(collectionId: Long): List<CollectionMember> =
-        collectionDao.getMembers(collectionId)
+    suspend fun getMembers(collectionId: Long): List<CollectionMember> {
+        val hidden = hiddenGamesRepository.hiddenAppIdSet()
+        return collectionDao.getMembers(collectionId).filterNot { it.appId in hidden }
+    }
+
+    private fun Flow<List<CollectionMember>>.visibleMembers(): Flow<List<CollectionMember>> =
+        combine(hiddenGamesRepository.hiddenAppIds) { members, hidden ->
+            if (hidden.isEmpty()) members else members.filterNot { it.appId in hidden }
+        }
 
     /** Create a collection and return its new id; a fresh collection defaults its sort per mode. */
     suspend fun create(

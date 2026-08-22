@@ -637,6 +637,7 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
     }
 
     override fun observeLibrary(): Flow<List<Game>> = flowOf(store.values.toList())
+    override fun observeAllGames(): Flow<List<Game>> = flowOf(store.values.toList())
     override fun observeGoalGames(): Flow<List<Game>> = flowOf(emptyList())
     override fun observeBacklog(): Flow<List<Game>> = flowOf(emptyList())
     override suspend fun allAppIds(): List<Long> = store.keys.toList()
@@ -688,6 +689,7 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     override suspend fun getAll(): List<Session> = store.sortedBy { it.startAt }
     override suspend fun deleteAll() = store.clear()
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(store.minOfOrNull { it.startAt })
+    override fun observeEarliestVisibleSessionStart(): Flow<Long?> = flowOf(store.minOfOrNull { it.startAt })
     override suspend fun findByNaturalKey(appId: Long, startAt: Long, endAt: Long?): Session? =
         store.firstOrNull { it.appId == appId && it.startAt == startAt && it.endAt == endAt }
 

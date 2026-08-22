@@ -73,11 +73,19 @@ class GameRepository @Inject constructor(
     private val gameDao: GameDao,
     private val hltbRepository: HltbRepository,
     private val gameGenreRepository: GameGenreRepository,
+    private val hiddenGamesRepository: HiddenGamesRepository,
     private val steamApi: SteamApi,
 ) {
-    val library: Flow<List<LibraryGame>> = gameDao.observeLibrary().withHltb()
-    val goalGames: Flow<List<LibraryGame>> = gameDao.observeGoalGames().withHltb()
-    val backlog: Flow<List<LibraryGame>> = gameDao.observeBacklog().withHltb()
+    /**
+     * The visible library. Hidden games are dropped here rather than by each surface, so a screen
+     * cannot forget: Library, search, History, Analytics, collections, and game detail all read
+     * one of these three flows (add-hidden-games).
+     */
+    val library: Flow<List<LibraryGame>> = gameDao.observeLibrary().visible().withHltb()
+
+    /** Focus games, hidden ones excluded — hiding a goal game clears its goal flag anyway. */
+    val goalGames: Flow<List<LibraryGame>> = gameDao.observeGoalGames().visible().withHltb()
+    val backlog: Flow<List<LibraryGame>> = gameDao.observeBacklog().visible().withHltb()
 
     /**
      * The game's current Steam concurrent-player count, or `null` on any failure — network error,
@@ -109,6 +117,12 @@ class GameRepository @Inject constructor(
     /** Remove a game's goal tag and clear its target. */
     suspend fun untagGoal(appId: Long) =
         gameDao.setGoal(appId, isGoal = false, targetMinutes = null)
+
+    /** Drops hidden games, preserving the query's ordering so no gap or placeholder is left. */
+    private fun Flow<List<Game>>.visible(): Flow<List<Game>> =
+        combine(hiddenGamesRepository.hiddenAppIds) { games, hidden ->
+            if (hidden.isEmpty()) games else games.filterNot { it.appId in hidden }
+        }
 
     /** Joins each game with its cached HLTB row and maps both into [LibraryGame]. */
     private fun Flow<List<Game>>.withHltb(): Flow<List<LibraryGame>> =

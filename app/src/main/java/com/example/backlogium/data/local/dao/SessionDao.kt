@@ -59,6 +59,14 @@ interface SessionDao {
     fun observeEarliestSessionStart(): Flow<Long?>
 
     /**
+     * Earliest session start among games the player can see. Hidden games contribute to no figure
+     * Analytics presents, so they must not stretch its history anchor either (add-hidden-games).
+     * Room re-emits when `hidden_games` changes, because the subquery names that table.
+     */
+    @Query("SELECT MIN(startAt) FROM sessions WHERE appId NOT IN (SELECT appId FROM hidden_games)")
+    fun observeEarliestVisibleSessionStart(): Flow<Long?>
+
+    /**
      * Natural-key lookup for the backup/restore merge engine (add-backup-restore): [Session.id]
      * is a surrogate autoincrement that does not survive an export/import round trip, so a
      * merge must find a session by `(appId, startAt, endAt)` instead. `endAt IS :endAt` (not

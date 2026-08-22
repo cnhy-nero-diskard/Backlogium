@@ -210,7 +210,10 @@ fun BacklogiumAppRoot(
                     route = ROUTE_GAME_DETAIL,
                     arguments = listOf(navArgument("appId") { type = NavType.LongType }),
                 ) {
-                    GameDetailScreen(onAccentColorChanged = { accentColor = it })
+                    GameDetailScreen(
+                        onAccentColorChanged = { accentColor = it },
+                        onDismiss = { navController.popBackStack() },
+                    )
                 }
                 composable(
                     route = ROUTE_COLLECTION,

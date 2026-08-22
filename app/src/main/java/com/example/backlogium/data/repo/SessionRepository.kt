@@ -3,6 +3,7 @@ package com.example.backlogium.data.repo
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Session
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -19,10 +20,18 @@ data class PlaySession(
     val open: Boolean,
 )
 
-/** Read access to synthesized play sessions. */
+/**
+ * Read access to synthesized play sessions.
+ *
+ * Every flow here excludes hidden games (add-hidden-games). A hidden game's sessions are still
+ * *recorded* — hiding destroys nothing, and unhiding has to restore the full history — they are
+ * simply not readable through this repository while the game is hidden, so History, Analytics,
+ * and the Library's XP badge cannot show or count them.
+ */
 @Singleton
 class SessionRepository @Inject constructor(
     private val sessionDao: SessionDao,
+    private val hiddenGamesRepository: HiddenGamesRepository,
 ) {
     /**
      * Sessions starting at or after [cutoffMillis]. Backs the History screen's day-grouped view
@@ -30,19 +39,21 @@ class SessionRepository @Inject constructor(
      * fixed row count.
      */
     fun sessionsSince(cutoffMillis: Long): Flow<List<PlaySession>> =
-        sessionDao.observeSince(cutoffMillis).map { rows -> rows.map(Session::toDomain) }
+        sessionDao.observeSince(cutoffMillis).visibleSessions()
 
     /** Sessions whose start timestamps fall inside an explicit start-inclusive/end-exclusive window. */
     fun sessionsBetween(startInclusiveMillis: Long, endExclusiveMillis: Long): Flow<List<PlaySession>> =
-        sessionDao.observeBetween(startInclusiveMillis, endExclusiveMillis)
-            .map { rows -> rows.map(Session::toDomain) }
+        sessionDao.observeBetween(startInclusiveMillis, endExclusiveMillis).visibleSessions()
 
-    /** Earliest tracked session start, or null before the first session is recorded. */
-    val earliestSessionStart: Flow<Long?> = sessionDao.observeEarliestSessionStart()
+    /**
+     * Earliest visible session start, or null before the first session is recorded. Hidden games
+     * are excluded, so an Analytics window can never stretch back over history it cannot show.
+     */
+    val earliestSessionStart: Flow<Long?> = sessionDao.observeEarliestVisibleSessionStart()
 
     /** Closed synthesized sessions used by Personal Pace; open sessions are excluded in Room. */
     fun closedSessionsSince(cutoffMillis: Long): Flow<List<PlaySession>> =
-        sessionDao.observeClosedSince(cutoffMillis).map { rows -> rows.map(Session::toDomain) }
+        sessionDao.observeClosedSince(cutoffMillis).visibleSessions()
 
     /**
      * Tracked minutes summed per game, keyed by appId. Games with no tracked session are absent
@@ -50,10 +61,12 @@ class SessionRepository @Inject constructor(
      */
     val trackedMinutesByGame: Flow<Map<Long, Int>> = sessionDao.observeTrackedMinutesByGame()
         .map { rows -> rows.associate { it.appId to it.minutes } }
+        .visibleKeys()
 
     /** Synthesized session count per game, keyed by appId. */
     val sessionCountByGame: Flow<Map<Long, Int>> = sessionDao.observeSessionCountsByGame()
         .map { rows -> rows.associate { it.appId to it.sessions } }
+        .visibleKeys()
 
     /**
      * Tracked minutes summed per game over sessions starting at or after [cutoffMillis], keyed
@@ -63,11 +76,26 @@ class SessionRepository @Inject constructor(
     fun minutesByGameSince(cutoffMillis: Long): Flow<Map<Long, Int>> =
         sessionDao.observeMinutesByGameSince(cutoffMillis)
             .map { rows -> rows.associate { it.appId to it.minutes } }
+            .visibleKeys()
 
     /** Tracked minutes per game inside an explicit start-inclusive/end-exclusive window. */
     fun minutesByGameBetween(startInclusiveMillis: Long, endExclusiveMillis: Long): Flow<Map<Long, Int>> =
         sessionDao.observeMinutesByGameBetween(startInclusiveMillis, endExclusiveMillis)
             .map { rows -> rows.associate { it.appId to it.minutes } }
+            .visibleKeys()
+
+    private fun Flow<List<Session>>.visibleSessions(): Flow<List<PlaySession>> =
+        combine(hiddenGamesRepository.hiddenAppIds) { rows, hidden ->
+            rows.asSequence()
+                .filterNot { it.appId in hidden }
+                .map(Session::toDomain)
+                .toList()
+        }
+
+    private fun Flow<Map<Long, Int>>.visibleKeys(): Flow<Map<Long, Int>> =
+        combine(hiddenGamesRepository.hiddenAppIds) { byAppId, hidden ->
+            if (hidden.isEmpty()) byAppId else byAppId.filterKeys { it !in hidden }
+        }
 }
 
 private fun Session.toDomain() = PlaySession(
