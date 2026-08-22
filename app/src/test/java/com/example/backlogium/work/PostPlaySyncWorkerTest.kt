@@ -429,6 +429,7 @@ class PostPlaySyncWorkerTest {
                         db.hltbDataDao(),
                         db.achievementDao(),
                         db.gameDao(),
+                        db.hiddenGameDao(),
                     ),
                     derivedStateWrites = DerivedStateWriteCoordinator(),
                 ),

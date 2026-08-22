@@ -466,7 +466,8 @@ class AchievementRepository @Inject constructor(
     }
 
     /**
-     * Fetches [appIds] **serially** — one request in flight at a time.
+     * Fetches [appIds] **serially** — one request in flight at a time. Hidden games are skipped
+     * before any request is made.
      *
      * This is deliberate, not a missing optimisation. Tiering is what made fetch volume small: a
      * steady-state sync now selects a handful of played games, so a typical inline pass is a few

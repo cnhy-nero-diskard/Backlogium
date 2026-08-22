@@ -32,6 +32,7 @@ class SetSharedGamePlaytimeUseCaseTest {
             hltbDataDao = FakeHltbDataDao(completionistByAppId = mapOf(1L to 1000)),
             achievementDao = FakeAchievementDao(emptyList()),
             gameDao = gameDao,
+            hiddenGameDao = FakeHiddenGameDao(),
         )
         val useCase = SetSharedGamePlaytimeUseCase(
             gameDao = gameDao,
@@ -122,6 +123,7 @@ class SetSharedGamePlaytimeUseCaseTest {
             hltbDataDao = FakeHltbDataDao(),
             achievementDao = FakeAchievementDao(emptyList()),
             gameDao = gameDao,
+            hiddenGameDao = FakeHiddenGameDao(),
         ),
         time = FixedTimeProvider,
         derivedStateWrites = DerivedStateWriteCoordinator(),

@@ -328,7 +328,7 @@ class GamificationUpdaterTest {
         )
 
         val updater =
-            GamificationUpdater(sessionDao, dailyDao, profileDao, hltbDao, achievementDao, gameDao)
+            GamificationUpdater(sessionDao, dailyDao, profileDao, hltbDao, achievementDao, gameDao, FakeHiddenGameDao())
         updater.recompute(today = LocalDate.parse("2026-07-17"), config = RuleConfig())
 
         assertEquals(400, profileDao.get()!!.totalXp)

@@ -47,6 +47,7 @@ import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.FakeDailyProgressDao
 import com.example.backlogium.domain.FakeGameDao
+import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.FakeHltbDataDao
 import com.example.backlogium.domain.FakePlayerProfileDao
 import com.example.backlogium.domain.FakeSessionDao
@@ -113,6 +114,7 @@ class FamilySharedGameRepositoryTest {
             hltbDataDao = database.hltbDataDao(),
             achievementDao = database.achievementDao(),
             gameDao = database.gameDao(),
+            hiddenGameDao = database.hiddenGameDao(),
             progressMarksStore = marksStore,
         )
         val repository = repositoryWithRealGamification(database, gamificationUpdater)
@@ -164,6 +166,7 @@ class FamilySharedGameRepositoryTest {
             hltbDataDao = database.hltbDataDao(),
             achievementDao = database.achievementDao(),
             gameDao = database.gameDao(),
+            hiddenGameDao = database.hiddenGameDao(),
             progressMarksStore = marksStore,
         )
         val excludedDao = FakeExcludedSharedGameDao(
@@ -200,6 +203,7 @@ class FamilySharedGameRepositoryTest {
             hltbDataDao = database.hltbDataDao(),
             achievementDao = database.achievementDao(),
             gameDao = database.gameDao(),
+            hiddenGameDao = database.hiddenGameDao(),
             progressMarksStore = marksStore,
         )
         val repository = repositoryWithRealGamification(database, gamificationUpdater)
@@ -266,6 +270,7 @@ class FamilySharedGameRepositoryTest {
             achievementDao = database.achievementDao(),
             gameAchievementSyncDao = noOpProxy(GameAchievementSyncDao::class.java),
             gameDao = database.gameDao(),
+            hiddenGamesRepository = fakeHiddenGamesRepository(),
             time = FixedTimeProvider,
         ),
     )
@@ -557,6 +562,7 @@ class FamilySharedGameRepositoryTest {
             hltbDataDao = FakeHltbDataDao(),
             achievementDao = achievementDao,
             gameDao = gameDao,
+            hiddenGameDao = FakeHiddenGameDao(),
         ),
         derivedStateWrites = DerivedStateWriteCoordinator(),
         achievementRepository = AchievementRepository(
@@ -564,6 +570,7 @@ class FamilySharedGameRepositoryTest {
             achievementDao = achievementDao,
             gameAchievementSyncDao = syncDao,
             gameDao = gameDao,
+            hiddenGamesRepository = fakeHiddenGamesRepository(),
             time = FixedTimeProvider,
         ),
     )

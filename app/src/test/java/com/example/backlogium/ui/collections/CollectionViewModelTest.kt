@@ -26,6 +26,7 @@ import com.example.backlogium.data.repo.CollectionRepository
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.GameGenreRepository
 import com.example.backlogium.data.repo.GameRepository
+import com.example.backlogium.data.repo.fakeHiddenGamesRepository
 import com.example.backlogium.data.repo.HltbDatasetLookup
 import com.example.backlogium.data.repo.HltbRepository
 import com.example.backlogium.data.repo.LiveStatusRepository
@@ -36,6 +37,7 @@ import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.SteamStoreGenreDataSource
 import com.example.backlogium.domain.CollectionMode
+import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.TimeProvider
 import java.lang.reflect.Proxy
@@ -202,7 +204,10 @@ class CollectionViewModelTest {
     ): CollectionViewModel {
         val time = FixedTimeProvider()
         val gameDao = emptyGameDao(libraryGames)
-        val sessionRepository = SessionRepository(emptySessionDao())
+        val sessionRepository = SessionRepository(
+            emptySessionDao(),
+            hiddenGamesRepository = fakeHiddenGamesRepository(),
+        )
         val hltbRepository = HltbRepository(
             dataSource = object : HltbDataSource {
                 override suspend fun search(name: String) = emptyList<com.example.backlogium.data.hltb.HltbCandidate>()
@@ -211,6 +216,7 @@ class CollectionViewModelTest {
             },
             hltbDataDao = emptyHltbDataDao(hltbData),
             datasetLookup = HltbDatasetLookup { null },
+            hiddenGameDao = FakeHiddenGameDao(),
             json = Json,
             time = time,
         )
@@ -223,6 +229,7 @@ class CollectionViewModelTest {
             gameDao = gameDao,
             hltbRepository = hltbRepository,
             gameGenreRepository = gameGenreRepository,
+            hiddenGamesRepository = fakeHiddenGamesRepository(),
             steamApi = emptyProxy(SteamApi::class.java),
             sessionRepository = sessionRepository,
             time = time,
@@ -232,12 +239,14 @@ class CollectionViewModelTest {
             achievementDao = emptyAchievementDao(),
             gameAchievementSyncDao = emptyGameAchievementSyncDao(),
             gameDao = gameDao,
+            hiddenGamesRepository = fakeHiddenGamesRepository(),
             time = time,
         )
         val settings = emptySettingsRepository()
         val liveStatusRepository = LiveStatusRepository(
             steamApi = emptyProxy(SteamApi::class.java),
             gameDao = gameDao,
+            hiddenGameDao = FakeHiddenGameDao(),
             profileDao = emptyProxy(PlayerProfileDao::class.java),
             credentials = object : CredentialsProvider {
                 override suspend fun currentCredentials() = null
@@ -254,6 +263,7 @@ class CollectionViewModelTest {
             savedStateHandle = SavedStateHandle(),
             collectionRepository = CollectionRepository(
                 collectionDao = store.dao,
+                hiddenGamesRepository = fakeHiddenGamesRepository(),
                 time = time,
                 transaction = transaction,
             ),

@@ -60,6 +60,8 @@ class HiddenGamesExclusionTest {
             hltbRepository = HltbRepository(
                 dataSource = OfflineHltbSource,
                 hltbDataDao = db.hltbDataDao(),
+                datasetLookup = HltbDatasetLookup { null },
+                hiddenGameDao = db.hiddenGameDao(),
                 json = Json,
                 time = HiddenGamesTestTime,
             ),
