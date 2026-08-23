@@ -26,6 +26,7 @@ import com.example.backlogium.domain.CollectionMemberSignals
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CurrentDateProvider
+import com.example.backlogium.domain.exactExpiryTicks
 import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.ProgressEvent
 import com.example.backlogium.domain.TimeProvider
@@ -41,6 +42,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -317,21 +319,26 @@ class HomeViewModel @Inject constructor(
         }
 
     /**
-     * The stored acquisition batch, re-emitted on a day boundary so its window is re-evaluated.
+     * The stored acquisition batch, re-emitted at its exact expiry deadline so its window is re-evaluated.
      *
-     * Expiry is computed rather than scheduled — no worker, no alarm — which is what makes the
-     * banner correctly absent after any period of the app being closed rather than reappearing
-     * because nothing ran to retire it. The date joins as an input for the same reason it does
-     * elsewhere on Home; a Home left open continuously across the 24-hour boundary keeps the banner
-     * until something else re-emits, which is the accepted cost of having no scheduled work.
+     * Expiry is computed rather than persisted — no worker, no alarm — and a collector-scoped delay
+     * re-emits at the actual deadline. The banner therefore disappears on time even when it expires
+     * between local midnights or while the app was closed.
      *
      * The game *names* are resolved downstream, against the library the ui-state combine already
      * collects, so the stored batch carries only app ids and the library is subscribed to once.
      */
-    private val acquiredBatch: Flow<AcquiredGamesAnnouncement> = combine(
-        settings.acquiredGames,
-        currentDate.currentDate,
-    ) { announcement, _ -> announcement }
+    private val acquiredBatch: Flow<AcquiredGamesAnnouncement> = settings.acquiredGames
+        .flatMapLatest { announcement ->
+            exactExpiryTicks(
+                nowMillis = time::nowMillis,
+                nextExpiryAt = { now ->
+                    announcement.takeIf { it.appIds.isNotEmpty() && !it.dismissed }
+                        ?.let { it.acquiredAt + AcquiredGamesAnnouncement.LIFETIME_MILLIS }
+                        ?.takeIf { it > now }
+                },
+            ).map { announcement }
+        }
 
     // A plain observer: PresenceService owns the poll, and BacklogiumApp's foreground observer owns
     // the one-off re-check, so collecting liveStatus here never starts or extends anything — Home

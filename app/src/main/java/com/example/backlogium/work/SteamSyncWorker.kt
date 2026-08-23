@@ -125,12 +125,13 @@ internal data class RecencyPollWrite(
  * a gap at all.
  *
  * @param isBaseline whether this poll is establishing the library rather than observing a change to
- *   one — meaning it found no stored library at all. Deliberately not "is this the first sync":
- *   an upgrade and a restore both leave a known library behind, and neither may present the games
- *   it already contains as newly acquired while still stamping genuine new ones.
+ *   one — meaning it found no stored library and no completed sync exists yet. Deliberately not
+ *   simply "is this the first sync": an upgrade and a restore both leave a known library behind, and
+ *   neither may present the games it already contains as newly acquired while still stamping genuine
+ *   new ones.
  * @param observedPlayAt when the play happened, as the caller knows it — Steam's newly reported
- *   last-played time for a periodic poll, falling back to the caller's own observation instant
- *   where the source reported none. Never derived here: see [LibraryRecency.evaluateReturn].
+ *   last-played time for a periodic poll, or an event time supplied by a post-play caller. A caller
+ *   with no event-time estimate passes null. Never derived here: see [LibraryRecency.evaluateReturn].
  */
 internal fun recencyPollWrite(
     isBaseline: Boolean,
@@ -160,6 +161,8 @@ internal fun recencyPollWrite(
         )
     },
 )
+internal fun isLibraryBaseline(existingGameCount: Int, lastSyncAt: Long): Boolean =
+    existingGameCount == 0 && lastSyncAt <= 0L
 
 /**
  * Runs one Steam poll: fetch -> diff into sessions -> persist -> recompute gamification.
@@ -387,18 +390,19 @@ class SteamSyncWorker @AssistedInject constructor(
         val existingGames = gameDao.getAll().associateBy { it.appId }
         val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
         val lastSyncAt = profileBefore?.lastSyncAt ?: 0L
-        // The recency baseline is "the library was not known before this poll", which is a
-        // different question from the session differ's baseline ("is there a playtime baseline to
-        // diff against", keyed on `lastSyncAt`) and must not be conflated with it.
+        // The recency baseline is "tracking has not begun", which is a different question from the
+        // session differ's playtime baseline (also keyed on `lastSyncAt`).
         //
-        // Keyed on the stored library because that is what the rule is actually for: never present
-        // games the player already owned as newly acquired. It gets two cases right that the
-        // sync-timestamp reading does not. An upgrade of an existing library is not a baseline, and
-        // needs no special case — every app id it sees is already stored, so nothing is stamped
-        // anyway. And the first poll after a restore is not a baseline either: the restored games
-        // are known, so a game Steam reports that the backup did not contain is a genuine
-        // acquisition and is announced as one, even though `lastSyncAt` is still zero.
-        val isLibraryBaseline = existingGames.isEmpty()
+        // An empty stored library is a baseline only when no successful sync has committed yet.
+        // Once an empty poll commits, `lastSyncAt` makes that known-empty result durable and a later
+        // acquisition is genuine. A non-empty stored library is always known, keeping upgrade and
+        // restore behavior unchanged: existing app ids are never arrivals, while an app id missing
+        // from a restore is a genuine acquisition and is announced even when restored `lastSyncAt`
+        // is zero.
+        val isLibraryBaseline = isLibraryBaseline(
+            existingGameCount = existingGames.size,
+            lastSyncAt = lastSyncAt,
+        )
         // Read before `applySessionActions`, deliberately. Both of this poll's own writes — the
         // session it is about to open or extend, and the `lastPlayedAt` it is about to overwrite —
         // destroy the only evidence that the play it observed followed a dormant period. Reading
@@ -427,10 +431,9 @@ class SteamSyncWorker @AssistedInject constructor(
                 storedLastPlayedAt = existingGames[dto.appid]?.lastPlayedAt,
                 mostRecentSessionEndAt = sessionInstantBefore[dto.appid],
                 reportedPlayAt = reportedPlayAt,
-                // A periodic poll's best estimate of when the play happened is Steam's own
-                // timestamp. Where Steam reports none it has nothing better than the instant it
-                // ran, which is the documented degraded path rather than the event time.
-                observedPlayAt = reportedPlayAt ?: now,
+                // This is a periodic poll. If Steam omitted its event timestamp, do not turn the
+                // observation instant into a fabricated return or a badge-window start.
+                observedPlayAt = reportedPlayAt,
                 now = now,
             )
             if (recency.firstSeenAt != null) arrivedAppIds += dto.appid

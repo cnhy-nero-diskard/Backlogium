@@ -11,11 +11,11 @@
 - [x] 2.2 Give the commit path an explicit `observedPlayAt` parameter and make it the only source of "when the play happened" — the path must never call a clock for this, or no caller can supply a better value than the commit time
 - [x] 2.2a For each game with a play increase, compute `previousPlayAt = max(mostRecentSessionEnd, storedLastPlayedAt)` and `observedPlayAt = min(newLastPlayedAtFromSteam, now)`; stamp `returnedToPlayAt = observedPlayAt` when `observedPlayAt - previousPlayAt >= 30 days`; leave it untouched otherwise
 - [x] 2.2b Clamp `observedPlayAt` to the present, so a Steam clock running ahead of the device cannot record a return in the future
-- [x] 2.2c Where Steam reports no new last-played time, fall back to the observation instant the caller supplies; where the caller has none either, record no return
+- [x] 2.2c Where Steam reports no new last-played time, use only an event-time estimate the caller supplies; a periodic poll passes null when Steam supplies none, and no return is recorded without an event time
 - [x] 2.3 Where neither source has a value for `previousPlayAt`, record no return rather than one against an assumed zero
 - [x] 2.4 Write `lastPlayedAt` on every poll as a Steam-owned field, alongside name, icon, and playtime — after 2.2 has read the old value
 - [x] 2.5 Stamp `firstSeenAt` only when a non-baseline poll inserts an app id not already in `games`
-- [x] 2.6 Ensure a baseline poll stamps `firstSeenAt` for nothing and records no returns, while still storing `lastPlayedAt`
+- [x] 2.6 Ensure a baseline poll means no stored games and no completed sync (`lastSyncAt`), stamps `firstSeenAt` for nothing, and records no returns while still storing `lastPlayedAt`
 - [x] 2.7 Ensure a poll never overwrites an existing `firstSeenAt`
 - [x] 2.8 Persist all three fields inside the poll's existing atomic commit — no separate write, so a return can never be stored without the playtime that justified it
 - [x] 2.9 Record the set of app ids a poll stamped as arrivals, and pass it to the acquisition announcement without a second query
@@ -33,7 +33,7 @@
 
 ## 4. Badge presentation
 
-- [x] 4.1 Add three Tabler glyphs and a state→glyph mapping in one place: sparkle for newly added, play-triangle for newly played, rotate arrow for returned
+- [x] 4.1 Add three Tabler glyphs and a state→glyph mapping in one place: sparkle for newly added, history glyph for newly played, rotate arrow for returned
 - [x] 4.2 Render the badge in `LibraryGameCell` at `Alignment.TopEnd`, since `TileSelectionIndicator` holds `TopStart`
 - [x] 4.3 Render the badge on `LibraryGameRow`, checking it does not collide with the existing HLTB status badge on the game icon
 - [x] 4.4 Render the badge at every density including `COMPACT_GRID`, without joining the `GameListField` ladder — recency is a live signal like currently-playing, not detail
@@ -74,6 +74,7 @@
 - [x] 8.2 Unit-test precedence: bought-and-played-today is newly played; long-owned-first-play is newly played, not returned
 - [x] 8.3 Unit-test that newly played fires once per game and never again
 - [x] 8.4 Unit-test expiry: a state present at day 6 is absent at day 8, with no write in between
+- [x] 8.4a Unit-test the collector-scoped expiry ticker: it emits immediately and again at the exact badge deadline
 - [x] 8.5 Unit-test the dormancy evaluation at poll time: `previousPlayAt` taken from the session when it is later, from the stored last-played time when it is later, and no return recorded when neither exists
 - [x] 8.6 Unit-test the ordering hazard directly — a poll that advances `lastPlayedAt` past the dormancy threshold still records the return, proving the old value was read before the overwrite
 - [x] 8.7 Unit-test that a poll with a play increase inside the dormancy threshold records no return and leaves an existing `returnedToPlayAt` untouched
@@ -82,6 +83,7 @@
 - [x] 8.7c Unit-test that a return whose play predates the poll by more than the badge window is recorded and yields no state
 - [x] 8.7d Unit-test that `observedPlayAt` is clamped to the present when Steam reports a future time
 - [x] 8.7e Unit-test that the commit path derives no time of its own — passing two different `observedPlayAt` values with identical stored state produces two different `returnedToPlayAt` values
+- [x] 8.7f Unit-test that a periodic poll with no Steam event timestamp passes no observation time and records no return
 - [x] 8.8 Unit-test that a baseline poll over a large library stamps zero arrivals, records zero returns, and stores last-played times
 - [x] 8.9 Unit-test that a second poll observing a new app id stamps exactly that one
 - [x] 8.10 Unit-test that a poll never overwrites an existing `firstSeenAt`
@@ -94,7 +96,7 @@
 
 ## 9. Verification
 
-- [ ] 9.1 `./gradlew :app:testDebugUnitTest :gamification:test`
+- [x] 9.1 `./gradlew :app:testDebugUnitTest :gamification:test --offline --no-daemon`
 - [x] 9.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
 - [ ] 9.3 On device: upgrade an existing install and confirm no badges appear, no banner appears, and last-played dates populate after one sync
 - [ ] 9.4 On device: confirm a game with playtime but no Steam date reads "Unknown", and a zero-playtime game reads "Never played"
@@ -104,28 +106,14 @@
 
 ## Verification status
 
-Recorded here because this change was applied in an environment that cannot reach
-`dl.google.com`, so the Android Gradle Plugin does not resolve and no Gradle task can run.
+Verified on 2026-08-23 with the local Android toolchain:
 
-Verified:
+- `.gradlew.bat :app:testDebugUnitTest :gamification:test --offline --no-daemon` passed.
+- Focused recency, expiry-ticker, and repository join tests passed.
+- `.gradlew.bat :app:lintDebug --offline --no-daemon` passed; no new lint findings were introduced.
+- 9.2's repository-boundary grep remains clean apart from the two documented pre-existing breaches.
+- The existing standalone Kotlin/JUnit checks remain passing.
 
-- 9.2's repository-boundary grep reports only the two pre-existing breaches CLAUDE.md already
-  documents (`HomeViewModel`'s `Collection`/`CollectionMember`, plus `SettingsViewModel`'s
-  `SteamAssetDownloadState` from `fix: reconcile offline steam assets`). The haptics-authority grep
-  is silent.
-- Every source file under `app/src/main`, `app/src/test`, `app/src/androidTest`, and
-  `gamification/src/main` parses cleanly under kotlinc 2.2.10.
-- 51 of the new unit tests were compiled and executed against a standalone Kotlin compiler and
-  JUnit: `LibraryRecencyTest` (23), `SteamSyncRecencyTest` (15, including the `rtime_last_played`
-  payload cases against the real serializer), `AcquiredGamesAnnouncementTest` (9), and
-  `GameSummaryLastPlayedTest` (4). All pass.
+Deferred:
 
-Deferred to a machine with the Android toolchain:
-
-- 9.1, and the Room/Robolectric tests that need it: `WriteIntegrityDaoTest`'s three new cases,
-  `BackupMergeEngineTest`'s four new cases plus the restore-timeline case, `BackupFileRoundTripTest`,
-  and `MigrationTest.v20ToV21_*`.
-- `app/schemas/com.example.backlogium.data.local.BacklogiumDatabase/21.json`. Room's processor emits
-  it during a build; it could not be hand-written, since its `identityHash` is computed by the
-  processor. `MigrationTest` will fail until one build has generated it.
-- 9.3 through 9.7, which are on-device by definition.
+- 4.8 and 9.3 through 9.7, which require a connected device and visual/manual verification.

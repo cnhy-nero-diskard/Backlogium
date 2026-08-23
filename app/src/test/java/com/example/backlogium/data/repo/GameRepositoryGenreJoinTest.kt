@@ -18,7 +18,6 @@ import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.StoreAppDetails
-import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -74,7 +73,6 @@ class GameRepositoryGenreJoinTest {
             ),
             steamApi = OfflineSteamApi,
             sessionRepository = SessionRepository(db.sessionDao()),
-            currentDate = CurrentDateProvider(OfflineTime),
             time = OfflineTime,
         )
     }

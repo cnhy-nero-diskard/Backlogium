@@ -44,7 +44,7 @@
 all defaulting to null in migration 18→19. The third exists for the reason set out in decision 3:
 dormancy is knowable only at the instant it ends, and cannot be recovered afterwards.
 
-Nullability is the whole baselining mechanism, not a convenience:
+Per-game nullability is part of the baselining mechanism, but an empty library also needs the durable sync marker:
 
 - **`firstSeenAt = null`** means the game was present when the app started keeping track. It is not
   new, was never new, and can never become new. Migration sets it null for every existing row, and
@@ -52,10 +52,10 @@ Nullability is the whole baselining mechanism, not a convenience:
 - **`firstSeenAt = <timestamp>`** is written only by a *non-baseline* poll encountering an app id
   not already in `games`. That is exactly "a game arrived while we were watching."
 
-The alternative — stamping every game with the migration time and adding a separate
-`libraryBaselinedAt` marker to suppress badges — needs two facts to stay consistent forever, and
-gets the wrong answer the moment someone reads `firstSeenAt` without knowing the marker exists. One
-nullable column cannot be misread.
+A library with no rows is a special case: `lastSyncAt <= 0` means no successful poll has established
+that the empty result is known, while a positive `lastSyncAt` means a later acquisition is genuinely
+new. `lastSyncAt` is already the durable sync status field, so this does not add another marker or
+change the restore/upgrade rule: any restored game row makes the library non-baseline immediately.
 
 `lastPlayedAt` is Steam's `rtime_last_played`, converted from epoch seconds to the epoch
 milliseconds the rest of the schema uses. Null means Steam reported no value — which it does for
@@ -159,12 +159,12 @@ out ten days afterwards, `returnedToPlayAt` is ten days old and the badge never 
 returned; the app simply missed the window in which saying so was interesting. Announcing it late
 would be worse than staying quiet.
 
-**Where Steam reports no new last-played time, the caller supplies the observation instant it does
-have.** The committing path takes `observedPlayAt` as an explicit argument rather than reading a
-clock, so each caller passes the best estimate available to it: a periodic poll passes Steam's
-timestamp, and the post-play targeted fetch passes the session end that triggered it — which is
-seconds to minutes old and therefore *more* accurate than a coarse Steam value would be. If a caller
-has neither, it records no return; the failure mode stays a missing badge rather than a wrong one.
+**Where Steam reports no new last-played time, the caller supplies an event-time estimate or null.**
+The committing path takes `observedPlayAt` as an explicit argument rather than reading a clock. A
+periodic poll passes Steam's timestamp when present and null otherwise; a post-play targeted fetch
+can pass the session end that triggered it — seconds to minutes old and therefore *more* accurate
+than a coarse Steam value would be. If a caller has neither, it records no return; the failure mode
+stays a missing badge rather than a wrong one.
 
 Making `observedPlayAt` a parameter is what keeps the two paths honest. A commit path that reads
 `System.currentTimeMillis()` internally cannot be given a correct event time by any caller, however
@@ -207,13 +207,14 @@ accumulation also bounds the stored state to one batch.
 reads concretely and a sale reads as a number. Its action opens the Library; it does not attempt a
 filtered view, since this change deliberately adds no query axis.
 
-**Expiry is computed, not scheduled.** No worker, no alarm. The banner is absent because the
-timestamp is old, which means it is correct after any period of the app being closed.
+**Expiry is computed, not persisted or OS-scheduled.** No worker or alarm retires the banner. While
+a collector is active, a lightweight coroutine delay re-emits at the exact deadline; when the app is
+closed, timestamp arithmetic still makes it absent on the next collection.
 
 ### 5. The badge is a corner glyph, and it is the same glyph everywhere
 
 An icon in the card's top-left corner over the artwork, with the state's name in
-`contentDescription`. Three Tabler glyphs: a sparkle for newly added, a play-triangle for newly
+`contentDescription`. Three Tabler glyphs: a sparkle for newly added, a history glyph for newly
 played, a rotate arrow for returned.
 
 Icon-only is what makes the badge survive `COMPACT_GRID`, where a three-column tile has one

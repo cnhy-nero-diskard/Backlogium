@@ -25,6 +25,17 @@ class SteamSyncRecencyTest {
 
     private fun daysAgo(count: Long) = now - count * day
 
+    private fun acquisitionWrite(isBaseline: Boolean, at: Long) = recencyPollWrite(
+        isBaseline = isBaseline,
+        isNewToLibrary = true,
+        hadPlayIncrease = false,
+        storedLastPlayedAt = null,
+        mostRecentSessionEndAt = null,
+        reportedPlayAt = null,
+        observedPlayAt = null,
+        now = at,
+    )
+
     @Test
     fun `a new app id on a non-baseline poll is stamped as an arrival`() {
         val write = recencyPollWrite(
@@ -158,7 +169,7 @@ class SteamSyncRecencyTest {
     }
 
     @Test
-    fun `where Steam reports no last played time the caller's observation instant is used`() {
+    fun `where a periodic poll has no event time it records no return`() {
         val write = recencyPollWrite(
             isBaseline = false,
             isNewToLibrary = false,
@@ -166,11 +177,33 @@ class SteamSyncRecencyTest {
             storedLastPlayedAt = daysAgo(90),
             mostRecentSessionEndAt = null,
             reportedPlayAt = null,
-            observedPlayAt = now,
+            observedPlayAt = null,
             now = now,
         )
         assertNull(write.lastPlayedAt)
-        assertEquals(now, write.returnedToPlayAt)
+        assertNull(write.returnedToPlayAt)
+    }
+
+    @Test
+    fun `an explicit caller event time remains the return timestamp when Steam omits one`() {
+        val playAt = daysAgo(1)
+        val write = recencyPollWrite(
+            isBaseline = false,
+            isNewToLibrary = false,
+            hadPlayIncrease = true,
+            storedLastPlayedAt = daysAgo(90),
+            mostRecentSessionEndAt = null,
+            reportedPlayAt = null,
+            observedPlayAt = playAt,
+            now = now,
+        )
+        assertEquals(playAt, write.returnedToPlayAt)
+    }
+
+    @Test
+    fun `an empty library after a completed sync is no longer treated as a baseline`() {
+        assertNull(acquisitionWrite(isLibraryBaseline(0, 0L), now).firstSeenAt)
+        assertEquals(now, acquisitionWrite(isLibraryBaseline(0, now), now).firstSeenAt)
     }
 
     @Test

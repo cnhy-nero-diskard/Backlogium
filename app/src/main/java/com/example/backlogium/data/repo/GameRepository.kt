@@ -6,12 +6,14 @@ import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamIconMapper
-import com.example.backlogium.domain.CurrentDateProvider
+import com.example.backlogium.domain.exactExpiryTicks
 import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.LibraryRecency
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -89,7 +91,6 @@ class GameRepository @Inject constructor(
     private val gameGenreRepository: GameGenreRepository,
     private val steamApi: SteamApi,
     private val sessionRepository: SessionRepository,
-    private val currentDate: CurrentDateProvider,
     private val time: TimeProvider,
 ) {
     val library: Flow<List<LibraryGame>> = gameDao.observeLibrary().withHltb()
@@ -131,10 +132,9 @@ class GameRepository @Inject constructor(
      * Joins each game with its cached HLTB row and its derived recency state, and maps them into
      * [LibraryGame].
      *
-     * The date is an input rather than a call inside the lambda, for the same reason Home threads
-     * it through: a recency state expires by arithmetic and nothing writes to retire it, so a
-     * combine that only re-runs on data changes would keep presenting a badge that stopped being
-     * true at midnight. One suspended delay per day, no alarm — see [CurrentDateProvider].
+     * A recency state expires by arithmetic and nothing writes to retire it, so the join watches the
+     * nearest recorded deadline with one collector-scoped delay. This invalidates at the actual
+     * expiry rather than waiting for local midnight; there is no worker, alarm, or per-row polling.
      *
      * The first-session times arrive as one grouped query for the whole library, so deriving a
      * state per row costs no query per row.
@@ -145,25 +145,41 @@ class GameRepository @Inject constructor(
             .combine(sessionRepository.firstSessionAtByGame) { (games, hltb, genres), firstSessions ->
                 RecencyJoin(games, hltb, genres, firstSessions)
             }
-            .combine(currentDate.currentDate) { join, _ ->
-                val rowByAppId = join.hltb.associateBy(HltbData::appId)
-                val now = time.nowMillis()
-                join.games.map { game ->
-                    game.toDomain(
-                        hltb = rowByAppId[game.appId],
-                        genres = join.genres[game.appId].orEmpty(),
-                        recencyState = LibraryRecency.derive(
-                            firstSeenAt = game.firstSeenAt,
-                            returnedToPlayAt = game.returnedToPlayAt,
-                            playtimeForever = game.playtimeForever,
-                            firstSessionAt = join.firstSessionAtByGame[game.appId],
-                            now = now,
-                        ),
-                    )
+            .flatMapLatest { join ->
+                exactExpiryTicks(
+                    nowMillis = time::nowMillis,
+                    nextExpiryAt = { now -> nextRecencyExpiryAt(join, now) },
+                ).map { now ->
+                    val rowByAppId = join.hltb.associateBy(HltbData::appId)
+                    join.games.map { game ->
+                        game.toDomain(
+                            hltb = rowByAppId[game.appId],
+                            genres = join.genres[game.appId].orEmpty(),
+                            recencyState = LibraryRecency.derive(
+                                firstSeenAt = game.firstSeenAt,
+                                returnedToPlayAt = game.returnedToPlayAt,
+                                playtimeForever = game.playtimeForever,
+                                firstSessionAt = join.firstSessionAtByGame[game.appId],
+                                now = now,
+                            ),
+                        )
+                    }
                 }
             }
 
     /** The four library-wide inputs one pass of the join needs, gathered before any per-row work. */
+    private fun nextRecencyExpiryAt(join: RecencyJoin, now: Long): Long? = join.games.asSequence()
+        .flatMap { game ->
+            sequenceOf(
+                join.firstSessionAtByGame[game.appId],
+                game.returnedToPlayAt,
+                game.firstSeenAt.takeIf { game.playtimeForever == 0 },
+            ).filterNotNull()
+        }
+        .map { it + LibraryRecency.BADGE_WINDOW_MILLIS }
+        .filter { it > now }
+        .minOrNull()
+
     private data class RecencyJoin(
         val games: List<Game>,
         val hltb: List<HltbData>,
