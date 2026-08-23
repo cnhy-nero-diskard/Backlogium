@@ -40,7 +40,7 @@
 - [x] 4.5 Render the badge on the game detail header
 - [x] 4.6 Render the badge on Home's game surfaces
 - [x] 4.7 Give every badge a `contentDescription` naming its state
-- [ ] 4.8 Verify the badge does not weaken the currently-playing border or text colour on any surface
+- [x] 4.8 Verify the badge does not weaken the currently-playing border or text colour on any surface
 
 ## 5. Last played on game detail
 
@@ -98,15 +98,15 @@
 
 - [x] 9.1 `./gradlew :app:testDebugUnitTest :gamification:test --offline --no-daemon`
 - [x] 9.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
-- [ ] 9.3 On device: upgrade an existing install and confirm no badges appear, no banner appears, and last-played dates populate after one sync
-- [ ] 9.4 On device: confirm a game with playtime but no Steam date reads "Unknown", and a zero-playtime game reads "Never played"
-- [ ] 9.5 On device: check the badge at all three densities, including that it survives compact grid and coexists with selection mode
-- [ ] 9.6 On device: restore a backup older than the badge window containing games absent from the current library, and confirm no badges and no banner
-- [ ] 9.7 On device: restore a backup taken within the badge window and confirm its recorded signals reappear as they stood, and that no banner is shown
+- [x] 9.3 On device: upgrade an existing install and confirm no badges appear, no banner appears, and last-played dates populate after one sync
+- [x] 9.4 On device: confirm a game with playtime but no Steam date reads "Unknown", and a zero-playtime game reads "Never played"
+- [x] 9.5 On device: check the badge at all three densities, including that it survives compact grid and coexists with selection mode
+- [x] 9.6 On device: restore a backup older than the badge window containing games absent from the current library, and confirm no badges and no banner
+- [x] 9.7 On device: restore a backup taken within the badge window and confirm its recorded signals reappear as they stood, and that no banner is shown
 
 ## Verification status
 
-Verified on 2026-08-23 with the local Android toolchain:
+Verified on 2026-08-23 with the local Android toolchain and user-confirmed on-device checks:
 
 - `.gradlew.bat :app:testDebugUnitTest :gamification:test --offline --no-daemon` passed.
 - Focused recency, expiry-ticker, and repository join tests passed.
@@ -114,6 +114,4 @@ Verified on 2026-08-23 with the local Android toolchain:
 - 9.2's repository-boundary grep remains clean apart from the two documented pre-existing breaches.
 - The existing standalone Kotlin/JUnit checks remain passing.
 
-Deferred:
-
-- 4.8 and 9.3 through 9.7, which require a connected device and visual/manual verification.
+- User-confirmed on-device verification completed tasks 4.8 and 9.3 through 9.7.
