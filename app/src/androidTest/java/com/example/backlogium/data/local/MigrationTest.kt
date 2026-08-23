@@ -426,6 +426,54 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun v20ToV21_addsNullableRecencyColumnsAndLeavesExistingDataUntouched() {
+        val databaseName = "migration-v20-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 20)
+        try {
+            database.execSQL(
+                "INSERT INTO games " +
+                    "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+                    "isGoal, targetMinutes, lastSyncedAt, backfillMinutes) VALUES " +
+                    "(440, 'Game', 'icon-hash', 100, 0, 100, 1, 240, 1700000000000, 55)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                21,
+                true,
+                BacklogiumDatabase.MIGRATION_20_21,
+            )
+            try {
+                // All three nullable, so an existing library reads as "was already here" rather
+                // than as newly acquired.
+                migrated.query(
+                    "SELECT appId, name, isGoal, targetMinutes, backfillMinutes, " +
+                        "firstSeenAt, lastPlayedAt, returnedToPlayAt FROM games",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(440L, cursor.getLong(0))
+                    assertEquals("Game", cursor.getString(1))
+                    assertEquals(1, cursor.getInt(2))
+                    assertEquals(240, cursor.getInt(3))
+                    assertEquals(55, cursor.getInt(4))
+                    assertTrue(cursor.isNull(5))
+                    assertTrue(cursor.isNull(6))
+                    assertTrue(cursor.isNull(7))
+                    assertFalse(cursor.moveToNext())
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private data class ColumnInfo(val name: String, val type: String, val notNull: Boolean, val pk: Int)
 
     private fun assertTableInfo(database: SupportSQLiteDatabase, table: String, expected: List<ColumnInfo>) {

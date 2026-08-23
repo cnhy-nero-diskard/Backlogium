@@ -8,6 +8,7 @@ import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameSessionCounts
+import com.example.backlogium.data.local.dao.GameSessionInstant
 import com.example.backlogium.data.local.dao.GameTrackedMinutes
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -23,12 +24,15 @@ import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.GameRecencyState
+import com.example.backlogium.domain.LibraryRecency
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -111,6 +115,134 @@ class BackupMergeEngineTest {
         collections = collections,
         collectionMembers = collectionMembers,
     )
+
+    @Test
+    fun restore_insertingUnknownGames_recordsNoArrivalAndNoReturn() = runTest {
+        // The sharpest edge in the recency work: the natural implementation of "insert a game that
+        // isn't there" is exactly what must not stamp an arrival. A restore of many games is not
+        // many acquisitions.
+        val harness = newEngine(nowMillis = 1_700_000_000_000L)
+        val file = baseFile(
+            games = listOf(
+                BackupGame(appId = 1L, name = "Game 1", isGoal = false, backfillMinutes = 0),
+                BackupGame(appId = 2L, name = "Game 2", isGoal = false, backfillMinutes = 0),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        harness.gameDao.getAll().forEach { game ->
+            assertNull(game.firstSeenAt)
+            assertNull(game.lastPlayedAt)
+            assertNull(game.returnedToPlayAt)
+        }
+    }
+
+    @Test
+    fun restore_carriesTheRecencyTimesTheBackupRecorded() = runTest {
+        val arrivedAt = 1_699_000_000_000L
+        val playedAt = 1_699_500_000_000L
+        val returnedAt = 1_699_400_000_000L
+        val harness = newEngine(nowMillis = 1_700_000_000_000L)
+        val file = baseFile(
+            games = listOf(
+                BackupGame(
+                    appId = 1L,
+                    name = "Game 1",
+                    isGoal = false,
+                    backfillMinutes = 0,
+                    firstSeenAt = arrivedAt.toIso8601(),
+                    lastPlayedAt = playedAt.toIso8601(),
+                    returnedToPlayAt = returnedAt.toIso8601(),
+                ),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        val restored = harness.gameDao.getById(1L)!!
+        assertEquals(arrivedAt, restored.firstSeenAt)
+        assertEquals(playedAt, restored.lastPlayedAt)
+        assertEquals(returnedAt, restored.returnedToPlayAt)
+    }
+
+    @Test
+    fun restore_backupPredatingTheFields_importsWithThemAbsent() = runTest {
+        val harness = newEngine(
+            games = mutableMapOf(1L to testGame(1L)),
+            nowMillis = 1_700_000_000_000L,
+        )
+        // No recency fields at all, as an older file has none.
+        val file = baseFile(
+            games = listOf(BackupGame(appId = 1L, name = "Game 1", isGoal = true, backfillMinutes = 30)),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        val merged = harness.gameDao.getById(1L)!!
+        assertNull(merged.firstSeenAt)
+        assertNull(merged.returnedToPlayAt)
+        // The rest of the import still applied, so the absence is genuinely additive.
+        assertEquals(30, merged.backfillMinutes)
+    }
+
+    @Test
+    fun restore_absentRecencyFieldsDoNotEraseLocallyObservedOnes() = runTest {
+        // An older backup must not delete an arrival this device observed after it was taken:
+        // the import writes what the backup carried and nothing else.
+        val locallyObserved = 1_699_900_000_000L
+        val harness = newEngine(
+            games = mutableMapOf(1L to testGame(1L).copy(firstSeenAt = locallyObserved)),
+            nowMillis = 1_700_000_000_000L,
+        )
+        val file = baseFile(
+            games = listOf(BackupGame(appId = 1L, name = "Game 1", isGoal = false, backfillMinutes = 0)),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        assertEquals(locallyObserved, harness.gameDao.getById(1L)!!.firstSeenAt)
+    }
+
+    @Test
+    fun restore_isInterpretedOnItsOwnTimeline() = runTest {
+        // A backup is a snapshot of a timeline, and restoring it reproduces that timeline. The
+        // windows do the discriminating work that a blanket "no badges after a restore" rule would
+        // have done clumsily — and which was, in any case, unimplementable: nothing in the stored
+        // data distinguishes "restored" from "observed".
+        val now = 1_700_000_000_000L
+        val day = 24L * 60 * 60 * 1_000
+
+        suspend fun restoredStateFor(arrivedAt: Long): GameRecencyState? {
+            val harness = newEngine(nowMillis = now)
+            harness.engine.merge(
+                baseFile(
+                    games = listOf(
+                        BackupGame(
+                            appId = 1L, name = "Game 1", isGoal = false, backfillMinutes = 0,
+                            firstSeenAt = arrivedAt.toIso8601(),
+                        ),
+                    ),
+                ),
+                RuleConfig(),
+            )
+            val restored = harness.gameDao.getById(1L)!!
+            return LibraryRecency.derive(
+                firstSeenAt = restored.firstSeenAt,
+                returnedToPlayAt = restored.returnedToPlayAt,
+                playtimeForever = restored.playtimeForever,
+                firstSessionAt = null,
+                now = now,
+            )
+        }
+
+        // Older than the window: already expired, by arithmetic, with no suppression rule.
+        assertNull(restoredStateFor(now - 90 * day))
+        // Inside it: badged, and correctly so — the game *was* acquired yesterday. Restoring a
+        // recent backup onto a new device reproducing badges the user already saw is continuity,
+        // not duplication.
+        assertEquals(GameRecencyState.NEWLY_ADDED, restoredStateFor(now - day))
+    }
 
     @Test
     fun overlappingSession_replacesInPlace_noDuplicate() = runTest {
@@ -601,6 +733,8 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
         playtime2Weeks: Int,
         lastPlaytime: Int,
         lastSyncedAt: Long,
+        firstSeenAt: Long?,
+        lastPlayedAt: Long?,
     ) {
         if (appId !in store) {
             store[appId] = Game(
@@ -611,6 +745,8 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
                 playtime2Weeks = playtime2Weeks,
                 lastPlaytime = lastPlaytime,
                 lastSyncedAt = lastSyncedAt,
+                firstSeenAt = firstSeenAt,
+                lastPlayedAt = lastPlayedAt,
             )
         }
     }
@@ -623,6 +759,8 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
         playtime2Weeks: Int,
         lastPlaytime: Int,
         lastSyncedAt: Long,
+        lastPlayedAt: Long?,
+        returnedToPlayAt: Long?,
     ) {
         store[appId]?.let {
             store[appId] = it.copy(
@@ -632,6 +770,9 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
                 playtime2Weeks = playtime2Weeks,
                 lastPlaytime = lastPlaytime,
                 lastSyncedAt = lastSyncedAt,
+                lastPlayedAt = lastPlayedAt,
+                // Mirrors the real query's COALESCE: a null verdict never erases a stored return.
+                returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt,
             )
         }
     }
@@ -654,6 +795,23 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
     override suspend fun deleteAll() = store.clear()
     override suspend fun setBackfillMinutes(appId: Long, minutes: Int) {
         store[appId]?.let { store[appId] = it.copy(backfillMinutes = minutes) }
+    }
+
+    override suspend fun setRecencyFromBackup(
+        appId: Long,
+        firstSeenAt: Long?,
+        lastPlayedAt: Long?,
+        returnedToPlayAt: Long?,
+    ) {
+        // Mirrors the real query's COALESCE: a value the backup carries is restored, an absence
+        // leaves the stored value alone.
+        store[appId]?.let {
+            store[appId] = it.copy(
+                firstSeenAt = firstSeenAt ?: it.firstSeenAt,
+                lastPlayedAt = lastPlayedAt ?: it.lastPlayedAt,
+                returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt,
+            )
+        }
     }
 }
 
@@ -712,6 +870,14 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     )
 
     override fun observeSessionCountsByGame(): Flow<List<GameSessionCounts>> = flowOf(emptyList())
+
+    override fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>> = flowOf(
+        store.groupBy { it.appId }.map { (appId, s) -> GameSessionInstant(appId, s.minOf { it.startAt }) },
+    )
+
+    override suspend fun latestSessionInstantByGame(): List<GameSessionInstant> =
+        store.groupBy { it.appId }
+            .map { (appId, s) -> GameSessionInstant(appId, s.maxOf { it.endAt ?: it.startAt }) }
 }
 
 private class FakeDailyProgressDao(private val store: MutableMap<String, DailyProgress>) : DailyProgressDao {

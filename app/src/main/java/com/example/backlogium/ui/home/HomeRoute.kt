@@ -15,6 +15,7 @@ fun HomeRoute(
     onAccentColorChanged: (Color?) -> Unit = {},
     onOpenCollection: (Long) -> Unit = {},
     onCreateCollection: () -> Unit = {},
+    onOpenLibrary: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -32,6 +33,24 @@ fun HomeRoute(
             StreakBrokenOverlay(
                 previousLength = broken.previousLength,
                 onDismiss = { viewModel.acknowledgeProgressEvent(broken) },
+            )
+        }
+
+        // Only when no streak break is being acknowledged. Both are top-anchored non-modal cards,
+        // and two stacked in the same place would overlap into something unreadable — an earned
+        // streak break is the more consequential of the two, so it holds the slot.
+        val acquired = state.acquiredGames
+        if (broken == null && acquired != null) {
+            AcquiredGamesBanner(
+                acquired = acquired,
+                onViewLibrary = {
+                    // Acting on the announcement retires it. Coming back to Home and being told
+                    // again about games you just went and looked at reads as a bug, and having
+                    // done the thing is a stronger acknowledgement than declining to.
+                    viewModel.dismissAcquiredGames()
+                    onOpenLibrary()
+                },
+                onDismiss = viewModel::dismissAcquiredGames,
             )
         }
     }

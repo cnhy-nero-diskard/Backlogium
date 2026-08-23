@@ -6,8 +6,14 @@ import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamIconMapper
+import com.example.backlogium.domain.exactExpiryTicks
+import com.example.backlogium.domain.GameRecencyState
+import com.example.backlogium.domain.LibraryRecency
+import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -65,6 +71,16 @@ data class LibraryGame(
     val isGoal: Boolean = false,
     /** Ordered Steam Store genres; empty while unknown, unavailable, or malformed in cache. */
     val genres: List<GameGenre> = emptyList(),
+    /**
+     * The one recency signal this game currently carries, or null — already derived, so no
+     * consumer re-implements the precedence or the window (add-library-recency-signals).
+     */
+    val recencyState: GameRecencyState? = null,
+    /**
+     * Steam's last-played time in epoch millis, or null where Steam reported none. Null is
+     * "unknown", never "never played" — that is [playtimeForever] being 0.
+     */
+    val lastPlayedAt: Long? = null,
 )
 
 /** Read/write access to the game library, exposing domain models as observable [Flow]s. */
@@ -74,6 +90,8 @@ class GameRepository @Inject constructor(
     private val hltbRepository: HltbRepository,
     private val gameGenreRepository: GameGenreRepository,
     private val steamApi: SteamApi,
+    private val sessionRepository: SessionRepository,
+    private val time: TimeProvider,
 ) {
     val library: Flow<List<LibraryGame>> = gameDao.observeLibrary().withHltb()
     val goalGames: Flow<List<LibraryGame>> = gameDao.observeGoalGames().withHltb()
@@ -110,16 +128,71 @@ class GameRepository @Inject constructor(
     suspend fun untagGoal(appId: Long) =
         gameDao.setGoal(appId, isGoal = false, targetMinutes = null)
 
-    /** Joins each game with its cached HLTB row and maps both into [LibraryGame]. */
+    /**
+     * Joins each game with its cached HLTB row and its derived recency state, and maps them into
+     * [LibraryGame].
+     *
+     * A recency state expires by arithmetic and nothing writes to retire it, so the join watches the
+     * nearest recorded deadline with one collector-scoped delay. This invalidates at the actual
+     * expiry rather than waiting for local midnight; there is no worker, alarm, or per-row polling.
+     *
+     * The first-session times arrive as one grouped query for the whole library, so deriving a
+     * state per row costs no query per row.
+     */
     private fun Flow<List<Game>>.withHltb(): Flow<List<LibraryGame>> =
         combine(hltbRepository.allData) { games, hltb -> games to hltb }
-            .combine(gameGenreRepository.allGenres) { (games, hltb), genres ->
-            val rowByAppId = hltb.associateBy(HltbData::appId)
-            games.map { it.toDomain(rowByAppId[it.appId], genres[it.appId].orEmpty()) }
+            .combine(gameGenreRepository.allGenres) { (games, hltb), genres -> Triple(games, hltb, genres) }
+            .combine(sessionRepository.firstSessionAtByGame) { (games, hltb, genres), firstSessions ->
+                RecencyJoin(games, hltb, genres, firstSessions)
+            }
+            .flatMapLatest { join ->
+                exactExpiryTicks(
+                    nowMillis = time::nowMillis,
+                    nextExpiryAt = { now -> nextRecencyExpiryAt(join, now) },
+                ).map { now ->
+                    val rowByAppId = join.hltb.associateBy(HltbData::appId)
+                    join.games.map { game ->
+                        game.toDomain(
+                            hltb = rowByAppId[game.appId],
+                            genres = join.genres[game.appId].orEmpty(),
+                            recencyState = LibraryRecency.derive(
+                                firstSeenAt = game.firstSeenAt,
+                                returnedToPlayAt = game.returnedToPlayAt,
+                                playtimeForever = game.playtimeForever,
+                                firstSessionAt = join.firstSessionAtByGame[game.appId],
+                                now = now,
+                            ),
+                        )
+                    }
+                }
+            }
+
+    /** The four library-wide inputs one pass of the join needs, gathered before any per-row work. */
+    private fun nextRecencyExpiryAt(join: RecencyJoin, now: Long): Long? = join.games.asSequence()
+        .flatMap { game ->
+            sequenceOf(
+                join.firstSessionAtByGame[game.appId],
+                game.returnedToPlayAt,
+                game.firstSeenAt.takeIf { game.playtimeForever == 0 },
+            ).filterNotNull()
         }
+        .map { it + LibraryRecency.BADGE_WINDOW_MILLIS }
+        .filter { it > now }
+        .minOrNull()
+
+    private data class RecencyJoin(
+        val games: List<Game>,
+        val hltb: List<HltbData>,
+        val genres: Map<Long, List<GameGenre>>,
+        val firstSessionAtByGame: Map<Long, Long>,
+    )
 }
 
-private fun Game.toDomain(hltb: HltbData?, genres: List<GameGenre>) = LibraryGame(
+private fun Game.toDomain(
+    hltb: HltbData?,
+    genres: List<GameGenre>,
+    recencyState: GameRecencyState?,
+) = LibraryGame(
     appId = appId,
     name = name,
     iconUrl = iconUrl,
@@ -135,6 +208,8 @@ private fun Game.toDomain(hltb: HltbData?, genres: List<GameGenre>) = LibraryGam
     hltbMatchState = hltb?.matchStatus?.toDomain(),
     isGoal = isGoal,
     genres = genres,
+    recencyState = recencyState,
+    lastPlayedAt = lastPlayedAt,
 )
 
 /** Storage → domain status mapping; internal so [HltbRepository] can report batch outcomes. */

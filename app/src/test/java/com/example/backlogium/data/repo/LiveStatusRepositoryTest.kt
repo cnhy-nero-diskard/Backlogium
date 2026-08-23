@@ -1,6 +1,7 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
+import com.example.backlogium.data.local.AcquiredGamesAnnouncement
 import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.dao.GameDao
@@ -342,8 +343,8 @@ class LiveStatusRepositoryTest {
     private class FakeGameDao(private vararg val games: Game) : GameDao {
         override suspend fun upsertAll(games: List<Game>) = error("not used")
         override suspend fun upsert(game: Game) = error("not used")
-        override suspend fun insertSteamGameIfMissing(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long) = error("not used")
-        override suspend fun updateSteamFields(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long) = error("not used")
+        override suspend fun insertSteamGameIfMissing(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long, firstSeenAt: Long?, lastPlayedAt: Long?) = error("not used")
+        override suspend fun updateSteamFields(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long, lastPlayedAt: Long?, returnedToPlayAt: Long?) = error("not used")
         override fun observeLibrary(): Flow<List<Game>> = error("not used")
         override fun observeGoalGames(): Flow<List<Game>> = error("not used")
         override fun observeBacklog(): Flow<List<Game>> = error("not used")
@@ -355,6 +356,7 @@ class LiveStatusRepositoryTest {
         override suspend fun count(): Int = error("not used")
         override suspend fun deleteAll() = error("not used")
         override suspend fun setBackfillMinutes(appId: Long, minutes: Int) = error("not used")
+        override suspend fun setRecencyFromBackup(appId: Long, firstSeenAt: Long?, lastPlayedAt: Long?, returnedToPlayAt: Long?) = error("not used")
     }
 
     /** In-memory single-row profile, matching the real DAO's "id = 0 singleton" contract. */
@@ -463,6 +465,9 @@ class LiveStatusRepositoryTest {
         override suspend fun setNotificationPermissionRequested() = Unit
 
         override val liveMonitorEnabled: Flow<Boolean> = MutableStateFlow(false)
+        override val acquiredGames: Flow<AcquiredGamesAnnouncement> =
+            MutableStateFlow(AcquiredGamesAnnouncement())
+        override suspend fun setAcquiredGamesDismissed() = Unit
         override suspend fun setLiveMonitorEnabled(enabled: Boolean) = Unit
 
         override val ruleConfig: Flow<RuleConfig> = MutableStateFlow(RuleConfig())

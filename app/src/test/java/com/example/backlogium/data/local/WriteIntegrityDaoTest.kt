@@ -61,6 +61,126 @@ class WriteIntegrityDaoTest {
     }
 
     @Test
+    fun steamInsertStampsArrivalAndALaterPollNeverOverwritesIt() = runBlocking {
+        database.gameDao().insertSteamGameIfMissing(
+            appId = 440L,
+            name = "Game",
+            iconUrl = "icon",
+            playtimeForever = 0,
+            playtime2Weeks = 0,
+            lastPlaytime = 0,
+            lastSyncedAt = 1L,
+            firstSeenAt = 1_000L,
+            lastPlayedAt = null,
+        )
+
+        // A second poll runs the same insert-then-update pair. `INSERT OR IGNORE` cannot reach the
+        // existing row, and the update deliberately has no `firstSeenAt` column in its SET list —
+        // between them, "written once" is a property of the SQL rather than of the caller.
+        database.gameDao().insertSteamGameIfMissing(
+            appId = 440L,
+            name = "Game",
+            iconUrl = "icon",
+            playtimeForever = 60,
+            playtime2Weeks = 60,
+            lastPlaytime = 0,
+            lastSyncedAt = 2L,
+            firstSeenAt = 9_000L,
+            lastPlayedAt = 8_000L,
+        )
+        database.gameDao().updateSteamFields(
+            appId = 440L,
+            name = "Game",
+            iconUrl = "icon",
+            playtimeForever = 60,
+            playtime2Weeks = 60,
+            lastPlaytime = 60,
+            lastSyncedAt = 2L,
+            lastPlayedAt = 8_000L,
+            returnedToPlayAt = null,
+        )
+
+        val stored = database.gameDao().getById(440L)!!
+        assertEquals(1_000L, stored.firstSeenAt)
+        assertEquals(8_000L, stored.lastPlayedAt)
+        assertNull(stored.returnedToPlayAt)
+    }
+
+    @Test
+    fun steamUpdateRecordsAReturnAndNeverErasesOne() = runBlocking {
+        database.gameDao().upsert(
+            Game(
+                appId = 440L,
+                name = "Game",
+                iconUrl = "",
+                playtimeForever = 100,
+                playtime2Weeks = 0,
+                lastPlaytime = 100,
+            ),
+        )
+
+        database.gameDao().updateSteamFields(
+            appId = 440L,
+            name = "Game",
+            iconUrl = "",
+            playtimeForever = 160,
+            playtime2Weeks = 60,
+            lastPlaytime = 160,
+            lastSyncedAt = 2L,
+            lastPlayedAt = 5_000L,
+            returnedToPlayAt = 5_000L,
+        )
+        assertEquals(5_000L, database.gameDao().getById(440L)!!.returnedToPlayAt)
+
+        // A later poll with no return to record must leave the stored one alone: this is the
+        // COALESCE, and without it every subsequent poll would silently retire the badge.
+        database.gameDao().updateSteamFields(
+            appId = 440L,
+            name = "Game",
+            iconUrl = "",
+            playtimeForever = 200,
+            playtime2Weeks = 100,
+            lastPlaytime = 200,
+            lastSyncedAt = 3L,
+            lastPlayedAt = 6_000L,
+            returnedToPlayAt = null,
+        )
+        val stored = database.gameDao().getById(440L)!!
+        assertEquals(5_000L, stored.returnedToPlayAt)
+        assertEquals(6_000L, stored.lastPlayedAt)
+    }
+
+    @Test
+    fun steamUpdateClearsLastPlayedWhenSteamStopsReportingIt() = runBlocking {
+        database.gameDao().upsert(
+            Game(
+                appId = 440L,
+                name = "Game",
+                iconUrl = "",
+                playtimeForever = 100,
+                playtime2Weeks = 0,
+                lastPlaytime = 100,
+                lastPlayedAt = 5_000L,
+            ),
+        )
+
+        // `lastPlayedAt` is Steam-owned, so it mirrors the source including its absence — the
+        // detail row then reads "unknown", which is the honest answer.
+        database.gameDao().updateSteamFields(
+            appId = 440L,
+            name = "Game",
+            iconUrl = "",
+            playtimeForever = 100,
+            playtime2Weeks = 0,
+            lastPlaytime = 100,
+            lastSyncedAt = 3L,
+            lastPlayedAt = null,
+            returnedToPlayAt = null,
+        )
+        assertNull(database.gameDao().getById(440L)!!.lastPlayedAt)
+    }
+
+    @Test
     fun steamUpdatePreservesGoalTargetAndBackfillColumns() = runBlocking {
         database.gameDao().upsert(
             Game(
@@ -84,6 +204,8 @@ class WriteIntegrityDaoTest {
             playtime2Weeks = 1,
             lastPlaytime = 1,
             lastSyncedAt = 1L,
+            firstSeenAt = null,
+            lastPlayedAt = null,
         )
         database.gameDao().updateSteamFields(
             appId = 440L,
@@ -93,6 +215,8 @@ class WriteIntegrityDaoTest {
             playtime2Weeks = 20,
             lastPlaytime = 130,
             lastSyncedAt = 2L,
+            lastPlayedAt = null,
+            returnedToPlayAt = null,
         )
 
         val stored = database.gameDao().getById(440L)!!
@@ -351,6 +475,8 @@ class WriteIntegrityDaoTest {
                     playtime2Weeks = 0,
                     lastPlaytime = 130,
                     lastSyncedAt = 2L,
+                    lastPlayedAt = null,
+                    returnedToPlayAt = null,
                 )
                 error("injected failure between baseline and daily progress")
                 // The real commit credits daily progress after the baseline write. The injected
@@ -448,6 +574,8 @@ class WriteIntegrityDaoTest {
                 playtime2Weeks = 0,
                 lastPlaytime = diff.newLastPlaytime[440L]!!,
                 lastSyncedAt = pollAt,
+                lastPlayedAt = null,
+                returnedToPlayAt = null,
             )
             val delta = diff.playedDeltaByAppId[440L] ?: 0
             database.dailyProgressDao().ensureDate(DATE)

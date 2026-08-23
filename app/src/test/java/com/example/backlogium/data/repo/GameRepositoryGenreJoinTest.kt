@@ -72,6 +72,8 @@ class GameRepositoryGenreJoinTest {
                 time = OfflineTime,
             ),
             steamApi = OfflineSteamApi,
+            sessionRepository = SessionRepository(db.sessionDao()),
+            time = OfflineTime,
         )
     }
 

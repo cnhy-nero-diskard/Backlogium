@@ -53,6 +53,31 @@ object BackupValidator {
             if (game.appId <= 0L) {
                 problems += BackupValidationProblem("game", index, "malformed appId ${game.appId}")
             }
+            // Range, not just parseability, for the same class of reason the achievement unlock
+            // times get it: these three are compared against recency windows, and an
+            // impossible-but-parseable value would either badge a game forever (a future arrival
+            // never leaves the window) or assert an arrival in 1970 that no sync ever corrects,
+            // since a poll writes `firstSeenAt` once and never again.
+            listOf(
+                "firstSeenAt" to game.firstSeenAt,
+                "lastPlayedAt" to game.lastPlayedAt,
+                "returnedToPlayAt" to game.returnedToPlayAt,
+            ).forEach { (field, value) ->
+                val millis = value?.toEpochMilliOrNull()
+                when {
+                    value == null -> Unit
+                    millis == null -> problems += BackupValidationProblem(
+                        "game", index,
+                        "unparseable $field '$value'",
+                    )
+                    millis !in EARLIEST_PLAUSIBLE_MILLIS..LATEST_PLAUSIBLE_MILLIS ->
+                        problems += BackupValidationProblem(
+                            "game", index,
+                            "$field '$value' outside the supported range " +
+                                "$EARLIEST_PLAUSIBLE_DATE..$LATEST_PLAUSIBLE_DATE",
+                        )
+                }
+            }
         }
 
         file.sessions.forEachIndexed { index, session ->

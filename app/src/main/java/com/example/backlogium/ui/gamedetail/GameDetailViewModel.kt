@@ -10,6 +10,7 @@ import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.GameXpInput
 import com.example.backlogium.domain.LibraryXp
 import com.example.backlogium.gamification.AchievementInput
@@ -94,6 +95,13 @@ data class GameSummaryUi(
     val activePlayers: Int? = null,
     /** Ordered, cached Store genres. Empty means unknown or definitively unavailable. */
     val genres: List<GameGenre> = emptyList(),
+    /** The one recency signal this game carries, already derived; null when it carries none. */
+    val recencyState: GameRecencyState? = null,
+    /**
+     * Steam's last-played time, or null where Steam reported none. Distinguishing this from
+     * never-played is [playtimeMinutes]'s job, not this field's — see [lastPlayed].
+     */
+    val lastPlayedAt: Long? = null,
 ) {
     /** True when any HLTB length resolved. Gates the whole block: no zeros, no placeholders. */
     val hasHltb: Boolean
@@ -105,6 +113,31 @@ data class GameSummaryUi(
      * backfill the split is just the total restated.
      */
     val showPlaytimeSplit: Boolean get() = importedMinutes > 0
+
+    /**
+     * The three genuinely distinct answers to "when did I last play this?".
+     *
+     * Never-played is decided by playtime, never by a missing timestamp: Steam omits
+     * `rtime_last_played` for some games it has hours for, and reporting a 40-hour game as never
+     * played would be a straightforwardly false statement about the player's own history.
+     */
+    val lastPlayed: LastPlayed
+        get() = when {
+            playtimeMinutes == 0 -> LastPlayed.Never
+            lastPlayedAt == null -> LastPlayed.Unknown
+            else -> LastPlayed.At(lastPlayedAt)
+        }
+}
+
+/** What the summary can say about a game's last-played time. */
+sealed interface LastPlayed {
+    /** No recorded playtime at all. */
+    data object Never : LastPlayed
+
+    /** Played, but the source reported no date for it. */
+    data object Unknown : LastPlayed
+
+    data class At(val epochMillis: Long) : LastPlayed
 }
 
 data class GameDetailUiState(
@@ -323,6 +356,8 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
         ),
         activePlayers = activePlayers,
         genres = game.genres,
+        recencyState = game.recencyState,
+        lastPlayedAt = game.lastPlayedAt,
     )
 }
 
