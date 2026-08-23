@@ -73,7 +73,7 @@
 ## 9. Verification
 
 - [ ] 9.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and `./gradlew assembleDebug`
-- [ ] 9.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
+- [x] 9.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
 - [ ] 9.3 Manually verify hiding a heavily-played game: the disclosure states the real level change, and applying it matches
 - [ ] 9.4 Manually verify unhiding restores XP, level, history, and collection membership exactly
 - [ ] 9.5 Manually verify a hidden game survives a sync still hidden — the case the standalone table exists to prevent

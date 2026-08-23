@@ -90,7 +90,7 @@ class HiddenGamesRepository @Inject constructor(
                     appId = row.appId,
                     name = row.name.takeIf { it.isNotBlank() } ?: "App ${row.appId}",
                     iconUrl = row.iconUrl,
-                    typeLabel = row.appType,
+                    typeLabel = row.appType.orEmpty(),
                 )
             }
         }
