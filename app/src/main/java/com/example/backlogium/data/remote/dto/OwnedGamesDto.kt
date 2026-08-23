@@ -11,7 +11,12 @@ data class OwnedGamesResponse(
 
 @Serializable
 data class OwnedGamesResult(
-    @SerialName("game_count") val gameCount: Int = 0,
+    /**
+     * Null means Steam did not confirm that this is an owned-library response (for example, the
+     * empty envelope returned for a private profile). An explicit zero is a valid, successfully
+     * tracked empty library and must not be conflated with that response.
+     */
+    @SerialName("game_count") val gameCount: Int? = null,
     val games: List<OwnedGameDto> = emptyList(),
 )
 

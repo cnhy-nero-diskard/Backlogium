@@ -207,6 +207,23 @@ class SteamSyncRecencyTest {
     }
 
     @Test
+    fun `worker persists a confirmed empty library so its first later game is an arrival`() {
+        // This is the actual doWorkLocked gate: Steam's explicit count makes an empty list a
+        // successful poll, which reaches commitRawPoll and writes lastSyncAt. An absent count is
+        // still the private-profile-shaped response and must leave the prior library untouched.
+        assertEquals(true, shouldPersistOwnedGamesPoll(gameCount = 0, gamesAreEmpty = true))
+        assertEquals(false, shouldPersistOwnedGamesPoll(gameCount = null, gamesAreEmpty = true))
+
+        val completedEmptyPollAt = now - day
+        val firstGame = acquisitionWrite(
+            isBaseline = isLibraryBaseline(existingGameCount = 0, lastSyncAt = completedEmptyPollAt),
+            at = now,
+        )
+
+        assertEquals(now, firstGame.firstSeenAt)
+    }
+
+    @Test
     fun `the commit path derives no play time of its own`() {
         val stored = daysAgo(90)
         fun writeWith(observedPlayAt: Long) = recencyPollWrite(

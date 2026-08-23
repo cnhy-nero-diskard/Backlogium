@@ -165,6 +165,14 @@ internal fun isLibraryBaseline(existingGameCount: Int, lastSyncAt: Long): Boolea
     existingGameCount == 0 && lastSyncAt <= 0L
 
 /**
+ * Steam uses an empty response envelope for profiles whose libraries cannot be read. Only its
+ * explicit `game_count: 0` confirms that an empty list is a successful library snapshot; persisting
+ * that snapshot establishes the durable baseline for the first later acquisition.
+ */
+internal fun shouldPersistOwnedGamesPoll(gameCount: Int?, gamesAreEmpty: Boolean): Boolean =
+    !gamesAreEmpty || gameCount == 0
+
+/**
  * Runs one Steam poll: fetch -> diff into sessions -> persist -> recompute gamification.
  * Fully self-contained and idempotent enough to run on WorkManager's periodic schedule or
  * as an expedited "Sync now". Never discards last-good data on failure.
@@ -249,8 +257,10 @@ class SteamSyncWorker @AssistedInject constructor(
             ).getOrThrow()
             val games = owned.response.games
 
-            if (games.isEmpty()) {
-                // Empty response usually means a private profile. Keep last-good data.
+            if (!shouldPersistOwnedGamesPoll(owned.response.gameCount, games.isEmpty())) {
+                // An unconfirmed empty envelope usually means a private profile. Keep last-good
+                // data; an explicit `game_count: 0` continues through persistPoll so the completed
+                // empty-library baseline is durable.
                 recordError("No games returned — your Steam profile may be private")
                 outcome = SyncOutcome.SKIPPED_EMPTY_OWNED_GAMES
                 return Result.success()
