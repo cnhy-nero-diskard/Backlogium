@@ -61,10 +61,15 @@ interface GameGenreCacheDao {
     fun observeNonGameCandidates(): Flow<List<NonGameCandidateRow>>
 }
 
-/** One non-game library item as the review offer needs it: named, so the player can check it. */
+/**
+ * One non-game library item as the review offer needs it: named, so the player can check it.
+ *
+ * [appType] is nullable to match the column, even though the query's `WHERE` already excludes
+ * nulls — the projection describes the schema rather than restating the filter.
+ */
 data class NonGameCandidateRow(
     val appId: Long,
     val name: String,
     val iconUrl: String,
-    val appType: String,
+    val appType: String?,
 )

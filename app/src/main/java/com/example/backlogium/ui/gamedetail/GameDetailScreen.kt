@@ -138,15 +138,16 @@ fun GameDetailScreen(
         if (state.dismissed) onDismiss()
     }
 
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.stopPolling() }
+    }
+
     state.hideEffect?.let { effect ->
         VisibilityChangeDialog(
             effect = effect,
             onConfirm = viewModel::confirmHide,
             onDismiss = viewModel::dismissHide,
         )
-    }
-    DisposableEffect(viewModel) {
-        onDispose { viewModel.stopPolling() }
     }
 
     // Full destinations report the wash to the shell so it can bleed behind the profile header.

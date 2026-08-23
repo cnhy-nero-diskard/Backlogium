@@ -196,7 +196,11 @@ class AchievementRepository @Inject constructor(
         playtimeDeltaByAppId: Map<Long, Int>,
         scope: SyncRunRecorder.RunScope? = null,
     ): AchievementLibraryFetch {
-        if (ownedGames.isEmpty()) {
+        // Hidden games leave the tiering input, not just the request loop, so the tier counts this
+        // records describe the work actually being done (add-hidden-games).
+        val hidden = hiddenGamesRepository.hiddenAppIdSet()
+        val visibleGames = ownedGames.filterNot { it.appId in hidden }
+        if (visibleGames.isEmpty()) {
             return AchievementLibraryFetch(
                 selection = AchievementFreshness.Result(
                     emptyList(),
@@ -209,7 +213,7 @@ class AchievementRepository @Inject constructor(
             )
         }
 
-        val metadataByAppId = gameAchievementSyncDao.getAll(ownedGames.map { it.appId }.toSet())
+        val metadataByAppId = gameAchievementSyncDao.getAll(visibleGames.map { it.appId }.toSet())
             .associateBy { it.appId }
             .mapValues {
                 AchievementFreshness.SyncMetadata(
@@ -221,7 +225,7 @@ class AchievementRepository @Inject constructor(
 
         val selection = AchievementFreshness.selectByTier(
             now = time.nowMillis(),
-            ownedGames = ownedGames,
+            ownedGames = visibleGames,
             playtimeDeltaByAppId = playtimeDeltaByAppId,
             metadataByAppId = metadataByAppId,
         )
@@ -301,7 +305,8 @@ class AchievementRepository @Inject constructor(
         onRefresh: suspend (AchievementRefresh) -> Unit,
         onProgress: ((refreshed: Int, total: Int) -> Unit)? = null,
     ): ReconciliationFetch {
-        val games = gameDao.getAll()
+        val hidden = hiddenGamesRepository.hiddenAppIdSet()
+        val games = gameDao.getAll().filterNot { it.appId in hidden }
         if (games.isEmpty()) return ReconciliationFetch(refreshed = 0, total = 0)
 
         val metadataByAppId = gameAchievementSyncDao.getAll(games.map { it.appId }.toSet())

@@ -179,6 +179,12 @@ class SettingsViewModel @Inject constructor(
         status to progress
     }
 
+    // Counts only: the section itself owns the list and every mutation (HiddenGamesViewModel).
+    private val hiddenState = combine(
+        hiddenGames.hiddenGames,
+        hiddenGames.nonGameCandidates,
+    ) { hidden, candidates -> hidden.size to candidates.size }
+
     private val storedState = combine(
         profileRepository.profile,
         credentials.credentialsStateFlow,
@@ -219,12 +225,6 @@ class SettingsViewModel @Inject constructor(
     }.combine(hiddenState) { state, hidden ->
         state.copy(hiddenGameCount = hidden.first, nonGameCandidateCount = hidden.second)
     }
-
-    // Counts only: the section itself owns the list and every mutation (HiddenGamesViewModel).
-    private val hiddenState = combine(
-        hiddenGames.hiddenGames,
-        hiddenGames.nonGameCandidates,
-    ) { hidden, candidates -> hidden.size to candidates.size }
 
     private val ruleLocalState = combine(
         draftEdit,
