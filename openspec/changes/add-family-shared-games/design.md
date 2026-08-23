@@ -174,6 +174,19 @@ would leave collections, goals, genres, and HLTB each needing to handle two shap
 A nullable-free enum column defaulting existing rows to owned is a widening migration with no data
 movement, and every existing query keeps working untouched.
 
+### 9. Manual import probes Steam without weakening admission
+
+The Settings flow accepts either a numeric app id or the canonical Store URL shape and treats the
+result only as an identifier. It then calls `GetOwnedGames` for the configured account before any
+write. A match is owned and is not imported; an absence may proceed to the same Store game-type
+verification and persistence shape as automatic admission. Existing rows and sticky exclusions
+remain authoritative.
+
+After a successful import, `GetPlayerAchievements` is called once and the UI reports one of three
+facts: achievements returned, Steam returned no usable player data, or the probe was unavailable.
+This is a diagnostic result, not proof of ownership and not a playtime source. The owned-games API
+still supplies no borrowed-game lifetime total, so tracked playtime remains presence-derived.
+
 ## Risks / Trade-offs
 
 - **Presence-derived session boundaries are coarser than playtime-derived ones.** They are bounded

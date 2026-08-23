@@ -58,6 +58,25 @@ SHALL NOT occur silently.
 - **WHEN** an already-admitted family-shared game is played again
 - **THEN** no admission notification is issued
 
+### Requirement: Manual admission preserves source safety
+A Settings-initiated import SHALL confirm the submitted app id is absent from the configured
+account's current `GetOwnedGames` response and is a game according to the Steam Store before
+creating a Family Shared row. It SHALL respect existing tracked rows and sticky exclusions.
+
+#### Scenario: Current owned-library check passes
+- **WHEN** a submitted app id is absent from `GetOwnedGames`, is not tracked or excluded, and the
+  Store verifies it as a game
+- **THEN** the same Family Shared game shape used by automatic admission is persisted
+
+#### Scenario: Owned, tracked, or excluded
+- **WHEN** the submitted app id is owned, already tracked, or excluded
+- **THEN** no duplicate or wrongly sourced row is created and the reason is returned to Settings
+
+#### Scenario: No authoritative answer
+- **WHEN** either the owned-library request or Store verification cannot provide an authoritative
+  answer
+- **THEN** nothing is imported
+
 ### Requirement: Session mechanism is determined by source
 Sessions for a game with Steam-reported playtime SHALL be synthesized by diffing that playtime.
 Sessions for a game without Steam-reported playtime SHALL be derived from observed presence. No

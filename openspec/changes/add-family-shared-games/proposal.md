@@ -54,6 +54,11 @@ time it resolves presence.
   surfaces are expected to work unchanged — and where Steam reports nothing, the game is simply
   presented without an achievement surface.
 
+- **Manual import and Steam-data probe in Settings.** A player may paste a Steam Store URL or app
+  id. Backlogium checks the current owned-games response, verifies the Store app is a game, imports
+  an eligible unowned title as Family Shared, and reports whether Steam returned per-player
+  achievement data. It never presents absent borrowed-game playtime as a Steam total.
+
 ## Capabilities
 
 ### New Capabilities
@@ -66,7 +71,8 @@ time it resolves presence.
   playtime, so it cannot also apply to a game whose sessions come from presence.
 - `app-ui`: game detail and Library indicate a game's source; the Analytics screen distinguishes
   shared games; a notification announces a newly admitted game.
-- `app-settings`: a section listing removed shared games, from which a removal can be reversed.
+- `app-settings`: manual Family Shared import/data probing plus a section listing removed shared
+  games, from which a removal can be reversed.
 
 ## Impact
 

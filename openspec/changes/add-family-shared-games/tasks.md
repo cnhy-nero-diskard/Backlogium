@@ -54,6 +54,11 @@
 - [ ] 7.1 Verify against a real borrowed game whether `GetPlayerAchievements` returns data for a family-shared title, and record the finding in `design.md`
 - [x] 7.2 Where achievements are reported, confirm the existing achievement, rarity, rarity-XP, and rarity-standing surfaces work unmodified
 - [x] 7.3 Where no achievement data is reported, present no achievement surface rather than an empty one
+- [x] 7.4 Parse a numeric app id or Steam Store URL into an app id, with JVM tests for accepted and rejected input
+- [x] 7.5 Add a typed manual-import result that checks the current owned library, tracked/excluded state, Store game type, and player-achievement response before reporting success
+- [x] 7.6 Add a Settings card for manual Family Shared import with busy, validation, success, and Steam-data result states
+- [ ] 7.7 Add repository and Settings view-model tests covering owned, shared, excluded, invalid, unavailable, achievement-data, and no-data outcomes
+- [ ] 7.8 Manually verify importing a real borrowed game from its Store URL and record the achievement-data result in `design.md`
 
 ## 8. Verification
 
