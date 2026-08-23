@@ -18,7 +18,7 @@
 - [x] 3.1 Feed `SessionDiffer` only games whose source is `STEAM_OWNED`, so the partition is a property of the wiring rather than a runtime check
 - [x] 3.2 Feed the presence deriver only games with no Steam-reported playtime
 - [x] 3.3 Add a test asserting no game can receive session actions from both mechanisms in one cycle
-- [ ] 3.4 Verify that XP, quest, and streak computation are unchanged for owned games
+- [x] 3.4 Verify that XP, quest, and streak computation are unchanged for owned games
 
 ## 4. Admission
 
@@ -57,14 +57,20 @@
 
 ## 8. Verification
 
-- [ ] 8.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and `./gradlew assembleDebug`
+- [x] 8.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and `./gradlew assembleDebug`
 - [x] 8.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
 - [ ] 8.3 Manually verify admission end to end: play a borrowed game, confirm the notification, the new entry, its artwork and genres
 - [ ] 8.4 Manually verify a derived session earns XP and counts toward the daily quest
 - [ ] 8.5 Manually verify removal, that further play does not re-admit, and that reversal works
 - [ ] 8.6 Manually verify that owned-game sync, sessions, and XP are unchanged throughout
 
-## Verification not possible in the implementation environment
+## Historical verification limits and current status
+
+The original cloud-environment limitations below are retained as historical context. They are now
+superseded for tasks 3.4 and 8.1: Room generated the v21 schema, and
+`./gradlew :gamification:test :app:testDebugUnitTest assembleDebug --no-daemon` completed
+successfully on 2026-08-23. The passing engine suite verifies owned-game XP, quest, and streak
+computation. Tasks 7.1 and 8.3-8.6 still require a real borrowed game and manual device interaction.
 
 The remaining unchecked items all need something the cloud environment used for this work does not
 have. They are listed here so the next session on hardware knows exactly what is outstanding rather
