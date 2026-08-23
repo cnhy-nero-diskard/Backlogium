@@ -134,6 +134,8 @@ fun SettingsScreen(
                 onCheckForUpdates = viewModel::checkForUpdates,
                 onOpenUpdate = onOpenUpdate,
                 onRestoreSharedGame = viewModel::restoreSharedGame,
+                onManualSharedGameInputChanged = viewModel::onManualSharedGameInputChanged,
+                onImportManualSharedGame = viewModel::importManualSharedGame,
             )
         },
     )
@@ -168,6 +170,8 @@ data class SettingsActions(
     val onCheckForUpdates: () -> Unit = {},
     val onOpenUpdate: () -> Unit = {},
     val onRestoreSharedGame: (Long) -> Unit = {},
+    val onManualSharedGameInputChanged: (String) -> Unit = {},
+    val onImportManualSharedGame: () -> Unit = {},
 )
 
 /** The stateless half: renders [state] and raises [actions]. */
@@ -234,6 +238,9 @@ fun SettingsScreen(
             configured = state.configured,
             onEnabledChanged = actions.onLiveMonitorEnabledChanged,
         )
+
+        SectionHeader("Family Sharing")
+        ManualSharedGameCard(state, actions)
 
         if (state.removedSharedGames.isNotEmpty()) {
             SectionHeader("Removed shared games")

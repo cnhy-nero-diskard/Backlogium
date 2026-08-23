@@ -5,11 +5,15 @@ import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.entity.ExcludedSharedGame
+import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.domain.AdmissionDecision
 import com.example.backlogium.domain.AdmissionFacts
+import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.SharedGameAdmissionPolicy
+import com.example.backlogium.domain.SteamAppIdInput
 import com.example.backlogium.domain.StoreVerification
 import com.example.backlogium.domain.TimeProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -22,6 +26,28 @@ data class RemovedSharedGame(
     val name: String,
     val removedAt: Long,
 )
+
+sealed interface PlayerDataProbe {
+    data class Returned(val total: Int, val unlocked: Int) : PlayerDataProbe
+    data object NoData : PlayerDataProbe
+    data object Unavailable : PlayerDataProbe
+}
+
+enum class ManualImportUnavailableAt { OWNED_LIBRARY, STORE }
+
+sealed interface ManualSharedGameImportResult {
+    data object InvalidInput : ManualSharedGameImportResult
+    data class Owned(val appId: Long, val name: String) : ManualSharedGameImportResult
+    data class Excluded(val appId: Long) : ManualSharedGameImportResult
+    data class NotAGame(val appId: Long) : ManualSharedGameImportResult
+    data class Unavailable(val appId: Long, val at: ManualImportUnavailableAt) : ManualSharedGameImportResult
+    data class Imported(
+        val appId: Long,
+        val name: String,
+        val alreadyTracked: Boolean,
+        val playerData: PlayerDataProbe,
+    ) : ManualSharedGameImportResult
+}
 
 /**
  * Admission, removal, and re-admission of family-shared games (add-family-shared-games).
@@ -44,6 +70,7 @@ class FamilySharedGameRepository @Inject constructor(
     private val genres: GameGenreRepository,
     private val policy: SharedGameAdmissionPolicy,
     private val notifier: SharedGameNotifier,
+    private val steamApi: SteamApi,
     private val time: TimeProvider,
 ) {
 
@@ -103,6 +130,58 @@ class FamilySharedGameRepository @Inject constructor(
         return AdmissionDecision.Admit
     }
 
+    suspend fun importManually(
+        input: String,
+        apiKey: String,
+        steamId: String,
+    ): ManualSharedGameImportResult {
+        val appId = SteamAppIdInput.parse(input)
+            ?: return ManualSharedGameImportResult.InvalidInput
+        gameDao.getById(appId)?.let { tracked ->
+            return if (tracked.source == GameSource.STEAM_OWNED) {
+                ManualSharedGameImportResult.Owned(appId, tracked.name)
+            } else {
+                importedResult(appId, tracked.name, true, apiKey, steamId)
+            }
+        }
+        if (excludedDao.isExcluded(appId)) return ManualSharedGameImportResult.Excluded(appId)
+        return importUntracked(appId, apiKey, steamId)
+    }
+
+    private suspend fun importUntracked(appId: Long, apiKey: String, steamId: String): ManualSharedGameImportResult {
+        val owned = try {
+            steamApi.getOwnedGames(apiKey, steamId).response.games
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return ManualSharedGameImportResult.Unavailable(appId, ManualImportUnavailableAt.OWNED_LIBRARY)
+        }
+        owned.firstOrNull { it.appid == appId }?.let {
+            return ManualSharedGameImportResult.Owned(appId, it.name.ifBlank { "App $appId" })
+        }
+        return verifyStoreAndImport(appId, apiKey, steamId)
+    }
+
+    private suspend fun verifyStoreAndImport(appId: Long, apiKey: String, steamId: String): ManualSharedGameImportResult {
+        val info = try {
+            store.appInfoFor(appId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            StoreAppInfo.Unavailable()
+        }
+        when (info) {
+            StoreAppInfo.NotAGame -> return ManualSharedGameImportResult.NotAGame(appId)
+            is StoreAppInfo.Unavailable -> return ManualSharedGameImportResult.Unavailable(
+                appId,
+                ManualImportUnavailableAt.STORE,
+            )
+            is StoreAppInfo.Game -> Unit
+        }
+        admit(appId, info, time.nowMillis(), announce = false)
+        return importedResult(appId, info.name, false, apiKey, steamId)
+    }
+
     /**
      * Remove a family-shared game and record the exclusion, so further play does not re-admit it.
      * The game row is deleted, and its sessions cascade with it — the player asked for the game to
@@ -136,7 +215,12 @@ class FamilySharedGameRepository @Inject constructor(
         clearCandidateIfCurrent(appId)
     }
 
-    private suspend fun admit(appId: Long, info: StoreAppInfo.Game, observedAt: Long) {
+    private suspend fun admit(
+        appId: Long,
+        info: StoreAppInfo.Game,
+        observedAt: Long,
+        announce: Boolean = true,
+    ) {
         // Icon hash comes from GetOwnedGames, which by definition has nothing to say about a
         // borrowed game. Left blank: header and capsule artwork are derived from the app id alone,
         // so the game still arrives with artwork, and every icon consumer already treats a blank
@@ -154,7 +238,34 @@ class FamilySharedGameRepository @Inject constructor(
         // and background enrichment would resolve them later anyway.
         runCatching { genres.storeGenres(appId, info.genres) }
         clearCandidateIfCurrent(appId)
-        notifier.notifyAdmitted(appId, info.name)
+        if (announce) notifier.notifyAdmitted(appId, info.name)
+    }
+
+    private suspend fun importedResult(
+        appId: Long,
+        name: String,
+        alreadyTracked: Boolean,
+        apiKey: String,
+        steamId: String,
+    ) = ManualSharedGameImportResult.Imported(
+        appId,
+        name,
+        alreadyTracked,
+        probePlayerData(apiKey, steamId, appId),
+    )
+
+    private suspend fun probePlayerData(apiKey: String, steamId: String, appId: Long): PlayerDataProbe {
+        return try {
+            val stats = steamApi.getPlayerAchievements(apiKey, steamId, appId).playerstats
+            if (!stats.success) PlayerDataProbe.NoData else PlayerDataProbe.Returned(
+                total = stats.achievements.size,
+                unlocked = stats.achievements.count { it.achieved != 0 },
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            PlayerDataProbe.Unavailable
+        }
     }
 
     private suspend fun clearCandidateIfCurrent(appId: Long) {
