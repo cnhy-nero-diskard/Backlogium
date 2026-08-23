@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.backlogium.domain.GameRecencyState
 import compose.icons.TablerIcons
-import compose.icons.tablericons.PlayerPlay
+import compose.icons.tablericons.History
 import compose.icons.tablericons.Rotate
 import compose.icons.tablericons.Stars
 
@@ -69,7 +69,8 @@ private val GameRecencyState.glyph: ImageVector
     get() = when (this) {
         // Tabler has no `Sparkles` at the version this project pins; `Stars` is its sparkle glyph.
         GameRecencyState.NEWLY_ADDED -> TablerIcons.Stars
-        GameRecencyState.NEWLY_PLAYED -> TablerIcons.PlayerPlay
+        // A history arrow describes a recent interaction without reading like an action button.
+        GameRecencyState.NEWLY_PLAYED -> TablerIcons.History
         GameRecencyState.RETURNED -> TablerIcons.Rotate
     }
 
