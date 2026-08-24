@@ -58,7 +58,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         GameAchievementSync::class,
         ExcludedSharedGame::class,
     ],
-    version = 21,
+    version = 22,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -498,7 +498,24 @@ abstract class BacklogiumDatabase : RoomDatabase() {
         }
 
         /**
-         * v20 -> v21: family-shared games (add-family-shared-games).
+         * v20 -> v21: record recency observations on the games schema. `games` gains
+         * `firstSeenAt`, `lastPlayedAt`, and `returnedToPlayAt`, all nullable with no backfill.
+         *
+         * This must stay exactly the schema `master` already shipped at version 21: an install
+         * that upgraded from a genuine `master` build is stamped version 21 with only these three
+         * columns, and Room's identity check is content-based, not just the version number. Fold
+         * anything else into a later migration instead of editing this one.
+         */
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `games` ADD COLUMN `firstSeenAt` INTEGER")
+                db.execSQL("ALTER TABLE `games` ADD COLUMN `lastPlayedAt` INTEGER")
+                db.execSQL("ALTER TABLE `games` ADD COLUMN `returnedToPlayAt` INTEGER")
+            }
+        }
+
+        /**
+         * v21 -> v22: family-shared games (add-family-shared-games).
          *
          * - `games` gains `source`, defaulting to `STEAM_OWNED`. A widening with no data movement:
          *   every existing row *is* an owned game, since the owned-games sync was until now the
@@ -508,7 +525,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
          *   precisely because the game row does not — and `name` is carried so Settings can list a
          *   removal with nothing else left to read it from.
          */
-        val MIGRATION_20_21 = object : Migration(20, 21) {
+        val MIGRATION_21_22 = object : Migration(21, 22) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     "ALTER TABLE `games` ADD COLUMN `source` TEXT NOT NULL " +
@@ -521,9 +538,6 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "`excludedAt` INTEGER NOT NULL, " +
                         "PRIMARY KEY(`appId`))",
                 )
-                db.execSQL("ALTER TABLE `games` ADD COLUMN `firstSeenAt` INTEGER")
-                db.execSQL("ALTER TABLE `games` ADD COLUMN `lastPlayedAt` INTEGER")
-                db.execSQL("ALTER TABLE `games` ADD COLUMN `returnedToPlayAt` INTEGER")
             }
         }
 
