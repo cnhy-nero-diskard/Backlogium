@@ -114,6 +114,7 @@ fun GameDetailScreen(
     presentation: GameDetailPresentation = GameDetailPresentation.FULL_DESTINATION,
     viewModel: GameDetailViewModel = hiltViewModel(),
     onAccentColorChanged: (Color?) -> Unit = {},
+    onRemoved: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val overlay = presentation == GameDetailPresentation.COLLECTION_OVERLAY
@@ -130,6 +131,9 @@ fun GameDetailScreen(
     LaunchedEffect(viewModel, appId) {
         appId?.let(viewModel::setAppId)
         viewModel.startPolling()
+    }
+    LaunchedEffect(viewModel, onRemoved) {
+        viewModel.removedSharedGameEvents.collect { onRemoved() }
     }
     DisposableEffect(viewModel) {
         onDispose { viewModel.stopPolling() }

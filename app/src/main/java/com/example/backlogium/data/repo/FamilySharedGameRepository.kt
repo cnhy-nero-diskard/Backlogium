@@ -275,9 +275,9 @@ class FamilySharedGameRepository @Inject constructor(
      * sessions through the normal presence path. The exclusion and row are changed together so a
      * restored game cannot be admitted twice if presence is observed at the same time.
      */
-    suspend fun reverseRemoval(appId: Long) {
-        transaction.run {
-            val excluded = excludedDao.getAll().firstOrNull { it.appId == appId } ?: return@run
+    suspend fun reverseRemoval(appId: Long): Boolean {
+        val restored = transaction.run {
+            val excluded = excludedDao.getAll().firstOrNull { it.appId == appId } ?: return@run false
             gameDao.insertSharedGameIfMissing(
                 appId = excluded.appId,
                 name = excluded.name,
@@ -285,8 +285,10 @@ class FamilySharedGameRepository @Inject constructor(
                 admittedAt = time.nowMillis(),
             )
             excludedDao.delete(appId)
+            true
         }
-        clearCandidateIfCurrent(appId)
+        if (restored) clearCandidateIfCurrent(appId)
+        return restored
     }
 
     private suspend fun admit(

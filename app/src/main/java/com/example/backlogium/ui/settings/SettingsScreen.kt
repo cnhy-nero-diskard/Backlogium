@@ -1,6 +1,7 @@
 package com.example.backlogium.ui.settings
 
 import android.net.Uri
+import android.widget.Toast
 import com.example.backlogium.BuildConfig
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -90,6 +92,10 @@ fun SettingsScreen(
 
     LaunchedEffect(viewModel, haptics) {
         viewModel.hapticIntents.collect(haptics::playIfNotSilent)
+    }
+    val context = LocalContext.current
+    LaunchedEffect(viewModel, context) {
+        viewModel.toastMessages.collect { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
     }
 
     val exportLauncher = rememberLauncherForActivityResult(

@@ -23,6 +23,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -43,7 +44,7 @@ class FamilySharedGameRepositoryTest {
         )
         val repository = repository(gameDao, excludedDao)
 
-        repository.reverseRemoval(appId)
+        assertTrue(repository.reverseRemoval(appId))
 
         val restored = gameDao.getById(appId)
         assertNotNull(restored)
@@ -52,6 +53,7 @@ class FamilySharedGameRepositoryTest {
         assertEquals(2_000L, restored?.lastSyncedAt)
         assertEquals(listOf(appId), gameDao.observeLibrary().first().map { it.appId })
         assertFalse(excludedDao.isExcluded(appId))
+        assertFalse(repository.reverseRemoval(appId))
     }
 
     private fun repository(

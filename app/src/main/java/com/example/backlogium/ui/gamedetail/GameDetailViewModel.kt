@@ -25,8 +25,11 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
@@ -195,6 +198,8 @@ class GameDetailViewModel @Inject constructor(
     private val activePlayers = MutableStateFlow<Int?>(null)
     private val refreshingPlayerCount = MutableStateFlow(false)
     private var activePlayersPollingJob: Job? = null
+    private val _removedSharedGameEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val removedSharedGameEvents: SharedFlow<Unit> = _removedSharedGameEvents.asSharedFlow()
 
     private val content = appIdState
         .filterNotNull()
@@ -306,7 +311,9 @@ class GameDetailViewModel @Inject constructor(
      */
     fun removeSharedGame() {
         val appId = appIdState.value ?: return
-        viewModelScope.launch { sharedGames.remove(appId) }
+        viewModelScope.launch {
+            if (sharedGames.remove(appId)) _removedSharedGameEvents.emit(Unit)
+        }
     }
 
     private companion object {

@@ -174,6 +174,8 @@ class SettingsViewModel @Inject constructor(
     private val manualSharedGameBusy = MutableStateFlow(false)
     private val manualSharedGameFeedback = MutableStateFlow<ManualImportFeedback?>(null)
     private val _hapticIntents = MutableSharedFlow<HapticIntent>(extraBufferCapacity = 4)
+    private val _toastMessages = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val toastMessages: SharedFlow<String> = _toastMessages.asSharedFlow()
     val hapticIntents: SharedFlow<HapticIntent> = _hapticIntents.asSharedFlow()
 
     init {
@@ -327,6 +329,7 @@ class SettingsViewModel @Inject constructor(
                     )
                 }
                 manualSharedGameFeedback.value = feedback
+                _toastMessages.tryEmit(manualImportToast(feedback))
                 when (feedback.tone) {
                     ManualImportFeedbackTone.SUCCESS -> _hapticIntents.tryEmit(HapticIntent.Confirm)
                     ManualImportFeedbackTone.ERROR -> _hapticIntents.tryEmit(HapticIntent.Reject)
@@ -335,11 +338,13 @@ class SettingsViewModel @Inject constructor(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                manualSharedGameFeedback.value = ManualImportFeedback(
+                val feedback = ManualImportFeedback(
                     ManualImportFeedbackTone.ERROR,
                     "Import failed",
                     "Backlogium couldn't finish the check. Try again.",
                 )
+                manualSharedGameFeedback.value = feedback
+                _toastMessages.tryEmit(manualImportToast(feedback))
                 _hapticIntents.tryEmit(HapticIntent.Reject)
             } finally {
                 manualSharedGameBusy.value = false
@@ -556,13 +561,24 @@ class SettingsViewModel @Inject constructor(
         backupMessage.value = null
     }
 
-    /**
-     * Undo a removal. The game is not recreated here: it becomes eligible for admission again and
-     * arrives the next time it is observed being played, by the same path that admitted it
-     * originally. Recreating the row directly would invent a tracked game from a list entry.
-     */
+    /** Restore a removed Family Shared game and report the outcome through a toast. */
     fun restoreSharedGame(appId: Long) {
-        viewModelScope.launch { sharedGames.reverseRemoval(appId) }
+        viewModelScope.launch {
+            try {
+                if (sharedGames.reverseRemoval(appId)) {
+                    _toastMessages.tryEmit("Family Shared game restored.")
+                    _hapticIntents.tryEmit(HapticIntent.Confirm)
+                } else {
+                    _toastMessages.tryEmit("Family Shared game could not be restored.")
+                    _hapticIntents.tryEmit(HapticIntent.Reject)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _toastMessages.tryEmit("Family Shared game could not be restored.")
+                _hapticIntents.tryEmit(HapticIntent.Reject)
+            }
+        }
     }
 
     private fun refreshSnapshots() {
@@ -681,3 +697,10 @@ internal fun manualImportFeedback(result: ManualSharedGameImportResult): ManualI
 
 internal fun manualImportMessage(result: ManualSharedGameImportResult): String =
     manualImportFeedback(result).message
+
+internal fun manualImportToast(feedback: ManualImportFeedback): String = when {
+    feedback.tone == ManualImportFeedbackTone.SUCCESS && feedback.title == "Game already found" ->
+        "Family Shared game is already tracked."
+    feedback.tone == ManualImportFeedbackTone.SUCCESS -> "Family Shared game added."
+    else -> "Family Shared game was not added."
+}
