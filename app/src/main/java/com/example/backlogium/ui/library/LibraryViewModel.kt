@@ -20,6 +20,7 @@ import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.GameXpInput
 import com.example.backlogium.domain.GameListDensity
+import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortPrefs
@@ -79,6 +80,8 @@ data class GoalGameUi(
     /** True while Steam's live presence reports this exact game as the one running right now. */
     val isCurrentlyPlaying: Boolean = false,
     override val genres: List<GameGenre> = emptyList(),
+    /** The one recency signal this game carries, already derived; null when it carries none. */
+    val recencyState: GameRecencyState? = null,
     /**
      * Played through Family Sharing rather than owned. Rendered as a short text label on the row,
      * never as colour alone; false for an owned game, which carries no marking at all.
@@ -108,6 +111,8 @@ data class BacklogGameUi(
     /** True while Steam's live presence reports this exact game as the one running right now. */
     val isCurrentlyPlaying: Boolean = false,
     override val genres: List<GameGenre> = emptyList(),
+    /** The one recency signal this game carries, already derived; null when it carries none. */
+    val recencyState: GameRecencyState? = null,
     /**
      * Played through Family Sharing rather than owned. Rendered as a short text label on the row,
      * never as colour alone; false for an owned game, which carries no marking at all.
@@ -532,6 +537,7 @@ private fun LibraryGame.toGoalUi(
     achievementTotal = counts[appId]?.total,
     isCurrentlyPlaying = appId == playingAppId,
     genres = genres,
+    recencyState = recencyState,
     isFamilyShared = when (source) {
         GameSource.FAMILY_SHARED -> true
         GameSource.STEAM_OWNED -> false
@@ -559,6 +565,7 @@ private fun LibraryGame.toBacklogUi(
     achievementTotal = counts[appId]?.total,
     isCurrentlyPlaying = appId == playingAppId,
     genres = genres,
+    recencyState = recencyState,
     isFamilyShared = when (source) {
         GameSource.FAMILY_SHARED -> true
         GameSource.STEAM_OWNED -> false

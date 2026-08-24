@@ -202,6 +202,11 @@ private fun Game.toBackup() = BackupGame(
     name = name,
     isGoal = isGoal,
     backfillMinutes = backfillMinutes,
+    // An explicit absence where unknown — a null field rather than an epoch-zero timestamp, which
+    // would import as "arrived in 1970" and read as a genuine (if very old) recorded arrival.
+    firstSeenAt = firstSeenAt?.toIso8601(),
+    lastPlayedAt = lastPlayedAt?.toIso8601(),
+    returnedToPlayAt = returnedToPlayAt?.toIso8601(),
 )
 
 private fun Achievement.toBackup() = BackupAchievement(

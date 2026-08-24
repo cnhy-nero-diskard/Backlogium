@@ -31,4 +31,7 @@ data class Game(
     val lastSyncedAt: Long = 0L,
     val backfillMinutes: Int = 0,
     val source: GameSource = GameSource.STEAM_OWNED,
+    val firstSeenAt: Long? = null,
+    val lastPlayedAt: Long? = null,
+    val returnedToPlayAt: Long? = null,
 )

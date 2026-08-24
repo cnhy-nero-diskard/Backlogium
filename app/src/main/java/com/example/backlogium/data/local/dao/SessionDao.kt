@@ -107,10 +107,38 @@ interface SessionDao {
             "WHERE startAt >= :startInclusive AND startAt < :endExclusive GROUP BY appId",
     )
     fun observeMinutesByGameBetween(startInclusive: Long, endExclusive: Long): Flow<List<GameTrackedMinutes>>
+
+    /**
+     * Each game's earliest recorded session start — the input that makes the newly-played recency
+     * state fire once per game, for life (add-library-recency-signals).
+     *
+     * One grouped query for the whole library rather than a lookup per row: the Library derives a
+     * state for every game it renders, so a per-game query would turn one scan into hundreds.
+     */
+    @Query("SELECT appId, MIN(startAt) AS at FROM sessions GROUP BY appId")
+    fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>>
+
+    /**
+     * Each game's most recent recorded play, as `endAt` where the session has one and `startAt`
+     * where it is still open.
+     *
+     * Read by a poll *before* it overwrites `lastPlayedAt`, as one half of the previously-known
+     * last-play time the dormancy evaluation compares against. Grouped for the same reason as
+     * above: a poll examines the whole library.
+     */
+    @Query("SELECT appId, MAX(COALESCE(endAt, startAt)) AS at FROM sessions GROUP BY appId")
+    suspend fun latestSessionInstantByGame(): List<GameSessionInstant>
 }
 
 /** Per-game tracked-minutes projection for [SessionDao.trackedMinutesByGame]. */
 data class GameTrackedMinutes(val appId: Long, val minutes: Int)
+
+/**
+ * Per-game single-instant projection: one timestamp per game, whose meaning is the query's
+ * ([SessionDao.observeFirstSessionStartByGame] the earliest start,
+ * [SessionDao.latestSessionInstantByGame] the most recent play).
+ */
+data class GameSessionInstant(val appId: Long, val at: Long)
 
 /** Per-game session-count projection for collection overview metrics. */
 data class GameSessionCounts(val appId: Long, val sessions: Int)

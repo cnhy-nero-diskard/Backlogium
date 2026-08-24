@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 21,
-    "identityHash": "81e16837564932f3b6b94989a3053217",
+    "identityHash": "f5013b21491942479f01607d43faa0c8",
     "entities": [
       {
         "tableName": "games",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`appId` INTEGER NOT NULL, `name` TEXT NOT NULL, `iconUrl` TEXT NOT NULL, `playtimeForever` INTEGER NOT NULL, `playtime2Weeks` INTEGER NOT NULL, `lastPlaytime` INTEGER NOT NULL, `isGoal` INTEGER NOT NULL, `targetMinutes` INTEGER, `lastSyncedAt` INTEGER NOT NULL, `backfillMinutes` INTEGER NOT NULL, `source` TEXT NOT NULL, PRIMARY KEY(`appId`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`appId` INTEGER NOT NULL, `name` TEXT NOT NULL, `iconUrl` TEXT NOT NULL, `playtimeForever` INTEGER NOT NULL, `playtime2Weeks` INTEGER NOT NULL, `lastPlaytime` INTEGER NOT NULL, `isGoal` INTEGER NOT NULL, `targetMinutes` INTEGER, `lastSyncedAt` INTEGER NOT NULL, `backfillMinutes` INTEGER NOT NULL, `source` TEXT NOT NULL, `firstSeenAt` INTEGER, `lastPlayedAt` INTEGER, `returnedToPlayAt` INTEGER, PRIMARY KEY(`appId`))",
         "fields": [
           {
             "fieldPath": "appId",
@@ -72,6 +72,21 @@
             "columnName": "source",
             "affinity": "TEXT",
             "notNull": true
+          },
+          {
+            "fieldPath": "firstSeenAt",
+            "columnName": "firstSeenAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastPlayedAt",
+            "columnName": "lastPlayedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "returnedToPlayAt",
+            "columnName": "returnedToPlayAt",
+            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -1121,7 +1136,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '81e16837564932f3b6b94989a3053217')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f5013b21491942479f01607d43faa0c8')"
     ]
   }
 }

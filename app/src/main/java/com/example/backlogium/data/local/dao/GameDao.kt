@@ -24,9 +24,11 @@ interface GameDao {
     @Query(
         "INSERT OR IGNORE INTO games " +
             "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
-            "isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source) " +
+            "isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+            "firstSeenAt, lastPlayedAt, returnedToPlayAt) " +
             "VALUES (:appId, :name, :iconUrl, :playtimeForever, :playtime2Weeks, " +
-            ":lastPlaytime, 0, NULL, :lastSyncedAt, 0, 'STEAM_OWNED')",
+            ":lastPlaytime, 0, NULL, :lastSyncedAt, 0, 'STEAM_OWNED', " +
+            ":firstSeenAt, :lastPlayedAt, NULL)",
     )
     suspend fun insertSteamGameIfMissing(
         appId: Long,
@@ -36,13 +38,18 @@ interface GameDao {
         playtime2Weeks: Int,
         lastPlaytime: Int,
         lastSyncedAt: Long,
+        firstSeenAt: Long?,
+        lastPlayedAt: Long?,
     )
 
     /** Update only fields for which Steam is authoritative. */
     @Query(
         "UPDATE games SET name = :name, iconUrl = :iconUrl, " +
             "playtimeForever = :playtimeForever, playtime2Weeks = :playtime2Weeks, " +
-            "lastPlaytime = :lastPlaytime, lastSyncedAt = :lastSyncedAt WHERE appId = :appId",
+            "lastPlaytime = :lastPlaytime, lastSyncedAt = :lastSyncedAt, " +
+            "lastPlayedAt = :lastPlayedAt, " +
+            "returnedToPlayAt = COALESCE(:returnedToPlayAt, returnedToPlayAt) " +
+            "WHERE appId = :appId",
     )
     suspend fun updateSteamFields(
         appId: Long,
@@ -52,6 +59,8 @@ interface GameDao {
         playtime2Weeks: Int,
         lastPlaytime: Int,
         lastSyncedAt: Long,
+        lastPlayedAt: Long?,
+        returnedToPlayAt: Long?,
     )
 
     @Query("SELECT * FROM games ORDER BY playtime2Weeks DESC, name ASC")
@@ -143,6 +152,21 @@ interface GameDao {
     /** Remove the account-owned library; child rows are cleared explicitly by the reset caller. */
     @Query("DELETE FROM games")
     suspend fun deleteAll()
+
+    /** Restore only recency values carried by a backup; absent values never erase local facts. */
+    @Query(
+        "UPDATE games SET " +
+            "firstSeenAt = COALESCE(:firstSeenAt, firstSeenAt), " +
+            "lastPlayedAt = COALESCE(:lastPlayedAt, lastPlayedAt), " +
+            "returnedToPlayAt = COALESCE(:returnedToPlayAt, returnedToPlayAt) " +
+            "WHERE appId = :appId",
+    )
+    suspend fun setRecencyFromBackup(
+        appId: Long,
+        firstSeenAt: Long?,
+        lastPlayedAt: Long?,
+        returnedToPlayAt: Long?,
+    )
 
     /** Freeze one game's historical playtime offset (opt-in Steam-history import). */
     @Query("UPDATE games SET backfillMinutes = :minutes WHERE appId = :appId")

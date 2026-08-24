@@ -521,6 +521,9 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "`excludedAt` INTEGER NOT NULL, " +
                         "PRIMARY KEY(`appId`))",
                 )
+                db.execSQL("ALTER TABLE `games` ADD COLUMN `firstSeenAt` INTEGER")
+                db.execSQL("ALTER TABLE `games` ADD COLUMN `lastPlayedAt` INTEGER")
+                db.execSQL("ALTER TABLE `games` ADD COLUMN `returnedToPlayAt` INTEGER")
             }
         }
 

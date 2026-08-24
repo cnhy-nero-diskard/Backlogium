@@ -74,6 +74,7 @@ import com.example.backlogium.data.repo.HltbRefreshOutcome
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.GameListDensity
+import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.components.GameHeaderBackdrop
@@ -85,6 +86,7 @@ import com.example.backlogium.ui.collections.GenreFilterChoice
 import com.example.backlogium.ui.collections.genreFilterCatalog
 import com.example.backlogium.ui.theme.overrunExcess
 import com.example.backlogium.ui.theme.playingIndicator
+import com.example.backlogium.ui.components.RecencyBadge
 import com.example.backlogium.ui.util.HapticIntent
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.ui.util.rememberHaptics
@@ -138,6 +140,7 @@ private data class LibraryDisplayGame(
      * the figure is what the app observed and the row says so.
      */
     val isFamilyShared: Boolean = false,
+    val recencyState: GameRecencyState? = null,
 )
 
 @Composable
@@ -996,6 +999,7 @@ private fun GoalGameUi.toDisplayGame() = LibraryDisplayGame(
     xpContributed = xpContributed,
     isCurrentlyPlaying = isCurrentlyPlaying,
     isFamilyShared = isFamilyShared,
+    recencyState = recencyState,
 )
 
 private fun BacklogGameUi.toDisplayGame() = LibraryDisplayGame(
@@ -1013,6 +1017,7 @@ private fun BacklogGameUi.toDisplayGame() = LibraryDisplayGame(
     xpContributed = xpContributed,
     isCurrentlyPlaying = isCurrentlyPlaying,
     isFamilyShared = isFamilyShared,
+    recencyState = recencyState,
 )
 
 /** Emit one lazy item per row in list mode, or one lazy item per grid row in grid modes. */
@@ -1095,6 +1100,7 @@ private fun LibraryGameRow(
             // The HLTB match badge is part of the completion picture rather than a score badge,
             // so it rides the same rung as the progress bar below the name.
             showHltbStatus = density.showsCompletionProgress,
+            recencyState = game.recencyState,
         )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -1199,6 +1205,12 @@ private fun LibraryGameCell(
                         modifier = Modifier.align(Alignment.TopStart),
                     )
                 }
+                RecencyBadge(
+                    state = game.recencyState,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp),
+                )
             }
 
             Column(
@@ -1610,9 +1622,15 @@ private fun GameIconWithHltbBadge(
     isCurrentlyPlaying: Boolean,
     iconSize: Dp = 40.dp,
     showHltbStatus: Boolean = true,
+    recencyState: GameRecencyState? = null,
 ) {
     Box {
         GameIcon(iconUrl, iconSize = iconSize)
+        RecencyBadge(
+            state = recencyState,
+            size = 16.dp,
+            modifier = Modifier.align(Alignment.TopStart),
+        )
         if (showHltbStatus) {
             Box(
                 modifier = Modifier

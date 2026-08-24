@@ -1,5 +1,6 @@
 package com.example.backlogium.domain
 
+import com.example.backlogium.data.local.AcquiredGamesAnnouncement
 import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.entity.DailyProgress
@@ -209,6 +210,9 @@ class UpdateRuleConfigUseCaseTest {
 
         private val liveMonitor = MutableStateFlow(false)
         override val liveMonitorEnabled: Flow<Boolean> = liveMonitor
+        override val acquiredGames: Flow<AcquiredGamesAnnouncement> =
+            MutableStateFlow(AcquiredGamesAnnouncement())
+        override suspend fun setAcquiredGamesDismissed() = Unit
         override suspend fun setLiveMonitorEnabled(enabled: Boolean) {
             liveMonitor.value = enabled
         }

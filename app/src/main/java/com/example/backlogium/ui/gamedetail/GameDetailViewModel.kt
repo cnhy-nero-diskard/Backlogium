@@ -12,6 +12,7 @@ import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.GameSource
+import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.GameXpInput
 import com.example.backlogium.domain.LibraryXp
 import com.example.backlogium.gamification.AchievementInput
@@ -96,6 +97,10 @@ data class GameSummaryUi(
     val activePlayers: Int? = null,
     /** Ordered, cached Store genres. Empty means unknown or definitively unavailable. */
     val genres: List<GameGenre> = emptyList(),
+    /** The one recency signal this game carries, already derived; null when it carries none. */
+    val recencyState: GameRecencyState? = null,
+    /** Steam's last-played time, or null where Steam reported none. */
+    val lastPlayedAt: Long? = null,
     /**
      * True when this game is played through Family Sharing rather than owned. Drives the source
      * marking and the coverage disclosure; false for an owned game, which is presented exactly as
@@ -126,6 +131,20 @@ data class GameSummaryUi(
      * beside a history of real sessions. Tracked minutes are what the app actually knows.
      */
     val headlineMinutes: Int get() = if (isFamilyShared) trackedMinutes else playtimeMinutes
+
+    val lastPlayed: LastPlayed
+        get() = when {
+            playtimeMinutes == 0 -> LastPlayed.Never
+            lastPlayedAt == null -> LastPlayed.Unknown
+            else -> LastPlayed.At(lastPlayedAt)
+        }
+}
+
+/** What the summary can say about a game's last-played time. */
+sealed interface LastPlayed {
+    data object Never : LastPlayed
+    data object Unknown : LastPlayed
+    data class At(val epochMillis: Long) : LastPlayed
 }
 
 data class GameDetailUiState(
@@ -359,6 +378,8 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
         ),
         activePlayers = activePlayers,
         genres = game.genres,
+        recencyState = game.recencyState,
+        lastPlayedAt = game.lastPlayedAt,
         isFamilyShared = when (game.source) {
             GameSource.FAMILY_SHARED -> true
             GameSource.STEAM_OWNED -> false

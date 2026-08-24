@@ -72,6 +72,9 @@ class SettingsDataStore @Inject constructor(
         val SHARED_CANDIDATE_APP_ID = longPreferencesKey("shared_candidate_app_id")
         val SHARED_CANDIDATE_FIRST_OBSERVED_AT =
             longPreferencesKey("shared_candidate_first_observed_at")
+        val ACQUIRED_AT = longPreferencesKey("acquired_batch_at")
+        val ACQUIRED_APP_IDS = stringSetPreferencesKey("acquired_batch_app_ids")
+        val ACQUIRED_DISMISSED = booleanPreferencesKey("acquired_batch_dismissed")
         val NOTIFICATION_PERMISSION_REQUESTED =
             booleanPreferencesKey("notification_permission_requested")
         val LIVE_MONITOR_ENABLED = booleanPreferencesKey("live_monitor_enabled")
@@ -415,6 +418,35 @@ class SettingsDataStore @Inject constructor(
     }
 
     /**
+     * The most recent acquiring poll's announcement batch. Absent by default, so a fresh install
+     * and an install that has never acquired anything both read as "nothing to announce".
+     *
+     * Deliberately not exported in a backup: the banner belongs to a poll that observed previously
+     * unknown games on this device, so a restore must not re-announce another device's purchase.
+     */
+    val acquiredGamesFlow: Flow<AcquiredGamesAnnouncement> = context.dataStore.data.map { prefs ->
+        AcquiredGamesAnnouncement(
+            appIds = prefs[Keys.ACQUIRED_APP_IDS].orEmpty().mapNotNull(String::toLongOrNull).toSet(),
+            acquiredAt = prefs[Keys.ACQUIRED_AT] ?: 0L,
+            dismissed = prefs[Keys.ACQUIRED_DISMISSED] ?: false,
+        )
+    }
+
+    /** Replace the announcement with a later poll's arrivals, clearing dismissal. */
+    suspend fun setAcquiredGames(appIds: Set<Long>, acquiredAt: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.ACQUIRED_APP_IDS] = appIds.mapTo(mutableSetOf(), Long::toString)
+            prefs[Keys.ACQUIRED_AT] = acquiredAt
+            prefs[Keys.ACQUIRED_DISMISSED] = false
+        }
+    }
+
+    /** Dismiss the current batch. A later acquisition clears it again. */
+    suspend fun setAcquiredGamesDismissed() {
+        context.dataStore.edit { it[Keys.ACQUIRED_DISMISSED] = true }
+    }
+
+    /**
      * Clear account-derived DataStore state while retaining rules, UI preferences, backup
      * settings, and one-time installation migrations. The Room half of an account reset is
      * protected by the same durable account-change marker, so repeating this operation is safe.
@@ -435,6 +467,9 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.PENDING_TRANSITION_STREAK)
             prefs.remove(Keys.PENDING_TRANSITION_QUEST_MET)
             prefs.remove(Keys.PENDING_TRANSITION_DATE)
+            prefs.remove(Keys.ACQUIRED_APP_IDS)
+            prefs.remove(Keys.ACQUIRED_AT)
+            prefs.remove(Keys.ACQUIRED_DISMISSED)
         }
     }
 
@@ -535,6 +570,20 @@ data class AutoSnapshotSettings(
     val retentionCount: Int = 7,
     val intervalHours: Int = 24,
 )
+
+/** The newly-acquired-games announcement stored for the most recent successful poll. */
+data class AcquiredGamesAnnouncement(
+    val appIds: Set<Long> = emptySet(),
+    val acquiredAt: Long = 0L,
+    val dismissed: Boolean = false,
+) {
+    fun isLive(now: Long): Boolean =
+        appIds.isNotEmpty() && !dismissed && now - acquiredAt < LIFETIME_MILLIS
+
+    companion object {
+        const val LIFETIME_MILLIS: Long = 24L * 60 * 60 * 1_000
+    }
+}
 
 /**
  * The persisted live now-playing session: which game (Steam appId, possibly unresolved) and when

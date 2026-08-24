@@ -427,7 +427,7 @@ class MigrationTest {
     }
 
     @Test
-    fun v20ToV21_addsSourceColumnAndExclusionTableAndDefaultsExistingRowsToOwned() {
+    fun v20ToV21_addsFamilySourceExclusionAndNullableRecencyColumns() {
         val databaseName = "migration-v20-${System.nanoTime()}"
         val database = migrationTestHelper.createDatabase(databaseName, 20)
         try {
@@ -435,7 +435,7 @@ class MigrationTest {
                 "INSERT INTO games " +
                     "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
                     "isGoal, targetMinutes, lastSyncedAt, backfillMinutes) VALUES " +
-                    "(440, 'Game', 'icon-hash', 100, 0, 100, 0, NULL, 1700000000000, 0)",
+                    "(440, 'Game', 'icon-hash', 100, 0, 100, 1, 240, 1700000000000, 55)",
             )
         } finally {
             database.close()
@@ -461,12 +461,15 @@ class MigrationTest {
 
                 // Every pre-migration row is an owned game: the owned-games sync was the only
                 // path that could create one.
-                migrated.query("SELECT appId, name, playtimeForever, source FROM games").use { cursor ->
+                migrated.query("SELECT appId, name, playtimeForever, source, firstSeenAt, lastPlayedAt, returnedToPlayAt FROM games").use { cursor ->
                     assertTrue(cursor.moveToFirst())
                     assertEquals(440L, cursor.getLong(0))
                     assertEquals("Game", cursor.getString(1))
                     assertEquals(100, cursor.getInt(2))
                     assertEquals("STEAM_OWNED", cursor.getString(3))
+                    assertTrue(cursor.isNull(4))
+                    assertTrue(cursor.isNull(5))
+                    assertTrue(cursor.isNull(6))
                     assertFalse(cursor.moveToNext())
                 }
 

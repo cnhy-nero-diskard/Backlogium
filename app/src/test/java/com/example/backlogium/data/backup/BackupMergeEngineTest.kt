@@ -9,6 +9,7 @@ import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.domain.GameSource
 import com.example.backlogium.data.local.dao.GameSessionCounts
+import com.example.backlogium.data.local.dao.GameSessionInstant
 import com.example.backlogium.data.local.dao.GameTrackedMinutes
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -602,6 +603,8 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
         playtime2Weeks: Int,
         lastPlaytime: Int,
         lastSyncedAt: Long,
+        firstSeenAt: Long?,
+        lastPlayedAt: Long?,
     ) {
         if (appId !in store) {
             store[appId] = Game(
@@ -612,6 +615,8 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
                 playtime2Weeks = playtime2Weeks,
                 lastPlaytime = lastPlaytime,
                 lastSyncedAt = lastSyncedAt,
+                firstSeenAt = firstSeenAt,
+                lastPlayedAt = lastPlayedAt,
             )
         }
     }
@@ -624,6 +629,8 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
         playtime2Weeks: Int,
         lastPlaytime: Int,
         lastSyncedAt: Long,
+        lastPlayedAt: Long?,
+        returnedToPlayAt: Long?,
     ) {
         store[appId]?.let {
             store[appId] = it.copy(
@@ -633,6 +640,8 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
                 playtime2Weeks = playtime2Weeks,
                 lastPlaytime = lastPlaytime,
                 lastSyncedAt = lastSyncedAt,
+                lastPlayedAt = lastPlayedAt ?: it.lastPlayedAt,
+                returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt,
             )
         }
     }
@@ -655,6 +664,9 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
     override suspend fun deleteAll() = store.clear()
     override suspend fun setBackfillMinutes(appId: Long, minutes: Int) {
         store[appId]?.let { store[appId] = it.copy(backfillMinutes = minutes) }
+    }
+    override suspend fun setRecencyFromBackup(appId: Long, firstSeenAt: Long?, lastPlayedAt: Long?, returnedToPlayAt: Long?) {
+        store[appId]?.let { store[appId] = it.copy(firstSeenAt = firstSeenAt ?: it.firstSeenAt, lastPlayedAt = lastPlayedAt ?: it.lastPlayedAt, returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt) }
     }
 
     override suspend fun insertSharedGameIfMissing(
@@ -741,6 +753,11 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     override suspend fun getAll(): List<Session> = store.sortedBy { it.startAt }
     override suspend fun deleteAll() = store.clear()
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(store.minOfOrNull { it.startAt })
+    override fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>> = flowOf(
+        store.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.minOf { it.startAt }) },
+    )
+    override suspend fun latestSessionInstantByGame(): List<GameSessionInstant> =
+        store.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.maxOf { it.endAt ?: it.startAt }) }
     override suspend fun findByNaturalKey(appId: Long, startAt: Long, endAt: Long?): Session? =
         store.firstOrNull { it.appId == appId && it.startAt == startAt && it.endAt == endAt }
 

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
+import com.example.backlogium.data.local.AcquiredGamesAnnouncement
 import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.AchievementRepository
@@ -25,7 +26,10 @@ import com.example.backlogium.domain.CollectionMemberSignals
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CurrentDateProvider
+import com.example.backlogium.domain.exactExpiryTicks
+import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.ProgressEvent
+import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.work.setup.SetupCoordinator
@@ -38,6 +42,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -76,6 +81,12 @@ data class HomeUiState(
     val nowPlayingHeaderUrl: String? = null,
     /** When the current session was first observed, for the card's elapsed-time ticker. */
     val nowPlayingSessionStartedAt: Long? = null,
+    /**
+     * The running game's recency state, if it carries one. Home's one genuine game surface, so
+     * this is where the badge appears here — the collection cards' 26dp thumbnail strip is both
+     * too small for a legible glyph and a collection member list, which this change excludes.
+     */
+    val nowPlayingRecencyState: GameRecencyState? = null,
     /** Mission cards derived from the player's custom collections; empty when none exist. */
     val collections: List<HomeCollectionCard> = emptyList(),
     /** Highest-priority durable progress transition waiting for a Home consumer. */
@@ -84,9 +95,48 @@ data class HomeUiState(
     val pendingStreakBreak: ProgressEvent.StreakBroken? = null,
     /** Dedicated streak-milestone delivery so an unrelated pending event cannot hide the animation. */
     val pendingStreakMilestone: ProgressEvent.StreakMilestone? = null,
+    /** The unexpired, undismissed newly-acquired-games announcement, or null when there is none. */
+    val acquiredGames: AcquiredGamesUi? = null,
 ) {
     val xpFraction: Float
         get() = if (xpForNext > 0) (xpIntoLevel.toFloat() / xpForNext).coerceIn(0f, 1f) else 0f
+}
+
+/**
+ * The newly-acquired-games banner's content: the names it can show and how many arrived beyond
+ * them.
+ *
+ * Names rather than ids, resolved against the library the ViewModel already holds. The common case
+ * (one or two games) then reads concretely, and a sale reads as a number — which is what a banner
+ * announcing eight games should say rather than listing all eight.
+ */
+data class AcquiredGamesUi(
+    val namedGames: List<String>,
+    val unnamedCount: Int,
+) {
+    val totalCount: Int get() = namedGames.size + unnamedCount
+}
+
+/**
+ * How many games the banner names individually before it starts counting instead. Three keeps the
+ * common case (one or two purchases) concrete without a sale turning the banner into a list.
+ */
+private const val MAX_NAMED_ACQUIRED_GAMES = 3
+
+/**
+ * The banner's content for this announcement, or null when there is nothing to present.
+ *
+ * A game the backup or the library no longer knows the name of is *counted* rather than dropped:
+ * the count is the announcement's load-bearing claim ("eight games arrived"), and silently omitting
+ * an unnamed one would make the banner understate what happened.
+ */
+internal fun AcquiredGamesAnnouncement.toUi(
+    namesByAppId: Map<Long, String>,
+    now: Long,
+): AcquiredGamesUi? {
+    if (!isLive(now)) return null
+    val named = appIds.mapNotNull(namesByAppId::get).sorted().take(MAX_NAMED_ACQUIRED_GAMES)
+    return AcquiredGamesUi(namedGames = named, unnamedCount = appIds.size - named.size)
 }
 
 /** One collection's Home mission card: its identity plus its freshly derived mode banner. */
@@ -141,6 +191,7 @@ class HomeViewModel @Inject constructor(
     private val personalPaceRepository: PersonalPaceRepository,
     private val progressEventRepository: ProgressEventRepository,
     private val setupCoordinator: SetupCoordinator,
+    private val time: TimeProvider,
 ) : ViewModel() {
 
     /**
@@ -267,6 +318,28 @@ class HomeViewModel @Inject constructor(
             )
         }
 
+    /**
+     * The stored acquisition batch, re-emitted at its exact expiry deadline so its window is re-evaluated.
+     *
+     * Expiry is computed rather than persisted — no worker, no alarm — and a collector-scoped delay
+     * re-emits at the actual deadline. The banner therefore disappears on time even when it expires
+     * between local midnights or while the app was closed.
+     *
+     * The game *names* are resolved downstream, against the library the ui-state combine already
+     * collects, so the stored batch carries only app ids and the library is subscribed to once.
+     */
+    private val acquiredBatch: Flow<AcquiredGamesAnnouncement> = settings.acquiredGames
+        .flatMapLatest { announcement ->
+            exactExpiryTicks(
+                nowMillis = time::nowMillis,
+                nextExpiryAt = { now ->
+                    announcement.takeIf { it.appIds.isNotEmpty() && !it.dismissed }
+                        ?.let { it.acquiredAt + AcquiredGamesAnnouncement.LIFETIME_MILLIS }
+                        ?.takeIf { it > now }
+                },
+            ).map { announcement }
+        }
+
     // A plain observer: PresenceService owns the poll, and BacklogiumApp's foreground observer owns
     // the one-off re-check, so collecting liveStatus here never starts or extends anything — Home
     // just reflects whatever the last poll found, degraded (no live card) but not broken while
@@ -276,8 +349,10 @@ class HomeViewModel @Inject constructor(
         liveStatusRepository.liveStatus,
         collectionCards,
         progressEventRepository.pendingEvents,
-    ) { state, live, cards, pendingEvents ->
+        combine(gameRepository.library, acquiredBatch) { library, batch -> library to batch },
+    ) { state, live, cards, pendingEvents, (library, batch) ->
         val playingAppId = (live.nowPlaying as? NowPlaying.InGame)?.gameId
+        val acquired = batch.toUi(library.associate { it.appId to it.name }, time.nowMillis())
         val withCards = state.copy(
             collections = cards.map { card ->
                 card.copy(
@@ -292,6 +367,7 @@ class HomeViewModel @Inject constructor(
             // producing concurrent overlays/animations or more than one haptic for one moment.
             pendingStreakBreak = pendingEvents.firstOrNull() as? ProgressEvent.StreakBroken,
             pendingStreakMilestone = pendingEvents.firstOrNull() as? ProgressEvent.StreakMilestone,
+            acquiredGames = acquired,
         )
         when (val nowPlaying = live.nowPlaying) {
             is NowPlaying.InGame -> withCards.copy(
@@ -300,6 +376,11 @@ class HomeViewModel @Inject constructor(
                 nowPlayingIconUrl = nowPlaying.iconUrl,
                 nowPlayingHeaderUrl = nowPlaying.gameId?.let(SteamIconMapper::headerUrl),
                 nowPlayingSessionStartedAt = live.sessionStartedAt,
+                // Already derived by the repository, so Home neither re-implements the precedence
+                // nor needs its own clock to expire it.
+                nowPlayingRecencyState = library
+                    .firstOrNull { it.appId == nowPlaying.gameId }
+                    ?.recencyState,
             )
             NowPlaying.NotPlaying -> withCards
         }
@@ -311,6 +392,11 @@ class HomeViewModel @Inject constructor(
 
     /** Retry a failed sync from the Home error card; the manual trigger lives in Settings. */
     fun syncNow() = profileRepository.syncNow()
+
+    /** Dismiss the acquisition banner. Scoped to this batch: a later purchase announces again. */
+    fun dismissAcquiredGames() {
+        viewModelScope.launch { settings.setAcquiredGamesDismissed() }
+    }
 
     /** Acknowledge only after the corresponding progress event has actually been presented. */
     fun acknowledgeProgressEvent(event: ProgressEvent) {

@@ -620,8 +620,8 @@ class AchievementRepositoryTest {
     private class FakeGameDao(private vararg val games: Game) : GameDao {
         override suspend fun upsertAll(games: List<Game>) = error("not used")
         override suspend fun upsert(game: Game) = error("not used")
-        override suspend fun insertSteamGameIfMissing(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long) = error("not used")
-        override suspend fun updateSteamFields(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long) = error("not used")
+        override suspend fun insertSteamGameIfMissing(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long, firstSeenAt: Long?, lastPlayedAt: Long?) = error("not used")
+        override suspend fun updateSteamFields(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long, lastPlayedAt: Long?, returnedToPlayAt: Long?) = error("not used")
         override fun observeLibrary(): Flow<List<Game>> = flowOf(games.toList())
         override fun observeGoalGames(): Flow<List<Game>> = error("not used")
         override fun observeBacklog(): Flow<List<Game>> = error("not used")
@@ -633,6 +633,7 @@ class AchievementRepositoryTest {
         override suspend fun count(): Int = games.size
         override suspend fun deleteAll() = error("not used")
         override suspend fun setBackfillMinutes(appId: Long, minutes: Int) = error("not used")
+        override suspend fun setRecencyFromBackup(appId: Long, firstSeenAt: Long?, lastPlayedAt: Long?, returnedToPlayAt: Long?) = error("not used")
         override suspend fun insertSharedGameIfMissing(appId: Long, name: String, iconUrl: String, admittedAt: Long) = error("not used")
         override suspend fun ownedGamesForDiffing(): List<Game> = games.filter { it.source == GameSource.STEAM_OWNED }
         override suspend fun sharedGames(): List<Game> = games.filter { it.source == GameSource.FAMILY_SHARED }
