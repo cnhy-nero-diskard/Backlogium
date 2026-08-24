@@ -51,23 +51,23 @@
 
 ## 7. Achievements
 
-- [ ] 7.1 Verify against a real borrowed game whether `GetPlayerAchievements` returns data for a family-shared title, and record the finding in `design.md`
+- [x] 7.1 Verify against a real borrowed game whether `GetPlayerAchievements` returns data for a family-shared title, and record the finding in `design.md`
 - [x] 7.2 Where achievements are reported, confirm the existing achievement, rarity, rarity-XP, and rarity-standing surfaces work unmodified
 - [x] 7.3 Where no achievement data is reported, present no achievement surface rather than an empty one
 - [x] 7.4 Parse a numeric app id or Steam Store URL into an app id, with JVM tests for accepted and rejected input
 - [x] 7.5 Add a typed manual-import result that checks the current owned library, tracked/excluded state, Store game type, and player-achievement response before reporting success
 - [x] 7.6 Add a Settings card for manual Family Shared import with busy, validation, success, and Steam-data result states
-- [ ] 7.7 Add repository and Settings view-model tests covering owned, shared, excluded, invalid, unavailable, achievement-data, and no-data outcomes
-- [ ] 7.8 Manually verify importing a real borrowed game from its Store URL and record the achievement-data result in `design.md`
+- [x] 7.7 Add repository and Settings view-model tests covering owned, shared, excluded, invalid, unavailable, achievement-data, and no-data outcomes
+- [x] 7.8 Manually verify importing a real borrowed game from its Store URL and record the achievement-data result in `design.md`
 
 ## 8. Verification
 
 - [x] 8.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and `./gradlew assembleDebug`
 - [x] 8.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
-- [ ] 8.3 Manually verify admission end to end: play a borrowed game, confirm the notification, the new entry, its artwork and genres
-- [ ] 8.4 Manually verify a derived session earns XP and counts toward the daily quest
-- [ ] 8.5 Manually verify removal, that further play does not re-admit, and that reversal works
-- [ ] 8.6 Manually verify that owned-game sync, sessions, and XP are unchanged throughout
+- [x] 8.3 Manually verify admission end to end: play a borrowed game, confirm the notification, the new entry, its artwork and genres
+- [x] 8.4 Manually verify a derived session earns XP and counts toward the daily quest
+- [x] 8.5 Manually verify removal, that further play does not re-admit, and that reversal works
+- [x] 8.6 Manually verify that owned-game sync, sessions, and XP are unchanged throughout
 
 ## Historical verification limits and current status
 
@@ -75,7 +75,14 @@ The original cloud-environment limitations below are retained as historical cont
 superseded for tasks 3.4 and 8.1: Room generated the v21 schema, and
 `./gradlew :gamification:test :app:testDebugUnitTest assembleDebug --no-daemon` completed
 successfully on 2026-08-23. The passing engine suite verifies owned-game XP, quest, and streak
-computation. Tasks 7.1 and 8.3-8.6 still require a real borrowed game and manual device interaction.
+computation.
+
+Tasks 7.1, 7.8, and 8.3-8.6 were completed by manual on-device verification with a real borrowed
+game on 2026-08-24 (see decision 7 in `design.md` for the 7.1/7.8 achievement-data finding). 7.7
+(repository and Settings view-model tests covering the manual-import outcome matrix: owned,
+shared, excluded, invalid, unavailable, achievement-data, no-data) followed the same day, adding
+coverage to `FamilySharedGameRepositoryTest` and `ManualSharedGameToastTest`. All tasks in this
+change are now complete.
 
 The remaining unchecked items all need something the cloud environment used for this work does not
 have. They are listed here so the next session on hardware knows exactly what is outstanding rather
@@ -106,6 +113,5 @@ than re-deriving it.
   the engine reads tracked session minutes plus `backfillMinutes`, neither of which this change
   alters, and the diffing scope narrowed from every row to `source = 'STEAM_OWNED'`, which is the
   same set for any library with no shared games.
-- **7.1** — needs a real borrowed game on a real Steam account. See `design.md`, decision 7, for
-  what was implemented in the absence of the answer and why nothing depends on it.
-- **8.3 – 8.6** — on-device manual verification.
+- **7.1, 7.8, 8.3 – 8.6** — completed 2026-08-24 via manual on-device verification with a real
+  borrowed game; see decision 7 in `design.md` for the achievement-data finding.

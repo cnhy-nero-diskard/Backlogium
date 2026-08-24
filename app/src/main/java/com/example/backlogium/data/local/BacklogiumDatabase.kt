@@ -58,7 +58,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         GameAchievementSync::class,
         ExcludedSharedGame::class,
     ],
-    version = 21,
+    version = 22,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -498,7 +498,24 @@ abstract class BacklogiumDatabase : RoomDatabase() {
         }
 
         /**
-         * v20 -> v21: family-shared games (add-family-shared-games).
+         * v20 -> v21: record recency observations on the games schema. `games` gains
+         * `firstSeenAt`, `lastPlayedAt`, and `returnedToPlayAt`, all nullable with no backfill.
+         *
+         * This must stay exactly the schema `master` already shipped at version 21: an install
+         * that upgraded from a genuine `master` build is stamped version 21 with only these three
+         * columns, and Room's identity check is content-based, not just the version number. Fold
+         * anything else into a later migration instead of editing this one.
+         */
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `games` ADD COLUMN `firstSeenAt` INTEGER")
+                db.execSQL("ALTER TABLE `games` ADD COLUMN `lastPlayedAt` INTEGER")
+                db.execSQL("ALTER TABLE `games` ADD COLUMN `returnedToPlayAt` INTEGER")
+            }
+        }
+
+        /**
+         * v21 -> v22: family-shared games (add-family-shared-games).
          *
          * - `games` gains `source`, defaulting to `STEAM_OWNED`. A widening with no data movement:
          *   every existing row *is* an owned game, since the owned-games sync was until now the
@@ -507,13 +524,22 @@ abstract class BacklogiumDatabase : RoomDatabase() {
          *   removal survives further play. Deliberately no foreign key to `games` — the row exists
          *   precisely because the game row does not — and `name` is carried so Settings can list a
          *   removal with nothing else left to read it from.
+         *
+         * `source` is added conditionally: an install that ran this branch before the v21/v22
+         * split (a build between the family-shared feature landing and this fix) is *also*
+         * stamped version 21, but its `games` table already has `source` — that earlier build's
+         * `MIGRATION_20_21` put it there. An unconditional `ADD COLUMN` would fail on that shape
+         * with a duplicate-column error, so this checks first rather than assuming master's
+         * recency-only v21 is the only one that exists in the wild.
          */
-        val MIGRATION_20_21 = object : Migration(20, 21) {
+        val MIGRATION_21_22 = object : Migration(21, 22) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "ALTER TABLE `games` ADD COLUMN `source` TEXT NOT NULL " +
-                        "DEFAULT 'STEAM_OWNED'",
-                )
+                if (!db.hasColumn("games", "source")) {
+                    db.execSQL(
+                        "ALTER TABLE `games` ADD COLUMN `source` TEXT NOT NULL " +
+                            "DEFAULT 'STEAM_OWNED'",
+                    )
+                }
                 db.execSQL(
                     "CREATE TABLE IF NOT EXISTS `excluded_shared_games` (" +
                         "`appId` INTEGER NOT NULL, " +
@@ -521,10 +547,17 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "`excludedAt` INTEGER NOT NULL, " +
                         "PRIMARY KEY(`appId`))",
                 )
-                db.execSQL("ALTER TABLE `games` ADD COLUMN `firstSeenAt` INTEGER")
-                db.execSQL("ALTER TABLE `games` ADD COLUMN `lastPlayedAt` INTEGER")
-                db.execSQL("ALTER TABLE `games` ADD COLUMN `returnedToPlayAt` INTEGER")
             }
+        }
+
+        private fun SupportSQLiteDatabase.hasColumn(table: String, column: String): Boolean {
+            query("PRAGMA table_info(`$table`)").use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIndex) == column) return true
+                }
+            }
+            return false
         }
 
         private data class BackfillKey(

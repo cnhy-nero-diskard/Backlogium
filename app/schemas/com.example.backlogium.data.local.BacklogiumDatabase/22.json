@@ -1,12 +1,12 @@
 {
   "formatVersion": 1,
   "database": {
-    "version": 21,
-    "identityHash": "f48d71f8770ac80e4b71f703ee68eeab",
+    "version": 22,
+    "identityHash": "f5013b21491942479f01607d43faa0c8",
     "entities": [
       {
         "tableName": "games",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`appId` INTEGER NOT NULL, `name` TEXT NOT NULL, `iconUrl` TEXT NOT NULL, `playtimeForever` INTEGER NOT NULL, `playtime2Weeks` INTEGER NOT NULL, `lastPlaytime` INTEGER NOT NULL, `isGoal` INTEGER NOT NULL, `targetMinutes` INTEGER, `lastSyncedAt` INTEGER NOT NULL, `backfillMinutes` INTEGER NOT NULL, `firstSeenAt` INTEGER, `lastPlayedAt` INTEGER, `returnedToPlayAt` INTEGER, PRIMARY KEY(`appId`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`appId` INTEGER NOT NULL, `name` TEXT NOT NULL, `iconUrl` TEXT NOT NULL, `playtimeForever` INTEGER NOT NULL, `playtime2Weeks` INTEGER NOT NULL, `lastPlaytime` INTEGER NOT NULL, `isGoal` INTEGER NOT NULL, `targetMinutes` INTEGER, `lastSyncedAt` INTEGER NOT NULL, `backfillMinutes` INTEGER NOT NULL, `source` TEXT NOT NULL, `firstSeenAt` INTEGER, `lastPlayedAt` INTEGER, `returnedToPlayAt` INTEGER, PRIMARY KEY(`appId`))",
         "fields": [
           {
             "fieldPath": "appId",
@@ -65,6 +65,12 @@
             "fieldPath": "backfillMinutes",
             "columnName": "backfillMinutes",
             "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
             "notNull": true
           },
           {
@@ -1096,11 +1102,41 @@
             ]
           }
         ]
+      },
+      {
+        "tableName": "excluded_shared_games",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`appId` INTEGER NOT NULL, `name` TEXT NOT NULL, `excludedAt` INTEGER NOT NULL, PRIMARY KEY(`appId`))",
+        "fields": [
+          {
+            "fieldPath": "appId",
+            "columnName": "appId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "excludedAt",
+            "columnName": "excludedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "appId"
+          ]
+        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f48d71f8770ac80e4b71f703ee68eeab')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f5013b21491942479f01607d43faa0c8')"
     ]
   }
 }

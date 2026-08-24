@@ -145,9 +145,11 @@ achievements they are presented as for any game, and where it does not the game 
 without an achievement surface. That way the feature is correct whichever way the verification
 lands, and a task exists to establish which.
 
-**Verification status (task 7.1): not yet performed.** It requires a real borrowed game on a real
-account, and the implementation was carried out in an environment with neither. Nothing in the
-implementation depends on the answer:
+**Verification status (tasks 7.1, 7.8): confirmed 2026-08-24 against a real borrowed game.**
+`GetPlayerAchievements` does answer for a family-shared title — Steam reports achievement progress
+under the borrower's own account, same as for an owned game. The conditional design below was
+written before this was known and needed no change once it was confirmed; nothing in the
+implementation depended on the answer:
 
 - A family-shared game is included in the achievement fetch scope on both paths. Reconciliation
   already covered it (`fetchReconciliationGames` reads every `games` row); the inline sync path was
@@ -161,9 +163,9 @@ implementation depends on the answer:
   exactly the state an owned game with no achievements reaches them in — the detail screen already
   presents no achievement surface for that case rather than an empty one.
 
-So the outstanding work is to *record what Steam does*, not to change behaviour in response to it.
-Should the answer turn out to be "Steam refuses for shared games", the correct follow-up is to stop
-spending requests on them, not to add a surface — which is why that is not pre-emptively built.
+Since Steam does answer, the second bullet is the branch that actually applies: a family-shared
+game's achievements render through the existing surfaces with no special casing, confirmed on
+device. No follow-up work is needed on the strength of this answer.
 
 ### 8. `source` is an enum on `Game`, not a separate table
 

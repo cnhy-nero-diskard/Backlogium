@@ -270,14 +270,25 @@ class FamilySharedGameRepository @Inject constructor(
     }
 
     /**
-     * Reverse a removal. The game is not recreated here: it becomes eligible again and is admitted
-     * the next time it is observed being played, which is the same path that admitted it the first
-     * time. Recreating the row directly would invent a tracked game from a list entry rather than
-     * from an observation.
+     * Reverse a removal from Settings. Restore the tracked row immediately so the game is visible
+     * in Library and can be added to collections again; future play observations will provide its
+     * sessions through the normal presence path. The exclusion and row are changed together so a
+     * restored game cannot be admitted twice if presence is observed at the same time.
      */
-    suspend fun reverseRemoval(appId: Long) {
-        excludedDao.delete(appId)
-        clearCandidateIfCurrent(appId)
+    suspend fun reverseRemoval(appId: Long): Boolean {
+        val restored = transaction.run {
+            val excluded = excludedDao.getAll().firstOrNull { it.appId == appId } ?: return@run false
+            gameDao.insertSharedGameIfMissing(
+                appId = excluded.appId,
+                name = excluded.name,
+                iconUrl = "",
+                admittedAt = time.nowMillis(),
+            )
+            excludedDao.delete(appId)
+            true
+        }
+        if (restored) clearCandidateIfCurrent(appId)
+        return restored
     }
 
     private suspend fun admit(
