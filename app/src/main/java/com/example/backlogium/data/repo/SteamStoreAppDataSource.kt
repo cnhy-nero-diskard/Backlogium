@@ -39,8 +39,8 @@ class SteamStoreAppDataSource @Inject constructor(
                 // A missing entry for the id we asked about is not an answer about the id.
                 ?: return StoreAppInfo.Unavailable()
             // `success = false` is the store's answer for an id it will not describe — delisted,
-            // region-locked, or not a store item. Not a game, and not worth re-asking about.
-            if (!envelope.success) return StoreAppInfo.NotAGame
+            // region-locked, or not a store item; those cases are unavailable until they can be retried.
+            if (!envelope.success) return StoreAppInfo.Unavailable()
             val data = envelope.data ?: return StoreAppInfo.Unavailable()
             if (!data.type.equals(STORE_TYPE_GAME, ignoreCase = true)) return StoreAppInfo.NotAGame
 

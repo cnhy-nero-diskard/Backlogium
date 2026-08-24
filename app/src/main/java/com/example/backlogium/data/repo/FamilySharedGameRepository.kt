@@ -1,10 +1,15 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.SettingsDataStore
+import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.DailyProgressDao
+import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.entity.ExcludedSharedGame
+import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.domain.AdmissionDecision
 import com.example.backlogium.domain.AdmissionFacts
@@ -13,10 +18,14 @@ import com.example.backlogium.domain.SharedGameAdmissionPolicy
 import com.example.backlogium.domain.SteamAppIdInput
 import com.example.backlogium.domain.StoreVerification
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.domain.DerivedStateWriteCoordinator
+import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.RecomputeSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -72,6 +81,11 @@ class FamilySharedGameRepository @Inject constructor(
     private val notifier: SharedGameNotifier,
     private val steamApi: SteamApi,
     private val time: TimeProvider,
+    private val sessionDao: SessionDao,
+    private val dailyProgressDao: DailyProgressDao,
+    private val transaction: DatabaseTransactionScope,
+    private val gamificationUpdater: GamificationUpdater,
+    private val derivedStateWrites: DerivedStateWriteCoordinator,
 ) {
 
     /** Removed games, newest first. Empty when nothing has been removed, so Settings can hide. */
@@ -90,6 +104,10 @@ class FamilySharedGameRepository @Inject constructor(
      * @return the decision reached. [AdmissionDecision.Admit] means a game row now exists.
      */
     suspend fun considerAdmission(appId: Long, observedAt: Long): AdmissionDecision {
+        if (settings.isSharedGameNotAGame(appId)) {
+            clearCandidateIfCurrent(appId)
+            return AdmissionDecision.NotAGame
+        }
         val candidate = settings.sharedGameCandidateFlow.first()
         // A new app id restarts the clock: the sync that matters is one that completed after *this*
         // id was first seen, and the previous candidate is worth nothing once play has moved on.
@@ -124,6 +142,11 @@ class FamilySharedGameRepository @Inject constructor(
                 },
             ),
         )
+        if (info == StoreAppInfo.NotAGame) {
+            settings.markSharedGameNotAGame(appId)
+            clearCandidateIfCurrent(appId)
+            return verified
+        }
         if (verified != AdmissionDecision.Admit || info !is StoreAppInfo.Game) return verified
 
         admit(appId, info, observedAt)
@@ -145,6 +168,7 @@ class FamilySharedGameRepository @Inject constructor(
             }
         }
         if (excludedDao.isExcluded(appId)) return ManualSharedGameImportResult.Excluded(appId)
+        if (settings.isSharedGameNotAGame(appId)) return ManualSharedGameImportResult.NotAGame(appId)
         return importUntracked(appId, apiKey, steamId)
     }
 
@@ -171,7 +195,11 @@ class FamilySharedGameRepository @Inject constructor(
             StoreAppInfo.Unavailable()
         }
         when (info) {
-            StoreAppInfo.NotAGame -> return ManualSharedGameImportResult.NotAGame(appId)
+            StoreAppInfo.NotAGame -> {
+                settings.markSharedGameNotAGame(appId)
+                clearCandidateIfCurrent(appId)
+                return ManualSharedGameImportResult.NotAGame(appId)
+            }
             is StoreAppInfo.Unavailable -> return ManualSharedGameImportResult.Unavailable(
                 appId,
                 ManualImportUnavailableAt.STORE,
@@ -195,13 +223,50 @@ class FamilySharedGameRepository @Inject constructor(
      * @return true when a family-shared game was removed.
      */
     suspend fun remove(appId: Long): Boolean {
-        val game = gameDao.getById(appId) ?: return false
-        if (gameDao.deleteSharedGame(appId) == 0) return false
-        excludedDao.upsert(
-            ExcludedSharedGame(appId = appId, name = game.name, excludedAt = time.nowMillis()),
-        )
+        val removed = transaction.run {
+            val game = gameDao.getById(appId) ?: return@run false
+            val sessions = sessionDao.getAll().filter { it.appId == appId }
+            if (gameDao.deleteSharedGame(appId) == 0) return@run false
+            reconcileDailyProgress(game, sessions)
+            excludedDao.upsert(
+                ExcludedSharedGame(appId = appId, name = game.name, excludedAt = time.nowMillis()),
+            )
+            true
+        }
+        if (!removed) return false
         clearCandidateIfCurrent(appId)
+        recomputeAfterRemoval()
         return true
+    }
+    private suspend fun reconcileDailyProgress(game: Game, sessions: List<Session>) {
+        val zone = time.zone()
+        val minutesByDate = sessions
+            .groupBy { session ->
+                Instant.ofEpochMilli(session.startAt).atZone(zone).toLocalDate().toString()
+            }
+            .mapValues { (_, rows) -> rows.sumOf { it.minutes } }
+
+        minutesByDate.forEach { (date, minutes) ->
+            val day = dailyProgressDao.getByDate(date) ?: return@forEach
+            val removedGoalMinutes = if (game.isGoal) minutes else 0
+            dailyProgressDao.setMinutes(
+                date = date,
+                minutesPlayed = (day.minutesPlayed - minutes).coerceAtLeast(0),
+                goalMinutesPlayed = (day.goalMinutesPlayed - removedGoalMinutes).coerceAtLeast(0),
+            )
+        }
+    }
+
+    private suspend fun recomputeAfterRemoval() {
+        derivedStateWrites.withLock {
+            val rules = settings.ruleConfigWithVersionFlow.first()
+            gamificationUpdater.recompute(
+                today = time.today(),
+                source = RecomputeSource.SYNC,
+                config = rules.config,
+                configVersion = rules.version,
+            )
+        }
     }
 
     /**
@@ -238,7 +303,9 @@ class FamilySharedGameRepository @Inject constructor(
         // and background enrichment would resolve them later anyway.
         runCatching { genres.storeGenres(appId, info.genres) }
         clearCandidateIfCurrent(appId)
-        if (announce) notifier.notifyAdmitted(appId, info.name)
+        if (announce && !notifier.notifyAdmitted(appId, info.name)) {
+            settings.setSharedGameAnnouncement(appId, info.name, time.nowMillis())
+        }
     }
 
     private suspend fun importedResult(

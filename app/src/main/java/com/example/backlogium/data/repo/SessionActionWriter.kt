@@ -1,6 +1,7 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.dao.DailyProgressDao
+import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.SessionDiffer
@@ -26,6 +27,7 @@ class SessionActionWriter @Inject constructor(
     private val sessionDao: SessionDao,
     private val dailyProgressDao: DailyProgressDao,
     private val time: TimeProvider,
+    private val transaction: DatabaseTransactionScope = com.example.backlogium.data.backup.PassThroughTransactionScope,
 ) {
 
     /** Apply the session rows only, leaving daily-progress crediting to the caller. */
@@ -69,7 +71,9 @@ class SessionActionWriter @Inject constructor(
     /** Both halves together — the presence path's whole write. */
     suspend fun apply(actions: List<SessionDiffer.SessionAction>, goalAppIds: Set<Long>) {
         if (actions.isEmpty()) return
-        applySessionActions(actions)
-        creditDailyProgress(actions, goalAppIds)
+        transaction.run {
+            applySessionActions(actions)
+            creditDailyProgress(actions, goalAppIds)
+        }
     }
 }

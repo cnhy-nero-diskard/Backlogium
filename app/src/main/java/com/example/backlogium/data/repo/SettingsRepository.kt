@@ -4,6 +4,7 @@ import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.data.local.AcquiredGamesAnnouncement
+import com.example.backlogium.data.local.SharedGameAnnouncement
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
@@ -116,6 +117,13 @@ interface SettingsRepository {
     /** Dismiss the current announcement. Per-batch: a later acquisition clears the flag again. */
     suspend fun setAcquiredGamesDismissed()
 
+    /** Durable foreground cue when automatic family-shared admission could not post a notification. */
+    val sharedGameAnnouncement: Flow<SharedGameAnnouncement?>
+        get() = flowOf(null)
+
+    /** Dismiss the durable family-shared admission cue. */
+    suspend fun clearSharedGameAnnouncement() = Unit
+
     val liveMonitoringAvailability: Flow<PresenceMonitoringAvailability>
         get() = flowOf(PresenceMonitoringAvailability.AVAILABLE)
 
@@ -190,6 +198,10 @@ class DataStoreSettingsRepository @Inject constructor(
     override val acquiredGames: Flow<AcquiredGamesAnnouncement> = settings.acquiredGamesFlow
 
     override suspend fun setAcquiredGamesDismissed() = settings.setAcquiredGamesDismissed()
+
+    override val sharedGameAnnouncement: Flow<SharedGameAnnouncement?> =
+        settings.sharedGameAnnouncementFlow
+
 
     override val liveMonitoringAvailability: Flow<PresenceMonitoringAvailability> =
         settings.liveMonitoringAvailabilityFlow

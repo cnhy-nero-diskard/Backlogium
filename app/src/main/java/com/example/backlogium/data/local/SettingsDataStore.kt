@@ -72,6 +72,14 @@ class SettingsDataStore @Inject constructor(
         val SHARED_CANDIDATE_APP_ID = longPreferencesKey("shared_candidate_app_id")
         val SHARED_CANDIDATE_FIRST_OBSERVED_AT =
             longPreferencesKey("shared_candidate_first_observed_at")
+        val SHARED_GAME_NOT_A_GAME_APP_IDS =
+            stringSetPreferencesKey("shared_game_not_a_game_app_ids")
+        val SHARED_GAME_ANNOUNCEMENT_APP_ID =
+            longPreferencesKey("shared_game_announcement_app_id")
+        val SHARED_GAME_ANNOUNCEMENT_NAME =
+            stringPreferencesKey("shared_game_announcement_name")
+        val SHARED_GAME_ANNOUNCEMENT_AT =
+            longPreferencesKey("shared_game_announcement_at")
         val ACQUIRED_AT = longPreferencesKey("acquired_batch_at")
         val ACQUIRED_APP_IDS = stringSetPreferencesKey("acquired_batch_app_ids")
         val ACQUIRED_DISMISSED = booleanPreferencesKey("acquired_batch_dismissed")
@@ -417,6 +425,45 @@ class SettingsDataStore @Inject constructor(
         }
     }
 
+    /** Store-confirmed non-games are permanent and distinct from player-controlled exclusions. */
+    suspend fun isSharedGameNotAGame(appId: Long): Boolean =
+        appId.toString() in context.dataStore.data.first()[Keys.SHARED_GAME_NOT_A_GAME_APP_IDS].orEmpty()
+
+    suspend fun markSharedGameNotAGame(appId: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.SHARED_GAME_NOT_A_GAME_APP_IDS] =
+                prefs[Keys.SHARED_GAME_NOT_A_GAME_APP_IDS].orEmpty() + appId.toString()
+        }
+    }
+
+    /** Durable in-app cue used when automatic admission cannot post a notification. */
+    val sharedGameAnnouncementFlow: Flow<SharedGameAnnouncement?> = context.dataStore.data.map { prefs ->
+        val appId = prefs[Keys.SHARED_GAME_ANNOUNCEMENT_APP_ID]
+        val name = prefs[Keys.SHARED_GAME_ANNOUNCEMENT_NAME]
+        val announcedAt = prefs[Keys.SHARED_GAME_ANNOUNCEMENT_AT]
+        if (appId != null && name != null && announcedAt != null) {
+            SharedGameAnnouncement(appId, name, announcedAt)
+        } else {
+            null
+        }
+    }
+
+    suspend fun setSharedGameAnnouncement(appId: Long, name: String, announcedAt: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.SHARED_GAME_ANNOUNCEMENT_APP_ID] = appId
+            prefs[Keys.SHARED_GAME_ANNOUNCEMENT_NAME] = name
+            prefs[Keys.SHARED_GAME_ANNOUNCEMENT_AT] = announcedAt
+        }
+    }
+
+    suspend fun clearSharedGameAnnouncement() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_APP_ID)
+            prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_NAME)
+            prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_AT)
+        }
+    }
+
     /**
      * The most recent acquiring poll's announcement batch. Absent by default, so a fresh install
      * and an install that has never acquired anything both read as "nothing to announce".
@@ -457,6 +504,10 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
             prefs.remove(Keys.SHARED_CANDIDATE_APP_ID)
             prefs.remove(Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT)
+            prefs.remove(Keys.SHARED_GAME_NOT_A_GAME_APP_IDS)
+            prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_APP_ID)
+            prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_NAME)
+            prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_AT)
             prefs.remove(Keys.LAST_CELEBRATED_LEVEL)
             prefs.remove(Keys.LAST_CELEBRATED_STREAK_MILESTONE)
             prefs.remove(Keys.LAST_QUEST_CELEBRATED_DATE)
@@ -584,6 +635,13 @@ data class AcquiredGamesAnnouncement(
         const val LIFETIME_MILLIS: Long = 24L * 60 * 60 * 1_000
     }
 }
+/** A durable foreground cue for a family-shared admission when notifications were unavailable. */
+data class SharedGameAnnouncement(
+    val appId: Long,
+    val name: String,
+    val announcedAt: Long,
+)
+
 
 /**
  * The persisted live now-playing session: which game (Steam appId, possibly unresolved) and when

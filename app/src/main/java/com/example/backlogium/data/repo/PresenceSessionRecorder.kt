@@ -120,9 +120,13 @@ class PresenceSessionRecorder @Inject constructor(
      * evidence the app ever gets that it exists.
      */
     private suspend fun resolveSharedGame(appId: Long?, observedAt: Long): Long? {
-        if (appId == null) return null
+        if (appId == null) {
+            settings.clearSharedGameCandidate()
+            return null
+        }
         val existing = gameDao.getById(appId)
         if (existing != null) {
+            settings.clearSharedGameCandidate()
             return when (existing.source) {
                 GameSource.FAMILY_SHARED -> appId
                 GameSource.STEAM_OWNED -> null
