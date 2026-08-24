@@ -74,12 +74,14 @@ class SettingsDataStore @Inject constructor(
             longPreferencesKey("shared_candidate_first_observed_at")
         val SHARED_GAME_NOT_A_GAME_APP_IDS =
             stringSetPreferencesKey("shared_game_not_a_game_app_ids")
-        val SHARED_GAME_ANNOUNCEMENT_APP_ID =
-            longPreferencesKey("shared_game_announcement_app_id")
-        val SHARED_GAME_ANNOUNCEMENT_NAME =
-            stringPreferencesKey("shared_game_announcement_name")
-        val SHARED_GAME_ANNOUNCEMENT_AT =
-            longPreferencesKey("shared_game_announcement_at")
+        /**
+         * One encoded entry per undismissed announcement (`appId|announcedAt|urlEncodedName`), so
+         * an admission that arrives while an earlier one is still unseen queues rather than
+         * overwriting it — the notifier contract requires every automatic admission to leave a
+         * cue, not just the most recent one.
+         */
+        val SHARED_GAME_ANNOUNCEMENT_ENTRIES =
+            stringSetPreferencesKey("shared_game_announcement_entries")
         val ACQUIRED_AT = longPreferencesKey("acquired_batch_at")
         val ACQUIRED_APP_IDS = stringSetPreferencesKey("acquired_batch_app_ids")
         val ACQUIRED_DISMISSED = booleanPreferencesKey("acquired_batch_dismissed")
@@ -436,31 +438,44 @@ class SettingsDataStore @Inject constructor(
         }
     }
 
-    /** Durable in-app cue used when automatic admission cannot post a notification. */
-    val sharedGameAnnouncementFlow: Flow<SharedGameAnnouncement?> = context.dataStore.data.map { prefs ->
-        val appId = prefs[Keys.SHARED_GAME_ANNOUNCEMENT_APP_ID]
-        val name = prefs[Keys.SHARED_GAME_ANNOUNCEMENT_NAME]
-        val announcedAt = prefs[Keys.SHARED_GAME_ANNOUNCEMENT_AT]
-        if (appId != null && name != null && announcedAt != null) {
-            SharedGameAnnouncement(appId, name, announcedAt)
-        } else {
-            null
-        }
+    /**
+     * Every undismissed durable cue, oldest first — the queue [sharedGameAnnouncementFlow] and
+     * [clearSharedGameAnnouncement] present one entry at a time.
+     */
+    val sharedGameAnnouncementsFlow: Flow<List<SharedGameAnnouncement>> = context.dataStore.data.map { prefs ->
+        prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES].orEmpty()
+            .mapNotNull(::decodeSharedGameAnnouncement)
+            .sortedBy { it.announcedAt }
     }
 
+    /** Durable in-app cue used when automatic admission cannot post a notification. */
+    val sharedGameAnnouncementFlow: Flow<SharedGameAnnouncement?> =
+        sharedGameAnnouncementsFlow.map { it.firstOrNull() }
+
+    /** Queue a cue for [appId], replacing any earlier undismissed entry for the same game. */
     suspend fun setSharedGameAnnouncement(appId: Long, name: String, announcedAt: Long) {
         context.dataStore.edit { prefs ->
-            prefs[Keys.SHARED_GAME_ANNOUNCEMENT_APP_ID] = appId
-            prefs[Keys.SHARED_GAME_ANNOUNCEMENT_NAME] = name
-            prefs[Keys.SHARED_GAME_ANNOUNCEMENT_AT] = announcedAt
+            val remaining = prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES].orEmpty()
+                .mapNotNull(::decodeSharedGameAnnouncement)
+                .filterNot { it.appId == appId }
+            prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES] =
+                (remaining + SharedGameAnnouncement(appId, name, announcedAt))
+                    .mapTo(mutableSetOf(), ::encodeSharedGameAnnouncement)
         }
     }
 
-    suspend fun clearSharedGameAnnouncement() {
+    /** Dismiss only [appId]'s cue; any other queued admission's cue is untouched. */
+    suspend fun clearSharedGameAnnouncement(appId: Long) {
         context.dataStore.edit { prefs ->
-            prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_APP_ID)
-            prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_NAME)
-            prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_AT)
+            val remaining = prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES].orEmpty()
+                .mapNotNull(::decodeSharedGameAnnouncement)
+                .filterNot { it.appId == appId }
+            if (remaining.isEmpty()) {
+                prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES)
+            } else {
+                prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES] =
+                    remaining.mapTo(mutableSetOf(), ::encodeSharedGameAnnouncement)
+            }
         }
     }
 
@@ -505,9 +520,7 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.SHARED_CANDIDATE_APP_ID)
             prefs.remove(Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT)
             prefs.remove(Keys.SHARED_GAME_NOT_A_GAME_APP_IDS)
-            prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_APP_ID)
-            prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_NAME)
-            prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_AT)
+            prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES)
             prefs.remove(Keys.LAST_CELEBRATED_LEVEL)
             prefs.remove(Keys.LAST_CELEBRATED_STREAK_MILESTONE)
             prefs.remove(Keys.LAST_QUEST_CELEBRATED_DATE)
@@ -641,6 +654,21 @@ data class SharedGameAnnouncement(
     val name: String,
     val announcedAt: Long,
 )
+
+/** `appId|announcedAt|urlEncodedName` — a single [SharedGameAnnouncement] as a set element. */
+private fun encodeSharedGameAnnouncement(announcement: SharedGameAnnouncement): String {
+    val encodedName = java.net.URLEncoder.encode(announcement.name, "UTF-8")
+    return "${announcement.appId}|${announcement.announcedAt}|$encodedName"
+}
+
+private fun decodeSharedGameAnnouncement(raw: String): SharedGameAnnouncement? {
+    val parts = raw.split("|", limit = 3)
+    if (parts.size != 3) return null
+    val appId = parts[0].toLongOrNull() ?: return null
+    val announcedAt = parts[1].toLongOrNull() ?: return null
+    val name = runCatching { java.net.URLDecoder.decode(parts[2], "UTF-8") }.getOrNull() ?: return null
+    return SharedGameAnnouncement(appId, name, announcedAt)
+}
 
 
 /**

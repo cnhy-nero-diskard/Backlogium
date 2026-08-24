@@ -432,9 +432,14 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch { settings.setAcquiredGamesDismissed() }
     }
 
-    /** Acknowledge the durable fallback cue after the user sees or dismisses it. */
+    /**
+     * Acknowledge the durable fallback cue after the user sees or dismisses it. Scoped to the
+     * queue entry currently on screen, so a game admitted while this one was still unseen keeps
+     * its own cue rather than being dismissed along with it.
+     */
     fun dismissSharedGameAnnouncement() {
-        viewModelScope.launch { settings.clearSharedGameAnnouncement() }
+        val appId = uiState.value.sharedGameAnnouncement?.appId ?: return
+        viewModelScope.launch { settings.clearSharedGameAnnouncement(appId) }
     }
 
     /** Acknowledge only after the corresponding progress event has actually been presented. */

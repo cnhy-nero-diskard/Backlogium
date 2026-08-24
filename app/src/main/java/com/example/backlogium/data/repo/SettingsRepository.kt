@@ -117,12 +117,15 @@ interface SettingsRepository {
     /** Dismiss the current announcement. Per-batch: a later acquisition clears the flag again. */
     suspend fun setAcquiredGamesDismissed()
 
-    /** Durable foreground cue when automatic family-shared admission could not post a notification. */
+    /**
+     * Durable foreground cue when automatic family-shared admission could not post a
+     * notification — the oldest undismissed admission, when more than one is queued.
+     */
     val sharedGameAnnouncement: Flow<SharedGameAnnouncement?>
         get() = flowOf(null)
 
-    /** Dismiss the durable family-shared admission cue. */
-    suspend fun clearSharedGameAnnouncement() = Unit
+    /** Dismiss [appId]'s durable admission cue; any other queued admission's cue stays queued. */
+    suspend fun clearSharedGameAnnouncement(appId: Long) = Unit
 
     val liveMonitoringAvailability: Flow<PresenceMonitoringAvailability>
         get() = flowOf(PresenceMonitoringAvailability.AVAILABLE)
@@ -202,6 +205,8 @@ class DataStoreSettingsRepository @Inject constructor(
     override val sharedGameAnnouncement: Flow<SharedGameAnnouncement?> =
         settings.sharedGameAnnouncementFlow
 
+    override suspend fun clearSharedGameAnnouncement(appId: Long) =
+        settings.clearSharedGameAnnouncement(appId)
 
     override val liveMonitoringAvailability: Flow<PresenceMonitoringAvailability> =
         settings.liveMonitoringAvailabilityFlow
