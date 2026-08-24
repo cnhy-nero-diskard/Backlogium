@@ -52,6 +52,9 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
     )
     override suspend fun latestSessionInstantByGame(): List<GameSessionInstant> =
         sessions.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.maxOf { it.endAt ?: it.startAt }) }
+    override fun observeLatestSessionInstantByGame(): Flow<List<GameSessionInstant>> = flowOf(
+        sessions.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.maxOf { it.endAt ?: it.startAt }) },
+    )
     override suspend fun findByNaturalKey(appId: Long, startAt: Long, endAt: Long?): Session? =
         sessions.firstOrNull { it.appId == appId && it.startAt == startAt && it.endAt == endAt }
 

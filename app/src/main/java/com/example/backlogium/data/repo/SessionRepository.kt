@@ -59,6 +59,10 @@ class SessionRepository @Inject constructor(
     val firstSessionAtByGame: Flow<Map<Long, Long>> = sessionDao.observeFirstSessionStartByGame()
         .map { rows -> rows.associate { it.appId to it.at } }
 
+    /** Most recent tracked session timestamp per game, absent when no session exists. */
+    val latestSessionAtByGame: Flow<Map<Long, Long>> = sessionDao.observeLatestSessionInstantByGame()
+        .map { rows -> rows.associate { it.appId to it.at } }
+
     /** Synthesized session count per game, keyed by appId. */
     val sessionCountByGame: Flow<Map<Long, Int>> = sessionDao.observeSessionCountsByGame()
         .map { rows -> rows.associate { it.appId to it.sessions } }

@@ -13,6 +13,9 @@ interface ExcludedSharedGameDao {
     suspend fun upsert(row: ExcludedSharedGame)
 
     @Query("SELECT * FROM excluded_shared_games ORDER BY excludedAt DESC")
+    suspend fun getAll(): List<ExcludedSharedGame>
+
+    @Query("SELECT * FROM excluded_shared_games ORDER BY excludedAt DESC")
     fun observeAll(): Flow<List<ExcludedSharedGame>>
 
     @Query("SELECT EXISTS(SELECT 1 FROM excluded_shared_games WHERE appId = :appId)")
