@@ -57,7 +57,7 @@
 - [x] 7.4 Parse a numeric app id or Steam Store URL into an app id, with JVM tests for accepted and rejected input
 - [x] 7.5 Add a typed manual-import result that checks the current owned library, tracked/excluded state, Store game type, and player-achievement response before reporting success
 - [x] 7.6 Add a Settings card for manual Family Shared import with busy, validation, success, and Steam-data result states
-- [ ] 7.7 Add repository and Settings view-model tests covering owned, shared, excluded, invalid, unavailable, achievement-data, and no-data outcomes
+- [x] 7.7 Add repository and Settings view-model tests covering owned, shared, excluded, invalid, unavailable, achievement-data, and no-data outcomes
 - [x] 7.8 Manually verify importing a real borrowed game from its Store URL and record the achievement-data result in `design.md`
 
 ## 8. Verification
@@ -78,10 +78,11 @@ successfully on 2026-08-23. The passing engine suite verifies owned-game XP, que
 computation.
 
 Tasks 7.1, 7.8, and 8.3-8.6 were completed by manual on-device verification with a real borrowed
-game on 2026-08-24 (see decision 7 in `design.md` for the 7.1/7.8 achievement-data finding). Only
-**7.7** remains: repository and Settings view-model tests covering the manual-import outcome
-matrix (owned, shared, excluded, invalid, unavailable, achievement-data, no-data) — this is a code
-task, not a manual one, and has not been picked up yet.
+game on 2026-08-24 (see decision 7 in `design.md` for the 7.1/7.8 achievement-data finding). 7.7
+(repository and Settings view-model tests covering the manual-import outcome matrix: owned,
+shared, excluded, invalid, unavailable, achievement-data, no-data) followed the same day, adding
+coverage to `FamilySharedGameRepositoryTest` and `ManualSharedGameToastTest`. All tasks in this
+change are now complete.
 
 The remaining unchecked items all need something the cloud environment used for this work does not
 have. They are listed here so the next session on hardware knows exactly what is outstanding rather
