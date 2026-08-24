@@ -134,7 +134,7 @@ data class GameSummaryUi(
 
     val lastPlayed: LastPlayed
         get() = when {
-            playtimeMinutes == 0 -> LastPlayed.Never
+            headlineMinutes == 0 -> LastPlayed.Never
             lastPlayedAt == null -> LastPlayed.Unknown
             else -> LastPlayed.At(lastPlayedAt)
         }
@@ -201,16 +201,22 @@ class GameDetailViewModel @Inject constructor(
         .distinctUntilChanged()
         .flatMapLatest { appId ->
             combine(
-                gameRepository.library,
-                achievementRepository.observeForGame(appId),
-                sessionRepository.trackedMinutesByGame,
+                combine(
+                    gameRepository.library,
+                    achievementRepository.observeForGame(appId),
+                    sessionRepository.trackedMinutesByGame,
+                    sessionRepository.latestSessionAtByGame,
+                ) { games, achievements, trackedByGame, latestByGame ->
+                    DetailLocalInputs(games, achievements, trackedByGame, latestByGame)
+                },
                 settings.ruleConfig,
                 settings.liveMonitorEnabled,
-            ) { games, achievements, trackedByGame, config, liveMonitorEnabled ->
+            ) { inputs, config, liveMonitorEnabled ->
                 Content(
-                    games.firstOrNull { it.appId == appId },
-                    achievements,
-                    trackedByGame[appId] ?: 0,
+                    inputs.games.firstOrNull { it.appId == appId },
+                    inputs.achievements,
+                    inputs.trackedByGame[appId] ?: 0,
+                    inputs.latestByGame[appId],
                     config,
                     liveMonitorEnabled,
                 )
@@ -327,10 +333,18 @@ internal suspend fun refreshPlayerCountOnce(
 }
 
 /** The flows the screen derives from, gathered before any per-row work. */
+private data class DetailLocalInputs(
+    val games: List<LibraryGame>,
+    val achievements: List<GameAchievement>,
+    val trackedByGame: Map<Long, Int>,
+    val latestByGame: Map<Long, Long>,
+)
+
 internal data class Content(
     val game: LibraryGame?,
     val achievements: List<GameAchievement>,
     val trackedMinutes: Int,
+    val latestTrackedAt: Long? = null,
     val config: RuleConfig,
     /** Only consulted for a family-shared game, as the remedy its disclosure points at. */
     val liveMonitorEnabled: Boolean = false,
@@ -379,7 +393,10 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
         activePlayers = activePlayers,
         genres = game.genres,
         recencyState = game.recencyState,
-        lastPlayedAt = game.lastPlayedAt,
+        lastPlayedAt = when (game.source) {
+            GameSource.FAMILY_SHARED -> latestTrackedAt
+            GameSource.STEAM_OWNED -> game.lastPlayedAt
+        },
         isFamilyShared = when (game.source) {
             GameSource.FAMILY_SHARED -> true
             GameSource.STEAM_OWNED -> false

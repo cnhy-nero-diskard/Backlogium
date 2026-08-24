@@ -19,7 +19,7 @@ import org.junit.Test
  */
 class FamilySharedSummaryMappingTest {
 
-    private fun content(source: GameSource, playtimeForever: Int, tracked: Int, monitor: Boolean = false) =
+    private fun content(source: GameSource, playtimeForever: Int, tracked: Int, monitor: Boolean = false, latestTrackedAt: Long? = null) =
         Content(
             game = LibraryGame(
                 appId = 620L,
@@ -30,6 +30,7 @@ class FamilySharedSummaryMappingTest {
             ),
             achievements = emptyList(),
             trackedMinutes = tracked,
+            latestTrackedAt = latestTrackedAt,
             config = RuleConfig(),
             liveMonitorEnabled = monitor,
         )
@@ -44,6 +45,26 @@ class FamilySharedSummaryMappingTest {
         assertTrue(summary.isFamilyShared)
         assertEquals(95, summary.headlineMinutes)
     }
+    @Test
+    fun sharedPlaytimeWithoutLatestSession_isUnknownNotNever() {
+        val summary = content(GameSource.FAMILY_SHARED, playtimeForever = 0, tracked = 95)
+            .toSummary(rows = emptyList(), activePlayers = null)
+
+        assertEquals(LastPlayed.Unknown, summary.lastPlayed)
+    }
+
+    @Test
+    fun sharedPlaytimeUsesLatestTrackedSessionForRecency() {
+        val summary = content(
+            GameSource.FAMILY_SHARED,
+            playtimeForever = 0,
+            tracked = 95,
+            latestTrackedAt = 1_700_000_000_000L,
+        ).toSummary(rows = emptyList(), activePlayers = null)
+
+        assertEquals(LastPlayed.At(1_700_000_000_000L), summary.lastPlayed)
+    }
+
 
     @Test
     fun anOwnedGame_carriesNoMarkingAndLeadsWithSteamsTotal() {

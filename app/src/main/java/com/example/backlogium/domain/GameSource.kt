@@ -20,3 +20,12 @@ enum class GameSource {
      */
     FAMILY_SHARED,
 }
+
+/** The playtime value that is truthful for a game source in player-facing summaries. */
+fun GameSource.displayedPlaytimeMinutes(
+    steamPlaytimeMinutes: Int,
+    trackedMinutes: Int,
+): Int = when (this) {
+    GameSource.STEAM_OWNED -> steamPlaytimeMinutes
+    GameSource.FAMILY_SHARED -> trackedMinutes
+}

@@ -1,10 +1,12 @@
 package com.example.backlogium.ui.home
 
 import androidx.lifecycle.ViewModel
+import com.example.backlogium.data.local.dao.AchievementCounts
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.AcquiredGamesAnnouncement
+import com.example.backlogium.data.local.SharedGameAnnouncement
 import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.AchievementRepository
@@ -17,8 +19,10 @@ import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.PersonalPaceRepository
 import com.example.backlogium.data.repo.PlayerStats
+import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.ProgressEventRepository
+import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionBanner
@@ -28,6 +32,7 @@ import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.exactExpiryTicks
 import com.example.backlogium.domain.GameRecencyState
+import com.example.backlogium.domain.displayedPlaytimeMinutes
 import com.example.backlogium.domain.ProgressEvent
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
@@ -95,6 +100,8 @@ data class HomeUiState(
     val pendingStreakBreak: ProgressEvent.StreakBroken? = null,
     /** Dedicated streak-milestone delivery so an unrelated pending event cannot hide the animation. */
     val pendingStreakMilestone: ProgressEvent.StreakMilestone? = null,
+    /** Durable fallback cue for automatic family-shared admission when notifications were unavailable. */
+    val sharedGameAnnouncement: SharedGameAnnouncement? = null,
     /** The unexpired, undismissed newly-acquired-games announcement, or null when there is none. */
     val acquiredGames: AcquiredGamesUi? = null,
 ) {
@@ -150,6 +157,13 @@ data class HomeCollectionCard(
     val isCurrentlyPlaying: Boolean = false,
 )
 
+
+private data class HomeCollectionInputs(
+    val members: List<CollectionMember>,
+    val libraryGames: List<LibraryGame>,
+    val counts: Map<Long, AchievementCounts>,
+    val trackedMinutesByGame: Map<Long, Int>,
+)
 data class HomeCollectionGame(
     val appId: Long,
     val name: String,
@@ -189,6 +203,7 @@ class HomeViewModel @Inject constructor(
     private val gameRepository: GameRepository,
     private val achievementRepository: AchievementRepository,
     private val personalPaceRepository: PersonalPaceRepository,
+    private val sessionRepository: SessionRepository,
     private val progressEventRepository: ProgressEventRepository,
     private val setupCoordinator: SetupCoordinator,
     private val time: TimeProvider,
@@ -268,12 +283,21 @@ class HomeViewModel @Inject constructor(
     // same reason the quest tick does — the date joins as an input here too.
     private fun deriveCard(collection: Collection): Flow<HomeCollectionCard> =
         combine(
-            collectionRepository.members(collection.id),
-            gameRepository.library,
-            achievementRepository.counts,
+            combine(
+                collectionRepository.members(collection.id),
+                gameRepository.library,
+                achievementRepository.counts,
+                sessionRepository.trackedMinutesByGame,
+            ) { members, libraryGames, counts, trackedMinutesByGame ->
+                HomeCollectionInputs(members, libraryGames, counts, trackedMinutesByGame)
+            },
             personalPaceRepository.profile,
             currentDate.currentDate,
-        ) { members, libraryGames, counts, personalPace, today ->
+        ) { inputs, personalPace, today ->
+            val members = inputs.members
+            val libraryGames = inputs.libraryGames
+            val counts = inputs.counts
+            val trackedMinutesByGame = inputs.trackedMinutesByGame
             val gamesById = libraryGames.associateBy { it.appId }
             val signals = members.map { member ->
                 val game = gamesById[member.appId]
@@ -282,7 +306,12 @@ class HomeViewModel @Inject constructor(
                     // Null when the member references a game absent from the library — the pure
                     // derivation omits it from the summary without dropping the membership row.
                     name = game?.name,
-                    playtimeMinutes = game?.playtimeForever ?: 0,
+                    playtimeMinutes = game?.let {
+                        it.source.displayedPlaytimeMinutes(
+                            it.playtimeForever,
+                            trackedMinutesByGame[member.appId] ?: 0,
+                        )
+                    } ?: 0,
                     completionistMinutes = game?.completionistMinutes,
                     mainStoryMinutes = game?.mainStoryMinutes,
                     mainExtraMinutes = game?.mainExtraMinutes,
@@ -349,8 +378,12 @@ class HomeViewModel @Inject constructor(
         liveStatusRepository.liveStatus,
         collectionCards,
         progressEventRepository.pendingEvents,
-        combine(gameRepository.library, acquiredBatch) { library, batch -> library to batch },
-    ) { state, live, cards, pendingEvents, (library, batch) ->
+        combine(
+            gameRepository.library,
+            acquiredBatch,
+            settings.sharedGameAnnouncement,
+        ) { library, batch, shared -> Triple(library, batch, shared) },
+    ) { state, live, cards, pendingEvents, (library, batch, shared) ->
         val playingAppId = (live.nowPlaying as? NowPlaying.InGame)?.gameId
         val acquired = batch.toUi(library.associate { it.appId to it.name }, time.nowMillis())
         val withCards = state.copy(
@@ -368,6 +401,7 @@ class HomeViewModel @Inject constructor(
             pendingStreakBreak = pendingEvents.firstOrNull() as? ProgressEvent.StreakBroken,
             pendingStreakMilestone = pendingEvents.firstOrNull() as? ProgressEvent.StreakMilestone,
             acquiredGames = acquired,
+            sharedGameAnnouncement = shared,
         )
         when (val nowPlaying = live.nowPlaying) {
             is NowPlaying.InGame -> withCards.copy(
@@ -396,6 +430,11 @@ class HomeViewModel @Inject constructor(
     /** Dismiss the acquisition banner. Scoped to this batch: a later purchase announces again. */
     fun dismissAcquiredGames() {
         viewModelScope.launch { settings.setAcquiredGamesDismissed() }
+    }
+
+    /** Acknowledge the durable fallback cue after the user sees or dismisses it. */
+    fun dismissSharedGameAnnouncement() {
+        viewModelScope.launch { settings.clearSharedGameAnnouncement() }
     }
 
     /** Acknowledge only after the corresponding progress event has actually been presented. */
