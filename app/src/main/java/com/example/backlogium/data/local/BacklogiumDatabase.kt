@@ -524,13 +524,22 @@ abstract class BacklogiumDatabase : RoomDatabase() {
          *   removal survives further play. Deliberately no foreign key to `games` — the row exists
          *   precisely because the game row does not — and `name` is carried so Settings can list a
          *   removal with nothing else left to read it from.
+         *
+         * `source` is added conditionally: an install that ran this branch before the v21/v22
+         * split (a build between the family-shared feature landing and this fix) is *also*
+         * stamped version 21, but its `games` table already has `source` — that earlier build's
+         * `MIGRATION_20_21` put it there. An unconditional `ADD COLUMN` would fail on that shape
+         * with a duplicate-column error, so this checks first rather than assuming master's
+         * recency-only v21 is the only one that exists in the wild.
          */
         val MIGRATION_21_22 = object : Migration(21, 22) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "ALTER TABLE `games` ADD COLUMN `source` TEXT NOT NULL " +
-                        "DEFAULT 'STEAM_OWNED'",
-                )
+                if (!db.hasColumn("games", "source")) {
+                    db.execSQL(
+                        "ALTER TABLE `games` ADD COLUMN `source` TEXT NOT NULL " +
+                            "DEFAULT 'STEAM_OWNED'",
+                    )
+                }
                 db.execSQL(
                     "CREATE TABLE IF NOT EXISTS `excluded_shared_games` (" +
                         "`appId` INTEGER NOT NULL, " +
@@ -539,6 +548,16 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "PRIMARY KEY(`appId`))",
                 )
             }
+        }
+
+        private fun SupportSQLiteDatabase.hasColumn(table: String, column: String): Boolean {
+            query("PRAGMA table_info(`$table`)").use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIndex) == column) return true
+                }
+            }
+            return false
         }
 
         private data class BackfillKey(

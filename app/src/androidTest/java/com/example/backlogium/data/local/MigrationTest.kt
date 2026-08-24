@@ -528,6 +528,79 @@ class MigrationTest {
         }
     }
 
+    /**
+     * Regression: a build of this branch prior to the v21/v22 split (e.g. commit `bc281f7`) was
+     * also stamped version 21, but its `games` table already carried `source` and
+     * `excluded_shared_games` already existed — that build's `MIGRATION_20_21` put both there
+     * directly, before they were split out into [MIGRATION_21_22]. [MIGRATION_21_22] must
+     * tolerate this shape too, not just master's recency-only v21.
+     *
+     * Starts from [MigrationTestHelper.createDatabase]'s real, complete v21 fixture (every table,
+     * not just `games`) and grafts on the two pieces that build's v21 already had, rather than
+     * hand-building a partial schema that `runMigrationsAndValidate`'s full-schema comparison
+     * would then reject as incomplete.
+     */
+    @Test
+    fun v21ToV22_toleratesAPriorBranchBuildsV21ThatAlreadyHasSource() {
+        val databaseName = "migration-v21-legacy-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 21)
+        try {
+            database.execSQL(
+                "ALTER TABLE `games` ADD COLUMN `source` TEXT NOT NULL DEFAULT 'STEAM_OWNED'",
+            )
+            database.execSQL(
+                "CREATE TABLE IF NOT EXISTS `excluded_shared_games` (" +
+                    "`appId` INTEGER NOT NULL, " +
+                    "`name` TEXT NOT NULL, " +
+                    "`excludedAt` INTEGER NOT NULL, " +
+                    "PRIMARY KEY(`appId`))",
+            )
+            database.execSQL(
+                "INSERT INTO games " +
+                    "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+                    "isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+                    "firstSeenAt, lastPlayedAt, returnedToPlayAt) VALUES " +
+                    "(441, 'Borrowed Game', 'icon-hash', 30, 0, 30, 0, NULL, 1700000000000, 0, " +
+                    "'FAMILY_SHARED', NULL, NULL, NULL)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                22,
+                true,
+                BacklogiumDatabase.MIGRATION_21_22,
+            )
+            try {
+                // The pre-existing source value must survive untouched, not be reset to the
+                // ADD COLUMN default that a naive unconditional migration would have applied.
+                migrated.query("SELECT appId, source FROM games WHERE appId = 441").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(441L, cursor.getLong(0))
+                    assertEquals("FAMILY_SHARED", cursor.getString(1))
+                    assertFalse(cursor.moveToNext())
+                }
+
+                assertTableInfo(
+                    migrated,
+                    "excluded_shared_games",
+                    listOf(
+                        ColumnInfo("appId", "INTEGER", notNull = true, pk = 1),
+                        ColumnInfo("name", "TEXT", notNull = true, pk = 0),
+                        ColumnInfo("excludedAt", "INTEGER", notNull = true, pk = 0),
+                    ),
+                )
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private data class ColumnInfo(val name: String, val type: String, val notNull: Boolean, val pk: Int)
 
     private fun assertTableInfo(database: SupportSQLiteDatabase, table: String, expected: List<ColumnInfo>) {
