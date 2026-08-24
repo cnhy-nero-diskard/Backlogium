@@ -10,8 +10,8 @@ reversed. The section SHALL be absent when nothing has been removed.
 
 #### Scenario: Reversing a removal
 - **WHEN** the player reverses a removal
-- **THEN** the game is eligible for admission again the next time it is observed being played, and
-  it leaves the list
+- **THEN** the game is restored as a Family Shared tracked game, appears in Library and collection
+  add-game choices, and leaves the list
 
 #### Scenario: Nothing removed
 - **WHEN** no family-shared game has been removed

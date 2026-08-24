@@ -547,9 +547,8 @@ private fun LiveMonitorCard(
  * The family-shared games the player removed, and the way back. Shown only when something has been
  * removed: a standing empty section would explain a feature most players never touch.
  *
- * Restoring does not recreate the game. It makes it eligible again, and it arrives the next time it
- * is observed being played — the same path that admitted it originally, so a restored entry cannot
- * become a tracked game the app never actually saw running.
+ * Restoring recreates the tracked shared-game row immediately, so it is visible in Library and
+ * available to add to collections again. Future play observations provide its sessions.
  */
 @Composable
 private fun RemovedSharedGamesCard(
@@ -559,7 +558,7 @@ private fun RemovedSharedGamesCard(
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                "These are not tracked and will not be added back on their own.",
+                "These are not tracked until you choose Track again.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
