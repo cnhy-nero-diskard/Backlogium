@@ -427,7 +427,7 @@ class MigrationTest {
     }
 
     @Test
-    fun v20ToV21_addsNullableRecencyColumnsAndLeavesExistingDataUntouched() {
+    fun v20ToV21_addsFamilySourceExclusionAndNullableRecencyColumns() {
         val databaseName = "migration-v20-${System.nanoTime()}"
         val database = migrationTestHelper.createDatabase(databaseName, 20)
         try {
@@ -449,22 +449,33 @@ class MigrationTest {
                 BacklogiumDatabase.MIGRATION_20_21,
             )
             try {
-                // All three nullable, so an existing library reads as "was already here" rather
-                // than as newly acquired.
-                migrated.query(
-                    "SELECT appId, name, isGoal, targetMinutes, backfillMinutes, " +
-                        "firstSeenAt, lastPlayedAt, returnedToPlayAt FROM games",
-                ).use { cursor ->
+                assertTableInfo(
+                    migrated,
+                    "excluded_shared_games",
+                    listOf(
+                        ColumnInfo("appId", "INTEGER", notNull = true, pk = 1),
+                        ColumnInfo("name", "TEXT", notNull = true, pk = 0),
+                        ColumnInfo("excludedAt", "INTEGER", notNull = true, pk = 0),
+                    ),
+                )
+
+                // Every pre-migration row is an owned game: the owned-games sync was the only
+                // path that could create one.
+                migrated.query("SELECT appId, name, playtimeForever, source, firstSeenAt, lastPlayedAt, returnedToPlayAt FROM games").use { cursor ->
                     assertTrue(cursor.moveToFirst())
                     assertEquals(440L, cursor.getLong(0))
                     assertEquals("Game", cursor.getString(1))
-                    assertEquals(1, cursor.getInt(2))
-                    assertEquals(240, cursor.getInt(3))
-                    assertEquals(55, cursor.getInt(4))
+                    assertEquals(100, cursor.getInt(2))
+                    assertEquals("STEAM_OWNED", cursor.getString(3))
+                    assertTrue(cursor.isNull(4))
                     assertTrue(cursor.isNull(5))
                     assertTrue(cursor.isNull(6))
-                    assertTrue(cursor.isNull(7))
                     assertFalse(cursor.moveToNext())
+                }
+
+                migrated.query("SELECT COUNT(*) FROM excluded_shared_games").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
                 }
             } finally {
                 migrated.close()

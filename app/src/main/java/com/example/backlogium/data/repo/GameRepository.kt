@@ -6,6 +6,7 @@ import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamIconMapper
+import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.exactExpiryTicks
 import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.LibraryRecency
@@ -81,6 +82,7 @@ data class LibraryGame(
      * "unknown", never "never played" — that is [playtimeForever] being 0.
      */
     val lastPlayedAt: Long? = null,
+    val source: GameSource = GameSource.STEAM_OWNED,
 )
 
 /** Read/write access to the game library, exposing domain models as observable [Flow]s. */
@@ -210,6 +212,7 @@ private fun Game.toDomain(
     genres = genres,
     recencyState = recencyState,
     lastPlayedAt = lastPlayedAt,
+    source = source,
 )
 
 /** Storage → domain status mapping; internal so [HltbRepository] can report batch outcomes. */

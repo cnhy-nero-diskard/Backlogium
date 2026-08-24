@@ -2,6 +2,7 @@ package com.example.backlogium.data.backup
 
 import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.CollectionDao
+import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
@@ -9,6 +10,7 @@ import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.Collection
+import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
@@ -21,6 +23,7 @@ import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.defaultSort
@@ -55,6 +58,7 @@ class BackupMergeEngine @Inject constructor(
     private val achievementDao: AchievementDao,
     private val playerProfileDao: PlayerProfileDao,
     private val collectionDao: CollectionDao,
+    private val excludedSharedGameDao: ExcludedSharedGameDao,
     private val gamificationUpdater: GamificationUpdater,
     private val time: TimeProvider,
     private val derivedStateWrites: DerivedStateWriteCoordinator = DerivedStateWriteCoordinator(),
@@ -91,6 +95,7 @@ class BackupMergeEngine @Inject constructor(
         // these DAO calls happens in here — no settings, no file access, nothing that hops
         // threads — so the transaction cannot deadlock or be left holding a connection open.
         transaction.run {
+            file.excludedSharedGames.forEach { mergeExcludedSharedGame(it) }
             // Games first: Session/Achievement/HltbData all carry a FOREIGN KEY on games.appId, so
             // a fresh-install restore (no games synced yet) needs the skeleton row to exist first.
             file.games.forEach { mergeGame(it) }
@@ -160,12 +165,16 @@ class BackupMergeEngine @Inject constructor(
                     lastPlaytime = 0,
                     isGoal = backupGame.isGoal,
                     backfillMinutes = backupGame.backfillMinutes,
+                    source = backupGame.source.toGameSource(GameSource.STEAM_OWNED),
                     firstSeenAt = backupGame.firstSeenAt?.iso8601ToEpochMilli(),
                     lastPlayedAt = backupGame.lastPlayedAt?.iso8601ToEpochMilli(),
                     returnedToPlayAt = backupGame.returnedToPlayAt?.iso8601ToEpochMilli(),
                 ),
             )
         } else {
+            backupGame.source?.let { source ->
+                gameDao.upsert(existing.copy(source = source.toGameSource(existing.source)))
+            }
             gameDao.setGoalFlag(backupGame.appId, backupGame.isGoal)
             gameDao.setBackfillMinutes(backupGame.appId, backupGame.backfillMinutes)
             gameDao.setRecencyFromBackup(
@@ -175,6 +184,16 @@ class BackupMergeEngine @Inject constructor(
                 returnedToPlayAt = backupGame.returnedToPlayAt?.iso8601ToEpochMilli(),
             )
         }
+    }
+
+    private suspend fun mergeExcludedSharedGame(row: BackupExcludedSharedGame) {
+        excludedSharedGameDao.upsert(
+            ExcludedSharedGame(
+                appId = row.appId,
+                name = row.name,
+                excludedAt = row.excludedAt.iso8601ToEpochMilli(),
+            ),
+        )
     }
 
     private suspend fun mergeSession(backupSession: BackupSession) {
@@ -348,3 +367,5 @@ class BackupMergeEngine @Inject constructor(
         )
     }
 }
+private fun String?.toGameSource(fallback: GameSource): GameSource =
+    this?.let { runCatching { GameSource.valueOf(it) }.getOrDefault(fallback) } ?: fallback

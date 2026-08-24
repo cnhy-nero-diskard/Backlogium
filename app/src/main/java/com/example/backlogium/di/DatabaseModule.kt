@@ -7,6 +7,7 @@ import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.DiagnosticsDao
+import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
@@ -88,4 +89,8 @@ object DatabaseModule {
 
     @Provides
     fun provideSteamAssetDao(db: BacklogiumDatabase): SteamAssetDao = db.steamAssetDao()
+
+    @Provides
+    fun provideExcludedSharedGameDao(db: BacklogiumDatabase): ExcludedSharedGameDao =
+        db.excludedSharedGameDao()
 }

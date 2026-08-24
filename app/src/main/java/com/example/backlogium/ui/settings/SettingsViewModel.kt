@@ -15,7 +15,12 @@ import com.example.backlogium.data.local.dao.SteamAssetStoredSummary
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.data.repo.CredentialsState
+import com.example.backlogium.data.repo.FamilySharedGameRepository
+import com.example.backlogium.data.repo.ManualImportUnavailableAt
+import com.example.backlogium.data.repo.ManualSharedGameImportResult
+import com.example.backlogium.data.repo.PlayerDataProbe
 import com.example.backlogium.data.repo.ProfileRepository
+import com.example.backlogium.data.repo.RemovedSharedGame
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.updates.AppUpdateRepository
 import com.example.backlogium.data.updates.AppUpdateState
@@ -107,6 +112,15 @@ data class SettingsUiState(
     val appUpdateState: AppUpdateState = AppUpdateState(),
     val updateCheckInProgress: Boolean = false,
     val updateCheckMessage: String? = null,
+    val manualSharedGameInput: String = "",
+    val manualSharedGameBusy: Boolean = false,
+    val manualSharedGameFeedback: ManualImportFeedback? = null,
+    /**
+     * Family-shared games the player removed, newest first. Empty means nothing was ever removed,
+     * and the section is not shown at all — a permanently empty list would be a standing
+     * explanation of a feature most players never touch.
+     */
+    val removedSharedGames: List<RemovedSharedGame> = emptyList(),
 ) {
     /** The candidate config, or null while any field is invalid. */
     val candidate: RuleConfig? get() = draft.toConfig(savedConfig)
@@ -138,6 +152,7 @@ class SettingsViewModel @Inject constructor(
     private val syncScheduler: SyncScheduler,
     private val appUpdates: AppUpdateRepository,
     private val steamAssetDao: SteamAssetDao,
+    private val sharedGames: FamilySharedGameRepository,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -155,6 +170,9 @@ class SettingsViewModel @Inject constructor(
     private val snapshots = MutableStateFlow<List<SnapshotMeta>>(emptyList())
     private val updateCheckInProgress = MutableStateFlow(false)
     private val updateCheckMessage = MutableStateFlow<String?>(null)
+    private val manualSharedGameInput = MutableStateFlow("")
+    private val manualSharedGameBusy = MutableStateFlow(false)
+    private val manualSharedGameFeedback = MutableStateFlow<ManualImportFeedback?>(null)
     private val _hapticIntents = MutableSharedFlow<HapticIntent>(extraBufferCapacity = 4)
     val hapticIntents: SharedFlow<HapticIntent> = _hapticIntents.asSharedFlow()
 
@@ -210,6 +228,8 @@ class SettingsViewModel @Inject constructor(
         )
     }.combine(assetWorkState) { state, asset ->
         state.copy(steamAssetStatus = asset.first, steamAssetProgress = asset.second)
+    }.combine(sharedGames.removedGames) { state, removed ->
+        state.copy(removedSharedGames = removed)
     }
 
     private val ruleLocalState = combine(
@@ -234,6 +254,12 @@ class SettingsViewModel @Inject constructor(
     private val localState = combine(ruleLocalState, backupLocalState) { rule, backup ->
         Local(rule, backup)
     }
+
+    private val manualSharedState = combine(
+        manualSharedGameInput,
+        manualSharedGameBusy,
+        manualSharedGameFeedback,
+    ) { input, busy, message -> Triple(input, busy, message) }
 
     val uiState: StateFlow<SettingsUiState> = combine(
         combine(storedState, localState) { stored, local ->
@@ -260,6 +286,12 @@ class SettingsViewModel @Inject constructor(
             updateCheckInProgress = updateLocal.first,
             updateCheckMessage = updateLocal.second,
         )
+    }.combine(manualSharedState) { state, manual ->
+        state.copy(
+            manualSharedGameInput = manual.first,
+            manualSharedGameBusy = manual.second,
+            manualSharedGameFeedback = manual.third,
+        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -267,6 +299,53 @@ class SettingsViewModel @Inject constructor(
     )
 
     fun syncNow() = profileRepository.syncNow()
+
+    fun onManualSharedGameInputChanged(value: String) {
+        manualSharedGameInput.value = value
+        manualSharedGameFeedback.value = null
+    }
+
+    fun importManualSharedGame() {
+        if (manualSharedGameBusy.value) return
+        viewModelScope.launch {
+            manualSharedGameBusy.value = true
+            try {
+                val configured = credentials.currentCredentials()
+                val feedback = if (configured == null) {
+                    ManualImportFeedback(
+                        ManualImportFeedbackTone.ERROR,
+                        "Steam account required",
+                        "Connect a Steam account before checking a game.",
+                    )
+                } else {
+                    manualImportFeedback(
+                        sharedGames.importManually(
+                            manualSharedGameInput.value,
+                            configured.apiKey,
+                            configured.steamId,
+                        ),
+                    )
+                }
+                manualSharedGameFeedback.value = feedback
+                when (feedback.tone) {
+                    ManualImportFeedbackTone.SUCCESS -> _hapticIntents.tryEmit(HapticIntent.Confirm)
+                    ManualImportFeedbackTone.ERROR -> _hapticIntents.tryEmit(HapticIntent.Reject)
+                    ManualImportFeedbackTone.INFO -> Unit
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                manualSharedGameFeedback.value = ManualImportFeedback(
+                    ManualImportFeedbackTone.ERROR,
+                    "Import failed",
+                    "Backlogium couldn't finish the check. Try again.",
+                )
+                _hapticIntents.tryEmit(HapticIntent.Reject)
+            } finally {
+                manualSharedGameBusy.value = false
+            }
+        }
+    }
 
     fun downloadSteamAssets(mode: SteamAssetDownloadMode) = syncScheduler.downloadSteamAssets(mode)
 
@@ -477,6 +556,15 @@ class SettingsViewModel @Inject constructor(
         backupMessage.value = null
     }
 
+    /**
+     * Undo a removal. The game is not recreated here: it becomes eligible for admission again and
+     * arrives the next time it is observed being played, by the same path that admitted it
+     * originally. Recreating the row directly would invent a tracked game from a list entry.
+     */
+    fun restoreSharedGame(appId: Long) {
+        viewModelScope.launch { sharedGames.reverseRemoval(appId) }
+    }
+
     private fun refreshSnapshots() {
         snapshots.value = backupRepository.listSnapshots()
     }
@@ -530,3 +618,66 @@ private fun ParsedBackup.TooLarge.describeTooLarge(): String {
     fun Long.toMb() = this / (1024 * 1024)
     return "Backup too large: ${actualBytes.toMb()} MB exceeds the ${limitBytes.toMb()} MB limit."
 }
+
+enum class ManualImportFeedbackTone { SUCCESS, INFO, ERROR }
+
+data class ManualImportFeedback(
+    val tone: ManualImportFeedbackTone,
+    val title: String,
+    val message: String,
+)
+
+internal fun manualImportFeedback(result: ManualSharedGameImportResult): ManualImportFeedback = when (result) {
+    ManualSharedGameImportResult.InvalidInput -> ManualImportFeedback(
+        ManualImportFeedbackTone.ERROR,
+        "Check the link",
+        "Enter a numeric app ID or Steam Store URL.",
+    )
+    is ManualSharedGameImportResult.Owned -> ManualImportFeedback(
+        ManualImportFeedbackTone.INFO,
+        "Already in your library",
+        "${result.name} is in your owned Steam library; no Family Shared import was made.",
+    )
+    is ManualSharedGameImportResult.Excluded -> ManualImportFeedback(
+        ManualImportFeedbackTone.ERROR,
+        "Game is removed",
+        "App ${result.appId} is in Removed shared games. Restore it first.",
+    )
+    is ManualSharedGameImportResult.NotAGame -> ManualImportFeedback(
+        ManualImportFeedbackTone.ERROR,
+        "Game not found",
+        "Steam Store does not identify app ${result.appId} as a game.",
+    )
+    is ManualSharedGameImportResult.Unavailable -> ManualImportFeedback(
+        ManualImportFeedbackTone.ERROR,
+        "Couldn't check Steam",
+        when (result.at) {
+            ManualImportUnavailableAt.OWNED_LIBRARY -> "Steam ownership check is unavailable. Try again."
+            ManualImportUnavailableAt.STORE -> "Steam Store verification is unavailable. Try again."
+        },
+    )
+    is ManualSharedGameImportResult.Imported -> {
+        val probe = when (val data = result.playerData) {
+            is PlayerDataProbe.Returned -> if (data.total == 0) {
+                "Steam returned player data: this game has no achievements."
+            } else {
+                "Steam returned ${data.total} achievements; ${data.unlocked} unlocked."
+            }
+            PlayerDataProbe.NoData -> "Steam returned no usable player achievement data."
+            PlayerDataProbe.Unavailable -> "The achievement check is temporarily unavailable."
+        }
+        val tracking = if (result.alreadyTracked) {
+            "${result.name} is already tracked as Family Shared."
+        } else {
+            "${result.name} is now tracked as Family Shared."
+        }
+        ManualImportFeedback(
+            ManualImportFeedbackTone.SUCCESS,
+            if (result.alreadyTracked) "Game already found" else "Game found and imported",
+            "$tracking $probe Borrowed playtime is observed by Backlogium, not supplied by Steam.",
+        )
+    }
+}
+
+internal fun manualImportMessage(result: ManualSharedGameImportResult): String =
+    manualImportFeedback(result).message

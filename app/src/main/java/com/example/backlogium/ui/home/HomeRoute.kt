@@ -40,7 +40,17 @@ fun HomeRoute(
         // and two stacked in the same place would overlap into something unreadable — an earned
         // streak break is the more consequential of the two, so it holds the slot.
         val acquired = state.acquiredGames
-        if (broken == null && acquired != null) {
+        val shared = state.sharedGameAnnouncement
+        if (broken == null && shared != null) {
+            SharedGameAnnouncementBanner(
+                announcement = shared,
+                onViewLibrary = {
+                    viewModel.dismissSharedGameAnnouncement()
+                    onOpenLibrary()
+                },
+                onDismiss = viewModel::dismissSharedGameAnnouncement,
+            )
+        } else if (broken == null && acquired != null) {
             AcquiredGamesBanner(
                 acquired = acquired,
                 onViewLibrary = {

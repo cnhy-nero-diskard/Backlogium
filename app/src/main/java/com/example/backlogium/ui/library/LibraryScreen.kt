@@ -74,6 +74,7 @@ import com.example.backlogium.data.repo.HltbRefreshOutcome
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.GameListDensity
+import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.components.GameHeaderBackdrop
@@ -85,13 +86,12 @@ import com.example.backlogium.ui.collections.GenreFilterChoice
 import com.example.backlogium.ui.collections.genreFilterCatalog
 import com.example.backlogium.ui.theme.overrunExcess
 import com.example.backlogium.ui.theme.playingIndicator
+import com.example.backlogium.ui.components.RecencyBadge
 import com.example.backlogium.ui.util.HapticIntent
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.ui.util.rememberHaptics
 import com.example.backlogium.work.HltbBatchProgress
 import com.example.backlogium.work.HltbRefreshStatus
-import com.example.backlogium.domain.GameRecencyState
-import com.example.backlogium.ui.components.RecencyBadge
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.Bolt
@@ -134,7 +134,13 @@ private data class LibraryDisplayGame(
     val achievementTotal: Int?,
     val xpContributed: Int,
     val isCurrentlyPlaying: Boolean,
-    val recencyState: GameRecencyState?,
+    /**
+     * Played through Family Sharing rather than owned. Marked in words on the row rather than by
+     * colour, and it changes what [playtimeForever] means: a shared game has no Steam total, so
+     * the figure is what the app observed and the row says so.
+     */
+    val isFamilyShared: Boolean = false,
+    val recencyState: GameRecencyState? = null,
 )
 
 @Composable
@@ -992,6 +998,7 @@ private fun GoalGameUi.toDisplayGame() = LibraryDisplayGame(
     achievementTotal = achievementTotal,
     xpContributed = xpContributed,
     isCurrentlyPlaying = isCurrentlyPlaying,
+    isFamilyShared = isFamilyShared,
     recencyState = recencyState,
 )
 
@@ -1009,6 +1016,7 @@ private fun BacklogGameUi.toDisplayGame() = LibraryDisplayGame(
     achievementTotal = achievementTotal,
     xpContributed = xpContributed,
     isCurrentlyPlaying = isCurrentlyPlaying,
+    isFamilyShared = isFamilyShared,
     recencyState = recencyState,
 )
 
@@ -1105,7 +1113,10 @@ private fun LibraryGameRow(
                     Color.Unspecified
                 },
             )
-            if (density.showsPlaytime) PlaytimeLabel(game.playtimeForever)
+            if (game.isFamilyShared) FamilySharedLabel()
+            if (density.showsPlaytime) {
+                PlaytimeLabel(game.playtimeForever, observed = game.isFamilyShared)
+            }
             if (density.showsCompletionProgress) {
                 CompletionProgress(
                     playtimeMinutes = game.playtimeForever,
@@ -1194,10 +1205,6 @@ private fun LibraryGameCell(
                         modifier = Modifier.align(Alignment.TopStart),
                     )
                 }
-
-                // `TopEnd` because `TileSelectionIndicator` owns `TopStart` — the two coexist in
-                // selection mode rather than one hiding the other. Drawn at every density,
-                // including the compact grid: recency is a live signal, not detail.
                 RecencyBadge(
                     state = game.recencyState,
                     modifier = Modifier
@@ -1231,9 +1238,13 @@ private fun LibraryGameCell(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (game.isFamilyShared) {
+                    FamilySharedLabel(modifier = Modifier.padding(top = 4.dp))
+                }
                 if (density.showsPlaytime) {
                     PlaytimeLabel(
                         minutes = game.playtimeForever,
+                        observed = game.isFamilyShared,
                         modifier = Modifier.padding(top = 5.dp),
                     )
                 }
@@ -1296,7 +1307,16 @@ private fun TileSelectionIndicator(selected: Boolean, modifier: Modifier = Modif
 
 /** A play icon plus the raw duration — "played" is implied by the row it sits in. */
 @Composable
-private fun PlaytimeLabel(minutes: Int, modifier: Modifier = Modifier) {
+private fun PlaytimeLabel(
+    minutes: Int,
+    observed: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    // Steam reports no lifetime playtime for a family-shared game, so what is shown for one is what
+    // the app observed. The word travels with the number rather than living in a legend elsewhere:
+    // a total presented as complete when it structurally cannot be is the one thing this must not do.
+    val suffix = if (observed) " observed" else ""
+
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
@@ -1309,14 +1329,35 @@ private fun PlaytimeLabel(minutes: Int, modifier: Modifier = Modifier) {
         )
         Spacer(Modifier.width(4.dp))
         Text(
-            text = UiFormat.minutes(minutes),
+            text = UiFormat.minutes(minutes) + suffix,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.semantics {
-                contentDescription = "${UiFormat.minutes(minutes)} played"
+                contentDescription = if (observed) {
+                    "${UiFormat.minutes(minutes)} observed by Backlogium"
+                } else {
+                    "${UiFormat.minutes(minutes)} played"
+                }
             },
         )
     }
+}
+
+/**
+ * The row's source marking. Text, not a colour or a bare dot: the Library must make the
+ * distinction perceptible without depending on colour alone, and a shared game is a normal game
+ * in every other respect — so this stays a quiet label rather than a competing badge.
+ */
+@Composable
+private fun FamilySharedLabel(modifier: Modifier = Modifier) {
+    Text(
+        text = "Family Sharing",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier.semantics {
+            contentDescription = "Played through Family Sharing"
+        },
+    )
 }
 
 /**
@@ -1585,9 +1626,6 @@ private fun GameIconWithHltbBadge(
 ) {
     Box {
         GameIcon(iconUrl, iconSize = iconSize)
-        // `TopStart` is the icon's one free corner: the currently-playing dot holds `TopEnd` and
-        // the HowLongToBeat status holds `BottomEnd`, and the recency badge must displace neither.
-        // Smaller than on a grid tile, because it sits on a 40dp icon rather than over artwork.
         RecencyBadge(
             state = recencyState,
             size = 16.dp,

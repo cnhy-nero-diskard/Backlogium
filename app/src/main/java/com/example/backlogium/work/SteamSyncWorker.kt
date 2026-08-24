@@ -11,7 +11,6 @@ import com.example.backlogium.data.diagnostics.SyncOutcome
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
-import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
@@ -23,12 +22,14 @@ import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.remote.dto.lastPlayedAtMillis
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.repo.SessionActionWriter
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.LibraryRecency
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.PlayerIdentity
 import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.SessionDiffer
+import com.example.backlogium.domain.SharedGameConverter
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.mergePlayerIdentity
 import com.example.backlogium.domain.persistVersionChecked
@@ -40,12 +41,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.ZoneId
-
-/** Minutes credited to one local calendar date by a sync poll. */
-internal data class DailyProgressCredit(
-    val minutesPlayed: Int,
-    val goalMinutesPlayed: Int,
-)
 
 /**
  * Keep the owned-games poll independent from the optional fine-grained presence decision. A
@@ -76,6 +71,12 @@ internal suspend fun <T> fetchOwnedGamesAfterPresenceDecision(
         kotlin.Result.failure(error)
     }
 }
+
+/** Minutes credited to one local calendar date by a sync poll. */
+internal data class DailyProgressCredit(
+    val minutesPlayed: Int,
+    val goalMinutesPlayed: Int,
+)
 
 /**
  * Attribute only newly observed session minutes to each session's start date. A session remains
@@ -187,7 +188,6 @@ class SteamSyncWorker @AssistedInject constructor(
     private val database: BacklogiumDatabase,
     private val gameDao: GameDao,
     private val sessionDao: SessionDao,
-    private val dailyProgressDao: DailyProgressDao,
     private val profileDao: PlayerProfileDao,
     private val differ: SessionDiffer,
     private val gamificationUpdater: GamificationUpdater,
@@ -200,6 +200,8 @@ class SteamSyncWorker @AssistedInject constructor(
     private val syncCoordinator: SteamSyncCoordinator,
     private val accountChangeMarker: AccountChangeMarkerStore,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
+    private val sessionActionWriter: SessionActionWriter,
+    private val sharedGameConverter: SharedGameConverter,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result =
@@ -309,16 +311,31 @@ class SteamSyncWorker @AssistedInject constructor(
 
         // Achievement requests are part of fetch, never the Room commit. Their payload is merged
         // below only after the raw playtime transaction has acquired its database boundary.
+        //
+        // Achievement progress on a borrowed game is recorded against the player's own account, so
+        // a family-shared game belongs in this scope exactly like an owned one — GetPlayerAchievements
+        // keys on app id, not on ownership. Its tiering input is the playtime the app actually knows
+        // (tracked session minutes), since Steam reports none: that puts a newly admitted game in
+        // the cold tier with no stored metadata, which the missing-data override picks up promptly,
+        // and leaves it on ordinary cold rotation afterwards.
+        val trackedByAppId = sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes }
+        val achievementScope = games.map {
+            com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
+                appId = it.appid,
+                playtimeForever = it.playtimeForever.toLong(),
+                playtime2Weeks = it.playtime2Weeks.toLong(),
+            )
+        } + gameDao.sharedGames().map { shared ->
+            com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
+                appId = shared.appId,
+                playtimeForever = (trackedByAppId[shared.appId] ?: 0).toLong(),
+                playtime2Weeks = 0L,
+            )
+        }
         val achievementFetch = achievementRepository.fetchLibraryGames(
             apiKey = apiKey,
             steamId = steamId,
-            ownedGames = games.map {
-                com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
-                    appId = it.appid,
-                    playtimeForever = it.playtimeForever.toLong(),
-                    playtime2Weeks = it.playtime2Weeks.toLong(),
-                )
-            },
+            ownedGames = achievementScope,
             playtimeDeltaByAppId = provisionalDiff.playedDeltaByAppId,
             scope = scope,
         )
@@ -370,7 +387,7 @@ class SteamSyncWorker @AssistedInject constructor(
         now: Long,
     ): SessionDiffer.DiffResult {
         val profile = profileDao.get()
-        val existingGames = gameDao.getAll().associateBy { it.appId }
+        val existingGames = gameDao.ownedGamesForDiffing().associateBy { it.appId }
         val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
         return diffAgainst(
             polls = polls,
@@ -397,7 +414,13 @@ class SteamSyncWorker @AssistedInject constructor(
         achievementFetch: AchievementLibraryFetch,
     ): Set<Long> {
         val profileBefore = profileDao.get()
-        val existingGames = gameDao.getAll().associateBy { it.appId }
+        // A shared game the player has since bought converts before the diff reads its baseline,
+        // so the poll that first reports it as owned already sees the fresh baseline and produces
+        // no session from a lifetime total that was earned while borrowing.
+        sharedGameConverter.convertNewlyOwned(games, now)
+        // Only games Steam reports playtime for are diffed. The partition between the two session
+        // mechanisms is this query, not a check inside either mechanism.
+        val existingGames = gameDao.ownedGamesForDiffing().associateBy { it.appId }
         val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
         val lastSyncAt = profileBefore?.lastSyncAt ?: 0L
         // The recency baseline is "tracking has not begun", which is a different question from the
@@ -427,7 +450,7 @@ class SteamSyncWorker @AssistedInject constructor(
             now = now,
         )
 
-        applySessionActions(diff.actions)
+        sessionActionWriter.applySessionActions(diff.actions)
 
         val arrivedAppIds = mutableSetOf<Long>()
         games.forEach { dto ->
@@ -472,10 +495,7 @@ class SteamSyncWorker @AssistedInject constructor(
         }
 
         val goalIds = existingGames.values.filter { it.isGoal }.mapTo(mutableSetOf()) { it.appId }
-        attributeDailyProgress(diff.actions, goalIds, time.zone()).forEach { (date, credit) ->
-            dailyProgressDao.ensureDate(date)
-            dailyProgressDao.addMinutes(date, credit.minutesPlayed, credit.goalMinutesPlayed)
-        }
+        sessionActionWriter.creditDailyProgress(diff.actions, goalIds)
 
         if (profileBefore == null) profileDao.insertIfMissing()
         val currentProfile = profileDao.get() ?: PlayerProfile()
@@ -543,32 +563,6 @@ class SteamSyncWorker @AssistedInject constructor(
             },
             coordinator = derivedStateWrites,
         )
-    }
-
-    private suspend fun applySessionActions(actions: List<SessionDiffer.SessionAction>) {
-        for (action in actions) {
-            when (action) {
-                is SessionDiffer.SessionAction.Open -> sessionDao.insert(
-                    Session(
-                        appId = action.appId,
-                        startAt = action.startAt,
-                        endAt = action.endAt,
-                        minutes = action.minutes,
-                        open = true,
-                    ),
-                )
-
-                is SessionDiffer.SessionAction.Extend ->
-                    sessionDao.getOpenSession(action.appId)?.let {
-                        sessionDao.update(it.copy(minutes = action.minutes, endAt = action.endAt))
-                    }
-
-                is SessionDiffer.SessionAction.Close ->
-                    sessionDao.getOpenSession(action.appId)?.let {
-                        sessionDao.update(it.copy(open = false, endAt = action.endAt))
-                    }
-            }
-        }
     }
 
     private suspend fun recordError(message: String) {

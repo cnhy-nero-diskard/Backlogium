@@ -145,6 +145,26 @@ achievements they are presented as for any game, and where it does not the game 
 without an achievement surface. That way the feature is correct whichever way the verification
 lands, and a task exists to establish which.
 
+**Verification status (task 7.1): not yet performed.** It requires a real borrowed game on a real
+account, and the implementation was carried out in an environment with neither. Nothing in the
+implementation depends on the answer:
+
+- A family-shared game is included in the achievement fetch scope on both paths. Reconciliation
+  already covered it (`fetchReconciliationGames` reads every `games` row); the inline sync path was
+  extended to include shared games, whose freshness tier is derived from tracked session minutes
+  because Steam reports no playtime for them. A newly admitted game therefore lands in the cold
+  tier with no stored metadata, which the existing missing-data override picks up promptly.
+- If `GetPlayerAchievements` answers, the achievement, rarity, rarity-XP, and rarity-standing
+  surfaces receive its rows through the same repository and render them with no special casing:
+  none of them reads a game's source, and all of them key on app id and global unlock percentages.
+- If it does not answer, the game reaches those surfaces with an empty achievement list, which is
+  exactly the state an owned game with no achievements reaches them in — the detail screen already
+  presents no achievement surface for that case rather than an empty one.
+
+So the outstanding work is to *record what Steam does*, not to change behaviour in response to it.
+Should the answer turn out to be "Steam refuses for shared games", the correct follow-up is to stop
+spending requests on them, not to add a surface — which is why that is not pre-emptively built.
+
 ### 8. `source` is an enum on `Game`, not a separate table
 
 A shared game is an ordinary game missing one input. Giving it its own table would fork every
@@ -153,6 +173,19 @@ would leave collections, goals, genres, and HLTB each needing to handle two shap
 
 A nullable-free enum column defaulting existing rows to owned is a widening migration with no data
 movement, and every existing query keeps working untouched.
+
+### 9. Manual import probes Steam without weakening admission
+
+The Settings flow accepts either a numeric app id or the canonical Store URL shape and treats the
+result only as an identifier. It then calls `GetOwnedGames` for the configured account before any
+write. A match is owned and is not imported; an absence may proceed to the same Store game-type
+verification and persistence shape as automatic admission. Existing rows and sticky exclusions
+remain authoritative.
+
+After a successful import, `GetPlayerAchievements` is called once and the UI reports one of three
+facts: achievements returned, Steam returned no usable player data, or the probe was unavailable.
+This is a diagnostic result, not proof of ownership and not a playtime source. The owned-games API
+still supplies no borrowed-game lifetime total, so tracked playtime remains presence-derived.
 
 ## Risks / Trade-offs
 

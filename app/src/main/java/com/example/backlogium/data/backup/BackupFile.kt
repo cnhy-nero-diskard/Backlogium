@@ -31,6 +31,7 @@ data class BackupFile(
     /** Custom collections and their memberships (add-custom-collections) — app-owned state. */
     val collections: List<BackupCollection> = emptyList(),
     val collectionMembers: List<BackupCollectionMember> = emptyList(),
+    val excludedSharedGames: List<BackupExcludedSharedGame> = emptyList(),
 ) {
     companion object {
         const val CURRENT_FORMAT_VERSION = 1
@@ -78,6 +79,8 @@ data class BackupGame(
     val firstSeenAt: String? = null,
     val lastPlayedAt: String? = null,
     val returnedToPlayAt: String? = null,
+    /** Null means an older backup did not carry source; new exports always write it. */
+    val source: String? = null,
 )
 
 /** One unlocked achievement's frozen rarity snapshot, with its identity for legibility. */
@@ -198,4 +201,12 @@ data class BackupCollectionMember(
     val appId: Long,
     val orderIndex: Int,
     val done: Boolean = false,
+)
+
+/** A sticky family-shared removal, preserved separately from the game row it deleted. */
+@Serializable
+data class BackupExcludedSharedGame(
+    val appId: Long,
+    val name: String,
+    val excludedAt: String,
 )

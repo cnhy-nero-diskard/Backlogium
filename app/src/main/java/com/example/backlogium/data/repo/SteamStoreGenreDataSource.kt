@@ -1,6 +1,7 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.remote.SteamStoreApi
+import com.example.backlogium.data.remote.dto.StoreGenreDto
 import retrofit2.HttpException
 import java.io.IOException
 import javax.inject.Inject
@@ -27,11 +28,7 @@ class SteamStoreGenreDataSource @Inject constructor(
                 ?: return StoreGenreResult.Empty
             if (!envelope.success) return StoreGenreResult.Empty
 
-            val genres = envelope.data?.genres.orEmpty().mapNotNull { dto ->
-                val id = dto.id?.trim().orEmpty()
-                val label = dto.description?.trim().orEmpty()
-                if (id.isEmpty() || label.isEmpty()) null else GameGenre(id, label)
-            }
+            val genres = envelope.data?.genres.orEmpty().toGameGenres()
             if (genres.isEmpty()) StoreGenreResult.Empty else StoreGenreResult.Genres(genres)
         } catch (error: IOException) {
             StoreGenreResult.TransientFailure(error)
@@ -39,4 +36,15 @@ class SteamStoreGenreDataSource @Inject constructor(
             StoreGenreResult.TransientFailure(error)
         }
     }
+}
+
+/**
+ * Store genre DTOs to domain genres, dropping any entry missing an id or a label. Shared with
+ * [SteamStoreAppDataSource] so a genre resolved during family-shared admission is exactly the
+ * genre enrichment would have resolved later.
+ */
+internal fun List<StoreGenreDto>.toGameGenres(): List<GameGenre> = mapNotNull { dto ->
+    val id = dto.id?.trim().orEmpty()
+    val label = dto.description?.trim().orEmpty()
+    if (id.isEmpty() || label.isEmpty()) null else GameGenre(id, label)
 }

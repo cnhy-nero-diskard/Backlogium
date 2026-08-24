@@ -126,6 +126,9 @@ interface SessionDao {
      * last-play time the dormancy evaluation compares against. Grouped for the same reason as
      * above: a poll examines the whole library.
      */
+    /** Each game's most recent session timestamp, observed for source-aware detail recency. */
+    @Query("SELECT appId, MAX(COALESCE(endAt, startAt)) AS at FROM sessions GROUP BY appId")
+    fun observeLatestSessionInstantByGame(): Flow<List<GameSessionInstant>>
     @Query("SELECT appId, MAX(COALESCE(endAt, startAt)) AS at FROM sessions GROUP BY appId")
     suspend fun latestSessionInstantByGame(): List<GameSessionInstant>
 }

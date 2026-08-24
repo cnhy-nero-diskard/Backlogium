@@ -89,6 +89,7 @@ class LiveStatusRepository @Inject constructor(
     private val credentials: CredentialsProvider,
     private val settings: SettingsRepository,
     private val time: TimeProvider,
+    private val presenceObserver: PresenceObserver,
     private val diagnostics: PresenceDecisionRecorder? = null,
     @ApplicationScope private val scope: CoroutineScope,
 ) {
@@ -200,6 +201,12 @@ class LiveStatusRepository @Inject constructor(
         val next = fetched.status.copy(sessionStartedAt = nextSession.startedAt)
         _liveStatus.value = next
         diagnostics?.record(trigger, fetched.outcome, fetched.appId)
+
+        // A successful fetch is an observation, and an observation is the only session input a
+        // family-shared game has. Deliberately after the emission above and wrapped: the live card
+        // is the caller's reason for being here, and it must not be held up — or lost — by a Room
+        // write or an admission lookup. A game with no derivable session makes this a no-op.
+        runCatching { presenceObserver.onObservation(fetched.appId, time.nowMillis()) }
         return next
     }
 
