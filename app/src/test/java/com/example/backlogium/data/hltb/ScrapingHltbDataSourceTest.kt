@@ -19,6 +19,63 @@ import org.junit.Test
 class ScrapingHltbDataSourceTest {
 
     @Test
+    fun rotatedFallbackSkipsUnrelatedPostAndDiscoversNestedSearchEndpoint() = runTest {
+        val script = ScriptedInterceptor(
+            listOf(
+                { request ->
+                    assertEquals("/api/search/site/init", request.url.encodedPath)
+                    response(request, 404, "missing")
+                },
+                { request ->
+                    assertEquals("/", request.url.encodedPath)
+                    response(
+                        request,
+                        200,
+                        """
+                        <script src="/_next/static/chunks/error.js"></script>
+                        <script src="/_next/static/chunks/search.js"></script>
+                        """.trimIndent(),
+                    )
+                },
+                { request ->
+                    assertEquals("/_next/static/chunks/error.js", request.url.encodedPath)
+                    response(request, 200, """fetch("/api/error",{method:"POST"})""")
+                },
+                { request ->
+                    assertEquals("/api/error/init", request.url.encodedPath)
+                    response(request, 404, "missing")
+                },
+                { request ->
+                    assertEquals("/_next/static/chunks/search.js", request.url.encodedPath)
+                    response(
+                        request,
+                        200,
+                        """fetch(`/api/search/rotated/init?t=${'$'}{Date.now()}`)""",
+                    )
+                },
+                { request ->
+                    assertEquals("/api/search/rotated/init", request.url.encodedPath)
+                    response(
+                        request,
+                        200,
+                        """{"token":"token","hpKey":"key","hpVal":"value"}""",
+                    )
+                },
+                { request ->
+                    assertEquals("/api/search/rotated", request.url.encodedPath)
+                    assertEquals("POST", request.method)
+                    response(request, 200, """{"data":[]}""")
+                },
+            ),
+        )
+
+        val result = source(script).search("Portal")
+
+        assertTrue(result.isEmpty())
+        assertEquals(7, script.callCount)
+    }
+
+    @Test
     fun serverFailureDoesNotReResolveSession() = runTest {
         val script = ScriptedInterceptor(
             listOf(

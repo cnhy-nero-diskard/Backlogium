@@ -34,9 +34,9 @@ import javax.inject.Singleton
  *    `x-auth-token`/`x-hp-key`/`x-hp-val`, and a search body that also carries a field named
  *    `hpKey` whose value is `hpVal`.
  *
- * The endpoint is the known `/api/bleed` fast-path; if its init fails (HLTB rotated the path)
- * the current endpoint is rediscovered by scanning the homepage's JS chunks for the `POST`
- * `fetch` call, then falling back to the hard-coded path. The resolved endpoint + token are
+ * The endpoint is the known `/api/search/site` fast-path; if its init fails (HLTB rotated the
+ * path), the current endpoint is rediscovered and validated by scanning the homepage's JS chunks
+ * for the init handshake or `POST` fetch call. The resolved endpoint + token are
  * cached **in memory only** for a short window so a batch sweep reuses one handshake, and are
  * re-resolved when that window lapses or a search is rejected (HTTP 403 / rotation). They are
  * never persisted.
@@ -95,13 +95,14 @@ class ScrapingHltbDataSource @Inject constructor(
         var endpoint = HltbBundleParser.FALLBACK_ENDPOINT
         var init = tryInit(endpoint)
 
-        // Known endpoint failed → rediscover the current one from the site bundle, then init.
+        // Known endpoint failed → rediscover and validate the current one from the site bundle.
         if (init == null) {
-            endpoint = discoverEndpoint()
-            init = tryInit(endpoint) ?: throw HltbSearchException(
+            val discovered = discoverSession() ?: throw HltbSearchException(
                 failureClass = HltbFailureClass.TRANSPORT,
                 message = "HLTB endpoint/init resolution failed",
             )
+            endpoint = discovered.endpoint
+            init = discovered.init
         }
 
         Session(
@@ -149,9 +150,15 @@ class ScrapingHltbDataSource @Inject constructor(
         null
     }
 
-    /** Scan the homepage's JS chunks for the current POST search endpoint; fall back if absent. */
-    private fun discoverEndpoint(): String = try {
+    private data class DiscoveredSession(
+        val endpoint: String,
+        val init: HltbInitResponse,
+    )
+
+    /** Scan the homepage's JS chunks and accept only an endpoint with a working init handshake. */
+    private fun discoverSession(): DiscoveredSession? = try {
         val chunks = HltbBundleParser.extractChunkPaths(httpGet("$BASE_URL/"))
+        val attempted = mutableSetOf(HltbBundleParser.FALLBACK_ENDPOINT)
         for (path in chunks) {
             val js = try {
                 httpGet("$BASE_URL$path")
@@ -160,13 +167,17 @@ class ScrapingHltbDataSource @Inject constructor(
             } catch (_: Exception) {
                 continue
             }
-            HltbBundleParser.extractSearchEndpoint(js)?.let { return it }
+            val endpoint = HltbBundleParser.extractSearchEndpoint(js) ?: continue
+            if (!attempted.add(endpoint)) continue
+            tryInit(endpoint)?.let { return DiscoveredSession(endpoint, it) }
         }
-        HltbBundleParser.FALLBACK_ENDPOINT
+        null
     } catch (cancellation: CancellationException) {
         throw cancellation
+    } catch (failure: HltbSearchException) {
+        throw failure
     } catch (_: Exception) {
-        HltbBundleParser.FALLBACK_ENDPOINT
+        null
     }
 
     private fun postSearch(terms: List<String>, session: Session): String {
