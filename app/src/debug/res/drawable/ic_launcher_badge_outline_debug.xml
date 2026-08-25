@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Debug-only monochrome/themed badge geometry: the badge outline ring and "DBG"
+    lettering only (no amber fill, which would collapse into a featureless blob when
+    the launcher tints it). Layered over the unchanged release foreground artwork so
+    themed icons stay recognizable as debug via the extra badge silhouette.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outline ring only (same footprint as the filled badge's outline). -->
+    <path
+        android:pathData="M69,60 a9,9 0 1,0 0,18 a9,9 0 1,0 0,-18 z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2" />
+    <!-- Same "DBG" lettering geometry as the colored badge. -->
+    <path
+        android:pathData="M62.4,65.5 V72.5 M62.4,65.5 H64 A3.5,3.5 0 0 1 64,72.5 H62.4"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="butt"
+        android:strokeWidth="1" />
+    <path
+        android:pathData="M68.6,65.5 V72.5 M68.6,65.5 H70 A1.75,1.75 0 0 1 70,69 H68.6 M68.7,69 H70.4 A1.75,1.75 0 0 1 70.4,72.5 H68.7"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="butt"
+        android:strokeWidth="1" />
+    <path
+        android:pathData="M76,66.3 V65.5 H73.4 V72.5 H76 V69 H74.6"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="miter"
+        android:strokeWidth="1" />
+</vector>

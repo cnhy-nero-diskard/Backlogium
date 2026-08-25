@@ -78,6 +78,11 @@ android {
 
     buildTypes {
         debug {
+            // Distinct installed identity so debug installs side by side with the signed
+            // release app (separate data, permissions, notifications, and WorkManager
+            // state). The code namespace stays `com.example.backlogium`.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
             buildConfigField("String", "STEAM_API_KEY", "\"$steamApiKey\"")
             buildConfigField("String", "STEAM_ID", "\"$steamId\"")
         }
