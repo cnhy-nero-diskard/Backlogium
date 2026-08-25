@@ -11,7 +11,7 @@ import org.junit.Test
  * Fixture-based tests for the fragile scrape parsing: the JS chunk enumeration, the POST
  * search endpoint extraction, and the seconds → minutes candidate mapping. Fixtures mirror
  * the shape of HowLongToBeat's current homepage/bundle (turbopack-hashed chunk names and the
- * `fetch("/api/bleed",{method:"POST"})` call).
+ * `/api/search/site/init` handshake).
  */
 class HltbBundleParserTest {
 
@@ -48,10 +48,26 @@ class HltbBundleParserTest {
     }
 
     @Test
-    fun extractSearchEndpoint_ignoresGetFetches() {
-        // The init GET must not be mistaken for the search endpoint.
+    fun extractSearchEndpoint_readsInitFetchPath() {
         val js = """let e=await fetch(`/api/bleed/init?t=${'$'}{Date.now()}`);"""
-        assertNull(HltbBundleParser.extractSearchEndpoint(js))
+        assertEquals("/api/bleed", HltbBundleParser.extractSearchEndpoint(js))
+    }
+
+    @Test
+    fun extractSearchEndpoint_readsNestedInitPathBeforeUnrelatedPost() {
+        val js = """
+            let token=await fetch(`/api/search/site/init?t=${'$'}{Date.now()}`)
+            fetch("/api/error",{method:"POST",body:"diagnostic"})
+        """.trimIndent()
+
+        assertEquals("/api/search/site", HltbBundleParser.extractSearchEndpoint(js))
+    }
+
+    @Test
+    fun extractSearchEndpoint_readsNestedPostPath() {
+        val js = """fetch("/api/search/site",{method:"POST",body:"search"})"""
+
+        assertEquals("/api/search/site", HltbBundleParser.extractSearchEndpoint(js))
     }
 
     @Test
