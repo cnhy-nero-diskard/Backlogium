@@ -5,9 +5,13 @@ import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.AchievementRarity
 import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.CollectionDao
+import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.domain.GameSource
 import com.example.backlogium.data.local.dao.GameSessionCounts
+import com.example.backlogium.domain.GameRecencyState
+import com.example.backlogium.domain.LibraryRecency
 import com.example.backlogium.data.local.dao.GameSessionInstant
 import com.example.backlogium.data.local.dao.GameTrackedMinutes
 import com.example.backlogium.data.local.dao.HltbDataDao
@@ -17,6 +21,7 @@ import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
+import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.PlayerProfile
@@ -24,16 +29,14 @@ import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.GamificationUpdater
-import com.example.backlogium.domain.GameRecencyState
-import com.example.backlogium.domain.LibraryRecency
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneId
@@ -53,6 +56,7 @@ class BackupMergeEngineTest {
         val profileDao: FakePlayerProfileDao,
         val collectionDao: FakeCollectionDao,
         val achievementDao: FakeAchievementDao,
+        val excludedDao: FakeExcludedSharedGameDao,
     )
 
     private fun newEngine(
@@ -73,15 +77,16 @@ class BackupMergeEngineTest {
         val achievementDao = FakeAchievementDao(achievements)
         val profileDao = FakePlayerProfileDao(profile)
         val collectionDao = FakeCollectionDao(collections)
+        val excludedDao = FakeExcludedSharedGameDao()
         val time = FixedTimeProvider(today, nowMillis)
         val gamificationUpdater = GamificationUpdater(
             sessionDao, dailyProgressDao, profileDao, hltbDataDao, achievementDao, gameDao,
         )
         val engine = BackupMergeEngine(
             gameDao, sessionDao, dailyProgressDao, hltbDataDao, achievementDao, profileDao,
-            collectionDao, gamificationUpdater, time,
+            collectionDao, excludedDao, gamificationUpdater, time,
         )
-        return Harness(engine, gameDao, sessionDao, profileDao, collectionDao, achievementDao)
+        return Harness(engine, gameDao, sessionDao, profileDao, collectionDao, achievementDao, excludedDao)
     }
 
     private fun baseFile(
@@ -94,6 +99,7 @@ class BackupMergeEngineTest {
         playtimeBackfilled: Boolean = false,
         collections: List<BackupCollection> = emptyList(),
         collectionMembers: List<BackupCollectionMember> = emptyList(),
+        excludedSharedGames: List<BackupExcludedSharedGame> = emptyList(),
     ) = BackupFile(
         exportedAt = "2026-07-01T00:00:00Z",
         identity = BackupIdentity(steamId64 = "1"),
@@ -114,13 +120,36 @@ class BackupMergeEngineTest {
         computed = BackupComputed(emptyList(), emptyList()),
         collections = collections,
         collectionMembers = collectionMembers,
+        excludedSharedGames = excludedSharedGames,
     )
+    @Test
+    fun restore_preservesSharedSourceAndStickyExclusion() = runTest {
+        val excludedAt = "2026-06-20T12:00:00Z"
+        val harness = newEngine()
+        val file = baseFile(
+            games = listOf(
+                BackupGame(
+                    appId = 620L,
+                    name = "Portal 2",
+                    isGoal = true,
+                    backfillMinutes = 25,
+                    source = "FAMILY_SHARED",
+                ),
+            ),
+            excludedSharedGames = listOf(
+                BackupExcludedSharedGame(appId = 620L, name = "Portal 2", excludedAt = excludedAt),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        assertEquals(GameSource.FAMILY_SHARED, harness.gameDao.getById(620L)?.source)
+        assertTrue(harness.excludedDao.isExcluded(620L))
+    }
 
     @Test
     fun restore_insertingUnknownGames_recordsNoArrivalAndNoReturn() = runTest {
-        // The sharpest edge in the recency work: the natural implementation of "insert a game that
-        // isn't there" is exactly what must not stamp an arrival. A restore of many games is not
-        // many acquisitions.
+        // Restoring many games is not many acquisitions.
         val harness = newEngine(nowMillis = 1_700_000_000_000L)
         val file = baseFile(
             games = listOf(
@@ -172,7 +201,6 @@ class BackupMergeEngineTest {
             games = mutableMapOf(1L to testGame(1L)),
             nowMillis = 1_700_000_000_000L,
         )
-        // No recency fields at all, as an older file has none.
         val file = baseFile(
             games = listOf(BackupGame(appId = 1L, name = "Game 1", isGoal = true, backfillMinutes = 30)),
         )
@@ -182,14 +210,11 @@ class BackupMergeEngineTest {
         val merged = harness.gameDao.getById(1L)!!
         assertNull(merged.firstSeenAt)
         assertNull(merged.returnedToPlayAt)
-        // The rest of the import still applied, so the absence is genuinely additive.
         assertEquals(30, merged.backfillMinutes)
     }
 
     @Test
     fun restore_absentRecencyFieldsDoNotEraseLocallyObservedOnes() = runTest {
-        // An older backup must not delete an arrival this device observed after it was taken:
-        // the import writes what the backup carried and nothing else.
         val locallyObserved = 1_699_900_000_000L
         val harness = newEngine(
             games = mutableMapOf(1L to testGame(1L).copy(firstSeenAt = locallyObserved)),
@@ -206,10 +231,6 @@ class BackupMergeEngineTest {
 
     @Test
     fun restore_isInterpretedOnItsOwnTimeline() = runTest {
-        // A backup is a snapshot of a timeline, and restoring it reproduces that timeline. The
-        // windows do the discriminating work that a blanket "no badges after a restore" rule would
-        // have done clumsily — and which was, in any case, unimplementable: nothing in the stored
-        // data distinguishes "restored" from "observed".
         val now = 1_700_000_000_000L
         val day = 24L * 60 * 60 * 1_000
 
@@ -219,7 +240,10 @@ class BackupMergeEngineTest {
                 baseFile(
                     games = listOf(
                         BackupGame(
-                            appId = 1L, name = "Game 1", isGoal = false, backfillMinutes = 0,
+                            appId = 1L,
+                            name = "Game 1",
+                            isGoal = false,
+                            backfillMinutes = 0,
                             firstSeenAt = arrivedAt.toIso8601(),
                         ),
                     ),
@@ -236,13 +260,10 @@ class BackupMergeEngineTest {
             )
         }
 
-        // Older than the window: already expired, by arithmetic, with no suppression rule.
         assertNull(restoredStateFor(now - 90 * day))
-        // Inside it: badged, and correctly so — the game *was* acquired yesterday. Restoring a
-        // recent backup onto a new device reproducing badges the user already saw is continuity,
-        // not duplication.
         assertEquals(GameRecencyState.NEWLY_ADDED, restoredStateFor(now - day))
     }
+
 
     @Test
     fun overlappingSession_replacesInPlace_noDuplicate() = runTest {
@@ -771,7 +792,6 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
                 lastPlaytime = lastPlaytime,
                 lastSyncedAt = lastSyncedAt,
                 lastPlayedAt = lastPlayedAt,
-                // Mirrors the real query's COALESCE: a null verdict never erases a stored return.
                 returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt,
             )
         }
@@ -796,23 +816,71 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
     override suspend fun setBackfillMinutes(appId: Long, minutes: Int) {
         store[appId]?.let { store[appId] = it.copy(backfillMinutes = minutes) }
     }
-
-    override suspend fun setRecencyFromBackup(
-        appId: Long,
-        firstSeenAt: Long?,
-        lastPlayedAt: Long?,
-        returnedToPlayAt: Long?,
-    ) {
-        // Mirrors the real query's COALESCE: a value the backup carries is restored, an absence
-        // leaves the stored value alone.
-        store[appId]?.let {
-            store[appId] = it.copy(
-                firstSeenAt = firstSeenAt ?: it.firstSeenAt,
-                lastPlayedAt = lastPlayedAt ?: it.lastPlayedAt,
-                returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt,
-            )
-        }
+    override suspend fun setRecencyFromBackup(appId: Long, firstSeenAt: Long?, lastPlayedAt: Long?, returnedToPlayAt: Long?) {
+        store[appId]?.let { store[appId] = it.copy(firstSeenAt = firstSeenAt ?: it.firstSeenAt, lastPlayedAt = lastPlayedAt ?: it.lastPlayedAt, returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt) }
     }
+
+    override suspend fun insertSharedGameIfMissing(
+        appId: Long,
+        name: String,
+        iconUrl: String,
+        admittedAt: Long,
+    ) {
+        store.putIfAbsent(
+            appId,
+            Game(
+                appId = appId,
+                name = name,
+                iconUrl = iconUrl,
+                playtimeForever = 0,
+                playtime2Weeks = 0,
+                lastPlaytime = 0,
+                lastSyncedAt = admittedAt,
+                source = GameSource.FAMILY_SHARED,
+            ),
+        )
+    }
+
+    override suspend fun ownedGamesForDiffing(): List<Game> =
+        store.values.filter { it.source == GameSource.STEAM_OWNED }
+
+    override suspend fun sharedGames(): List<Game> =
+        store.values.filter { it.source == GameSource.FAMILY_SHARED }
+
+    override suspend fun convertSharedToOwned(
+        appId: Long,
+        playtimeForever: Int,
+        playtime2Weeks: Int,
+        convertedAt: Long,
+    ): Int {
+        val existing = store[appId]?.takeIf { it.source == GameSource.FAMILY_SHARED } ?: return 0
+        store[appId] = existing.copy(
+            source = GameSource.STEAM_OWNED,
+            playtimeForever = playtimeForever,
+            playtime2Weeks = playtime2Weeks,
+            lastPlaytime = playtimeForever,
+            lastSyncedAt = convertedAt,
+        )
+        return 1
+    }
+
+    override suspend fun deleteSharedGame(appId: Long): Int =
+        if (store[appId]?.source == GameSource.FAMILY_SHARED) {
+            store.remove(appId)
+            1
+        } else {
+            0
+        }
+}
+
+private class FakeExcludedSharedGameDao : ExcludedSharedGameDao {
+    private val store = mutableMapOf<Long, ExcludedSharedGame>()
+    override suspend fun upsert(row: ExcludedSharedGame) { store[row.appId] = row }
+    override suspend fun getAll(): List<ExcludedSharedGame> = store.values.toList()
+    override fun observeAll(): Flow<List<ExcludedSharedGame>> = flowOf(store.values.toList())
+    override suspend fun isExcluded(appId: Long): Boolean = appId in store
+    override suspend fun delete(appId: Long) { store.remove(appId) }
+    override suspend fun deleteAll() { store.clear() }
 }
 
 private class FakeSessionDao(private val store: MutableList<Session>) : SessionDao {
@@ -846,6 +914,14 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     override suspend fun getAll(): List<Session> = store.sortedBy { it.startAt }
     override suspend fun deleteAll() = store.clear()
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(store.minOfOrNull { it.startAt })
+    override fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>> = flowOf(
+        store.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.minOf { it.startAt }) },
+    )
+    override suspend fun latestSessionInstantByGame(): List<GameSessionInstant> =
+        store.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.maxOf { it.endAt ?: it.startAt }) }
+    override fun observeLatestSessionInstantByGame(): Flow<List<GameSessionInstant>> = flowOf(
+        store.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.maxOf { it.endAt ?: it.startAt }) },
+    )
     override suspend fun findByNaturalKey(appId: Long, startAt: Long, endAt: Long?): Session? =
         store.firstOrNull { it.appId == appId && it.startAt == startAt && it.endAt == endAt }
 
@@ -870,14 +946,6 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     )
 
     override fun observeSessionCountsByGame(): Flow<List<GameSessionCounts>> = flowOf(emptyList())
-
-    override fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>> = flowOf(
-        store.groupBy { it.appId }.map { (appId, s) -> GameSessionInstant(appId, s.minOf { it.startAt }) },
-    )
-
-    override suspend fun latestSessionInstantByGame(): List<GameSessionInstant> =
-        store.groupBy { it.appId }
-            .map { (appId, s) -> GameSessionInstant(appId, s.maxOf { it.endAt ?: it.startAt }) }
 }
 
 private class FakeDailyProgressDao(private val store: MutableMap<String, DailyProgress>) : DailyProgressDao {

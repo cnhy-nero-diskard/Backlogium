@@ -8,6 +8,7 @@ import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.DayProgress
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
+import com.example.backlogium.domain.GameSource
 import com.example.backlogium.data.repo.PlaySession
 import com.example.backlogium.data.repo.PlayerStats
 import com.example.backlogium.data.repo.ProfileRepository
@@ -45,6 +46,12 @@ data class AnalyticsGame(
     val name: String,
     val iconUrl: String,
     val minutes: Int,
+    /**
+     * Played through Family Sharing. Its minutes are in every total on this screen exactly like an
+     * owned game's, and this is what lets the reader tell the two apart — the totals are honest
+     * either way, but a shared game's minutes are what the app observed rather than a Steam total.
+     */
+    val isFamilyShared: Boolean = false,
 )
 
 /** One all-time unlocked achievement in the rarity drill-down. */
@@ -118,6 +125,12 @@ data class AnalyticsUiState(
     val timeOfDayPattern: TimeOfDayPattern = TimeOfDayPattern(),
     /** Per-day game totals used by chart-day inspection; absent days have no breakdown. */
     val gamesByDate: Map<LocalDate, List<AnalyticsGame>> = emptyMap(),
+    /**
+     * Of the window's tracked minutes, how many came from family-shared games. Zero for the
+     * overwhelmingly common case of a library with none, where the figure is not shown at all
+     * rather than stated as a zero.
+     */
+    val familySharedMinutes: Int = 0,
 ) {
     /** True when there is at least one tracked minute in the selected window. */
     val hasData: Boolean
@@ -259,6 +272,12 @@ class AnalyticsViewModel @Inject constructor(
 
         val topGames = joinGameMinutes(inputs.minutesByGame, gamesById)
             .take(TOP_GAMES_LIMIT)
+        // Shared games are counted in the window's totals; this is the slice of them, so the
+        // contribution can be told apart rather than silently folded in.
+        val familySharedMinutes = inputs.minutesByGame
+            .filter { (appId, _) -> gamesById[appId]?.source == GameSource.FAMILY_SHARED }
+            .values
+            .sum()
         val gamesByDate = sessionsByDate
             .mapValues { (_, daySessions) ->
                 val minutesByDayGame = daySessions.groupBy { it.appId }
@@ -326,6 +345,7 @@ class AnalyticsViewModel @Inject constructor(
             sessionInsights = sessionInsights,
             timeOfDayPattern = timeOfDayPattern,
             gamesByDate = gamesByDate,
+            familySharedMinutes = familySharedMinutes,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -354,6 +374,7 @@ private fun joinGameMinutes(
             name = game?.name ?: "App $appId",
             iconUrl = game?.iconUrl.orEmpty(),
             minutes = minutes,
+            isFamilyShared = game?.source == GameSource.FAMILY_SHARED,
         )
     }
     .sortedWith(compareByDescending<AnalyticsGame> { it.minutes }.thenBy { it.name })

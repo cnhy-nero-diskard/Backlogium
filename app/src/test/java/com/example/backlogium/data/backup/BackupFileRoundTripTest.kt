@@ -30,6 +30,7 @@ class BackupFileRoundTripTest {
                     firstSeenAt = "2026-05-20T09:00:00Z",
                     lastPlayedAt = "2026-06-28T21:15:00Z",
                     returnedToPlayAt = "2026-06-28T21:15:00Z",
+                    source = "FAMILY_SHARED",
                 ),
             ),
             achievements = listOf(
@@ -64,6 +65,9 @@ class BackupFileRoundTripTest {
                 ),
             ),
             collectionMembers = listOf(BackupCollectionMember(collectionId = 1L, appId = 440L, orderIndex = 0, done = false)),
+            excludedSharedGames = listOf(
+                BackupExcludedSharedGame(appId = 620L, name = "Portal 2", excludedAt = "2026-06-20T12:00:00Z"),
+            ),
         )
 
         val encoded = json.encodeToString(BackupFile.serializer(), original)

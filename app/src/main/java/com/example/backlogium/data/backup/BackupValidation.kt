@@ -169,6 +169,27 @@ object BackupValidator {
             }
         }
 
+        file.excludedSharedGames.forEachIndexed { index, excluded ->
+            if (excluded.appId <= 0L) {
+                problems += BackupValidationProblem(
+                    "excludedSharedGame", index, "malformed appId " + excluded.appId,
+                )
+            }
+            val excludedAt = excluded.excludedAt.toEpochMilliOrNull()
+            when {
+                excludedAt == null ->
+                    problems += BackupValidationProblem(
+                        "excludedSharedGame", index,
+                        "unparseable excludedAt '" + excluded.excludedAt + "'",
+                    )
+                excludedAt !in EARLIEST_PLAUSIBLE_MILLIS..LATEST_PLAUSIBLE_MILLIS ->
+                    problems += BackupValidationProblem(
+                        "excludedSharedGame", index,
+                        "excludedAt '" + excluded.excludedAt + "' outside the supported range " +
+                            EARLIEST_PLAUSIBLE_DATE + ".." + LATEST_PLAUSIBLE_DATE,
+                    )
+            }
+        }
         file.collectionMembers.forEachIndexed { index, member ->
             if (member.collectionId !in collectionIds) {
                 problems += BackupValidationProblem(

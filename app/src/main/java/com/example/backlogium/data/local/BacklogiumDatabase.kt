@@ -12,6 +12,7 @@ import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.DiagnosticsDao
+import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
@@ -23,6 +24,7 @@ import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
+import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.local.entity.GameGenreCache
@@ -54,8 +56,9 @@ import com.example.backlogium.data.local.entity.SyncRun
         SteamAssetManifest::class,
         SteamAssetDownloadState::class,
         GameAchievementSync::class,
+        ExcludedSharedGame::class,
     ],
-    version = 21,
+    version = 22,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -71,6 +74,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun gameGenreCacheDao(): GameGenreCacheDao
     abstract fun gameAchievementSyncDao(): GameAchievementSyncDao
     abstract fun steamAssetDao(): SteamAssetDao
+    abstract fun excludedSharedGameDao(): ExcludedSharedGameDao
 
     companion object {
         const val NAME = "backlogium.db"
@@ -494,21 +498,13 @@ abstract class BacklogiumDatabase : RoomDatabase() {
         }
 
         /**
-         * v20 → v21: additive only — `games` gains the three recency observation columns
-         * (add-library-recency-signals). All nullable, all null for existing rows, deliberately
-         * not backfilled:
+         * v20 -> v21: record recency observations on the games schema. `games` gains
+         * `firstSeenAt`, `lastPlayedAt`, and `returnedToPlayAt`, all nullable with no backfill.
          *
-         * - `firstSeenAt` null is the *correct* value for an existing library, not a gap. Every
-         *   game already stored was present before tracking began, so none of them is new and
-         *   none may ever be badged as new. Stamping the migration time here — with a separate
-         *   "baselined at" marker to suppress the badges — would need two facts to stay
-         *   consistent forever; one nullable column cannot be misread.
-         * - `lastPlayedAt` fills in from Steam on the next poll, which is the only source for it.
-         * - `returnedToPlayAt` null because no return has been observed: dormancy is knowable
-         *   only at the instant it ends, and nothing was watching before now.
-         *
-         * Three nullable columns with no index; the `ALTER TABLE`s are O(1) in SQLite, so this is
-         * cheap on a large library.
+         * This must stay exactly the schema `master` already shipped at version 21: an install
+         * that upgraded from a genuine `master` build is stamped version 21 with only these three
+         * columns, and Room's identity check is content-based, not just the version number. Fold
+         * anything else into a later migration instead of editing this one.
          */
         val MIGRATION_20_21 = object : Migration(20, 21) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -516,6 +512,52 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `games` ADD COLUMN `lastPlayedAt` INTEGER")
                 db.execSQL("ALTER TABLE `games` ADD COLUMN `returnedToPlayAt` INTEGER")
             }
+        }
+
+        /**
+         * v21 -> v22: family-shared games (add-family-shared-games).
+         *
+         * - `games` gains `source`, defaulting to `STEAM_OWNED`. A widening with no data movement:
+         *   every existing row *is* an owned game, since the owned-games sync was until now the
+         *   only path that could create one. Stored as the enum name, matching `Converters`.
+         * - `excluded_shared_games` records app ids the player removed after admission, so a
+         *   removal survives further play. Deliberately no foreign key to `games` — the row exists
+         *   precisely because the game row does not — and `name` is carried so Settings can list a
+         *   removal with nothing else left to read it from.
+         *
+         * `source` is added conditionally: an install that ran this branch before the v21/v22
+         * split (a build between the family-shared feature landing and this fix) is *also*
+         * stamped version 21, but its `games` table already has `source` — that earlier build's
+         * `MIGRATION_20_21` put it there. An unconditional `ADD COLUMN` would fail on that shape
+         * with a duplicate-column error, so this checks first rather than assuming master's
+         * recency-only v21 is the only one that exists in the wild.
+         */
+        val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                if (!db.hasColumn("games", "source")) {
+                    db.execSQL(
+                        "ALTER TABLE `games` ADD COLUMN `source` TEXT NOT NULL " +
+                            "DEFAULT 'STEAM_OWNED'",
+                    )
+                }
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `excluded_shared_games` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`name` TEXT NOT NULL, " +
+                        "`excludedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`))",
+                )
+            }
+        }
+
+        private fun SupportSQLiteDatabase.hasColumn(table: String, column: String): Boolean {
+            query("PRAGMA table_info(`$table`)").use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIndex) == column) return true
+                }
+            }
+            return false
         }
 
         private data class BackfillKey(

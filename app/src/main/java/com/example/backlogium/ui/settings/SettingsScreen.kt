@@ -1,6 +1,7 @@
 package com.example.backlogium.ui.settings
 
 import android.net.Uri
+import android.widget.Toast
 import com.example.backlogium.BuildConfig
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -48,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.data.backup.SnapshotMeta
+import com.example.backlogium.data.repo.RemovedSharedGame
 import com.example.backlogium.data.updates.AppUpdateState
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
@@ -89,6 +92,10 @@ fun SettingsScreen(
 
     LaunchedEffect(viewModel, haptics) {
         viewModel.hapticIntents.collect(haptics::playIfNotSilent)
+    }
+    val context = LocalContext.current
+    LaunchedEffect(viewModel, context) {
+        viewModel.toastMessages.collect { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
     }
 
     val exportLauncher = rememberLauncherForActivityResult(
@@ -132,6 +139,9 @@ fun SettingsScreen(
                 onDismissBackupMessage = viewModel::onDismissBackupMessage,
                 onCheckForUpdates = viewModel::checkForUpdates,
                 onOpenUpdate = onOpenUpdate,
+                onRestoreSharedGame = viewModel::restoreSharedGame,
+                onManualSharedGameInputChanged = viewModel::onManualSharedGameInputChanged,
+                onImportManualSharedGame = viewModel::importManualSharedGame,
             )
         },
     )
@@ -165,6 +175,9 @@ data class SettingsActions(
     val onDismissBackupMessage: () -> Unit,
     val onCheckForUpdates: () -> Unit = {},
     val onOpenUpdate: () -> Unit = {},
+    val onRestoreSharedGame: (Long) -> Unit = {},
+    val onManualSharedGameInputChanged: (String) -> Unit = {},
+    val onImportManualSharedGame: () -> Unit = {},
 )
 
 /** The stateless half: renders [state] and raises [actions]. */
@@ -231,6 +244,17 @@ fun SettingsScreen(
             configured = state.configured,
             onEnabledChanged = actions.onLiveMonitorEnabledChanged,
         )
+
+        SectionHeader("Family Sharing")
+        ManualSharedGameCard(state, actions)
+
+        if (state.removedSharedGames.isNotEmpty()) {
+            SectionHeader("Removed shared games")
+            RemovedSharedGamesCard(
+                removed = state.removedSharedGames,
+                onRestore = actions.onRestoreSharedGame,
+            )
+        }
 
         SectionHeader("Daily quest")
         DailyQuestCard(state = state, actions = actions)
@@ -521,6 +545,42 @@ private fun LiveMonitorCard(
                 onCheckedChange = onEnabledChanged,
                 enabled = configured,
             )
+        }
+    }
+}
+
+/**
+ * The family-shared games the player removed, and the way back. Shown only when something has been
+ * removed: a standing empty section would explain a feature most players never touch.
+ *
+ * Restoring recreates the tracked shared-game row immediately, so it is visible in Library and
+ * available to add to collections again. Future play observations provide its sessions.
+ */
+@Composable
+private fun RemovedSharedGamesCard(
+    removed: List<RemovedSharedGame>,
+    onRestore: (Long) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                "These are not tracked until you choose Track again.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            removed.forEach { game ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = game.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { onRestore(game.appId) }) { Text("Track again") }
+                }
+            }
         }
     }
 }

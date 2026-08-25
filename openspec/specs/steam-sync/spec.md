@@ -76,7 +76,9 @@ number of games owned and cannot approach the platform's background execution li
 ### Requirement: Session synthesis by playtime diffing
 The system SHALL synthesize play sessions by comparing each game's `playtime_forever`
 against the previously stored value, since the Steam Web API does not expose session
-or "currently playing" data.
+or "currently playing" data. This mechanism SHALL apply only to games for which Steam reports
+playtime ? those in the player's own library ? so that a game whose sessions are derived from
+observed presence is never also diffed.
 
 #### Scenario: Playtime increases
 - **WHEN** a game's `playtime_forever` is greater than its stored value
@@ -402,4 +404,9 @@ result from an account change.
 #### Scenario: Same account across polls
 - **WHEN** consecutive polls are for the same account
 - **THEN** session synthesis by playtime diffing behaves exactly as specified for normal
+
+#### Scenario: A game without Steam-reported playtime is not diffed
+- **WHEN** a tracked game is absent from the player's Steam library
+- **THEN** it is excluded from playtime diffing entirely, and no session for it is created or
+  closed by this mechanism
   operation

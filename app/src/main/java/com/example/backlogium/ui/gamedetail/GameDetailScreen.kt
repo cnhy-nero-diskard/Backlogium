@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -43,8 +44,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -82,6 +85,7 @@ import compose.icons.TablerIcons
 import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.ExternalLink
+import compose.icons.tablericons.Trash
 import compose.icons.tablericons.Trophy
 import compose.icons.tablericons.User
 import java.util.Locale
@@ -110,6 +114,7 @@ fun GameDetailScreen(
     presentation: GameDetailPresentation = GameDetailPresentation.FULL_DESTINATION,
     viewModel: GameDetailViewModel = hiltViewModel(),
     onAccentColorChanged: (Color?) -> Unit = {},
+    onRemoved: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val overlay = presentation == GameDetailPresentation.COLLECTION_OVERLAY
@@ -126,6 +131,9 @@ fun GameDetailScreen(
     LaunchedEffect(viewModel, appId) {
         appId?.let(viewModel::setAppId)
         viewModel.startPolling()
+    }
+    LaunchedEffect(viewModel, onRemoved) {
+        viewModel.removedSharedGameEvents.collect { onRemoved() }
     }
     DisposableEffect(viewModel) {
         onDispose { viewModel.stopPolling() }
@@ -199,6 +207,7 @@ private fun GameDetailList(
                 appId = appId,
                 artworkFallbackUrls = artworkFallbackUrls,
                 summary = state.summary,
+                onRemoveSharedGame = viewModel::removeSharedGame,
             )
         }
         state.rarityStanding?.let { standing ->
@@ -310,6 +319,7 @@ private fun GameSummarySection(
     appId: Long,
     artworkFallbackUrls: List<String>,
     summary: GameSummaryUi,
+    onRemoveSharedGame: () -> Unit = {},
 ) {
     val uriHandler = LocalUriHandler.current
     val linkLabel = name.takeIf { it.isNotBlank() }?.let { "Open $it on Steam" } ?: "Open game on Steam"
@@ -335,6 +345,7 @@ private fun GameSummarySection(
                             fontWeight = FontWeight.Bold,
                             maxLines = 2,
                         )
+                        if (summary.isFamilyShared) FamilySharedBadge()
                         PlaytimeLine(summary)
                     }
                     // Beside the title rather than over the header art: art is absent for some
@@ -352,6 +363,10 @@ private fun GameSummarySection(
                 if (summary.hasHltb) {
                     Spacer(Modifier.height(8.dp))
                     HltbLengths(summary)
+                }
+                if (summary.isFamilyShared) {
+                    ObservedCoverageNotice(summary)
+                    RemoveSharedGameAction(name, onRemoveSharedGame)
                 }
                 TextButton(
                     onClick = { uriHandler.openUri("$STEAM_STORE_URL_PREFIX$appId") },
@@ -421,11 +436,18 @@ private fun HeaderArt(headerUrl: String, fallbackUrls: List<String>) {
 /**
  * Steam's lifetime playtime, plus the tracked-vs-imported split when history was imported. The
  * split is omitted otherwise, where it would only restate the total.
+ *
+ * A family-shared game has no Steam total at all, so it leads with what the app tracked and says
+ * so on the line itself — the fuller disclosure sits in [ObservedCoverageNotice] below.
  */
 @Composable
 private fun PlaytimeLine(summary: GameSummaryUi) {
     Text(
-        text = "${UiFormat.minutes(summary.playtimeMinutes)} played",
+        text = if (summary.isFamilyShared) {
+            "${UiFormat.minutes(summary.headlineMinutes)} observed"
+        } else {
+            "${UiFormat.minutes(summary.headlineMinutes)} played"
+        },
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -437,6 +459,101 @@ private fun PlaytimeLine(summary: GameSummaryUi) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/**
+ * A game played through Family Sharing, marked in words rather than by colour so the distinction
+ * survives a colour-blind reader and a greyscale screenshot alike. Deliberately a small label under
+ * the title: the artwork and the name remain the game's identity, and how the app came to track it
+ * is secondary to what it is.
+ */
+@Composable
+private fun FamilySharedBadge() {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        modifier = Modifier.padding(top = 4.dp),
+    ) {
+        Text(
+            text = "Family Sharing",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier
+                .padding(horizontal = 8.dp, vertical = 3.dp)
+                .semantics { contentDescription = "Played through Family Sharing" },
+        )
+    }
+}
+
+/**
+ * States what a shared game's tracked time actually is. Steam reports no lifetime playtime for a
+ * borrowed game, so this total is what the app saw — and it can only see presence while it is in
+ * the foreground or the background monitor is running. Presenting it as complete when it
+ * structurally cannot be would be the app's first false claim about the player's own history.
+ *
+ * When the monitor is off, the notice names it: the remedy is actionable, so the disclosure points
+ * at it rather than merely apologising.
+ */
+@Composable
+private fun ObservedCoverageNotice(summary: GameSummaryUi) {
+    val remedy = if (summary.liveMonitorEnabled) {
+        ""
+    } else {
+        " Turn on background presence monitoring in Settings to catch more of it."
+    }
+    Text(
+        text = "Tracked time is what Backlogium observed, not your total time in this game." + remedy,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 10.dp),
+    )
+}
+
+/**
+ * Removal, offered only for a family-shared game. An owned game has no equivalent: its presence in
+ * the library is Steam's to decide, not the app's. Confirmed first, because removal takes the
+ * game's tracked history with it and is not something to trigger by a mis-tap.
+ */
+@Composable
+private fun RemoveSharedGameAction(name: String, onRemove: () -> Unit) {
+    var confirming by remember { mutableStateOf(false) }
+
+    TextButton(
+        onClick = { confirming = true },
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+    ) {
+        Icon(
+            imageVector = TablerIcons.Trash,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text("Stop tracking this game")
+    }
+
+    if (!confirming) return
+    AlertDialog(
+        onDismissRequest = { confirming = false },
+        title = { Text("Stop tracking ${name.ifBlank { "this game" }}?") },
+        text = {
+            Text(
+                "Its tracked sessions are removed, and playing it again will not add it back. " +
+                    "You can undo this from Settings.",
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    confirming = false
+                    onRemove()
+                },
+            ) { Text("Stop tracking") }
+        },
+        dismissButton = {
+            TextButton(onClick = { confirming = false }) { Text("Cancel") }
+        },
+    )
 }
 
 /**
