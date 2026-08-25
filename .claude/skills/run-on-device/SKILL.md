@@ -17,7 +17,15 @@ Rebuild the Android app, install the debug APK on a connected device, and launch
 - `$run-on-device` — build + install + launch from the **current** repo directory.
 - `$run-on-device <worktree>` — build + install + launch from the named worktree (e.g. `$run-on-device Backlogium-improve-search-relevance`).
 
-Package id used for launch: `com.example.backlogium`.
+Package id used for launch: `com.example.backlogium.debug` (the debug build applies an
+`applicationIdSuffix`, so it installs side by side with the signed release app rather
+than replacing it).
+
+One-time cleanup of legacy debug installs: debug builds installed before this change
+used the release package id `com.example.backlogium` (debug-signed). If such an install
+is present on a device, export anything valuable from it first, then remove it with
+`adb uninstall com.example.backlogium` before installing or restoring the signed
+release build at that id.
 
 ## Workflow
 
@@ -50,7 +58,7 @@ If `BUILD FAILED`, read `build_install_err.log` and report the failure — do no
 ### 3. Launch on device
 
 ```powershell
-C:\Users\cnhyn\AppData\Local\Android\Sdk\platform-tools\adb.exe shell monkey -p com.example.backlogium 1
+C:\Users\cnhyn\AppData\Local\Android\Sdk\platform-tools\adb.exe shell monkey -p com.example.backlogium.debug 1
 ```
 
 Confirm `Events injected: 1` in the output.

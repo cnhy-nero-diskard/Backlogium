@@ -2,6 +2,7 @@ package com.example.backlogium
 
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.backlogium.BuildConfig
 
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -19,6 +20,8 @@ class ExampleInstrumentedTest {
     fun useAppContext() {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        assertEquals("com.example.backlogium", appContext.packageName)
+        // The debug build installs under a `.debug` application-ID suffix, so resolve
+        // against the generated APPLICATION_ID instead of a hardcoded package literal.
+        assertEquals(BuildConfig.APPLICATION_ID, appContext.packageName)
     }
 }
