@@ -73,9 +73,9 @@
 
 ## 7. Verification
 
-- [ ] 7.1 `./gradlew :app:testDebugUnitTest :gamification:test`
+- [x] 7.1 `./gradlew :app:testDebugUnitTest :gamification:test`
 - [ ] 7.2 On device with the live monitor enabled: play a game for a few minutes, quit, and confirm the session appears in History without a manual sync
-- [ ] 7.3 Confirm Diagnostics shows the post-play attempts, their trigger, the scoped game, and how many requests were issued
+- [x] 7.3 Confirm Diagnostics shows the post-play attempts, their trigger, the scoped game, and how many requests were issued
 - [ ] 7.4 Quit a game, background the app, and kill its process with `adb shell am kill com.example.backlogium`; confirm the session is still recorded — **not** `am force-stop`, which puts the package in Android's stopped state where WorkManager is suspended until the user relaunches, and so cannot demonstrate durability across ordinary process death
 - [ ] 7.5 Launch and quit a game within a few seconds; confirm the schedule exhausts quietly with nothing recorded and no error surfaced
 - [ ] 7.6 Confirm the day's total minutes match what a manual "Sync now" would have produced, with no double-count
