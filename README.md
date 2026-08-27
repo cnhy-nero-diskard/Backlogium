@@ -11,17 +11,19 @@ local backup. An independent presence poller records server-side observations to
 Firestore while the phone is asleep; the app itself does not read that data yet,
 and works entirely without it. An OBS overlay remains a roadmap item.
 
-## Status snapshot — 2026-08-21
+## Status snapshot — 2026-08-27
 
 The current branch contains the implemented offline-first Android product loop,
 including the guided first-run setup, in-app updates, offline Steam asset download,
-haptic-feedback, and diagnostics/UI refinements merged through August 21, on top of
-the sync write-integrity hardening merged on August 15 (atomic poll persistence,
-database-serialized concurrent polls, field-scoped Steam/app column ownership,
-versioned rule-config provenance, and tombstoned achievement removal) and the
-collection UI behavior fixes (August 12) and tiered achievement-sync optimization
-(August 11) that preceded it. The source is actively maintained; it is not presented
-here as a claim that every device-only check or future cloud consumer is complete.
+haptic-feedback, and diagnostics/UI refinements merged through August 21, the
+add-post-play-sync capability (August 27), and the housekeeping audit script and agent
+skill definitions (August 27), on top of the sync write-integrity hardening merged on
+August 15 (atomic poll persistence, database-serialized concurrent polls, field-scoped
+Steam/app column ownership, versioned rule-config provenance, and tombstoned achievement
+removal) and the collection UI behavior fixes (August 12) and tiered achievement-sync
+optimization (August 11) that preceded it. The source is actively maintained; it is not
+presented here as a claim that every device-only check or future cloud consumer is
+complete.
 
 | Area | Current state |
 |---|---|
