@@ -109,7 +109,6 @@ class PostPlaySyncWorkerTest {
         coordinator = PostPlayGenerationCoordinator(generations)
         schedulerScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         scheduler = PostPlaySyncScheduler(
-            context = context,
             coordinator = coordinator,
             sessionEnds = PlaySessionEndPublisher(),
             sessionEndOutbox = object : SessionEndOutbox {
@@ -121,6 +120,7 @@ class PostPlaySyncWorkerTest {
                 ) = Unit
                 override suspend fun acknowledgeSessionEnd(sessionEnd: PlaySessionEnd) = Unit
             },
+            workEnqueuer = WorkManagerPostPlayWorkEnqueuer(context),
             scope = schedulerScope,
         )
         time = FakeTimeProvider(now = sessionEndAt + 30_000L)

@@ -1,10 +1,16 @@
 package com.example.backlogium.work
 
+import android.content.Context
 import androidx.work.Configuration
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequest
+import androidx.work.Operation
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.repo.PlaySessionEnd
 import com.example.backlogium.data.repo.PlaySessionEndPublisher
@@ -43,6 +49,7 @@ import java.util.concurrent.TimeUnit
 @OptIn(ExperimentalCoroutinesApi::class)
 class PostPlaySyncScheduleTest {
 
+    private lateinit var context: Context
     private lateinit var workManager: WorkManager
     private lateinit var scheduler: PostPlaySyncScheduler
     private lateinit var generations: FakeGenerations
@@ -52,7 +59,7 @@ class PostPlaySyncScheduleTest {
 
     @Before
     fun setUp() {
-        val context = RuntimeEnvironment.getApplication()
+        context = RuntimeEnvironment.getApplication()
         WorkManagerTestInitHelper.initializeTestWorkManager(
             context,
             Configuration.Builder().setExecutor(SynchronousExecutor()).build(),
@@ -62,13 +69,7 @@ class PostPlaySyncScheduleTest {
         sessionEnds = PlaySessionEndPublisher()
         sessionEndOutbox = FakeSessionEndOutbox()
         schedulerScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        scheduler = PostPlaySyncScheduler(
-            context = context,
-            coordinator = PostPlayGenerationCoordinator(generations),
-            sessionEnds = sessionEnds,
-            sessionEndOutbox = sessionEndOutbox,
-            scope = schedulerScope,
-        )
+        scheduler = newScheduler(WorkManagerPostPlayWorkEnqueuer(context))
     }
 
     @After
@@ -210,8 +211,37 @@ class PostPlaySyncScheduleTest {
         assertTrue(sessionEndOutbox.pending.value.isEmpty())
     }
 
+    @Test
+    fun `outbox stays pending until the WorkManager enqueue operation completes`() = runTest {
+        val delayed = DelayedWorkEnqueuer(WorkManagerPostPlayWorkEnqueuer(context))
+        scheduler = newScheduler(delayed)
+        val event = PlaySessionEnd(appId = 440L, endedAt = 1_000L, steamId = "account-a")
+        sessionEndOutbox.pending.value = listOf(event)
+
+        scheduler.observeSessionEnds()
+        runCurrent()
+
+        assertTrue(delayed.enqueueStarted)
+        assertEquals(listOf(event), sessionEndOutbox.pending.value)
+        assertEquals(1, workInfosFor(440L).size)
+
+        delayed.complete()
+        runCurrent()
+
+        assertTrue(sessionEndOutbox.pending.value.isEmpty())
+    }
+
     private fun workInfosFor(appId: Long): List<WorkInfo> =
         workManager.getWorkInfosForUniqueWork(PostPlaySyncScheduler.uniqueWorkName(appId)).get()
+
+    private fun newScheduler(workEnqueuer: PostPlayWorkEnqueuer): PostPlaySyncScheduler =
+        PostPlaySyncScheduler(
+            coordinator = PostPlayGenerationCoordinator(generations),
+            sessionEnds = sessionEnds,
+            sessionEndOutbox = sessionEndOutbox,
+            workEnqueuer = workEnqueuer,
+            scope = schedulerScope,
+        )
 
     private class FakeGenerations : PostPlayGenerations {
         private val values = mutableMapOf<Long, Long>()
@@ -237,6 +267,34 @@ class PostPlaySyncScheduleTest {
 
         override suspend fun acknowledgeSessionEnd(sessionEnd: PlaySessionEnd) {
             pending.value = pending.value.filterNot { it == sessionEnd }
+        }
+    }
+
+    private class DelayedWorkEnqueuer(
+        private val delegate: PostPlayWorkEnqueuer,
+    ) : PostPlayWorkEnqueuer {
+        private val completion = SettableFuture.create<Operation.State.SUCCESS>()
+        private var delegateOperation: Operation? = null
+        var enqueueStarted = false
+            private set
+
+        override fun enqueue(
+            uniqueWorkName: String,
+            policy: ExistingWorkPolicy,
+            request: OneTimeWorkRequest,
+        ): Operation {
+            enqueueStarted = true
+            val operation = delegate.enqueue(uniqueWorkName, policy, request)
+            delegateOperation = operation
+            return object : Operation {
+                override fun getState() = operation.getState()
+
+                override fun getResult(): ListenableFuture<Operation.State.SUCCESS> = completion
+            }
+        }
+
+        fun complete() {
+            completion.set(checkNotNull(delegateOperation).getResult().get())
         }
     }
 }

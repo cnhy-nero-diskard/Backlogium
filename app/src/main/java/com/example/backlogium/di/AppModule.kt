@@ -35,6 +35,8 @@ import com.example.backlogium.domain.PostPlayGenerations
 import com.example.backlogium.domain.ProgressMarksStore
 import com.example.backlogium.domain.SystemTimeProvider
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.work.PostPlayWorkEnqueuer
+import com.example.backlogium.work.WorkManagerPostPlayWorkEnqueuer
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -106,6 +108,12 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindPostPlayGenerations(impl: PostPlayGenerationStore): PostPlayGenerations
+
+    @Binds
+    @Singleton
+    abstract fun bindPostPlayWorkEnqueuer(
+        impl: WorkManagerPostPlayWorkEnqueuer,
+    ): PostPlayWorkEnqueuer
 
     @Binds
     @Singleton

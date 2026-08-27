@@ -1,17 +1,15 @@
 package com.example.backlogium.work
 
-import android.content.Context
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
+import androidx.work.await
 import androidx.work.workDataOf
 import com.example.backlogium.data.repo.PlaySessionEnd
 import com.example.backlogium.data.repo.PlaySessionEndPublisher
 import com.example.backlogium.data.repo.SessionEndOutbox
 import com.example.backlogium.di.ApplicationScope
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -36,13 +34,12 @@ import javax.inject.Singleton
  */
 @Singleton
 class PostPlaySyncScheduler @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val coordinator: PostPlayGenerationCoordinator,
     private val sessionEnds: PlaySessionEndPublisher,
     private val sessionEndOutbox: SessionEndOutbox,
+    private val workEnqueuer: PostPlayWorkEnqueuer,
     @ApplicationScope private val scope: CoroutineScope,
 ) {
-    private val workManager: WorkManager get() = WorkManager.getInstance(context)
     private val dispatchMutex = Mutex()
     private val dispatchedSessionEnds = mutableSetOf<PlaySessionEnd>()
 
@@ -123,7 +120,7 @@ class PostPlaySyncScheduler @Inject constructor(
         )
     }
 
-    private fun enqueue(
+    private suspend fun enqueue(
         appId: Long,
         attempt: Int,
         sessionEndAt: Long,
@@ -149,7 +146,10 @@ class PostPlaySyncScheduler @Inject constructor(
             // No expedited quota and no foreground service: the schedule's own delays make
             // expedited execution meaningless, and a playtime read is not worth either.
             .build()
-        workManager.enqueueUniqueWork(uniqueWorkName(appId), policy, request)
+        // The outbox is acknowledged only after this operation completes. If WorkManager rejects
+        // or cancellation interrupts the operation, await throws and the durable event remains
+        // pending for the next collector/process to retry.
+        workEnqueuer.enqueue(uniqueWorkName(appId), policy, request).await()
     }
 
     companion object {
