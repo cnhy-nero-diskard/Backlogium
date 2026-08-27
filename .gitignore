@@ -30,3 +30,6 @@ logs/
 
 # Scratch Gradle project caches from local review builds
 .gradle-project-cache*/
+
+# Scratch screenshots from local emulator / device testing
+.scratch_screens/
