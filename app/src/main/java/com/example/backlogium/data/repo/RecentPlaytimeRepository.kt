@@ -20,34 +20,41 @@ data class PlaytimeObservation(
 )
 
 /**
- * The targeted playtime read used by the post-play fetch: `GetRecentlyPlayedGames` with a count of
- * one, which is the single most recently played game — the one whose session just ended.
- *
- * Deliberately does not verify that the returned game is the one the caller expected. The caller
- * knows which app id it asked about; discarding a mismatch is its decision to record, not a detail
- * to hide in here (see add-post-play-sync's design, "the response is verified against the expected
- * app id rather than trusted").
+ * The bounded recent-playtime read used by the post-play fetch. Steam does not reliably put the
+ * game whose session just ended first, so the repository returns the small recent window and lets
+ * the worker select the requested app before it reaches the commit path.
  */
 @Singleton
 class RecentPlaytimeRepository @Inject constructor(
     private val steamApi: SteamApi,
     private val credentials: CredentialsProvider,
 ) {
+    companion object {
+        /** Keeps the lookup bounded without assuming the first recent game is the stopped game. */
+        const val RECENT_GAME_COUNT = 20
+    }
+
     /**
-     * @return the single most recent observation, or null when Steam is not configured or the
+     * @return bounded recent observations, or an empty list when Steam is not configured or the
      *   response carries no games (a private profile, or an account that has played nothing).
      */
-    suspend fun mostRecentlyPlayed(scope: SyncRunRecorder.RunScope? = null): PlaytimeObservation? {
-        val creds = credentials.currentCredentials() ?: return null
-        val game = steamApi
-            .getRecentlyPlayedGames(creds.apiKey, creds.steamId, count = 1, scope = scope)
-            .response.games.firstOrNull()
-            ?: return null
-        return PlaytimeObservation(
-            appId = game.appid,
-            name = game.name,
-            playtimeForever = game.playtimeForever,
-            playtime2Weeks = game.playtime2Weeks,
-        )
+    suspend fun recentlyPlayed(scope: SyncRunRecorder.RunScope? = null): List<PlaytimeObservation> {
+        val creds = credentials.currentCredentials() ?: return emptyList()
+        return steamApi
+            .getRecentlyPlayedGames(
+                creds.apiKey,
+                creds.steamId,
+                count = RECENT_GAME_COUNT,
+                scope = scope,
+            )
+            .response.games
+            .map { game ->
+                PlaytimeObservation(
+                    appId = game.appid,
+                    name = game.name,
+                    playtimeForever = game.playtimeForever,
+                    playtime2Weeks = game.playtime2Weeks,
+                )
+            }
     }
 }

@@ -6,10 +6,9 @@ import kotlinx.serialization.Serializable
 /**
  * Response envelope for `IPlayerService/GetRecentlyPlayedGames`.
  *
- * Asked with `count = 1` this is the smallest answer Steam gives to "what did the player just
- * play, and for how long in total" — see add-post-play-sync's design, which chose it over
- * `GetOwnedGames` + `appids_filter` because it is a plain GET (no `input_json` for Retrofit to
- * hand-build and for diagnostics to normalize) and returns one game rather than the library.
+ * The post-play fetch asks for a small bounded recent-game window and selects the stopped app from
+ * the response. This remains independent of library size while avoiding the assumption that the
+ * first row is always the session that just ended.
  */
 @Serializable
 data class RecentlyPlayedGamesResponse(

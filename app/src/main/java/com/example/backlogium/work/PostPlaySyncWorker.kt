@@ -55,8 +55,8 @@ class PostPlaySyncWorker @AssistedInject constructor(
 
     /** What one attempt's request turned out to be, before it is compared to the baseline. */
     private sealed interface Attempt {
-        /** Steam answered about some game. Which game it is has not been checked yet. */
-        data class Observed(val observation: PlaytimeObservation) : Attempt
+        /** Steam answered about one or more recent games. The requested game is selected below. */
+        data class Observed(val observations: List<PlaytimeObservation>) : Attempt
 
         /** A successful request with nothing in it: Steam unconfigured, or an empty response. */
         data object Empty : Attempt
@@ -110,15 +110,14 @@ class PostPlaySyncWorker @AssistedInject constructor(
                 Attempt.Empty -> null
 
                 is Attempt.Observed -> {
-                    examined = 1
-                    if (result.observation.appId == appId) {
-                        result.observation
-                    } else {
+                    examined = result.observations.size
+                    result.observations.firstOrNull { it.appId == appId } ?: run {
                         // Attributing another game's minutes to this one would be worse than the
                         // staleness this fetch exists to fix. Discard, and let the attempt count
                         // as unproductive.
                         outcome = SyncOutcome.SKIPPED_UNEXPECTED_GAME
-                        error = "expected app $appId, Steam answered about ${result.observation.appId}"
+                        error = "expected app " + appId +
+                            ", Steam answered about " + result.observations.first().appId
                         null
                     }
                 }
@@ -188,7 +187,9 @@ class PostPlaySyncWorker @AssistedInject constructor(
      * next attempt is a minute or two away and Steam may well have published by then.
      */
     private suspend fun fetch(scope: SyncRunRecorder.RunScope): Attempt = try {
-        recentPlaytime.mostRecentlyPlayed(scope)?.let { Attempt.Observed(it) } ?: Attempt.Empty
+        recentPlaytime.recentlyPlayed(scope).let { observations ->
+            if (observations.isEmpty()) Attempt.Empty else Attempt.Observed(observations)
+        }
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (error: Exception) {

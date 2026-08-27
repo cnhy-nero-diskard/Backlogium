@@ -50,10 +50,10 @@ class DiagnosticRedactionTest {
 
     @Test fun recentlyPlayedGamesKeepsItsCountButNeitherCredential() {
         val identifier = DiagnosticRedaction.requestIdentifier(
-            "https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/?key=secret&steamid=76561198000000001&count=1".toHttpUrl(),
+            "https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/?key=secret&steamid=76561198000000001&count=20".toHttpUrl(),
         )
 
-        assertEquals("/IPlayerService/GetRecentlyPlayedGames/v1/?count=1", identifier)
+        assertEquals("/IPlayerService/GetRecentlyPlayedGames/v1/?count=20", identifier)
         assertEquals("/IPlayerService/GetRecentlyPlayedGames/v1/", requestRoute(identifier))
         assertFalse(identifier.contains("secret"))
         assertFalse(identifier.contains("76561198000000001"))

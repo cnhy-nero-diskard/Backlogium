@@ -40,11 +40,10 @@ interface SteamApi {
     ): OwnedGamesResponse
 
     /**
-     * The player's most recently played games, newest first, with the same cumulative
-     * `playtime_forever` [getOwnedGames] reports. Asked with `count = 1` this is the targeted
-     * post-play fetch: one small plain-GET response about the game the player just stopped,
-     * independent of library size. `count` survives diagnostics redaction as a safe parameter,
-     * while `key` and `steamid` do not.
+     * The player's recently played games with the same cumulative `playtime_forever`
+     * [getOwnedGames] reports. The post-play repository requests a small bounded window and selects
+     * the stopped app from it; it must not assume Steam's first row is the game that just ended.
+     * `count` survives diagnostics redaction as a safe parameter, while `key` and `steamid` do not.
      */
     @GET("IPlayerService/GetRecentlyPlayedGames/v1/")
     suspend fun getRecentlyPlayedGames(

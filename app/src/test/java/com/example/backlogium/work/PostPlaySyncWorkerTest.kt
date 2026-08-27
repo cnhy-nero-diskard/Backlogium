@@ -199,6 +199,24 @@ class PostPlaySyncWorkerTest {
     }
 
     @Test
+    fun `the requested game is selected when it is not the first recent game`() = runTest {
+        seedLibrary(playtime = 100)
+        generations.set(APP_ID, 1L)
+        steamApi.answers = listOf(
+            observation(appId = 999L, playtimeForever = 500),
+            observation(playtimeForever = 130),
+        )
+
+        runAttempt(attempt = 0)
+
+        assertEquals(RecentPlaytimeRepository.RECENT_GAME_COUNT, steamApi.requestedCount)
+        assertEquals(1, db.sessionDao().getAll().size)
+        assertEquals(30, db.sessionDao().getAll().single().minutes)
+        assertEquals(130, db.gameDao().getById(APP_ID)?.lastPlaytime)
+        assertEquals(0, pendingAttempts())
+    }
+
+    @Test
     fun `an increase already committed by the periodic poll is not credited twice`() = runTest {
         seedLibrary(playtime = 100)
         generations.set(APP_ID, 1L)
@@ -437,9 +455,11 @@ class PostPlaySyncWorkerTest {
     /** Only the recently-played endpoint is reachable; anything else is a test failure. */
     private class FakeSteamApi : SteamApi {
         var answer: RecentlyPlayedGameDto? = null
+        var answers: List<RecentlyPlayedGameDto>? = null
         var failWith: Exception? = null
         var onCall: (() -> Unit)? = null
         var callCount = 0
+        var requestedCount: Int? = null
 
         override suspend fun getRecentlyPlayedGames(
             key: String,
@@ -448,9 +468,10 @@ class PostPlaySyncWorkerTest {
             scope: SyncRunRecorder.RunScope?,
         ): RecentlyPlayedGamesResponse {
             callCount++
+            requestedCount = count
             onCall?.invoke()
             failWith?.let { throw it }
-            val games = answer?.let { listOf(it) } ?: emptyList()
+            val games = answers ?: answer?.let { listOf(it) } ?: emptyList()
             return RecentlyPlayedGamesResponse(RecentlyPlayedGamesResult(games.size, games))
         }
 
