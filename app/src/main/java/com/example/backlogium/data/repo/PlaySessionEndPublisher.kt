@@ -14,7 +14,12 @@ import javax.inject.Singleton
  * runs minutes later — see add-post-play-sync, where every attempt of a schedule must report the
  * same play instant regardless of which attempt happened to observe the playtime increase.
  */
-data class PlaySessionEnd(val appId: Long, val endedAt: Long)
+data class PlaySessionEnd(
+    val appId: Long,
+    val endedAt: Long,
+    /** Steam identity that owned the session, used to reject work after an account switch. */
+    val steamId: String = "",
+)
 
 /**
  * Makes the end of an observed session available to work that acts on it, without giving presence

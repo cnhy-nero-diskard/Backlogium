@@ -344,7 +344,10 @@ class LiveStatusRepositoryTest {
 
         // By the time the transition is observed, NowPlaying no longer names the game — the app id
         // has to come from the recorded session, and the end time from this observation.
-        assertEquals(listOf(PlaySessionEnd(appId = 10L, endedAt = 91_000L)), published)
+        assertEquals(
+            listOf(PlaySessionEnd(appId = 10L, endedAt = 91_000L, steamId = "1")),
+            published,
+        )
 
         collector.cancel()
     }
@@ -374,7 +377,10 @@ class LiveStatusRepositoryTest {
 
         // A game that is replaced rather than followed by a not-playing poll still stopped, and its
         // minutes are as real as any other session's.
-        assertEquals(listOf(PlaySessionEnd(appId = 10L, endedAt = 61_000L)), published)
+        assertEquals(
+            listOf(PlaySessionEnd(appId = 10L, endedAt = 61_000L, steamId = "1")),
+            published,
+        )
 
         collector.cancel()
     }

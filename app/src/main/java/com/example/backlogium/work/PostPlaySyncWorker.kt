@@ -5,10 +5,13 @@ import androidx.hilt.work.HiltWorker
 import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.diagnostics.SyncOutcome
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.PlayerProfileDao
+import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.PlaytimeObservation
 import com.example.backlogium.data.repo.RecentPlaytimeRepository
 import com.example.backlogium.domain.PlaytimeObservationCommitter
@@ -44,6 +47,7 @@ class PostPlaySyncWorker @AssistedInject constructor(
     private val recentPlaytime: RecentPlaytimeRepository,
     private val database: BacklogiumDatabase,
     private val gameDao: GameDao,
+    private val profileDao: PlayerProfileDao,
     private val committer: PlaytimeObservationCommitter,
     private val derivedStateWriter: SyncDerivedStateWriter,
     private val generations: PostPlayGenerationCoordinator,
@@ -51,6 +55,8 @@ class PostPlaySyncWorker @AssistedInject constructor(
     private val diagnostics: SyncRunRecorder,
     private val time: TimeProvider,
     private val syncCoordinator: SteamSyncCoordinator,
+    private val credentials: CredentialsProvider,
+    private val accountChangeMarker: AccountChangeMarkerStore,
 ) : CoroutineWorker(appContext, params) {
 
     /** What one attempt's request turned out to be, before it is compared to the baseline. */
@@ -70,9 +76,10 @@ class PostPlaySyncWorker @AssistedInject constructor(
         val attempt = inputData.getInt(KEY_ATTEMPT, 0)
         val sessionEndAt = inputData.getLong(KEY_SESSION_END_AT, 0L)
         val generation = inputData.getLong(KEY_GENERATION, 0L)
+        val steamId = inputData.getString(KEY_STEAM_ID).orEmpty()
         // Nothing to scope the work to. Only reachable if input data were lost, which WorkManager
         // does not do; recorded nowhere, because there is no game to record it against.
-        if (appId <= 0L || sessionEndAt <= 0L) return Result.success()
+        if (appId <= 0L || sessionEndAt <= 0L || steamId.isBlank()) return Result.success()
 
         val scope = diagnostics.begin(trigger(appId, attempt))
         var outcome = SyncOutcome.SUCCESS
@@ -96,9 +103,15 @@ class PostPlaySyncWorker @AssistedInject constructor(
             val result = syncCoordinator.withLock {
                 // Opportunistic: this only avoids two concurrent Steam conversations in one
                 // process. Waiting is fine, failing or skipping is not — correctness lives in the
-                // commit transaction, never in this mutex.
+                // commit transaction, never in this mutex. The marker and identity checks are the
+                // durable account-change barrier: a running request may finish, but it cannot
+                // start or commit against the account that replaced its schedule.
+                if (!isAccountActive(steamId)) {
+                    outcome = SyncOutcome.SKIPPED_SUPERSEDED
+                    return@withLock null
+                }
                 fetch(scope)
-            }
+            } ?: return Result.success()
 
             val observation = when (result) {
                 is Attempt.Failed -> {
@@ -130,7 +143,13 @@ class PostPlaySyncWorker @AssistedInject constructor(
                 observation.playtimeForever > baseline
 
             if (increased) {
-                val recorded = commitIfStillActive(appId, generation, sessionEndAt, observation!!)
+                val recorded = commitIfStillActive(
+                    appId = appId,
+                    generation = generation,
+                    sessionEndAt = sessionEndAt,
+                    steamId = steamId,
+                    observed = observation,
+                )
                 outcome = if (recorded == null) {
                     // Refused: a newer session end took this game over while the fetch was in
                     // flight, and a superseded attempt commits nothing.
@@ -152,14 +171,21 @@ class PostPlaySyncWorker @AssistedInject constructor(
             // ordinary outcome, with the periodic poll remaining the backstop for whenever Steam
             // publishes the increase.
             if (!PostPlaySyncScheduler.isLastAttempt(attempt)) {
-                val enqueued = generations.ifActive(appId, generation) {
-                    scheduler.enqueueSuccessor(
-                        appId = appId,
-                        attempt = attempt,
-                        sessionEndAt = sessionEndAt,
-                        generation = generation,
-                    )
-                    true
+                val enqueued = syncCoordinator.withLock {
+                    if (!isAccountActive(steamId)) {
+                        null
+                    } else {
+                        generations.ifActive(appId, generation) {
+                            scheduler.enqueueSuccessor(
+                                appId = appId,
+                                attempt = attempt,
+                                sessionEndAt = sessionEndAt,
+                                generation = generation,
+                                steamId = steamId,
+                            )
+                            true
+                        }
+                    }
                 }
                 // A superseded attempt must not append into the schedule that replaced it.
                 if (enqueued == null) outcome = SyncOutcome.SKIPPED_SUPERSEDED
@@ -211,30 +237,37 @@ class PostPlaySyncWorker @AssistedInject constructor(
         appId: Long,
         generation: Long,
         sessionEndAt: Long,
+        steamId: String,
         observed: PlaytimeObservation,
     ): Boolean? {
-        val recordedPlay = generations.ifActive(appId, generation) {
-            withContext(NonCancellable) {
-                database.withTransaction {
-                    committer.commit(
-                        observed = listOf(
-                            PlaytimeObservationCommitter.ObservedGame(
-                                appId = observed.appId,
-                                name = observed.name,
-                                // This endpoint carries no icon, and blank leaves the stored one
-                                // alone. Steam owns the field; the next periodic poll sets it.
-                                iconUrl = "",
-                                playtimeForever = observed.playtimeForever,
-                                playtime2Weeks = observed.playtime2Weeks,
-                            ),
-                        ),
-                        // The session end this schedule was triggered by, not this attempt's own
-                        // clock: attempt four runs eight minutes after the play, and recording it
-                        // eight minutes late would make one game's history disagree with itself
-                        // depending on which attempt happened to see the increase.
-                        observedPlayAt = sessionEndAt,
-                        syncedAt = time.nowMillis(),
-                    ).recordedPlay
+        val recordedPlay = syncCoordinator.withLock {
+            if (!isAccountActive(steamId)) {
+                null
+            } else {
+                generations.ifActive(appId, generation) {
+                    withContext(NonCancellable) {
+                        database.withTransaction {
+                            committer.commit(
+                                observed = listOf(
+                                    PlaytimeObservationCommitter.ObservedGame(
+                                        appId = observed.appId,
+                                        name = observed.name,
+                                        // This endpoint carries no icon, and blank leaves the stored one
+                                        // alone. Steam owns the field; the next periodic poll sets it.
+                                        iconUrl = "",
+                                        playtimeForever = observed.playtimeForever,
+                                        playtime2Weeks = observed.playtime2Weeks,
+                                    ),
+                                ),
+                                // The session end this schedule was triggered by, not this attempt's own
+                                // clock: attempt four runs eight minutes after the play, and recording it
+                                // eight minutes late would make one game's history disagree with itself
+                                // depending on which attempt happened to see the increase.
+                                observedPlayAt = sessionEndAt,
+                                syncedAt = time.nowMillis(),
+                            ).recordedPlay
+                        }
+                    }
                 }
             }
         } ?: return null
@@ -246,11 +279,20 @@ class PostPlaySyncWorker @AssistedInject constructor(
         return recordedPlay
     }
 
+    /** Must be called while holding [syncCoordinator], which is the account-change barrier lock. */
+    private suspend fun isAccountActive(expectedSteamId: String): Boolean {
+        if (accountChangeMarker.pendingSteamId() != null) return false
+        if (credentials.currentCredentials()?.steamId != expectedSteamId) return false
+        val storedSteamId = profileDao.get()?.steamId?.trim()
+        return storedSteamId.isNullOrBlank() || storedSteamId == expectedSteamId
+    }
+
     companion object {
         const val KEY_APP_ID = "app_id"
         const val KEY_ATTEMPT = "attempt"
         const val KEY_SESSION_END_AT = "session_end_at"
         const val KEY_GENERATION = "generation"
+        const val KEY_STEAM_ID = "steam_id"
 
         /**
          * The sync-run trigger for one post-play attempt: play-triggered, scoped to a game, and

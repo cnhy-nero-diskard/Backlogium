@@ -12,6 +12,7 @@ import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.testing.WorkManagerTestInitHelper
 import androidx.work.workDataOf
+import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
@@ -79,6 +80,8 @@ class PostPlaySyncWorkerTest {
     private lateinit var db: BacklogiumDatabase
     private lateinit var workManager: WorkManager
     private lateinit var steamApi: FakeSteamApi
+    private lateinit var credentials: FakeCredentialsProvider
+    private lateinit var accountChangeMarker: AccountChangeMarkerStore
     private lateinit var generations: FakeGenerations
     private lateinit var coordinator: PostPlayGenerationCoordinator
     private lateinit var scheduler: PostPlaySyncScheduler
@@ -93,6 +96,8 @@ class PostPlaySyncWorkerTest {
             Configuration.Builder().setExecutor(SynchronousExecutor()).build(),
         )
         workManager = WorkManager.getInstance(context)
+        credentials = FakeCredentialsProvider()
+        accountChangeMarker = AccountChangeMarkerStore(context)
         db = Room.inMemoryDatabaseBuilder(context, BacklogiumDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -282,6 +287,41 @@ class PostPlaySyncWorkerTest {
     }
 
     @Test
+    fun `a pending account change prevents an old post-play attempt from fetching`() = runTest {
+        seedLibrary(playtime = 100)
+        generations.set(APP_ID, 1L)
+        steamApi.answer = observation(playtimeForever = 130)
+        accountChangeMarker.markPending("account-b")
+
+        try {
+            val result = runAttempt(attempt = 0)
+
+            assertTrue(result is ListenableWorker.Result.Success)
+            assertEquals("the durable reset barrier stops old work before the request", 0, steamApi.callCount)
+            assertTrue(db.sessionDao().getAll().isEmpty())
+            assertEquals(0, pendingAttempts())
+        } finally {
+            accountChangeMarker.clear()
+        }
+    }
+
+    @Test
+    fun `an account switch during fetch prevents the old attempt from committing or appending`() =
+        runTest {
+            seedLibrary(playtime = 100)
+            generations.set(APP_ID, 1L)
+            steamApi.answer = observation(playtimeForever = 130)
+            steamApi.onCall = { credentials.steamId = "account-b" }
+
+            runAttempt(attempt = 0)
+
+            assertEquals("the old schedule may finish its request but cannot write", 1, steamApi.callCount)
+            assertTrue(db.sessionDao().getAll().isEmpty())
+            assertEquals(100, db.gameDao().getById(APP_ID)?.lastPlaytime)
+            assertEquals(0, pendingAttempts())
+        }
+
+    @Test
     fun `an attempt superseded before it runs spends no request`() = runTest {
         seedLibrary(playtime = 100)
         generations.set(APP_ID, 2L)
@@ -363,6 +403,7 @@ class PostPlaySyncWorkerTest {
                 recentPlaytime = RecentPlaytimeRepository(steamApi, FakeCredentialsProvider()),
                 database = db,
                 gameDao = db.gameDao(),
+                profileDao = db.playerProfileDao(),
                 committer = committer(),
                 derivedStateWriter = SyncDerivedStateWriter(
                     settings = SettingsDataStore(context),
@@ -381,6 +422,8 @@ class PostPlaySyncWorkerTest {
                 diagnostics = SyncRunRecorder(db.diagnosticsDao(), time),
                 time = time,
                 syncCoordinator = SteamSyncCoordinator(),
+                credentials = credentials,
+                accountChangeMarker = accountChangeMarker,
             )
         }
         return TestListenableWorkerBuilder<PostPlaySyncWorker>(
@@ -390,6 +433,7 @@ class PostPlaySyncWorkerTest {
                 PostPlaySyncWorker.KEY_ATTEMPT to attempt,
                 PostPlaySyncWorker.KEY_SESSION_END_AT to sessionEndAt,
                 PostPlaySyncWorker.KEY_GENERATION to generation,
+                PostPlaySyncWorker.KEY_STEAM_ID to credentials.steamId,
             ),
         ).setWorkerFactory(factory).build()
     }
@@ -447,9 +491,9 @@ class PostPlaySyncWorkerTest {
         override suspend fun current(appId: Long): Long = values[appId] ?: 0L
     }
 
-    private class FakeCredentialsProvider : CredentialsProvider {
+    private class FakeCredentialsProvider(var steamId: String = "account-a") : CredentialsProvider {
         override suspend fun currentCredentials() =
-            CredentialsState.Configured(apiKey = "key", steamId = "1")
+            CredentialsState.Configured(apiKey = "key", steamId = steamId)
     }
 
     /** Only the recently-played endpoint is reachable; anything else is a test failure. */

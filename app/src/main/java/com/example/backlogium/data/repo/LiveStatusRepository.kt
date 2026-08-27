@@ -65,7 +65,12 @@ data class LiveStatus(
     val sessionStartedAt: Long? = null,
 )
 
-private data class PresenceFetch(val status: LiveStatus, val outcome: PresenceOutcome, val appId: Long? = null)
+private data class PresenceFetch(
+    val status: LiveStatus,
+    val outcome: PresenceOutcome,
+    val appId: Long? = null,
+    val steamId: String? = null,
+)
 
 /**
  * Exposes the player's live Steam status as an application-scoped [StateFlow], polled roughly
@@ -202,7 +207,7 @@ class LiveStatusRepository @Inject constructor(
 
         val next = fetched.status.copy(sessionStartedAt = nextSession.startedAt)
         _liveStatus.value = next
-        publishSessionEndIfAny(previousSession, fetched.status.nowPlaying, now)
+        publishSessionEndIfAny(previousSession, fetched.status.nowPlaying, now, fetched.steamId)
         diagnostics?.record(trigger, fetched.outcome, fetched.appId)
 
         // A successful fetch is an observation, and an observation is the only session input a
@@ -234,23 +239,35 @@ class LiveStatusRepository @Inject constructor(
         previousSession: com.example.backlogium.data.local.LiveSessionState,
         observed: NowPlaying,
         now: Long,
+        steamId: String?,
     ) {
         val stoppedAppId = previousSession.appId ?: return
         if (previousSession.startedAt == null) return
         val runningAppId = (observed as? NowPlaying.InGame)?.gameId
         if (runningAppId == stoppedAppId) return
-        sessionEnds.publish(PlaySessionEnd(appId = stoppedAppId, endedAt = now))
+        sessionEnds.publish(
+            PlaySessionEnd(
+                appId = stoppedAppId,
+                endedAt = now,
+                steamId = steamId.orEmpty(),
+            ),
+        )
     }
 
     private suspend fun fetch(): PresenceFetch {
         // Unconfigured (or private) profiles simply report not-in-game — no error surfaced.
-        val creds = credentials.currentCredentials() ?: return PresenceFetch(LiveStatus(), PresenceOutcome.NO_CREDENTIALS)
+        val creds = credentials.currentCredentials()
+            ?: return PresenceFetch(LiveStatus(), PresenceOutcome.NO_CREDENTIALS)
         val apiKey = creds.apiKey
         val steamId = creds.steamId
 
         val player = steamApi.getPlayerSummaries(apiKey, steamId)
             .response.players.firstOrNull()
-            ?: return PresenceFetch(LiveStatus(), PresenceOutcome.NO_PLAYER)
+            ?: return PresenceFetch(
+                LiveStatus(),
+                PresenceOutcome.NO_PLAYER,
+                steamId = steamId,
+            )
 
         refreshStoredIdentity(player)
 
@@ -261,7 +278,11 @@ class LiveStatusRepository @Inject constructor(
             } else {
                 LivePresence.ONLINE
             }
-            return PresenceFetch(LiveStatus(NowPlaying.NotPlaying, presence), PresenceOutcome.NOT_PLAYING)
+            return PresenceFetch(
+                LiveStatus(NowPlaying.NotPlaying, presence),
+                PresenceOutcome.NOT_PLAYING,
+                steamId = steamId,
+            )
         }
 
         val gameId = player.gameId.toLongOrNull()
@@ -279,7 +300,8 @@ class LiveStatusRepository @Inject constructor(
                 presence = LivePresence.IN_GAME,
             ),
             PresenceOutcome.IN_GAME,
-            gameId,
+            appId = gameId,
+            steamId = steamId,
         )
     }
 

@@ -120,7 +120,13 @@ class PostPlaySyncScheduleTest {
         scheduler.schedule(PlaySessionEnd(appId = 440L, endedAt = 1_000L))
         val predecessor = workInfosFor(440L).single()
 
-        scheduler.enqueueSuccessor(appId = 440L, attempt = 0, sessionEndAt = 1_000L, generation = 1L)
+        scheduler.enqueueSuccessor(
+            appId = 440L,
+            attempt = 0,
+            sessionEndAt = 1_000L,
+            generation = 1L,
+            steamId = "account-a",
+        )
 
         val infos = workInfosFor(440L)
         assertEquals("the successor joins the chain rather than replacing it", 2, infos.size)

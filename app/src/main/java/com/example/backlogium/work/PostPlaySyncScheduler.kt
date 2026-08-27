@@ -66,6 +66,7 @@ class PostPlaySyncScheduler @Inject constructor(
                 attempt = 0,
                 sessionEndAt = sessionEnd.endedAt,
                 generation = generation,
+                steamId = sessionEnd.steamId,
                 delayMillis = 0,
                 policy = ExistingWorkPolicy.REPLACE,
             )
@@ -81,7 +82,13 @@ class PostPlaySyncScheduler @Inject constructor(
      * this name may have ended cancelled by a supersede, and `APPEND` would leave the successor
      * blocked behind those cancelled prerequisites forever.
      */
-    suspend fun enqueueSuccessor(appId: Long, attempt: Int, sessionEndAt: Long, generation: Long) {
+    suspend fun enqueueSuccessor(
+        appId: Long,
+        attempt: Int,
+        sessionEndAt: Long,
+        generation: Long,
+        steamId: String,
+    ) {
         val next = attempt + 1
         require(next in ATTEMPT_OFFSETS_MILLIS.indices) { "attempt $next is past the schedule" }
         enqueue(
@@ -89,6 +96,7 @@ class PostPlaySyncScheduler @Inject constructor(
             attempt = next,
             sessionEndAt = sessionEndAt,
             generation = generation,
+            steamId = steamId,
             delayMillis = delayBefore(next),
             policy = ExistingWorkPolicy.APPEND_OR_REPLACE,
         )
@@ -99,6 +107,7 @@ class PostPlaySyncScheduler @Inject constructor(
         attempt: Int,
         sessionEndAt: Long,
         generation: Long,
+        steamId: String,
         delayMillis: Long,
         policy: ExistingWorkPolicy,
     ) {
@@ -113,6 +122,7 @@ class PostPlaySyncScheduler @Inject constructor(
                     PostPlaySyncWorker.KEY_ATTEMPT to attempt,
                     PostPlaySyncWorker.KEY_SESSION_END_AT to sessionEndAt,
                     PostPlaySyncWorker.KEY_GENERATION to generation,
+                    PostPlaySyncWorker.KEY_STEAM_ID to steamId,
                 ),
             )
             // No expedited quota and no foreground service: the schedule's own delays make
