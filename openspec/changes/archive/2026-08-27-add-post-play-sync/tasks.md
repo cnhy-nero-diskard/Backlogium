@@ -3,7 +3,7 @@
 - [x] 1.1 Add `RecentlyPlayedGamesDto` mirroring `IPlayerService/GetRecentlyPlayedGames`: `total_count` plus a `games` list carrying `appid`, `name`, `playtime_forever`, and `playtime_2weeks`
 - [x] 1.2 Add `getRecentlyPlayedGames(key, steamId, count)` to `SteamApi` as a plain `@GET` with `@Query` parameters — no `input_json`
 - [x] 1.3 Confirm the new endpoint normalizes correctly under the diagnostics endpoint scheme and that neither `key` nor `steamid` reaches a stored record
-- [x] 1.4 Add a repository method that fetches a bounded recent-game window with `count = 20` and maps its observations for app-id selection, or an empty list when the response is empty
+- [x] 1.4 Add a repository method that fetches with `count = 1` and returns the single observation, or nothing when the response is empty
 
 ## 2. Session-end transition
 
@@ -19,7 +19,7 @@
 - [x] 3.1b Add `PostPlayGenerationCoordinator` with a per-app mutex that serializes generation advancement, guarded observation commits, and guarded successor enqueues; network requests remain outside the critical section
 - [x] 3.2 Read the stored `playtimeForever` baseline for that app id before fetching, so "increase" is evaluated against the same value session synthesis will use
 - [x] 3.2a Check the persisted generation before fetching and return a successful no-op when the attempt is already stale
-- [x] 3.3 Select the requested app id from the bounded response, and discard the observations when that app is absent
+- [x] 3.3 Fetch, and discard the observation when the returned app id is not the one requested
 - [x] 3.4 On an observed increase, ask `PostPlayGenerationCoordinator` to re-check ownership and, only when the generation is active, apply it through the existing session synthesis and commit path — do not synthesize sessions, credit daily progress, or write derived values in the worker
 - [x] 3.4a Pass the session-end time carried in work input as the commit path's event time, so every attempt of a schedule reports the same play instant regardless of which one observed the increase — never the attempt's own clock
 - [x] 3.4b Leave the Steam-owned last-played field unchanged; this path has no Steam-reported value for it, and the next periodic poll sets it
@@ -64,7 +64,7 @@
 - [x] 6.3e Unit-test that every attempt of one schedule commits the same session-end time, so an increase seen on attempt 4 is not recorded eight minutes late
 - [x] 6.3f Unit-test the supersession race: keep generation A's attempt mid-flight, start generation B with `REPLACE`, then resume A; A must neither commit an observed increase nor enqueue a successor, while B's chain remains intact
 - [x] 6.3g Unit-test both stale exits independently: a generation mismatch after a fetch suppresses the commit, and a mismatch on the no-increase path suppresses the successor enqueue
-- [x] 6.4 Unit-test that an unrelated recent row is discarded and a matching app after it is selected without attributing the unrelated playtime
+- [x] 6.4 Unit-test that a response naming a different app id is discarded and attributes no playtime
 - [x] 6.5 Unit-test that a targeted fetch and a periodic poll observing the same increase credit it exactly once, with the second commit recording no session and no minutes
 - [x] 6.6 Unit-test that a playtime decrease emits no session and no negative playtime
 - [x] 6.7 Unit-test that a fetch failure leaves stored data unchanged and does not end the schedule early
