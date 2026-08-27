@@ -11,8 +11,8 @@ is independent of library size, and SHALL request no data other than playtime.
 
 #### Scenario: Fetch is scoped to one game
 - **WHEN** a targeted playtime fetch runs
-- **THEN** it retrieves playtime for the stopped game only, and its request count does not grow with
-  the size of the library
+- **THEN** it requests a bounded recent-game window, selects only the stopped game's observation, and
+  its request count does not grow with the size of the library
 
 #### Scenario: Periodic cadence unchanged
 - **WHEN** a targeted playtime fetch is scheduled, running, or exhausted
@@ -29,6 +29,10 @@ is independent of library size, and SHALL request no data other than playtime.
 #### Scenario: Response for an unexpected game
 - **WHEN** a targeted playtime fetch returns playtime for a game other than the one that stopped
 - **THEN** the observation is discarded and no playtime is attributed
+
+#### Scenario: Stopped game is not the first recent game
+- **WHEN** the bounded response contains another recent game before the one that stopped
+- **THEN** the stopped game's observation is selected and only its playtime can be attributed
 
 ### Requirement: Targeted fetch retries on a bounded schedule
 Because Steam does not publish a game's updated playtime at the instant that game exits, the system
