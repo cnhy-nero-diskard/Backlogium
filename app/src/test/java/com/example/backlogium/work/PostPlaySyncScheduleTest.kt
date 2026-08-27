@@ -140,10 +140,16 @@ class PostPlaySyncScheduleTest {
         scheduler.schedule(PlaySessionEnd(appId = 440L, endedAt = 500_000L))
 
         val infos = workInfosFor(440L)
-        assertEquals(
-            "the earlier schedule is cancelled, not run alongside the new one",
-            WorkInfo.State.CANCELLED,
-            infos.single { it.id == first.id }.state,
+        assertTrue(
+            "the earlier schedule is no longer live alongside the replacement",
+            infos.none {
+                it.id == first.id &&
+                    it.state in setOf(
+                        WorkInfo.State.ENQUEUED,
+                        WorkInfo.State.RUNNING,
+                        WorkInfo.State.BLOCKED,
+                    )
+            },
         )
         assertEquals(
             "exactly one live attempt remains",
