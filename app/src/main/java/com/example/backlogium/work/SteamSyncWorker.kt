@@ -21,10 +21,10 @@ import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.remote.dto.lastPlayedAtMillis
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
-import com.example.backlogium.data.repo.SessionActionWriter
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.LibraryRecency
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
+import com.example.backlogium.domain.PlaytimeObservationCommitter
 import com.example.backlogium.domain.PlayerIdentity
 import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.SessionDiffer
@@ -199,7 +199,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private val syncCoordinator: SteamSyncCoordinator,
     private val accountChangeMarker: AccountChangeMarkerStore,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
-    private val sessionActionWriter: SessionActionWriter,
+    private val committer: PlaytimeObservationCommitter,
     private val sharedGameConverter: SharedGameConverter,
 ) : CoroutineWorker(appContext, params) {
 
@@ -353,7 +353,6 @@ class SteamSyncWorker @AssistedInject constructor(
                     steamLevel = steamLevel,
                     summary = summary,
                     now = now,
-                    polls = polls,
                     achievementFetch = achievementFetch,
                 )
             }
@@ -409,7 +408,6 @@ class SteamSyncWorker @AssistedInject constructor(
         steamLevel: Int,
         summary: com.example.backlogium.data.remote.dto.PlayerSummaryDto?,
         now: Long,
-        polls: List<SessionDiffer.PollGame>,
         achievementFetch: AchievementLibraryFetch,
     ): Set<Long> {
         val profileBefore = profileDao.get()
@@ -420,7 +418,6 @@ class SteamSyncWorker @AssistedInject constructor(
         // Only games Steam reports playtime for are diffed. The partition between the two session
         // mechanisms is this query, not a check inside either mechanism.
         val existingGames = gameDao.ownedGamesForDiffing().associateBy { it.appId }
-        val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
         val lastSyncAt = profileBefore?.lastSyncAt ?: 0L
         // The recency baseline is "tracking has not begun", which is a different question from the
         // session differ's playtime baseline (also keyed on `lastSyncAt`).
@@ -441,25 +438,27 @@ class SteamSyncWorker @AssistedInject constructor(
         // either afterwards would compare the new play against itself.
         val sessionInstantBefore = sessionDao.latestSessionInstantByGame()
             .associate { it.appId to it.at }
-        val diff = diffAgainst(
-            polls = polls,
-            existingGames = existingGames,
-            openSessionsByAppId = openSessionsByAppId,
-            lastSyncAt = lastSyncAt,
-            now = now,
+        val committed = committer.commit(
+            observed = games.map { dto ->
+                PlaytimeObservationCommitter.ObservedGame(
+                    appId = dto.appid,
+                    name = dto.name,
+                    iconUrl = SteamIconMapper.iconUrl(dto.appid, dto.imgIconUrl),
+                    playtimeForever = dto.playtimeForever,
+                    playtime2Weeks = dto.playtime2Weeks,
+                )
+            },
+            observedPlayAt = now,
+            syncedAt = now,
         )
-
-        sessionActionWriter.applySessionActions(diff.actions)
 
         val arrivedAppIds = mutableSetOf<Long>()
         games.forEach { dto ->
-            val lastPlaytime = diff.newLastPlaytime[dto.appid] ?: dto.playtimeForever
-            val iconUrl = SteamIconMapper.iconUrl(dto.appid, dto.imgIconUrl)
             val reportedPlayAt = dto.lastPlayedAtMillis
             val recency = recencyPollWrite(
                 isBaseline = isLibraryBaseline,
                 isNewToLibrary = dto.appid !in existingGames,
-                hadPlayIncrease = (diff.playedDeltaByAppId[dto.appid] ?: 0) > 0,
+                hadPlayIncrease = (committed.playedDeltaByAppId[dto.appid] ?: 0) > 0,
                 storedLastPlayedAt = existingGames[dto.appid]?.lastPlayedAt,
                 mostRecentSessionEndAt = sessionInstantBefore[dto.appid],
                 reportedPlayAt = reportedPlayAt,
@@ -469,32 +468,13 @@ class SteamSyncWorker @AssistedInject constructor(
                 now = now,
             )
             if (recency.firstSeenAt != null) arrivedAppIds += dto.appid
-            gameDao.insertSteamGameIfMissing(
+            gameDao.updateRecencyFields(
                 appId = dto.appid,
-                name = dto.name,
-                iconUrl = iconUrl,
-                playtimeForever = dto.playtimeForever,
-                playtime2Weeks = dto.playtime2Weeks,
-                lastPlaytime = lastPlaytime,
-                lastSyncedAt = now,
                 firstSeenAt = recency.firstSeenAt,
-                lastPlayedAt = recency.lastPlayedAt,
-            )
-            gameDao.updateSteamFields(
-                appId = dto.appid,
-                name = dto.name,
-                iconUrl = iconUrl,
-                playtimeForever = dto.playtimeForever,
-                playtime2Weeks = dto.playtime2Weeks,
-                lastPlaytime = lastPlaytime,
-                lastSyncedAt = now,
                 lastPlayedAt = recency.lastPlayedAt,
                 returnedToPlayAt = recency.returnedToPlayAt,
             )
         }
-
-        val goalIds = existingGames.values.filter { it.isGoal }.mapTo(mutableSetOf()) { it.appId }
-        sessionActionWriter.creditDailyProgress(diff.actions, goalIds)
 
         if (profileBefore == null) profileDao.insertIfMissing()
         val currentProfile = profileDao.get() ?: PlayerProfile()

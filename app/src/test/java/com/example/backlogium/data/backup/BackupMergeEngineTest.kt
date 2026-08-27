@@ -797,6 +797,13 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
         }
     }
 
+    override suspend fun updateRecencyFields(
+        appId: Long,
+        firstSeenAt: Long?,
+        lastPlayedAt: Long?,
+        returnedToPlayAt: Long?,
+    ) = Unit
+
     override fun observeLibrary(): Flow<List<Game>> = flowOf(store.values.toList())
     override fun observeGoalGames(): Flow<List<Game>> = flowOf(emptyList())
     override fun observeBacklog(): Flow<List<Game>> = flowOf(emptyList())

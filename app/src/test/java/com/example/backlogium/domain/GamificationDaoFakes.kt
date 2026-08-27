@@ -150,6 +150,16 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
         store[appId]?.let { store[appId] = it.copy(name = name, iconUrl = iconUrl, playtimeForever = playtimeForever, playtime2Weeks = playtime2Weeks, lastPlaytime = lastPlaytime, lastSyncedAt = lastSyncedAt, lastPlayedAt = lastPlayedAt ?: it.lastPlayedAt, returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt) }
     }
 
+    override suspend fun updateRecencyFields(appId: Long, firstSeenAt: Long?, lastPlayedAt: Long?, returnedToPlayAt: Long?) {
+        store[appId]?.let {
+            store[appId] = it.copy(
+                firstSeenAt = it.firstSeenAt ?: firstSeenAt,
+                lastPlayedAt = lastPlayedAt,
+                returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt,
+            )
+        }
+    }
+
     override fun observeLibrary(): Flow<List<Game>> = flowOf(store.values.toList())
     override fun observeGoalGames(): Flow<List<Game>> = flowOf(emptyList())
     override fun observeBacklog(): Flow<List<Game>> = flowOf(emptyList())

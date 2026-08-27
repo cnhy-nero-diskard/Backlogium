@@ -151,6 +151,44 @@ class WriteIntegrityDaoTest {
     }
 
     @Test
+    fun recencyOnlyUpdateLeavesSteamAndUserOwnedFieldsUntouched() = runBlocking {
+        database.gameDao().upsert(
+            Game(
+                appId = 440L,
+                name = "Game",
+                iconUrl = "icon",
+                playtimeForever = 100,
+                playtime2Weeks = 20,
+                lastPlaytime = 100,
+                isGoal = true,
+                targetMinutes = 60,
+                lastSyncedAt = 1L,
+                firstSeenAt = 1_000L,
+                lastPlayedAt = 2_000L,
+                returnedToPlayAt = 3_000L,
+            ),
+        )
+
+        database.gameDao().updateRecencyFields(
+            appId = 440L,
+            firstSeenAt = 9_000L,
+            lastPlayedAt = 8_000L,
+            returnedToPlayAt = null,
+        )
+
+        val stored = database.gameDao().getById(440L)!!
+        assertEquals(100, stored.playtimeForever)
+        assertEquals(20, stored.playtime2Weeks)
+        assertEquals(100, stored.lastPlaytime)
+        assertEquals("Game", stored.name)
+        assertTrue(stored.isGoal)
+        assertEquals(60, stored.targetMinutes)
+        assertEquals(1_000L, stored.firstSeenAt)
+        assertEquals(8_000L, stored.lastPlayedAt)
+        assertEquals(3_000L, stored.returnedToPlayAt)
+    }
+
+    @Test
     fun steamUpdateClearsLastPlayedWhenSteamStopsReportingIt() = runBlocking {
         database.gameDao().upsert(
             Game(
