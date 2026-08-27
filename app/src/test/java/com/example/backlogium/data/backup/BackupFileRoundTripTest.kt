@@ -24,7 +24,15 @@ class BackupFileRoundTripTest {
                 streakGraceDays = 2, commonAchievementXp = 5, uncommonAchievementXp = 10,
                 rareAchievementXp = 20, epicAchievementXp = 40, legendaryAchievementXp = 80,
             ),
-            games = listOf(BackupGame(appId = 440L, name = "Team Fortress 2", isGoal = true, backfillMinutes = 120)),
+            games = listOf(
+                BackupGame(
+                    appId = 440L, name = "Team Fortress 2", isGoal = true, backfillMinutes = 120,
+                    firstSeenAt = "2026-05-20T09:00:00Z",
+                    lastPlayedAt = "2026-06-28T21:15:00Z",
+                    returnedToPlayAt = "2026-06-28T21:15:00Z",
+                    source = "FAMILY_SHARED",
+                ),
+            ),
             achievements = listOf(
                 BackupAchievement(
                     appId = 440L, apiName = "ACH_WIN", displayName = "Win a match",
@@ -57,12 +65,28 @@ class BackupFileRoundTripTest {
                 ),
             ),
             collectionMembers = listOf(BackupCollectionMember(collectionId = 1L, appId = 440L, orderIndex = 0, done = false)),
+            excludedSharedGames = listOf(
+                BackupExcludedSharedGame(appId = 620L, name = "Portal 2", excludedAt = "2026-06-20T12:00:00Z"),
+            ),
         )
 
         val encoded = json.encodeToString(BackupFile.serializer(), original)
         val decoded = json.decodeFromString(BackupFile.serializer(), encoded)
 
         assertEquals(original, decoded)
+    }
+
+    @Test
+    fun gameBlockWithoutRecencyTimes_stillDecodes() {
+        // A backup written before recency existed carries none of the three. Absent must decode to
+        // null — "was already here" — rather than failing the whole import over an optional.
+        val legacy = """{"appId":440,"name":"Team Fortress 2","isGoal":false,"backfillMinutes":0}"""
+
+        val decoded = json.decodeFromString(BackupGame.serializer(), legacy)
+
+        assertEquals(null, decoded.firstSeenAt)
+        assertEquals(null, decoded.lastPlayedAt)
+        assertEquals(null, decoded.returnedToPlayAt)
     }
 
     /**

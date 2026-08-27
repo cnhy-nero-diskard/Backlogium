@@ -5,6 +5,7 @@ import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
@@ -12,6 +13,7 @@ import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
+import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
@@ -29,6 +31,7 @@ import javax.inject.Singleton
 /** Everything read from Room for one export, captured inside a single [DatabaseTransactionScope.run]. */
 private data class ExportSnapshot(
     val games: List<Game>,
+    val excludedSharedGames: List<ExcludedSharedGame>,
     val achievements: List<Achievement>,
     val sessions: List<Session>,
     val days: List<DailyProgress>,
@@ -58,6 +61,7 @@ class BackupExportMapper @Inject constructor(
     private val hltbDataDao: HltbDataDao,
     private val playerProfileDao: PlayerProfileDao,
     private val collectionDao: CollectionDao,
+    private val excludedSharedGameDao: ExcludedSharedGameDao,
     private val settings: SettingsDataStore,
     private val credentials: CredentialsRepository,
     private val time: TimeProvider,
@@ -71,6 +75,7 @@ class BackupExportMapper @Inject constructor(
         val snapshot = transaction.run {
             ExportSnapshot(
                 games = gameDao.getAll(),
+                excludedSharedGames = excludedSharedGameDao.getAll(),
                 achievements = achievementDao.getAllUnlocked(),
                 sessions = sessionDao.getAll(),
                 days = dailyProgressDao.getAllOrdered(),
@@ -80,7 +85,7 @@ class BackupExportMapper @Inject constructor(
                 collectionMembers = collectionDao.getAllMembers(),
             )
         }
-        val (games, achievements, sessions, days, hltb, profile, collections, collectionMembers) = snapshot
+        val (games, excludedSharedGames, achievements, sessions, days, hltb, profile, collections, collectionMembers) = snapshot
 
         val steamId64 = steamId64FromCredentials ?: profile.steamId
 
@@ -89,6 +94,7 @@ class BackupExportMapper @Inject constructor(
             identity = BackupIdentity(steamId64 = steamId64),
             ruleConfig = config.toBackup(),
             games = games.map { it.toBackup() },
+            excludedSharedGames = excludedSharedGames.map { it.toBackup() },
             achievements = achievements.map { it.toBackup() },
             sessions = sessions.map { it.toBackup() },
             dailyProgress = days.map { it.toBackup() },
@@ -202,6 +208,17 @@ private fun Game.toBackup() = BackupGame(
     name = name,
     isGoal = isGoal,
     backfillMinutes = backfillMinutes,
+    // An explicit absence where unknown — a null field rather than an epoch-zero timestamp, which
+    // would import as "arrived in 1970" and read as a genuine (if very old) recorded arrival.
+    firstSeenAt = firstSeenAt?.toIso8601(),
+    lastPlayedAt = lastPlayedAt?.toIso8601(),
+    returnedToPlayAt = returnedToPlayAt?.toIso8601(),
+    source = source.name,
+)
+private fun ExcludedSharedGame.toBackup() = BackupExcludedSharedGame(
+    appId = appId,
+    name = name,
+    excludedAt = excludedAt.toIso8601(),
 )
 
 private fun Achievement.toBackup() = BackupAchievement(

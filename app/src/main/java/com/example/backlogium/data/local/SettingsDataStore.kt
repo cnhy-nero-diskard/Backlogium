@@ -69,6 +69,22 @@ class SettingsDataStore @Inject constructor(
         val SNAPSHOT_INTERVAL_HOURS = intPreferencesKey("snapshot_interval_hours")
         val LIVE_SESSION_APP_ID = longPreferencesKey("live_session_app_id")
         val LIVE_SESSION_STARTED_AT = longPreferencesKey("live_session_started_at")
+        val SHARED_CANDIDATE_APP_ID = longPreferencesKey("shared_candidate_app_id")
+        val SHARED_CANDIDATE_FIRST_OBSERVED_AT =
+            longPreferencesKey("shared_candidate_first_observed_at")
+        val SHARED_GAME_NOT_A_GAME_APP_IDS =
+            stringSetPreferencesKey("shared_game_not_a_game_app_ids")
+        /**
+         * One encoded entry per undismissed announcement (`appId|announcedAt|urlEncodedName`), so
+         * an admission that arrives while an earlier one is still unseen queues rather than
+         * overwriting it — the notifier contract requires every automatic admission to leave a
+         * cue, not just the most recent one.
+         */
+        val SHARED_GAME_ANNOUNCEMENT_ENTRIES =
+            stringSetPreferencesKey("shared_game_announcement_entries")
+        val ACQUIRED_AT = longPreferencesKey("acquired_batch_at")
+        val ACQUIRED_APP_IDS = stringSetPreferencesKey("acquired_batch_app_ids")
+        val ACQUIRED_DISMISSED = booleanPreferencesKey("acquired_batch_dismissed")
         val NOTIFICATION_PERMISSION_REQUESTED =
             booleanPreferencesKey("notification_permission_requested")
         val LIVE_MONITOR_ENABLED = booleanPreferencesKey("live_monitor_enabled")
@@ -374,6 +390,125 @@ class SettingsDataStore @Inject constructor(
     }
 
     /**
+     * The unrecognised app id currently under consideration for admission as family-shared, and
+     * when it was first observed (add-family-shared-games).
+     *
+     * Persisted rather than held in memory because the admission rule spans a sync: an app id is
+     * only considered once a *successful sync has completed since it was first observed*, which is
+     * what tells a genuinely borrowed game apart from an owned one the app has simply not synced
+     * yet. Holding the first-observation time in memory would reset that clock on every process
+     * death and could leave a borrowed game never admitted.
+     *
+     * One candidate, not a set: Steam reports one running game at a time, and a candidate the
+     * player has moved on from is worth nothing — it is reconsidered from scratch the next time it
+     * is observed.
+     */
+    val sharedGameCandidateFlow: Flow<SharedGameCandidate?> = context.dataStore.data.map { prefs ->
+        val appId = prefs[Keys.SHARED_CANDIDATE_APP_ID]
+        val firstObservedAt = prefs[Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT]
+        if (appId != null && firstObservedAt != null) {
+            SharedGameCandidate(appId, firstObservedAt)
+        } else {
+            null
+        }
+    }
+
+    suspend fun setSharedGameCandidate(appId: Long, firstObservedAt: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.SHARED_CANDIDATE_APP_ID] = appId
+            prefs[Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT] = firstObservedAt
+        }
+    }
+
+    suspend fun clearSharedGameCandidate() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.SHARED_CANDIDATE_APP_ID)
+            prefs.remove(Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT)
+        }
+    }
+
+    /** Store-confirmed non-games are permanent and distinct from player-controlled exclusions. */
+    suspend fun isSharedGameNotAGame(appId: Long): Boolean =
+        appId.toString() in context.dataStore.data.first()[Keys.SHARED_GAME_NOT_A_GAME_APP_IDS].orEmpty()
+
+    suspend fun markSharedGameNotAGame(appId: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.SHARED_GAME_NOT_A_GAME_APP_IDS] =
+                prefs[Keys.SHARED_GAME_NOT_A_GAME_APP_IDS].orEmpty() + appId.toString()
+        }
+    }
+
+    /**
+     * Every undismissed durable cue, oldest first — the queue [sharedGameAnnouncementFlow] and
+     * [clearSharedGameAnnouncement] present one entry at a time.
+     */
+    val sharedGameAnnouncementsFlow: Flow<List<SharedGameAnnouncement>> = context.dataStore.data.map { prefs ->
+        prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES].orEmpty()
+            .mapNotNull(::decodeSharedGameAnnouncement)
+            .sortedBy { it.announcedAt }
+    }
+
+    /** Durable in-app cue used when automatic admission cannot post a notification. */
+    val sharedGameAnnouncementFlow: Flow<SharedGameAnnouncement?> =
+        sharedGameAnnouncementsFlow.map { it.firstOrNull() }
+
+    /** Queue a cue for [appId], replacing any earlier undismissed entry for the same game. */
+    suspend fun setSharedGameAnnouncement(appId: Long, name: String, announcedAt: Long) {
+        context.dataStore.edit { prefs ->
+            val remaining = prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES].orEmpty()
+                .mapNotNull(::decodeSharedGameAnnouncement)
+                .filterNot { it.appId == appId }
+            prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES] =
+                (remaining + SharedGameAnnouncement(appId, name, announcedAt))
+                    .mapTo(mutableSetOf(), ::encodeSharedGameAnnouncement)
+        }
+    }
+
+    /** Dismiss only [appId]'s cue; any other queued admission's cue is untouched. */
+    suspend fun clearSharedGameAnnouncement(appId: Long) {
+        context.dataStore.edit { prefs ->
+            val remaining = prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES].orEmpty()
+                .mapNotNull(::decodeSharedGameAnnouncement)
+                .filterNot { it.appId == appId }
+            if (remaining.isEmpty()) {
+                prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES)
+            } else {
+                prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES] =
+                    remaining.mapTo(mutableSetOf(), ::encodeSharedGameAnnouncement)
+            }
+        }
+    }
+
+    /**
+     * The most recent acquiring poll's announcement batch. Absent by default, so a fresh install
+     * and an install that has never acquired anything both read as "nothing to announce".
+     *
+     * Deliberately not exported in a backup: the banner belongs to a poll that observed previously
+     * unknown games on this device, so a restore must not re-announce another device's purchase.
+     */
+    val acquiredGamesFlow: Flow<AcquiredGamesAnnouncement> = context.dataStore.data.map { prefs ->
+        AcquiredGamesAnnouncement(
+            appIds = prefs[Keys.ACQUIRED_APP_IDS].orEmpty().mapNotNull(String::toLongOrNull).toSet(),
+            acquiredAt = prefs[Keys.ACQUIRED_AT] ?: 0L,
+            dismissed = prefs[Keys.ACQUIRED_DISMISSED] ?: false,
+        )
+    }
+
+    /** Replace the announcement with a later poll's arrivals, clearing dismissal. */
+    suspend fun setAcquiredGames(appIds: Set<Long>, acquiredAt: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.ACQUIRED_APP_IDS] = appIds.mapTo(mutableSetOf(), Long::toString)
+            prefs[Keys.ACQUIRED_AT] = acquiredAt
+            prefs[Keys.ACQUIRED_DISMISSED] = false
+        }
+    }
+
+    /** Dismiss the current batch. A later acquisition clears it again. */
+    suspend fun setAcquiredGamesDismissed() {
+        context.dataStore.edit { it[Keys.ACQUIRED_DISMISSED] = true }
+    }
+
+    /**
      * Clear account-derived DataStore state while retaining rules, UI preferences, backup
      * settings, and one-time installation migrations. The Room half of an account reset is
      * protected by the same durable account-change marker, so repeating this operation is safe.
@@ -382,6 +517,10 @@ class SettingsDataStore @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs.remove(Keys.LIVE_SESSION_APP_ID)
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
+            prefs.remove(Keys.SHARED_CANDIDATE_APP_ID)
+            prefs.remove(Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT)
+            prefs.remove(Keys.SHARED_GAME_NOT_A_GAME_APP_IDS)
+            prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES)
             prefs.remove(Keys.LAST_CELEBRATED_LEVEL)
             prefs.remove(Keys.LAST_CELEBRATED_STREAK_MILESTONE)
             prefs.remove(Keys.LAST_QUEST_CELEBRATED_DATE)
@@ -392,6 +531,9 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.PENDING_TRANSITION_STREAK)
             prefs.remove(Keys.PENDING_TRANSITION_QUEST_MET)
             prefs.remove(Keys.PENDING_TRANSITION_DATE)
+            prefs.remove(Keys.ACQUIRED_APP_IDS)
+            prefs.remove(Keys.ACQUIRED_AT)
+            prefs.remove(Keys.ACQUIRED_DISMISSED)
         }
     }
 
@@ -493,10 +635,52 @@ data class AutoSnapshotSettings(
     val intervalHours: Int = 24,
 )
 
+/** The newly-acquired-games announcement stored for the most recent successful poll. */
+data class AcquiredGamesAnnouncement(
+    val appIds: Set<Long> = emptySet(),
+    val acquiredAt: Long = 0L,
+    val dismissed: Boolean = false,
+) {
+    fun isLive(now: Long): Boolean =
+        appIds.isNotEmpty() && !dismissed && now - acquiredAt < LIFETIME_MILLIS
+
+    companion object {
+        const val LIFETIME_MILLIS: Long = 24L * 60 * 60 * 1_000
+    }
+}
+/** A durable foreground cue for a family-shared admission when notifications were unavailable. */
+data class SharedGameAnnouncement(
+    val appId: Long,
+    val name: String,
+    val announcedAt: Long,
+)
+
+/** `appId|announcedAt|urlEncodedName` — a single [SharedGameAnnouncement] as a set element. */
+private fun encodeSharedGameAnnouncement(announcement: SharedGameAnnouncement): String {
+    val encodedName = java.net.URLEncoder.encode(announcement.name, "UTF-8")
+    return "${announcement.appId}|${announcement.announcedAt}|$encodedName"
+}
+
+private fun decodeSharedGameAnnouncement(raw: String): SharedGameAnnouncement? {
+    val parts = raw.split("|", limit = 3)
+    if (parts.size != 3) return null
+    val appId = parts[0].toLongOrNull() ?: return null
+    val announcedAt = parts[1].toLongOrNull() ?: return null
+    val name = runCatching { java.net.URLDecoder.decode(parts[2], "UTF-8") }.getOrNull() ?: return null
+    return SharedGameAnnouncement(appId, name, announcedAt)
+}
+
+
 /**
  * The persisted live now-playing session: which game (Steam appId, possibly unresolved) and when
  * it was first observed running. Both null means no session is currently tracked.
  */
+/** An unrecognised app id awaiting the sync that will confirm it is genuinely not owned. */
+data class SharedGameCandidate(
+    val appId: Long,
+    val firstObservedAt: Long,
+)
+
 data class LiveSessionState(
     val appId: Long? = null,
     val startedAt: Long? = null,

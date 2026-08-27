@@ -1,0 +1,4 @@
+<resources>
+    <!-- Debug-only override: keeps the debug install unmistakable next to the release app. -->
+    <string name="app_name">Backlogium Debug</string>
+</resources>

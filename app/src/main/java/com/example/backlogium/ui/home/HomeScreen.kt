@@ -93,8 +93,11 @@ import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionPacingState
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.label
+import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.ProgressEvent
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.components.RecencyBadge
+import com.example.backlogium.ui.components.accessibilityLabel
 import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.theme.collectionAccentColor
 import com.example.backlogium.ui.theme.deadlineWarning
@@ -237,6 +240,7 @@ fun HomeScreen(
                 iconUrl = state.nowPlayingIconUrl,
                 headerUrl = state.nowPlayingHeaderUrl,
                 sessionStartedAt = state.nowPlayingSessionStartedAt,
+                recencyState = state.nowPlayingRecencyState,
             )
         }
 
@@ -982,6 +986,7 @@ private fun NowPlayingPanel(
     iconUrl: String?,
     headerUrl: String?,
     sessionStartedAt: Long?,
+    recencyState: GameRecencyState? = null,
 ) {
     val elapsedMillis by rememberElapsedMillis(sessionStartedAt)
     val sheenCenter = rememberNowPlayingSheenCenter()
@@ -1047,8 +1052,13 @@ private fun NowPlayingPanel(
                 )
             }
             // Accessible even with the visible "Now playing" label folded into the header above.
+            // The recency state is spelled into this description rather than left to the badge's
+            // own: this node merges its descendants, so a nested contentDescription is swallowed.
             .semantics(mergeDescendants = true) {
-                contentDescription = "Now playing $name, playing for $elapsedLabel"
+                contentDescription = listOfNotNull(
+                    "Now playing $name, playing for $elapsedLabel",
+                    recencyState?.accessibilityLabel,
+                ).joinToString(", ")
             },
     ) {
         // The running game's own store art, filling the space to the right of the text. Reuses the
@@ -1087,12 +1097,20 @@ private fun NowPlayingPanel(
                 // No repeated "Now playing" label here — the profile header directly above
                 // already reads "In game"; this just continues that thought with what and how
                 // long, rather than announcing the same state a second time.
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = onContainer,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = onContainer,
+                    )
+                    // The playing treatment here is the panel's whole tint and sheen, so a corner
+                    // glyph beside the name competes with none of it.
+                    RecencyBadge(
+                        state = recencyState,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
                 Spacer(Modifier.height(2.dp))
                 // "Playing for" reads as accumulated time since detection, not an exact launch
                 // time — detection can lag the true start by up to the periodic sync's interval.

@@ -31,6 +31,7 @@ data class BackupFile(
     /** Custom collections and their memberships (add-custom-collections) — app-owned state. */
     val collections: List<BackupCollection> = emptyList(),
     val collectionMembers: List<BackupCollectionMember> = emptyList(),
+    val excludedSharedGames: List<BackupExcludedSharedGame> = emptyList(),
 ) {
     companion object {
         const val CURRENT_FORMAT_VERSION = 1
@@ -56,13 +57,30 @@ data class BackupRuleConfig(
     val legendaryAchievementXp: Int,
 )
 
-/** Identity skeleton (appId+name) plus the two app-derived fields a restore must recover. */
+/**
+ * Identity skeleton (appId+name) plus the app-derived fields a restore must recover.
+ *
+ * The three recency timestamps are optional so a backup written before they existed still imports:
+ * absent means the game has no recorded arrival and no recorded return, which is exactly the
+ * "was already here" reading those nulls carry everywhere else.
+ *
+ * They round-trip because a backup is a snapshot of a *timeline* and restoring it is supposed to
+ * reproduce that timeline, including the fact that a game was acquired two days ago. The recency
+ * windows do the discriminating work on their own: a three-month-old backup restores to no badges
+ * by arithmetic, and a yesterday backup restores to a badge that is still true. What must never
+ * happen is narrower — a restore *causing* an arrival, a return, or an announcement of its own.
+ */
 @Serializable
 data class BackupGame(
     val appId: Long,
     val name: String,
     val isGoal: Boolean,
     val backfillMinutes: Int,
+    val firstSeenAt: String? = null,
+    val lastPlayedAt: String? = null,
+    val returnedToPlayAt: String? = null,
+    /** Null means an older backup did not carry source; new exports always write it. */
+    val source: String? = null,
 )
 
 /** One unlocked achievement's frozen rarity snapshot, with its identity for legibility. */
@@ -183,4 +201,12 @@ data class BackupCollectionMember(
     val appId: Long,
     val orderIndex: Int,
     val done: Boolean = false,
+)
+
+/** A sticky family-shared removal, preserved separately from the game row it deleted. */
+@Serializable
+data class BackupExcludedSharedGame(
+    val appId: Long,
+    val name: String,
+    val excludedAt: String,
 )

@@ -13,12 +13,14 @@ import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.data.repo.HltbRepository
 import com.example.backlogium.data.repo.HltbRefreshOutcome
 import com.example.backlogium.data.repo.LibraryGame
+import com.example.backlogium.domain.GameSource
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.GameXpInput
 import com.example.backlogium.domain.GameListDensity
+import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortPrefs
@@ -78,6 +80,13 @@ data class GoalGameUi(
     /** True while Steam's live presence reports this exact game as the one running right now. */
     val isCurrentlyPlaying: Boolean = false,
     override val genres: List<GameGenre> = emptyList(),
+    /** The one recency signal this game carries, already derived; null when it carries none. */
+    val recencyState: GameRecencyState? = null,
+    /**
+     * Played through Family Sharing rather than owned. Rendered as a short text label on the row,
+     * never as colour alone; false for an owned game, which carries no marking at all.
+     */
+    val isFamilyShared: Boolean = false,
 ) : LibraryRow
 
 data class BacklogGameUi(
@@ -102,6 +111,13 @@ data class BacklogGameUi(
     /** True while Steam's live presence reports this exact game as the one running right now. */
     val isCurrentlyPlaying: Boolean = false,
     override val genres: List<GameGenre> = emptyList(),
+    /** The one recency signal this game carries, already derived; null when it carries none. */
+    val recencyState: GameRecencyState? = null,
+    /**
+     * Played through Family Sharing rather than owned. Rendered as a short text label on the row,
+     * never as colour alone; false for an owned game, which carries no marking at all.
+     */
+    val isFamilyShared: Boolean = false,
 ) : LibraryRow
 
 /** One processed game in a running batch sweep, including structured failure evidence. */
@@ -511,7 +527,7 @@ private fun LibraryGame.toGoalUi(
     iconUrl = iconUrl,
     headerUrl = headerUrl,
     heroCapsuleUrl = heroCapsuleUrl,
-    playtimeForever = playtimeForever,
+    playtimeForever = displayedPlaytimeMinutes(xp),
     playtime2Weeks = playtime2Weeks,
     xpContributed = xpContribution(xp),
     completionistMinutes = completionistMinutes,
@@ -521,6 +537,11 @@ private fun LibraryGame.toGoalUi(
     achievementTotal = counts[appId]?.total,
     isCurrentlyPlaying = appId == playingAppId,
     genres = genres,
+    recencyState = recencyState,
+    isFamilyShared = when (source) {
+        GameSource.FAMILY_SHARED -> true
+        GameSource.STEAM_OWNED -> false
+    },
 )
 
 private fun LibraryGame.toBacklogUi(
@@ -534,7 +555,7 @@ private fun LibraryGame.toBacklogUi(
     iconUrl = iconUrl,
     headerUrl = headerUrl,
     heroCapsuleUrl = heroCapsuleUrl,
-    playtimeForever = playtimeForever,
+    playtimeForever = displayedPlaytimeMinutes(xp),
     playtime2Weeks = playtime2Weeks,
     xpContributed = xpContribution(xp),
     completionistMinutes = completionistMinutes,
@@ -544,7 +565,26 @@ private fun LibraryGame.toBacklogUi(
     achievementTotal = counts[appId]?.total,
     isCurrentlyPlaying = appId == playingAppId,
     genres = genres,
+    recencyState = recencyState,
+    isFamilyShared = when (source) {
+        GameSource.FAMILY_SHARED -> true
+        GameSource.STEAM_OWNED -> false
+    },
 )
+
+/**
+ * The playtime figure the Library shows, sorts by, and measures completion progress against.
+ *
+ * For an owned game this is Steam's lifetime total, unchanged. For a family-shared game Steam
+ * reports no total at all, so `playtimeForever` is structurally 0 and using it would render a game
+ * with a real history of sessions as "0m" — and sort it to the bottom of every playtime ordering.
+ * The observed session minutes are the only playtime such a game has, and the row labels them as
+ * observed rather than presenting them as a Steam total.
+ */
+private fun LibraryGame.displayedPlaytimeMinutes(xp: XpInputs): Int = when (source) {
+    GameSource.STEAM_OWNED -> playtimeForever
+    GameSource.FAMILY_SHARED -> xp.trackedByGame[appId] ?: 0
+}
 
 /**
  * This game's XP contribution, from the engine's own inputs: frozen backfill plus tracked session

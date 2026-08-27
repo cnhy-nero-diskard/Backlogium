@@ -5,40 +5,8 @@ import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Session
-import java.time.Instant
-import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
-
-/** Minutes credited to one local calendar date by a poll. */
-data class DailyProgressCredit(
-    val minutesPlayed: Int,
-    val goalMinutesPlayed: Int,
-)
-
-/**
- * Attribute only newly observed session minutes to each session's start date. A session remains
- * atomic across midnight; [SessionDiffer.SessionAction.addedMinutes] is the delta for an Extend,
- * not the session's accumulated total.
- */
-fun attributeDailyProgress(
-    actions: List<SessionDiffer.SessionAction>,
-    goalAppIds: Set<Long>,
-    zone: ZoneId,
-): Map<String, DailyProgressCredit> = actions
-    .asSequence()
-    .filter { it.addedMinutes > 0 }
-    .groupBy { action ->
-        Instant.ofEpochMilli(action.startAt).atZone(zone).toLocalDate().toString()
-    }
-    .mapValues { (_, dayActions) ->
-        DailyProgressCredit(
-            minutesPlayed = dayActions.sumOf { it.addedMinutes },
-            goalMinutesPlayed = dayActions
-                .filter { it.appId in goalAppIds }
-                .sumOf { it.addedMinutes },
-        )
-    }
 
 /**
  * The one path from an observed playtime reading to stored sessions, playtime baselines, and daily
@@ -105,7 +73,7 @@ class PlaytimeObservationCommitter @Inject constructor(
     ): Commit {
         val lastSyncAt = profileDao.get()?.lastSyncAt ?: 0L
         val polls = observed.map { SessionDiffer.PollGame(it.appId, it.playtimeForever) }
-        val existingGames = gameDao.getAll().associateBy { it.appId }
+        val existingGames = gameDao.ownedGamesForDiffing().associateBy { it.appId }
         val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
 
         val diff = if (lastSyncAt == 0L) {
@@ -152,6 +120,8 @@ class PlaytimeObservationCommitter @Inject constructor(
                 playtime2Weeks = game.playtime2Weeks,
                 lastPlaytime = lastPlaytime,
                 lastSyncedAt = syncedAt,
+                firstSeenAt = null,
+                lastPlayedAt = null,
             )
             gameDao.updateSteamFields(
                 appId = game.appId,
@@ -161,6 +131,10 @@ class PlaytimeObservationCommitter @Inject constructor(
                 playtime2Weeks = game.playtime2Weeks,
                 lastPlaytime = lastPlaytime,
                 lastSyncedAt = syncedAt,
+                // Targeted playtime has no Steam-owned last-played value; preserve the stored
+                // recency facts until the periodic owned-games poll supplies one.
+                lastPlayedAt = existing?.lastPlayedAt,
+                returnedToPlayAt = existing?.returnedToPlayAt,
             )
         }
 

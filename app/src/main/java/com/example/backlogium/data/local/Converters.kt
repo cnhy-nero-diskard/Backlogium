@@ -6,6 +6,7 @@ import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionTimeBasis
+import com.example.backlogium.domain.GameSource
 
 /**
  * Room type converters. Stores the [HltbMatchStatus], [CollectionMode], [CollectionSort], and
@@ -19,6 +20,20 @@ class Converters {
 
     @TypeConverter
     fun toMatchStatus(value: String): HltbMatchStatus = HltbMatchStatus.valueOf(value)
+
+    /**
+     * A game's source is stored as its name. Unlike the tolerant parses below, an unrecognised
+     * value falls back to [GameSource.STEAM_OWNED]: that is what every pre-migration row is, and
+     * treating an unreadable value as owned keeps the game on playtime diffing — the mechanism
+     * that has a Steam-side baseline to recover from — rather than handing it to the presence
+     * deriver, which would start inventing sessions for a library game.
+     */
+    @TypeConverter
+    fun fromGameSource(source: GameSource): String = source.name
+
+    @TypeConverter
+    fun toGameSource(value: String): GameSource =
+        runCatching { GameSource.valueOf(value) }.getOrDefault(GameSource.STEAM_OWNED)
 
     @TypeConverter
     fun fromCollectionMode(mode: CollectionMode): String = mode.name

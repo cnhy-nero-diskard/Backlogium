@@ -12,25 +12,33 @@ object HltbBundleParser {
 
     /**
      * Hard-coded fallback / fast-path endpoint used when dynamic extraction is unnecessary or
-     * fails. HLTB currently serves search at `/api/bleed` (with an `/api/bleed/init` handshake).
+     * fails. HLTB currently serves search at `/api/search/site` (with a matching `/init`
+     * handshake).
      */
-    const val FALLBACK_ENDPOINT = "/api/bleed"
+    const val FALLBACK_ENDPOINT = "/api/search/site"
 
     // Any Next.js chunk the homepage pulls in (names are opaque hashes, no stable "_app-").
     private val CHUNK_REGEX = Regex("""/_next/static/chunks/[^"']+\.js""")
 
-    // The web client posts the search via fetch("/api/<name>", { ... method:"POST" ... }).
-    private val ENDPOINT_REGEX = Regex(
-        """fetch\(\s*["'](/api/[a-zA-Z0-9_]+)["']\s*,\s*\{[^}]*method\s*:\s*["']POST["']""",
+    // Prefer the endpoint with the required init handshake. This distinguishes site search from
+    // unrelated POSTs such as error reporting, while still tolerating nested API paths.
+    private val INIT_ENDPOINT_REGEX = Regex(
+        """["'`](/api/[a-zA-Z0-9_/-]+)/init\?t=""",
+    )
+
+    // Compatibility fallback for bundle variants that keep the POST but construct init elsewhere.
+    private val POST_ENDPOINT_REGEX = Regex(
+        """fetch\(\s*["'](/api/[a-zA-Z0-9_/-]+)["']\s*,\s*\{[^}]*method\s*:\s*["']POST["']""",
     )
 
     /** All `_next/static/chunks` JS paths referenced by the homepage HTML (de-duplicated). */
     fun extractChunkPaths(html: String): List<String> =
         CHUNK_REGEX.findAll(html).map { it.value }.distinct().toList()
 
-    /** The current POST search endpoint path from a chunk's JS, or null if not present. */
+    /** The current search endpoint path from a chunk's JS, or null if not present. */
     fun extractSearchEndpoint(chunkJs: String): String? =
-        ENDPOINT_REGEX.find(chunkJs)?.groupValues?.getOrNull(1)
+        INIT_ENDPOINT_REGEX.find(chunkJs)?.groupValues?.getOrNull(1)
+            ?: POST_ENDPOINT_REGEX.find(chunkJs)?.groupValues?.getOrNull(1)
 
     /** Map a raw search response to candidates, converting `comp_*` seconds to minutes. */
     fun mapCandidates(response: HltbSearchResponse): List<HltbCandidate> =

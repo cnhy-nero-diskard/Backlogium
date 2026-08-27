@@ -10,6 +10,7 @@ import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.diagnostics.SyncOutcome
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
+import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
@@ -17,20 +18,28 @@ import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.repo.AchievementLibraryFetch
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamIconMapper
+import com.example.backlogium.data.remote.dto.lastPlayedAtMillis
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
-import com.example.backlogium.domain.PlaytimeObservationCommitter
+import com.example.backlogium.data.repo.SessionActionWriter
+import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.LibraryRecency
+import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.PlayerIdentity
+import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.SessionDiffer
-import com.example.backlogium.domain.SyncDerivedStateWriter
+import com.example.backlogium.domain.SharedGameConverter
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.mergePlayerIdentity
+import com.example.backlogium.domain.persistVersionChecked
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.ZoneId
 
 /**
  * Keep the owned-games poll independent from the optional fine-grained presence decision. A
@@ -62,6 +71,107 @@ internal suspend fun <T> fetchOwnedGamesAfterPresenceDecision(
     }
 }
 
+/** Minutes credited to one local calendar date by a sync poll. */
+internal data class DailyProgressCredit(
+    val minutesPlayed: Int,
+    val goalMinutesPlayed: Int,
+)
+
+/**
+ * Attribute only newly observed session minutes to each session's start date. A session remains
+ * atomic across midnight; [SessionDiffer.SessionAction.addedMinutes] is the delta for an Extend,
+ * not the session's accumulated total.
+ */
+internal fun attributeDailyProgress(
+    actions: List<SessionDiffer.SessionAction>,
+    goalAppIds: Set<Long>,
+    zone: ZoneId,
+): Map<String, DailyProgressCredit> = actions
+    .asSequence()
+    .filter { it.addedMinutes > 0 }
+    .groupBy { action ->
+        Instant.ofEpochMilli(action.startAt).atZone(zone).toLocalDate().toString()
+    }
+    .mapValues { (_, dayActions) ->
+        DailyProgressCredit(
+            minutesPlayed = dayActions.sumOf { it.addedMinutes },
+            goalMinutesPlayed = dayActions
+                .filter { it.appId in goalAppIds }
+                .sumOf { it.addedMinutes },
+        )
+    }
+
+/**
+ * What one poll writes for one observed game's three recency columns.
+ *
+ * A null [returnedToPlayAt] means "record nothing and leave any stored return alone", not "clear
+ * it" — the write path's `COALESCE` enforces that. A null [firstSeenAt] likewise means "do not
+ * stamp an arrival", which for an inserted row is the positive statement that the game was already
+ * here (a baseline poll) rather than a missing value.
+ */
+internal data class RecencyPollWrite(
+    val firstSeenAt: Long?,
+    val lastPlayedAt: Long?,
+    val returnedToPlayAt: Long?,
+)
+
+/**
+ * One observed game's recency writes, resolved before any of them is stored.
+ *
+ * Every input is supplied: this reads no clock and no database, which is what makes the poll's
+ * ordering hazard testable. The hazard is that [storedLastPlayedAt] and [mostRecentSessionEndAt]
+ * both describe the state *before* this poll — the caller must read them ahead of both its session
+ * writes and its `lastPlayedAt` update, because each of those destroys the evidence that there was
+ * a gap at all.
+ *
+ * @param isBaseline whether this poll is establishing the library rather than observing a change to
+ *   one — meaning it found no stored library and no completed sync exists yet. Deliberately not
+ *   simply "is this the first sync": an upgrade and a restore both leave a known library behind, and
+ *   neither may present the games it already contains as newly acquired while still stamping genuine
+ *   new ones.
+ * @param observedPlayAt when the play happened, as the caller knows it — Steam's newly reported
+ *   last-played time for a periodic poll, or an event time supplied by a post-play caller. A caller
+ *   with no event-time estimate passes null. Never derived here: see [LibraryRecency.evaluateReturn].
+ */
+internal fun recencyPollWrite(
+    isBaseline: Boolean,
+    isNewToLibrary: Boolean,
+    hadPlayIncrease: Boolean,
+    storedLastPlayedAt: Long?,
+    mostRecentSessionEndAt: Long?,
+    reportedPlayAt: Long?,
+    observedPlayAt: Long?,
+    now: Long,
+): RecencyPollWrite = RecencyPollWrite(
+    // A baseline poll stamps nothing: the library it is discovering is one the player already
+    // owned, and presenting it as newly acquired is the exact failure this rule exists to prevent.
+    // Existing rows are never reached at all — the insert is `INSERT OR IGNORE`.
+    firstSeenAt = now.takeIf { !isBaseline && isNewToLibrary },
+    // Steam-owned, so written on every poll including a baseline: a last-played time describes
+    // history that already happened rather than a change, and null is a faithful "unknown".
+    lastPlayedAt = reportedPlayAt,
+    returnedToPlayAt = if (isBaseline || !hadPlayIncrease) {
+        null
+    } else {
+        LibraryRecency.evaluateReturn(
+            previousLastPlayedAt = storedLastPlayedAt,
+            mostRecentSessionEndAt = mostRecentSessionEndAt,
+            observedPlayAt = observedPlayAt,
+            now = now,
+        )
+    },
+)
+internal fun isLibraryBaseline(existingGameCount: Int, lastSyncAt: Long): Boolean =
+    existingGameCount == 0 && lastSyncAt <= 0L
+
+/**
+ * Steam uses an empty response envelope for profiles whose libraries cannot be read. Only its
+ * explicit `game_count: 0` confirms that an empty list is a successful library snapshot; persisting
+ * that snapshot establishes the durable baseline for the first later acquisition.
+ */
+internal fun shouldPersistOwnedGamesPoll(gameCount: Int?, gamesAreEmpty: Boolean): Boolean =
+    !gamesAreEmpty || gameCount == 0
+
 /**
  * Runs one Steam poll: fetch -> diff into sessions -> persist -> recompute gamification.
  * Fully self-contained and idempotent enough to run on WorkManager's periodic schedule or
@@ -72,14 +182,14 @@ class SteamSyncWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
     private val steamApi: SteamApi,
+    private val settings: SettingsDataStore,
     private val credentials: CredentialsRepository,
     private val database: BacklogiumDatabase,
     private val gameDao: GameDao,
     private val sessionDao: SessionDao,
     private val profileDao: PlayerProfileDao,
     private val differ: SessionDiffer,
-    private val committer: PlaytimeObservationCommitter,
-    private val derivedStateWriter: SyncDerivedStateWriter,
+    private val gamificationUpdater: GamificationUpdater,
     private val achievementRepository: AchievementRepository,
     private val backupRepository: BackupRepository,
     private val genreEnrichmentScheduler: GenreEnrichmentScheduler,
@@ -88,6 +198,9 @@ class SteamSyncWorker @AssistedInject constructor(
     private val time: TimeProvider,
     private val syncCoordinator: SteamSyncCoordinator,
     private val accountChangeMarker: AccountChangeMarkerStore,
+    private val derivedStateWrites: DerivedStateWriteCoordinator,
+    private val sessionActionWriter: SessionActionWriter,
+    private val sharedGameConverter: SharedGameConverter,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result =
@@ -145,8 +258,10 @@ class SteamSyncWorker @AssistedInject constructor(
             ).getOrThrow()
             val games = owned.response.games
 
-            if (games.isEmpty()) {
-                // Empty response usually means a private profile. Keep last-good data.
+            if (!shouldPersistOwnedGamesPoll(owned.response.gameCount, games.isEmpty())) {
+                // An unconfirmed empty envelope usually means a private profile. Keep last-good
+                // data; an explicit `game_count: 0` continues through persistPoll so the completed
+                // empty-library baseline is durable.
                 recordError("No games returned — your Steam profile may be private")
                 outcome = SyncOutcome.SKIPPED_EMPTY_OWNED_GAMES
                 return Result.success()
@@ -190,21 +305,36 @@ class SteamSyncWorker @AssistedInject constructor(
         val now = time.nowMillis()
         val today = time.today()
         val polls = games.map { SessionDiffer.PollGame(it.appid, it.playtimeForever) }
-        val configAtCompute = derivedStateWriter.configuration()
+        val configAtCompute = settings.ruleConfigWithVersionFlow.first()
         val provisionalDiff = readAndComputeDiff(polls, now)
 
         // Achievement requests are part of fetch, never the Room commit. Their payload is merged
         // below only after the raw playtime transaction has acquired its database boundary.
+        //
+        // Achievement progress on a borrowed game is recorded against the player's own account, so
+        // a family-shared game belongs in this scope exactly like an owned one — GetPlayerAchievements
+        // keys on app id, not on ownership. Its tiering input is the playtime the app actually knows
+        // (tracked session minutes), since Steam reports none: that puts a newly admitted game in
+        // the cold tier with no stored metadata, which the missing-data override picks up promptly,
+        // and leaves it on ordinary cold rotation afterwards.
+        val trackedByAppId = sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes }
+        val achievementScope = games.map {
+            com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
+                appId = it.appid,
+                playtimeForever = it.playtimeForever.toLong(),
+                playtime2Weeks = it.playtime2Weeks.toLong(),
+            )
+        } + gameDao.sharedGames().map { shared ->
+            com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
+                appId = shared.appId,
+                playtimeForever = (trackedByAppId[shared.appId] ?: 0).toLong(),
+                playtime2Weeks = 0L,
+            )
+        }
         val achievementFetch = achievementRepository.fetchLibraryGames(
             apiKey = apiKey,
             steamId = steamId,
-            ownedGames = games.map {
-                com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
-                    appId = it.appid,
-                    playtimeForever = it.playtimeForever.toLong(),
-                    playtime2Weeks = it.playtime2Weeks.toLong(),
-                )
-            },
+            ownedGames = achievementScope,
             playtimeDeltaByAppId = provisionalDiff.playedDeltaByAppId,
             scope = scope,
         )
@@ -215,7 +345,7 @@ class SteamSyncWorker @AssistedInject constructor(
             never = achievementFetch.selection.never.size,
         )
 
-        withContext(NonCancellable) {
+        val arrivedAppIds = withContext(NonCancellable) {
             database.withTransaction {
                 commitRawPoll(
                     games = games,
@@ -223,9 +353,19 @@ class SteamSyncWorker @AssistedInject constructor(
                     steamLevel = steamLevel,
                     summary = summary,
                     now = now,
+                    polls = polls,
                     achievementFetch = achievementFetch,
                 )
             }
+        }
+
+        // The arrivals the commit itself stamped, carried out rather than queried again: a second
+        // read would have to guess which of the games now carrying a `firstSeenAt` this poll wrote.
+        // Written after the transaction, never inside it — DataStore is a separate store, and this
+        // codebase does not wrap cross-store writes in a Room transaction. A poll that stamped
+        // nothing leaves the existing announcement exactly as it stood.
+        if (arrivedAppIds.isNotEmpty()) {
+            runCatching { settings.setAcquiredGames(arrivedAppIds, now) }
         }
 
         // Store metadata is a separately scheduled best-effort concern: never await it or make
@@ -236,7 +376,7 @@ class SteamSyncWorker @AssistedInject constructor(
         // cross-store write-ahead protocol, after a version check against the configuration read
         // before compute. If rules moved, the stale candidate is refused and recomputed under the
         // current version instead of being silently stamped as current.
-        derivedStateWriter.persist(today, configAtCompute)
+        persistDerived(today, configAtCompute)
         // Best-effort: a snapshot-write failure must never fail an otherwise-successful poll.
         runCatching { backupRepository.writeAutoSnapshotIfDue() }
     }
@@ -246,7 +386,7 @@ class SteamSyncWorker @AssistedInject constructor(
         now: Long,
     ): SessionDiffer.DiffResult {
         val profile = profileDao.get()
-        val existingGames = gameDao.getAll().associateBy { it.appId }
+        val existingGames = gameDao.ownedGamesForDiffing().associateBy { it.appId }
         val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
         return diffAgainst(
             polls = polls,
@@ -258,11 +398,10 @@ class SteamSyncWorker @AssistedInject constructor(
     }
 
     /**
-     * The only raw-write boundary. Sessions, playtime baselines, and daily progress go through
-     * [PlaytimeObservationCommitter] — the same path the play-triggered targeted fetch uses, which
-     * is what makes exactly-once crediting independent of who observed the increase. The profile
-     * identity and achievement writes below are this poll's alone: a targeted single-game fetch
-     * has nothing to say about either.
+     * The only raw-write boundary. Every baseline read used here is intentionally fresh.
+     *
+     * Returns the app ids this poll stamped as arrivals, so the acquisition announcement is driven
+     * by what the commit actually wrote.
      */
     private suspend fun commitRawPoll(
         games: List<com.example.backlogium.data.remote.dto.OwnedGameDto>,
@@ -270,25 +409,92 @@ class SteamSyncWorker @AssistedInject constructor(
         steamLevel: Int,
         summary: com.example.backlogium.data.remote.dto.PlayerSummaryDto?,
         now: Long,
+        polls: List<SessionDiffer.PollGame>,
         achievementFetch: AchievementLibraryFetch,
-    ) {
+    ): Set<Long> {
         val profileBefore = profileDao.get()
-
-        committer.commit(
-            observed = games.map {
-                PlaytimeObservationCommitter.ObservedGame(
-                    appId = it.appid,
-                    name = it.name,
-                    iconUrl = SteamIconMapper.iconUrl(it.appid, it.imgIconUrl),
-                    playtimeForever = it.playtimeForever,
-                    playtime2Weeks = it.playtime2Weeks,
-                )
-            },
-            // A library poll observes the present, so the play it sees and the moment it saw it
-            // are the same instant. Only a targeted fetch can name an earlier one.
-            observedPlayAt = now,
-            syncedAt = now,
+        // A shared game the player has since bought converts before the diff reads its baseline,
+        // so the poll that first reports it as owned already sees the fresh baseline and produces
+        // no session from a lifetime total that was earned while borrowing.
+        sharedGameConverter.convertNewlyOwned(games, now)
+        // Only games Steam reports playtime for are diffed. The partition between the two session
+        // mechanisms is this query, not a check inside either mechanism.
+        val existingGames = gameDao.ownedGamesForDiffing().associateBy { it.appId }
+        val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
+        val lastSyncAt = profileBefore?.lastSyncAt ?: 0L
+        // The recency baseline is "tracking has not begun", which is a different question from the
+        // session differ's playtime baseline (also keyed on `lastSyncAt`).
+        //
+        // An empty stored library is a baseline only when no successful sync has committed yet.
+        // Once an empty poll commits, `lastSyncAt` makes that known-empty result durable and a later
+        // acquisition is genuine. A non-empty stored library is always known, keeping upgrade and
+        // restore behavior unchanged: existing app ids are never arrivals, while an app id missing
+        // from a restore is a genuine acquisition and is announced even when restored `lastSyncAt`
+        // is zero.
+        val isLibraryBaseline = isLibraryBaseline(
+            existingGameCount = existingGames.size,
+            lastSyncAt = lastSyncAt,
         )
+        // Read before `applySessionActions`, deliberately. Both of this poll's own writes — the
+        // session it is about to open or extend, and the `lastPlayedAt` it is about to overwrite —
+        // destroy the only evidence that the play it observed followed a dormant period. Reading
+        // either afterwards would compare the new play against itself.
+        val sessionInstantBefore = sessionDao.latestSessionInstantByGame()
+            .associate { it.appId to it.at }
+        val diff = diffAgainst(
+            polls = polls,
+            existingGames = existingGames,
+            openSessionsByAppId = openSessionsByAppId,
+            lastSyncAt = lastSyncAt,
+            now = now,
+        )
+
+        sessionActionWriter.applySessionActions(diff.actions)
+
+        val arrivedAppIds = mutableSetOf<Long>()
+        games.forEach { dto ->
+            val lastPlaytime = diff.newLastPlaytime[dto.appid] ?: dto.playtimeForever
+            val iconUrl = SteamIconMapper.iconUrl(dto.appid, dto.imgIconUrl)
+            val reportedPlayAt = dto.lastPlayedAtMillis
+            val recency = recencyPollWrite(
+                isBaseline = isLibraryBaseline,
+                isNewToLibrary = dto.appid !in existingGames,
+                hadPlayIncrease = (diff.playedDeltaByAppId[dto.appid] ?: 0) > 0,
+                storedLastPlayedAt = existingGames[dto.appid]?.lastPlayedAt,
+                mostRecentSessionEndAt = sessionInstantBefore[dto.appid],
+                reportedPlayAt = reportedPlayAt,
+                // This is a periodic poll. If Steam omitted its event timestamp, do not turn the
+                // observation instant into a fabricated return or a badge-window start.
+                observedPlayAt = reportedPlayAt,
+                now = now,
+            )
+            if (recency.firstSeenAt != null) arrivedAppIds += dto.appid
+            gameDao.insertSteamGameIfMissing(
+                appId = dto.appid,
+                name = dto.name,
+                iconUrl = iconUrl,
+                playtimeForever = dto.playtimeForever,
+                playtime2Weeks = dto.playtime2Weeks,
+                lastPlaytime = lastPlaytime,
+                lastSyncedAt = now,
+                firstSeenAt = recency.firstSeenAt,
+                lastPlayedAt = recency.lastPlayedAt,
+            )
+            gameDao.updateSteamFields(
+                appId = dto.appid,
+                name = dto.name,
+                iconUrl = iconUrl,
+                playtimeForever = dto.playtimeForever,
+                playtime2Weeks = dto.playtime2Weeks,
+                lastPlaytime = lastPlaytime,
+                lastSyncedAt = now,
+                lastPlayedAt = recency.lastPlayedAt,
+                returnedToPlayAt = recency.returnedToPlayAt,
+            )
+        }
+
+        val goalIds = existingGames.values.filter { it.isGoal }.mapTo(mutableSetOf()) { it.appId }
+        sessionActionWriter.creditDailyProgress(diff.actions, goalIds)
 
         if (profileBefore == null) profileDao.insertIfMissing()
         val currentProfile = profileDao.get() ?: PlayerProfile()
@@ -307,6 +513,8 @@ class SteamSyncWorker @AssistedInject constructor(
         // This is the only achievement write path for an inline poll, and it is deliberately
         // called while the same transaction still owns the raw commit.
         achievementRepository.applyRefreshes(achievementFetch.refreshes)
+
+        return arrivedAppIds
     }
 
     private fun diffAgainst(
@@ -339,6 +547,21 @@ class SteamSyncWorker @AssistedInject constructor(
                 previousPollAt = lastSyncAt,
             )
         }
+    }
+
+    private suspend fun persistDerived(
+        today: java.time.LocalDate,
+        initialConfig: com.example.backlogium.domain.VersionedRuleConfig,
+    ) {
+        persistVersionChecked(
+            initial = initialConfig,
+            readCurrent = { settings.ruleConfigWithVersionFlow.first() },
+            compute = { config -> gamificationUpdater.compute(today, config) },
+            persist = { result, version ->
+                gamificationUpdater.persist(result, RecomputeSource.SYNC, version)
+            },
+            coordinator = derivedStateWrites,
+        )
     }
 
     private suspend fun recordError(message: String) {

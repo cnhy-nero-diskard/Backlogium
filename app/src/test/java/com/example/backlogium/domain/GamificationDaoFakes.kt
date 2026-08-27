@@ -7,6 +7,7 @@ import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameSessionCounts
+import com.example.backlogium.data.local.dao.GameSessionInstant
 import com.example.backlogium.data.local.dao.GameTrackedMinutes
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -46,6 +47,14 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
     override suspend fun getAll(): List<Session> = sessions
     override suspend fun deleteAll() = Unit
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(sessions.minOfOrNull { it.startAt })
+    override fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>> = flowOf(
+        sessions.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.minOf { it.startAt }) },
+    )
+    override suspend fun latestSessionInstantByGame(): List<GameSessionInstant> =
+        sessions.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.maxOf { it.endAt ?: it.startAt }) }
+    override fun observeLatestSessionInstantByGame(): Flow<List<GameSessionInstant>> = flowOf(
+        sessions.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.maxOf { it.endAt ?: it.startAt }) },
+    )
     override suspend fun findByNaturalKey(appId: Long, startAt: Long, endAt: Long?): Session? =
         sessions.firstOrNull { it.appId == appId && it.startAt == startAt && it.endAt == endAt }
 
@@ -133,12 +142,12 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
         store[game.appId] = game
     }
 
-    override suspend fun insertSteamGameIfMissing(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long) {
-        store.putIfAbsent(appId, Game(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, lastSyncedAt = lastSyncedAt))
+    override suspend fun insertSteamGameIfMissing(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long, firstSeenAt: Long?, lastPlayedAt: Long?) {
+        store.putIfAbsent(appId, Game(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, lastSyncedAt = lastSyncedAt, firstSeenAt = firstSeenAt, lastPlayedAt = lastPlayedAt))
     }
 
-    override suspend fun updateSteamFields(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long) {
-        store[appId]?.let { store[appId] = it.copy(name = name, iconUrl = iconUrl, playtimeForever = playtimeForever, playtime2Weeks = playtime2Weeks, lastPlaytime = lastPlaytime, lastSyncedAt = lastSyncedAt) }
+    override suspend fun updateSteamFields(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long, lastPlayedAt: Long?, returnedToPlayAt: Long?) {
+        store[appId]?.let { store[appId] = it.copy(name = name, iconUrl = iconUrl, playtimeForever = playtimeForever, playtime2Weeks = playtime2Weeks, lastPlaytime = lastPlaytime, lastSyncedAt = lastSyncedAt, lastPlayedAt = lastPlayedAt ?: it.lastPlayedAt, returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt) }
     }
 
     override fun observeLibrary(): Flow<List<Game>> = flowOf(store.values.toList())
@@ -154,6 +163,42 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
     override suspend fun setBackfillMinutes(appId: Long, minutes: Int) {
         store[appId]?.let { store[appId] = it.copy(backfillMinutes = minutes) }
     }
+    override suspend fun setRecencyFromBackup(appId: Long, firstSeenAt: Long?, lastPlayedAt: Long?, returnedToPlayAt: Long?) {
+        store[appId]?.let { store[appId] = it.copy(firstSeenAt = firstSeenAt ?: it.firstSeenAt, lastPlayedAt = lastPlayedAt ?: it.lastPlayedAt, returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt) }
+    }
+
+    override suspend fun insertSharedGameIfMissing(appId: Long, name: String, iconUrl: String, admittedAt: Long) {
+        store.putIfAbsent(
+            appId,
+            Game(appId, name, iconUrl, 0, 0, 0, lastSyncedAt = admittedAt, source = GameSource.FAMILY_SHARED),
+        )
+    }
+
+    override suspend fun ownedGamesForDiffing(): List<Game> =
+        store.values.filter { it.source == GameSource.STEAM_OWNED }
+
+    override suspend fun sharedGames(): List<Game> =
+        store.values.filter { it.source == GameSource.FAMILY_SHARED }
+
+    override suspend fun convertSharedToOwned(appId: Long, playtimeForever: Int, playtime2Weeks: Int, convertedAt: Long): Int {
+        val existing = store[appId]?.takeIf { it.source == GameSource.FAMILY_SHARED } ?: return 0
+        store[appId] = existing.copy(
+            source = GameSource.STEAM_OWNED,
+            playtimeForever = playtimeForever,
+            playtime2Weeks = playtime2Weeks,
+            lastPlaytime = playtimeForever,
+            lastSyncedAt = convertedAt,
+        )
+        return 1
+    }
+
+    override suspend fun deleteSharedGame(appId: Long): Int =
+        if (store[appId]?.source == GameSource.FAMILY_SHARED) {
+            store.remove(appId)
+            1
+        } else {
+            0
+        }
 }
 
 internal class FakeDailyProgressDao(

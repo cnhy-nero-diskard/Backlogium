@@ -43,4 +43,39 @@ class SettingsRepositoryTest {
         assertEquals(GameListDensity.GRID, repository.libraryDensity.first())
         assertEquals(GameListDensity.COMPACT_GRID, repository.collectionDensity.first())
     }
+
+    @Test
+    fun clearSharedGameAnnouncement_reachesDataStore_throughTheProductionRepository() = runTest {
+        // Regression: DataStoreSettingsRepository previously left this call on the interface's
+        // no-op default, so dismissal from the production repository never reached DataStore.
+        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val repository: SettingsRepository = DataStoreSettingsRepository(dataStore)
+        dataStore.setSharedGameAnnouncement(appId = 10L, name = "Game A", announcedAt = 1_000L)
+
+        repository.clearSharedGameAnnouncement(10L)
+
+        assertEquals(null, repository.sharedGameAnnouncement.first())
+    }
+
+    @Test
+    fun sharedGameAnnouncement_queuesInsteadOfOverwriting() = runTest {
+        // Regression: a single mutable slot let a second admission silently overwrite the first
+        // game's cue before it was ever seen, which is exactly what "must never be silent" rules
+        // out.
+        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val repository: SettingsRepository = DataStoreSettingsRepository(dataStore)
+
+        dataStore.setSharedGameAnnouncement(appId = 10L, name = "Game A", announcedAt = 1_000L)
+        dataStore.setSharedGameAnnouncement(appId = 20L, name = "Game B", announcedAt = 2_000L)
+
+        assertEquals(10L, repository.sharedGameAnnouncement.first()?.appId)
+
+        repository.clearSharedGameAnnouncement(10L)
+
+        assertEquals(20L, repository.sharedGameAnnouncement.first()?.appId)
+
+        repository.clearSharedGameAnnouncement(20L)
+
+        assertEquals(null, repository.sharedGameAnnouncement.first())
+    }
 }

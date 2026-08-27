@@ -97,7 +97,11 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        AnalyticsOverviewCard(days = state.dailyMinutes, window = state.window)
+        AnalyticsOverviewCard(
+            days = state.dailyMinutes,
+            window = state.window,
+            familySharedMinutes = state.familySharedMinutes,
+        )
 
         AnalyticsWindowSelector(
             window = state.window,
@@ -278,7 +282,11 @@ private fun windowPeriodLabel(window: AnalyticsWindow, bounds: AnalyticsWindowBo
 }
 
 @Composable
-private fun AnalyticsOverviewCard(days: List<AnalyticsDay>, window: AnalyticsWindow) {
+private fun AnalyticsOverviewCard(
+    days: List<AnalyticsDay>,
+    window: AnalyticsWindow,
+    familySharedMinutes: Int,
+) {
     val activeDays = days.count { it.minutes > 0 }
     val totalMinutes = days.sumOf { it.minutes }
     val averageMinutes = if (activeDays == 0) 0 else totalMinutes / activeDays
@@ -316,6 +324,19 @@ private fun AnalyticsOverviewCard(days: List<AnalyticsDay>, window: AnalyticsWin
                 SummaryStat(label = "Tracked", value = UiFormat.minutes(totalMinutes), valueColor = contentColor)
                 SummaryStat(label = "Active days", value = "$activeDays", valueColor = contentColor)
                 SummaryStat(label = "Daily avg", value = UiFormat.minutes(averageMinutes), valueColor = contentColor)
+            }
+            // Shared games are already inside every figure above. This names their slice, so a
+            // reader can tell how much of the window came from time the app observed rather than
+            // from a Steam-reported total. Omitted entirely when there is none — a standing zero
+            // would explain a distinction that does not apply to this library.
+            if (familySharedMinutes > 0) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = "Includes ${UiFormat.minutes(familySharedMinutes)} observed " +
+                        "from Family Sharing",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = contentColor.copy(alpha = 0.8f),
+                )
             }
         }
     }
@@ -670,13 +691,24 @@ private fun MostPlayedGamesCard(games: List<AnalyticsGame>, periodLabel: String)
                     ) {
                         GameIcon(iconUrl = game.iconUrl, iconSize = 32.dp)
                         Spacer(Modifier.width(12.dp))
-                        Text(
-                            text = game.name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = game.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            // Named on the row rather than only in the card's footnote: this is
+                            // where a reader compares one game's minutes against another's, and
+                            // the two figures do not mean quite the same thing.
+                            if (game.isFamilyShared) {
+                                Text(
+                                    text = "Family Sharing",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                         Spacer(Modifier.width(8.dp))
                         Text(
                             text = UiFormat.minutes(game.minutes),

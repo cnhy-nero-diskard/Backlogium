@@ -21,6 +21,7 @@ import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.GameListDensity
+import com.example.backlogium.domain.displayedPlaytimeMinutes
 import com.example.backlogium.domain.PersonalPaceProfile
 import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.defaultSort
@@ -53,6 +54,9 @@ data class CollectionMemberUi(
     val allStylesMinutes: Int? = null,
     val isCurrentlyPlaying: Boolean = false,
 )
+
+private fun LibraryGame.displayedPlaytimeMinutes(trackedByGame: Map<Long, Int>): Int =
+    source.displayedPlaytimeMinutes(playtimeForever, trackedByGame[appId] ?: 0)
 
 /** Full management-screen state for one collection (create or edit), all local/offline-first. */
 data class CollectionUiState(
@@ -226,6 +230,7 @@ class CollectionViewModel @Inject constructor(
         val games: List<LibraryGame>,
         val achievementsByGame: Map<Long, AchievementCounts>,
         val sessionCountByGame: Map<Long, Int>,
+        val trackedMinutesByGame: Map<Long, Int>,
         val personalPace: PersonalPaceProfile,
     )
 
@@ -233,13 +238,14 @@ class CollectionViewModel @Inject constructor(
         gameRepository.library,
         achievementRepository.counts,
         sessionRepository.sessionCountByGame,
+        sessionRepository.trackedMinutesByGame,
         personalPaceRepository.profile,
-    ) { games, achievementsByGame, sessionCountByGame, personalPace ->
-        LibraryMetrics(games, achievementsByGame, sessionCountByGame, personalPace)
+    ) { games, achievementsByGame, sessionCountByGame, trackedMinutesByGame, personalPace ->
+        LibraryMetrics(games, achievementsByGame, sessionCountByGame, trackedMinutesByGame, personalPace)
     }.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,
-        LibraryMetrics(emptyList(), emptyMap(), emptyMap(), PersonalPaceProfile.empty()),
+        LibraryMetrics(emptyList(), emptyMap(), emptyMap(), emptyMap(), PersonalPaceProfile.empty()),
     )
 
     // The date is an input for the same reason as on Home: a target-date banner counts down, and a
@@ -258,7 +264,7 @@ class CollectionViewModel @Inject constructor(
             CollectionMemberSignals(
                 appId = appId,
                 name = game?.name,
-                playtimeMinutes = game?.playtimeForever ?: 0,
+                playtimeMinutes = game?.displayedPlaytimeMinutes(metrics.trackedMinutesByGame) ?: 0,
                 completionistMinutes = game?.completionistMinutes,
                 mainStoryMinutes = game?.mainStoryMinutes,
                 mainExtraMinutes = game?.mainExtraMinutes,
@@ -302,7 +308,7 @@ class CollectionViewModel @Inject constructor(
                     headerUrl = game?.headerUrl.orEmpty(),
                     heroCapsuleUrl = game?.heroCapsuleUrl.orEmpty(),
                     done = appId in s.doneMarks,
-                    playtimeMinutes = game?.playtimeForever ?: 0,
+                    playtimeMinutes = game?.displayedPlaytimeMinutes(metrics.trackedMinutesByGame) ?: 0,
                     achievementsUnlocked = metrics.achievementsByGame[appId]?.unlocked,
                     achievementsTotal = metrics.achievementsByGame[appId]?.total,
                     sessionCount = metrics.sessionCountByGame[appId] ?: 0,

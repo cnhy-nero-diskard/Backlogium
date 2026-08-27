@@ -6,6 +6,7 @@ import com.example.backlogium.domain.attributeDailyProgress
 import com.example.backlogium.domain.SessionDiffer.GameDiffState
 import com.example.backlogium.domain.SessionDiffer.OpenSession
 import com.example.backlogium.domain.SessionDiffer.PollGame
+import com.example.backlogium.domain.attributeDailyProgress
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.time.Instant

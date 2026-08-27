@@ -1399,13 +1399,27 @@ after game detail is left or dismissed.
 ### Requirement: Game summary section
 The game detail screen SHALL present a summary of the game above its achievement list, showing the
 game's art, its playtime, its known HowLongToBeat completion lengths, its achievement completion,
-and its XP contribution. The summary SHALL offer a link to the game's Steam store page, presented
-directly below the summary's own content, which opens that page outside the app.
+its XP contribution, and when it was last played. The summary SHALL offer a link to the game's Steam
+store page, presented directly below the summary's own content, which opens that page outside the
+app.
 
 #### Scenario: Viewing the summary
 - **WHEN** the game detail screen is opened
 - **THEN** a summary section above the achievement list shows the game's art, playtime, achievement
-  completion, and XP contribution
+  completion, XP contribution, and when it was last played
+
+#### Scenario: Last played shown when known
+- **WHEN** the game has a known last-played time
+- **THEN** the summary presents when it was last played
+
+#### Scenario: Game never played
+- **WHEN** the game has no recorded playtime
+- **THEN** the summary states that it has never been played, rather than showing an empty or unknown
+  date
+
+#### Scenario: Played but date unknown
+- **WHEN** the game has recorded playtime but no known last-played time
+- **THEN** the summary states that the date is unknown, distinctly from stating it was never played
 
 #### Scenario: HowLongToBeat lengths shown when known
 - **WHEN** the game has resolved HowLongToBeat data
@@ -2220,3 +2234,139 @@ candidate lists, layout geometry, placeholders, or themed all-candidates-failed 
 - **WHEN** no artwork candidate can be loaded from durable storage or the network
 - **THEN** the existing generic game fallback is shown without a broken-image placeholder
 
+### Requirement: Recency badge on game surfaces
+Where a game carries a recency state, the system SHALL present that state as a symbol on the game's
+Library row or grid cell, on its detail screen, and on Home's game surfaces. The symbol SHALL be
+shown at every display density, SHALL identify its state to accessibility services by name, and
+SHALL NOT displace or obscure the currently-playing signal or the selection indicator.
+
+#### Scenario: Badge on a Library row
+- **WHEN** the Library shows a game carrying a recency state as a row
+- **THEN** the row presents that state's symbol
+
+#### Scenario: Badge in a grid cell
+- **WHEN** the Library shows a game carrying a recency state in a grid
+- **THEN** the cell presents that state's symbol
+
+#### Scenario: Badge survives the densest grid
+- **WHEN** a game carrying a recency state is shown at the densest display density
+- **THEN** its symbol is still presented
+
+#### Scenario: Badge on game detail
+- **WHEN** the detail screen is opened for a game carrying a recency state
+- **THEN** that state's symbol is presented in the screen's header
+
+#### Scenario: Badge on Home
+- **WHEN** Home presents a game carrying a recency state
+- **THEN** that state's symbol is presented on that game's surface
+
+#### Scenario: Game with no state
+- **WHEN** a game carries no recency state
+- **THEN** no symbol is presented and its layout is otherwise unchanged
+
+#### Scenario: One symbol at a time
+- **WHEN** a game is presented on any surface
+- **THEN** at most one recency symbol is shown
+
+#### Scenario: Symbol is named
+- **WHEN** a recency symbol is reached by an accessibility service
+- **THEN** the state it represents is announced by name
+
+#### Scenario: Coexistence with selection
+- **WHEN** a badged game is shown in a grid while selection mode is active
+- **THEN** both the selection indicator and the recency symbol are visible and neither obscures the
+  other
+
+#### Scenario: Coexistence with currently-playing
+- **WHEN** a badged game is currently being played
+- **THEN** the currently-playing signal remains fully legible
+
+### Requirement: Newly acquired games banner on Home
+Home SHALL present the announcement of newly acquired games as a non-modal banner reporting how many
+arrived and naming at least one, offering an action that opens the Library and an action that
+dismisses it. Home SHALL remain usable while the banner is shown.
+
+#### Scenario: Banner shown after an acquisition
+- **WHEN** Home is shown while an unexpired, undismissed acquisition announcement exists
+- **THEN** a banner reports how many games arrived and names at least one of them
+
+#### Scenario: Home remains usable
+- **WHEN** the banner is shown
+- **THEN** the rest of Home can still be scrolled and interacted with
+
+#### Scenario: Viewing the games
+- **WHEN** the user activates the banner's view action
+- **THEN** the Library is opened
+
+#### Scenario: Dismissing the banner
+- **WHEN** the user dismisses the banner
+- **THEN** it is removed and is not shown again for that set of games
+
+#### Scenario: Banner absent when nothing was acquired
+- **WHEN** Home is shown and no unexpired announcement exists
+- **THEN** no banner is presented and Home's layout is unchanged
+
+#### Scenario: Many games acquired
+- **WHEN** more games arrived than the banner names individually
+- **THEN** it names some and reports the number of remaining ones
+
+## ADDED Requirements
+
+### Requirement: A game's source is indicated where it matters
+Game detail SHALL indicate that a game is family-shared, and the Library SHALL make the
+distinction perceptible without relying on colour alone. The indication SHALL be subordinate to the
+game's own identity rather than competing with it, and SHALL be absent for owned games.
+
+#### Scenario: Shared game on game detail
+- **WHEN** a family-shared game's detail is viewed
+- **THEN** it is identified as played through Family Sharing
+
+#### Scenario: Shared game in the Library
+- **WHEN** a family-shared game appears in a Library list
+- **THEN** its source is perceptible from the row without depending on colour alone
+
+#### Scenario: Owned games carry no marking
+- **WHEN** an owned game is viewed anywhere
+- **THEN** no source indication is shown, and it is presented exactly as it is today
+
+#### Scenario: The marking does not dominate
+- **WHEN** a family-shared game is presented
+- **THEN** its artwork and name remain the primary identity, and the source reads as secondary
+
+### Requirement: Shared games are represented in Analytics
+The Analytics screen SHALL account for family-shared games in its totals and SHALL allow their
+contribution to be distinguished from that of owned games. Where a metric is undefined for a game
+the system SHALL exclude it rather than counting it as zero.
+
+#### Scenario: Shared playtime included
+- **WHEN** analytics are computed over a period in which a family-shared game was played
+- **THEN** its tracked playtime is included in the totals
+
+#### Scenario: Contribution distinguishable
+- **WHEN** the player views analytics
+- **THEN** the contribution of family-shared games can be told apart from that of owned games
+
+#### Scenario: Undefined metrics exclude rather than zero
+- **WHEN** a metric cannot be computed for a game, such as achievement completion where Steam
+  reports no achievements
+- **THEN** that game is excluded from the metric rather than contributing a zero that would lower
+  an average
+
+### Requirement: Achievement surfaces follow what Steam reports
+Where Steam reports achievement progress for a family-shared game, the existing achievement,
+rarity, and standing surfaces SHALL present it as for any other game. Where Steam reports no
+achievement data, the game SHALL be presented without an achievement surface rather than with an
+empty one.
+
+#### Scenario: Achievements available for a shared game
+- **WHEN** Steam reports achievement progress for a family-shared game
+- **THEN** achievements, rarity tiers, and rarity standing are presented as for an owned game
+
+#### Scenario: No achievement data
+- **WHEN** Steam reports no achievement data for a family-shared game
+- **THEN** no achievement surface is shown for it, and no empty or zeroed surface appears in its
+  place
+
+#### Scenario: Rarity XP unaffected
+- **WHEN** achievements are reported for a family-shared game and unlocked
+- **THEN** they contribute rarity-tiered XP on the same terms as an owned game's

@@ -5,8 +5,12 @@ import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.DataStoreProgressMarksStore
+import com.example.backlogium.data.repo.AndroidSharedGameNotifier
 import com.example.backlogium.data.repo.DataStoreSettingsRepository
+import com.example.backlogium.data.repo.PresenceObserver
+import com.example.backlogium.data.repo.PresenceSessionRecorder
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.data.repo.SharedGameNotifier
 import com.example.backlogium.data.updates.AndroidInstalledPackageInfoProvider
 import com.example.backlogium.data.updates.AppUpdateRepository
 import com.example.backlogium.data.updates.DataStoreAppUpdateRepository
@@ -105,6 +109,14 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindDatabaseTransactionScope(impl: RoomDatabaseTransactionScope): DatabaseTransactionScope
+
+    @Binds
+    @Singleton
+    abstract fun bindPresenceObserver(impl: PresenceSessionRecorder): PresenceObserver
+
+    @Binds
+    @Singleton
+    abstract fun bindSharedGameNotifier(impl: AndroidSharedGameNotifier): SharedGameNotifier
 
     companion object {
         /**

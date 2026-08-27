@@ -182,6 +182,15 @@ fun BacklogiumAppRoot(
                         onAccentColorChanged = { accentColor = it },
                         onOpenCollection = { id -> navController.navigate(collectionRoute(id)) },
                         onCreateCollection = { navController.navigate(collectionRoute(0L)) },
+                        // Same navigation the bottom bar performs, so arriving from the banner
+                        // leaves the back stack exactly as tapping Library would.
+                        onOpenLibrary = {
+                            navController.navigate(Destination.LIBRARY.route) {
+                                popUpTo(Destination.HOME.route) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
                     )
                 }
                 composable(Destination.LIBRARY.route) {
@@ -210,7 +219,10 @@ fun BacklogiumAppRoot(
                     route = ROUTE_GAME_DETAIL,
                     arguments = listOf(navArgument("appId") { type = NavType.LongType }),
                 ) {
-                    GameDetailScreen(onAccentColorChanged = { accentColor = it })
+                    GameDetailScreen(
+                        onAccentColorChanged = { accentColor = it },
+                        onRemoved = { navController.popBackStack() },
+                    )
                 }
                 composable(
                     route = ROUTE_COLLECTION,

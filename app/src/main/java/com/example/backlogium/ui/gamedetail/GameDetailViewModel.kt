@@ -4,12 +4,15 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.repo.AchievementRepository
+import com.example.backlogium.data.repo.FamilySharedGameRepository
 import com.example.backlogium.data.repo.GameAchievement
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.domain.GameSource
+import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.GameXpInput
 import com.example.backlogium.domain.LibraryXp
 import com.example.backlogium.gamification.AchievementInput
@@ -22,8 +25,11 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
@@ -94,6 +100,22 @@ data class GameSummaryUi(
     val activePlayers: Int? = null,
     /** Ordered, cached Store genres. Empty means unknown or definitively unavailable. */
     val genres: List<GameGenre> = emptyList(),
+    /** The one recency signal this game carries, already derived; null when it carries none. */
+    val recencyState: GameRecencyState? = null,
+    /** Steam's last-played time, or null where Steam reported none. */
+    val lastPlayedAt: Long? = null,
+    /**
+     * True when this game is played through Family Sharing rather than owned. Drives the source
+     * marking and the coverage disclosure; false for an owned game, which is presented exactly as
+     * it was before family sharing existed.
+     */
+    val isFamilyShared: Boolean = false,
+    /**
+     * Whether background presence monitoring is on. Only read for a family-shared game, where it
+     * is the actionable remedy for partial coverage — the disclosure points at it rather than
+     * merely apologising.
+     */
+    val liveMonitorEnabled: Boolean = false,
 ) {
     /** True when any HLTB length resolved. Gates the whole block: no zeros, no placeholders. */
     val hasHltb: Boolean
@@ -105,6 +127,27 @@ data class GameSummaryUi(
      * backfill the split is just the total restated.
      */
     val showPlaytimeSplit: Boolean get() = importedMinutes > 0
+
+    /**
+     * The playtime figure to lead with. Steam reports no lifetime total for a family-shared game,
+     * so [playtimeMinutes] is structurally 0 for one and leading with it would read as "0m played"
+     * beside a history of real sessions. Tracked minutes are what the app actually knows.
+     */
+    val headlineMinutes: Int get() = if (isFamilyShared) trackedMinutes else playtimeMinutes
+
+    val lastPlayed: LastPlayed
+        get() = when {
+            headlineMinutes == 0 -> LastPlayed.Never
+            lastPlayedAt == null -> LastPlayed.Unknown
+            else -> LastPlayed.At(lastPlayedAt)
+        }
+}
+
+/** What the summary can say about a game's last-played time. */
+sealed interface LastPlayed {
+    data object Never : LastPlayed
+    data object Unknown : LastPlayed
+    data class At(val epochMillis: Long) : LastPlayed
 }
 
 data class GameDetailUiState(
@@ -132,6 +175,7 @@ class GameDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     achievementRepository: AchievementRepository,
     private val gameRepository: GameRepository,
+    private val sharedGames: FamilySharedGameRepository,
     sessionRepository: SessionRepository,
     settings: SettingsRepository,
 ) : ViewModel() {
@@ -154,22 +198,32 @@ class GameDetailViewModel @Inject constructor(
     private val activePlayers = MutableStateFlow<Int?>(null)
     private val refreshingPlayerCount = MutableStateFlow(false)
     private var activePlayersPollingJob: Job? = null
+    private val _removedSharedGameEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val removedSharedGameEvents: SharedFlow<Unit> = _removedSharedGameEvents.asSharedFlow()
 
     private val content = appIdState
         .filterNotNull()
         .distinctUntilChanged()
         .flatMapLatest { appId ->
             combine(
-                gameRepository.library,
-                achievementRepository.observeForGame(appId),
-                sessionRepository.trackedMinutesByGame,
+                combine(
+                    gameRepository.library,
+                    achievementRepository.observeForGame(appId),
+                    sessionRepository.trackedMinutesByGame,
+                    sessionRepository.latestSessionAtByGame,
+                ) { games, achievements, trackedByGame, latestByGame ->
+                    DetailLocalInputs(games, achievements, trackedByGame, latestByGame)
+                },
                 settings.ruleConfig,
-            ) { games, achievements, trackedByGame, config ->
+                settings.liveMonitorEnabled,
+            ) { inputs, config, liveMonitorEnabled ->
                 Content(
-                    games.firstOrNull { it.appId == appId },
-                    achievements,
-                    trackedByGame[appId] ?: 0,
+                    inputs.games.firstOrNull { it.appId == appId },
+                    inputs.achievements,
+                    inputs.trackedByGame[appId] ?: 0,
+                    inputs.latestByGame[appId],
                     config,
+                    liveMonitorEnabled,
                 )
             }
         }
@@ -250,6 +304,18 @@ class GameDetailViewModel @Inject constructor(
         sort.value = value
     }
 
+    /**
+     * Remove a family-shared game and record the exclusion, so further play does not re-admit it.
+     * A no-op for an owned game — the repository guards it in SQL, because the contents of the
+     * player's Steam library are not the app's to decide.
+     */
+    fun removeSharedGame() {
+        val appId = appIdState.value ?: return
+        viewModelScope.launch {
+            if (sharedGames.remove(appId)) _removedSharedGameEvents.emit(Unit)
+        }
+    }
+
     private companion object {
         const val ACTIVE_PLAYERS_POLL_INTERVAL_MS = 30_000L
     }
@@ -273,12 +339,22 @@ internal suspend fun refreshPlayerCountOnce(
     }
 }
 
-/** The four flows the screen derives from, gathered before any per-row work. */
+/** The flows the screen derives from, gathered before any per-row work. */
+private data class DetailLocalInputs(
+    val games: List<LibraryGame>,
+    val achievements: List<GameAchievement>,
+    val trackedByGame: Map<Long, Int>,
+    val latestByGame: Map<Long, Long>,
+)
+
 internal data class Content(
     val game: LibraryGame?,
     val achievements: List<GameAchievement>,
     val trackedMinutes: Int,
+    val latestTrackedAt: Long? = null,
     val config: RuleConfig,
+    /** Only consulted for a family-shared game, as the remedy its disclosure points at. */
+    val liveMonitorEnabled: Boolean = false,
 )
 
 /**
@@ -323,6 +399,16 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
         ),
         activePlayers = activePlayers,
         genres = game.genres,
+        recencyState = game.recencyState,
+        lastPlayedAt = when (game.source) {
+            GameSource.FAMILY_SHARED -> latestTrackedAt
+            GameSource.STEAM_OWNED -> game.lastPlayedAt
+        },
+        isFamilyShared = when (game.source) {
+            GameSource.FAMILY_SHARED -> true
+            GameSource.STEAM_OWNED -> false
+        },
+        liveMonitorEnabled = liveMonitorEnabled,
     )
 }
 
