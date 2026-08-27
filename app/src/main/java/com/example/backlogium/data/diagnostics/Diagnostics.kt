@@ -83,6 +83,16 @@ enum class SyncOutcome(val value: String) {
     SKIPPED_NO_CREDENTIALS("skipped:no_credentials"),
     SKIPPED_EMPTY_OWNED_GAMES("skipped:empty_owned_games"),
     SKIPPED_ACCOUNT_MISMATCH("skipped:account_mismatch"),
+
+    /**
+     * A play-triggered attempt whose schedule had already been superseded by a newer session end
+     * for the same game. It committed nothing and enqueued nothing — recorded rather than silent,
+     * because "my session did not show up" must always be attributable.
+     */
+    SKIPPED_SUPERSEDED("skipped:superseded"),
+
+    /** A targeted fetch answered about a different game than the one that stopped; discarded. */
+    SKIPPED_UNEXPECTED_GAME("skipped:unexpected_game"),
 }
 
 /**

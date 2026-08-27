@@ -23,6 +23,7 @@ import com.example.backlogium.data.remote.dto.PlayerAchievementDto
 import com.example.backlogium.data.remote.dto.PlayerAchievementsResponse
 import com.example.backlogium.data.remote.dto.PlayerAchievementsResult
 import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
+import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.domain.TimeProvider
@@ -548,6 +549,13 @@ class AchievementRepositoryTest {
             scope: SyncRunRecorder.RunScope?,
         ): OwnedGamesResponse = error("not used")
 
+        override suspend fun getRecentlyPlayedGames(
+            key: String,
+            steamId: String,
+            count: Int,
+            scope: SyncRunRecorder.RunScope?,
+        ): RecentlyPlayedGamesResponse = error("not used")
+
         override suspend fun getSteamLevel(
             key: String,
             steamId: String,
@@ -622,6 +630,7 @@ class AchievementRepositoryTest {
         override suspend fun upsert(game: Game) = error("not used")
         override suspend fun insertSteamGameIfMissing(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long, firstSeenAt: Long?, lastPlayedAt: Long?) = error("not used")
         override suspend fun updateSteamFields(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long, lastPlayedAt: Long?, returnedToPlayAt: Long?) = error("not used")
+        override suspend fun updateRecencyFields(appId: Long, firstSeenAt: Long?, lastPlayedAt: Long?, returnedToPlayAt: Long?) = error("not used")
         override fun observeLibrary(): Flow<List<Game>> = flowOf(games.toList())
         override fun observeGoalGames(): Flow<List<Game>> = error("not used")
         override fun observeBacklog(): Flow<List<Game>> = error("not used")

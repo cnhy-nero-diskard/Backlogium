@@ -20,8 +20,8 @@ a short bounded retry that stops as soon as the increase appears, not a single c
 
 - Observe the `InGame` → `NotPlaying` transition and enqueue a targeted playtime fetch for the game
   that just stopped.
-- Fetch via `IPlayerService/GetRecentlyPlayedGames` with a count of one — the smallest response that
-  answers the question, and a plain GET, unlike `GetOwnedGames`'s `appids_filter`.
+- Fetch via `IPlayerService/GetRecentlyPlayedGames` with a bounded count of 20, selecting the stopped
+  app from the response. It remains a plain GET, unlike `GetOwnedGames`'s `appids_filter`.
 - Retry on a bounded schedule — at 0, 1, 3, and 8 minutes after the session end — realised as a
   chain in which each attempt enqueues only its successor, stopping at the first observation that
   shows the increase and giving up silently after the last attempt.

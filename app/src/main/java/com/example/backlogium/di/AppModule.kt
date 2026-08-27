@@ -9,6 +9,7 @@ import com.example.backlogium.data.repo.AndroidSharedGameNotifier
 import com.example.backlogium.data.repo.DataStoreSettingsRepository
 import com.example.backlogium.data.repo.PresenceObserver
 import com.example.backlogium.data.repo.PresenceSessionRecorder
+import com.example.backlogium.data.repo.SessionEndOutbox
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.SharedGameNotifier
 import com.example.backlogium.data.updates.AndroidInstalledPackageInfoProvider
@@ -29,9 +30,13 @@ import com.example.backlogium.data.updates.UpdateDataStore
 import com.example.backlogium.data.updates.UpdateManager
 import com.example.backlogium.data.updates.UpdateStateStore
 import com.example.backlogium.data.updates.UpdateVerifier
+import com.example.backlogium.data.local.PostPlayGenerationStore
+import com.example.backlogium.domain.PostPlayGenerations
 import com.example.backlogium.domain.ProgressMarksStore
 import com.example.backlogium.domain.SystemTimeProvider
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.work.PostPlayWorkEnqueuer
+import com.example.backlogium.work.WorkManagerPostPlayWorkEnqueuer
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -53,6 +58,10 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindSettingsRepository(impl: DataStoreSettingsRepository): SettingsRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindSessionEndOutbox(impl: DataStoreSettingsRepository): SessionEndOutbox
 
     @Binds
     @Singleton
@@ -95,6 +104,16 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindProgressMarksStore(impl: DataStoreProgressMarksStore): ProgressMarksStore
+
+    @Binds
+    @Singleton
+    abstract fun bindPostPlayGenerations(impl: PostPlayGenerationStore): PostPlayGenerations
+
+    @Binds
+    @Singleton
+    abstract fun bindPostPlayWorkEnqueuer(
+        impl: WorkManagerPostPlayWorkEnqueuer,
+    ): PostPlayWorkEnqueuer
 
     @Binds
     @Singleton

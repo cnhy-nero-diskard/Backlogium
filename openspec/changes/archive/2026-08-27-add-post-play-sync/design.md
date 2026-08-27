@@ -40,7 +40,7 @@ mostly about *not* disturbing them.
 
 ## Decisions
 
-### 1. `GetRecentlyPlayedGames` with `count=1`, not a filtered `GetOwnedGames`
+### 1. `GetRecentlyPlayedGames` with a bounded window, not a filtered `GetOwnedGames`
 
 Three ways to ask Steam about one game's playtime:
 
@@ -48,21 +48,24 @@ Three ways to ask Steam about one game's playtime:
 |---|---|---|---|
 | `GetOwnedGames` unfiltered | plain GET | whole library | Defeats the purpose — the cost this change exists to avoid |
 | `GetOwnedGames` + `appids_filter` | `input_json` with a nested JSON array | one game | Correct but awkward: the filter is only reachable through a JSON-encoded parameter, which Retrofit must hand-build and diagnostics must then normalize |
-| `GetRecentlyPlayedGames` + `count=1` | plain GET, two params | one game | Chosen |
+| `GetRecentlyPlayedGames` + `count=20` | plain GET, bounded window | up to 20 recent games | Chosen |
 
-`GetRecentlyPlayedGames` is ordered by recency, so `count=1` returns the game the player just
-stopped — which is precisely the game whose transition triggered the fetch. It is a plain GET with
-`key` and `steamid`, so it normalizes into the diagnostics endpoint scheme with no special case, and
-it carries `playtime_forever` and `playtime_2weeks`, the two fields session synthesis reads.
+`GetRecentlyPlayedGames` does not reliably put the game whose session just ended first: the first
+device run returned another app for all four attempts. The post-play read therefore requests a
+fixed window of 20 recent games and selects the stopped app by id. It remains a plain GET with
+`key` and `steamid`, so it normalizes into the diagnostics endpoint scheme with no special case,
+and every returned row carries `playtime_forever` and `playtime_2weeks`, the two fields session
+synthesis reads. The response size remains bounded and independent of library size.
 
-**The response is verified against the expected app id rather than trusted.** If the returned game
-is not the one that stopped — possible if the player started something else within the window, or
-if Steam orders differently than documented — the observation is discarded and the attempt counts as
-unproductive. Applying playtime from an unexpected app id would attribute minutes to the wrong game,
-which is worse than the staleness this change exists to fix.
+**The response is verified against the expected app id rather than trusted.** The worker searches the
+bounded response for the app that stopped. If that app is absent — possible if the player started
+something else or Steam has not published it yet — all returned observations are discarded and the
+attempt counts as unproductive. Applying playtime from an unexpected app id would attribute minutes
+to the wrong game, which is worse than the staleness this change exists to fix.
 
-*Rejected:* using `count=0` (all recently played) and picking the match. It returns more data for no
-benefit — the app already knows which game it is asking about.
+*Rejected:* using `count=0` (all recently played) and picking the match. It makes the response
+unbounded, while a fixed recent window addresses the observed ordering issue without reading the
+player's whole recent history.
 
 ### 2. The retry schedule is fixed, front-loaded, and terminates on evidence
 

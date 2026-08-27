@@ -20,6 +20,7 @@ import com.example.backlogium.data.steamassets.SteamAssetInterceptor
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.domain.DailyProgressBackfillUseCase
 import com.example.backlogium.domain.PendingImportRecomputeUseCase
+import com.example.backlogium.work.PostPlaySyncScheduler
 import com.example.backlogium.work.PresenceServiceStarter
 import com.example.backlogium.work.SyncScheduler
 import com.example.backlogium.work.UpdateScheduler
@@ -92,6 +93,9 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
     lateinit var presenceServiceStarter: PresenceServiceStarter
 
     @Inject
+    lateinit var postPlaySyncScheduler: PostPlaySyncScheduler
+
+    @Inject
     lateinit var settings: SettingsRepository
 
     @Inject
@@ -145,6 +149,10 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
                 .isSuccess
             if (!ready) return@launch
 
+            // Start after account recovery so a durable session-end handoff cannot schedule work
+            // against an account reset that is still incomplete. The outbox replays anything
+            // recorded before process death.
+            postPlaySyncScheduler.observeSessionEnds()
             runCatching { diagnosticHistoryMigration.purgeLegacyIdentifiersIfNeeded() }
                 .onFailure { Timber.e(it, "Diagnostic history migration failed") }
             correctHistoricalDailyTotals()

@@ -63,6 +63,21 @@ interface GameDao {
         returnedToPlayAt: Long?,
     )
 
+    /** Update periodic-poll recency without reimplementing the shared playtime commit. */
+    @Query(
+        "UPDATE games SET " +
+            "firstSeenAt = COALESCE(firstSeenAt, :firstSeenAt), " +
+            "lastPlayedAt = :lastPlayedAt, " +
+            "returnedToPlayAt = COALESCE(:returnedToPlayAt, returnedToPlayAt) " +
+            "WHERE appId = :appId",
+    )
+    suspend fun updateRecencyFields(
+        appId: Long,
+        firstSeenAt: Long?,
+        lastPlayedAt: Long?,
+        returnedToPlayAt: Long?,
+    )
+
     @Query("SELECT * FROM games ORDER BY playtime2Weeks DESC, name ASC")
     fun observeLibrary(): Flow<List<Game>>
 

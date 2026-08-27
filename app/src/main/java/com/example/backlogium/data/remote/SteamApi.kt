@@ -7,6 +7,7 @@ import com.example.backlogium.data.remote.dto.GlobalAchievementPercentagesRespon
 import com.example.backlogium.data.remote.dto.OwnedGamesResponse
 import com.example.backlogium.data.remote.dto.PlayerAchievementsResponse
 import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
+import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import retrofit2.http.GET
@@ -37,6 +38,20 @@ interface SteamApi {
         @Query("include_played_free_games") includePlayedFreeGames: Int = 1,
         @Tag scope: SyncRunRecorder.RunScope? = null,
     ): OwnedGamesResponse
+
+    /**
+     * The player's recently played games with the same cumulative `playtime_forever`
+     * [getOwnedGames] reports. The post-play repository requests a small bounded window and selects
+     * the stopped app from it; it must not assume Steam's first row is the game that just ended.
+     * `count` survives diagnostics redaction as a safe parameter, while `key` and `steamid` do not.
+     */
+    @GET("IPlayerService/GetRecentlyPlayedGames/v1/")
+    suspend fun getRecentlyPlayedGames(
+        @Query("key") key: String,
+        @Query("steamid") steamId: String,
+        @Query("count") count: Int,
+        @Tag scope: SyncRunRecorder.RunScope? = null,
+    ): RecentlyPlayedGamesResponse
 
     @GET("IPlayerService/GetSteamLevel/v1/")
     suspend fun getSteamLevel(

@@ -69,6 +69,8 @@ class SettingsDataStore @Inject constructor(
         val SNAPSHOT_INTERVAL_HOURS = intPreferencesKey("snapshot_interval_hours")
         val LIVE_SESSION_APP_ID = longPreferencesKey("live_session_app_id")
         val LIVE_SESSION_STARTED_AT = longPreferencesKey("live_session_started_at")
+        val PENDING_SESSION_ENDS =
+            stringSetPreferencesKey("pending_session_end_entries")
         val SHARED_CANDIDATE_APP_ID = longPreferencesKey("shared_candidate_app_id")
         val SHARED_CANDIDATE_FIRST_OBSERVED_AT =
             longPreferencesKey("shared_candidate_first_observed_at")
@@ -374,19 +376,75 @@ class SettingsDataStore @Inject constructor(
         )
     }
 
+    /** Session ends recorded before the live session is cleared, oldest first. */
+    val pendingSessionEndsFlow: Flow<List<PendingSessionEnd>> = context.dataStore.data.map { prefs ->
+        prefs[Keys.PENDING_SESSION_ENDS]
+            ?.mapNotNull(::decodePendingSessionEnd)
+            ?.sortedWith(
+                compareBy<PendingSessionEnd> { it.endedAt }
+                    .thenBy { it.appId }
+                    .thenBy { it.steamId },
+            )
+            ?: emptyList()
+    }
+
     /** [appId] is nullable: Steam's running-game id can fail to parse while still in a game. */
     suspend fun setLiveSession(appId: Long?, startedAt: Long) {
         context.dataStore.edit { prefs ->
-            if (appId != null) prefs[Keys.LIVE_SESSION_APP_ID] = appId else prefs.remove(Keys.LIVE_SESSION_APP_ID)
-            prefs[Keys.LIVE_SESSION_STARTED_AT] = startedAt
+            writeLiveSession(prefs, LiveSessionState(appId, startedAt))
         }
     }
 
     suspend fun clearLiveSession() {
         context.dataStore.edit { prefs ->
+            writeLiveSession(prefs, LiveSessionState())
+        }
+    }
+
+    /**
+     * Record the session end and advance the live-session state in the same DataStore edit. A
+     * process death cannot leave the caller with a cleared session and no handoff to WorkManager.
+     */
+    suspend fun recordSessionEnd(
+        sessionEnd: PendingSessionEnd,
+        nextLiveSession: LiveSessionState,
+    ) {
+        context.dataStore.edit { prefs ->
+            val entries = (prefs[Keys.PENDING_SESSION_ENDS] ?: emptySet()).toMutableSet()
+            entries += encodePendingSessionEnd(sessionEnd)
+            prefs[Keys.PENDING_SESSION_ENDS] = entries
+            writeLiveSession(prefs, nextLiveSession)
+        }
+    }
+
+    /** Remove one successfully handed-off session end, preserving any other pending entries. */
+    suspend fun acknowledgeSessionEnd(sessionEnd: PendingSessionEnd) {
+        context.dataStore.edit { prefs ->
+            val entries = prefs[Keys.PENDING_SESSION_ENDS] ?: return@edit
+            val remaining = entries - encodePendingSessionEnd(sessionEnd)
+            if (remaining.isEmpty()) {
+                prefs.remove(Keys.PENDING_SESSION_ENDS)
+            } else {
+                prefs[Keys.PENDING_SESSION_ENDS] = remaining
+            }
+        }
+    }
+
+    private fun writeLiveSession(
+        prefs: MutablePreferences,
+        session: LiveSessionState,
+    ) {
+        if (session.startedAt == null) {
             prefs.remove(Keys.LIVE_SESSION_APP_ID)
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
+            return
         }
+        if (session.appId != null) {
+            prefs[Keys.LIVE_SESSION_APP_ID] = session.appId
+        } else {
+            prefs.remove(Keys.LIVE_SESSION_APP_ID)
+        }
+        prefs[Keys.LIVE_SESSION_STARTED_AT] = session.startedAt
     }
 
     /**
@@ -517,6 +575,7 @@ class SettingsDataStore @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs.remove(Keys.LIVE_SESSION_APP_ID)
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
+            prefs.remove(Keys.PENDING_SESSION_ENDS)
             prefs.remove(Keys.SHARED_CANDIDATE_APP_ID)
             prefs.remove(Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT)
             prefs.remove(Keys.SHARED_GAME_NOT_A_GAME_APP_IDS)
@@ -685,6 +744,29 @@ data class LiveSessionState(
     val appId: Long? = null,
     val startedAt: Long? = null,
 )
+
+/** One session end held durably until its post-play schedule has been enqueued. */
+data class PendingSessionEnd(
+    val appId: Long,
+    val endedAt: Long,
+    val steamId: String,
+)
+
+/** appId|endedAt|urlEncodedSteamId - one durable session-end handoff. */
+private fun encodePendingSessionEnd(sessionEnd: PendingSessionEnd): String {
+    val encodedSteamId = java.net.URLEncoder.encode(sessionEnd.steamId, "UTF-8")
+    return "${sessionEnd.appId}|${sessionEnd.endedAt}|$encodedSteamId"
+}
+
+private fun decodePendingSessionEnd(raw: String): PendingSessionEnd? {
+    val parts = raw.split("|", limit = 3)
+    if (parts.size != 3) return null
+    val appId = parts[0].toLongOrNull() ?: return null
+    val endedAt = parts[1].toLongOrNull() ?: return null
+    val steamId = runCatching { java.net.URLDecoder.decode(parts[2], "UTF-8") }.getOrNull()
+        ?: return null
+    return PendingSessionEnd(appId, endedAt, steamId)
+}
 
 /** Why the opt-in live monitor is not currently available, if it is not available. */
 enum class PresenceMonitoringAvailability {
