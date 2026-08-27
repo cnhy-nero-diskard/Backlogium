@@ -15,7 +15,6 @@ import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.PlayerProfile
-import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.repo.AchievementLibraryFetch
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamIconMapper
@@ -521,7 +520,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private fun diffAgainst(
         polls: List<SessionDiffer.PollGame>,
         existingGames: Map<Long, com.example.backlogium.data.local.entity.Game>,
-        openSessionsByAppId: Map<Long, Session>,
+        openSessionsByAppId: Map<Long, com.example.backlogium.data.local.entity.Session>,
         lastSyncAt: Long,
         now: Long,
     ): SessionDiffer.DiffResult {

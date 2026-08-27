@@ -17,6 +17,7 @@ import com.example.backlogium.data.remote.dto.PlayerAchievementsResponse
 import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
 import com.example.backlogium.data.remote.dto.PlayerSummaryDto
 import com.example.backlogium.data.remote.dto.PlayerSummariesResult
+import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.domain.LibrarySortDirection
@@ -29,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
@@ -305,6 +307,115 @@ class LiveStatusRepositoryTest {
         assertFalse(repo.isPolling)
     }
 
+    @Test
+    fun leavingAGame_publishesTheStoppedGameAndTheTimeItEnded() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val sessionEnds = PlaySessionEndPublisher()
+        val published = mutableListOf<PlaySessionEnd>()
+        val collector = launch { sessionEnds.events.collect { published += it } }
+        runCurrent()
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            sessionEnds = sessionEnds,
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+        runCurrent()
+        assertTrue("starting a game is not a session end", published.isEmpty())
+
+        // A presence change with the same game still running is not an end either: Steam cycles
+        // idle accounts through away and snooze on its own, and that churn used to fragment
+        // continuous sessions.
+        time.now = 31_000L
+        repo.checkNow()
+        runCurrent()
+        assertTrue("the same game still running is not a session end", published.isEmpty())
+
+        time.now = 91_000L
+        steamApi.setNotInGame()
+        repo.checkNow()
+        runCurrent()
+
+        // By the time the transition is observed, NowPlaying no longer names the game — the app id
+        // has to come from the recorded session, and the end time from this observation.
+        assertEquals(listOf(PlaySessionEnd(appId = 10L, endedAt = 91_000L)), published)
+
+        collector.cancel()
+    }
+
+    @Test
+    fun swappingGamesDirectly_publishesTheGameThatStopped() = runTest {
+        val steamApi = FakeSteamApi()
+        val time = FakeTimeProvider(1_000L)
+        val sessionEnds = PlaySessionEndPublisher()
+        val published = mutableListOf<PlaySessionEnd>()
+        val collector = launch { sessionEnds.events.collect { published += it } }
+        runCurrent()
+        val repo = repository(
+            steamApi = steamApi,
+            settings = FakeSettingsRepository(),
+            time = time,
+            scope = this,
+            sessionEnds = sessionEnds,
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+        time.now = 61_000L
+        steamApi.setInGame(gameId = 20L, name = "Hades")
+        repo.checkNow()
+        runCurrent()
+
+        // A game that is replaced rather than followed by a not-playing poll still stopped, and its
+        // minutes are as real as any other session's.
+        assertEquals(listOf(PlaySessionEnd(appId = 10L, endedAt = 61_000L)), published)
+
+        collector.cancel()
+    }
+
+    @Test
+    fun failedObservationAndStoppedPolling_publishNothing() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val sessionEnds = PlaySessionEndPublisher()
+        val published = mutableListOf<PlaySessionEnd>()
+        val collector = launch { sessionEnds.events.collect { published += it } }
+        runCurrent()
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            sessionEnds = sessionEnds,
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+
+        // A failed fetch is not an observation: it says nothing about whether the game ended.
+        time.now = 31_000L
+        steamApi.throwOnNextCall = true
+        repo.checkNow()
+        runCurrent()
+        assertTrue("a failed fetch must not fabricate a session end", published.isEmpty())
+
+        // Nor is the observer being torn down: stopPolling runs on process death and Android 15's
+        // onTimeout, which retain the recorded session rather than clearing it.
+        repo.stopPolling()
+        advanceUntilIdle()
+        assertTrue("a stopped observer must not fabricate a session end", published.isEmpty())
+        assertEquals(LiveSessionState(appId = 10L, startedAt = 1_000L), settings.session.value)
+
+        collector.cancel()
+    }
+
     /** Only the three fields the live path reads matter; the playtime columns are filler. */
     private fun game(appId: Long, name: String, iconUrl: String) = Game(
         appId = appId,
@@ -321,6 +432,7 @@ class LiveStatusRepositoryTest {
         time: FakeTimeProvider,
         scope: CoroutineScope,
         gameDao: GameDao = FakeGameDao(),
+        sessionEnds: PlaySessionEndPublisher = PlaySessionEndPublisher(),
     ) = LiveStatusRepository(
         steamApi = steamApi,
         gameDao = gameDao,
@@ -328,6 +440,7 @@ class LiveStatusRepositoryTest {
         credentials = FakeCredentialsProvider(),
         settings = settings,
         time = time,
+        sessionEnds = sessionEnds,
         // The observation side-effect is exercised in its own tests; here it only has to not
         // interfere with the live-status emissions under test.
         presenceObserver = RecordingPresenceObserver(),
@@ -434,6 +547,13 @@ class LiveStatusRepositoryTest {
             includePlayedFreeGames: Int,
             scope: SyncRunRecorder.RunScope?,
         ): OwnedGamesResponse = error("not used")
+
+        override suspend fun getRecentlyPlayedGames(
+            key: String,
+            steamId: String,
+            count: Int,
+            scope: SyncRunRecorder.RunScope?,
+        ): RecentlyPlayedGamesResponse = error("not used")
 
         override suspend fun getSteamLevel(
             key: String,

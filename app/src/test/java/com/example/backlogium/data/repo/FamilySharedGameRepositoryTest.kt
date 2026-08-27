@@ -25,6 +25,7 @@ import com.example.backlogium.data.remote.dto.PlayerAchievementDto
 import com.example.backlogium.data.remote.dto.PlayerAchievementsResponse
 import com.example.backlogium.data.remote.dto.PlayerAchievementsResult
 import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
+import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.dto.StoreAppData
@@ -319,6 +320,13 @@ class FamilySharedGameRepositoryTest {
             includePlayedFreeGames: Int,
             scope: SyncRunRecorder.RunScope?,
         ): OwnedGamesResponse = ownedGames()
+
+        override suspend fun getRecentlyPlayedGames(
+            key: String,
+            steamId: String,
+            count: Int,
+            scope: SyncRunRecorder.RunScope?,
+        ): RecentlyPlayedGamesResponse = throw UnsupportedOperationException()
 
         override suspend fun getPlayerAchievements(
             key: String,
