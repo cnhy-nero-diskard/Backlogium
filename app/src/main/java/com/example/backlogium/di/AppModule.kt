@@ -9,6 +9,7 @@ import com.example.backlogium.data.repo.AndroidSharedGameNotifier
 import com.example.backlogium.data.repo.DataStoreSettingsRepository
 import com.example.backlogium.data.repo.PresenceObserver
 import com.example.backlogium.data.repo.PresenceSessionRecorder
+import com.example.backlogium.data.repo.SessionEndOutbox
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.SharedGameNotifier
 import com.example.backlogium.data.updates.AndroidInstalledPackageInfoProvider
@@ -55,6 +56,10 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindSettingsRepository(impl: DataStoreSettingsRepository): SettingsRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindSessionEndOutbox(impl: DataStoreSettingsRepository): SessionEndOutbox
 
     @Binds
     @Singleton

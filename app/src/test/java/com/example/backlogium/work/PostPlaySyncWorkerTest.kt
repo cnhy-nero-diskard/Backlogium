@@ -15,6 +15,7 @@ import androidx.work.workDataOf
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
+import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.remote.SteamApi
@@ -31,8 +32,10 @@ import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.CredentialsState
+import com.example.backlogium.data.repo.PlaySessionEnd
 import com.example.backlogium.data.repo.PlaySessionEndPublisher
 import com.example.backlogium.data.repo.RecentPlaytimeRepository
+import com.example.backlogium.data.repo.SessionEndOutbox
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.PlaytimeObservationCommitter
@@ -109,6 +112,15 @@ class PostPlaySyncWorkerTest {
             context = context,
             coordinator = coordinator,
             sessionEnds = PlaySessionEndPublisher(),
+            sessionEndOutbox = object : SessionEndOutbox {
+                override val pendingSessionEnds =
+                    kotlinx.coroutines.flow.flowOf(emptyList<PlaySessionEnd>())
+                override suspend fun recordSessionEnd(
+                    sessionEnd: PlaySessionEnd,
+                    nextLiveSession: LiveSessionState,
+                ) = Unit
+                override suspend fun acknowledgeSessionEnd(sessionEnd: PlaySessionEnd) = Unit
+            },
             scope = schedulerScope,
         )
         time = FakeTimeProvider(now = sessionEndAt + 30_000L)

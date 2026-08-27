@@ -9,10 +9,14 @@ import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.example.backlogium.data.repo.PlaySessionEnd
 import com.example.backlogium.data.repo.PlaySessionEndPublisher
+import com.example.backlogium.data.repo.SessionEndOutbox
 import com.example.backlogium.di.ApplicationScope
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -35,9 +39,12 @@ class PostPlaySyncScheduler @Inject constructor(
     @ApplicationContext private val context: Context,
     private val coordinator: PostPlayGenerationCoordinator,
     private val sessionEnds: PlaySessionEndPublisher,
+    private val sessionEndOutbox: SessionEndOutbox,
     @ApplicationScope private val scope: CoroutineScope,
 ) {
     private val workManager: WorkManager get() = WorkManager.getInstance(context)
+    private val dispatchMutex = Mutex()
+    private val dispatchedSessionEnds = mutableSetOf<PlaySessionEnd>()
 
     /**
      * Act on every observed session end for as long as the process lives. Application-scoped
@@ -47,7 +54,21 @@ class PostPlaySyncScheduler @Inject constructor(
      */
     fun observeSessionEnds() {
         scope.launch {
-            sessionEnds.events.collect { schedule(it) }
+            sessionEnds.events.collect { dispatch(it) }
+        }
+        scope.launch {
+            sessionEndOutbox.pendingSessionEnds.collect { pending ->
+                pending.forEach { dispatch(it) }
+            }
+        }
+    }
+
+    private suspend fun dispatch(sessionEnd: PlaySessionEnd) {
+        dispatchMutex.withLock {
+            if (sessionEnd in dispatchedSessionEnds) return@withLock
+            schedule(sessionEnd)
+            sessionEndOutbox.acknowledgeSessionEnd(sessionEnd)
+            dispatchedSessionEnds += sessionEnd
         }
     }
 

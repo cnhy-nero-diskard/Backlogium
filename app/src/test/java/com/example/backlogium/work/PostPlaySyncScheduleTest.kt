@@ -5,14 +5,18 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
+import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.repo.PlaySessionEnd
 import com.example.backlogium.data.repo.PlaySessionEndPublisher
+import com.example.backlogium.data.repo.SessionEndOutbox
 import com.example.backlogium.domain.PostPlayGenerations
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -43,6 +47,7 @@ class PostPlaySyncScheduleTest {
     private lateinit var scheduler: PostPlaySyncScheduler
     private lateinit var generations: FakeGenerations
     private lateinit var sessionEnds: PlaySessionEndPublisher
+    private lateinit var sessionEndOutbox: FakeSessionEndOutbox
     private lateinit var schedulerScope: CoroutineScope
 
     @Before
@@ -55,11 +60,13 @@ class PostPlaySyncScheduleTest {
         workManager = WorkManager.getInstance(context)
         generations = FakeGenerations()
         sessionEnds = PlaySessionEndPublisher()
+        sessionEndOutbox = FakeSessionEndOutbox()
         schedulerScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         scheduler = PostPlaySyncScheduler(
             context = context,
             coordinator = PostPlayGenerationCoordinator(generations),
             sessionEnds = sessionEnds,
+            sessionEndOutbox = sessionEndOutbox,
             scope = schedulerScope,
         )
     }
@@ -190,6 +197,19 @@ class PostPlaySyncScheduleTest {
         assertEquals(1L, generations.current(440L))
     }
 
+    @Test
+    fun persistedSessionEndIsDrainedWithoutAHotEvent() = runTest {
+        val event = PlaySessionEnd(appId = 440L, endedAt = 1_000L, steamId = "account-a")
+        sessionEndOutbox.pending.value = listOf(event)
+
+        scheduler.observeSessionEnds()
+        runCurrent()
+
+        assertEquals(1, workInfosFor(440L).size)
+        assertEquals(1L, generations.current(440L))
+        assertTrue(sessionEndOutbox.pending.value.isEmpty())
+    }
+
     private fun workInfosFor(appId: Long): List<WorkInfo> =
         workManager.getWorkInfosForUniqueWork(PostPlaySyncScheduler.uniqueWorkName(appId)).get()
 
@@ -202,5 +222,21 @@ class PostPlaySyncScheduleTest {
         }
 
         override suspend fun current(appId: Long): Long = values[appId] ?: 0L
+    }
+
+    private class FakeSessionEndOutbox : SessionEndOutbox {
+        val pending = MutableStateFlow<List<PlaySessionEnd>>(emptyList())
+        override val pendingSessionEnds = pending
+
+        override suspend fun recordSessionEnd(
+            sessionEnd: PlaySessionEnd,
+            nextLiveSession: LiveSessionState,
+        ) {
+            pending.value = (pending.value + sessionEnd).distinct()
+        }
+
+        override suspend fun acknowledgeSessionEnd(sessionEnd: PlaySessionEnd) {
+            pending.value = pending.value.filterNot { it == sessionEnd }
+        }
     }
 }

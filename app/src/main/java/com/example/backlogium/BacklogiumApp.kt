@@ -143,17 +143,16 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
         // Both migrations are idempotent and leave their source data in place when a copy or
         // database operation fails, so the next process start can retry safely.
         snapshotStore.migrateLegacySnapshots()
-        // Subscribed here, application-scoped, because a session end is observed by whichever
-        // caller happens to poll presence — the foreground check and the sync worker as much as
-        // PresenceService, which stops itself on the very observation that ends a session. Enqueues
-        // WorkManager work and nothing else, so it costs a launch nothing until a game stops.
-        postPlaySyncScheduler.observeSessionEnds()
         scope.launch {
             val ready = runCatching { accountChangeCoordinator.resumeIfPending() }
                 .onFailure { Timber.e(it, "Account-change recovery failed; sync remains unscheduled") }
                 .isSuccess
             if (!ready) return@launch
 
+            // Start after account recovery so a durable session-end handoff cannot schedule work
+            // against an account reset that is still incomplete. The outbox replays anything
+            // recorded before process death.
+            postPlaySyncScheduler.observeSessionEnds()
             runCatching { diagnosticHistoryMigration.purgeLegacyIdentifiersIfNeeded() }
                 .onFailure { Timber.e(it, "Diagnostic history migration failed") }
             correctHistoricalDailyTotals()

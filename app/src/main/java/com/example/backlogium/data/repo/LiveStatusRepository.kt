@@ -197,7 +197,10 @@ class LiveStatusRepository @Inject constructor(
         val now = time.nowMillis()
         val previousSession = settings.liveSession.first()
         val nextSession = LiveSessionTracker.next(previousSession, fetched.status.nowPlaying, now)
-        if (nextSession != previousSession) {
+        val sessionEnd = sessionEndIfAny(previousSession, fetched.status.nowPlaying, now, fetched.steamId)
+        if (sessionEnd != null) {
+            settings.recordSessionEnd(sessionEnd, nextSession)
+        } else if (nextSession != previousSession) {
             if (nextSession.startedAt == null) {
                 settings.clearLiveSession()
             } else {
@@ -207,7 +210,7 @@ class LiveStatusRepository @Inject constructor(
 
         val next = fetched.status.copy(sessionStartedAt = nextSession.startedAt)
         _liveStatus.value = next
-        publishSessionEndIfAny(previousSession, fetched.status.nowPlaying, now, fetched.steamId)
+        sessionEnd?.let(sessionEnds::publish)
         diagnostics?.record(trigger, fetched.outcome, fetched.appId)
 
         // A successful fetch is an observation, and an observation is the only session input a
@@ -235,22 +238,20 @@ class LiveStatusRepository @Inject constructor(
      * A game swapped directly for another (A -> B with no not-playing poll between) *is* an end
      * for A, and is published: A's minutes are as real as if a not-playing poll had landed first.
      */
-    private fun publishSessionEndIfAny(
+    private fun sessionEndIfAny(
         previousSession: com.example.backlogium.data.local.LiveSessionState,
         observed: NowPlaying,
         now: Long,
         steamId: String?,
-    ) {
-        val stoppedAppId = previousSession.appId ?: return
-        if (previousSession.startedAt == null) return
+    ): PlaySessionEnd? {
+        val stoppedAppId = previousSession.appId ?: return null
+        if (previousSession.startedAt == null) return null
         val runningAppId = (observed as? NowPlaying.InGame)?.gameId
-        if (runningAppId == stoppedAppId) return
-        sessionEnds.publish(
-            PlaySessionEnd(
-                appId = stoppedAppId,
-                endedAt = now,
-                steamId = steamId.orEmpty(),
-            ),
+        if (runningAppId == stoppedAppId) return null
+        return PlaySessionEnd(
+            appId = stoppedAppId,
+            endedAt = now,
+            steamId = steamId.orEmpty(),
         )
     }
 

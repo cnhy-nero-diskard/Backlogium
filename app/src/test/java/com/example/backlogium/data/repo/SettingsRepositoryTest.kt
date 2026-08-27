@@ -1,5 +1,6 @@
 package com.example.backlogium.data.repo
 
+import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.domain.GameListDensity
 import kotlinx.coroutines.flow.first
@@ -77,5 +78,22 @@ class SettingsRepositoryTest {
         repository.clearSharedGameAnnouncement(20L)
 
         assertEquals(null, repository.sharedGameAnnouncement.first())
+    }
+
+    @Test
+    fun sessionEndIsDurableAndClearsLiveSessionInTheSameRepositoryOperation() = runTest {
+        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val repository = DataStoreSettingsRepository(dataStore)
+        val sessionEnd = PlaySessionEnd(appId = 10L, endedAt = 2_000L, steamId = "account-a")
+
+        repository.setLiveSession(appId = 10L, startedAt = 1_000L)
+        repository.recordSessionEnd(sessionEnd, LiveSessionState())
+
+        assertEquals(LiveSessionState(), repository.liveSession.first())
+        assertEquals(listOf(sessionEnd), repository.pendingSessionEnds.first())
+
+        repository.acknowledgeSessionEnd(sessionEnd)
+
+        assertTrue(repository.pendingSessionEnds.first().isEmpty())
     }
 }

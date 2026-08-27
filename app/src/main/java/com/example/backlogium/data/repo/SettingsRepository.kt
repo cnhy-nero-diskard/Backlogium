@@ -2,6 +2,7 @@ package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.LiveSessionState
+import com.example.backlogium.data.local.PendingSessionEnd
 import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.data.local.AcquiredGamesAnnouncement
 import com.example.backlogium.data.local.SharedGameAnnouncement
@@ -20,6 +21,22 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
+ * Durable handoff for a session end. The event stays pending until its WorkManager schedule has
+ * been accepted; replaying an already-accepted event is safe because scheduling replaces its
+ * per-game generation.
+ */
+interface SessionEndOutbox {
+    val pendingSessionEnds: Flow<List<PlaySessionEnd>>
+
+    suspend fun recordSessionEnd(
+        sessionEnd: PlaySessionEnd,
+        nextLiveSession: LiveSessionState,
+    )
+
+    suspend fun acknowledgeSessionEnd(sessionEnd: PlaySessionEnd)
+}
+
+/**
  * Read/write access to app settings: the tunable gamification [RuleConfig] and the per-list
  * Library sort selections.
  *
@@ -36,7 +53,23 @@ import javax.inject.Singleton
  * An interface rather than a class (mirroring [com.example.backlogium.domain.TimeProvider]) so
  * callers can be tested on the JVM without a `Context`-scoped DataStore.
  */
-interface SettingsRepository {
+interface SettingsRepository : SessionEndOutbox {
+    override val pendingSessionEnds: Flow<List<PlaySessionEnd>>
+        get() = flowOf(emptyList())
+
+    override suspend fun recordSessionEnd(
+        sessionEnd: PlaySessionEnd,
+        nextLiveSession: LiveSessionState,
+    ) {
+        if (nextLiveSession.startedAt == null) {
+            clearLiveSession()
+        } else {
+            setLiveSession(nextLiveSession.appId, nextLiveSession.startedAt)
+        }
+    }
+
+    override suspend fun acknowledgeSessionEnd(sessionEnd: PlaySessionEnd) = Unit
+
     val ruleConfig: Flow<RuleConfig>
 
     suspend fun setRuleConfig(config: RuleConfig)
@@ -186,6 +219,24 @@ class DataStoreSettingsRepository @Inject constructor(
         settings.setLiveSession(appId, startedAt)
 
     override suspend fun clearLiveSession() = settings.clearLiveSession()
+
+    override val pendingSessionEnds: Flow<List<PlaySessionEnd>> =
+        settings.pendingSessionEndsFlow.map { entries ->
+            entries.map { PlaySessionEnd(it.appId, it.endedAt, it.steamId) }
+        }
+
+    override suspend fun recordSessionEnd(
+        sessionEnd: PlaySessionEnd,
+        nextLiveSession: LiveSessionState,
+    ) = settings.recordSessionEnd(
+        PendingSessionEnd(sessionEnd.appId, sessionEnd.endedAt, sessionEnd.steamId),
+        nextLiveSession,
+    )
+
+    override suspend fun acknowledgeSessionEnd(sessionEnd: PlaySessionEnd) =
+        settings.acknowledgeSessionEnd(
+            PendingSessionEnd(sessionEnd.appId, sessionEnd.endedAt, sessionEnd.steamId),
+        )
 
     override val notificationPermissionRequested: Flow<Boolean> =
         settings.notificationPermissionRequestedFlow
