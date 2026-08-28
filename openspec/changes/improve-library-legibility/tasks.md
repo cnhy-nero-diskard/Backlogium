@@ -41,4 +41,4 @@
 - [ ] 5.3 Confirm the completion bar's existing behaviour — including its overrun rescale and its accessibility description — is unchanged
 - [ ] 5.4 Confirm the existing `100% Completed` indicator is unchanged on rows, grid cells, and game detail
 - [ ] 5.5 Confirm collection overview aggregate trophy metrics and the completion-goal banner are unchanged
-- [ ] 5.6 Re-check cell layout after `add-library-recency-signals` if that change has landed, since it adds a corner badge to the same cells
+- [ ] 5.6 Verify layout with an active recency badge present: use the least-dense grid fixture with the completion bar, trophy bar, and recency badge, and the Library list-row fixture with trophy progress and recency badge; confirm no overlap, clipping, or density-ladder regression
