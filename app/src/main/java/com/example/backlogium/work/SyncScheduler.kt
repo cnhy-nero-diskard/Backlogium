@@ -244,6 +244,32 @@ class SyncScheduler @Inject constructor(
         )
     }
 
+    /**
+     * Enqueue the daily wishlist price sample. Idempotent: keeps any already-scheduled work.
+     *
+     * Shares [reconciliationConstraints] — charging and unmetered — for the same reason that pass
+     * does: it is not interactive, nobody is waiting for it, and the player should never pay
+     * mobile data or battery for a price nobody asked to see. Daily rather than weekly because a
+     * price history sampled weekly would miss most of Steam's sales entirely, and the cost is a
+     * couple of requests.
+     */
+    fun ensurePeriodicWishlistSampling() {
+        val request = PeriodicWorkRequestBuilder<WishlistPriceSamplingWorker>(1, TimeUnit.DAYS)
+            .setConstraints(reconciliationConstraints)
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                WorkRequest.MIN_BACKOFF_MILLIS,
+                TimeUnit.MILLISECONDS,
+            )
+            .build()
+
+        workManager.enqueueUniquePeriodicWork(
+            WishlistPriceSamplingWorker.PERIODIC_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            request,
+        )
+    }
+
     /** Starts the independent asset worker; duplicate taps keep the admitted job. */
     fun downloadSteamAssets(mode: com.example.backlogium.data.steamassets.SteamAssetDownloadMode) {
         val constraints = Constraints.Builder()

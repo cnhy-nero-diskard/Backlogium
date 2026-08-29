@@ -40,10 +40,10 @@
 
 ## 6. Periodic sampling
 
-- [ ] 6.1 Add a periodic worker that samples wishlist prices independently of the section being viewed
-- [ ] 6.2 Constrain it to charging and unmetered network, off the interactive path, following the reconciliation worker's precedent
-- [ ] 6.3 Confirm it issues the same batched requests as the on-view path and adds no per-game fan-out
-- [ ] 6.4 Confirm it records observations only and surfaces nothing — no alert, no notification
+- [x] 6.1 Add a periodic worker that samples wishlist prices independently of the section being viewed
+- [x] 6.2 Constrain it to charging and unmetered network, off the interactive path, following the reconciliation worker's precedent
+- [x] 6.3 Confirm it issues the same batched requests as the on-view path and adds no per-game fan-out
+- [x] 6.4 Confirm it records observations only and surfaces nothing — no alert, no notification
 
 ## 7. Surfaces
 

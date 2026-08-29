@@ -159,6 +159,7 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
             resolvePendingImportRecompute()
             syncScheduler.ensurePeriodicSync()
             syncScheduler.ensurePeriodicReconciliation()
+            syncScheduler.ensurePeriodicWishlistSampling()
         }
         ProcessLifecycleOwner.get().lifecycle.addObserver(ForegroundPresenceCheck())
     }
