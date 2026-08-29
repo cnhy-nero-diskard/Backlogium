@@ -3,7 +3,11 @@ package com.example.backlogium.data.repo
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.domain.GameListDensity
+import com.example.backlogium.domain.SmartCollectionId
+import com.example.backlogium.domain.SmartCollectionVisibility
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
@@ -121,5 +125,29 @@ class SettingsRepositoryTest {
         assertTrue(reopenedRepository.smartCollectionVisibility.first().isVisible(
             com.example.backlogium.domain.SmartCollectionId.QUICK_WINS,
         ))
+    }
+
+    @Test
+    fun smartCollectionVisible_concurrentTogglesOfDifferentLists_bothSurvive() = runTest {
+        // Regression: toggling used to read the shared hidden-id set and then write a whole
+        // replacement, so two near-concurrent switches from the manage dialog could both read
+        // the same old set and the slower write would silently discard the other toggle.
+        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val repository: SettingsRepository = DataStoreSettingsRepository(dataStore)
+
+        try {
+            coroutineScope {
+                launch { repository.setSmartCollectionVisible(SmartCollectionId.DROPPED, visible = false) }
+                launch { repository.setSmartCollectionVisible(SmartCollectionId.QUICK_WINS, visible = false) }
+            }
+
+            val visibility = repository.smartCollectionVisibility.first()
+            assertFalse(visibility.isVisible(SmartCollectionId.DROPPED))
+            assertFalse(visibility.isVisible(SmartCollectionId.QUICK_WINS))
+        } finally {
+            // The DataStore delegate is a process-wide singleton, so the hidden ids would
+            // otherwise leak into tests that assert the all-visible default.
+            repository.setSmartCollectionVisibility(SmartCollectionVisibility())
+        }
     }
 }

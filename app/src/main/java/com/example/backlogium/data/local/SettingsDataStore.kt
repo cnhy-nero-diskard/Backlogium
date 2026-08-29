@@ -344,20 +344,39 @@ class SettingsDataStore @Inject constructor(
 
     /** Hidden derived collections; absent or malformed ids default to visible. */
     val smartCollectionVisibilityFlow: Flow<SmartCollectionVisibility> = context.dataStore.data.map { prefs ->
+        readHiddenSmartCollections(prefs)
+    }
+
+    suspend fun setSmartCollectionVisibility(visibility: SmartCollectionVisibility) {
+        context.dataStore.edit { prefs ->
+            writeHiddenSmartCollections(prefs, visibility.hidden)
+        }
+    }
+
+    /**
+     * Toggling one list is a read-modify-write of the shared hidden-id set, so both steps happen
+     * inside a single edit: DataStore serializes concurrent edits, and a read-modify-write split
+     * across calls would let the slower write silently discard a concurrent toggle.
+     */
+    suspend fun setSmartCollectionVisible(id: SmartCollectionId, visible: Boolean) {
+        context.dataStore.edit { prefs ->
+            val hidden = readHiddenSmartCollections(prefs).setVisible(id, visible).hidden
+            writeHiddenSmartCollections(prefs, hidden)
+        }
+    }
+
+    private fun readHiddenSmartCollections(prefs: Preferences): SmartCollectionVisibility =
         SmartCollectionVisibility(
             hidden = prefs[Keys.SMART_COLLECTIONS_HIDDEN].orEmpty()
                 .mapNotNull { raw -> runCatching { SmartCollectionId.valueOf(raw) }.getOrNull() }
                 .toSet(),
         )
-    }
 
-    suspend fun setSmartCollectionVisibility(visibility: SmartCollectionVisibility) {
-        context.dataStore.edit { prefs ->
-            if (visibility.hidden.isEmpty()) {
-                prefs.remove(Keys.SMART_COLLECTIONS_HIDDEN)
-            } else {
-                prefs[Keys.SMART_COLLECTIONS_HIDDEN] = visibility.hidden.mapTo(mutableSetOf()) { it.name }
-            }
+    private fun writeHiddenSmartCollections(prefs: MutablePreferences, hidden: Set<SmartCollectionId>) {
+        if (hidden.isEmpty()) {
+            prefs.remove(Keys.SMART_COLLECTIONS_HIDDEN)
+        } else {
+            prefs[Keys.SMART_COLLECTIONS_HIDDEN] = hidden.mapTo(mutableSetOf()) { it.name }
         }
     }
 
