@@ -6,15 +6,6 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 
-/**
- * A session shorter than this does not prove that a game was meaningfully played.
- *
- * The motivating case is a game relaunched for a few minutes after months away: that relaunch
- * must not rescue it from Dropped. The same floor keeps a loading-screen check or settings visit
- * from turning Never started into a played game.
- */
-const val MEANINGFUL_SESSION_MINUTES = 15
-
 /** The fixed derived collection kinds, in their presentation order. */
 enum class SmartCollectionId {
     QUICK_WINS,
@@ -38,47 +29,37 @@ data class SmartCollectionAchievementSignals(
     val state: AchievementDataState = AchievementDataState.NOT_FETCHED,
 )
 
-/** Session facts supplied to the pure derivation. */
-data class MeaningfulSessionSignals(
-    val meaningfulSessionCount: Int = 0,
-    val lastMeaningfulSessionAt: Long? = null,
-    /** Meaningful session minutes are needed for games without Steam-reported totals. */
-    val meaningfulMinutes: Int = 0,
-)
-
 /** The library facts needed by [SmartCollections]. */
 data class SmartCollectionGame(
     val appId: Long,
     val name: String,
     val playtimeMinutes: Int,
     val mainStoryMinutes: Int?,
+    /**
+     * When this game was last played, from whichever source knows — Steam's own last-played stamp
+     * or an observed session, whichever is later — or null when neither does. Steam's stamp is what
+     * lets a game Backlogium never watched still be recognised as abandoned.
+     */
+    val lastPlayedAt: Long? = null,
 )
 
 /**
- * Playtime used by derived collections, with sub-threshold observed launches removed.
+ * Playtime used by derived collections.
  *
- * Owned games' Steam total includes minutes from sessions the app observed. Subtracting the known
- * short-session portion is what makes a ten-minute relaunch remain Never started, while the raw
- * total still supplies historical playtime when no session explains it. Imported history and
- * qualifying sessions are retained as the two sources that remain meaningful to this feature.
+ * An owned game's Steam total is authoritative and already includes everything the app observed;
+ * imported history plus tracked sessions is the fallback for whatever that total predates. A
+ * family-shared game has no Steam total at all, so only what Backlogium watched exists.
  */
 fun smartCollectionPlaytimeMinutes(
     source: GameSource,
     steamPlaytimeMinutes: Int,
     importedPlaytimeMinutes: Int,
-    totalSessionMinutes: Int,
-    meaningfulSessionMinutes: Int,
-): Int {
-    val shortSessionMinutes =
-        (totalSessionMinutes - meaningfulSessionMinutes).coerceAtLeast(0)
-    val ownedPlaytime =
-        (steamPlaytimeMinutes - shortSessionMinutes).coerceAtLeast(0)
-    return when (source) {
-        GameSource.STEAM_OWNED ->
-            maxOf(ownedPlaytime, importedPlaytimeMinutes + meaningfulSessionMinutes)
-        GameSource.FAMILY_SHARED -> meaningfulSessionMinutes
-    }.coerceAtLeast(0)
-}
+    sessionMinutes: Int,
+): Int = when (source) {
+    GameSource.STEAM_OWNED ->
+        maxOf(steamPlaytimeMinutes, importedPlaytimeMinutes + sessionMinutes)
+    GameSource.FAMILY_SHARED -> sessionMinutes
+}.coerceAtLeast(0)
 
 /** The evidence that placed a game in Completed. */
 enum class CompletionBasis {
@@ -107,17 +88,17 @@ data class SmartCollectionResult(
 }
 
 /**
- * Pure derivation of the fixed, read-only collections shown by the Collections screen.
+ * Pure derivation of the fixed, read-only collections shown by the Collections screen and Home.
  *
  * There is deliberately no Room, Android, clock, or injection here. Callers provide the current
  * date and all local inputs, so a date boundary changes Dropped membership without a sync or a
  * persisted recompute.
  */
 object SmartCollections {
-    /** Dropped requires strictly more than two hours of recorded playtime. */
-    const val DROPPED_MINIMUM_PLAYTIME_MINUTES = 2 * 60
+    /** Dropped requires strictly more than an hour and a half of recorded playtime. */
+    const val DROPPED_MINIMUM_PLAYTIME_MINUTES = 90
 
-    /** Dropped requires the last meaningful session to be more than thirty calendar days ago. */
+    /** Dropped requires the last play to be more than thirty calendar days ago. */
     const val DROPPED_IDLE_DAYS = 30L
 
     /** Quick wins have a main story length of at most six hours. */
@@ -127,13 +108,22 @@ object SmartCollections {
     const val ALMOST_DONE_FRACTION = 0.8
 
     /**
-     * Derive every list from one snapshot of library, session, achievement, and date facts.
+     * Almost done also requires eighty percent of achievements, where a game has any.
+     *
+     * Playtime alone reads as nearly finished a game the player is nowhere near done with: forty
+     * hours into a roguelike, past its main-story length, with under half its achievements
+     * unlocked, is not almost done by any reading a player would recognise. Achievements are
+     * evidence of what was accomplished, so they gate the list rather than merely decorate it.
+     */
+    const val ALMOST_DONE_ACHIEVEMENT_FRACTION = 0.8
+
+    /**
+     * Derive every list from one snapshot of library, achievement, and date facts.
      * [sessionZone] defaults to UTC so JVM callers have deterministic timestamp boundaries; the
      * app passes its local zone when rendering on a device.
      */
     fun derive(
         games: List<SmartCollectionGame>,
-        sessionsByGame: Map<Long, MeaningfulSessionSignals>,
         achievementsByGame: Map<Long, SmartCollectionAchievementSignals>,
         today: LocalDate,
         sessionZone: ZoneId = ZoneOffset.UTC,
@@ -144,9 +134,7 @@ object SmartCollections {
             .map { game ->
                 val achievements = achievementsByGame[game.appId]
                     ?: SmartCollectionAchievementSignals()
-                val session = sessionsByGame[game.appId]
-                    ?: MeaningfulSessionSignals()
-                DerivedGame(game, achievements, session, completionBasis(game, achievements))
+                DerivedGame(game, achievements, completionBasis(game, achievements))
             }
 
         fun membersWhere(
@@ -179,6 +167,7 @@ object SmartCollections {
                 SmartCollectionId.ALMOST_DONE to membersWhere(
                     predicate = { row ->
                         !row.isCompleted &&
+                            row.achievementsNearlyComplete &&
                             row.game.mainStoryMinutes?.let { mainStory ->
                                 mainStory > 0 &&
                                     row.game.playtimeMinutes.toDouble() / mainStory >= ALMOST_DONE_FRACTION
@@ -189,8 +178,7 @@ object SmartCollections {
                     predicate = { row ->
                         !row.isCompleted &&
                             row.game.playtimeMinutes > DROPPED_MINIMUM_PLAYTIME_MINUTES &&
-                            row.session.meaningfulSessionCount > 0 &&
-                            row.session.lastMeaningfulSessionAt
+                            row.game.lastPlayedAt
                                 ?.toLocalDate(sessionZone)
                                 ?.let { lastPlayed ->
                                     ChronoUnit.DAYS.between(lastPlayed, today) > DROPPED_IDLE_DAYS
@@ -208,10 +196,24 @@ object SmartCollections {
     private data class DerivedGame(
         val game: SmartCollectionGame,
         val achievements: SmartCollectionAchievementSignals,
-        val session: MeaningfulSessionSignals,
         val completionBasis: CompletionBasis?,
     ) {
         val isCompleted: Boolean get() = completionBasis != null
+
+        /**
+         * Whether achievements permit an almost-done reading. A game confirmed to have none is
+         * judged on playtime alone; one whose achievements have never been fetched is excluded,
+         * because an unmet condition and an unknown one must not look the same.
+         */
+        val achievementsNearlyComplete: Boolean
+            get() = when (achievements.state) {
+                AchievementDataState.NOT_FETCHED -> false
+                AchievementDataState.NO_ACHIEVEMENTS -> true
+                AchievementDataState.HAS_ACHIEVEMENTS ->
+                    achievements.total > 0 &&
+                        achievements.unlocked.toDouble() / achievements.total >=
+                        ALMOST_DONE_ACHIEVEMENT_FRACTION
+            }
     }
 
     private fun completionBasis(

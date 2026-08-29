@@ -28,14 +28,20 @@ dropped on a Tuesday because a month elapsed, not because anything happened.
   |---|---|
   | **Quick wins** | never started, main story at or under 6 hours |
   | **Never started** | no recorded playtime from any source |
-  | **Almost done** | at or past 80% of main story, not completed |
-  | **Dropped** | over 2 hours played, not completed, no meaningful session in 30 days |
+  | **Almost done** | at or past 80% of main story *and* 80% of achievements, not completed |
+  | **Dropped** | over 1.5 hours played, not completed, not played in 30 days |
   | **Completed** | every achievement unlocked, or playtime at or past main story where a game has no achievements |
 
-- **A meaningful-session threshold of 15 minutes.** A launch shorter than that does not count as
-  playing, so checking a setting or bouncing off a loading screen neither starts a game nor
-  resumes a dropped one. This is the concept behind the wrinkle that motivated it — a game briefly
-  relaunched after months is still dropped.
+- **Almost done requires achievements, not just hours.** Playtime alone reads a forty-hour roguelike
+  as nearly finished against a thirty-two-hour length while under half its achievements are
+  unlocked, which is not a claim any player would recognise. Achievements are evidence of what was
+  accomplished, so eighty percent of them is a condition of the list rather than a decoration on it.
+  A game confirmed to have no achievements is judged on playtime alone; one whose achievements have
+  never been fetched is excluded, because an unmet condition and an unknown one must not look alike.
+- **Dropped reads Steam's last-played time, not only observed sessions.** Requiring a session the app
+  itself watched excluded exactly the games most likely to be abandoned — the ones played long
+  before Backlogium was installed. Steam already reports when each owned game was last played, so
+  that is the date the rule uses, with an observed session taking over when it is more recent.
 - **Completion is achievements-first with a playtime fallback**, and each member states which rule
   placed it there. A game with neither achievements nor a HowLongToBeat length is excluded rather
   than guessed at.
@@ -46,19 +52,22 @@ dropped on a Tuesday because a month elapsed, not because anything happened.
 - **Lists overlap deliberately.** A game 85% through its main story and untouched for two months is
   both almost done and dropped, and that combination is the most actionable thing the app could
   say about it.
-- **Nothing appears on Home.** Home's collection banners exist to surface intent the player chose;
-  a derived observation has none.
+- **Home shows them last, and read-only.** The derived lists appear beneath the custom collections
+  on Home, separated by a horizontal dashed rule, in their fixed order. They cannot be reordered,
+  edited, or removed there — the rule above them is what marks the boundary between the collections
+  the player arranged and the ones the app worked out.
 
 ## Capabilities
 
 ### New Capabilities
-- `smart-collections`: the derived collections, their rules and fixed thresholds, the
-  meaningful-session concept, how completion is determined and disclosed, immutability, per-list
-  visibility, and how each behaves when the data a rule depends on is missing.
+- `smart-collections`: the derived collections, their rules and fixed thresholds, how completion is
+  determined and disclosed, immutability, per-list visibility, their fixed position on Home, and how
+  each behaves when the data a rule depends on is missing.
 
 ### Modified Capabilities
 - `app-ui`: the Collections screen presents derived collections as a group distinct from custom
-  ones, with their rules visible and their visibility controllable.
+  ones, with their rules visible and their visibility controllable; Home presents the same lists as
+  a fixed, unmovable group below the custom cards.
 
 ## Impact
 
@@ -69,12 +78,16 @@ dropped on a Tuesday because a month elapsed, not because anything happened.
   per-game session summaries, achievement counts, and today, returning each list's membership —
   following the same shape as `CollectionSummary.derive`, `SessionDiffer`, and `Gamification`; a
   visibility preference on `SettingsDataStore`; the Collections-screen group and its controls.
-- **Affected code (modified):** the Collections screen, and a session-summary query exposing each
-  game's last meaningful session and meaningful session count.
-- **A new query, not a new store.** Deriving "last meaningful session" per game needs one indexed
-  aggregate over `sessions`, which already carries `minutes` per session and an `appId` index.
+- **Affected code (modified):** the Collections screen and the Home collections section.
+- **No new query at all.** Last play comes from `Game.lastPlayedAt`, which the sync worker already
+  writes from Steam's `rtime_last_played`, joined with the existing per-game
+  `latestSessionAtByGame` and `trackedMinutesByGame` aggregates.
+- **One derivation, two surfaces.** `SmartCollectionFeed` performs the single pass that Home and the
+  Collections screen both read, so a rule cannot mean one thing in a Home card and another in the
+  list it opens.
 - **Custom collections are untouched.** No change to the `collections` table, to display order, to
-  modes, or to any existing behaviour. Derived lists are a separate group in the same screen.
+  modes, or to any existing behaviour — including Home's drag-to-reorder, which continues to act on
+  the custom cards alone. Derived lists are a separate group, below them.
 - **Derived lists carry no mode.** Deadline and ordered-queue modes require a target date and a
   manual sequence respectively, neither of which a derived list can have. They present a member
   count and their rule, not a banner.

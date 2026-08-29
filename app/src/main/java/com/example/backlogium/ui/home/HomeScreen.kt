@@ -8,6 +8,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.scrollBy
@@ -64,6 +65,7 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.compositeOver
@@ -95,6 +97,8 @@ import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.label
 import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.ProgressEvent
+import com.example.backlogium.domain.SmartCollectionId
+import com.example.backlogium.ui.collections.smartCollectionRule
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.components.RecencyBadge
 import com.example.backlogium.ui.components.accessibilityLabel
@@ -131,6 +135,7 @@ fun HomeScreen(
     onOpenCollection: (Long) -> Unit = {},
     onCreateCollection: () -> Unit = {},
     onOpenCollections: () -> Unit = {},
+    onOpenSmartCollection: (SmartCollectionId) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -264,6 +269,7 @@ fun HomeScreen(
             onOpenCollection = onOpenCollection,
             onCreateCollection = onCreateCollection,
             onOpenCollections = onOpenCollections,
+            onOpenSmartCollection = onOpenSmartCollection,
             scrollState = scrollState,
             scrollViewport = scrollViewport,
             onReorderCollections = viewModel::reorderCollections,
@@ -282,6 +288,7 @@ private fun InnerHomeContent(
     onOpenCollection: (Long) -> Unit,
     onCreateCollection: () -> Unit,
     onOpenCollections: () -> Unit,
+    onOpenSmartCollection: (SmartCollectionId) -> Unit,
     scrollState: ScrollState,
     scrollViewport: Rect?,
     onReorderCollections: (List<Long>) -> Unit,
@@ -528,6 +535,17 @@ private fun InnerHomeContent(
             modifier = Modifier.fillMaxWidth(),
         )
 
+        // Derived lists, always last and always in their fixed order. The dashed rule above them
+        // carries the whole distinction: everything above it the player arranged, everything below
+        // it the app worked out.
+        if (state.smartCollections.isNotEmpty()) {
+            SmartCollectionsSection(
+                cards = state.smartCollections,
+                onOpenSmartCollection = onOpenSmartCollection,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
         Spacer(Modifier.height(16.dp))
     }
 }
@@ -722,6 +740,97 @@ private fun CollectionsSection(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Home's derived collections: fixed membership, fixed order, no affordance to change either.
+ *
+ * They sit below the custom collections rather than among them because the two answer different
+ * questions - what the player chose to group, then what the library turned out to be saying - and
+ * a list that cannot be reordered must not appear to be part of one that can.
+ */
+@Composable
+private fun SmartCollectionsSection(
+    cards: List<HomeSmartCollectionCard>,
+    onOpenSmartCollection: (SmartCollectionId) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        DashedSectionDivider(Modifier.padding(vertical = 6.dp))
+        Text("Derived collections", style = MaterialTheme.typography.titleMedium)
+        cards.forEach { card ->
+            key(card.id) {
+                SmartCollectionCard(
+                    card = card,
+                    onClick = { onOpenSmartCollection(card.id) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
+}
+
+/** The boundary between chosen and derived collections, drawn rather than written. */
+@Composable
+private fun DashedSectionDivider(modifier: Modifier = Modifier) {
+    val color = MaterialTheme.colorScheme.outlineVariant
+    Canvas(
+        modifier
+            .fillMaxWidth()
+            .height(1.dp),
+    ) {
+        drawLine(
+            color = color,
+            start = Offset(0f, size.height / 2f),
+            end = Offset(size.width, size.height / 2f),
+            strokeWidth = size.height,
+            pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f), 0f),
+        )
+    }
+}
+
+/** A derived list on Home: its name, how many games qualify, and the rule that decided. */
+@Composable
+private fun SmartCollectionCard(
+    card: HomeSmartCollectionCard,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.semantics {
+            contentDescription = "Open ${card.name} derived collection"
+        },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = card.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "${card.memberCount}",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Text(
+                text = smartCollectionRule(card.id),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

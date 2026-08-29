@@ -38,7 +38,7 @@ drive banners.
 
 - User-defined rules or a query builder. Five fixed lists, not a filtering language.
 - Tunable thresholds in this change.
-- Any Home surface.
+- Any Home surface the player can arrange: the derived group is fixed, last, and read-only.
 - Modes, target dates, ordering, accents, or descriptions on derived lists.
 - Editing membership by any means, including a one-off exclusion.
 - Promoting a derived list into a custom collection. Worth doing, and worth its own decision.
@@ -47,9 +47,11 @@ drive banners.
 
 ### 1. Derived on read, as a pure function
 
-`SmartCollections` takes library games, per-game session summaries, achievement counts, and
-`today`, and returns each list's membership. No Room types, no Android, no injection — the same
-shape as `CollectionSummary.derive`, `SessionDiffer`, `Gamification`, and `RarityStanding`.
+`SmartCollections` takes library games, achievement counts, and `today`, and returns each list's
+membership. No Room types, no Android, no injection — the same shape as `CollectionSummary.derive`,
+`SessionDiffer`, `Gamification`, and `RarityStanding`. `SmartCollectionFeed` is the thin injected
+wrapper that assembles its inputs from repositories once, for every surface that presents the
+lists.
 
 This is not only idiom. Membership is a function of the calendar: a game becomes dropped because
 thirty days elapsed, not because anything was observed. Materialized membership would need a daily
@@ -59,20 +61,24 @@ all.
 
 Cost is negligible: one pass over a few hundred games against data the screen already observes.
 
-### 2. The meaningful-session threshold, at 15 minutes
+### 2. No session-length threshold
 
-A session under fifteen minutes does not count as playing.
+Every recorded session counts as play. There is no fifteen-minute floor.
 
-This came out of a specific observation — a game relaunched briefly after months should still read
-as dropped — but it generalises further than the case that produced it. Without it, "never started"
-is defeated by a three-minute install check, and "dropped" resets every time a game is opened to
-adjust a setting.
+The floor existed to protect one case: a game relaunched briefly after months should still read as
+dropped. It bought that at a price that turned out to be far higher than the case was worth —
+because the same threshold defined which games had *any* usable history, it silently excluded every
+game the app had never watched closely, which is most of a library on the day it is installed.
 
-Fifteen minutes is the number the requirement was described with, and it is a reasonable floor for
-"I actually played this." It is fixed rather than derived, and stated on the lists that depend on
-it.
+Dropped now takes its date from Steam's last-played stamp (Decision 4), so the relaunch case is
+handled by the fact rather than by a filter: a game launched today was, in fact, played today, and
+saying otherwise was always a small fiction. What remains is simpler in every direction — no
+threshold constant, no filtered aggregate, and no second meaning for the word "session" that only
+this feature used.
 
-`Session.minutes` supports this directly — the threshold applies per session, not to a total.
+The cost is honest and small: a two-minute launch to change a setting does start a game and does
+resume a dropped one. That is the same thing Steam's own library says, and disagreeing with Steam
+about whether a game was launched is not a position this app should hold.
 
 ### 3. Completion is achievements-first, playtime-fallback, and never guessed
 
@@ -97,6 +103,13 @@ completed, while a story game finished under the HLTB average fails one.
 The fallback exists because a large share of games have no achievements at all, and excluding them
 outright would make the list quietly wrong rather than usefully incomplete.
 
+**Almost done carries the achievement condition too.** Completion asks whether every achievement is
+unlocked; almost-done asks whether eighty percent are, alongside the playtime test. The list is
+worthless without it — a forty-hour roguelike sails past any playtime threshold with a third of its
+achievements locked, and calling that "almost done" discredits every other row in the list. Where a
+game genuinely has no achievements, playtime decides alone; where they have simply never been
+fetched, the game is absent, on the same principle that governs a missing HowLongToBeat length.
+
 **Each member states which rule placed it there.** A list that silently mixes two definitions
 invites exactly one question — why is that in here — and a list that cannot answer it is worse
 than no list. Main story is the fallback basis, not completionist: the question is whether the
@@ -106,19 +119,28 @@ Games with neither signal are excluded rather than assumed incomplete. Absence o
 evidence, and the same principle already governs trophy counts in `custom-collections`, where
 missing data must stay distinguishable from zero.
 
-### 4. Dropped requires session history, not just playtime
+### 4. Dropped takes its date from Steam, with observed sessions as the more recent authority
 
-The rule needs a *date* — when the game was last meaningfully played — and only `Session` carries
-one. `playtimeForever` and `backfillMinutes` are totals with no time attached.
+The rule needs a *date* — when the game was last played. The original design looked only at
+`Session`, on the reasoning that `playtimeForever` and `backfillMinutes` are totals with no time
+attached, and concluded that a game the app never watched could not be judged abandoned.
 
-This matters immediately on a fresh install. A player who imports Steam history has hundreds of
-games with substantial playtime and zero sessions. Without a guard, "Dropped" would open containing
-most of their library on day one, which is both wrong and the worst possible first impression of
-the feature.
+That reasoning missed a column. `Game.lastPlayedAt` already holds Steam's own `rtime_last_played`,
+written by the sync worker on every pass. It is exactly the date the rule wanted, it covers the
+entire library including the years before this app existed, and requiring an observed session in
+preference to it excluded precisely the games most likely to have been abandoned.
 
-So a game qualifies as dropped only if it has at least one meaningful session on record. The app
-cannot know you abandoned something it never watched, and saying so by omission is more honest than
-inferring a date from a total. The list fills in as history accumulates.
+So last play is the later of Steam's stamp and the most recent observed session. Steam supplies the
+history; a session supplies what Steam does not report — a family-shared game, or a play more recent
+than the last sync.
+
+The consequence is deliberate and was the point of asking: a freshly configured library can show a
+substantial Dropped list on day one. Those games *were* abandoned; the earlier design's empty list
+was not a more honest answer, only a quieter one. A game whose last play no source knows is still
+excluded, because nothing establishes that it was abandoned rather than never touched.
+
+The dropped floor drops to an hour and a half at the same time. Two hours excluded a category of
+game that is genuinely abandoned — a short indie given one evening and never reopened.
 
 ### 5. Lists overlap, deliberately
 
@@ -132,15 +154,31 @@ quietly abandoned — so the design surfaces both rather than picking one.
 The two exclusions that do apply are semantic rather than structural: **Dropped** and **Almost
 done** both exclude completed games, because a finished game is neither abandoned nor nearly done.
 
-### 6. Collections screen only, never Home
+### 6. Home shows them, last and unmovable, below a dashed rule
 
 Home's collection banners exist to surface intent the player chose: a deadline they set, a queue
-they ordered, a completion goal they declared. A derived list carries no intent — it is an
-observation the app made.
+they ordered. A derived list carries no intent — it is an observation the app made. That difference
+is real, and it is what the layout has to express; it is not, on reflection, a reason to withhold
+the observation from the screen the player actually opens.
 
-There is also a tone argument. Home is the first thing seen on opening the app, and `app-ui` guards
-its attention deliberately. A permanent count of abandoned games there is a standing reproach, not
-a feature. In the Collections screen the same list is something the player went looking for.
+```
+   Collections                    ← chosen: ordered, accented, draggable
+     [ Finish before December ]
+     [ Weekend queue          ]
+   - - - - - - - - - - - - - -    ← the boundary, drawn
+   Derived collections            ← observed: fixed order, no gestures
+     [ Almost done          3 ]
+     [ Dropped             11 ]
+```
+
+The dashed rule does the whole job. Above it, everything responds to a long-press and remembers
+where the player put it; below it, nothing does. A read-only list mixed in among draggable ones
+would invite a gesture that silently fails, which is worse than not showing it at all — so the
+separation is what makes the inclusion safe rather than a decoration on it.
+
+The tone argument that originally kept them off Home stands, and per-list visibility answers it:
+anyone who does not want a standing count of abandoned games hides that one list, once, and it is
+gone from both surfaces.
 
 ### 7. Visibility is per-list, at the point of use
 
@@ -156,11 +194,11 @@ useful.
 ### 8. Fixed thresholds, stated visibly
 
 ```
-   meaningful session            15 minutes
-   dropped: minimum playtime      2 hours
+   dropped: minimum playtime    1.5 hours
    dropped: idle period          30 days
    quick win: main story max      6 hours
    almost done: main story        80%
+   almost done: achievements      80%
 ```
 
 `app-settings` already carries editable gamification rules with a retroactive-effect disclosure, so
@@ -174,20 +212,25 @@ tells you which number actually chafes.
 
 ## Risks / Trade-offs
 
-- **"Dropped" starts empty and fills slowly**, because it needs observed session history rather
-  than imported totals. → Accepted as the honest behaviour. The alternative declares most of a
-  freshly-imported library abandoned on first launch, which would be wrong in a way the player can
-  immediately see.
+- **"Dropped" can be long on the first day**, because Steam's last-played history reaches back
+  years before the app was installed. → Accepted, and asked for. Those games really were abandoned;
+  a list that stayed empty until the app had watched them itself was withholding an answer it
+  already had. The list can be hidden by anyone who does not want it.
 
 - **"Quick wins" and "Almost done" depend on HowLongToBeat coverage.** Games without a match simply
   cannot appear. → Consistent with how the app already treats missing HLTB data, and the existing
   match-review surfaces are the remedy. Worth noting on the lists themselves so an absence reads as
   missing data rather than an empty library.
 
-- **Fifteen minutes will be wrong for someone.** A daily ten-minute puzzle habit registers as never
-  playing. → The cost of a lower threshold is worse: install checks and setting tweaks would count
-  as sessions, which breaks the case the threshold exists to handle. Fixed and visible, revisited
-  if it bites.
+- **A momentary launch now counts as play.** Opening a game to change a setting starts it and
+  un-drops it. → The honest reading of the fact, and the same one Steam's own library shows. The
+  previous threshold's cost — excluding every game the app never watched from Dropped — was far
+  larger than this.
+
+- **"Almost done" is empty until achievements have been fetched.** A library synced without
+  achievement data shows nothing there. → Correct rather than unfortunate: without achievements the
+  rule cannot be evaluated, and the alternative is a list built on the half of the condition that
+  produces false members. The screen says so, so an absence reads as missing data.
 
 - **Deriving on every read repeats work across screens.** → A single pass over a few hundred games
   against already-observed flows. If it ever registers, the fix is caching the derivation per

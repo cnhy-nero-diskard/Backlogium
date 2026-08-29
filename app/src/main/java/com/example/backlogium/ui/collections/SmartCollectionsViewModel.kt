@@ -2,26 +2,19 @@ package com.example.backlogium.ui.collections
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CollectionRepository
-import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
-import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.domain.AchievementDataState
 import com.example.backlogium.domain.CompletionBasis
-import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.GameSource
-import com.example.backlogium.domain.MeaningfulSessionSignals
 import com.example.backlogium.domain.SmartCollectionAchievementSignals
-import com.example.backlogium.domain.SmartCollectionGame
+import com.example.backlogium.domain.SmartCollectionFeed
 import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.domain.SmartCollectionMember
-import com.example.backlogium.domain.SmartCollections
-import com.example.backlogium.domain.smartCollectionPlaytimeMinutes
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
@@ -80,12 +73,6 @@ data class CollectionsUiState(
         get() = smartCollections.filter { !it.hidden && it.members.isNotEmpty() }
 }
 
-private data class SmartCollectionLibraryInputs(
-    val games: List<LibraryGame>,
-    val sessionsByGame: Map<Long, MeaningfulSessionSignals>,
-    val trackedMinutesByGame: Map<Long, Int>,
-)
-
 /** Fixed names are kept beside the derivation so the list and its detail view cannot diverge. */
 internal fun smartCollectionName(id: SmartCollectionId): String = when (id) {
     SmartCollectionId.QUICK_WINS -> "Quick wins"
@@ -98,88 +85,45 @@ internal fun smartCollectionName(id: SmartCollectionId): String = when (id) {
 /** The rule is visible at the point where each derived list is presented. */
 internal fun smartCollectionRule(id: SmartCollectionId): String = when (id) {
     SmartCollectionId.QUICK_WINS ->
-        "Never started, with a Main Story length of at most 6 hours. Sessions under 15 minutes do not count."
+        "Never started, with a Main Story length of at most 6 hours."
     SmartCollectionId.NEVER_STARTED ->
-        "No recorded playtime from Steam, imported history, or meaningful sessions. " +
-            "Sessions under 15 minutes do not count."
+        "No recorded playtime from Steam, imported history, or tracked sessions."
     SmartCollectionId.ALMOST_DONE ->
-        "At least 80% of Main Story, but not completed."
+        "At least 80% of Main Story and at least 80% of achievements unlocked, but not completed."
     SmartCollectionId.DROPPED ->
-        "More than 2 hours played, not completed, and no meaningful play in over 30 days. " +
-            "Sessions under 15 minutes do not count."
+        "More than 1.5 hours played, not completed, and not played in over 30 days."
     SmartCollectionId.COMPLETED ->
         "All achievements unlocked, or no achievements and playtime at least the Main Story length."
 }
 
 internal const val SMART_COLLECTION_MISSING_HLTB_NOTE =
-    "Lists that use Main Story length exclude games without a HowLongToBeat length."
+    "Lists that use Main Story length exclude games without a HowLongToBeat length, and Almost " +
+        "done excludes games whose achievements have not been fetched yet."
 
 @HiltViewModel
 class SmartCollectionsViewModel @Inject constructor(
     private val collectionRepository: CollectionRepository,
-    private val gameRepository: GameRepository,
-    private val achievementRepository: AchievementRepository,
-    private val sessionRepository: SessionRepository,
+    private val smartCollectionFeed: SmartCollectionFeed,
     private val settings: SettingsRepository,
     private val liveStatusRepository: LiveStatusRepository,
-    private val currentDate: CurrentDateProvider,
 ) : ViewModel() {
 
     private val smartCards: Flow<List<SmartCollectionCardUi>> = combine(
-        combine(
-            combine(
-                gameRepository.library,
-                sessionRepository.meaningfulSessionSignalsByGame,
-            ) { games, sessionsByGame -> games to sessionsByGame },
-            sessionRepository.trackedMinutesByGame,
-        ) { (games, sessionsByGame), trackedMinutesByGame ->
-            SmartCollectionLibraryInputs(
-                games = games,
-                sessionsByGame = sessionsByGame,
-                trackedMinutesByGame = trackedMinutesByGame,
-            )
-        },
-        combine(
-            achievementRepository.smartCollectionSignals,
-            currentDate.currentDate,
-            settings.smartCollectionVisibility,
-        ) { achievementsByGame, today, visibility -> Triple(achievementsByGame, today, visibility) },
+        smartCollectionFeed.snapshot,
+        settings.smartCollectionVisibility,
         liveStatusRepository.nowPlaying,
-    ) { library, (achievementsByGame, today, visibility), nowPlaying ->
-        val games = library.games
-        val sessionsByGame = library.sessionsByGame
+    ) { snapshot, visibility, nowPlaying ->
         val playingAppId = (nowPlaying as? NowPlaying.InGame)?.gameId
-        val result = SmartCollections.derive(
-            games = games.map { game ->
-                val meaningful = sessionsByGame[game.appId] ?: MeaningfulSessionSignals()
-                SmartCollectionGame(
-                    appId = game.appId,
-                    name = game.name,
-                    playtimeMinutes = smartCollectionPlaytimeMinutes(
-                        source = game.source,
-                        steamPlaytimeMinutes = game.playtimeForever,
-                        importedPlaytimeMinutes = game.backfillMinutes,
-                        totalSessionMinutes = library.trackedMinutesByGame[game.appId] ?: 0,
-                        meaningfulSessionMinutes = meaningful.meaningfulMinutes,
-                    ),
-                    mainStoryMinutes = game.mainStoryMinutes,
-                )
-            },
-            sessionsByGame = sessionsByGame,
-            achievementsByGame = achievementsByGame,
-            today = today,
-            sessionZone = currentDate.zone,
-        )
         SmartCollectionId.entries.map { id ->
             SmartCollectionCardUi(
                 id = id,
                 name = smartCollectionName(id),
                 rule = smartCollectionRule(id),
-                members = result[id].map { member ->
+                members = snapshot.result[id].map { member ->
                     member.toUi(
-                        games = games,
-                        achievementsByGame = achievementsByGame,
-                        sessionsByGame = sessionsByGame,
+                        games = snapshot.games,
+                        achievementsByGame = snapshot.achievementsByGame,
+                        sessionCountByGame = snapshot.sessionCountByGame,
                         playingAppId = playingAppId,
                     )
                 },
@@ -228,7 +172,7 @@ class SmartCollectionsViewModel @Inject constructor(
 private fun SmartCollectionMember.toUi(
     games: List<LibraryGame>,
     achievementsByGame: Map<Long, SmartCollectionAchievementSignals>,
-    sessionsByGame: Map<Long, MeaningfulSessionSignals>,
+    sessionCountByGame: Map<Long, Int>,
     playingAppId: Long?,
 ): SmartCollectionMemberUi {
     val libraryGame = games.firstOrNull { it.appId == game.appId }
@@ -246,7 +190,7 @@ private fun SmartCollectionMember.toUi(
         achievementsTotal = achievements
             ?.takeIf { it.state == AchievementDataState.HAS_ACHIEVEMENTS }
             ?.total,
-        sessionCount = sessionsByGame[game.appId]?.meaningfulSessionCount ?: 0,
+        sessionCount = sessionCountByGame[game.appId] ?: 0,
         completionistMinutes = libraryGame?.completionistMinutes,
         mainStoryMinutes = game.mainStoryMinutes,
         mainExtraMinutes = libraryGame?.mainExtraMinutes,

@@ -5,7 +5,6 @@ import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Update
 import com.example.backlogium.data.local.entity.Session
-import com.example.backlogium.domain.MEANINGFUL_SESSION_MINUTES
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -92,21 +91,6 @@ interface SessionDao {
     fun observeSessionCountsByGame(): Flow<List<GameSessionCounts>>
 
     /**
-     * Meaningful session signals for the whole library in one grouped pass. The existing
-     * `appId` index is named explicitly so SQLite can satisfy the grouping from that index rather
-     * than turning this into one lookup per game. Short sessions are deliberately filtered before
-     * the aggregate: a brief relaunch must not reset Dropped or count as play.
-     */
-    @Query(
-        "SELECT appId, COUNT(*) AS meaningfulSessionCount, " +
-            "MAX(COALESCE(endAt, startAt)) AS lastMeaningfulSessionAt, " +
-            "COALESCE(SUM(minutes), 0) AS meaningfulMinutes " +
-            "FROM sessions INDEXED BY index_sessions_appId " +
-            "WHERE minutes >= " + MEANINGFUL_SESSION_MINUTES + " GROUP BY appId",
-    )
-    fun observeMeaningfulSessionSignalsByGame(): Flow<List<GameMeaningfulSessionSignals>>
-
-    /**
      * Tracked minutes summed per game over sessions starting at or after [cutoff] (epoch millis).
      * Feeds the Analytics screen's most-played-games-in-the-window list, which is distinct from
      * the all-time [observeTrackedMinutesByGame] the Library's XP badge uses.
@@ -135,16 +119,21 @@ interface SessionDao {
     fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>>
 
     /**
-     * Each game's most recent recorded play, as `endAt` where the session has one and `startAt`
-     * where it is still open.
+     * Each game's most recent recorded play, observed. Feeds source-aware detail recency and the
+     * derived collections' idle test, where it stands in for Steam's own last-played stamp on a
+     * game Steam reports none for.
+     */
+    @Query("SELECT appId, MAX(COALESCE(endAt, startAt)) AS at FROM sessions GROUP BY appId")
+    fun observeLatestSessionInstantByGame(): Flow<List<GameSessionInstant>>
+
+    /**
+     * The same most recent recorded play, as `endAt` where the session has one and `startAt` where
+     * it is still open.
      *
      * Read by a poll *before* it overwrites `lastPlayedAt`, as one half of the previously-known
      * last-play time the dormancy evaluation compares against. Grouped for the same reason as
      * above: a poll examines the whole library.
      */
-    /** Each game's most recent session timestamp, observed for source-aware detail recency. */
-    @Query("SELECT appId, MAX(COALESCE(endAt, startAt)) AS at FROM sessions GROUP BY appId")
-    fun observeLatestSessionInstantByGame(): Flow<List<GameSessionInstant>>
     @Query("SELECT appId, MAX(COALESCE(endAt, startAt)) AS at FROM sessions GROUP BY appId")
     suspend fun latestSessionInstantByGame(): List<GameSessionInstant>
 }
@@ -161,11 +150,3 @@ data class GameSessionInstant(val appId: Long, val at: Long)
 
 /** Per-game session-count projection for collection overview metrics. */
 data class GameSessionCounts(val appId: Long, val sessions: Int)
-
-/** Per-game meaningful-session projection used by derived collections. */
-data class GameMeaningfulSessionSignals(
-    val appId: Long,
-    val meaningfulSessionCount: Int,
-    val lastMeaningfulSessionAt: Long?,
-    val meaningfulMinutes: Int,
-)

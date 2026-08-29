@@ -26,7 +26,7 @@ class SmartCollectionsTest {
                 expected = setOf(SmartCollectionId.NEVER_STARTED),
             ),
             fixture(
-                name = "short game with recorded imported playtime is not a quick win",
+                name = "short game with recorded playtime is not a quick win",
                 game = game(playtime = 10, mainStory = 240),
                 expected = emptySet(),
             ),
@@ -36,65 +36,83 @@ class SmartCollectionsTest {
                 expected = setOf(SmartCollectionId.NEVER_STARTED),
             ),
             fixture(
-                name = "imported playtime without session history is not dropped",
-                game = game(playtime = 300, mainStory = 600),
+                name = "playtime with no known last play is not dropped",
+                game = game(playtime = 300, mainStory = 600, lastPlayed = null),
                 achievements = noAchievements(),
                 expected = emptySet(),
             ),
             fixture(
-                name = "barely started game is not dropped",
-                game = game(playtime = 40, mainStory = 600),
-                session = oldSession(),
+                name = "steam's own last-played stamp supplies dropped recency",
+                game = game(playtime = 300, mainStory = 600, lastPlayed = today.minusDays(90)),
+                achievements = lockedAchievements(),
+                expected = setOf(SmartCollectionId.DROPPED),
+            ),
+            fixture(
+                name = "an hour of playtime is below the dropped floor",
+                game = game(playtime = 60, mainStory = 600, lastPlayed = today.minusDays(90)),
                 achievements = lockedAchievements(),
                 expected = emptySet(),
             ),
             fixture(
-                name = "recent meaningful play is not dropped",
-                game = game(playtime = 300, mainStory = 600),
-                session = session(today.minusDays(7)),
+                name = "exactly ninety minutes is still below the dropped floor",
+                game = game(playtime = 90, mainStory = 600, lastPlayed = today.minusDays(90)),
+                achievements = lockedAchievements(),
+                expected = emptySet(),
+            ),
+            fixture(
+                name = "ninety-one minutes clears the dropped floor",
+                game = game(playtime = 91, mainStory = 600, lastPlayed = today.minusDays(90)),
+                achievements = lockedAchievements(),
+                expected = setOf(SmartCollectionId.DROPPED),
+            ),
+            fixture(
+                name = "recent play is not dropped",
+                game = game(playtime = 300, mainStory = 600, lastPlayed = today.minusDays(7)),
                 achievements = lockedAchievements(),
                 expected = emptySet(),
             ),
             fixture(
                 name = "a game at exactly thirty idle days is not dropped",
-                game = game(playtime = 300, mainStory = 600),
-                session = session(today.minusDays(30)),
+                game = game(playtime = 300, mainStory = 600, lastPlayed = today.minusDays(30)),
                 achievements = lockedAchievements(),
                 expected = emptySet(),
             ),
             fixture(
                 name = "a game crossing the idle boundary is dropped",
-                game = game(playtime = 300, mainStory = 600),
-                session = session(today.minusDays(31)),
-                achievements = lockedAchievements(),
-                expected = setOf(SmartCollectionId.DROPPED),
-            ),
-            fixture(
-                name = "a brief relaunch does not rescue a dropped game",
-                game = game(playtime = 300, mainStory = 600),
-                // The ten-minute relaunch is filtered out before these signals reach the domain.
-                session = oldSession(),
-                achievements = lockedAchievements(),
-                expected = setOf(SmartCollectionId.DROPPED),
-            ),
-            fixture(
-                name = "a qualifying session supplies dropped recency",
-                game = game(playtime = 300, mainStory = 600),
-                session = session(today.minusDays(31)),
+                game = game(playtime = 300, mainStory = 600, lastPlayed = today.minusDays(31)),
                 achievements = lockedAchievements(),
                 expected = setOf(SmartCollectionId.DROPPED),
             ),
             fixture(
                 name = "nearly finished and abandoned game overlaps both lists",
-                game = game(playtime = 510, mainStory = 600),
-                session = oldSession(),
-                achievements = lockedAchievements(),
+                game = game(playtime = 510, mainStory = 600, lastPlayed = today.minusDays(31)),
+                achievements = nearlyUnlockedAchievements(),
                 expected = setOf(SmartCollectionId.ALMOST_DONE, SmartCollectionId.DROPPED),
             ),
             fixture(
-                name = "locked achievements prevent completion despite sufficient playtime",
+                name = "half-unlocked achievements keep a long-played game out of almost done",
+                game = game(playtime = 2_400, mainStory = 1_920),
+                achievements = SmartCollectionAchievementSignals(
+                    unlocked = 40,
+                    total = 100,
+                    state = AchievementDataState.HAS_ACHIEVEMENTS,
+                ),
+                expected = emptySet(),
+            ),
+            fixture(
+                name = "one locked achievement out of ten still qualifies as almost done",
                 game = game(playtime = 600, mainStory = 600),
-                achievements = lockedAchievements(),
+                achievements = SmartCollectionAchievementSignals(
+                    unlocked = 9,
+                    total = 10,
+                    state = AchievementDataState.HAS_ACHIEVEMENTS,
+                ),
+                expected = setOf(SmartCollectionId.ALMOST_DONE),
+            ),
+            fixture(
+                name = "an achievementless game is judged on playtime alone",
+                game = game(playtime = 500, mainStory = 600),
+                achievements = noAchievements(),
                 expected = setOf(SmartCollectionId.ALMOST_DONE),
             ),
             fixture(
@@ -131,21 +149,19 @@ class SmartCollectionsTest {
                 name = "missing achievement data does not trigger playtime fallback",
                 game = game(playtime = 600, mainStory = 600),
                 achievements = SmartCollectionAchievementSignals(),
-                expected = setOf(SmartCollectionId.ALMOST_DONE),
+                expected = emptySet(),
             ),
             fixture(
-                name = "a sub-threshold session alone is neither play nor dropped history",
-                game = game(playtime = 0, mainStory = 240),
-                // An under-fifteen-minute session is absent from the meaningful aggregate.
-                session = MeaningfulSessionSignals(),
-                expected = setOf(SmartCollectionId.QUICK_WINS, SmartCollectionId.NEVER_STARTED),
+                name = "unfetched achievements keep a game out of almost done, not out of dropped",
+                game = game(playtime = 510, mainStory = 600, lastPlayed = today.minusDays(31)),
+                achievements = SmartCollectionAchievementSignals(),
+                expected = setOf(SmartCollectionId.DROPPED),
             ),
         )
 
         fixtures.forEach { fixture ->
             val result = SmartCollections.derive(
                 games = listOf(fixture.game),
-                sessionsByGame = mapOf(fixture.game.appId to fixture.session),
                 achievementsByGame = mapOf(fixture.game.appId to fixture.achievements),
                 today = today,
             )
@@ -170,47 +186,14 @@ class SmartCollectionsTest {
     }
 
     @Test
-    fun shortOwnedSessionDoesNotBecomeDerivedPlaytime() {
-        val derivedPlaytime = smartCollectionPlaytimeMinutes(
-            source = GameSource.STEAM_OWNED,
-            steamPlaytimeMinutes = 10,
-            importedPlaytimeMinutes = 0,
-            totalSessionMinutes = 10,
-            meaningfulSessionMinutes = 0,
-        )
-
-        val result = SmartCollections.derive(
-            games = listOf(game(playtime = derivedPlaytime, mainStory = 240)),
-            sessionsByGame = emptyMap(),
-            achievementsByGame = emptyMap(),
-            today = today,
-        )
-
-        assertEquals(0, derivedPlaytime)
-        assertTrue(result.neverStarted.isNotEmpty())
-        assertTrue(result.quickWins.isNotEmpty())
-    }
-
-    @Test
-    fun importedAndMeaningfulPlaytimeSurviveShortSessionFiltering() {
+    fun ownedPlaytimePrefersSteamsTotalAndFallsBackToObservedHistory() {
         assertEquals(
-            100,
+            110,
             smartCollectionPlaytimeMinutes(
                 source = GameSource.STEAM_OWNED,
                 steamPlaytimeMinutes = 110,
                 importedPlaytimeMinutes = 100,
-                totalSessionMinutes = 10,
-                meaningfulSessionMinutes = 0,
-            ),
-        )
-        assertEquals(
-            15,
-            smartCollectionPlaytimeMinutes(
-                source = GameSource.FAMILY_SHARED,
-                steamPlaytimeMinutes = 0,
-                importedPlaytimeMinutes = 0,
-                totalSessionMinutes = 15,
-                meaningfulSessionMinutes = 15,
+                sessionMinutes = 10,
             ),
         )
         assertEquals(
@@ -219,10 +202,38 @@ class SmartCollectionsTest {
                 source = GameSource.STEAM_OWNED,
                 steamPlaytimeMinutes = 100,
                 importedPlaytimeMinutes = 100,
-                totalSessionMinutes = 20,
-                meaningfulSessionMinutes = 20,
+                sessionMinutes = 20,
             ),
         )
+        assertEquals(
+            15,
+            smartCollectionPlaytimeMinutes(
+                source = GameSource.FAMILY_SHARED,
+                steamPlaytimeMinutes = 0,
+                importedPlaytimeMinutes = 0,
+                sessionMinutes = 15,
+            ),
+        )
+    }
+
+    @Test
+    fun anyTrackedSessionCountsAsPlay() {
+        val derivedPlaytime = smartCollectionPlaytimeMinutes(
+            source = GameSource.FAMILY_SHARED,
+            steamPlaytimeMinutes = 0,
+            importedPlaytimeMinutes = 0,
+            sessionMinutes = 10,
+        )
+
+        val result = SmartCollections.derive(
+            games = listOf(game(playtime = derivedPlaytime, mainStory = 240)),
+            achievementsByGame = emptyMap(),
+            today = today,
+        )
+
+        assertEquals(10, derivedPlaytime)
+        assertTrue(result.neverStarted.isEmpty())
+        assertTrue(result.quickWins.isEmpty())
     }
 
     @Test
@@ -230,7 +241,6 @@ class SmartCollectionsTest {
         val game = game(playtime = 0, mainStory = 240)
         val result = SmartCollections.derive(
             games = listOf(game),
-            sessionsByGame = emptyMap(),
             achievementsByGame = mapOf(game.appId to noAchievements()),
             today = today,
         )
@@ -245,11 +255,10 @@ class SmartCollectionsTest {
         val game = game(playtime = 600, mainStory = 600)
         val result = SmartCollections.derive(
             games = listOf(game),
-            sessionsByGame = emptyMap(),
             achievementsByGame = mapOf(
                 game.appId to SmartCollectionAchievementSignals(
-                    unlocked = 2,
-                    total = 3,
+                    unlocked = 9,
+                    total = 10,
                     state = AchievementDataState.HAS_ACHIEVEMENTS,
                 ),
             ),
@@ -263,7 +272,6 @@ class SmartCollectionsTest {
     private data class Fixture(
         val name: String,
         val game: SmartCollectionGame,
-        val session: MeaningfulSessionSignals,
         val achievements: SmartCollectionAchievementSignals,
         val expected: Set<SmartCollectionId>,
         val completionBasis: CompletionBasis? = null,
@@ -273,30 +281,32 @@ class SmartCollectionsTest {
         name: String,
         game: SmartCollectionGame,
         expected: Set<SmartCollectionId>,
-        session: MeaningfulSessionSignals = MeaningfulSessionSignals(),
         achievements: SmartCollectionAchievementSignals = SmartCollectionAchievementSignals(),
         completionBasis: CompletionBasis? = null,
-    ) = Fixture(name, game, session, achievements, expected, completionBasis)
+    ) = Fixture(name, game, achievements, expected, completionBasis)
 
-    private fun game(playtime: Int, mainStory: Int?, appId: Long = nextId++) =
-        SmartCollectionGame(
-            appId = appId,
-            name = "Game $appId",
-            playtimeMinutes = playtime,
-            mainStoryMinutes = mainStory,
-        )
-
-    private fun session(date: LocalDate) = MeaningfulSessionSignals(
-        meaningfulSessionCount = 1,
-        lastMeaningfulSessionAt = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
-        meaningfulMinutes = MEANINGFUL_SESSION_MINUTES,
+    private fun game(
+        playtime: Int,
+        mainStory: Int?,
+        lastPlayed: LocalDate? = null,
+        appId: Long = nextId++,
+    ) = SmartCollectionGame(
+        appId = appId,
+        name = "Game $appId",
+        playtimeMinutes = playtime,
+        mainStoryMinutes = mainStory,
+        lastPlayedAt = lastPlayed?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli(),
     )
-
-    private fun oldSession() = session(today.minusDays(31))
 
     private fun lockedAchievements() = SmartCollectionAchievementSignals(
         unlocked = 1,
         total = 2,
+        state = AchievementDataState.HAS_ACHIEVEMENTS,
+    )
+
+    private fun nearlyUnlockedAchievements() = SmartCollectionAchievementSignals(
+        unlocked = 8,
+        total = 10,
         state = AchievementDataState.HAS_ACHIEVEMENTS,
     )
 
