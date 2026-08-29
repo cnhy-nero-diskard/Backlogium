@@ -47,14 +47,14 @@
 
 ## 7. Surfaces
 
-- [ ] 7.1 Add the wishlist section to the Library, reachable without displacing the owned lists
-- [ ] 7.2 Present entries with artwork, name, price, and discount, in Steam's priority order
-- [ ] 7.3 Make wishlist entries distinguishable from owned entries without relying on colour alone
-- [ ] 7.4 Present each price state distinctly: current, retained with its date, unavailable, never observed — none rendered in a way that reads as a price
-- [ ] 7.5 Distinguish an empty wishlist from an unreadable one, and explain the latter
-- [ ] 7.6 Add the Steam store link per entry, offered even when no price is available
-- [ ] 7.7 Hide the section entirely when no Steam credentials are configured
-- [ ] 7.8 Verify the owned Library's sorting, grouping, density, and search are unchanged
+- [x] 7.1 Add the wishlist section to the Library, reachable without displacing the owned lists
+- [x] 7.2 Present entries with artwork, name, price, and discount, in Steam's priority order
+- [x] 7.3 Make wishlist entries distinguishable from owned entries without relying on colour alone
+- [x] 7.4 Present each price state distinctly: current, retained with its date, unavailable, never observed — none rendered in a way that reads as a price
+- [x] 7.5 Distinguish an empty wishlist from an unreadable one, and explain the latter
+- [x] 7.6 Add the Steam store link per entry, offered even when no price is available
+- [x] 7.7 Hide the section entirely when no Steam credentials are configured
+- [x] 7.8 Verify the owned Library's sorting, grouping, density, and search are unchanged
 
 ## 8. Verification
 

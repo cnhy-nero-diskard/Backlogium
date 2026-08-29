@@ -58,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -149,8 +150,11 @@ fun LibraryScreen(
     onOpenReview: () -> Unit = {},
     onOpenGameDetail: (Long) -> Unit = {},
     viewModel: LibraryViewModel = hiltViewModel(),
+    wishlistViewModel: WishlistViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val wishlistState by wishlistViewModel.uiState.collectAsStateWithLifecycle()
+    val uriHandler = LocalUriHandler.current
     val haptics = rememberHaptics()
     var dialogTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
     var pickerTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
@@ -294,6 +298,17 @@ fun LibraryScreen(
                         onStop = viewModel::stopHltbRefresh,
                     )
                 }
+            }
+
+            // Above the owned lists, and only while nothing is being searched or filtered:
+            // those controls act on the owned library, and an unfiltered wishlist sitting under a
+            // query would read as a result of it.
+            if (state.query.isBlank() && selectedGenreSet.isEmpty()) {
+                wishlistSection(
+                    state = wishlistState,
+                    onToggle = wishlistViewModel::setExpanded,
+                    onOpenStore = { uriHandler.openUri(it.storeUrl) },
+                )
             }
 
             if (visibleGoalGames.isNotEmpty()) {
