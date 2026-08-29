@@ -482,6 +482,7 @@ class LiveStatusRepositoryTest {
         override fun observeGoalGames(): Flow<List<Game>> = error("not used")
         override fun observeBacklog(): Flow<List<Game>> = error("not used")
         override suspend fun allAppIds(): List<Long> = error("not used")
+        override fun observeAppIds(): Flow<List<Long>> = error("not used")
         override suspend fun getAll(): List<Game> = error("not used")
         override suspend fun getById(appId: Long): Game? = games.firstOrNull { it.appId == appId }
         override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = error("not used")

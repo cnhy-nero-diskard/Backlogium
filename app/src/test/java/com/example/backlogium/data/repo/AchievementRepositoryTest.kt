@@ -647,6 +647,7 @@ class AchievementRepositoryTest {
         override fun observeGoalGames(): Flow<List<Game>> = error("not used")
         override fun observeBacklog(): Flow<List<Game>> = error("not used")
         override suspend fun allAppIds(): List<Long> = games.map { it.appId }
+        override fun observeAppIds(): Flow<List<Long>> = flowOf(games.map { it.appId })
         override suspend fun getAll(): List<Game> = games.toList()
         override suspend fun getById(appId: Long): Game? = games.firstOrNull { it.appId == appId }
         override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = error("not used")

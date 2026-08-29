@@ -92,6 +92,14 @@ interface GameDao {
     suspend fun allAppIds(): List<Long>
 
     /**
+     * The same ids as a stream, for the wishlist's ownership reconciliation. Observed rather than
+     * read once so a game first reported as owned by a sync stops being presented as wanted
+     * without waiting for a wishlist refresh.
+     */
+    @Query("SELECT appId FROM games")
+    fun observeAppIds(): Flow<List<Long>>
+
+    /**
      * Insert a family-shared game admitted from observed presence. `INSERT OR IGNORE`, so a second
      * observation of an already-admitted game is a no-op rather than a duplicate or an overwrite.
      *

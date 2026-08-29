@@ -23,11 +23,11 @@
 
 ## 4. Storage
 
-- [ ] 4.1 Add a `wishlist_items` table — app id, name, artwork, priority, date added, last seen — with no foreign key to `games`
-- [ ] 4.2 Add a `wishlist_price_observations` table appending each observation with its timestamp, never overwriting
-- [ ] 4.3 Add the migration for both
-- [ ] 4.4 Add a repository exposing wishlist entries and their latest observed price as domain models, keeping entities inside `data/`
-- [ ] 4.5 Verify no wishlist row can reach any owned-library query, count, XP denominator, or analytic
+- [x] 4.1 Add a `wishlist_items` table — app id, name, artwork, priority, date added, last seen — with no foreign key to `games`
+- [x] 4.2 Add a `wishlist_price_observations` table appending each observation with its timestamp, never overwriting
+- [x] 4.3 Add the migration for both
+- [x] 4.4 Add a repository exposing wishlist entries and their latest observed price as domain models, keeping entities inside `data/`
+- [x] 4.5 Verify no wishlist row can reach any owned-library query, count, XP denominator, or analytic
 
 ## 5. Refresh and reconciliation
 
