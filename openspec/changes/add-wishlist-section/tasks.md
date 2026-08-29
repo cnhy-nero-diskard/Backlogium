@@ -58,9 +58,9 @@
 
 ## 8. Verification
 
-- [ ] 8.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and `./gradlew assembleDebug`
-- [ ] 8.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
-- [ ] 8.3 Confirm no wishlist data reaches library counts, XP, completion figures, or Analytics
+- [x] 8.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and `./gradlew assembleDebug`
+- [x] 8.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
+- [x] 8.3 Confirm no wishlist data reaches library counts, XP, completion figures, or Analytics
 - [ ] 8.4 Manually verify prices render in the expected currency for the configured profile region
 - [ ] 8.5 Manually verify a wishlist containing at least one free-to-play game refreshes without failing the whole batch
 - [ ] 8.6 Manually verify airplane mode: entries and dated prices remain, nothing errors
