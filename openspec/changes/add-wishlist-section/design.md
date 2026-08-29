@@ -177,3 +177,104 @@ same spirit as the standing requirement that the app work with no network and no
 - **A wishlist section invites the purchase-decision features it explicitly excludes.** → Named as
   a non-goal rather than left implicit, so the next change makes that case on its own terms instead
   of arriving as scope creep here.
+
+## Observed responses
+
+Recorded during implementation (tasks 1.1–1.4). Every shape below was returned by a live request,
+not inferred, because both endpoints are undocumented and the failure paths are built against what
+they actually answer.
+
+### The wishlist list
+
+`GET https://api.steampowered.com/IWishlistService/GetWishlist/v1/?steamid=<id>`, no API key — the
+endpoint answers for any publicly readable wishlist, so the app does not spend a credential on it.
+
+```json
+{"response":{"items":[
+  {"appid":1620,"priority":0,"date_added":1572456900},
+  {"appid":34180,"priority":879,"date_added":1549370695}
+]}}
+```
+
+Three fields and no more: `appid`, `priority` (0 for an unprioritized entry), and `date_added` in
+epoch **seconds**. **No name and no artwork** — those have to come from somewhere else, which is
+what fixes the shape of section 3 below.
+
+An unreadable wishlist answers `HTTP 200` with `{"response":{}}` — the `items` key is *absent*,
+not an empty array. That is the only signal available, so the app reads a missing `items` as
+"cannot be read" and an `items: []` as "empty". Conflating them is what the app must not do;
+erring towards "unavailable" is the direction the spec asks for, since an unreadable wishlist
+appearing empty is the failure worth preventing.
+
+*Coverage note:* probed against public Steam IDs, not against a configured account — this checkout
+has no Steam credentials in `local.properties`. The authenticated case (does a key let the owner
+read their own private wishlist?) is unprobed, and the app assumes it does not.
+
+### Prices
+
+`GET https://store.steampowered.com/api/appdetails?appids=<csv>&cc=<code>&filters=price_overview`.
+
+A paid app, and the same app discounted:
+
+```json
+"292030":{"success":true,"data":{"price_overview":{
+  "currency":"PHP","initial":209900,"final":209900,"discount_percent":0,
+  "initial_formatted":"","final_formatted":"P2,099.00"}}}
+
+"1174180":{"success":true,"data":{"price_overview":{
+  "currency":"PHP","initial":339900,"final":84975,"discount_percent":75,
+  "initial_formatted":"P3,399.00","final_formatted":"P849.75"}}}
+```
+
+`initial_formatted` is **empty at full price** and carries the struck-through list price only while
+a discount is active. Reading it as "the price before discount" unconditionally would render an
+empty string where a price belongs, so `final_formatted` is the one field always safe to show.
+
+`cc` behaves as the design assumed: `cc=US` returns `USD`/`$49.99` for the same app that `cc=PH`
+prices at `PHP`/`P2,099.00`, and **omitting `cc` entirely** returns a region Steam resolves from
+the request rather than an error — which is exactly what decision 4's fallback needs.
+
+Three distinct per-app outcomes, all inside one `HTTP 200`:
+
+| Response | Meaning |
+|---|---|
+| `{"success":true,"data":{"price_overview":{…}}}` | a price |
+| `{"success":true,"data":[]}` | the app has no price (free, unreleased, not sold here) |
+| `{"success":false}` | Steam will not describe this app id at all — no `data` key |
+
+The third was not anticipated by the original design and matters: `success:false` is not the same
+answer as `data: []`. It says nothing about whether a price exists, so it is retained-not-observed
+rather than a recorded "no price".
+
+### Batch ceiling
+
+Probed at 391 ids and again at **1191 ids** in a single request: both returned `HTTP 200` with an
+entry for every id requested. There is no low ceiling to design around — `filters=price_overview`
+is what makes the endpoint answer for a whole list at once.
+
+The chunk size is nonetheless **100**, well under anything observed to fail. The limit that bites
+first is URL length rather than a documented app cap, and a wishlist of any realistic size is one
+or two requests either way; a conservative chunk buys a failed chunk that costs a hundred prices
+instead of all of them, for no extra requests in the common case.
+
+`filters` is also what makes batching work at all: `filters=basic` and `filters=price_overview,basic`
+over several ids both return a bare `null`. **Only the price filter batches.** That is why names
+and artwork cannot ride along on this request.
+
+### Names and artwork
+
+Since the wishlist carries no names and `appdetails` will not batch anything but prices, entry
+details come from `IStoreBrowseService/GetItems/v1` — the same endpoint Steam's own wishlist page
+uses. Credential-free, batched, and it returns `name` plus an `assets` block:
+
+```json
+{"response":{"store_items":[{"id":440,"success":1,"visible":true,"name":"Team Fortress 2",
+  "assets":{"asset_url_format":"steam/apps/440/${FILENAME}?t=1757348372","header":"header.jpg",…}}]}}
+```
+
+`asset_url_format` is the store's own answer for where an app's art lives, cache-busting timestamp
+included, so the stored artwork URL is observed rather than a guessed CDN path — with
+`SteamIconMapper.headerUrl` as the fallback when an entry carries no assets.
+
+This is one added request shape, not a per-game fan-out: names and prices are each one batched call
+per chunk.

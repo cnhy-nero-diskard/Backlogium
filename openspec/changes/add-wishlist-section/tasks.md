@@ -1,9 +1,9 @@
 ## 1. Verify the endpoints before building on them
 
-- [ ] 1.1 Confirm `IWishlistService/GetWishlist/v1` answers for the configured Steam ID, and record the response shape — appid, priority, date added — in `design.md`
-- [ ] 1.2 Confirm a price-filtered `appdetails` request against a **paid** app returns `price_overview` with currency, initial, final, discount percent, and formatted string, and that `cc` yields the expected currency; record it in `design.md`
-- [ ] 1.3 Probe the batch ceiling with a realistic id count and record the chunk size chosen and why
-- [ ] 1.4 Record what a private wishlist returns, so the unavailable path is built against an observed response rather than a guess
+- [x] 1.1 Confirm `IWishlistService/GetWishlist/v1` answers for the configured Steam ID, and record the response shape — appid, priority, date added — in `design.md`
+- [x] 1.2 Confirm a price-filtered `appdetails` request against a **paid** app returns `price_overview` with currency, initial, final, discount percent, and formatted string, and that `cc` yields the expected currency; record it in `design.md`
+- [x] 1.3 Probe the batch ceiling with a realistic id count and record the chunk size chosen and why
+- [x] 1.4 Record what a private wishlist returns, so the unavailable path is built against an observed response rather than a guess
 
 ## 2. Store region
 
