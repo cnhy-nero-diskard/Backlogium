@@ -2,6 +2,7 @@ package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.domain.MeaningfulSessionSignals
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -66,6 +67,18 @@ class SessionRepository @Inject constructor(
     /** Synthesized session count per game, keyed by appId. */
     val sessionCountByGame: Flow<Map<Long, Int>> = sessionDao.observeSessionCountsByGame()
         .map { rows -> rows.associate { it.appId to it.sessions } }
+
+    /** Meaningful session count, latest meaningful play, and meaningful minutes per game. */
+    val meaningfulSessionSignalsByGame: Flow<Map<Long, MeaningfulSessionSignals>> =
+        sessionDao.observeMeaningfulSessionSignalsByGame().map { rows ->
+            rows.associate { row ->
+                row.appId to MeaningfulSessionSignals(
+                    meaningfulSessionCount = row.meaningfulSessionCount,
+                    lastMeaningfulSessionAt = row.lastMeaningfulSessionAt,
+                    meaningfulMinutes = row.meaningfulMinutes,
+                )
+            }
+        }
 
     /**
      * Tracked minutes summed per game over sessions starting at or after [cutoffMillis], keyed

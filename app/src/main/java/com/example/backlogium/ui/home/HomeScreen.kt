@@ -130,6 +130,7 @@ fun HomeScreen(
     onAccentColorChanged: (Color?) -> Unit = {},
     onOpenCollection: (Long) -> Unit = {},
     onCreateCollection: () -> Unit = {},
+    onOpenCollections: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -262,6 +263,7 @@ fun HomeScreen(
             },
             onOpenCollection = onOpenCollection,
             onCreateCollection = onCreateCollection,
+            onOpenCollections = onOpenCollections,
             scrollState = scrollState,
             scrollViewport = scrollViewport,
             onReorderCollections = viewModel::reorderCollections,
@@ -279,6 +281,7 @@ private fun InnerHomeContent(
     onSyncNow: () -> Unit,
     onOpenCollection: (Long) -> Unit,
     onCreateCollection: () -> Unit,
+    onOpenCollections: () -> Unit,
     scrollState: ScrollState,
     scrollViewport: Rect?,
     onReorderCollections: (List<Long>) -> Unit,
@@ -518,6 +521,7 @@ private fun InnerHomeContent(
             cards = state.collections,
             onOpenCollection = onOpenCollection,
             onCreateCollection = onCreateCollection,
+            onOpenCollections = onOpenCollections,
             scrollState = scrollState,
             scrollViewport = scrollViewport,
             onReorderCollections = onReorderCollections,
@@ -547,6 +551,7 @@ private fun CollectionsSection(
     cards: List<HomeCollectionCard>,
     onOpenCollection: (Long) -> Unit,
     onCreateCollection: () -> Unit,
+    onOpenCollections: () -> Unit,
     scrollState: ScrollState,
     scrollViewport: Rect?,
     onReorderCollections: (List<Long>) -> Unit,
@@ -600,10 +605,14 @@ private fun CollectionsSection(
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Collections", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Collections",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onOpenCollections) { Text("View all") }
             TextButton(onClick = onCreateCollection) { Text("New") }
         }
         if (cards.isEmpty()) {

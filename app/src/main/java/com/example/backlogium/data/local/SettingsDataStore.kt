@@ -12,6 +12,8 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
+import com.example.backlogium.domain.SmartCollectionId
+import com.example.backlogium.domain.SmartCollectionVisibility
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.domain.PendingStreakBreak
@@ -64,6 +66,7 @@ class SettingsDataStore @Inject constructor(
         val LIBRARY_ALL_SORT_DIRECTION = stringPreferencesKey("library_all_sort_direction")
         val LIBRARY_DENSITY = stringPreferencesKey("library_density")
         val COLLECTION_DENSITY = stringPreferencesKey("collection_density")
+        val SMART_COLLECTIONS_HIDDEN = stringSetPreferencesKey("smart_collections_hidden")
         val AUTO_SNAPSHOT_ENABLED = booleanPreferencesKey("auto_snapshot_enabled")
         val SNAPSHOT_RETENTION_COUNT = intPreferencesKey("snapshot_retention_count")
         val SNAPSHOT_INTERVAL_HOURS = intPreferencesKey("snapshot_interval_hours")
@@ -337,6 +340,25 @@ class SettingsDataStore @Inject constructor(
 
     suspend fun setCollectionDensity(density: GameListDensity) {
         context.dataStore.edit { it[Keys.COLLECTION_DENSITY] = density.name }
+    }
+
+    /** Hidden derived collections; absent or malformed ids default to visible. */
+    val smartCollectionVisibilityFlow: Flow<SmartCollectionVisibility> = context.dataStore.data.map { prefs ->
+        SmartCollectionVisibility(
+            hidden = prefs[Keys.SMART_COLLECTIONS_HIDDEN].orEmpty()
+                .mapNotNull { raw -> runCatching { SmartCollectionId.valueOf(raw) }.getOrNull() }
+                .toSet(),
+        )
+    }
+
+    suspend fun setSmartCollectionVisibility(visibility: SmartCollectionVisibility) {
+        context.dataStore.edit { prefs ->
+            if (visibility.hidden.isEmpty()) {
+                prefs.remove(Keys.SMART_COLLECTIONS_HIDDEN)
+            } else {
+                prefs[Keys.SMART_COLLECTIONS_HIDDEN] = visibility.hidden.mapTo(mutableSetOf()) { it.name }
+            }
+        }
     }
 
     /**

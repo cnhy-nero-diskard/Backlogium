@@ -286,6 +286,7 @@ private fun CollectionOverview(
     val summarySurface = accentColor.copy(alpha = 0.12f)
         .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
     val trophyProgress = trophyProgress(state.members)
+    val hasFamilySharedMembers = state.members.any { it.isFamilyShared }
     val banner = state.banner ?: return
     var showDeadlinePicker by remember { mutableStateOf(false) }
 
@@ -348,7 +349,7 @@ private fun CollectionOverview(
                             modifier = Modifier.weight(1f),
                         )
                         CollectionMetric(
-                            label = "Played",
+                            label = collectionPlaytimeMetricLabel(hasFamilySharedMembers),
                             value = UiFormat.minutes(state.members.sumOf { it.playtimeMinutes }),
                             modifier = Modifier.weight(1f),
                         )
@@ -757,7 +758,24 @@ private fun CollectionCompletionProgress(member: CollectionMemberUi) {
     )
 }
 
-private fun LazyListScope.collectionMemberItems(
+/** Explains the rule that placed a member in the derived Completed collection. */
+@Composable
+private fun CollectionCompletionBasis(member: CollectionMemberUi) {
+    val label = when (member.completionBasis) {
+        com.example.backlogium.domain.CompletionBasis.ACHIEVEMENTS ->
+            "Completed by achievements"
+        com.example.backlogium.domain.CompletionBasis.PLAYTIME ->
+            "Completed by playtime"
+        null -> return
+    }
+    Text(
+        text = label,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.primary,
+    )
+}
+
+internal fun LazyListScope.collectionMemberItems(
     members: List<CollectionMemberUi>,
     density: GameListDensity,
     accentColor: Color,
@@ -869,7 +887,7 @@ private fun CollectionGameCard(
                         )
                         if (density.showsPlaytime) {
                             Text(
-                                text = "${UiFormat.minutes(member.playtimeMinutes)} played · " +
+                                text = "${collectionPlaytimeText(member, includePlayedLabel = true)} · " +
                                     sessionLabel(member.sessionCount),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -879,6 +897,7 @@ private fun CollectionGameCard(
                         if (density.showsCompletionProgress) {
                             CollectionCompletionProgress(member)
                         }
+                        CollectionCompletionBasis(member)
                         if (density.showsAchievementCount) {
                             TrophyLabel(member = member, accentColor = accentColor)
                         }
@@ -965,7 +984,7 @@ private fun CollectionGameTile(
                 )
                 if (density.showsPlaytime) {
                     Text(
-                        text = UiFormat.minutes(member.playtimeMinutes),
+                        text = collectionPlaytimeText(member),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -973,6 +992,7 @@ private fun CollectionGameTile(
                 if (density.showsCompletionProgress) {
                     CollectionCompletionProgress(member)
                 }
+                CollectionCompletionBasis(member)
                 // The ladder is a property of the density, not of the surface: the achievement
                 // count reaches the least dense grid here for the same reason it does in the
                 // Library.
@@ -1027,6 +1047,21 @@ private fun trophyProgress(members: List<CollectionMemberUi>): Pair<Int, Int>? {
 private fun sessionLabel(count: Int): String = when (count) {
     1 -> "1 session"
     else -> "$count sessions"
+}
+
+internal fun collectionPlaytimeMetricLabel(hasFamilySharedMembers: Boolean): String =
+    if (hasFamilySharedMembers) "Played (includes observed shared time)" else "Played"
+
+private fun collectionPlaytimeText(
+    member: CollectionMemberUi,
+    includePlayedLabel: Boolean = false,
+): String {
+    val suffix = when {
+        member.isFamilyShared -> " observed"
+        includePlayedLabel -> " played"
+        else -> ""
+    }
+    return UiFormat.minutes(member.playtimeMinutes) + suffix
 }
 
 /** Actions raised by the stateless collection management form renderer. */

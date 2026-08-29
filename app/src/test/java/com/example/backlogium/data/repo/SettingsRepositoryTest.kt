@@ -96,4 +96,30 @@ class SettingsRepositoryTest {
 
         assertTrue(repository.pendingSessionEnds.first().isEmpty())
     }
+
+    @Test
+    fun smartCollectionVisibility_defaultsVisible_andPersistsAcrossRepositoryInstances() = runTest {
+        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val repository = DataStoreSettingsRepository(dataStore)
+
+        assertTrue(repository.smartCollectionVisibility.first().isVisible(
+            com.example.backlogium.domain.SmartCollectionId.DROPPED,
+        ))
+
+        repository.setSmartCollectionVisibility(
+            com.example.backlogium.domain.SmartCollectionVisibility(
+                hidden = setOf(com.example.backlogium.domain.SmartCollectionId.DROPPED),
+            ),
+        )
+
+        val reopenedRepository = DataStoreSettingsRepository(
+            SettingsDataStore(RuntimeEnvironment.getApplication()),
+        )
+        assertFalse(reopenedRepository.smartCollectionVisibility.first().isVisible(
+            com.example.backlogium.domain.SmartCollectionId.DROPPED,
+        ))
+        assertTrue(reopenedRepository.smartCollectionVisibility.first().isVisible(
+            com.example.backlogium.domain.SmartCollectionId.QUICK_WINS,
+        ))
+    }
 }

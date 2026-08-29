@@ -6,6 +6,7 @@ import com.example.backlogium.data.local.dao.AchievementRarity
 import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.GameMeaningfulSessionSignals
 import com.example.backlogium.data.local.dao.GameSessionCounts
 import com.example.backlogium.data.local.dao.GameSessionInstant
 import com.example.backlogium.data.local.dao.GameTrackedMinutes
@@ -85,6 +86,19 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
     override fun observeSessionCountsByGame(): Flow<List<GameSessionCounts>> = flowOf(
         sessions.groupBy { it.appId }
             .map { (appId, group) -> GameSessionCounts(appId, group.size) },
+    )
+
+    override fun observeMeaningfulSessionSignalsByGame(): Flow<List<GameMeaningfulSessionSignals>> = flowOf(
+        sessions.filter { it.minutes >= MEANINGFUL_SESSION_MINUTES }
+            .groupBy { it.appId }
+            .map { (appId, group) ->
+                GameMeaningfulSessionSignals(
+                    appId = appId,
+                    meaningfulSessionCount = group.size,
+                    lastMeaningfulSessionAt = group.maxOfOrNull { it.endAt ?: it.startAt },
+                    meaningfulMinutes = group.sumOf { it.minutes },
+                )
+            },
     )
 }
 

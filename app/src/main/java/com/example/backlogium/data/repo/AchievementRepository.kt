@@ -14,6 +14,8 @@ import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.dto.AchievementSchemaDto
 import com.example.backlogium.data.remote.dto.PlayerAchievementDto
+import com.example.backlogium.domain.AchievementDataState
+import com.example.backlogium.domain.SmartCollectionAchievementSignals
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -105,6 +107,32 @@ class AchievementRepository @Inject constructor(
     /** Unlocked/total achievement counts, keyed by appId — feeds the Library row badge. */
     val counts: Flow<Map<Long, AchievementCounts>> = achievementDao.observeCounts()
         .map { it.associateBy(AchievementCounts::appId) }
+
+    /**
+     * Completion inputs for derived collections. A sync row with `hasAchievements = false` is a
+     * confirmed no-achievement result; a missing row or nullable legacy value remains NOT_FETCHED
+     * so a playtime fallback cannot guess completion from absent data.
+     */
+    val smartCollectionSignals: Flow<Map<Long, SmartCollectionAchievementSignals>> = combine(
+        achievementDao.observeCounts(),
+        gameAchievementSyncDao.observeAll(),
+    ) { counts, syncRows ->
+        val countsByAppId = counts.associateBy(AchievementCounts::appId)
+        syncRows.associate { row ->
+            val count = countsByAppId[row.appId]
+            row.appId to when (row.hasAchievements) {
+                true -> SmartCollectionAchievementSignals(
+                    unlocked = count?.unlocked ?: 0,
+                    total = count?.total ?: 0,
+                    state = AchievementDataState.HAS_ACHIEVEMENTS,
+                )
+                false -> SmartCollectionAchievementSignals(
+                    state = AchievementDataState.NO_ACHIEVEMENTS,
+                )
+                null -> SmartCollectionAchievementSignals()
+            }
+        }
+    }
 
     /**
      * Per-game rarity snapshots of unlocked achievements, keyed by appId — the achievement half of

@@ -15,6 +15,7 @@ fun HomeRoute(
     onAccentColorChanged: (Color?) -> Unit = {},
     onOpenCollection: (Long) -> Unit = {},
     onCreateCollection: () -> Unit = {},
+    onOpenCollections: () -> Unit = {},
     onOpenLibrary: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
@@ -25,6 +26,7 @@ fun HomeRoute(
             onAccentColorChanged = onAccentColorChanged,
             onOpenCollection = onOpenCollection,
             onCreateCollection = onCreateCollection,
+            onOpenCollections = onOpenCollections,
             viewModel = viewModel,
         )
 

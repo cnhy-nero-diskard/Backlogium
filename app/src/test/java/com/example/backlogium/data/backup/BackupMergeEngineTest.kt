@@ -953,6 +953,19 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     )
 
     override fun observeSessionCountsByGame(): Flow<List<GameSessionCounts>> = flowOf(emptyList())
+
+    override fun observeMeaningfulSessionSignalsByGame(): Flow<List<com.example.backlogium.data.local.dao.GameMeaningfulSessionSignals>> = flowOf(
+        store.filter { it.minutes >= com.example.backlogium.domain.MEANINGFUL_SESSION_MINUTES }
+            .groupBy { it.appId }
+            .map { (appId, sessions) ->
+                com.example.backlogium.data.local.dao.GameMeaningfulSessionSignals(
+                    appId = appId,
+                    meaningfulSessionCount = sessions.size,
+                    lastMeaningfulSessionAt = sessions.maxOfOrNull { it.endAt ?: it.startAt },
+                    meaningfulMinutes = sessions.sumOf { it.minutes },
+                )
+            },
+    )
 }
 
 private class FakeDailyProgressDao(private val store: MutableMap<String, DailyProgress>) : DailyProgressDao {

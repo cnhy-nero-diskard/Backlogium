@@ -62,4 +62,13 @@ class CollectionPacingPresentationTest {
         assertEquals(DeadlineUrgency.DUE_OR_PAST, deadlineUrgency(0))
         assertEquals(DeadlineUrgency.DUE_OR_PAST, deadlineUrgency(-1))
     }
+
+    @Test
+    fun collectionPlaytimeMetricLabel_disclosesObservedSharedTime() {
+        assertEquals("Played", collectionPlaytimeMetricLabel(hasFamilySharedMembers = false))
+        assertEquals(
+            "Played (includes observed shared time)",
+            collectionPlaytimeMetricLabel(hasFamilySharedMembers = true),
+        )
+    }
 }
