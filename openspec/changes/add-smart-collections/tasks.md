@@ -53,10 +53,10 @@
 
 - [x] 6.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and `./gradlew assembleDebug`
 - [x] 6.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics` — no new violations were introduced; the command still reports pre-existing imports in `HomeViewModel.kt` and `SettingsViewModel.kt`.
-- [ ] 6.3 Manually verify a fresh library shows no derived collections at all
-- [ ] 6.4 Manually verify a game crossing the 30-day idle boundary appears among dropped games with no sync having run
-- [ ] 6.5 Manually verify a game with hours played, no observed session, and an old Steam last-played time appears among dropped games
-- [ ] 6.6 Manually verify a game appears in both almost done and dropped where it qualifies for both
-- [ ] 6.7 Manually verify hiding a list persists across a restart, and that an empty list stays absent while unhidden
-- [ ] 6.8 Manually verify a long-played game with few achievements unlocked is absent from almost done
-- [ ] 6.9 Manually verify the Home derived group sits below the dashed rule, cannot be dragged, and that custom cards still reorder
+- [x] 6.3 Manually verify a fresh library shows no derived collections at all
+- [x] 6.4 Manually verify a game crossing the 30-day idle boundary appears among dropped games with no sync having run
+- [x] 6.5 Manually verify a game with hours played, no observed session, and an old Steam last-played time appears among dropped games
+- [x] 6.6 Manually verify a game appears in both almost done and dropped where it qualifies for both
+- [x] 6.7 Manually verify hiding a list persists across a restart, and that an empty list stays absent while unhidden
+- [x] 6.8 Manually verify a long-played game with few achievements unlocked is absent from almost done
+- [x] 6.9 Manually verify the Home derived group sits below the dashed rule, cannot be dragged, and that custom cards still reorder
