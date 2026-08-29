@@ -21,6 +21,7 @@ import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.GameListDensity
+import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.displayedPlaytimeMinutes
 import com.example.backlogium.domain.PersonalPaceProfile
 import com.example.backlogium.domain.CurrentDateProvider
@@ -52,6 +53,10 @@ data class CollectionMemberUi(
     val mainExtraMinutes: Int? = null,
     val completionistMinutes: Int? = null,
     val allStylesMinutes: Int? = null,
+    /** Set only for read-only derived collections that need to explain completion. */
+    val completionBasis: com.example.backlogium.domain.CompletionBasis? = null,
+    /** Family-shared playtime is observed by Backlogium rather than a Steam lifetime total. */
+    val isFamilyShared: Boolean = false,
     val isCurrentlyPlaying: Boolean = false,
 )
 
@@ -316,6 +321,7 @@ class CollectionViewModel @Inject constructor(
                     mainExtraMinutes = game?.mainExtraMinutes,
                     completionistMinutes = game?.completionistMinutes,
                     allStylesMinutes = game?.allStylesMinutes,
+                    isFamilyShared = game?.source == GameSource.FAMILY_SHARED,
                     isCurrentlyPlaying = appId == playingAppId,
                 )
             },

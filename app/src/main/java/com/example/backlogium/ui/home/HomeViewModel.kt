@@ -34,9 +34,12 @@ import com.example.backlogium.domain.exactExpiryTicks
 import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.displayedPlaytimeMinutes
 import com.example.backlogium.domain.ProgressEvent
+import com.example.backlogium.domain.SmartCollectionFeed
+import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RuleConfig
+import com.example.backlogium.ui.collections.smartCollectionName
 import com.example.backlogium.work.setup.SetupCoordinator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
@@ -94,6 +97,11 @@ data class HomeUiState(
     val nowPlayingRecencyState: GameRecencyState? = null,
     /** Mission cards derived from the player's custom collections; empty when none exist. */
     val collections: List<HomeCollectionCard> = emptyList(),
+    /**
+     * Derived collections, in their fixed order, presented beneath the custom ones. Read-only:
+     * they carry no accent, no mode, and no position the player can change.
+     */
+    val smartCollections: List<HomeSmartCollectionCard> = emptyList(),
     /** Highest-priority durable progress transition waiting for a Home consumer. */
     val pendingProgressEvent: ProgressEvent? = null,
     /** Dedicated streak-break delivery so unrelated unacknowledged events cannot hide the card. */
@@ -157,6 +165,30 @@ data class HomeCollectionCard(
     val isCurrentlyPlaying: Boolean = false,
 )
 
+/**
+ * One derived collection's Home entry: an identity and a count, and deliberately nothing else.
+ *
+ * A custom collection's card carries the intent the player declared — a deadline, a queue, an
+ * accent. A derived list carries an observation the app made, so it has none of those to show and
+ * no order of its own to keep.
+ */
+data class HomeSmartCollectionCard(
+    val id: SmartCollectionId,
+    val name: String,
+    val memberCount: Int,
+)
+
+
+/**
+ * The banner-and-announcement half of the Home combine, gathered so the typed `combine` overloads
+ * still reach every input without dropping to the untyped vararg form.
+ */
+private data class HomeAnnouncements(
+    val library: List<LibraryGame>,
+    val acquiredBatch: AcquiredGamesAnnouncement,
+    val sharedGameAnnouncement: SharedGameAnnouncement?,
+    val smartCollections: List<HomeSmartCollectionCard>,
+)
 
 private data class HomeCollectionInputs(
     val members: List<CollectionMember>,
@@ -206,6 +238,7 @@ class HomeViewModel @Inject constructor(
     private val sessionRepository: SessionRepository,
     private val progressEventRepository: ProgressEventRepository,
     private val setupCoordinator: SetupCoordinator,
+    private val smartCollectionFeed: SmartCollectionFeed,
     private val time: TimeProvider,
 ) : ViewModel() {
 
@@ -348,6 +381,30 @@ class HomeViewModel @Inject constructor(
         }
 
     /**
+     * Derived collections for Home. Hidden and empty lists are absent for exactly the reasons they
+     * are absent from the Collections screen: the visibility preference is one setting, not one per
+     * surface, and an empty list says nothing worth a row on the first screen the player sees.
+     */
+    private val smartCollectionCards: Flow<List<HomeSmartCollectionCard>> = combine(
+        smartCollectionFeed.snapshot,
+        settings.smartCollectionVisibility,
+    ) { snapshot, visibility ->
+        SmartCollectionId.entries
+            .filter(visibility::isVisible)
+            .mapNotNull { id ->
+                snapshot.result[id].size
+                    .takeIf { it > 0 }
+                    ?.let { count ->
+                        HomeSmartCollectionCard(
+                            id = id,
+                            name = smartCollectionName(id),
+                            memberCount = count,
+                        )
+                    }
+            }
+    }
+
+    /**
      * The stored acquisition batch, re-emitted at its exact expiry deadline so its window is re-evaluated.
      *
      * Expiry is computed rather than persisted — no worker, no alarm — and a collector-scoped delay
@@ -382,8 +439,12 @@ class HomeViewModel @Inject constructor(
             gameRepository.library,
             acquiredBatch,
             settings.sharedGameAnnouncement,
-        ) { library, batch, shared -> Triple(library, batch, shared) },
-    ) { state, live, cards, pendingEvents, (library, batch, shared) ->
+            smartCollectionCards,
+        ) { library, batch, shared, smartCards -> HomeAnnouncements(library, batch, shared, smartCards) },
+    ) { state, live, cards, pendingEvents, announcements ->
+        val library = announcements.library
+        val batch = announcements.acquiredBatch
+        val shared = announcements.sharedGameAnnouncement
         val playingAppId = (live.nowPlaying as? NowPlaying.InGame)?.gameId
         val acquired = batch.toUi(library.associate { it.appId to it.name }, time.nowMillis())
         val withCards = state.copy(
@@ -395,6 +456,7 @@ class HomeViewModel @Inject constructor(
                     ),
                 )
             },
+            smartCollections = announcements.smartCollections,
             pendingProgressEvent = pendingEvents.firstOrNull(),
             // Present one durable event at a time. This keeps a queue of simultaneous events from
             // producing concurrent overlays/animations or more than one haptic for one moment.

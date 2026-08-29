@@ -12,6 +12,8 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
+import com.example.backlogium.domain.SmartCollectionId
+import com.example.backlogium.domain.SmartCollectionVisibility
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.domain.PendingStreakBreak
@@ -64,6 +66,7 @@ class SettingsDataStore @Inject constructor(
         val LIBRARY_ALL_SORT_DIRECTION = stringPreferencesKey("library_all_sort_direction")
         val LIBRARY_DENSITY = stringPreferencesKey("library_density")
         val COLLECTION_DENSITY = stringPreferencesKey("collection_density")
+        val SMART_COLLECTIONS_HIDDEN = stringSetPreferencesKey("smart_collections_hidden")
         val AUTO_SNAPSHOT_ENABLED = booleanPreferencesKey("auto_snapshot_enabled")
         val SNAPSHOT_RETENTION_COUNT = intPreferencesKey("snapshot_retention_count")
         val SNAPSHOT_INTERVAL_HOURS = intPreferencesKey("snapshot_interval_hours")
@@ -337,6 +340,44 @@ class SettingsDataStore @Inject constructor(
 
     suspend fun setCollectionDensity(density: GameListDensity) {
         context.dataStore.edit { it[Keys.COLLECTION_DENSITY] = density.name }
+    }
+
+    /** Hidden derived collections; absent or malformed ids default to visible. */
+    val smartCollectionVisibilityFlow: Flow<SmartCollectionVisibility> = context.dataStore.data.map { prefs ->
+        readHiddenSmartCollections(prefs)
+    }
+
+    suspend fun setSmartCollectionVisibility(visibility: SmartCollectionVisibility) {
+        context.dataStore.edit { prefs ->
+            writeHiddenSmartCollections(prefs, visibility.hidden)
+        }
+    }
+
+    /**
+     * Toggling one list is a read-modify-write of the shared hidden-id set, so both steps happen
+     * inside a single edit: DataStore serializes concurrent edits, and a read-modify-write split
+     * across calls would let the slower write silently discard a concurrent toggle.
+     */
+    suspend fun setSmartCollectionVisible(id: SmartCollectionId, visible: Boolean) {
+        context.dataStore.edit { prefs ->
+            val hidden = readHiddenSmartCollections(prefs).setVisible(id, visible).hidden
+            writeHiddenSmartCollections(prefs, hidden)
+        }
+    }
+
+    private fun readHiddenSmartCollections(prefs: Preferences): SmartCollectionVisibility =
+        SmartCollectionVisibility(
+            hidden = prefs[Keys.SMART_COLLECTIONS_HIDDEN].orEmpty()
+                .mapNotNull { raw -> runCatching { SmartCollectionId.valueOf(raw) }.getOrNull() }
+                .toSet(),
+        )
+
+    private fun writeHiddenSmartCollections(prefs: MutablePreferences, hidden: Set<SmartCollectionId>) {
+        if (hidden.isEmpty()) {
+            prefs.remove(Keys.SMART_COLLECTIONS_HIDDEN)
+        } else {
+            prefs[Keys.SMART_COLLECTIONS_HIDDEN] = hidden.mapTo(mutableSetOf()) { it.name }
+        }
     }
 
     /**

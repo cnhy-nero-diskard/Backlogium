@@ -27,6 +27,9 @@ import kotlinx.coroutines.flow.flow
 @Singleton
 class CurrentDateProvider @Inject constructor(private val time: TimeProvider) {
 
+    /** The same device zone used to derive [currentDate], exposed for timestamp-to-date joins. */
+    val zone: java.time.ZoneId get() = time.zone()
+
     val currentDate: Flow<LocalDate> = flow {
         while (true) {
             val today = time.today()

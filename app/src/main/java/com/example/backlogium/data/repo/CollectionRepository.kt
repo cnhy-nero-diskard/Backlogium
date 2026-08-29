@@ -7,9 +7,11 @@ import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionTimeBasis
+import com.example.backlogium.domain.CustomCollectionOverview
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.defaultSort
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,6 +28,31 @@ class CollectionRepository @Inject constructor(
     val collections: Flow<List<Collection>> = collectionDao.observeCollections()
 
     val allMembers: Flow<List<CollectionMember>> = collectionDao.observeAllMembers()
+
+    /** Custom collection summaries exposed without leaking Room entities to new UI surfaces. */
+    val customOverviews: Flow<List<CustomCollectionOverview>> = combine(
+        collectionDao.observeCollections(),
+        collectionDao.observeAllMembers(),
+    ) { collections, members ->
+        val membersByCollection = members.groupBy { it.collectionId }
+        collections.map { collection ->
+            CustomCollectionOverview(
+                id = collection.id,
+                name = collection.name,
+                mode = collection.mode,
+                sort = collection.sort,
+                targetDate = collection.targetDate,
+                accent = collection.accent,
+                timeBasis = collection.timeBasis,
+                description = collection.description,
+                displayOrder = collection.displayOrder,
+                memberAppIds = membersByCollection[collection.id]
+                    .orEmpty()
+                    .sortedBy { it.orderIndex }
+                    .map { it.appId },
+            )
+        }
+    }
 
     fun members(collectionId: Long): Flow<List<CollectionMember>> =
         collectionDao.observeMembers(collectionId)

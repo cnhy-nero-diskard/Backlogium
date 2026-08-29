@@ -119,16 +119,21 @@ interface SessionDao {
     fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>>
 
     /**
-     * Each game's most recent recorded play, as `endAt` where the session has one and `startAt`
-     * where it is still open.
+     * Each game's most recent recorded play, observed. Feeds source-aware detail recency and the
+     * derived collections' idle test, where it stands in for Steam's own last-played stamp on a
+     * game Steam reports none for.
+     */
+    @Query("SELECT appId, MAX(COALESCE(endAt, startAt)) AS at FROM sessions GROUP BY appId")
+    fun observeLatestSessionInstantByGame(): Flow<List<GameSessionInstant>>
+
+    /**
+     * The same most recent recorded play, as `endAt` where the session has one and `startAt` where
+     * it is still open.
      *
      * Read by a poll *before* it overwrites `lastPlayedAt`, as one half of the previously-known
      * last-play time the dormancy evaluation compares against. Grouped for the same reason as
      * above: a poll examines the whole library.
      */
-    /** Each game's most recent session timestamp, observed for source-aware detail recency. */
-    @Query("SELECT appId, MAX(COALESCE(endAt, startAt)) AS at FROM sessions GROUP BY appId")
-    fun observeLatestSessionInstantByGame(): Flow<List<GameSessionInstant>>
     @Query("SELECT appId, MAX(COALESCE(endAt, startAt)) AS at FROM sessions GROUP BY appId")
     suspend fun latestSessionInstantByGame(): List<GameSessionInstant>
 }

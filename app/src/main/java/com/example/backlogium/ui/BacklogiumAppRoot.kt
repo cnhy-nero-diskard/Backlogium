@@ -33,7 +33,10 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.backlogium.ui.analytics.AnalyticsScreen
+import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.ui.collections.CollectionScreen
+import com.example.backlogium.ui.collections.CollectionsScreen
+import com.example.backlogium.ui.collections.SmartCollectionDetailScreen
 import com.example.backlogium.ui.components.ProfileHeader
 import com.example.backlogium.ui.diagnostics.DiagnosticsScreen
 import com.example.backlogium.ui.gamedetail.GameDetailScreen
@@ -77,6 +80,14 @@ private fun gameDetailRoute(appId: Long) = "game_detail/$appId"
 private const val ROUTE_COLLECTION = "collection/{collectionId}"
 private fun collectionRoute(collectionId: Long) = "collection/$collectionId"
 
+/** Route for the custom-and-derived Collections index. */
+private const val ROUTE_COLLECTIONS = "collections"
+
+/** Route for a read-only derived collection detail surface. */
+private const val ROUTE_SMART_COLLECTION = "smart_collection/{collectionId}"
+private fun smartCollectionRoute(collectionId: SmartCollectionId) =
+    "smart_collection/${collectionId.name}"
+
 /** App shell: bottom navigation between Home, Library, History, Analytics, and Settings. */
 @Composable
 fun BacklogiumAppRoot(
@@ -97,7 +108,9 @@ fun BacklogiumAppRoot(
     // selected — hide it there instead of leaving a misleading state. Same for the collection
     // collection destination, another pushed sub-destination.
     val fullDestinationGameDetailPresented = currentDestination?.route == ROUTE_GAME_DETAIL
-    val onCollectionScreen = currentDestination?.route == ROUTE_COLLECTION
+    val onCollectionScreen = currentDestination?.route == ROUTE_COLLECTION ||
+        currentDestination?.route == ROUTE_COLLECTIONS ||
+        currentDestination?.route == ROUTE_SMART_COLLECTION
 
     // Hoisted above the Scaffold so a screen-reported wash can paint behind the top bar too, not
     // just its own content area — the game detail screen's header-art wash, and Home's now-playing
@@ -182,6 +195,10 @@ fun BacklogiumAppRoot(
                         onAccentColorChanged = { accentColor = it },
                         onOpenCollection = { id -> navController.navigate(collectionRoute(id)) },
                         onCreateCollection = { navController.navigate(collectionRoute(0L)) },
+                        onOpenCollections = { navController.navigate(ROUTE_COLLECTIONS) },
+                        onOpenSmartCollection = { id ->
+                            navController.navigate(smartCollectionRoute(id))
+                        },
                         // Same navigation the bottom bar performs, so arriving from the banner
                         // leaves the back stack exactly as tapping Library would.
                         onOpenLibrary = {
@@ -223,6 +240,39 @@ fun BacklogiumAppRoot(
                         onAccentColorChanged = { accentColor = it },
                         onRemoved = { navController.popBackStack() },
                     )
+                }
+                composable(ROUTE_COLLECTIONS) {
+                    CollectionsScreen(
+                        onDone = { navController.popBackStack() },
+                        onCreateCustomCollection = {
+                            navController.navigate(collectionRoute(0L))
+                        },
+                        onOpenCustomCollection = { id ->
+                            navController.navigate(collectionRoute(id))
+                        },
+                        onOpenSmartCollection = { id ->
+                            navController.navigate(smartCollectionRoute(id))
+                        },
+                    )
+                }
+                composable(
+                    route = ROUTE_SMART_COLLECTION,
+                    arguments = listOf(navArgument("collectionId") { type = NavType.StringType }),
+                ) { entry ->
+                    val collectionId = entry.arguments
+                        ?.getString("collectionId")
+                        ?.let { runCatching { SmartCollectionId.valueOf(it) }.getOrNull() }
+                    if (collectionId == null) {
+                        Text("Collection unavailable")
+                    } else {
+                        SmartCollectionDetailScreen(
+                            collectionId = collectionId,
+                            onDone = { navController.popBackStack() },
+                            onOpenGameDetail = { appId ->
+                                navController.navigate(gameDetailRoute(appId))
+                            },
+                        )
+                    }
                 }
                 composable(
                     route = ROUTE_COLLECTION,

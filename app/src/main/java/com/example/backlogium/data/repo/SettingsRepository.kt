@@ -11,6 +11,8 @@ import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortPrefs
+import com.example.backlogium.domain.SmartCollectionId
+import com.example.backlogium.domain.SmartCollectionVisibility
 import com.example.backlogium.domain.VersionedRuleConfig
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.flow.Flow
@@ -110,6 +112,20 @@ interface SettingsRepository : SessionEndOutbox {
 
     suspend fun setCollectionDensity(density: GameListDensity)
 
+    /** Per-list visibility for derived collections; old implementations default to all visible. */
+    val smartCollectionVisibility: Flow<SmartCollectionVisibility>
+        get() = flowOf(SmartCollectionVisibility())
+
+    suspend fun setSmartCollectionVisibility(visibility: SmartCollectionVisibility) = Unit
+
+    /**
+     * Toggles a single list without disturbing the visibility of the others. The default falls
+     * back to a whole-set read-modify-write; the production implementation applies the change
+     * atomically inside one DataStore edit so concurrent toggles cannot discard each other.
+     */
+    suspend fun setSmartCollectionVisible(id: SmartCollectionId, visible: Boolean) =
+        setSmartCollectionVisibility(smartCollectionVisibility.first().setVisible(id, visible))
+
     /** Automatic rolling snapshot configuration (add-backup-restore): see the Data & Backup section. */
     val autoSnapshotSettings: Flow<AutoSnapshotSettings>
 
@@ -201,6 +217,15 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun setCollectionDensity(density: GameListDensity) =
         settings.setCollectionDensity(density)
+
+    override val smartCollectionVisibility: Flow<SmartCollectionVisibility> =
+        settings.smartCollectionVisibilityFlow
+
+    override suspend fun setSmartCollectionVisibility(visibility: SmartCollectionVisibility) =
+        settings.setSmartCollectionVisibility(visibility)
+
+    override suspend fun setSmartCollectionVisible(id: SmartCollectionId, visible: Boolean) =
+        settings.setSmartCollectionVisible(id, visible)
 
     override val autoSnapshotSettings: Flow<AutoSnapshotSettings> = settings.autoSnapshotSettingsFlow
 

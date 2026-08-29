@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.backlogium.domain.SmartCollectionId
 
 /** Home route-level presentation for durable progress events. */
 @Composable
@@ -15,6 +16,8 @@ fun HomeRoute(
     onAccentColorChanged: (Color?) -> Unit = {},
     onOpenCollection: (Long) -> Unit = {},
     onCreateCollection: () -> Unit = {},
+    onOpenCollections: () -> Unit = {},
+    onOpenSmartCollection: (SmartCollectionId) -> Unit = {},
     onOpenLibrary: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
@@ -25,6 +28,8 @@ fun HomeRoute(
             onAccentColorChanged = onAccentColorChanged,
             onOpenCollection = onOpenCollection,
             onCreateCollection = onCreateCollection,
+            onOpenCollections = onOpenCollections,
+            onOpenSmartCollection = onOpenSmartCollection,
             viewModel = viewModel,
         )
 

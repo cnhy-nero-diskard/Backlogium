@@ -23,9 +23,24 @@ using the same presentation custom collections use, without offering any managem
 - **THEN** custom collections' creation, ordering, modes, accents, and management behave exactly as
   they do today
 
-#### Scenario: Not shown on Home
-- **WHEN** the player views Home
-- **THEN** no derived collection appears there, and the Home collection banners are unchanged
+### Requirement: Derived collections in the Home collections section
+The Home screen SHALL present derived collections as a group beneath the custom collections,
+separated by a horizontal dashed rule and always last in the section. Each SHALL show its name, its
+member count, and its rule. They SHALL carry no accent, no mode banner, and no reordering gesture,
+and the custom collections' existing drag-to-reorder behaviour SHALL be unchanged.
+
+#### Scenario: Grouped below the custom cards
+- **WHEN** Home is shown with both kinds present
+- **THEN** the derived group appears below the custom cards, after a dashed rule, and which is which
+  is unambiguous
+
+#### Scenario: No reordering affordance
+- **WHEN** the player presses and holds a derived collection card on Home
+- **THEN** it is not picked up, and the custom cards' reordering is unaffected
+
+#### Scenario: Opening one from Home
+- **WHEN** the player taps a derived collection card on Home
+- **THEN** the same read-only list the Collections screen opens is shown
 
 ### Requirement: Derived collection presentation
 Each derived collection SHALL present its name, its member count, and the rule that determines

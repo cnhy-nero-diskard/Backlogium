@@ -1,4 +1,10 @@
-## ADDED Requirements
+﻿# smart-collections
+
+## Purpose
+
+Defines the fixed, derived (smart) collections computed from library, session, achievement, and HowLongToBeat state: their membership rules, thresholds, overlap behaviour, and immutability.
+
+## Requirements
 
 ### Requirement: Derived collections are computed, never stored
 The system SHALL determine each derived collection's membership from current library, session,
@@ -12,31 +18,13 @@ action.
   shown
 
 #### Scenario: Membership changes with the date alone
-- **WHEN** a day boundary passes such that a game's last meaningful session is now older than the
-  idle period
+- **WHEN** a day boundary passes such that a game's last play is now older than the idle period
 - **THEN** it appears among dropped games without a sync having run and without the player having
   done anything
 
 #### Scenario: No stored membership
 - **WHEN** derived collections are examined
 - **THEN** no persisted membership exists for them, and none can become stale
-
-### Requirement: A meaningful session is at least fifteen minutes
-The system SHALL treat a play session shorter than fifteen minutes as not constituting play for the
-purpose of derived collections. A game's last meaningful play and its meaningful session count
-SHALL disregard shorter sessions.
-
-#### Scenario: A brief launch does not count as playing
-- **WHEN** a game's only session lasted under fifteen minutes
-- **THEN** the game is treated as having no meaningful play
-
-#### Scenario: A brief relaunch does not resume a dropped game
-- **WHEN** a dropped game is launched for under fifteen minutes and closed
-- **THEN** it remains among dropped games, because its last meaningful play is unchanged
-
-#### Scenario: A qualifying session counts
-- **WHEN** a session lasts fifteen minutes or longer
-- **THEN** it counts as meaningful play and updates the game's last meaningful play
 
 ### Requirement: Completed games are determined by achievements first
 The system SHALL treat a game as completed when every one of its achievements is unlocked. Where a
@@ -83,7 +71,7 @@ main-story length is at or under six hours. A game with no main-story length SHA
 - **THEN** it is not a quick win
 
 #### Scenario: A short game already started
-- **WHEN** a game with a three-hour main story has recorded playtime
+- **WHEN** a game with a three-hour main story has any recorded playtime
 - **THEN** it is not a quick win
 
 #### Scenario: No length known
@@ -91,7 +79,7 @@ main-story length is at or under six hours. A game with no main-story length SHA
 - **THEN** it is not a quick win, and its absence reflects missing data rather than an assessment
 
 ### Requirement: Never-started games have no recorded playtime
-The system SHALL present as never started those games with no recorded playtime from any source —
+The system SHALL present as never started those games with no recorded playtime from any source â€”
 neither Steam-reported playtime, nor imported historical playtime, nor any meaningful session.
 
 #### Scenario: Genuinely untouched
@@ -102,68 +90,93 @@ neither Steam-reported playtime, nor imported historical playtime, nor any meani
 - **WHEN** a game's only playtime came from an imported Steam history
 - **THEN** it is not never started
 
-#### Scenario: A brief launch does not start a game
-- **WHEN** a game's only session was under fifteen minutes and it has no other recorded playtime
-- **THEN** it remains never started
+#### Scenario: A tracked session counts as played
+- **WHEN** a game's only playtime came from a session Backlogium observed
+- **THEN** it is not never started
 
-### Requirement: Almost-done games are near their main story length
+### Requirement: Almost-done games are near their main story length and near their achievements
 The system SHALL present as almost done those games, not already completed, whose playtime is at or
-beyond eighty percent of their HowLongToBeat main-story length. A game with no main-story length
-SHALL NOT appear.
+beyond eighty percent of their HowLongToBeat main-story length **and** which have unlocked at least
+eighty percent of their achievements. The achievement condition is not negotiable: playtime alone
+SHALL NOT place a game in this list. Where a game is known to have no achievements, playtime alone
+SHALL decide. Where a game's achievements have never been fetched, it SHALL NOT appear, because an
+unmet condition and an unknown one must not look the same. A game with no main-story length SHALL
+NOT appear.
 
-#### Scenario: Past the threshold
-- **WHEN** a game's playtime is 85% of its main-story length and it is not completed
+#### Scenario: Past both thresholds
+- **WHEN** a game's playtime is 85% of its main-story length, 90% of its achievements are unlocked,
+  and it is not completed
 - **THEN** it is almost done
 
-#### Scenario: Short of the threshold
+#### Scenario: Playtime past, achievements far short
+- **WHEN** a game has 40 hours played against a 32-hour length but under half its achievements
+  unlocked
+- **THEN** it is not almost done, because achievements are the evidence of what was accomplished
+
+#### Scenario: Short of the playtime threshold
 - **WHEN** a game's playtime is 60% of its main-story length
 - **THEN** it is not almost done
 
+#### Scenario: A game with no achievements is judged on playtime
+- **WHEN** a game confirmed to have no achievements is past 80% of its main-story length
+- **THEN** it is almost done
+
+#### Scenario: Achievements never fetched
+- **WHEN** a game past 80% of its main-story length has never had its achievements retrieved
+- **THEN** it is not almost done, and its absence reflects missing data rather than an assessment
+
 #### Scenario: Already completed
-- **WHEN** a game qualifies on playtime but is a completed game
+- **WHEN** a game qualifies on both thresholds but is a completed game
 - **THEN** it is not almost done
 
 #### Scenario: No length known
 - **WHEN** a game has no main-story length
 - **THEN** it is not almost done
 
-### Requirement: Dropped games have real progress, no completion, and no recent meaningful play
-The system SHALL present as dropped those games with more than two hours of playtime, which are not
-completed, which have at least one meaningful session on record, and whose last meaningful session
-was more than thirty days ago.
+### Requirement: Dropped games have real progress, no completion, and no recent play
+The system SHALL present as dropped those games with more than an hour and a half of playtime, which
+are not completed, and whose last play was more than thirty days ago. Last play SHALL be taken from
+whichever source knows it â€” Steam's own last-played time or a session Backlogium observed, whichever
+is later â€” so a game the app has never watched is still recognised as abandoned. A game whose last
+play is unknown from every source SHALL NOT appear.
 
 #### Scenario: Abandoned mid-game
-- **WHEN** a game has five hours played, is not completed, and its last meaningful session was six
-  weeks ago
+- **WHEN** a game has five hours played, is not completed, and was last played six weeks ago
 - **THEN** it is dropped
 
+#### Scenario: Never watched by the app
+- **WHEN** a game has hours of Steam playtime, no session Backlogium ever observed, and Steam
+  reports it was last played a year ago
+- **THEN** it is dropped, on Steam's record of when it was last played
+
 #### Scenario: Played recently
-- **WHEN** a game's last meaningful session was a week ago
+- **WHEN** a game was last played a week ago
 - **THEN** it is not dropped
 
 #### Scenario: Barely started
-- **WHEN** a game has forty minutes of playtime and has not been touched for months
+- **WHEN** a game has an hour of playtime and has not been touched for months
 - **THEN** it is not dropped, because it never had enough progress to abandon
 
 #### Scenario: Finished rather than abandoned
 - **WHEN** a game is a completed game and has not been played for months
 - **THEN** it is not dropped
 
-#### Scenario: Playtime with no session history
-- **WHEN** a game has substantial playtime but no meaningful session on record, such as playtime
-  known only from an imported history
-- **THEN** it is not dropped, because the app has no observation of when it was last played
+#### Scenario: Last play unknown
+- **WHEN** a game has substantial playtime but neither Steam nor any session says when it was last
+  played
+- **THEN** it is not dropped, because nothing establishes that it was abandoned
 
-#### Scenario: A brief relaunch does not rescue it
-- **WHEN** a dropped game is launched for ten minutes
-- **THEN** it remains dropped
+#### Scenario: A relaunch resumes it
+- **WHEN** a dropped game is launched
+- **THEN** it is no longer dropped, because it was played today
 
 ### Requirement: Derived collections may overlap
 The system SHALL allow a game to belong to more than one derived collection where it satisfies more
 than one rule, except where a rule explicitly excludes another's members.
 
 #### Scenario: Nearly finished and abandoned
-- **WHEN** a game is at 85% of its main story and was last meaningfully played two months ago
+- **WHEN** a game is at 85% of its main story with 80% of its achievements unlocked, and was last
+  played two months ago
 - **THEN** it appears among both almost-done and dropped games
 
 #### Scenario: Unstarted and short
@@ -193,8 +206,8 @@ manual sequence.
 
 #### Scenario: Custom collections unaffected
 - **WHEN** derived collections exist
-- **THEN** every existing capability of custom collections — creation, membership, modes, ordering,
-  accents, deletion — behaves exactly as before
+- **THEN** every existing capability of custom collections â€” creation, membership, modes, ordering,
+  accents, deletion â€” behaves exactly as before
 
 ### Requirement: Each derived collection states its rule
 The system SHALL present, with each derived collection, the rule that determines its membership,
@@ -211,6 +224,38 @@ including the thresholds that rule uses.
 #### Scenario: Missing data is distinguishable
 - **WHEN** a derived collection depends on HowLongToBeat lengths and some games lack them
 - **THEN** their absence is attributable to missing data rather than read as an assessment
+
+### Requirement: Derived collections appear on Home beneath custom collections
+The system SHALL present derived collections on the Home screen, always below the custom collections
+and always last in that section, separated from them by a horizontal dashed rule. They SHALL appear
+in their fixed order, and SHALL NOT be reorderable, editable, or removable from Home. Opening one
+SHALL show the same read-only list the Collections screen opens. Hidden and empty lists SHALL be
+absent from Home for the same reasons they are absent elsewhere.
+
+#### Scenario: Always at the bottom
+- **WHEN** Home shows both custom and derived collections
+- **THEN** every custom collection appears above every derived one
+
+#### Scenario: The two groups are separated
+- **WHEN** derived collections are shown on Home
+- **THEN** a horizontal dashed rule separates them from the custom collections above
+
+#### Scenario: A derived list cannot be moved
+- **WHEN** the player presses and holds a derived collection on Home
+- **THEN** nothing is picked up, no order changes, and no reorder is persisted
+
+#### Scenario: Custom reordering is unaffected
+- **WHEN** the player reorders custom collections on Home
+- **THEN** the reorder behaves exactly as before and the derived group stays below them in its own
+  fixed order
+
+#### Scenario: Opening one from Home
+- **WHEN** the player taps a derived collection on Home
+- **THEN** its read-only member list opens, with no management affordance
+
+#### Scenario: Hidden and empty lists stay off Home
+- **WHEN** a derived list is hidden, or has no members
+- **THEN** it does not appear on Home
 
 ### Requirement: Derived collections can be hidden, and empty ones do not appear
 Each derived collection SHALL be individually hideable, and the setting SHALL persist. A derived
