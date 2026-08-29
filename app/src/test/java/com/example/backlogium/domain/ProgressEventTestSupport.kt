@@ -68,11 +68,13 @@ internal class GatedPlayerProfileDao(
     override suspend fun updateSyncStatus(lastSyncAt: Long, lastSyncError: String?) =
         delegate.updateSyncStatus(lastSyncAt, lastSyncError)
 
-    override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?) =
-        delegate.updateSteamIdentity(steamId, steamLevel, personaName, avatarUrl)
+    override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?, storeRegion: String?) =
+        delegate.updateSteamIdentity(steamId, steamLevel, personaName, avatarUrl, storeRegion)
 
-    override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?) =
-        delegate.updateHeaderIdentity(personaName, avatarUrl)
+    override suspend fun storeRegion(): String? = delegate.storeRegion()
+
+    override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?, storeRegion: String?) =
+        delegate.updateHeaderIdentity(personaName, avatarUrl, storeRegion)
 
     override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) =
         delegate.updateGamification(totalXp, level, currentStreak, longestStreak, gamificationConfigVersion).also {

@@ -49,4 +49,34 @@ class PlayerIdentityTest {
     fun noIdentityEverSeen_staysNull() {
         assertEquals(empty, mergePlayerIdentity(summary = null, stored = empty))
     }
+
+    @Test
+    fun storeRegion_isReadFromTheProfileCountry() {
+        val summary = PlayerSummaryDto(personaName = "Nero", locCountryCode = "ph")
+
+        // Normalized to upper case: Steam is inconsistent about the case it returns, and the
+        // stored value is compared against itself on every poll to decide whether to write.
+        assertEquals("PH", mergePlayerIdentity(summary, empty).storeRegion)
+    }
+
+    @Test
+    fun absentCountry_preservesStoredRegion() {
+        val known = stored.copy(storeRegion = "PH")
+
+        assertEquals("PH", mergePlayerIdentity(PlayerSummaryDto(), known).storeRegion)
+        assertEquals("PH", mergePlayerIdentity(PlayerSummaryDto(locCountryCode = " "), known).storeRegion)
+        assertEquals("PH", mergePlayerIdentity(summary = null, stored = known).storeRegion)
+    }
+
+    @Test
+    fun changedCountry_replacesStoredRegion() {
+        val known = stored.copy(storeRegion = "PH")
+
+        assertEquals("US", mergePlayerIdentity(PlayerSummaryDto(locCountryCode = "US"), known).storeRegion)
+    }
+
+    @Test
+    fun noCountryEverSeen_staysNull() {
+        assertEquals(null, mergePlayerIdentity(PlayerSummaryDto(), empty).storeRegion)
+    }
 }

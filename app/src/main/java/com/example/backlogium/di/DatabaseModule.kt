@@ -52,6 +52,7 @@ object DatabaseModule {
                 BacklogiumDatabase.MIGRATION_19_20,
                 BacklogiumDatabase.MIGRATION_20_21,
                 BacklogiumDatabase.MIGRATION_21_22,
+                BacklogiumDatabase.MIGRATION_22_23,
             )
             // Never silently replace a user's database when a branch has an unexpected schema
             // version. A real version bump must ship and register its migration; otherwise the

@@ -508,9 +508,10 @@ class LiveStatusRepositoryTest {
         override suspend fun get(): PlayerProfile? = stored
         override suspend fun resetForAccountChange(steamId: String) = error("not used")
         override suspend fun updateSyncStatus(lastSyncAt: Long, lastSyncError: String?) = error("not used")
-        override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?) = error("not used")
-        override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?) {
-            stored = (stored ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl)
+        override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?, storeRegion: String?) = error("not used")
+        override suspend fun storeRegion(): String? = stored?.storeRegion
+        override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?, storeRegion: String?) {
+            stored = (stored ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
         }
         override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) = error("not used")
         override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) = error("not used")

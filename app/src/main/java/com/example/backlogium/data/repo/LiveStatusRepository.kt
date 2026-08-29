@@ -316,10 +316,14 @@ class LiveStatusRepository @Inject constructor(
         player: com.example.backlogium.data.remote.dto.PlayerSummaryDto,
     ) {
         val profile = profileDao.get() ?: return
-        val stored = PlayerIdentity(profile.personaName, profile.avatarUrl)
+        val stored = PlayerIdentity(profile.personaName, profile.avatarUrl, profile.storeRegion)
         val merged = mergePlayerIdentity(player, stored)
         if (merged == stored) return
-        profileDao.updateHeaderIdentity(merged.personaName, merged.avatarUrl)
+        profileDao.updateHeaderIdentity(
+            merged.personaName,
+            merged.avatarUrl,
+            merged.storeRegion,
+        )
     }
 
     companion object {

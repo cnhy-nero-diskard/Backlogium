@@ -58,7 +58,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         GameAchievementSync::class,
         ExcludedSharedGame::class,
     ],
-    version = 22,
+    version = 23,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -547,6 +547,20 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "`excludedAt` INTEGER NOT NULL, " +
                         "PRIMARY KEY(`appId`))",
                 )
+            }
+        }
+
+        /**
+         * v22 -> v23: the player's Steam store region on `player_profile` (add-wishlist-section).
+         *
+         * Additive and deliberately unbackfilled. `loccountrycode` has always been in Steam's
+         * `GetPlayerSummaries` response and simply went unread, so the column fills in on the
+         * next sync for anyone whose profile exposes a country. NULL is a real state — the price
+         * request asserts no region and lets Steam resolve one — not a value awaiting repair.
+         */
+        val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `player_profile` ADD COLUMN `storeRegion` TEXT")
             }
         }
 

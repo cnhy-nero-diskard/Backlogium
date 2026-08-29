@@ -7,9 +7,9 @@
 
 ## 2. Store region
 
-- [ ] 2.1 Deserialize `loccountrycode` in `PlayerSummariesDto` — it is already in Steam's response and simply unread
-- [ ] 2.2 Add a store-region column to `PlayerProfile` with its migration
-- [ ] 2.3 Persist the region during sync alongside persona name and avatar, leaving a previously stored value intact when the profile exposes none
+- [x] 2.1 Deserialize `loccountrycode` in `PlayerSummariesDto` — it is already in Steam's response and simply unread
+- [x] 2.2 Add a store-region column to `PlayerProfile` with its migration
+- [x] 2.3 Persist the region during sync alongside persona name and avatar, leaving a previously stored value intact when the profile exposes none
 - [ ] 2.4 Omit the region parameter entirely when none is known, rather than defaulting to one
 
 ## 3. Remote surface

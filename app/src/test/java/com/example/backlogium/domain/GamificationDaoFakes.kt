@@ -297,12 +297,14 @@ internal class FakePlayerProfileDao(initial: PlayerProfile? = null) : PlayerProf
         state.value = (state.value ?: PlayerProfile()).copy(lastSyncAt = maxOf(state.value?.lastSyncAt ?: 0L, lastSyncAt), lastSyncError = lastSyncError)
     }
 
-    override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?) {
-        state.value = (state.value ?: PlayerProfile()).copy(steamId = steamId, steamLevel = steamLevel, personaName = personaName, avatarUrl = avatarUrl)
+    override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?, storeRegion: String?) {
+        state.value = (state.value ?: PlayerProfile()).copy(steamId = steamId, steamLevel = steamLevel, personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
     }
 
-    override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?) {
-        state.value = (state.value ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl)
+    override suspend fun storeRegion(): String? = state.value?.storeRegion
+
+    override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?, storeRegion: String?) {
+        state.value = (state.value ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
     }
 
     override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {

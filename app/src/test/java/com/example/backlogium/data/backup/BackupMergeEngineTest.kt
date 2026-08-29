@@ -1059,12 +1059,15 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
         steamLevel: Int,
         personaName: String?,
         avatarUrl: String?,
+        storeRegion: String?,
     ) {
-        profile = (profile ?: PlayerProfile()).copy(steamId = steamId, steamLevel = steamLevel, personaName = personaName, avatarUrl = avatarUrl)
+        profile = (profile ?: PlayerProfile()).copy(steamId = steamId, steamLevel = steamLevel, personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
     }
 
-    override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?) {
-        profile = (profile ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl)
+    override suspend fun storeRegion(): String? = profile?.storeRegion
+
+    override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?, storeRegion: String?) {
+        profile = (profile ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
     }
 
     override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {

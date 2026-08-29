@@ -480,13 +480,18 @@ class SteamSyncWorker @AssistedInject constructor(
         val currentProfile = profileDao.get() ?: PlayerProfile()
         val identity = mergePlayerIdentity(
             summary,
-            PlayerIdentity(currentProfile.personaName, currentProfile.avatarUrl),
+            PlayerIdentity(
+                currentProfile.personaName,
+                currentProfile.avatarUrl,
+                currentProfile.storeRegion,
+            ),
         )
         profileDao.updateSteamIdentity(
             steamId = steamId,
             steamLevel = steamLevel,
             personaName = identity.personaName,
             avatarUrl = identity.avatarUrl,
+            storeRegion = identity.storeRegion,
         )
         profileDao.updateSyncStatus(lastSyncAt = now, lastSyncError = null)
 
