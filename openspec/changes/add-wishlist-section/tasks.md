@@ -10,15 +10,15 @@
 - [x] 2.1 Deserialize `loccountrycode` in `PlayerSummariesDto` — it is already in Steam's response and simply unread
 - [x] 2.2 Add a store-region column to `PlayerProfile` with its migration
 - [x] 2.3 Persist the region during sync alongside persona name and avatar, leaving a previously stored value intact when the profile exposes none
-- [ ] 2.4 Omit the region parameter entirely when none is known, rather than defaulting to one
+- [x] 2.4 Omit the region parameter entirely when none is known, rather than defaulting to one
 
 ## 3. Remote surface
 
-- [ ] 3.1 Add the wishlist call to `SteamApi`, taking the diagnostics `@Tag scope` like every other tracked call
-- [ ] 3.2 Add a batched, price-filtered `appDetails` call to `SteamStoreApi` taking multiple app ids and a country code
-- [ ] 3.3 Add a **separate** price DTO whose `data` tolerates both an object and the `[]` that Steam returns for an app with no price, mapping `[]` to "no price"
-- [ ] 3.4 Leave `StoreAppDetails` and the genre path untouched; add a comment recording why the DTO is not shared
-- [ ] 3.5 Add unit tests over recorded fixtures: a paid app, a free app returning `data: []`, a mixed batch, and a malformed response
+- [x] 3.1 Add the wishlist call to `SteamApi`, taking the diagnostics `@Tag scope` like every other tracked call
+- [x] 3.2 Add a batched, price-filtered `appDetails` call to `SteamStoreApi` taking multiple app ids and a country code
+- [x] 3.3 Add a **separate** price DTO whose `data` tolerates both an object and the `[]` that Steam returns for an app with no price, mapping `[]` to "no price"
+- [x] 3.4 Leave `StoreAppDetails` and the genre path untouched; add a comment recording why the DTO is not shared
+- [x] 3.5 Add unit tests over recorded fixtures: a paid app, a free app returning `data: []`, a mixed batch, and a malformed response
 - [ ] 3.6 Chunk requests conservatively and treat a failed chunk as a failed chunk, retaining previously observed prices for those apps
 
 ## 4. Storage

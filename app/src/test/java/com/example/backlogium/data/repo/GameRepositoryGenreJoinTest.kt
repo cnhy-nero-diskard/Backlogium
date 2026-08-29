@@ -19,6 +19,9 @@ import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.StoreAppDetails
+import com.example.backlogium.data.remote.dto.StoreItemsResponse
+import com.example.backlogium.data.remote.dto.StorePriceEnvelope
+import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -138,6 +141,12 @@ class GameRepositoryGenreJoinTest {
     }
 
     private object OfflineStore : SteamStoreApi {
+        override suspend fun appDetailsPrices(
+            appIds: String,
+            countryCode: String?,
+            filters: String,
+        ): Response<Map<String, StorePriceEnvelope>> = error("prices are not part of this test")
+
         override suspend fun appDetails(
             appId: Long,
             language: String,
@@ -152,6 +161,16 @@ class GameRepositoryGenreJoinTest {
 
     /** Nothing in the join may reach the network; every call is a test failure if made. */
     private object OfflineSteamApi : SteamApi {
+        override suspend fun getWishlist(
+            steamId: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): WishlistResponse = error("the wishlist is not part of this test")
+
+        override suspend fun getStoreItems(
+            inputJson: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): StoreItemsResponse = error("store items are not part of this test")
+
         override suspend fun getOwnedGames(
             key: String,
             steamId: String,

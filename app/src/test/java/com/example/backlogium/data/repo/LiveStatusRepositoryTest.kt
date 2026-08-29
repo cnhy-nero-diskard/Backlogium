@@ -20,6 +20,8 @@ import com.example.backlogium.data.remote.dto.PlayerSummariesResult
 import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
+import com.example.backlogium.data.remote.dto.StoreItemsResponse
+import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
@@ -522,6 +524,16 @@ class LiveStatusRepositoryTest {
 
     /** Configurable player-summary responses; [throwOnNextCall] simulates a transient failure. */
     private class FakeSteamApi : SteamApi {
+        override suspend fun getWishlist(
+            steamId: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): WishlistResponse = error("the wishlist is not part of this test")
+
+        override suspend fun getStoreItems(
+            inputJson: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): StoreItemsResponse = error("store items are not part of this test")
+
         private var players: List<PlayerSummaryDto> = emptyList()
         var throwOnNextCall = false
         var callCount = 0

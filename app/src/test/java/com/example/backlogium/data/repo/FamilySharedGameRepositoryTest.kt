@@ -30,6 +30,9 @@ import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.dto.StoreAppData
 import com.example.backlogium.data.remote.dto.StoreAppDetails
+import com.example.backlogium.data.remote.dto.StoreItemsResponse
+import com.example.backlogium.data.remote.dto.StorePriceEnvelope
+import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.FakeGameDao
 import com.example.backlogium.domain.GameSource
@@ -313,6 +316,16 @@ class FamilySharedGameRepositoryTest {
         private val playerAchievements: suspend () -> PlayerAchievementsResponse =
             { error("getPlayerAchievements not used") },
     ) : SteamApi {
+        override suspend fun getWishlist(
+            steamId: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): WishlistResponse = error("the wishlist is not part of this test")
+
+        override suspend fun getStoreItems(
+            inputJson: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): StoreItemsResponse = error("store items are not part of this test")
+
         override suspend fun getOwnedGames(
             key: String,
             steamId: String,
@@ -370,6 +383,12 @@ class FamilySharedGameRepositoryTest {
         private val respond: suspend (Long) -> Response<Map<String, StoreAppDetails>> =
             { error("appDetails not used") },
     ) : SteamStoreApi {
+        override suspend fun appDetailsPrices(
+            appIds: String,
+            countryCode: String?,
+            filters: String,
+        ): Response<Map<String, StorePriceEnvelope>> = error("prices are not part of this test")
+
         override suspend fun appDetails(appId: Long, language: String): Response<Map<String, StoreAppDetails>> =
             respond(appId)
     }
