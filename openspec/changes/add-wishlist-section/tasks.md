@@ -19,7 +19,7 @@
 - [x] 3.3 Add a **separate** price DTO whose `data` tolerates both an object and the `[]` that Steam returns for an app with no price, mapping `[]` to "no price"
 - [x] 3.4 Leave `StoreAppDetails` and the genre path untouched; add a comment recording why the DTO is not shared
 - [x] 3.5 Add unit tests over recorded fixtures: a paid app, a free app returning `data: []`, a mixed batch, and a malformed response
-- [ ] 3.6 Chunk requests conservatively and treat a failed chunk as a failed chunk, retaining previously observed prices for those apps
+- [x] 3.6 Chunk requests conservatively and treat a failed chunk as a failed chunk, retaining previously observed prices for those apps
 
 ## 4. Storage
 
@@ -31,12 +31,12 @@
 
 ## 5. Refresh and reconciliation
 
-- [ ] 5.1 Refresh the wishlist and its prices when the section is opened, skipping the request when retained prices are within the freshness window
-- [ ] 5.2 Choose and document the freshness window in the repository's KDoc, noting explicitly that it inverts the genre path's 30-day window because prices are volatile where genres are not
-- [ ] 5.3 Append an observation on every successful price fetch
-- [ ] 5.4 Reconcile against the owned library so an owned entry is not presented as wanted, without waiting for Steam to drop it
-- [ ] 5.5 Retain entries and prices with their dates when a refresh fails
-- [ ] 5.6 Add tests for the freshness window, partial-chunk failure, and owned reconciliation
+- [x] 5.1 Refresh the wishlist and its prices when the section is opened, skipping the request when retained prices are within the freshness window
+- [x] 5.2 Choose and document the freshness window in the repository's KDoc, noting explicitly that it inverts the genre path's 30-day window because prices are volatile where genres are not
+- [x] 5.3 Append an observation on every successful price fetch
+- [x] 5.4 Reconcile against the owned library so an owned entry is not presented as wanted, without waiting for Steam to drop it
+- [x] 5.5 Retain entries and prices with their dates when a refresh fails
+- [x] 5.6 Add tests for the freshness window, partial-chunk failure, and owned reconciliation
 
 ## 6. Periodic sampling
 

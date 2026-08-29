@@ -1,12 +1,19 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.WishlistDao
 import com.example.backlogium.data.local.entity.WishlistItem
 import com.example.backlogium.data.local.entity.WishlistPriceObservation
+import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -56,6 +63,27 @@ sealed interface WishlistPrice {
 }
 
 /**
+ * Whether the wishlist itself could be read on the last attempt. Distinct from having no
+ * entries: the section must say "this could not be read" rather than appear empty.
+ */
+enum class WishlistAvailability {
+    /** Nothing has been attempted yet this session. Whatever is stored is shown as it stands. */
+    UNKNOWN,
+
+    /** Steam listed the wishlist. Its entries are current as of the last refresh. */
+    AVAILABLE,
+
+    /** Steam answered and would not list it — the wishlist is not publicly readable. */
+    NOT_READABLE,
+
+    /** No answer at all: no network, an HTTP error, or a response shape gone unrecognisable. */
+    UNREACHABLE,
+}
+
+/** What a refresh did, for callers that need to distinguish "skipped" from "nothing changed". */
+enum class WishlistRefresh { REFRESHED, SKIPPED_FRESH, NOT_CONFIGURED, FAILED }
+
+/**
  * The wishlist as the app holds it: Steam's entries, their latest observed prices, and the
  * reconciliation that keeps an already-owned game from being presented as still wanted.
  *
@@ -65,8 +93,18 @@ sealed interface WishlistPrice {
 class WishlistRepository @Inject constructor(
     private val wishlistDao: WishlistDao,
     private val gameDao: GameDao,
+    private val profileDao: PlayerProfileDao,
+    private val credentials: CredentialsProvider,
+    private val wishlistSource: SteamWishlistDataSource,
+    private val priceSource: SteamStorePriceDataSource,
     private val time: TimeProvider,
 ) {
+    private val refreshMutex = Mutex()
+    private val availabilityState = MutableStateFlow(WishlistAvailability.UNKNOWN)
+
+    /** Whether the wishlist could be read, so the section can explain itself when it could not. */
+    val availability: StateFlow<WishlistAvailability> = availabilityState.asStateFlow()
+
     /**
      * Wishlisted games in Steam's priority order, each carrying the latest thing observed about
      * its price.
@@ -88,12 +126,148 @@ class WishlistRepository @Inject constructor(
         items.filterNot { it.appId in owned }.map { item -> item.toDomain(latest[item.appId], now) }
     }
 
+    /**
+     * Refresh the wishlist and its prices, as the section is opened.
+     *
+     * Skipped when every entry already has an observation newer than [FRESHNESS_WINDOW_MILLIS],
+     * so navigating back and forth does not re-request. [force] is for the periodic sampler,
+     * which exists precisely to record history on days the player never opens the section.
+     *
+     * Nothing here can fail loudly. A wishlist that cannot be read leaves the stored entries and
+     * their dated prices exactly as they were and only moves [availability]; a price chunk that
+     * fails records nothing for its app ids, so their previous observations stand. The one thing
+     * that must never happen is an absence being written over a price that was simply not
+     * re-observed.
+     */
+    suspend fun refresh(force: Boolean = false): WishlistRefresh = refreshMutex.withLock {
+        val steamId = (credentials.currentCredentials())?.steamId
+        if (steamId.isNullOrBlank()) return@withLock WishlistRefresh.NOT_CONFIGURED
+
+        if (!force && isFresh()) return@withLock WishlistRefresh.SKIPPED_FRESH
+
+        val region = profileDao.storeRegion()
+        val listed = when (val fetch = wishlistSource.wishlistFor(steamId)) {
+            is WishlistFetch.Entries -> {
+                availabilityState.value = WishlistAvailability.AVAILABLE
+                storeEntries(fetch.entries, region)
+                true
+            }
+
+            WishlistFetch.NotReadable -> {
+                availabilityState.value = WishlistAvailability.NOT_READABLE
+                false
+            }
+
+            is WishlistFetch.Unreachable -> {
+                availabilityState.value = WishlistAvailability.UNREACHABLE
+                false
+            }
+        }
+
+        // Prices are still worth refreshing when the list could not be re-read: the entries
+        // already stored are the same games, and a stale price is the thing most worth replacing.
+        val priced = refreshPrices(region)
+        when {
+            listed || priced -> WishlistRefresh.REFRESHED
+            else -> WishlistRefresh.FAILED
+        }
+    }
+
+    /**
+     * Whether every stored entry has a price observation inside the freshness window. An empty
+     * wishlist is never "fresh": there may be entries Steam knows about that this app does not.
+     */
+    private suspend fun isFresh(): Boolean {
+        val oldest = wishlistDao.oldestLatestObservationAt() ?: return false
+        return time.nowMillis() - oldest <= FRESHNESS_WINDOW_MILLIS
+    }
+
+    /**
+     * Replace the stored entries with what Steam listed, keeping names and artwork already held
+     * for entries the store does not answer for this time.
+     */
+    private suspend fun storeEntries(entries: List<WishlistEntry>, region: String?) {
+        val now = time.nowMillis()
+        if (entries.isEmpty()) {
+            wishlistDao.deleteAllItems()
+            return
+        }
+
+        val existing = wishlistDao.items().associateBy { it.appId }
+        // Only entries with no name stored yet cost a details request: a name does not change,
+        // and re-asking for the whole wishlist on every refresh would double the request count
+        // for nothing. A blank one is retried, so a details lookup that failed once recovers.
+        val needingDetails = entries
+            .map { it.appId }
+            .filter { existing[it]?.name.isNullOrBlank() }
+        val details = wishlistSource.detailsFor(needingDetails, region)
+
+        wishlistDao.upsertItems(
+            entries.map { entry ->
+                val known = existing[entry.appId]
+                val fetched = details[entry.appId]
+                WishlistItem(
+                    appId = entry.appId,
+                    name = fetched?.name ?: known?.name.orEmpty(),
+                    artworkUrl = fetched?.artworkUrl
+                        ?: known?.artworkUrl?.takeIf { it.isNotBlank() }
+                        ?: SteamIconMapper.headerUrl(entry.appId),
+                    priority = entry.priority,
+                    addedAt = entry.addedAtMillis,
+                    lastSeenAt = now,
+                )
+            },
+        )
+        wishlistDao.deleteItemsNotSeenSince(now)
+    }
+
+    /**
+     * Observe prices for everything still wanted. Owned entries are left out of the request as
+     * well as out of the section — there is no point pricing a game the player already has.
+     *
+     * Returns whether any observation was recorded at all, which is what separates "the refresh
+     * did something" from "every chunk failed".
+     */
+    private suspend fun refreshPrices(region: String?): Boolean {
+        val owned = gameDao.allAppIds().toHashSet()
+        val appIds = wishlistDao.appIds().filterNot { it in owned }
+        if (appIds.isEmpty()) return false
+
+        val now = time.nowMillis()
+        val batch = priceSource.pricesFor(appIds, region)
+        if (batch.prices.isEmpty()) return false
+
+        wishlistDao.insertObservations(
+            batch.prices.map { (appId, price) ->
+                when (price) {
+                    is StorePrice.Amount -> WishlistPriceObservation(
+                        appId = appId,
+                        observedAt = now,
+                        currency = price.currency,
+                        finalMinorUnits = price.finalMinorUnits,
+                        initialMinorUnits = price.initialMinorUnits,
+                        discountPercent = price.discountPercent,
+                        formatted = price.formatted,
+                        listFormatted = price.listFormatted,
+                    )
+                    // An observed absence, recorded with its date. Nothing is written for the ids
+                    // in `batch.unresolved`: a failed chunk is not an observation.
+                    StorePrice.None -> WishlistPriceObservation(appId = appId, observedAt = now)
+                }
+            },
+        )
+        return true
+    }
+
     private fun WishlistItem.toDomain(
         observation: WishlistPriceObservation?,
         now: Long,
     ) = WishlistGame(
         appId = appId,
-        name = name,
+        // The wishlist endpoint carries no name, and the store lookup that supplies one can fail
+        // independently. Naming the app by its id says exactly what is known rather than leaving
+        // a blank label under artwork that already shows the title.
+        name = name.ifBlank { "Steam app $appId" },
         artworkUrl = artworkUrl,
         priority = priority,
         addedAt = addedAt,

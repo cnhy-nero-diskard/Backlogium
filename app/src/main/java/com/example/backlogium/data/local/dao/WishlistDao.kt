@@ -25,6 +25,10 @@ interface WishlistDao {
     @Query("SELECT appId FROM wishlist_items")
     suspend fun appIds(): List<Long>
 
+    /** A one-shot read, for the refresh that has to merge Steam's entries onto what is stored. */
+    @Query("SELECT * FROM wishlist_items")
+    suspend fun items(): List<WishlistItem>
+
     @Upsert
     suspend fun upsertItems(items: List<WishlistItem>)
 

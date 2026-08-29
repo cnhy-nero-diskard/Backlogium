@@ -1,20 +1,8 @@
 package com.example.backlogium.data.repo
 
-import com.example.backlogium.data.diagnostics.SyncRunRecorder
-import com.example.backlogium.data.remote.SteamApi
-import com.example.backlogium.data.remote.dto.CurrentPlayersResponse
-import com.example.backlogium.data.remote.dto.GameSchemaResponse
-import com.example.backlogium.data.remote.dto.GlobalAchievementPercentagesResponse
-import com.example.backlogium.data.remote.dto.OwnedGamesResponse
-import com.example.backlogium.data.remote.dto.PlayerAchievementsResponse
-import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
-import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
-import com.example.backlogium.data.remote.dto.ResolveVanityResponse
-import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.dto.StoreItemsResponse
 import com.example.backlogium.data.remote.dto.WishlistResponse
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -95,12 +83,12 @@ class SteamWishlistDataSourceTest {
     }
 
     @Test fun anUnknownRegion_isOmittedFromTheStoreContext() = runBlocking {
-        val api = FakeSteamApi(storeItems = json.decodeFromString(STORE_ITEMS))
+        val api = api(storeItems = STORE_ITEMS)
 
         SteamWishlistDataSource(api).detailsFor(listOf(440), null)
 
-        assertTrue("country_code" !in api.storeItemsInput.orEmpty())
-        assertTrue("\"appid\":440" in api.storeItemsInput.orEmpty())
+        assertTrue("country_code" !in api.lastStoreItemsInput.orEmpty())
+        assertTrue("\"appid\":440" in api.lastStoreItemsInput.orEmpty())
     }
 
     private fun source(
@@ -108,47 +96,24 @@ class SteamWishlistDataSourceTest {
         wishlistFailure: Throwable? = null,
         storeItems: String = EMPTY_STORE_ITEMS,
         storeItemsFailure: Throwable? = null,
-    ) = SteamWishlistDataSource(
-        FakeSteamApi(
-            wishlist = runCatching { json.decodeFromString<WishlistResponse>(wishlist) }.getOrNull(),
-            wishlistFailure = wishlistFailure,
-            storeItems = runCatching { json.decodeFromString<StoreItemsResponse>(storeItems) }.getOrNull(),
-            storeItemsFailure = storeItemsFailure,
-        ),
-    )
+    ) = SteamWishlistDataSource(api(wishlist, wishlistFailure, storeItems, storeItemsFailure))
 
-    /** Only the two wishlist endpoints are reachable; anything else is a test failure. */
-    private class FakeSteamApi(
-        private val wishlist: WishlistResponse? = null,
-        private val wishlistFailure: Throwable? = null,
-        private val storeItems: StoreItemsResponse? = null,
-        private val storeItemsFailure: Throwable? = null,
-    ) : SteamApi {
-        var storeItemsInput: String? = null
-            private set
-
-        override suspend fun getWishlist(steamId: String, scope: SyncRunRecorder.RunScope?): WishlistResponse {
+    private fun api(
+        wishlist: String = NOT_READABLE,
+        wishlistFailure: Throwable? = null,
+        storeItems: String = EMPTY_STORE_ITEMS,
+        storeItemsFailure: Throwable? = null,
+    ) = FakeWishlistApi(
+        wishlist = {
             wishlistFailure?.let { throw it }
             // A body the app cannot decode arrives exactly as the converter would raise it.
-            return wishlist ?: throw SerializationException("unrecognised")
-        }
-
-        override suspend fun getStoreItems(inputJson: String, scope: SyncRunRecorder.RunScope?): StoreItemsResponse {
-            storeItemsInput = inputJson
+            json.decodeFromString<WishlistResponse>(wishlist)
+        },
+        storeItems = {
             storeItemsFailure?.let { throw it }
-            return storeItems ?: throw SerializationException("unrecognised")
-        }
-
-        override suspend fun getOwnedGames(key: String, steamId: String, includeAppInfo: Int, includePlayedFreeGames: Int, scope: SyncRunRecorder.RunScope?): OwnedGamesResponse = error("not used")
-        override suspend fun getRecentlyPlayedGames(key: String, steamId: String, count: Int, scope: SyncRunRecorder.RunScope?): RecentlyPlayedGamesResponse = error("not used")
-        override suspend fun getSteamLevel(key: String, steamId: String, scope: SyncRunRecorder.RunScope?): SteamLevelResponse = error("not used")
-        override suspend fun getPlayerSummaries(key: String, steamIds: String, scope: SyncRunRecorder.RunScope?): PlayerSummariesResponse = error("not used")
-        override suspend fun getPlayerAchievements(key: String, steamId: String, appId: Long, scope: SyncRunRecorder.RunScope?): PlayerAchievementsResponse = error("not used")
-        override suspend fun getGlobalAchievementPercentages(gameId: Long, scope: SyncRunRecorder.RunScope?): GlobalAchievementPercentagesResponse = error("not used")
-        override suspend fun getSchemaForGame(key: String, appId: Long, scope: SyncRunRecorder.RunScope?): GameSchemaResponse = error("not used")
-        override suspend fun resolveVanityUrl(key: String, vanityUrl: String): ResolveVanityResponse = error("not used")
-        override suspend fun getNumberOfCurrentPlayers(appId: Long): CurrentPlayersResponse = error("not used")
-    }
+            json.decodeFromString<StoreItemsResponse>(storeItems)
+        },
+    )
 
     private companion object {
         const val ENTRIES = """{"response":{"items":[{"appid":1620,"priority":0,"date_added":1572456900},{"appid":34180,"priority":879,"date_added":1549370695}]}}"""
