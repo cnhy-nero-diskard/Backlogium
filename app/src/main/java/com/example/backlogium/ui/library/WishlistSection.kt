@@ -53,11 +53,13 @@ import compose.icons.tablericons.ExternalLink
  * Entries follow the Library's own density control, so switching to grid does not leave a list of
  * wanted games sitting under a grid of owned ones.
  *
- * What drops as the grid tightens is the **wishlisted label**, not the price. The price is why
- * this section exists, and at three columns it also does the label's job: an owned tile at that
- * density carries a name and nothing else, so a money capsule — or the words "No price available"
+ * What drops as the grid tightens is the **wishlisted label**, not the price or its observation
+ * date. The price is why this section exists, and at three columns it also does the label's job: an
+ * owned tile at that density carries a name and nothing else, so a money capsule — or the words
+ * "No price available"
  * — separates a want from a have by structure rather than by colour. Repeating the word
- * "Wishlisted" under every third tile only crowds out the figure the player came to read.
+ * "Wishlisted" under every third tile only crowds out the figure the player came to read. Every
+ * shown amount also keeps its "Seen" date, so it cannot be mistaken for an undated current price.
  */
 fun LazyListScope.wishlistSection(
     state: WishlistUiState,
@@ -332,7 +334,7 @@ private fun WishlistPrice(
             formatted = price.formatted,
             listFormatted = price.listFormatted,
             discountPercent = price.discountPercent,
-            observedNote = null,
+            observedNote = "Seen ${UiFormat.date(price.observedAt)}",
             compact = compact,
             modifier = modifier,
         )
@@ -341,9 +343,8 @@ private fun WishlistPrice(
             formatted = price.formatted,
             listFormatted = price.listFormatted,
             discountPercent = price.discountPercent,
-            // A retained price is never presented as today's. The date is the whole point, and
-            // it survives the compact tile for that reason — dropping it to save a line would
-            // turn a remembered price into a claim about the price right now.
+            // The date survives every density — dropping it to save a line would turn an observed
+            // price into an undated claim about the price right now.
             observedNote = "Seen ${UiFormat.date(price.observedAt)}",
             compact = compact,
             modifier = modifier,

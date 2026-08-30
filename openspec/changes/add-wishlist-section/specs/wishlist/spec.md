@@ -80,7 +80,7 @@ current.
 
 #### Scenario: Freshly refreshed
 - **WHEN** prices have just been refreshed
-- **THEN** the entries show prices as current
+- **THEN** the entries show prices as current and include the date each price was observed
 
 #### Scenario: Offline
 - **WHEN** the section is opened with no network
@@ -106,7 +106,8 @@ the last membership read did not succeed.
 
 #### Scenario: Opening with fresh prices
 - **WHEN** the section is opened again shortly after a refresh in which the wishlist was read
-- **THEN** no further request is made and the retained prices are shown as current
+- **THEN** no further request is made and the retained prices are shown as current, each with its
+  observation date
 
 #### Scenario: A failed membership read is retried
 - **WHEN** the last wishlist read failed but the retained prices were observed successfully

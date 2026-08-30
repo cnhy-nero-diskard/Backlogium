@@ -24,11 +24,12 @@ import javax.inject.Inject
  */
 sealed interface WishlistPriceUi {
 
-    /** Observed inside the freshness window: shown plainly, with no qualification. */
+    /** Observed inside the freshness window: shown with the date it was observed. */
     data class Current(
         val formatted: String,
         val listFormatted: String?,
         val discountPercent: Int,
+        val observedAt: Long,
     ) : WishlistPriceUi
 
     /** Observed longer ago than that, so it is shown *with the date it was observed*. */
@@ -143,7 +144,7 @@ internal fun WishlistGame.toUi() = WishlistEntryUi(
 
 internal fun WishlistPrice.toUi(): WishlistPriceUi = when (this) {
     is WishlistPrice.Observed -> if (current) {
-        WishlistPriceUi.Current(formatted, listFormatted, discountPercent)
+        WishlistPriceUi.Current(formatted, listFormatted, discountPercent, observedAt)
     } else {
         WishlistPriceUi.Retained(formatted, listFormatted, discountPercent, observedAt)
     }

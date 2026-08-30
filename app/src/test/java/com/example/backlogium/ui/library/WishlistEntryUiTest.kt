@@ -8,14 +8,15 @@ import org.junit.Test
 /**
  * The four price states the row has to keep apart. Three of them carry no amount at all, and the
  * spec is explicit that none may be rendered as a zero, a dash, or a blank — which starts here,
- * with them being different types rather than a nullable string.
+ * with them being different types rather than a nullable string. Both observed states retain their
+ * observation date so a shown amount is never undated.
  */
 class WishlistEntryUiTest {
 
-    @Test fun aFreshPriceIsCurrent_andCarriesNoDate() {
+    @Test fun aFreshPriceIsCurrent_andKeepsTheDateItWasObserved() {
         val price = WishlistPrice.Observed("P2,099.00", null, 0, OBSERVED_AT, current = true).toUi()
 
-        assertEquals(WishlistPriceUi.Current("P2,099.00", null, 0), price)
+        assertEquals(WishlistPriceUi.Current("P2,099.00", null, 0, OBSERVED_AT), price)
     }
 
     @Test fun anOlderPriceIsRetained_andKeepsTheDateItWasObserved() {
@@ -30,7 +31,7 @@ class WishlistEntryUiTest {
     @Test fun aDiscountKeepsBothPricesAndThePercentage() {
         val price = WishlistPrice.Observed("P849.75", "P3,399.00", 75, OBSERVED_AT, current = true).toUi()
 
-        assertEquals(WishlistPriceUi.Current("P849.75", "P3,399.00", 75), price)
+        assertEquals(WishlistPriceUi.Current("P849.75", "P3,399.00", 75, OBSERVED_AT), price)
     }
 
     @Test fun aRecordedAbsenceAndNoObservationAtAll_areDifferentStates() {

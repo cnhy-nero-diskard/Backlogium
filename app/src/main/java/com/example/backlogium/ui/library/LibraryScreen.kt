@@ -144,6 +144,43 @@ private data class LibraryDisplayGame(
     val recencyState: GameRecencyState? = null,
 )
 
+/** Keep the owned-library empty state from hiding a separately readable wishlist. */
+internal fun shouldShowFullScreenLibraryEmptyState(
+    libraryState: LibraryUiState,
+    wishlistState: WishlistUiState,
+): Boolean = libraryState.libraryEmpty && !wishlistState.configured
+
+internal fun shouldShowWishlistSection(
+    libraryState: LibraryUiState,
+    wishlistState: WishlistUiState,
+    selectedGenreSet: Set<String>,
+): Boolean = wishlistState.configured &&
+    (libraryState.libraryEmpty ||
+        (libraryState.query.isBlank() && selectedGenreSet.isEmpty()))
+
+@Composable
+private fun LibraryEmptyNotice() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = "No games yet",
+            style = MaterialTheme.typography.titleLarge,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = "Once a sync completes, your Steam library appears here. " +
+                "If it stays empty, your profile may be private.",
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
 fun LibraryScreen(
@@ -212,13 +249,35 @@ fun LibraryScreen(
 
     // Keyed to the *unfiltered* library. If the filtered lists fed this, a query matching nothing
     // would unmount the search field along with everything else, leaving no way to clear the query
-    // that caused it.
-    if (state.libraryEmpty) {
+    // that caused it. A configured wishlist is the one independent surface that must remain
+    // reachable even when this owned-library state is empty.
+    if (shouldShowFullScreenLibraryEmptyState(state, wishlistState)) {
         EmptyState(
             title = "No games yet",
             message = "Once a sync completes, your Steam library appears here. " +
                 "If it stays empty, your profile may be private.",
         )
+        return
+    }
+
+    if (state.libraryEmpty) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+            ) {
+                if (shouldShowWishlistSection(state, wishlistState, selectedGenreSet)) {
+                    wishlistSection(
+                        state = wishlistState,
+                        density = state.density,
+                        onToggle = wishlistViewModel::setExpanded,
+                        onOpenStore = { uriHandler.openUri(it.storeUrl) },
+                    )
+                }
+                item { LibraryEmptyNotice() }
+            }
+        }
         return
     }
 

@@ -93,10 +93,10 @@ store region. Review corrected that: the field is the public/community profile l
 Steam Store Country is a separate account and payment-derived setting. Pricing from it can force
 the wrong region and currency, so the assumption is removed rather than refined.
 
-Until an explicit store-country setting exists, `cc` is omitted entirely and Steam resolves the
-region from the request itself. That is a better fallback than a derived or hardcoded region,
-which would confidently show the wrong currency. The `storeRegion` column remains as the future
-home of such a setting; the profile location is never written to it.
+An explicit stored Store Country is forwarded as `cc`; when it is absent or blank, `cc` is omitted
+entirely and Steam resolves the region from the request itself. That is a better fallback than a
+derived or hardcoded region, which would confidently show the wrong currency. The profile location
+is never written to `storeRegion`.
 
 Displayed prices use Steam's own formatted string, which places currency symbols correctly per
 region. Any arithmetic uses the integer minor-unit fields. Formatting money from raw integers
@@ -173,7 +173,7 @@ same spirit as the standing requirement that the app work with no network and no
 
 - **With `cc` omitted, Steam resolves the region from the request itself**, which may not be the
   account's actual Steam Store Country. The profile's public location is deliberately not consulted
-  (decision 4). When the explicitly configured `storeRegion` is non-null, it is forwarded instead;
+  (decision 4). When the explicitly configured `storeRegion` is non-blank, it is forwarded instead;
   otherwise `cc` remains omitted. → Prices are recorded as what was observed and dated, never
   presented as more than that.
 

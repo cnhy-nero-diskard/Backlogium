@@ -34,18 +34,24 @@ rather than keeping a presentation of their own.
 - **THEN** the owned-library lists, their sorting, grouping, density, and search behave exactly as
   they do today
 
+#### Scenario: Empty owned library does not hide the wishlist
+- **WHEN** Steam credentials are configured, the wishlist has entries, and the owned library is empty
+- **THEN** the wishlist section remains reachable while the owned library still explains that no
+  games have been loaded yet
+
 #### Scenario: Wishlist games absent from library statistics
 - **WHEN** any library count, completion figure, or analytic is computed
 - **THEN** wishlisted games contribute to none of them
 
 ### Requirement: Wishlist entry states
 Each wishlist entry SHALL convey the state of its price: current, retained from an earlier
-observation with its date, unavailable, or not yet observed. No state SHALL be rendered in a way
-that could be read as a price.
+observation with its date, unavailable, or not yet observed. Whenever an amount is shown, its
+observation date SHALL be shown with it at every Library density. No state SHALL be rendered in a
+way that could be read as a price.
 
 #### Scenario: Current price
 - **WHEN** prices were just refreshed
-- **THEN** the entry shows its price without qualification
+- **THEN** the entry shows its price and the date it was observed
 
 #### Scenario: A price is set apart from the entry's other text
 - **WHEN** an entry has a price to show

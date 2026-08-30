@@ -28,8 +28,9 @@ would fail the entire response, not merely its own entry.
   artwork, name, current price, and any active discount.
 - **Prices refreshed when the section is viewed**, batched into as few requests as the endpoint
   allows, and cached so the section works offline.
-- **Prices are always dated.** A cached price states when it was observed. The app never presents a
-  stored price as the current one.
+- **Prices are always dated.** Every shown price states when it was observed; a fresh observation may
+  also be identified as current, while an older one is explicitly retained rather than presented as
+  current.
 - **No price is a first-class state**, not an empty field: when Steam provides no price data, the
   entry says that no price is available without claiming whether the title is free-to-play,
   unreleased, or unavailable in the region.
@@ -69,9 +70,9 @@ would fail the entire response, not merely its own entry.
   `SteamStoreApi`; `wishlist_items` and `wishlist_price_observations` tables with their migration; a
   repository exposing wishlist entries as domain models; the section and its entry composables.
 - **Affected code (modified):** `PlayerSummariesDto` and `PlayerProfile` to carry persona name and
-  avatar, plus a `storeRegion` column reserved for a future explicit store-country setting — the
-  response's `loccountrycode` is the public profile location and is never used as one; the Library
-  screen to host the section.
+  avatar, plus a `storeRegion` column for the explicit Store Country setting — `loccountrycode` is
+  never used; a non-blank stored Store Country is forwarded to details and price requests as `cc`,
+  and otherwise `cc` is omitted; the Library screen hosts the section.
 - **Wishlist entries are deliberately not rows in `games`.** They are not owned, have no sessions,
   and must not enter library counts, XP denominators, completion percentages, or any analytic. A
   want is not a have.
