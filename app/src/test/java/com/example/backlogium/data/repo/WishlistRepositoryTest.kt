@@ -217,6 +217,23 @@ class WishlistRepositoryTest {
         assertEquals(1, priceApi.requests.size)
     }
 
+    @Test fun anOwnedWishlistEntryDoesNotPreventFreshnessSkippingForWantedEntries() = runBlocking {
+        db.gameDao().upsertAll(listOf(game(1)))
+        val api = FakeWishlistApi(
+            wishlist = { wishlistJson(WISHLIST_WITH_OWNED_ENTRY) },
+            storeItems = { storeItemsJson(STORE_ITEMS_WITH_OWNED_ENTRY) },
+        )
+        val priceApi = FakePriceApi { ids, _ -> Response.success(pricedChunk(ids)) }
+        val repo = repository(api = api, priceApi = priceApi)
+
+        assertEquals(WishlistRefresh.REFRESHED, repo.refresh())
+        assertEquals(WishlistRefresh.SKIPPED_FRESH, repo.refresh())
+
+        // The owned row is hidden and excluded from both the first price request and freshness.
+        assertEquals(1, api.wishlistCalls)
+        assertEquals(listOf("2"), priceApi.requests.map { it.first })
+    }
+
     @Test fun theSamplerIgnoresTheFreshnessWindowEntirely() = runBlocking {
         val api = FakeWishlistApi(
             wishlist = { wishlistJson(WISHLIST) },
@@ -430,9 +447,13 @@ class WishlistRepositoryTest {
 
         const val WISHLIST = """{"response":{"items":[{"appid":292030,"priority":1,"date_added":1549370695}]}}"""
 
+        const val WISHLIST_WITH_OWNED_ENTRY = """{"response":{"items":[{"appid":1,"priority":1,"date_added":1549370695},{"appid":2,"priority":2,"date_added":1549370695}]}}"""
+
         const val NOT_READABLE = """{"response":{}}"""
 
         const val STORE_ITEMS = """{"response":{"store_items":[{"id":292030,"appid":292030,"success":1,"visible":true,"name":"The Witcher 3: Wild Hunt"}]}}"""
+
+        const val STORE_ITEMS_WITH_OWNED_ENTRY = """{"response":{"store_items":[{"id":1,"appid":1,"success":1,"visible":true,"name":"Owned game"},{"id":2,"appid":2,"success":1,"visible":true,"name":"Wanted game"}]}}"""
 
         const val PRICED = """{"292030":{"success":true,"data":{"price_overview":{"currency":"PHP","initial":209900,"final":209900,"discount_percent":0,"initial_formatted":"","final_formatted":"P2,099.00"}}}}"""
 

@@ -63,17 +63,20 @@ interface WishlistDao {
     fun observeLatestPrices(): Flow<List<WishlistPriceObservation>>
 
     /**
-     * The oldest "last observed" instant across the wishlist, or null when it holds no entries.
+     * The oldest "last observed" instant across the non-owned wishlist, or null when it holds no
+     * entries that will be priced.
      *
      * The freshness window is judged on the *oldest* entry rather than the newest, so a game
      * wishlisted since the last refresh still pulls one. An entry never observed at all counts as
      * 0 for exactly that reason — `MIN` skips nulls, which would otherwise let the one entry that
-     * has no price be the one entry a refresh never covers.
+     * has no price be the one entry a refresh never covers. The ownership filter deliberately
+     * matches `WishlistRepository.refreshPrices()`: rows already in `games` are hidden and are not
+     * sent to Steam for pricing.
      */
     @Query(
         "SELECT MIN(IFNULL(latest, 0)) FROM (SELECT MAX(o.observedAt) AS latest " +
             "FROM wishlist_items i LEFT JOIN wishlist_price_observations o ON o.appId = i.appId " +
-            "GROUP BY i.appId)",
+            "WHERE i.appId NOT IN (SELECT appId FROM games) GROUP BY i.appId)",
     )
     suspend fun oldestLatestObservationAt(): Long?
 
