@@ -31,7 +31,7 @@
 
 ## 5. Refresh and reconciliation
 
-- [x] 5.1 Refresh the wishlist and its prices when the section is opened, skipping the request when retained prices are within the freshness window
+- [x] 5.1 Refresh the wishlist and its prices when the section is opened, skipping the request only when both wishlist membership and retained prices are within the freshness window; retry membership when its last read failed even if price observations are fresh
 - [x] 5.2 Choose and document the freshness window in the repository's KDoc, noting explicitly that it inverts the genre path's 30-day window because prices are volatile where genres are not
 - [x] 5.3 Append an observation on every successful price fetch
 - [x] 5.4 Reconcile against the owned library so an owned entry is not presented as wanted, without waiting for Steam to drop it

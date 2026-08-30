@@ -14,9 +14,9 @@ treating it as a whole subsystem. Two probes against a live profile settled the 
   keyed entries in one request. A wishlist of any realistic size is a handful of requests, not one
   per game — so no background worker, no batch cap, no progress UI, and no conflict with the
   serial-issuance position `optimize-steam-sync` established for fan-out request paths.
-- **Absent prices are explicit.** An app with no price returns `"data": []`. Free-to-play,
-  unreleased, and region-restricted titles are therefore distinguishable from a failed lookup
-  rather than needing to be inferred.
+- **Absent prices are explicit.** An app with no price returns `"data": []`, which the app records as
+  a known no-price result rather than a failed lookup. That response does not identify whether the
+  title is free-to-play, unreleased, or region-restricted.
 
 That second result also exposes a hazard worth naming up front: the existing `StoreAppDetails` DTO
 types `data` as an object, and deserializing `[]` into it throws. One free-to-play game in a batch
@@ -30,8 +30,9 @@ would fail the entire response, not merely its own entry.
   allows, and cached so the section works offline.
 - **Prices are always dated.** A cached price states when it was observed. The app never presents a
   stored price as the current one.
-- **No price is a first-class state**, not an empty field: free-to-play, unreleased, and
-  unavailable-in-region are shown as what they are.
+- **No price is a first-class state**, not an empty field: when Steam provides no price data, the
+  entry says that no price is available without claiming whether the title is free-to-play,
+  unreleased, or unavailable in the region.
 - **Prices are requested without deriving a store region from the player's public profile location.**
   When an explicit store-country setting exists, it is passed as `cc`; otherwise `cc` is omitted and
   Steam resolves the region for the request.
