@@ -33,9 +33,9 @@ would fail the entire response, not merely its own entry.
 - **No price is a first-class state**, not an empty field: when Steam provides no price data, the
   entry says that no price is available without claiming whether the title is free-to-play,
   unreleased, or unavailable in the region.
-- **Prices are requested without deriving a store region from the player's public profile location.**
-  When an explicit store-country setting exists, it is passed as `cc`; otherwise `cc` is omitted and
-  Steam resolves the region for the request.
+- **Price requests never use the profile's `loccountrycode`.** When a non-blank explicitly stored
+  Store Country exists, it is forwarded as `cc` to the details and price calls; otherwise `cc` is
+  omitted and Steam resolves the region for the request.
 - **Every entry links to its Steam store page**, which opens the Steam app directly when installed.
 - **Price observations are recorded over time.** No alerting and no history UI in this change — the
   point is that history is cheap to start accumulating and impossible to backfill, so recording

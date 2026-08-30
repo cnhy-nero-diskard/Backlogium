@@ -9,8 +9,14 @@ import com.example.backlogium.data.remote.dto.StoreItemsResponse
 import com.example.backlogium.data.remote.dto.StorePriceEnvelope
 import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.domain.TimeProvider
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
@@ -27,6 +33,7 @@ import java.time.ZoneId
 import retrofit2.Response
 
 /** The read side: Steam's ordering, the four price states, and ownership reconciliation. */
+@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 class WishlistRepositoryTest {
 
@@ -45,6 +52,7 @@ class WishlistRepositoryTest {
         steamId: String? = "76561197979911851",
         api: FakeWishlistApi = FakeWishlistApi(),
         priceApi: FakePriceApi = FakePriceApi { _, _ -> Response.success(emptyMap()) },
+        time: TimeProvider = clock,
     ) = WishlistRepository(
         wishlistDao = db.wishlistDao(),
         gameDao = db.gameDao(),
@@ -52,7 +60,7 @@ class WishlistRepositoryTest {
         credentials = FakeCredentials(steamId),
         wishlistSource = SteamWishlistDataSource(api),
         priceSource = SteamStorePriceDataSource(priceApi),
-        time = clock,
+        time = time,
     )
 
     @After fun tearDown() = db.close()
@@ -358,6 +366,51 @@ class WishlistRepositoryTest {
         assertEquals(2, api.wishlistCalls)
     }
 
+    @Test fun afterAForcedFailedRead_reopeningRetriesMembershipDespiteFreshPrices() = runBlocking {
+        var wishlistAttempt = 0
+        val api = FakeWishlistApi(wishlist = {
+            wishlistAttempt++
+            if (wishlistAttempt == 1) wishlistJson(WISHLIST) else wishlistJson(NOT_READABLE)
+        })
+        val priceApi = FakePriceApi { ids, _ -> Response.success(pricedChunk(ids)) }
+        val first = repository(api = api, priceApi = priceApi)
+
+        assertEquals(WishlistRefresh.REFRESHED, first.refresh())
+        // The forced sampler read fails, but its price pass succeeds and records a fresh observation.
+        assertEquals(WishlistRefresh.REFRESHED, first.refresh(force = true))
+
+        val reopened = repository(api = api, priceApi = priceApi)
+        assertEquals(WishlistRefresh.REFRESHED, reopened.refresh())
+        assertEquals(3, api.wishlistCalls)
+    }
+
+    @Test fun aPriceExpiresWhileTheSectionIsOpen_withoutAnyDatabaseEmission() = runTest {
+        val virtualClock = VirtualTime(this)
+        db.wishlistDao().upsertItems(
+            listOf(item(appId = 1, priority = 2), item(appId = 2, priority = 1)),
+        )
+        db.wishlistDao().insertObservations(
+            listOf(
+                price(appId = 1, at = NOW, discount = 50),
+                price(appId = 2, at = NOW),
+            ),
+        )
+
+        val states = repository(time = virtualClock).wishlist
+            .filter { games -> games.all { it.price is WishlistPrice.Observed } }
+            .distinctUntilChanged()
+            .take(2)
+            .toList()
+
+        assertEquals(listOf(1L, 2L), states[0].map { it.appId })
+        assertEquals(true, (states[0].first().price as WishlistPrice.Observed).current)
+        assertEquals(listOf(2L, 1L), states[1].map { it.appId })
+        assertEquals(
+            WishlistPrice.Observed("P2,099.00", null, 50, NOW, current = false),
+            states[1].last().price,
+        )
+    }
+
     @Test fun anUnresolvedPriceShapeRetainsThePreviousObservation() = runBlocking {
         val staleMembership = NOW - WishlistRepository.FRESHNESS_WINDOW_MILLIS - 1
         db.wishlistDao().upsertItems(listOf(item(appId = 1, lastSeenAt = staleMembership)))
@@ -474,6 +527,14 @@ class WishlistRepositoryTest {
 
     private class FixedTime(private val now: Long) : TimeProvider {
         override fun nowMillis(): Long = now
+        override fun zone(): ZoneId = ZoneId.of("UTC")
+        override fun today(): LocalDate = LocalDate.parse("2026-08-30")
+    }
+
+    private class VirtualTime(
+        private val scope: kotlinx.coroutines.test.TestScope,
+    ) : TimeProvider {
+        override fun nowMillis(): Long = NOW + scope.testScheduler.currentTime
         override fun zone(): ZoneId = ZoneId.of("UTC")
         override fun today(): LocalDate = LocalDate.parse("2026-08-30")
     }

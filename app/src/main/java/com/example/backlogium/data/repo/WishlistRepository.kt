@@ -7,11 +7,14 @@ import com.example.backlogium.data.local.entity.WishlistItem
 import com.example.backlogium.data.local.entity.WishlistPriceObservation
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.domain.exactExpiryTicks
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
@@ -139,12 +142,18 @@ class WishlistRepository @Inject constructor(
         wishlistDao.observeLatestPrices(),
         gameDao.observeAppIds(),
     ) { items, observations, ownedAppIds ->
-        val owned = ownedAppIds.toHashSet()
-        val latest = observations.associateBy { it.appId }
-        val now = time.nowMillis()
-        items.filterNot { it.appId in owned }
-            .map { item -> item.toDomain(latest[item.appId], now) }
-            .sortedByDescending { it.price.isLiveDiscount }
+        WishlistJoin(items, observations, ownedAppIds)
+    }.flatMapLatest { join ->
+        exactExpiryTicks(
+            nowMillis = time::nowMillis,
+            nextExpiryAt = { now -> nextPriceExpiryAt(join, now) },
+        ).map { now ->
+            val owned = join.ownedAppIds.toHashSet()
+            val latest = join.observations.associateBy { it.appId }
+            join.items.filterNot { it.appId in owned }
+                .map { item -> item.toDomain(latest[item.appId], now) }
+                .sortedByDescending { it.price.isLiveDiscount }
+        }
     }
 
     /**
@@ -183,11 +192,15 @@ class WishlistRepository @Inject constructor(
             }
 
             WishlistFetch.NotReadable -> {
+                playerProfileDao.insertIfMissing()
+                playerProfileDao.clearLastSuccessfulWishlistReadAt()
                 availabilityState.value = WishlistAvailability.NOT_READABLE
                 false
             }
 
             is WishlistFetch.Unreachable -> {
+                playerProfileDao.insertIfMissing()
+                playerProfileDao.clearLastSuccessfulWishlistReadAt()
                 availabilityState.value = WishlistAvailability.UNREACHABLE
                 false
             }
@@ -302,6 +315,17 @@ class WishlistRepository @Inject constructor(
         return true
     }
 
+    private fun nextPriceExpiryAt(join: WishlistJoin, now: Long): Long? {
+        val owned = join.ownedAppIds.toHashSet()
+        return join.observations.asSequence()
+            .filter { it.appId !in owned && !it.formatted.isNullOrBlank() }
+            // Freshness is inclusive (the existing `<=` checks), so wake at the first millisecond
+            // that is outside the window rather than at its still-fresh boundary.
+            .map { it.observedAt + FRESHNESS_WINDOW_MILLIS + 1 }
+            .filter { it > now }
+            .minOrNull()
+    }
+
     private fun WishlistItem.toDomain(
         observation: WishlistPriceObservation?,
         now: Long,
@@ -329,6 +353,12 @@ class WishlistRepository @Inject constructor(
             current = now - observedAt <= FRESHNESS_WINDOW_MILLIS,
         )
     }
+
+    private data class WishlistJoin(
+        val items: List<WishlistItem>,
+        val observations: List<WishlistPriceObservation>,
+        val ownedAppIds: List<Long>,
+    )
 
     companion object {
         /**

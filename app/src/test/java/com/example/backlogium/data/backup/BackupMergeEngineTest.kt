@@ -1075,6 +1075,10 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
         )
     }
 
+    override suspend fun clearLastSuccessfulWishlistReadAt() {
+        profile = (profile ?: PlayerProfile()).copy(lastSuccessfulWishlistReadAt = null)
+    }
+
     override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?, storeRegion: String?) {
         profile = (profile ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
     }

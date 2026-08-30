@@ -64,6 +64,10 @@ interface PlayerProfileDao {
     )
     suspend fun updateLastSuccessfulWishlistReadAt(readAt: Long)
 
+    /** Invalidate wishlist membership freshness after a read that did not succeed. */
+    @Query("UPDATE player_profile SET lastSuccessfulWishlistReadAt = NULL WHERE id = 0")
+    suspend fun clearLastSuccessfulWishlistReadAt()
+
     /**
      * The identity fields the live presence path can observe: the header pair plus any explicit
      * store-region setting retained by the profile.
