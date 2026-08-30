@@ -1,16 +1,28 @@
 ## ADDED Requirements
 
-### Requirement: The wishlist is retrieved and ordered as Steam holds it
-The system SHALL retrieve the player's Steam wishlist and SHALL present its entries in the priority
-order Steam reports. The app SHALL NOT modify the wishlist.
+### Requirement: The wishlist is retrieved, and ordered by what is worth deciding on now
+The system SHALL retrieve the player's Steam wishlist. It SHALL present entries currently observed
+to be discounted ahead of those that are not, and SHALL otherwise present entries in the priority
+order Steam reports, preserving that order within each group. A retained observation of a discount
+SHALL NOT promote an entry. The app SHALL NOT modify the wishlist.
 
 #### Scenario: Wishlist retrieved
 - **WHEN** the player's wishlist is fetched successfully
-- **THEN** its entries are available, ordered by the priority Steam reports
+- **THEN** its entries are available
 
-#### Scenario: Ordering preserved
+#### Scenario: Ordering preserved within each group
 - **WHEN** the player has assigned priorities in Steam
-- **THEN** the app presents the entries in that order rather than re-sorting them
+- **THEN** the app presents entries in that order, rather than re-sorting them on anything of its
+  own beyond bringing discounted entries forward
+
+#### Scenario: A running discount comes first
+- **WHEN** some entries are currently observed to be discounted
+- **THEN** they appear ahead of the rest, in the player's own priority order among themselves
+
+#### Scenario: A discount seen earlier does not come first
+- **WHEN** an entry's discount was observed longer ago than the freshness window
+- **THEN** it keeps its place in the player's priority order, because a sale seen earlier is not
+  evidence of one running now
 
 #### Scenario: No editing
 - **WHEN** the player views a wishlist entry

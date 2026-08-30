@@ -369,9 +369,15 @@ private fun AbsentPrice(text: String, modifier: Modifier = Modifier) {
 /**
  * A price, enclosed so it reads as a figure rather than as another line of the row's prose.
  *
- * A discount takes the tertiary fill and carries its percentage inside the capsule, so a sale is
- * visible from across the list without the app having to shout. The struck-through list price
- * follows outside it — it is context for the amount, not a second amount.
+ * A discount takes the tertiary fill, so a sale is visible from across the list without the app
+ * having to shout. At the two roomier densities it also carries its percentage inside the capsule
+ * and the struck-through list price outside it — context for the amount, not a second amount.
+ *
+ * At three columns both of those go and the fill carries the signal alone. That is a real
+ * reduction: a reader who cannot separate the two fills loses the discount at this density, where
+ * at every other one it is spelled out. It is the same bargain the compact grid already makes with
+ * playtime and achievements — the densest tier trades detail for count — and the price itself,
+ * which is what the sale actually amounts to, never leaves the tile.
  */
 @Composable
 private fun PriceCapsule(
@@ -383,6 +389,9 @@ private fun PriceCapsule(
     modifier: Modifier = Modifier,
 ) {
     val discounted = discountPercent > 0
+    // Spoken even where the percentage is not drawn, so the compact tile's fill is not the only
+    // way the discount exists.
+    val spoken = if (discounted) "$formatted, $discountPercent% off" else formatted
     val container = if (discounted) {
         MaterialTheme.colorScheme.tertiary
     } else {
@@ -400,10 +409,11 @@ private fun PriceCapsule(
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
                     .background(container)
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                    .semantics(mergeDescendants = true) { contentDescription = spoken },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (discounted) {
+                if (discounted && !compact) {
                     Text(
                         text = "-$discountPercent%",
                         style = MaterialTheme.typography.labelSmall,

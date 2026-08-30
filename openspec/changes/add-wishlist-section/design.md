@@ -278,3 +278,39 @@ included, so the stored artwork URL is observed rather than a guessed CDN path �
 
 This is one added request shape, not a per-game fan-out: names and prices are each one batched call
 per chunk.
+
+## Later decisions
+
+### 9. Discounts come first, and only while they are actually running
+
+The original position — present entries in Steam's priority order and re-sort on nothing — held
+until the section existed to look at. Checking a wishlist is overwhelmingly checking whether
+anything is on sale, and a sale at position forty is one the player hears about from somewhere
+else. So discounted entries lead.
+
+The player's ranking is not discarded for it. The sort is stable and applied over Steam's order, so
+within both groups the priority they set is exactly what they see: the change is which of two
+questions the list answers first, not the abandonment of the second.
+
+Only a *live* discount floats — one observed inside the freshness window. A retained discount is an
+observation about a day that has passed, and promoting it would put a price the app is explicitly
+unsure of at the top of the list, presented as the most urgent thing on it. That is the same
+mistake as rendering a retained price as current, arrived at from a different direction.
+
+### 10. What the compact grid gives up
+
+Entries follow the Library's density control rather than keeping a presentation of their own. The
+ladder is not the owned one, though: what drops as the grid tightens is the *wishlisted label*, not
+the price. The price is why the section exists, and at three columns it also does the label's job —
+an owned tile at that density carries a name and nothing else, so a money capsule, or the words "No
+price available", separates a want from a have by structure rather than by colour.
+
+At that density the discount percentage and the struck-through list price go too, and the capsule's
+fill carries the discount alone. This is a real reduction and worth naming rather than glossing: a
+reader who cannot separate the two fills loses the discount at this one density. Three things
+temper it — the percentage is spelled out at both other densities, the discounted *price* itself
+never leaves the tile, and the capsule's accessibility label speaks the percentage whether or not
+it is drawn. It is the same bargain the compact grid already makes with playtime and achievements.
+
+The observed date is the one thing that does **not** drop, at any density. Cutting it to save a
+line on a narrow tile would turn a remembered price into a claim about the price right now.

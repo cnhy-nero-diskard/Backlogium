@@ -15,6 +15,11 @@ rather than keeping a presentation of their own.
 - **WHEN** a wishlisted game is discounted
 - **THEN** the entry shows the discounted price and that a discount is active
 
+#### Scenario: Discount at the densest layout
+- **WHEN** the Library is at its most compact density
+- **THEN** the discounted price is still shown, and the discount is conveyed by the price's own
+  treatment rather than spelled out, while remaining available to assistive technology
+
 #### Scenario: Not mistaken for owned games
 - **WHEN** wishlist entries are presented
 - **THEN** they are distinguishable from owned-library entries without relying on colour alone

@@ -71,6 +71,45 @@ class WishlistRepositoryTest {
         assertEquals(listOf(4L, 2L, 3L, 1L), repository.wishlist.first().map { it.appId })
     }
 
+    @Test fun aLiveDiscountFloatsToTheTop_keepingSteamsOrderWithinEachGroup() = runBlocking {
+        db.wishlistDao().upsertItems(
+            listOf(
+                item(appId = 1, priority = 1),
+                item(appId = 2, priority = 2),
+                item(appId = 3, priority = 3),
+                item(appId = 4, priority = 4),
+            ),
+        )
+        db.wishlistDao().insertObservations(
+            listOf(
+                price(appId = 1, at = NOW),
+                price(appId = 2, at = NOW, discount = 50),
+                price(appId = 4, at = NOW, discount = 75),
+            ),
+        )
+
+        // Discounted first, but the player's own ranking still decides the order inside each
+        // group — 2 before 4, then 1 before 3.
+        assertEquals(listOf(2L, 4L, 1L, 3L), repository.wishlist.first().map { it.appId })
+    }
+
+    @Test fun aRetainedDiscountDoesNotFloat() = runBlocking {
+        db.wishlistDao().upsertItems(listOf(item(appId = 1, priority = 1), item(appId = 2, priority = 2)))
+        db.wishlistDao().insertObservations(
+            listOf(
+                price(
+                    appId = 2,
+                    at = NOW - WishlistRepository.FRESHNESS_WINDOW_MILLIS - 1,
+                    discount = 75,
+                ),
+            ),
+        )
+
+        // A sale seen yesterday says nothing about today; promoting it would dress a price the
+        // app is unsure of as the most urgent thing on the list.
+        assertEquals(listOf(1L, 2L), repository.wishlist.first().map { it.appId })
+    }
+
     @Test fun anOwnedGameIsNoLongerPresentedAsWanted() = runBlocking {
         db.wishlistDao().upsertItems(listOf(item(appId = 1), item(appId = 2)))
         db.gameDao().upsertAll(listOf(game(2)))

@@ -63,6 +63,14 @@ sealed interface WishlistPrice {
 }
 
 /**
+ * A discount the app is currently sure of: observed inside the freshness window and still running
+ * as far as the last successful look could tell. A retained discount is deliberately not one —
+ * a sale seen yesterday says nothing about today.
+ */
+val WishlistPrice.isLiveDiscount: Boolean
+    get() = this is WishlistPrice.Observed && current && discountPercent > 0
+
+/**
  * Whether the wishlist itself could be read on the last attempt. Distinct from having no
  * entries: the section must say "this could not be read" rather than appear empty.
  */
@@ -106,8 +114,19 @@ class WishlistRepository @Inject constructor(
     val availability: StateFlow<WishlistAvailability> = availabilityState.asStateFlow()
 
     /**
-     * Wishlisted games in Steam's priority order, each carrying the latest thing observed about
-     * its price.
+     * Wishlisted games, each carrying the latest thing observed about its price: games on a live
+     * discount first, then everything else, and Steam's own priority order within each group.
+     *
+     * Sorting on top of Steam's order at all is a deliberate departure — the player's ranking is
+     * the whole reason the wishlist has one — but checking a wishlist is overwhelmingly checking
+     * whether anything is on sale, and a sale buried at position forty is a sale the player finds
+     * out about from somewhere else. The sort is stable, so within both groups the ranking they
+     * set in Steam is exactly what they see.
+     *
+     * Only a *live* discount floats. A retained one is an observation about a day that has passed
+     * and is not evidence of a sale running now; promoting it would dress a price the app is
+     * unsure of as the most urgent thing on the list, which is the one thing every other decision
+     * here has been careful not to do.
      *
      * Ownership is reconciled here, at read time, rather than by deleting rows on purchase.
      * Steam removes a game from the wishlist when it is bought, but gifts, keys, and family
@@ -123,7 +142,9 @@ class WishlistRepository @Inject constructor(
         val owned = ownedAppIds.toHashSet()
         val latest = observations.associateBy { it.appId }
         val now = time.nowMillis()
-        items.filterNot { it.appId in owned }.map { item -> item.toDomain(latest[item.appId], now) }
+        items.filterNot { it.appId in owned }
+            .map { item -> item.toDomain(latest[item.appId], now) }
+            .sortedByDescending { it.price.isLiveDiscount }
     }
 
     /**
