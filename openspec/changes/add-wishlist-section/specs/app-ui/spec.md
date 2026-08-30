@@ -21,8 +21,8 @@ rather than keeping a presentation of their own.
 
 #### Scenario: Density applies to the wishlist too
 - **WHEN** the player changes the Library between its list and grid densities
-- **THEN** wishlist entries change with it, and the marking that distinguishes them from owned
-  games survives at every density
+- **THEN** wishlist entries change with it, and remain distinguishable from owned entries at every
+  density, by whatever means that density affords
 
 #### Scenario: Owned lists unaffected
 - **WHEN** the wishlist section exists

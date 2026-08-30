@@ -51,10 +51,13 @@ import compose.icons.tablericons.ExternalLink
  * today. Expanding is also the "opened" event the refresh policy hangs off.
  *
  * Entries follow the Library's own density control, so switching to grid does not leave a list of
- * wanted games sitting under a grid of owned ones. The ladder maps onto the owned one rather than
- * inventing a second: the **price rides the playtime rung** — it is the number about the game, and
- * the compact grid drops numbers — while the wishlisted marking is identity and survives every
- * density, because mistaking a want for a have is the one error this section must not invite.
+ * wanted games sitting under a grid of owned ones.
+ *
+ * What drops as the grid tightens is the **wishlisted label**, not the price. The price is why
+ * this section exists, and at three columns it also does the label's job: an owned tile at that
+ * density carries a name and nothing else, so a money capsule — or the words "No price available"
+ * — separates a want from a have by structure rather than by colour. Repeating the word
+ * "Wishlisted" under every third tile only crowds out the figure the player came to read.
  */
 fun LazyListScope.wishlistSection(
     state: WishlistUiState,
@@ -108,7 +111,7 @@ fun LazyListScope.wishlistSection(
     if (!density.isGrid) {
         state.entries.forEach { entry ->
             item(key = "wishlist-${entry.appId}") {
-                WishlistEntryRow(entry = entry, density = density, onOpenStore = onOpenStore)
+                WishlistEntryRow(entry = entry, onOpenStore = onOpenStore)
             }
         }
         return
@@ -180,7 +183,6 @@ private fun WishlistSectionHeader(
 @Composable
 private fun WishlistEntryRow(
     entry: WishlistEntryUi,
-    density: GameListDensity,
     onOpenStore: (WishlistEntryUi) -> Unit,
 ) {
     Card(
@@ -203,12 +205,10 @@ private fun WishlistEntryRow(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(text = entry.name, style = MaterialTheme.typography.bodyLarge)
                     WantedLabel(modifier = Modifier.padding(top = 2.dp))
-                    if (density.showsPlaytime) {
-                        WishlistPrice(
-                            price = entry.price,
-                            modifier = Modifier.padding(top = 6.dp),
-                        )
-                    }
+                    WishlistPrice(
+                        price = entry.price,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
                 }
                 Icon(
                     imageVector = TablerIcons.ExternalLink,
@@ -281,13 +281,17 @@ private fun WishlistEntryCell(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                WantedLabel(modifier = Modifier.padding(top = 3.dp))
-                if (density.showsPlaytime) {
-                    WishlistPrice(
-                        price = entry.price,
-                        modifier = Modifier.padding(top = 5.dp),
-                    )
-                }
+                // At three columns the repeated "Wishlisted" is noise, and the price line takes
+                // over marking the tile: an owned tile at this density carries a name and nothing
+                // else, so a money capsule — or the words "No price available" — is a difference
+                // in structure rather than in colour. Removing the price here would leave these
+                // tiles indistinguishable from owned ones, which is the thing to not do.
+                if (!compact) WantedLabel(modifier = Modifier.padding(top = 3.dp))
+                WishlistPrice(
+                    price = entry.price,
+                    compact = compact,
+                    modifier = Modifier.padding(top = if (compact) 4.dp else 5.dp),
+                )
             }
         }
     }
@@ -318,13 +322,18 @@ private fun WantedLabel(modifier: Modifier = Modifier) {
  * breath as rendering it as a zero or a dash.
  */
 @Composable
-private fun WishlistPrice(price: WishlistPriceUi, modifier: Modifier = Modifier) {
+private fun WishlistPrice(
+    price: WishlistPriceUi,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
     when (price) {
         is WishlistPriceUi.Current -> PriceCapsule(
             formatted = price.formatted,
             listFormatted = price.listFormatted,
             discountPercent = price.discountPercent,
             observedNote = null,
+            compact = compact,
             modifier = modifier,
         )
 
@@ -332,8 +341,11 @@ private fun WishlistPrice(price: WishlistPriceUi, modifier: Modifier = Modifier)
             formatted = price.formatted,
             listFormatted = price.listFormatted,
             discountPercent = price.discountPercent,
-            // A retained price is never presented as today's. The date is the whole point.
+            // A retained price is never presented as today's. The date is the whole point, and
+            // it survives the compact tile for that reason — dropping it to save a line would
+            // turn a remembered price into a claim about the price right now.
             observedNote = "Seen ${UiFormat.date(price.observedAt)}",
+            compact = compact,
             modifier = modifier,
         )
 
@@ -367,6 +379,7 @@ private fun PriceCapsule(
     listFormatted: String?,
     discountPercent: Int,
     observedNote: String?,
+    compact: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val discounted = discountPercent > 0
@@ -410,7 +423,10 @@ private fun PriceCapsule(
                     softWrap = false,
                 )
             }
-            if (discounted && listFormatted != null) {
+            // The struck-through list price is context for the amount, not a second amount, so
+            // it is the first thing to go where three columns leave no room: the capsule still
+            // carries both the discount and what the game actually costs.
+            if (discounted && listFormatted != null && !compact) {
                 Spacer(Modifier.width(6.dp))
                 Text(
                     text = listFormatted,
