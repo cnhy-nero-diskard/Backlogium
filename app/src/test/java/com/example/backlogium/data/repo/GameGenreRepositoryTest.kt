@@ -10,6 +10,7 @@ import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.StoreAppData
 import com.example.backlogium.data.remote.dto.StoreAppDetails
 import com.example.backlogium.data.remote.dto.StoreGenreDto
+import com.example.backlogium.data.remote.dto.StorePriceEnvelope
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -223,6 +224,12 @@ class GameGenreRepositoryTest {
         private val offline: Set<Long> = emptySet(),
         private val unavailable: Set<Long> = emptySet(),
     ) : SteamStoreApi {
+        override suspend fun appDetailsPrices(
+            appIds: String,
+            countryCode: String?,
+            filters: String,
+        ): Response<Map<String, StorePriceEnvelope>> = error("prices are not part of this test")
+
         val requested = mutableListOf<Long>()
 
         override suspend fun appDetails(

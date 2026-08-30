@@ -15,6 +15,8 @@ import com.example.backlogium.data.local.entity.PresenceDecision
 import com.example.backlogium.data.local.entity.RequestBreakdown
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.SyncRun
+import com.example.backlogium.data.local.entity.WishlistItem
+import com.example.backlogium.data.local.entity.WishlistPriceObservation
 import com.example.backlogium.data.local.entity.Collection as CollectionEntity
 import com.example.backlogium.data.repo.AccountRoomReset
 import com.example.backlogium.domain.SessionDiffer
@@ -450,8 +452,25 @@ class WriteIntegrityDaoTest {
                 playtimeBackfilled = true,
                 personaName = "Old player",
                 avatarUrl = "old-avatar",
+                storeRegion = "PH",
                 pendingImportRecompute = true,
+                lastSuccessfulWishlistReadAt = 200L,
             ),
+        )
+        database.wishlistDao().upsertItems(
+            listOf(
+                WishlistItem(
+                    appId = 999L,
+                    name = "Old account wishlist",
+                    artworkUrl = "art",
+                    priority = 1,
+                    addedAt = 10L,
+                    lastSeenAt = 20L,
+                ),
+            ),
+        )
+        database.wishlistDao().insertObservations(
+            listOf(WishlistPriceObservation(appId = 999L, observedAt = 20L)),
         )
 
         val reset = AccountRoomReset(database)
@@ -484,7 +503,11 @@ class WriteIntegrityDaoTest {
         assertFalse(profile.playtimeBackfilled)
         assertNull(profile.personaName)
         assertNull(profile.avatarUrl)
+        assertNull(profile.storeRegion)
+        assertNull(profile.lastSuccessfulWishlistReadAt)
         assertFalse(profile.pendingImportRecompute)
+        assertTrue(database.wishlistDao().observeItems().first().isEmpty())
+        assertTrue(database.wishlistDao().observeLatestPrices().first().isEmpty())
     }
 
     @Test

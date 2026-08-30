@@ -211,6 +211,32 @@ class SyncSchedulerTest {
     }
 
     @Test
+    fun `wishlist price sampling waits for charging and unmetered network`() {
+        scheduler.ensurePeriodicWishlistSampling()
+
+        val info = workInfosFor(WishlistPriceSamplingWorker.PERIODIC_NAME).single()
+        assertEquals(WorkInfo.State.ENQUEUED, info.state)
+        // Nobody is waiting for a price history sample, so it must never cost mobile data or
+        // battery — the same bargain the reconciliation pass makes.
+        assertTrue(info.constraints.requiresCharging())
+        assertEquals(NetworkType.UNMETERED, info.constraints.requiredNetworkType)
+    }
+
+    @Test
+    fun `wishlist price sampling is idempotent and has its own work name`() {
+        scheduler.ensurePeriodicWishlistSampling()
+        val firstId = workInfosFor(WishlistPriceSamplingWorker.PERIODIC_NAME).single().id
+        scheduler.ensurePeriodicReconciliation()
+
+        scheduler.ensurePeriodicWishlistSampling()
+
+        val infos = workInfosFor(WishlistPriceSamplingWorker.PERIODIC_NAME)
+        assertEquals("KEEP must not enqueue a second periodic request", 1, infos.size)
+        assertEquals(firstId, infos.single().id)
+        assertEquals(1, workInfosFor(ReconciliationWorker.PERIODIC_NAME).size)
+    }
+
+    @Test
     fun `syncNow enqueues under its own name with connectivity constraints`() {
         scheduler.syncNow()
 

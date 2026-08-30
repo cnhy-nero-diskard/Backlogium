@@ -30,6 +30,8 @@ import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
 import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResult
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
+import com.example.backlogium.data.remote.dto.StoreItemsResponse
+import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.PlaySessionEnd
@@ -510,6 +512,16 @@ class PostPlaySyncWorkerTest {
 
     /** Only the recently-played endpoint is reachable; anything else is a test failure. */
     private class FakeSteamApi : SteamApi {
+        override suspend fun getWishlist(
+            steamId: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): WishlistResponse = error("the wishlist is not part of this test")
+
+        override suspend fun getStoreItems(
+            inputJson: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): StoreItemsResponse = error("store items are not part of this test")
+
         var answer: RecentlyPlayedGameDto? = null
         var answers: List<RecentlyPlayedGameDto>? = null
         var failWith: Exception? = null

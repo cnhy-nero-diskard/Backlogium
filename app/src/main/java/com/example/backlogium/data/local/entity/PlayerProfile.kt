@@ -29,6 +29,8 @@ data class PlayerProfile(
     val personaName: String? = null,
     /** Full-size Steam avatar URL, persisted for the same reason as [personaName]. */
     val avatarUrl: String? = null,
+    /** Optional explicit Steam Store Country override; public profile location is not stored here. */
+    val storeRegion: String? = null,
     /**
      * True from the moment a backup merge's raw-data transaction commits until the following
      * gamification recompute finalizes (auditfix-backup-integrity). Room and the recompute's own
@@ -38,6 +40,8 @@ data class PlayerProfile(
      * atomically with the raw data; cleared by the next completed recompute regardless of source.
      */
     val pendingImportRecompute: Boolean = false,
+    /** The last successful wishlist membership read; null until Steam has answered successfully. */
+    val lastSuccessfulWishlistReadAt: Long? = null,
 ) {
     companion object {
         const val SINGLETON_ID = 0

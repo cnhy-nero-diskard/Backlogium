@@ -20,6 +20,7 @@ import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.dao.SteamAssetDao
+import com.example.backlogium.data.local.dao.WishlistDao
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
@@ -31,6 +32,8 @@ import com.example.backlogium.data.local.entity.GameGenreCache
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.WishlistItem
+import com.example.backlogium.data.local.entity.WishlistPriceObservation
 import com.example.backlogium.data.local.entity.PresenceDecision
 import com.example.backlogium.data.local.entity.RequestBreakdown
 import com.example.backlogium.data.local.entity.RequestTotal
@@ -57,8 +60,10 @@ import com.example.backlogium.data.local.entity.SyncRun
         SteamAssetDownloadState::class,
         GameAchievementSync::class,
         ExcludedSharedGame::class,
+        WishlistItem::class,
+        WishlistPriceObservation::class,
     ],
-    version = 22,
+    version = 25,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -75,6 +80,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun gameAchievementSyncDao(): GameAchievementSyncDao
     abstract fun steamAssetDao(): SteamAssetDao
     abstract fun excludedSharedGameDao(): ExcludedSharedGameDao
+    abstract fun wishlistDao(): WishlistDao
 
     companion object {
         const val NAME = "backlogium.db"
@@ -546,6 +552,73 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "`name` TEXT NOT NULL, " +
                         "`excludedAt` INTEGER NOT NULL, " +
                         "PRIMARY KEY(`appId`))",
+                )
+            }
+        }
+
+        /**
+         * v22 -> v23: an optional store-region setting on `player_profile` (add-wishlist-section).
+         *
+         * Additive and deliberately unbackfilled. The public profile location in
+         * `GetPlayerSummaries` is not the payment-derived Store Country, so NULL is the safe
+         * default and the price request asserts no region until an explicit setting exists.
+         */
+        val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `player_profile` ADD COLUMN `storeRegion` TEXT")
+            }
+        }
+
+        /**
+         * v23 -> v24: the wishlist's own two tables (add-wishlist-section).
+         *
+         * Neither carries a foreign key to `games`, and that is the point rather than an
+         * oversight: a wishlisted app id is one the player does not own, so there is no parent row
+         * to reference. Keeping wants out of `games` keeps them out of every library count, XP
+         * denominator, completion figure, and analytic without any of those queries having to
+         * learn to exclude them.
+         *
+         * `wishlist_price_observations` is append-only — one row per app per observation — because
+         * price history is cheap to start accumulating now and impossible to reconstruct later.
+         */
+        val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `wishlist_items` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`name` TEXT NOT NULL, " +
+                        "`artworkUrl` TEXT NOT NULL, " +
+                        "`priority` INTEGER NOT NULL, " +
+                        "`addedAt` INTEGER NOT NULL, " +
+                        "`lastSeenAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `wishlist_price_observations` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`observedAt` INTEGER NOT NULL, " +
+                        "`currency` TEXT, " +
+                        "`finalMinorUnits` INTEGER, " +
+                        "`initialMinorUnits` INTEGER, " +
+                        "`discountPercent` INTEGER, " +
+                        "`formatted` TEXT, " +
+                        "`listFormatted` TEXT)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_wishlist_price_observations_appId_observedAt` " +
+                        "ON `wishlist_price_observations` (`appId`, `observedAt`)",
+                )
+            }
+        }
+
+        /** v24 -> v25: persist the last successful wishlist membership read. */
+        val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `player_profile` ADD COLUMN " +
+                        "`lastSuccessfulWishlistReadAt` INTEGER",
                 )
             }
         }

@@ -49,4 +49,28 @@ class PlayerIdentityTest {
     fun noIdentityEverSeen_staysNull() {
         assertEquals(empty, mergePlayerIdentity(summary = null, stored = empty))
     }
+
+    @Test
+    fun profileLocation_neverSetsStoreRegion() {
+        val summary = PlayerSummaryDto(personaName = "Nero", locCountryCode = "ph")
+
+        // `loccountrycode` describes the public profile location, not the payment-derived Store
+        // Country. It must not select the region used for store prices.
+        assertEquals(null, mergePlayerIdentity(summary, empty).storeRegion)
+    }
+
+    @Test
+    fun profileLocation_doesNotReplaceAnExplicitStoreRegion() {
+        val known = stored.copy(storeRegion = "PH")
+
+        assertEquals("PH", mergePlayerIdentity(PlayerSummaryDto(), known).storeRegion)
+        assertEquals("PH", mergePlayerIdentity(PlayerSummaryDto(locCountryCode = " "), known).storeRegion)
+        assertEquals("PH", mergePlayerIdentity(PlayerSummaryDto(locCountryCode = "US"), known).storeRegion)
+        assertEquals("PH", mergePlayerIdentity(summary = null, stored = known).storeRegion)
+    }
+
+    @Test
+    fun noCountryEverSeen_staysNull() {
+        assertEquals(null, mergePlayerIdentity(PlayerSummaryDto(), empty).storeRegion)
+    }
 }

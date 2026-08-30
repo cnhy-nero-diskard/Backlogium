@@ -8,6 +8,8 @@ import com.example.backlogium.data.local.dao.AchievementRarity
 import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.remote.dto.StoreItemsResponse
+import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.domain.GameSource
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.Game
@@ -469,6 +471,16 @@ class AchievementRepositoryTest {
         private val failPlayerAchievementsFor: Set<Long> = emptySet(),
         private val noStatsFor: Set<Long> = emptySet(),
     ) : SteamApi {
+        override suspend fun getWishlist(
+            steamId: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): WishlistResponse = error("the wishlist is not part of this test")
+
+        override suspend fun getStoreItems(
+            inputJson: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): StoreItemsResponse = error("store items are not part of this test")
+
         private val gateSignal = CompletableDeferred<Unit>()
         private val calls = mutableListOf<Long>()
         private val schemas = mutableListOf<Long>()
@@ -635,6 +647,7 @@ class AchievementRepositoryTest {
         override fun observeGoalGames(): Flow<List<Game>> = error("not used")
         override fun observeBacklog(): Flow<List<Game>> = error("not used")
         override suspend fun allAppIds(): List<Long> = games.map { it.appId }
+        override fun observeAppIds(): Flow<List<Long>> = flowOf(games.map { it.appId })
         override suspend fun getAll(): List<Game> = games.toList()
         override suspend fun getById(appId: Long): Game? = games.firstOrNull { it.appId == appId }
         override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = error("not used")

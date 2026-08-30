@@ -22,6 +22,10 @@ data class PlayerSummariesResult(
  * [personaName] and [avatarFull] are the player's identity fields, always returned for a
  * public profile. They cost no extra request — this endpoint is already polled — and are
  * persisted onto the profile so the header renders offline.
+ *
+ * [locCountryCode] is the public/community profile location. It is not the account's Steam Store
+ * Country, which is a separate payment-derived setting, so callers must not use it to select a
+ * store region or currency.
  */
 @Serializable
 data class PlayerSummaryDto(
@@ -31,4 +35,5 @@ data class PlayerSummaryDto(
     @SerialName("personastate") val personaState: Int = 0,
     @SerialName("personaname") val personaName: String = "",
     @SerialName("avatarfull") val avatarFull: String? = null,
+    @SerialName("loccountrycode") val locCountryCode: String? = null,
 )

@@ -144,7 +144,10 @@ presented as newly acquired.
 
 ### Requirement: Persist player identity on sync
 The sync SHALL persist the player's Steam persona name and avatar URL alongside the existing
-profile aggregates, so identity is available to the UI without a network call.
+profile aggregates, so identity is available to the UI without a network call. The summary's
+`loccountrycode` SHALL NOT be stored as a store region: it is the public profile location, not the
+payment-derived Steam Store Country. An explicitly configured store region SHALL be retained until
+that setting changes.
 
 #### Scenario: Identity captured during sync
 - **WHEN** a sync completes successfully
@@ -157,6 +160,10 @@ profile aggregates, so identity is available to the UI without a network call.
 #### Scenario: Identity unavailable
 - **WHEN** the player summary cannot be retrieved or exposes no identity fields
 - **THEN** any previously stored identity is left intact and the sync does not fail
+
+#### Scenario: Profile location is not a store region
+- **WHEN** the player summary exposes a country
+- **THEN** it is not stored as a store region, and any explicitly configured region is left intact
 
 ### Requirement: Sync failure surfacing
 The system SHALL detect and surface sync failures without discarding the last good

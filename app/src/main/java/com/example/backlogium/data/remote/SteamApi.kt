@@ -10,6 +10,8 @@ import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
 import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
+import com.example.backlogium.data.remote.dto.StoreItemsResponse
+import com.example.backlogium.data.remote.dto.WishlistResponse
 import retrofit2.http.GET
 import retrofit2.http.Query
 import retrofit2.http.Tag
@@ -117,4 +119,38 @@ interface SteamApi {
     suspend fun getNumberOfCurrentPlayers(
         @Query("appid") appId: Long,
     ): CurrentPlayersResponse
+
+    /**
+     * The player's wishlist: app ids, the player's own priority, and when each was added.
+     *
+     * Takes no `key`. The endpoint answers for any publicly readable wishlist without one, and
+     * spending a credential on a request that does not need it only widens what a redaction
+     * failure could leak.
+     *
+     * Undocumented and unversioned in practice — Steam withdrew the previous wishlist JSON
+     * endpoint outright in its 2024 store revamp — so every caller must treat a shape it does not
+     * recognise as "unavailable" rather than as an error. An unreadable wishlist answers `HTTP
+     * 200` with no `items` key at all; see [WishlistResult][com.example.backlogium.data.remote.dto.WishlistResult].
+     */
+    @GET("IWishlistService/GetWishlist/v1/")
+    suspend fun getWishlist(
+        @Query("steamid") steamId: String,
+        @Tag scope: SyncRunRecorder.RunScope? = null,
+    ): WishlistResponse
+
+    /**
+     * Store details — name and artwork — for many apps at once, as Steam's own wishlist page
+     * fetches them. Credential-free, like the wishlist itself.
+     *
+     * [inputJson] is this endpoint's calling convention: the ids, the language and country
+     * context, and which blocks to include, all as one JSON query parameter. It exists here
+     * rather than on [SteamStoreApi] because only `appdetails`' price filter batches — a batched
+     * `appdetails` request for anything else returns `null` — so names cannot ride along on the
+     * price request.
+     */
+    @GET("IStoreBrowseService/GetItems/v1/")
+    suspend fun getStoreItems(
+        @Query("input_json") inputJson: String,
+        @Tag scope: SyncRunRecorder.RunScope? = null,
+    ): StoreItemsResponse
 }

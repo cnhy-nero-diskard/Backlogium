@@ -14,9 +14,9 @@ treating it as a whole subsystem. Two probes against a live profile settled the 
   keyed entries in one request. A wishlist of any realistic size is a handful of requests, not one
   per game — so no background worker, no batch cap, no progress UI, and no conflict with the
   serial-issuance position `optimize-steam-sync` established for fan-out request paths.
-- **Absent prices are explicit.** An app with no price returns `"data": []`. Free-to-play,
-  unreleased, and region-restricted titles are therefore distinguishable from a failed lookup
-  rather than needing to be inferred.
+- **Absent prices are explicit.** An app with no price returns `"data": []`, which the app records as
+  a known no-price result rather than a failed lookup. That response does not identify whether the
+  title is free-to-play, unreleased, or region-restricted.
 
 That second result also exposes a hazard worth naming up front: the existing `StoreAppDetails` DTO
 types `data` as an object, and deserializing `[]` into it throws. One free-to-play game in a batch
@@ -28,12 +28,15 @@ would fail the entire response, not merely its own entry.
   artwork, name, current price, and any active discount.
 - **Prices refreshed when the section is viewed**, batched into as few requests as the endpoint
   allows, and cached so the section works offline.
-- **Prices are always dated.** A cached price states when it was observed. The app never presents a
-  stored price as the current one.
-- **No price is a first-class state**, not an empty field: free-to-play, unreleased, and
-  unavailable-in-region are shown as what they are.
-- **Prices are requested in the player's own store region**, derived from their Steam profile, so a
-  player in the Philippines sees peso pricing rather than dollars.
+- **Prices are always dated.** Every shown price states when it was observed; a fresh observation may
+  also be identified as current, while an older one is explicitly retained rather than presented as
+  current.
+- **No price is a first-class state**, not an empty field: when Steam provides no price data, the
+  entry says that no price is available without claiming whether the title is free-to-play,
+  unreleased, or unavailable in the region.
+- **Price requests never use the profile's `loccountrycode`.** When a non-blank explicitly stored
+  Store Country exists, it is forwarded as `cc` to the details and price calls; otherwise `cc` is
+  omitted and Steam resolves the region for the request.
 - **Every entry links to its Steam store page**, which opens the Steam app directly when installed.
 - **Price observations are recorded over time.** No alerting and no history UI in this change — the
   point is that history is cheap to start accumulating and impossible to backfill, so recording
@@ -50,8 +53,9 @@ would fail the entire response, not merely its own entry.
   wishlist entry is reconciled, and how the feature degrades when Steam will not answer.
 
 ### Modified Capabilities
-- `steam-sync`: the sync additionally persists the player's store region alongside the identity it
-  already stores, so prices can be requested in the right currency without a separate lookup.
+- `steam-sync`: the sync additionally persists the player's persona identity and retains the
+  explicitly configured `storeRegion`; wishlist details and price requests forward it as `cc`, or
+  omit `cc` when it is null rather than using the public profile location.
 - `app-ui`: the Library gains a wishlist section, with its entries, ordering, states, and store
   links.
 
@@ -65,9 +69,10 @@ would fail the entire response, not merely its own entry.
 - **Affected code (new):** a wishlist retrieval call on `SteamApi`; a batched price call and DTO on
   `SteamStoreApi`; `wishlist_items` and `wishlist_price_observations` tables with their migration; a
   repository exposing wishlist entries as domain models; the section and its entry composables.
-- **Affected code (modified):** `PlayerSummariesDto` and `PlayerProfile` to carry the store region
-  (`loccountrycode` is already in Steam's response and simply not deserialized today); the Library
-  screen to host the section.
+- **Affected code (modified):** `PlayerSummariesDto` and `PlayerProfile` to carry persona name and
+  avatar, plus a `storeRegion` column for the explicit Store Country setting — `loccountrycode` is
+  never used; a non-blank stored Store Country is forwarded to details and price requests as `cc`,
+  and otherwise `cc` is omitted; the Library screen hosts the section.
 - **Wishlist entries are deliberately not rows in `games`.** They are not owned, have no sessions,
   and must not enter library counts, XP denominators, completion percentages, or any analytic. A
   want is not a have.

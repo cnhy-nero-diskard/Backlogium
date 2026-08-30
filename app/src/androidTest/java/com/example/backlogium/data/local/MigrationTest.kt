@@ -601,6 +601,192 @@ class MigrationTest {
         }
     }
 
+    /**
+     * v22 -> v23: `player_profile` gains `storeRegion` (add-wishlist-section). Additive and
+     * unbackfilled — the column arrives NULL and holds only an explicitly configured region,
+     * never the profile's public location — so what matters is that every aggregate already on
+     * the row survives.
+     */
+    @Test
+    fun v22ToV23_addsStoreRegionAndPreservesProfileAggregates() {
+        val databaseName = "migration-v22-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 22)
+        try {
+            database.execSQL(
+                "INSERT INTO player_profile " +
+                    "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                    "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
+                    "personaName, avatarUrl, pendingImportRecompute) VALUES " +
+                    "(0, '76561197960287930', 42, 1200, 7, 3, 19, 5, 1700000000000, NULL, 1, " +
+                    "'Nero', 'https://cdn/full.jpg', 0)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                23,
+                true,
+                BacklogiumDatabase.MIGRATION_22_23,
+            )
+            try {
+                migrated.query(
+                    "SELECT steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                        "personaName, avatarUrl, storeRegion FROM player_profile WHERE id = 0",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("76561197960287930", cursor.getString(0))
+                    assertEquals(42, cursor.getInt(1))
+                    assertEquals(1200, cursor.getInt(2))
+                    assertEquals(7, cursor.getInt(3))
+                    assertEquals(3, cursor.getInt(4))
+                    assertEquals(19, cursor.getInt(5))
+                    assertEquals("Nero", cursor.getString(6))
+                    assertEquals("https://cdn/full.jpg", cursor.getString(7))
+                    assertTrue(cursor.isNull(8))
+                    assertFalse(cursor.moveToNext())
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    /**
+     * v23 -> v24: the wishlist's own two tables (add-wishlist-section). Purely additive — nothing
+     * existing is touched — so the assertions are about the shape that lets wants stay out of the
+     * owned library: no foreign key to `games` on either table, and an append-only observation
+     * log keyed by its own rowid rather than by app id.
+     */
+    @Test
+    fun v23ToV24_addsWishlistTablesWithNoLinkToGames() {
+        val databaseName = "migration-v23-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 23)
+        try {
+            database.execSQL(
+                "INSERT INTO games " +
+                    "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+                    "isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+                    "firstSeenAt, lastPlayedAt, returnedToPlayAt) VALUES " +
+                    "(440, 'Owned Game', 'icon-hash', 100, 0, 100, 0, NULL, 1700000000000, 0, " +
+                    "'STEAM_OWNED', NULL, NULL, NULL)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                24,
+                true,
+                BacklogiumDatabase.MIGRATION_23_24,
+            )
+            try {
+                assertTableInfo(
+                    migrated,
+                    "wishlist_items",
+                    listOf(
+                        ColumnInfo("appId", "INTEGER", notNull = true, pk = 1),
+                        ColumnInfo("name", "TEXT", notNull = true, pk = 0),
+                        ColumnInfo("artworkUrl", "TEXT", notNull = true, pk = 0),
+                        ColumnInfo("priority", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("addedAt", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("lastSeenAt", "INTEGER", notNull = true, pk = 0),
+                    ),
+                )
+
+                // An app id the player does not own has no `games` row to reference, so a foreign
+                // key here would make the whole feature unstorable.
+                migrated.query("PRAGMA foreign_key_list(`wishlist_items`)").use { cursor ->
+                    assertFalse(cursor.moveToFirst())
+                }
+                migrated.query("PRAGMA foreign_key_list(`wishlist_price_observations`)").use { cursor ->
+                    assertFalse(cursor.moveToFirst())
+                }
+
+                // Two observations for one app must coexist: the log is appended, never updated.
+                migrated.execSQL(
+                    "INSERT INTO wishlist_price_observations " +
+                        "(appId, observedAt, currency, finalMinorUnits, initialMinorUnits, " +
+                        "discountPercent, formatted, listFormatted) VALUES " +
+                        "(292030, 1700000000000, 'PHP', 209900, 209900, 0, 'P2,099.00', NULL), " +
+                        "(292030, 1700000600000, 'PHP', 104950, 209900, 50, 'P1,049.50', 'P2,099.00')",
+                )
+                migrated.query("SELECT COUNT(*) FROM wishlist_price_observations").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(2, cursor.getInt(0))
+                }
+
+                // The owned library is untouched by any of it.
+                migrated.query("SELECT COUNT(*) FROM games").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1, cursor.getInt(0))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    /** v24 -> v25: successful wishlist reads gain durable freshness metadata. */
+    @Test
+    fun v24ToV25_addsWishlistReadTimestampAndPreservesProfile() {
+        val databaseName = "migration-v24-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 24)
+        try {
+            database.execSQL(
+                "INSERT INTO player_profile " +
+                    "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                    "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
+                    "personaName, avatarUrl, storeRegion, pendingImportRecompute) VALUES " +
+                    "(0, '76561197960287930', 42, 1200, 7, 3, 19, 5, 1700000000000, NULL, 1, " +
+                    "'Nero', 'https://cdn/full.jpg', 'PH', 0)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                25,
+                true,
+                BacklogiumDatabase.MIGRATION_24_25,
+            )
+            try {
+                migrated.query(
+                    "SELECT steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                        "personaName, avatarUrl, storeRegion, lastSuccessfulWishlistReadAt " +
+                        "FROM player_profile WHERE id = 0",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("76561197960287930", cursor.getString(0))
+                    assertEquals(42, cursor.getInt(1))
+                    assertEquals(1200, cursor.getInt(2))
+                    assertEquals(7, cursor.getInt(3))
+                    assertEquals(3, cursor.getInt(4))
+                    assertEquals(19, cursor.getInt(5))
+                    assertEquals("Nero", cursor.getString(6))
+                    assertEquals("https://cdn/full.jpg", cursor.getString(7))
+                    assertEquals("PH", cursor.getString(8))
+                    assertTrue(cursor.isNull(9))
+                    assertFalse(cursor.moveToNext())
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private data class ColumnInfo(val name: String, val type: String, val notNull: Boolean, val pk: Int)
 
     private fun assertTableInfo(database: SupportSQLiteDatabase, table: String, expected: List<ColumnInfo>) {

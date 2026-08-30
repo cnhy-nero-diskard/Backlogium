@@ -164,6 +164,7 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
     override fun observeGoalGames(): Flow<List<Game>> = flowOf(emptyList())
     override fun observeBacklog(): Flow<List<Game>> = flowOf(emptyList())
     override suspend fun allAppIds(): List<Long> = store.keys.toList()
+    override fun observeAppIds(): Flow<List<Long>> = flowOf(store.keys.toList())
     override suspend fun getAll(): List<Game> = store.values.toList()
     override suspend fun getById(appId: Long): Game? = store[appId]
     override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = Unit
@@ -297,12 +298,26 @@ internal class FakePlayerProfileDao(initial: PlayerProfile? = null) : PlayerProf
         state.value = (state.value ?: PlayerProfile()).copy(lastSyncAt = maxOf(state.value?.lastSyncAt ?: 0L, lastSyncAt), lastSyncError = lastSyncError)
     }
 
-    override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?) {
-        state.value = (state.value ?: PlayerProfile()).copy(steamId = steamId, steamLevel = steamLevel, personaName = personaName, avatarUrl = avatarUrl)
+    override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?, storeRegion: String?) {
+        state.value = (state.value ?: PlayerProfile()).copy(steamId = steamId, steamLevel = steamLevel, personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
     }
 
-    override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?) {
-        state.value = (state.value ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl)
+    override suspend fun storeRegion(): String? = state.value?.storeRegion
+
+    override suspend fun lastSuccessfulWishlistReadAt(): Long? = state.value?.lastSuccessfulWishlistReadAt
+
+    override suspend fun updateLastSuccessfulWishlistReadAt(readAt: Long) {
+        state.value = (state.value ?: PlayerProfile()).copy(
+            lastSuccessfulWishlistReadAt = maxOf(state.value?.lastSuccessfulWishlistReadAt ?: 0L, readAt),
+        )
+    }
+
+    override suspend fun clearLastSuccessfulWishlistReadAt() {
+        state.value = (state.value ?: PlayerProfile()).copy(lastSuccessfulWishlistReadAt = null)
+    }
+
+    override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?, storeRegion: String?) {
+        state.value = (state.value ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
     }
 
     override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {

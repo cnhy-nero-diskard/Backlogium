@@ -15,6 +15,9 @@ object UiFormat {
     private val timeOfDayFormatter: DateTimeFormatter =
         DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
 
+    private val dateFormatter: DateTimeFormatter =
+        DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
+
     /** "1h 20m", "45m", or "0m". */
     fun minutes(minutes: Int): String {
         val safe = minutes.coerceAtLeast(0)
@@ -54,6 +57,13 @@ object UiFormat {
             .atZone(zone)
             .format(dateTimeFormatter)
     }
+
+    /**
+     * Locale-aware date with no time part, e.g. "Aug 30, 2026" — for a fact whose day is what
+     * matters and whose hour would only imply a precision it does not have.
+     */
+    fun date(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
+        Instant.ofEpochMilli(epochMillis).atZone(zone).format(dateFormatter)
 
     /** Locale-aware time of day with no date part, e.g. "3:00 PM". */
     fun timeOfDay(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =

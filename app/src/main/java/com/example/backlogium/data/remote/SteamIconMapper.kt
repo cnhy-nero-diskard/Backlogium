@@ -10,7 +10,9 @@ object SteamIconMapper {
     private const val CDN_BASE =
         "https://media.steampowered.com/steamcommunity/public/images/apps"
 
-    private const val STORE_CDN_BASE = "https://cdn.cloudflare.steamstatic.com/steam/apps"
+    private const val CDN_ROOT = "https://cdn.cloudflare.steamstatic.com"
+
+    private const val STORE_CDN_BASE = "$CDN_ROOT/steam/apps"
 
     fun iconUrl(appId: Long, imgIconHash: String): String {
         if (imgIconHash.isBlank()) return ""
@@ -59,4 +61,22 @@ object SteamIconMapper {
         headerUrl(appId),
         wideCapsuleUrl(appId),
     )
+
+    /**
+     * Resolve an `asset_url_format` from `IStoreBrowseService/GetItems` — a CDN-relative path of
+     * the form `steam/apps/440/${'$'}{FILENAME}?t=1757348372` — against one of the asset names in
+     * the same block.
+     *
+     * Preferred over [headerUrl] for a store item because it is the path the store itself reports,
+     * cache-busting timestamp included, rather than the well-known one this object otherwise has
+     * to assume. Returns an empty string when either half is missing, so callers fall back the
+     * same way they do for a missing icon hash.
+     */
+    fun storeAssetUrl(assetUrlFormat: String?, fileName: String?): String {
+        if (assetUrlFormat.isNullOrBlank() || fileName.isNullOrBlank()) return ""
+        if (FILENAME_PLACEHOLDER !in assetUrlFormat) return ""
+        return "$CDN_ROOT/" + assetUrlFormat.replace(FILENAME_PLACEHOLDER, fileName)
+    }
+
+    private const val FILENAME_PLACEHOLDER = "${'$'}{FILENAME}"
 }

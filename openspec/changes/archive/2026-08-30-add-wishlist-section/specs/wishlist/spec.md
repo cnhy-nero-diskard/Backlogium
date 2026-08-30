@@ -1,16 +1,28 @@
 ## ADDED Requirements
 
-### Requirement: The wishlist is retrieved and ordered as Steam holds it
-The system SHALL retrieve the player's Steam wishlist and SHALL present its entries in the priority
-order Steam reports. The app SHALL NOT modify the wishlist.
+### Requirement: The wishlist is retrieved, and ordered by what is worth deciding on now
+The system SHALL retrieve the player's Steam wishlist. It SHALL present entries currently observed
+to be discounted ahead of those that are not, and SHALL otherwise present entries in the priority
+order Steam reports, preserving that order within each group. A retained observation of a discount
+SHALL NOT promote an entry. The app SHALL NOT modify the wishlist.
 
 #### Scenario: Wishlist retrieved
 - **WHEN** the player's wishlist is fetched successfully
-- **THEN** its entries are available, ordered by the priority Steam reports
+- **THEN** its entries are available
 
-#### Scenario: Ordering preserved
+#### Scenario: Ordering preserved within each group
 - **WHEN** the player has assigned priorities in Steam
-- **THEN** the app presents the entries in that order rather than re-sorting them
+- **THEN** the app presents entries in that order, rather than re-sorting them on anything of its
+  own beyond bringing discounted entries forward
+
+#### Scenario: A running discount comes first
+- **WHEN** some entries are currently observed to be discounted
+- **THEN** they appear ahead of the rest, in the player's own priority order among themselves
+
+#### Scenario: A discount seen earlier does not come first
+- **WHEN** an entry's discount was observed longer ago than the freshness window
+- **THEN** it keeps its place in the player's priority order, because a sale seen earlier is not
+  evidence of one running now
 
 #### Scenario: No editing
 - **WHEN** the player views a wishlist entry
@@ -20,17 +32,18 @@ order Steam reports. The app SHALL NOT modify the wishlist.
 - **WHEN** the player's wishlist contains no games
 - **THEN** the section reports that it is empty, distinctly from being unavailable
 
-### Requirement: Prices are requested in the player's store region
-The system SHALL request prices for the player's own Steam store region, determined from their
-profile. Where no region is known the system SHALL let Steam resolve the region rather than
-assuming one.
+### Requirement: Prices are requested without asserting an unverified region
+The system SHALL NOT derive a store region or currency from the player's public profile location,
+which is a community setting and not the payment-derived Steam Store Country. Where an explicit
+store-country setting exists, the system SHALL request prices in it; otherwise it SHALL omit the
+region from the request and let Steam resolve one.
 
-#### Scenario: Region known
-- **WHEN** the player's profile reports a country
+#### Scenario: An explicit store country is configured
+- **WHEN** a store-country setting exists
 - **THEN** prices are requested for that region and presented in its currency
 
-#### Scenario: Region unknown
-- **WHEN** the player's profile reports no country
+#### Scenario: No explicit store country
+- **WHEN** no store-country setting exists, whatever the profile's location says
 - **THEN** no region is asserted in the request, and whatever region Steam resolves is used
 
 #### Scenario: Prices displayed as Steam formats them
@@ -67,7 +80,7 @@ current.
 
 #### Scenario: Freshly refreshed
 - **WHEN** prices have just been refreshed
-- **THEN** the entries show prices as current
+- **THEN** the entries show prices as current and include the date each price was observed
 
 #### Scenario: Offline
 - **WHEN** the section is opened with no network
@@ -82,16 +95,23 @@ current.
 - **THEN** no price is claimed for it
 
 ### Requirement: Prices are refreshed on viewing, within a freshness window
-The system SHALL refresh prices when the wishlist section is opened, unless the retained prices are
-newer than a documented freshness window, so that repeated navigation does not re-request.
+The system SHALL refresh the wishlist and its prices when the section is opened, unless the
+wishlist membership and the retained prices are both newer than a documented freshness window, so
+that repeated navigation does not re-request. Fresh prices alone SHALL NOT suppress a refresh while
+the last membership read did not succeed.
 
 #### Scenario: Opening with stale prices
 - **WHEN** the section is opened and the retained prices are older than the freshness window
 - **THEN** prices are refreshed
 
 #### Scenario: Opening with fresh prices
-- **WHEN** the section is opened again shortly afterwards
-- **THEN** no further request is made and the retained prices are shown as current
+- **WHEN** the section is opened again shortly after a refresh in which the wishlist was read
+- **THEN** no further request is made and the retained prices are shown as current, each with its
+  observation date
+
+#### Scenario: A failed membership read is retried
+- **WHEN** the last wishlist read failed but the retained prices were observed successfully
+- **THEN** opening the section retries the wishlist read rather than treating the section as fresh
 
 #### Scenario: Requests are batched
 - **WHEN** prices are refreshed for a wishlist of many games

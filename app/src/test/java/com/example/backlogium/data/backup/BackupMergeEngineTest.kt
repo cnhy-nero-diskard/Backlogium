@@ -808,6 +808,7 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
     override fun observeGoalGames(): Flow<List<Game>> = flowOf(emptyList())
     override fun observeBacklog(): Flow<List<Game>> = flowOf(emptyList())
     override suspend fun allAppIds(): List<Long> = store.keys.toList()
+    override fun observeAppIds(): Flow<List<Long>> = flowOf(store.keys.toList())
     override suspend fun getAll(): List<Game> = store.values.toList()
     override suspend fun getById(appId: Long): Game? = store[appId]
     override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) {
@@ -1059,12 +1060,27 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
         steamLevel: Int,
         personaName: String?,
         avatarUrl: String?,
+        storeRegion: String?,
     ) {
-        profile = (profile ?: PlayerProfile()).copy(steamId = steamId, steamLevel = steamLevel, personaName = personaName, avatarUrl = avatarUrl)
+        profile = (profile ?: PlayerProfile()).copy(steamId = steamId, steamLevel = steamLevel, personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
     }
 
-    override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?) {
-        profile = (profile ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl)
+    override suspend fun storeRegion(): String? = profile?.storeRegion
+
+    override suspend fun lastSuccessfulWishlistReadAt(): Long? = profile?.lastSuccessfulWishlistReadAt
+
+    override suspend fun updateLastSuccessfulWishlistReadAt(readAt: Long) {
+        profile = (profile ?: PlayerProfile()).copy(
+            lastSuccessfulWishlistReadAt = maxOf(profile?.lastSuccessfulWishlistReadAt ?: 0L, readAt),
+        )
+    }
+
+    override suspend fun clearLastSuccessfulWishlistReadAt() {
+        profile = (profile ?: PlayerProfile()).copy(lastSuccessfulWishlistReadAt = null)
+    }
+
+    override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?, storeRegion: String?) {
+        profile = (profile ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
     }
 
     override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {

@@ -17,8 +17,9 @@ interface PlayerProfileDao {
         "INSERT OR IGNORE INTO player_profile " +
             "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
             "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
-            "personaName, avatarUrl, pendingImportRecompute) VALUES " +
-            "(0, '', 0, 0, 1, 0, 0, 0, 0, NULL, 0, NULL, NULL, 0)",
+            "personaName, avatarUrl, storeRegion, pendingImportRecompute, " +
+            "lastSuccessfulWishlistReadAt) VALUES " +
+            "(0, '', 0, 0, 1, 0, 0, 0, 0, NULL, 0, NULL, NULL, NULL, 0, NULL)",
     )
     suspend fun insertIfMissing()
 
@@ -38,20 +39,51 @@ interface PlayerProfileDao {
     /** Steam identity fields only; sync status and derived aggregates remain untouched. */
     @Query(
         "UPDATE player_profile SET steamId = :steamId, steamLevel = :steamLevel, " +
-            "personaName = :personaName, avatarUrl = :avatarUrl WHERE id = 0",
+            "personaName = :personaName, avatarUrl = :avatarUrl, storeRegion = :storeRegion " +
+            "WHERE id = 0",
     )
     suspend fun updateSteamIdentity(
         steamId: String,
         steamLevel: Int,
         personaName: String?,
         avatarUrl: String?,
+        storeRegion: String?,
     )
 
-    /** Header identity only, used by the live presence path. */
+    /** The optional explicitly configured store region, when one exists. */
+    @Query("SELECT storeRegion FROM player_profile WHERE id = 0")
+    suspend fun storeRegion(): String?
+
+    @Query("SELECT lastSuccessfulWishlistReadAt FROM player_profile WHERE id = 0")
+    suspend fun lastSuccessfulWishlistReadAt(): Long?
+
+    /** Record a successful wishlist read without replacing any other profile-owned fields. */
     @Query(
-        "UPDATE player_profile SET personaName = :personaName, avatarUrl = :avatarUrl WHERE id = 0",
+        "UPDATE player_profile SET lastSuccessfulWishlistReadAt = " +
+            "MAX(COALESCE(lastSuccessfulWishlistReadAt, 0), :readAt) WHERE id = 0",
     )
-    suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?)
+    suspend fun updateLastSuccessfulWishlistReadAt(readAt: Long)
+
+    /** Invalidate wishlist membership freshness after a read that did not succeed. */
+    @Query("UPDATE player_profile SET lastSuccessfulWishlistReadAt = NULL WHERE id = 0")
+    suspend fun clearLastSuccessfulWishlistReadAt()
+
+    /**
+     * The identity fields the live presence path can observe: the header pair plus any explicit
+     * store-region setting retained by the profile.
+     *
+     * The caller skips the write when the merged identity equals the stored one, keeping the
+     * update idempotent and cheap.
+     */
+    @Query(
+        "UPDATE player_profile SET personaName = :personaName, avatarUrl = :avatarUrl, " +
+            "storeRegion = :storeRegion WHERE id = 0",
+    )
+    suspend fun updateHeaderIdentity(
+        personaName: String?,
+        avatarUrl: String?,
+        storeRegion: String?,
+    )
 
     /**
      * Gamification aggregates and the configuration provenance that produced them. Also clears
@@ -107,7 +139,8 @@ interface PlayerProfileDao {
         "UPDATE player_profile SET steamId = :steamId, steamLevel = 0, totalXp = 0, level = 1, " +
             "currentStreak = 0, longestStreak = 0, lastSyncAt = 0, lastSyncError = NULL, " +
             "playtimeBackfilled = 0, personaName = NULL, avatarUrl = NULL, " +
-            "pendingImportRecompute = 0 WHERE id = 0",
+            "storeRegion = NULL, pendingImportRecompute = 0, " +
+            "lastSuccessfulWishlistReadAt = NULL WHERE id = 0",
     )
     suspend fun resetForAccountChange(steamId: String)
 }

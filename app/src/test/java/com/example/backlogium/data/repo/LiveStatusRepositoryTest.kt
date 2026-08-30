@@ -20,6 +20,8 @@ import com.example.backlogium.data.remote.dto.PlayerSummariesResult
 import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
+import com.example.backlogium.data.remote.dto.StoreItemsResponse
+import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
@@ -480,6 +482,7 @@ class LiveStatusRepositoryTest {
         override fun observeGoalGames(): Flow<List<Game>> = error("not used")
         override fun observeBacklog(): Flow<List<Game>> = error("not used")
         override suspend fun allAppIds(): List<Long> = error("not used")
+        override fun observeAppIds(): Flow<List<Long>> = error("not used")
         override suspend fun getAll(): List<Game> = error("not used")
         override suspend fun getById(appId: Long): Game? = games.firstOrNull { it.appId == appId }
         override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = error("not used")
@@ -508,9 +511,13 @@ class LiveStatusRepositoryTest {
         override suspend fun get(): PlayerProfile? = stored
         override suspend fun resetForAccountChange(steamId: String) = error("not used")
         override suspend fun updateSyncStatus(lastSyncAt: Long, lastSyncError: String?) = error("not used")
-        override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?) = error("not used")
-        override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?) {
-            stored = (stored ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl)
+        override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?, storeRegion: String?) = error("not used")
+        override suspend fun storeRegion(): String? = stored?.storeRegion
+        override suspend fun lastSuccessfulWishlistReadAt(): Long? = stored?.lastSuccessfulWishlistReadAt
+        override suspend fun updateLastSuccessfulWishlistReadAt(readAt: Long) = error("not used")
+        override suspend fun clearLastSuccessfulWishlistReadAt() = error("not used")
+        override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?, storeRegion: String?) {
+            stored = (stored ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
         }
         override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) = error("not used")
         override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) = error("not used")
@@ -521,6 +528,16 @@ class LiveStatusRepositoryTest {
 
     /** Configurable player-summary responses; [throwOnNextCall] simulates a transient failure. */
     private class FakeSteamApi : SteamApi {
+        override suspend fun getWishlist(
+            steamId: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): WishlistResponse = error("the wishlist is not part of this test")
+
+        override suspend fun getStoreItems(
+            inputJson: String,
+            scope: SyncRunRecorder.RunScope?,
+        ): StoreItemsResponse = error("store items are not part of this test")
+
         private var players: List<PlayerSummaryDto> = emptyList()
         var throwOnNextCall = false
         var callCount = 0
