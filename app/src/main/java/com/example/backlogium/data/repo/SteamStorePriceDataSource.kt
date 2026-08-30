@@ -83,9 +83,11 @@ class SteamStorePriceDataSource @Inject constructor(
                     unresolved += appId
                     continue
                 }
-                val overview = envelope.data?.priceOverview
+                val data = envelope.data
+                val overview = data?.priceOverview
                 when {
-                    overview == null -> prices[appId] = StorePrice.None
+                    data?.isExplicitEmptyArray == true -> prices[appId] = StorePrice.None
+                    overview == null -> unresolved += appId
                     overview.finalFormatted.isBlank() -> unresolved += appId
                     else -> prices[appId] = overview.toAmount()
                 }

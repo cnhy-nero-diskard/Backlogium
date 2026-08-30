@@ -29,11 +29,7 @@ data class PlayerProfile(
     val personaName: String? = null,
     /** Full-size Steam avatar URL, persisted for the same reason as [personaName]. */
     val avatarUrl: String? = null,
-    /**
-     * The player's Steam store region (`loccountrycode`), used to price the wishlist in their own
-     * currency. Null until a sync observes a profile that exposes a country — a state the price
-     * request handles by asserting no region rather than defaulting to one.
-     */
+    /** Optional explicit Steam Store Country override; public profile location is not stored here. */
     val storeRegion: String? = null,
     /**
      * True from the moment a backup merge's raw-data transaction commits until the following

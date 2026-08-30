@@ -1,7 +1,6 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.dao.GameDao
-import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.WishlistDao
 import com.example.backlogium.data.local.entity.WishlistItem
 import com.example.backlogium.data.local.entity.WishlistPriceObservation
@@ -101,7 +100,6 @@ enum class WishlistRefresh { REFRESHED, SKIPPED_FRESH, NOT_CONFIGURED, FAILED }
 class WishlistRepository @Inject constructor(
     private val wishlistDao: WishlistDao,
     private val gameDao: GameDao,
-    private val profileDao: PlayerProfileDao,
     private val credentials: CredentialsProvider,
     private val wishlistSource: SteamWishlistDataSource,
     private val priceSource: SteamStorePriceDataSource,
@@ -166,7 +164,9 @@ class WishlistRepository @Inject constructor(
 
         if (!force && isFresh()) return@withLock WishlistRefresh.SKIPPED_FRESH
 
-        val region = profileDao.storeRegion()
+        // `loccountrycode` is a public profile location, not Steam's payment-derived Store Country.
+        // No explicit store-country setting exists yet, so omit `cc` rather than asserting a region.
+        val region: String? = null
         val listed = when (val fetch = wishlistSource.wishlistFor(steamId)) {
             is WishlistFetch.Entries -> {
                 availabilityState.value = WishlistAvailability.AVAILABLE
@@ -195,12 +195,20 @@ class WishlistRepository @Inject constructor(
     }
 
     /**
-     * Whether every stored entry has a price observation inside the freshness window. An empty
-     * wishlist is never "fresh": there may be entries Steam knows about that this app does not.
+     * Whether both the wishlist membership and every stored entry's price observation are inside
+     * the freshness window. Price freshness alone is insufficient: a successful price pass after a
+     * failed wishlist read must not suppress the next membership retry. An empty wishlist is never
+     * "fresh": there may be entries Steam knows about that this app does not.
      */
     private suspend fun isFresh(): Boolean {
-        val oldest = wishlistDao.oldestLatestObservationAt() ?: return false
-        return time.nowMillis() - oldest <= FRESHNESS_WINDOW_MILLIS
+        // A failed membership read must always be retried while this repository still reports the
+        // wishlist as unavailable, even if an earlier successful read was recent.
+        if (availabilityState.value != WishlistAvailability.AVAILABLE) return false
+        val now = time.nowMillis()
+        val oldestMembershipRead = wishlistDao.oldestLastSeenAt() ?: return false
+        if (now - oldestMembershipRead > FRESHNESS_WINDOW_MILLIS) return false
+        val oldestPriceObservation = wishlistDao.oldestLatestObservationAt() ?: return false
+        return now - oldestPriceObservation <= FRESHNESS_WINDOW_MILLIS
     }
 
     /**

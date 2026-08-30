@@ -40,6 +40,10 @@ interface WishlistDao {
     @Query("DELETE FROM wishlist_items WHERE lastSeenAt < :seenBefore")
     suspend fun deleteItemsNotSeenSince(seenBefore: Long)
 
+    /** The oldest successful wishlist membership read across the retained entries. */
+    @Query("SELECT MIN(lastSeenAt) FROM wishlist_items")
+    suspend fun oldestLastSeenAt(): Long?
+
     @Query("DELETE FROM wishlist_items")
     suspend fun deleteAllItems()
 

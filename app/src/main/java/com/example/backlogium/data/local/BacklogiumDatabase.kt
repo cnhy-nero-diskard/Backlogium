@@ -557,12 +557,11 @@ abstract class BacklogiumDatabase : RoomDatabase() {
         }
 
         /**
-         * v22 -> v23: the player's Steam store region on `player_profile` (add-wishlist-section).
+         * v22 -> v23: an optional store-region setting on `player_profile` (add-wishlist-section).
          *
-         * Additive and deliberately unbackfilled. `loccountrycode` has always been in Steam's
-         * `GetPlayerSummaries` response and simply went unread, so the column fills in on the
-         * next sync for anyone whose profile exposes a country. NULL is a real state — the price
-         * request asserts no region and lets Steam resolve one — not a value awaiting repair.
+         * Additive and deliberately unbackfilled. The public profile location in
+         * `GetPlayerSummaries` is not the payment-derived Store Country, so NULL is the safe
+         * default and the price request asserts no region until an explicit setting exists.
          */
         val MIGRATION_22_23 = object : Migration(22, 23) {
             override fun migrate(db: SupportSQLiteDatabase) {

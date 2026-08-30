@@ -21,6 +21,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.io.IOException
 import java.time.LocalDate
 import java.time.ZoneId
 import retrofit2.Response
@@ -47,7 +48,6 @@ class WishlistRepositoryTest {
     ) = WishlistRepository(
         wishlistDao = db.wishlistDao(),
         gameDao = db.gameDao(),
-        profileDao = db.playerProfileDao(),
         credentials = FakeCredentials(steamId),
         wishlistSource = SteamWishlistDataSource(api),
         priceSource = SteamStorePriceDataSource(priceApi),
@@ -207,7 +207,7 @@ class WishlistRepositoryTest {
             wishlist = { wishlistJson(WISHLIST) },
             storeItems = { storeItemsJson(STORE_ITEMS) },
         )
-        val priceApi = FakePriceApi { _, _ -> Response.success(pricesJson(PRICED)) }
+        val priceApi = FakePriceApi { ids, _ -> Response.success(pricedChunk(ids)) }
         val repo = repository(api = api, priceApi = priceApi)
 
         repo.refresh()
@@ -284,6 +284,46 @@ class WishlistRepositoryTest {
         )
     }
 
+    @Test fun aFailedWishlistReadDoesNotBecomeFreshFromASuccessfulPriceRefresh() = runBlocking {
+        val staleMembership = NOW - WishlistRepository.FRESHNESS_WINDOW_MILLIS - 1
+        db.wishlistDao().upsertItems(listOf(item(appId = 1, lastSeenAt = staleMembership)))
+        var wishlistAttempt = 0
+        val api = FakeWishlistApi(wishlist = {
+            wishlistAttempt++
+            if (wishlistAttempt == 1) throw IOException("offline")
+            wishlistJson(NOT_READABLE)
+        })
+        val priceApi = FakePriceApi { ids, _ -> Response.success(pricedChunk(ids)) }
+        val repo = repository(api = api, priceApi = priceApi)
+
+        // The membership read fails, but retained entries still get a fresh price observation.
+        assertEquals(WishlistRefresh.REFRESHED, repo.refresh())
+        assertEquals(1, api.wishlistCalls)
+
+        // The membership timestamp stayed stale, so a fresh price must not suppress this retry.
+        assertEquals(WishlistRefresh.REFRESHED, repo.refresh())
+        assertEquals(2, api.wishlistCalls)
+    }
+
+    @Test fun anUnresolvedPriceShapeRetainsThePreviousObservation() = runBlocking {
+        val staleMembership = NOW - WishlistRepository.FRESHNESS_WINDOW_MILLIS - 1
+        db.wishlistDao().upsertItems(listOf(item(appId = 1, lastSeenAt = staleMembership)))
+        val previous = price(appId = 1, at = NOW - 5_000, formatted = "P1.00")
+        db.wishlistDao().insertObservations(listOf(previous))
+        val repo = repository(
+            api = FakeWishlistApi(wishlist = { wishlistJson(NOT_READABLE) }),
+            priceApi = FakePriceApi { _, _ -> Response.success(pricesJson(EMPTY_OBJECT_DATA)) },
+        )
+
+        repo.refresh()
+
+        assertEquals(
+            WishlistPrice.Observed("P1.00", null, 0, NOW - 5_000, current = true),
+            repo.wishlist.first().single().price,
+        )
+        assertEquals(1, observationCount())
+    }
+
     @Test fun anOwnedGameIsNotEvenPriced() = runBlocking {
         db.wishlistDao().upsertItems(listOf(item(appId = 1), item(appId = 2)))
         db.gameDao().upsertAll(listOf(game(2)))
@@ -305,7 +345,7 @@ class WishlistRepositoryTest {
         assertEquals(0, api.wishlistCalls)
     }
 
-    @Test fun theStoreRegionOnTheProfileIsWhatPricesAreRequestedIn() = runBlocking {
+    @Test fun aProfileLocationIsNotUsedAsTheStoreCountry() = runBlocking {
         db.playerProfileDao().insertIfMissing()
         db.playerProfileDao().updateSteamIdentity("1", 0, "Nero", null, storeRegion = "PH")
         db.wishlistDao().upsertItems(listOf(item(appId = 1)))
@@ -316,7 +356,7 @@ class WishlistRepositoryTest {
             priceApi = priceApi,
         ).refresh()
 
-        assertEquals(listOf<String?>("PH"), priceApi.requests.map { it.second })
+        assertEquals(listOf<String?>(null), priceApi.requests.map { it.second })
     }
 
     private fun wishlistJson(body: String) = JSON.decodeFromString<WishlistResponse>(body)
@@ -335,13 +375,18 @@ class WishlistRepositoryTest {
             cursor.getInt(0)
         }
 
-    private fun item(appId: Long, priority: Int = 0, addedAt: Long = 0L) = WishlistItem(
+    private fun item(
+        appId: Long,
+        priority: Int = 0,
+        addedAt: Long = 0L,
+        lastSeenAt: Long = NOW,
+    ) = WishlistItem(
         appId = appId,
         name = "Wanted $appId",
         artworkUrl = "https://cdn/$appId.jpg",
         priority = priority,
         addedAt = addedAt,
-        lastSeenAt = NOW,
+        lastSeenAt = lastSeenAt,
     )
 
     private fun price(
@@ -390,6 +435,8 @@ class WishlistRepositoryTest {
         const val STORE_ITEMS = """{"response":{"store_items":[{"id":292030,"appid":292030,"success":1,"visible":true,"name":"The Witcher 3: Wild Hunt"}]}}"""
 
         const val PRICED = """{"292030":{"success":true,"data":{"price_overview":{"currency":"PHP","initial":209900,"final":209900,"discount_percent":0,"initial_formatted":"","final_formatted":"P2,099.00"}}}}"""
+
+        const val EMPTY_OBJECT_DATA = """{"1":{"success":true,"data":{}}}"""
 
         fun PRICED_ENTRY(appId: String) =
             """"@ID@":{"success":true,"data":{"price_overview":{"currency":"PHP","initial":209900,"final":209900,"discount_percent":0,"initial_formatted":"","final_formatted":"P2,099.00"}}}"""

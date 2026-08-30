@@ -603,8 +603,9 @@ class MigrationTest {
 
     /**
      * v22 -> v23: `player_profile` gains `storeRegion` (add-wishlist-section). Additive and
-     * unbackfilled — the column arrives NULL and the next sync fills it from the profile's
-     * country — so what matters is that every aggregate already on the row survives.
+     * unbackfilled — the column arrives NULL and holds only an explicitly configured region,
+     * never the profile's public location — so what matters is that every aggregate already on
+     * the row survives.
      */
     @Test
     fun v22ToV23_addsStoreRegionAndPreservesProfileAggregates() {

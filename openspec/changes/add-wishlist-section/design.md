@@ -86,15 +86,17 @@ missing price as zero, blank, or a dash — each of which reads as a price. Wher
 itself carries enough information to be more specific, it may be, but the price lookup alone is not
 grounds for a claim about *why*.
 
-### 4. Region comes from the player's profile
+### 4. No store region is asserted from the player's profile
 
-`GetPlayerSummaries` already returns `loccountrycode`; the app simply does not deserialize it.
-Adding it to the DTO and persisting it beside the identity the sync already stores costs one field
-each and means prices arrive in the player's own currency with no setting to configure.
+An earlier version of this design read `loccountrycode` from `GetPlayerSummaries` as the player's
+store region. Review corrected that: the field is the public/community profile location, while
+Steam Store Country is a separate account and payment-derived setting. Pricing from it can force
+the wrong region and currency, so the assumption is removed rather than refined.
 
-Where the profile exposes no country, `cc` is omitted entirely and Steam resolves the region from
-the request itself. That is a better fallback than a hardcoded default, which would confidently
-show the wrong currency.
+Until an explicit store-country setting exists, `cc` is omitted entirely and Steam resolves the
+region from the request itself. That is a better fallback than a derived or hardcoded region,
+which would confidently show the wrong currency. The `storeRegion` column remains as the future
+home of such a setting; the profile location is never written to it.
 
 Displayed prices use Steam's own formatted string, which places currency symbols correctly per
 region. Any arithmetic uses the integer minor-unit fields. Formatting money from raw integers

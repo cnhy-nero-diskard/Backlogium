@@ -62,6 +62,24 @@ class SteamStorePriceDataSourceTest {
         assertTrue(batch.unresolved.isEmpty())
     }
 
+    @Test fun missingNullAndEmptyObjectData_areUnresolved_notNoPrice() = runBlocking {
+        val missing = source(MISSING_DATA).pricesFor(listOf(440), "PH")
+        val nullData = source(NULL_DATA).pricesFor(listOf(440), "PH")
+        val emptyObject = source(EMPTY_OBJECT_DATA).pricesFor(listOf(440), "PH")
+
+        listOf(missing, nullData, emptyObject).forEach { batch ->
+            assertTrue(batch.prices.isEmpty())
+            assertEquals(setOf(440L), batch.unresolved)
+        }
+    }
+
+    @Test fun unexpectedDataShape_failsTheChunk_andLeavesItsAppsUnresolved() = runBlocking {
+        val batch = source(UNEXPECTED_DATA).pricesFor(listOf(440), "PH")
+
+        assertTrue(batch.prices.isEmpty())
+        assertEquals(setOf(440L), batch.unresolved)
+    }
+
     @Test fun mixedBatch_keepsPricedAppsAndSeparatesTheThreeOutcomes() = runBlocking {
         val batch = source(MIXED).pricesFor(listOf(440, 292030, 11), "PH")
 
@@ -156,6 +174,14 @@ class SteamStorePriceDataSourceTest {
         const val DISCOUNTED = """{"1174180":{"success":true,"data":{"price_overview":{"currency":"PHP","initial":339900,"final":84975,"discount_percent":75,"initial_formatted":"P3,399.00","final_formatted":"P849.75"}}}}"""
 
         const val FREE = """{"440":{"success":true,"data":[]}}"""
+
+        const val MISSING_DATA = """{"440":{"success":true}}"""
+
+        const val NULL_DATA = """{"440":{"success":true,"data":null}}"""
+
+        const val EMPTY_OBJECT_DATA = """{"440":{"success":true,"data":{}}}"""
+
+        const val UNEXPECTED_DATA = """{"440":{"success":true,"data":"changed"}}"""
 
         const val MIXED = """{"440":{"success":true,"data":[]},"292030":{"success":true,"data":{"price_overview":{"currency":"PHP","initial":209900,"final":209900,"discount_percent":0,"initial_formatted":"","final_formatted":"P2,099.00"}}},"11":{"success":false}}"""
 

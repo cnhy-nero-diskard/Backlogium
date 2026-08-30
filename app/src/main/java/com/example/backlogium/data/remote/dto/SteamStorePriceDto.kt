@@ -3,6 +3,7 @@ package com.example.backlogium.data.remote.dto
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
@@ -36,6 +37,8 @@ data class StorePriceEnvelope(
 @Serializable
 data class StorePriceData(
     @SerialName("price_overview") val priceOverview: StorePriceOverviewDto? = null,
+    /** True only for the explicit `data: []` no-price sentinel. */
+    @Transient val isExplicitEmptyArray: Boolean = false,
 )
 
 /**
@@ -58,12 +61,12 @@ data class StorePriceOverviewDto(
 )
 
 /**
- * Reads `data` as an object when there is one and as "no price" when Steam sends `[]`.
+ * Reads `data` as an object when there is one and preserves Steam's explicit `[]` sentinel.
  *
  * The array carries nothing — it is purely the encoding for absence — so it maps to a
- * [StorePriceData] with no price overview rather than to a failure. Anything that is not a JSON
- * object is treated the same way for the same reason: the request succeeded, and this entry
- * simply has no price object in it.
+ * [StorePriceData] marked [StorePriceData.isExplicitEmptyArray]. Missing or null data is kept
+ * nullable by [StorePriceEnvelope], while an empty object and any unexpected non-object remain
+ * unresolved rather than being mistaken for a definitive no-price answer.
  */
 object StorePriceDataSerializer : KSerializer<StorePriceData> {
     private val delegate = StorePriceData.serializer()
@@ -73,7 +76,14 @@ object StorePriceDataSerializer : KSerializer<StorePriceData> {
     override fun deserialize(decoder: Decoder): StorePriceData {
         val json = decoder as? JsonDecoder ?: return delegate.deserialize(decoder)
         val element = json.decodeJsonElement()
-        if (element !is JsonObject) return StorePriceData()
+        if (element is kotlinx.serialization.json.JsonArray && element.isEmpty()) {
+            return StorePriceData(isExplicitEmptyArray = true)
+        }
+        if (element !is JsonObject) {
+            throw kotlinx.serialization.SerializationException(
+                "Expected price data object or empty array, got $element",
+            )
+        }
         return json.json.decodeFromJsonElement(delegate, element)
     }
 

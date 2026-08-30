@@ -23,11 +23,9 @@ data class PlayerSummariesResult(
  * public profile. They cost no extra request — this endpoint is already polled — and are
  * persisted onto the profile so the header renders offline.
  *
- * [locCountryCode] is the player's own store region, and Steam has always returned it here — it
- * was simply not deserialized. It is the two-letter code the store prices in, so reading it costs
- * nothing and spares the wishlist a separate lookup and the player a currency setting. Absent for
- * a profile that has not set a country, which is a real state rather than a failure: the price
- * request then asserts no region at all and lets Steam resolve one.
+ * [locCountryCode] is the public/community profile location. It is not the account's Steam Store
+ * Country, which is a separate payment-derived setting, so callers must not use it to select a
+ * store region or currency.
  */
 @Serializable
 data class PlayerSummaryDto(

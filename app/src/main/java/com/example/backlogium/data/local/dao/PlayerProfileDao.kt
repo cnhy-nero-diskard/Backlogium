@@ -49,18 +49,16 @@ interface PlayerProfileDao {
         storeRegion: String?,
     )
 
-    /** The store region alone, for callers that price without needing the whole profile row. */
+    /** The optional explicitly configured store region, when one exists. */
     @Query("SELECT storeRegion FROM player_profile WHERE id = 0")
     suspend fun storeRegion(): String?
 
     /**
-     * The identity fields the live presence path can observe: the header pair plus the store
-     * region, which the same `GetPlayerSummaries` response carries.
+     * The identity fields the live presence path can observe: the header pair plus any explicit
+     * store-region setting retained by the profile.
      *
-     * The region is written here rather than left to the next sync because the caller skips the
-     * write when the merged identity equals the stored one. A region it could observe but never
-     * persist would make that comparison differ on every single poll, turning an idempotent
-     * write into a repeating one that never converges.
+     * The caller skips the write when the merged identity equals the stored one, keeping the
+     * update idempotent and cheap.
      */
     @Query(
         "UPDATE player_profile SET personaName = :personaName, avatarUrl = :avatarUrl, " +
