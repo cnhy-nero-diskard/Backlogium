@@ -40,6 +40,8 @@ data class PlayerProfile(
      * atomically with the raw data; cleared by the next completed recompute regardless of source.
      */
     val pendingImportRecompute: Boolean = false,
+    /** The last successful wishlist membership read; null until Steam has answered successfully. */
+    val lastSuccessfulWishlistReadAt: Long? = null,
 ) {
     companion object {
         const val SINGLETON_ID = 0

@@ -63,7 +63,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         WishlistItem::class,
         WishlistPriceObservation::class,
     ],
-    version = 24,
+    version = 25,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -609,6 +609,16 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS " +
                         "`index_wishlist_price_observations_appId_observedAt` " +
                         "ON `wishlist_price_observations` (`appId`, `observedAt`)",
+                )
+            }
+        }
+
+        /** v24 -> v25: persist the last successful wishlist membership read. */
+        val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `player_profile` ADD COLUMN " +
+                        "`lastSuccessfulWishlistReadAt` INTEGER",
                 )
             }
         }

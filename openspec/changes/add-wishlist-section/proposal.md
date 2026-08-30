@@ -52,9 +52,9 @@ would fail the entire response, not merely its own entry.
   wishlist entry is reconciled, and how the feature degrades when Steam will not answer.
 
 ### Modified Capabilities
-- `steam-sync`: the sync additionally persists the player's persona identity and retains a
-  `storeRegion` value only for a future explicit store-country setting; until one exists, price
-  requests omit `cc` rather than using the public profile location.
+- `steam-sync`: the sync additionally persists the player's persona identity and retains the
+  explicitly configured `storeRegion`; wishlist details and price requests forward it as `cc`, or
+  omit `cc` when it is null rather than using the public profile location.
 - `app-ui`: the Library gains a wishlist section, with its entries, ordering, states, and store
   links.
 

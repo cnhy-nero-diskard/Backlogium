@@ -61,7 +61,7 @@
 - [x] 8.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and `./gradlew assembleDebug`
 - [x] 8.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
 - [x] 8.3 Confirm no wishlist data reaches library counts, XP, completion figures, or Analytics
-- [x] 8.4 Manually verify prices render in the currency Steam resolves from the request itself, as `cc` is omitted until an explicit store-country setting exists
+- [x] 8.4 Manually verify prices render in Steam's formatted currency, with an explicit store-country override forwarded as `cc` and no `cc` when unset
 - [x] 8.5 Manually verify a wishlist containing at least one free-to-play game refreshes without failing the whole batch
 - [x] 8.6 Manually verify airplane mode: entries and dated prices remain, nothing errors
 - [x] 8.7 Manually verify the store link opens the Steam app when installed

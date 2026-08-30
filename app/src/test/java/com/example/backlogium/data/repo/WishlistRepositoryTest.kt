@@ -48,6 +48,7 @@ class WishlistRepositoryTest {
     ) = WishlistRepository(
         wishlistDao = db.wishlistDao(),
         gameDao = db.gameDao(),
+        playerProfileDao = db.playerProfileDao(),
         credentials = FakeCredentials(steamId),
         wishlistSource = SteamWishlistDataSource(api),
         priceSource = SteamStorePriceDataSource(priceApi),
@@ -217,6 +218,41 @@ class WishlistRepositoryTest {
         assertEquals(1, priceApi.requests.size)
     }
 
+    @Test fun anEmptyWishlistStaysFreshAfterReopeningInsideTheWindow() = runBlocking {
+        val firstApi = FakeWishlistApi(wishlist = { wishlistJson(EMPTY_WISHLIST) })
+        val firstPriceApi = FakePriceApi { _, _ -> error("an empty wishlist must not be priced") }
+        val first = repository(api = firstApi, priceApi = firstPriceApi)
+
+        assertEquals(WishlistRefresh.REFRESHED, first.refresh())
+
+        val reopenedApi = FakeWishlistApi(wishlist = { error("fresh membership must not be re-read") })
+        val reopenedPriceApi = FakePriceApi { _, _ -> error("a fresh empty wishlist must not be priced") }
+        val reopened = repository(api = reopenedApi, priceApi = reopenedPriceApi)
+
+        assertEquals(WishlistRefresh.SKIPPED_FRESH, reopened.refresh())
+        assertEquals(WishlistAvailability.AVAILABLE, reopened.availability.value)
+        assertEquals(0, reopenedApi.wishlistCalls)
+        assertEquals(0, reopenedPriceApi.requests.size)
+    }
+
+    @Test fun anEntirelyOwnedWishlistStaysFreshWithoutARedundantPriceRequest() = runBlocking {
+        db.gameDao().upsertAll(listOf(game(1)))
+        val first = repository(
+            api = FakeWishlistApi(wishlist = { wishlistJson(OWNED_ONLY_WISHLIST) }),
+            priceApi = FakePriceApi { _, _ -> error("an entirely-owned wishlist must not be priced") },
+        )
+
+        assertEquals(WishlistRefresh.REFRESHED, first.refresh())
+
+        val reopenedApi = FakeWishlistApi(wishlist = { error("fresh membership must not be re-read") })
+        val reopenedPriceApi = FakePriceApi { _, _ -> error("owned entries must never be priced") }
+        val reopened = repository(api = reopenedApi, priceApi = reopenedPriceApi)
+
+        assertEquals(WishlistRefresh.SKIPPED_FRESH, reopened.refresh())
+        assertEquals(0, reopenedApi.wishlistCalls)
+        assertEquals(0, reopenedPriceApi.requests.size)
+    }
+
     @Test fun anOwnedWishlistEntryDoesNotPreventFreshnessSkippingForWantedEntries() = runBlocking {
         db.gameDao().upsertAll(listOf(game(1)))
         val api = FakeWishlistApi(
@@ -362,18 +398,23 @@ class WishlistRepositoryTest {
         assertEquals(0, api.wishlistCalls)
     }
 
-    @Test fun aProfileLocationIsNotUsedAsTheStoreCountry() = runBlocking {
+    @Test fun anExplicitStoreRegionIsUsedForDetailsAndPrices() = runBlocking {
         db.playerProfileDao().insertIfMissing()
         db.playerProfileDao().updateSteamIdentity("1", 0, "Nero", null, storeRegion = "PH")
         db.wishlistDao().upsertItems(listOf(item(appId = 1)))
-        val priceApi = FakePriceApi { _, _ -> Response.success(emptyMap()) }
+        val api = FakeWishlistApi(
+            wishlist = { wishlistJson(WISHLIST) },
+            storeItems = { storeItemsJson(STORE_ITEMS) },
+        )
+        val priceApi = FakePriceApi { _, _ -> Response.success(pricesJson(PRICED)) }
 
         repository(
-            api = FakeWishlistApi(wishlist = { wishlistJson(NOT_READABLE) }),
+            api = api,
             priceApi = priceApi,
         ).refresh()
 
-        assertEquals(listOf<String?>(null), priceApi.requests.map { it.second })
+        assertEquals(listOf("PH"), priceApi.requests.map { it.second })
+        assertEquals(true, "\"country_code\":\"PH\"" in api.lastStoreItemsInput.orEmpty())
     }
 
     private fun wishlistJson(body: String) = JSON.decodeFromString<WishlistResponse>(body)
@@ -448,6 +489,10 @@ class WishlistRepositoryTest {
         const val WISHLIST = """{"response":{"items":[{"appid":292030,"priority":1,"date_added":1549370695}]}}"""
 
         const val WISHLIST_WITH_OWNED_ENTRY = """{"response":{"items":[{"appid":1,"priority":1,"date_added":1549370695},{"appid":2,"priority":2,"date_added":1549370695}]}}"""
+
+        const val EMPTY_WISHLIST = """{"response":{"items":[]}}"""
+
+        const val OWNED_ONLY_WISHLIST = """{"response":{"items":[{"appid":1,"priority":1,"date_added":1549370695}]}}"""
 
         const val NOT_READABLE = """{"response":{}}"""
 

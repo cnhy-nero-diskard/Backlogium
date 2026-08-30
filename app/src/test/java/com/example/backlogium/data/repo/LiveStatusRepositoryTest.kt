@@ -513,6 +513,8 @@ class LiveStatusRepositoryTest {
         override suspend fun updateSyncStatus(lastSyncAt: Long, lastSyncError: String?) = error("not used")
         override suspend fun updateSteamIdentity(steamId: String, steamLevel: Int, personaName: String?, avatarUrl: String?, storeRegion: String?) = error("not used")
         override suspend fun storeRegion(): String? = stored?.storeRegion
+        override suspend fun lastSuccessfulWishlistReadAt(): Long? = stored?.lastSuccessfulWishlistReadAt
+        override suspend fun updateLastSuccessfulWishlistReadAt(readAt: Long) = error("not used")
         override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?, storeRegion: String?) {
             stored = (stored ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
         }

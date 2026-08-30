@@ -73,6 +73,11 @@ internal class GatedPlayerProfileDao(
 
     override suspend fun storeRegion(): String? = delegate.storeRegion()
 
+    override suspend fun lastSuccessfulWishlistReadAt(): Long? = delegate.lastSuccessfulWishlistReadAt()
+
+    override suspend fun updateLastSuccessfulWishlistReadAt(readAt: Long) =
+        delegate.updateLastSuccessfulWishlistReadAt(readAt)
+
     override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?, storeRegion: String?) =
         delegate.updateHeaderIdentity(personaName, avatarUrl, storeRegion)
 

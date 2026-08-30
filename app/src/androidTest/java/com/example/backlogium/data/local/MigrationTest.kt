@@ -735,6 +735,58 @@ class MigrationTest {
         }
     }
 
+    /** v24 -> v25: successful wishlist reads gain durable freshness metadata. */
+    @Test
+    fun v24ToV25_addsWishlistReadTimestampAndPreservesProfile() {
+        val databaseName = "migration-v24-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 24)
+        try {
+            database.execSQL(
+                "INSERT INTO player_profile " +
+                    "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                    "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
+                    "personaName, avatarUrl, storeRegion, pendingImportRecompute) VALUES " +
+                    "(0, '76561197960287930', 42, 1200, 7, 3, 19, 5, 1700000000000, NULL, 1, " +
+                    "'Nero', 'https://cdn/full.jpg', 'PH', 0)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                25,
+                true,
+                BacklogiumDatabase.MIGRATION_24_25,
+            )
+            try {
+                migrated.query(
+                    "SELECT steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                        "personaName, avatarUrl, storeRegion, lastSuccessfulWishlistReadAt " +
+                        "FROM player_profile WHERE id = 0",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("76561197960287930", cursor.getString(0))
+                    assertEquals(42, cursor.getInt(1))
+                    assertEquals(1200, cursor.getInt(2))
+                    assertEquals(7, cursor.getInt(3))
+                    assertEquals(3, cursor.getInt(4))
+                    assertEquals(19, cursor.getInt(5))
+                    assertEquals("Nero", cursor.getString(6))
+                    assertEquals("https://cdn/full.jpg", cursor.getString(7))
+                    assertEquals("PH", cursor.getString(8))
+                    assertTrue(cursor.isNull(9))
+                    assertFalse(cursor.moveToNext())
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private data class ColumnInfo(val name: String, val type: String, val notNull: Boolean, val pk: Int)
 
     private fun assertTableInfo(database: SupportSQLiteDatabase, table: String, expected: List<ColumnInfo>) {

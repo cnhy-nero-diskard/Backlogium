@@ -173,11 +173,9 @@ same spirit as the standing requirement that the app work with no network and no
 
 - **With `cc` omitted, Steam resolves the region from the request itself**, which may not be the
   account's actual Steam Store Country. The profile's public location is deliberately not consulted
-  (decision 4), and no explicit store-country setting exists yet. → Prices are recorded as what was
-  observed and dated, never presented as more than that, so a request-resolved region renders at
-  most a mislabelled price — the same exposure the un-regioned request already carries. The
-  `storeRegion` column is the future home of an explicit store-country setting; that override is a
-  later decision if the request-resolved region ever bites.
+  (decision 4). When the explicitly configured `storeRegion` is non-null, it is forwarded instead;
+  otherwise `cc` remains omitted. → Prices are recorded as what was observed and dated, never
+  presented as more than that.
 
 - **A wishlist section invites the purchase-decision features it explicitly excludes.** → Named as
   a non-goal rather than left implicit, so the next change makes that case on its own terms instead

@@ -17,8 +17,9 @@ interface PlayerProfileDao {
         "INSERT OR IGNORE INTO player_profile " +
             "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
             "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
-            "personaName, avatarUrl, storeRegion, pendingImportRecompute) VALUES " +
-            "(0, '', 0, 0, 1, 0, 0, 0, 0, NULL, 0, NULL, NULL, NULL, 0)",
+            "personaName, avatarUrl, storeRegion, pendingImportRecompute, " +
+            "lastSuccessfulWishlistReadAt) VALUES " +
+            "(0, '', 0, 0, 1, 0, 0, 0, 0, NULL, 0, NULL, NULL, NULL, 0, NULL)",
     )
     suspend fun insertIfMissing()
 
@@ -52,6 +53,16 @@ interface PlayerProfileDao {
     /** The optional explicitly configured store region, when one exists. */
     @Query("SELECT storeRegion FROM player_profile WHERE id = 0")
     suspend fun storeRegion(): String?
+
+    @Query("SELECT lastSuccessfulWishlistReadAt FROM player_profile WHERE id = 0")
+    suspend fun lastSuccessfulWishlistReadAt(): Long?
+
+    /** Record a successful wishlist read without replacing any other profile-owned fields. */
+    @Query(
+        "UPDATE player_profile SET lastSuccessfulWishlistReadAt = " +
+            "MAX(COALESCE(lastSuccessfulWishlistReadAt, 0), :readAt) WHERE id = 0",
+    )
+    suspend fun updateLastSuccessfulWishlistReadAt(readAt: Long)
 
     /**
      * The identity fields the live presence path can observe: the header pair plus any explicit
@@ -124,7 +135,8 @@ interface PlayerProfileDao {
         "UPDATE player_profile SET steamId = :steamId, steamLevel = 0, totalXp = 0, level = 1, " +
             "currentStreak = 0, longestStreak = 0, lastSyncAt = 0, lastSyncError = NULL, " +
             "playtimeBackfilled = 0, personaName = NULL, avatarUrl = NULL, " +
-            "storeRegion = NULL, pendingImportRecompute = 0 WHERE id = 0",
+            "storeRegion = NULL, pendingImportRecompute = 0, " +
+            "lastSuccessfulWishlistReadAt = NULL WHERE id = 0",
     )
     suspend fun resetForAccountChange(steamId: String)
 }

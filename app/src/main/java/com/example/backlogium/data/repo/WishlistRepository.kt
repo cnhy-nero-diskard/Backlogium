@@ -1,6 +1,7 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.WishlistDao
 import com.example.backlogium.data.local.entity.WishlistItem
 import com.example.backlogium.data.local.entity.WishlistPriceObservation
@@ -100,6 +101,7 @@ enum class WishlistRefresh { REFRESHED, SKIPPED_FRESH, NOT_CONFIGURED, FAILED }
 class WishlistRepository @Inject constructor(
     private val wishlistDao: WishlistDao,
     private val gameDao: GameDao,
+    private val playerProfileDao: PlayerProfileDao,
     private val credentials: CredentialsProvider,
     private val wishlistSource: SteamWishlistDataSource,
     private val priceSource: SteamStorePriceDataSource,
@@ -148,8 +150,10 @@ class WishlistRepository @Inject constructor(
     /**
      * Refresh the wishlist and its prices, as the section is opened.
      *
-     * Skipped when every entry already has an observation newer than [FRESHNESS_WINDOW_MILLIS],
-     * so navigating back and forth does not re-request. [force] is for the periodic sampler,
+     * Skipped when the last successful membership read and every priceable entry's latest
+     * observation are inside [FRESHNESS_WINDOW_MILLIS], so navigating back and forth does not
+     * re-request. An empty wishlist and a wishlist with no non-owned entries are fresh after their
+     * successful read even though neither has rows to age. [force] is for the periodic sampler,
      * which exists precisely to record history on days the player never opens the section.
      *
      * Nothing here can fail loudly. A wishlist that cannot be read leaves the stored entries and
@@ -165,12 +169,16 @@ class WishlistRepository @Inject constructor(
         if (!force && isFresh()) return@withLock WishlistRefresh.SKIPPED_FRESH
 
         // `loccountrycode` is a public profile location, not Steam's payment-derived Store Country.
-        // No explicit store-country setting exists yet, so omit `cc` rather than asserting a region.
-        val region: String? = null
+        // Only the explicitly stored setting is allowed to assert a region; otherwise both calls
+        // omit it and let Steam resolve the store context.
+        val region = playerProfileDao.storeRegion()?.trim()?.takeIf { it.isNotEmpty() }
         val listed = when (val fetch = wishlistSource.wishlistFor(steamId)) {
             is WishlistFetch.Entries -> {
+                val readAt = time.nowMillis()
                 availabilityState.value = WishlistAvailability.AVAILABLE
-                storeEntries(fetch.entries, region)
+                storeEntries(fetch.entries, region, readAt)
+                playerProfileDao.insertIfMissing()
+                playerProfileDao.updateLastSuccessfulWishlistReadAt(readAt)
                 true
             }
 
@@ -195,28 +203,34 @@ class WishlistRepository @Inject constructor(
     }
 
     /**
-     * Whether both the wishlist membership and every stored entry's price observation are inside
+     * Whether both the wishlist membership and every priceable entry's price observation are inside
      * the freshness window. Price freshness alone is insufficient: a successful price pass after a
-     * failed wishlist read must not suppress the next membership retry. An empty wishlist is never
-     * "fresh": there may be entries Steam knows about that this app does not.
+     * failed wishlist read must not suppress the next membership retry. The membership timestamp is
+     * independent of item rows, so a successful empty read remains fresh after its rows are deleted.
      */
     private suspend fun isFresh(): Boolean {
         // A failed membership read must always be retried while this repository still reports the
         // wishlist as unavailable, even if an earlier successful read was recent.
-        if (availabilityState.value != WishlistAvailability.AVAILABLE) return false
+        if (availabilityState.value == WishlistAvailability.NOT_READABLE ||
+            availabilityState.value == WishlistAvailability.UNREACHABLE
+        ) return false
         val now = time.nowMillis()
-        val oldestMembershipRead = wishlistDao.oldestLastSeenAt() ?: return false
-        if (now - oldestMembershipRead > FRESHNESS_WINDOW_MILLIS) return false
-        val oldestPriceObservation = wishlistDao.oldestLatestObservationAt() ?: return false
-        return now - oldestPriceObservation <= FRESHNESS_WINDOW_MILLIS
+        val lastMembershipRead = playerProfileDao.lastSuccessfulWishlistReadAt() ?: return false
+        if (now - lastMembershipRead > FRESHNESS_WINDOW_MILLIS) return false
+        if (availabilityState.value == WishlistAvailability.UNKNOWN) {
+            availabilityState.value = WishlistAvailability.AVAILABLE
+        }
+        val oldestPriceObservation = wishlistDao.oldestLatestObservationAt()
+        // NULL means there are no non-owned entries to price, not that pricing is stale.
+        return oldestPriceObservation == null ||
+            now - oldestPriceObservation <= FRESHNESS_WINDOW_MILLIS
     }
 
     /**
      * Replace the stored entries with what Steam listed, keeping names and artwork already held
      * for entries the store does not answer for this time.
      */
-    private suspend fun storeEntries(entries: List<WishlistEntry>, region: String?) {
-        val now = time.nowMillis()
+    private suspend fun storeEntries(entries: List<WishlistEntry>, region: String?, readAt: Long) {
         if (entries.isEmpty()) {
             wishlistDao.deleteAllItems()
             return
@@ -243,24 +257,24 @@ class WishlistRepository @Inject constructor(
                         ?: SteamIconMapper.headerUrl(entry.appId),
                     priority = entry.priority,
                     addedAt = entry.addedAtMillis,
-                    lastSeenAt = now,
+                    lastSeenAt = readAt,
                 )
             },
         )
-        wishlistDao.deleteItemsNotSeenSince(now)
+        wishlistDao.deleteItemsNotSeenSince(readAt)
     }
 
     /**
      * Observe prices for everything still wanted. Owned entries are left out of the request as
      * well as out of the section — there is no point pricing a game the player already has.
      *
-     * Returns whether any observation was recorded at all, which is what separates "the refresh
-     * did something" from "every chunk failed".
+     * Returns whether the price pass succeeded or had no non-owned entries to process, which is
+     * what separates "the refresh did something (or had nothing to do)" from "every chunk failed".
      */
     private suspend fun refreshPrices(region: String?): Boolean {
         val owned = gameDao.allAppIds().toHashSet()
         val appIds = wishlistDao.appIds().filterNot { it in owned }
-        if (appIds.isEmpty()) return false
+        if (appIds.isEmpty()) return true
 
         val now = time.nowMillis()
         val batch = priceSource.pricesFor(appIds, region)
