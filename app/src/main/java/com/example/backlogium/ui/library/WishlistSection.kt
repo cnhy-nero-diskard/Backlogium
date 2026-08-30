@@ -1,16 +1,21 @@
 package com.example.backlogium.ui.library
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -18,14 +23,19 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.WishlistAvailability
+import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.ui.components.GameHeaderBackdrop
+import com.example.backlogium.ui.components.GameHeroCapsule
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ChevronDown
@@ -39,9 +49,16 @@ import compose.icons.tablericons.ExternalLink
  * without displacing them: a wishlist of any size costs one header row until the player asks for
  * it, and the owned lists keep the position, sorting, grouping, density, and search they have
  * today. Expanding is also the "opened" event the refresh policy hangs off.
+ *
+ * Entries follow the Library's own density control, so switching to grid does not leave a list of
+ * wanted games sitting under a grid of owned ones. The ladder maps onto the owned one rather than
+ * inventing a second: the **price rides the playtime rung** — it is the number about the game, and
+ * the compact grid drops numbers — while the wishlisted marking is identity and survives every
+ * density, because mistaking a want for a have is the one error this section must not invite.
  */
 fun LazyListScope.wishlistSection(
     state: WishlistUiState,
+    density: GameListDensity,
     onToggle: (Boolean) -> Unit,
     onOpenStore: (WishlistEntryUi) -> Unit,
 ) {
@@ -88,8 +105,32 @@ fun LazyListScope.wishlistSection(
         return
     }
 
-    items(count = state.entries.size, key = { "wishlist-${state.entries[it].appId}" }) { index ->
-        WishlistEntryRow(entry = state.entries[index], onOpenStore = onOpenStore)
+    if (!density.isGrid) {
+        state.entries.forEach { entry ->
+            item(key = "wishlist-${entry.appId}") {
+                WishlistEntryRow(entry = entry, density = density, onOpenStore = onOpenStore)
+            }
+        }
+        return
+    }
+
+    state.entries.chunked(density.columns).forEachIndexed { rowIndex, row ->
+        item(key = "wishlist-grid-row-$rowIndex-${row.firstOrNull()?.appId ?: 0}") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                row.forEach { entry ->
+                    WishlistEntryCell(
+                        entry = entry,
+                        density = density,
+                        onOpenStore = onOpenStore,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                repeat(density.columns - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
     }
 }
 
@@ -118,7 +159,7 @@ private fun WishlistSectionHeader(
                     refreshing -> "Checking…"
                     // The count is only meaningful once something has been read; a bare "0"
                     // before the first read would assert an empty wishlist that is not known yet.
-                    expanded || count > 0 -> if (count > 0) "$count wanted" else "Show"
+                    count > 0 -> "$count wanted"
                     else -> "Show"
                 },
             )
@@ -133,11 +174,15 @@ private fun WishlistSectionHeader(
 }
 
 /**
- * One wanted game. The whole row is the store link, so the link is offered whatever the price
- * state turns out to be.
+ * One wanted game as a list row. The whole row is the store link, so the link is offered whatever
+ * the price state turns out to be.
  */
 @Composable
-private fun WishlistEntryRow(entry: WishlistEntryUi, onOpenStore: (WishlistEntryUi) -> Unit) {
+private fun WishlistEntryRow(
+    entry: WishlistEntryUi,
+    density: GameListDensity,
+    onOpenStore: (WishlistEntryUi) -> Unit,
+) {
     Card(
         onClick = { onOpenStore(entry) },
         modifier = Modifier
@@ -157,9 +202,13 @@ private fun WishlistEntryRow(entry: WishlistEntryUi, onOpenStore: (WishlistEntry
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(text = entry.name, style = MaterialTheme.typography.bodyLarge)
-                    WantedLabel()
-                    Spacer(Modifier.padding(top = 2.dp))
-                    WishlistPriceLabel(entry.price)
+                    WantedLabel(modifier = Modifier.padding(top = 2.dp))
+                    if (density.showsPlaytime) {
+                        WishlistPrice(
+                            price = entry.price,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
                 }
                 Icon(
                     imageVector = TablerIcons.ExternalLink,
@@ -173,95 +222,217 @@ private fun WishlistEntryRow(entry: WishlistEntryUi, onOpenStore: (WishlistEntry
 }
 
 /**
- * What separates a wanted game from an owned one, in words. Colour alone would not survive a
- * colour-blind reader or a greyscale screenshot, and these rows sit in the same list as games the
- * player actually has — mistaking the two is the one error this section must not invite.
+ * One wanted game as a grid tile, sharing the owned cell's shell — same portrait hero capsule,
+ * same shape, same proportions — so the two grids read as one surface rather than two designs.
+ * The wishlisted marking and the price capsule are what tell them apart.
  */
 @Composable
-private fun WantedLabel() {
+private fun WishlistEntryCell(
+    entry: WishlistEntryUi,
+    density: GameListDensity,
+    onOpenStore: (WishlistEntryUi) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val compact = density == GameListDensity.COMPACT_GRID
+    val tileShape = RoundedCornerShape(18.dp)
+    val heroShape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)
+    Card(
+        onClick = { onOpenStore(entry) },
+        modifier = modifier
+            .padding(vertical = 4.dp)
+            .aspectRatio(if (compact) 0.62f else 0.56f)
+            .semantics { contentDescription = "Open ${entry.name} on Steam" },
+        shape = tileShape,
+        elevation = CardDefaults.cardElevation(defaultElevation = if (compact) 1.dp else 2.dp),
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .clip(heroShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            ) {
+                GameHeroCapsule(
+                    heroCapsuleUrl = SteamIconMapper.heroCapsuleUrl(entry.appId),
+                    fallbackUrls = SteamIconMapper.gridArtworkFallbackUrls(entry.appId),
+                    modifier = Modifier.matchParentSize(),
+                    shape = heroShape,
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = if (compact) 9.dp else 12.dp, vertical = 9.dp),
+                horizontalAlignment = if (compact) Alignment.CenterHorizontally else Alignment.Start,
+            ) {
+                Text(
+                    text = entry.name,
+                    style = if (compact) {
+                        MaterialTheme.typography.labelLarge
+                    } else {
+                        MaterialTheme.typography.titleSmall
+                    },
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = if (compact) TextAlign.Center else TextAlign.Start,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                WantedLabel(modifier = Modifier.padding(top = 3.dp))
+                if (density.showsPlaytime) {
+                    WishlistPrice(
+                        price = entry.price,
+                        modifier = Modifier.padding(top = 5.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * What separates a wanted game from an owned one, in words. Colour alone would not survive a
+ * colour-blind reader or a greyscale screenshot, and these tiles are the same shell as the owned
+ * ones directly below — mistaking a want for a have is the one error this section must not invite.
+ * That makes this identity rather than detail, so it survives every density.
+ */
+@Composable
+private fun WantedLabel(modifier: Modifier = Modifier) {
     Text(
-        text = "Wishlisted · not owned",
+        text = "Wishlisted",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier.semantics { contentDescription = "Wishlisted, not owned" },
     )
 }
 
 /**
  * The price, in whichever of its four states it is in.
  *
- * None of the three non-price states renders anything that could be read as an amount: no zero,
- * no dash, no blank line where a number would sit.
+ * **The capsule means money.** Only an actual amount is enclosed and tinted; the two states that
+ * carry no amount stay plain, quiet text. Wrapping "No price available" in the same pill would
+ * give an absence the exact visual weight of a price, which is what the spec forbids in the same
+ * breath as rendering it as a zero or a dash.
  */
 @Composable
-private fun WishlistPriceLabel(price: WishlistPriceUi) {
+private fun WishlistPrice(price: WishlistPriceUi, modifier: Modifier = Modifier) {
     when (price) {
-        is WishlistPriceUi.Current -> PriceAmount(
+        is WishlistPriceUi.Current -> PriceCapsule(
             formatted = price.formatted,
             listFormatted = price.listFormatted,
             discountPercent = price.discountPercent,
             observedNote = null,
+            modifier = modifier,
         )
 
-        is WishlistPriceUi.Retained -> PriceAmount(
+        is WishlistPriceUi.Retained -> PriceCapsule(
             formatted = price.formatted,
             listFormatted = price.listFormatted,
             discountPercent = price.discountPercent,
             // A retained price is never presented as today's. The date is the whole point.
             observedNote = "Seen ${UiFormat.date(price.observedAt)}",
+            modifier = modifier,
         )
 
-        WishlistPriceUi.Unavailable -> Text(
-            text = "No price available",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        WishlistPriceUi.NeverObserved -> Text(
-            text = "Price not checked yet",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        WishlistPriceUi.Unavailable -> AbsentPrice("No price available", modifier)
+        WishlistPriceUi.NeverObserved -> AbsentPrice("Price not checked yet", modifier)
     }
 }
 
 @Composable
-private fun PriceAmount(
+private fun AbsentPrice(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier,
+    )
+}
+
+/**
+ * A price, enclosed so it reads as a figure rather than as another line of the row's prose.
+ *
+ * A discount takes the tertiary fill and carries its percentage inside the capsule, so a sale is
+ * visible from across the list without the app having to shout. The struck-through list price
+ * follows outside it — it is context for the amount, not a second amount.
+ */
+@Composable
+private fun PriceCapsule(
     formatted: String,
     listFormatted: String?,
     discountPercent: Int,
     observedNote: String?,
+    modifier: Modifier = Modifier,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = formatted,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Bold,
-        )
-        if (discountPercent > 0) {
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = "-$discountPercent%",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.tertiary,
-            )
-            if (listFormatted != null) {
+    val discounted = discountPercent > 0
+    val container = if (discounted) {
+        MaterialTheme.colorScheme.tertiary
+    } else {
+        MaterialTheme.colorScheme.secondaryContainer
+    }
+    val onContainer = if (discounted) {
+        MaterialTheme.colorScheme.onTertiary
+    } else {
+        MaterialTheme.colorScheme.onSecondaryContainer
+    }
+
+    Column(modifier = modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(container)
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (discounted) {
+                    Text(
+                        text = "-$discountPercent%",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = onContainer,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(
+                    text = formatted,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = onContainer,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            }
+            if (discounted && listFormatted != null) {
                 Spacer(Modifier.width(6.dp))
                 Text(
                     text = listFormatted,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textDecoration = TextDecoration.LineThrough,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
-    }
-    if (observedNote != null) {
-        Text(
-            text = observedNote,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (observedNote != null) {
+            Text(
+                text = observedNote,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
     }
 }
 

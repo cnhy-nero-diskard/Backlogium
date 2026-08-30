@@ -306,6 +306,7 @@ fun LibraryScreen(
             if (state.query.isBlank() && selectedGenreSet.isEmpty()) {
                 wishlistSection(
                     state = wishlistState,
+                    density = state.density,
                     onToggle = wishlistViewModel::setExpanded,
                     onOpenStore = { uriHandler.openUri(it.storeUrl) },
                 )

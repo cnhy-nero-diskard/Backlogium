@@ -4,7 +4,8 @@
 The Library SHALL provide a wishlist section presenting the player's wishlisted games with their
 artwork, name, current price, and any active discount. It SHALL be reachable without displacing the
 owned-library lists, and its entries SHALL be visually distinguishable from owned games so the two
-are never mistaken for one another.
+are never mistaken for one another. Its entries SHALL follow the Library's own density control
+rather than keeping a presentation of their own.
 
 #### Scenario: Viewing the wishlist
 - **WHEN** the player opens the wishlist section
@@ -17,6 +18,11 @@ are never mistaken for one another.
 #### Scenario: Not mistaken for owned games
 - **WHEN** wishlist entries are presented
 - **THEN** they are distinguishable from owned-library entries without relying on colour alone
+
+#### Scenario: Density applies to the wishlist too
+- **WHEN** the player changes the Library between its list and grid densities
+- **THEN** wishlist entries change with it, and the marking that distinguishes them from owned
+  games survives at every density
 
 #### Scenario: Owned lists unaffected
 - **WHEN** the wishlist section exists
@@ -35,6 +41,11 @@ that could be read as a price.
 #### Scenario: Current price
 - **WHEN** prices were just refreshed
 - **THEN** the entry shows its price without qualification
+
+#### Scenario: A price is set apart from the entry's other text
+- **WHEN** an entry has a price to show
+- **THEN** that amount is presented distinctly from the entry's other text, and a state carrying
+  no amount is not given the same treatment
 
 #### Scenario: Retained price
 - **WHEN** the shown price was observed earlier
