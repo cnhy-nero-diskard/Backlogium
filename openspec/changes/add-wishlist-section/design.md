@@ -171,10 +171,13 @@ same spirit as the standing requirement that the app work with no network and no
   trivial and the alternative is a future feature with no past. If drop alerting is never built, the
   cost is a small table nobody reads.
 
-- **`cc` is only as good as the player's profile country**, which they may have set to somewhere
-  they do not live. → Prices would be right for the region Steam thinks they are in, which is also
-  what the store itself would show them. Acceptable, and an override is a later decision if it ever
-  bites.
+- **With `cc` omitted, Steam resolves the region from the request itself**, which may not be the
+  account's actual Steam Store Country. The profile's public location is deliberately not consulted
+  (decision 4), and no explicit store-country setting exists yet. → Prices are recorded as what was
+  observed and dated, never presented as more than that, so a request-resolved region renders at
+  most a mislabelled price — the same exposure the un-regioned request already carries. The
+  `storeRegion` column is the future home of an explicit store-country setting; that override is a
+  later decision if the request-resolved region ever bites.
 
 - **A wishlist section invites the purchase-decision features it explicitly excludes.** → Named as
   a non-goal rather than left implicit, so the next change makes that case on its own terms instead

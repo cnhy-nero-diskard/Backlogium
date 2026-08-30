@@ -32,8 +32,9 @@ would fail the entire response, not merely its own entry.
   stored price as the current one.
 - **No price is a first-class state**, not an empty field: free-to-play, unreleased, and
   unavailable-in-region are shown as what they are.
-- **Prices are requested in the player's own store region**, derived from their Steam profile, so a
-  player in the Philippines sees peso pricing rather than dollars.
+- **Prices are requested without deriving a store region from the player's public profile location.**
+  When an explicit store-country setting exists, it is passed as `cc`; otherwise `cc` is omitted and
+  Steam resolves the region for the request.
 - **Every entry links to its Steam store page**, which opens the Steam app directly when installed.
 - **Price observations are recorded over time.** No alerting and no history UI in this change — the
   point is that history is cheap to start accumulating and impossible to backfill, so recording
@@ -50,8 +51,9 @@ would fail the entire response, not merely its own entry.
   wishlist entry is reconciled, and how the feature degrades when Steam will not answer.
 
 ### Modified Capabilities
-- `steam-sync`: the sync additionally persists the player's store region alongside the identity it
-  already stores, so prices can be requested in the right currency without a separate lookup.
+- `steam-sync`: the sync additionally persists the player's persona identity and retains a
+  `storeRegion` value only for a future explicit store-country setting; until one exists, price
+  requests omit `cc` rather than using the public profile location.
 - `app-ui`: the Library gains a wishlist section, with its entries, ordering, states, and store
   links.
 
@@ -65,8 +67,9 @@ would fail the entire response, not merely its own entry.
 - **Affected code (new):** a wishlist retrieval call on `SteamApi`; a batched price call and DTO on
   `SteamStoreApi`; `wishlist_items` and `wishlist_price_observations` tables with their migration; a
   repository exposing wishlist entries as domain models; the section and its entry composables.
-- **Affected code (modified):** `PlayerSummariesDto` and `PlayerProfile` to carry the store region
-  (`loccountrycode` is already in Steam's response and simply not deserialized today); the Library
+- **Affected code (modified):** `PlayerSummariesDto` and `PlayerProfile` to carry persona name and
+  avatar, plus a `storeRegion` column reserved for a future explicit store-country setting — the
+  response's `loccountrycode` is the public profile location and is never used as one; the Library
   screen to host the section.
 - **Wishlist entries are deliberately not rows in `games`.** They are not owned, have no sessions,
   and must not enter library counts, XP denominators, completion percentages, or any analytic. A

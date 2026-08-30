@@ -9,7 +9,7 @@
 
 - [x] 2.1 Deserialize `loccountrycode` in `PlayerSummariesDto` — it is already in Steam's response and simply unread
 - [x] 2.2 Add a store-region column to `PlayerProfile` with its migration
-- [x] 2.3 Persist the region during sync alongside persona name and avatar, leaving a previously stored value intact when the profile exposes none
+- [x] 2.3 Persist persona name and avatar during sync, leaving any explicitly configured store region intact — the profile's public location is never written to it
 - [x] 2.4 Omit the region parameter entirely when none is known, rather than defaulting to one
 
 ## 3. Remote surface
@@ -61,7 +61,7 @@
 - [x] 8.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and `./gradlew assembleDebug`
 - [x] 8.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
 - [x] 8.3 Confirm no wishlist data reaches library counts, XP, completion figures, or Analytics
-- [x] 8.4 Manually verify prices render in the expected currency for the configured profile region
+- [x] 8.4 Manually verify prices render in the currency Steam resolves from the request itself, as `cc` is omitted until an explicit store-country setting exists
 - [x] 8.5 Manually verify a wishlist containing at least one free-to-play game refreshes without failing the whole batch
 - [x] 8.6 Manually verify airplane mode: entries and dated prices remain, nothing errors
 - [x] 8.7 Manually verify the store link opens the Steam app when installed
