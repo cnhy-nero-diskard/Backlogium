@@ -6,6 +6,7 @@ import com.example.backlogium.data.hltb.HltbFailureClass
 import com.example.backlogium.data.hltb.HltbMatcher
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.entity.HltbData
+import com.example.backlogium.data.local.entity.HltbDataOrigin
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.Flow
@@ -31,6 +32,31 @@ import java.time.ZoneId
  * the request never got through.
  */
 class HltbRepositoryTest {
+
+    @Test
+    fun lookupWritesAutomaticOriginAndReviewResolutionWritesManualOrigin() = runTest {
+        val dao = FakeHltbDataDao()
+        val repository = repository(
+            dao = dao,
+            results = mapOf(
+                "Portal" to listOf(candidate("Portal")),
+                "Ambiguous" to listOf(candidate("First"), candidate("Second", id = 2L)),
+                "Missing" to emptyList(),
+            ),
+        )
+
+        repository.refresh(1L, "Portal")
+        repository.refresh(2L, "Ambiguous")
+        repository.refresh(3L, "Missing")
+
+        assertEquals(HltbDataOrigin.AUTOMATIC, dao.getByAppId(1L)?.origin)
+        assertEquals(HltbDataOrigin.AUTOMATIC, dao.getByAppId(2L)?.origin)
+        assertEquals(HltbDataOrigin.AUTOMATIC, dao.getByAppId(3L)?.origin)
+
+        repository.resolveMatch(2L, candidate("Chosen", id = 22L))
+
+        assertEquals(HltbDataOrigin.MANUAL, dao.getByAppId(2L)?.origin)
+    }
 
     @Test
     fun searchCandidates_returnsAllScoredCandidatesWithoutClassifying() = runTest {

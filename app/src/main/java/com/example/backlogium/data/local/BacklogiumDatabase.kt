@@ -63,7 +63,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         WishlistItem::class,
         WishlistPriceObservation::class,
     ],
-    version = 25,
+    version = 26,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -619,6 +619,16 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE `player_profile` ADD COLUMN " +
                         "`lastSuccessfulWishlistReadAt` INTEGER",
+                )
+            }
+        }
+
+        /** v25 -> v26: record whether each HLTB correspondence is dataset, automatic, or manual. */
+        val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `hltb_data` ADD COLUMN " +
+                        "`origin` TEXT NOT NULL DEFAULT 'AUTOMATIC'",
                 )
             }
         }

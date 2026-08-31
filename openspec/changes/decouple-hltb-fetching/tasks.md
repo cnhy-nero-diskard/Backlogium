@@ -23,10 +23,10 @@
 
 ## 2. Local provenance and age
 
-- [ ] 2.1 Add a provenance column to `HltbData` distinguishing dataset, automatic device match, and
+- [x] 2.1 Add a provenance column to `HltbData` distinguishing dataset, automatic device match, and
   manual resolution, with a Room migration defaulting existing rows to automatic device match;
   verify with a migration test asserting pre-migration rows survive and read as automatic
-- [ ] 2.2 Set provenance at every write site in `HltbRepository` — `query` writes automatic,
+- [x] 2.2 Set provenance at every write site in `HltbRepository` — `query` writes automatic,
   `resolveMatch` writes manual; verify with repository tests asserting the recorded origin for a
   confident match, a review resolution, and an unmatched result
 - [ ] 2.3 Stop `BackupMergeEngine.mergeHltbData` stamping `time.nowMillis()` as `fetchedAt` and

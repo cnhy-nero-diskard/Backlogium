@@ -3,6 +3,18 @@ package com.example.backlogium.data.local.entity
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+/** Where the stored correspondence came from, used to decide whether a dataset may replace it. */
+enum class HltbDataOrigin {
+    /** Supplied by an applied shared dataset. */
+    DATASET,
+
+    /** Chosen by the on-device matcher, including reviewable and unmatched lookup outcomes. */
+    AUTOMATIC,
+
+    /** Explicitly selected by the user in the match-review or change-match surface. */
+    MANUAL,
+}
+
 /** Outcome of matching a Steam game name to HowLongToBeat entries. */
 enum class HltbMatchStatus {
     /** A single confident match was resolved automatically (or confirmed via review). */
@@ -37,4 +49,5 @@ data class HltbData(
     val fetchedAt: Long,
     val matchStatus: HltbMatchStatus,
     val candidatesJson: String? = null,
+    val origin: HltbDataOrigin = HltbDataOrigin.AUTOMATIC,
 )

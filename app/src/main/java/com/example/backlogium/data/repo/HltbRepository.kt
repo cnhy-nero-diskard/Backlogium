@@ -7,6 +7,7 @@ import com.example.backlogium.data.hltb.HltbMatcher
 import com.example.backlogium.data.hltb.classifyHltbFailure
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.entity.HltbData
+import com.example.backlogium.data.local.entity.HltbDataOrigin
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CancellationException
@@ -85,6 +86,7 @@ class HltbRepository @Inject constructor(
                 fetchedAt = existing?.fetchedAt ?: time.nowMillis(),
                 matchStatus = HltbMatchStatus.RESOLVED,
                 candidatesJson = null,
+                origin = HltbDataOrigin.MANUAL,
             ),
         )
     }
@@ -183,6 +185,7 @@ class HltbRepository @Inject constructor(
                 fetchedAt = now,
                 matchStatus = HltbMatchStatus.RESOLVED,
                 candidatesJson = null,
+                origin = HltbDataOrigin.AUTOMATIC,
             )
 
             is HltbMatcher.Classification.NeedsReview -> HltbData(
@@ -190,6 +193,7 @@ class HltbRepository @Inject constructor(
                 fetchedAt = now,
                 matchStatus = HltbMatchStatus.NEEDS_REVIEW,
                 candidatesJson = json.encodeToString(CANDIDATE_LIST_SERIALIZER, result.candidates),
+                origin = HltbDataOrigin.AUTOMATIC,
             )
 
             HltbMatcher.Classification.Unmatched -> HltbData(
@@ -197,6 +201,7 @@ class HltbRepository @Inject constructor(
                 fetchedAt = now,
                 matchStatus = HltbMatchStatus.UNMATCHED,
                 candidatesJson = null,
+                origin = HltbDataOrigin.AUTOMATIC,
             )
         }
         hltbDataDao.upsert(row)

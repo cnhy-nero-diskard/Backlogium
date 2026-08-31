@@ -787,6 +787,51 @@ class MigrationTest {
         }
     }
 
+    /** v25 -> v26: existing HLTB rows survive and default to automatic device provenance. */
+    @Test
+    fun v25ToV26_addsHltbOriginAndPreservesRows() {
+        val databaseName = "migration-v25-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 25)
+        try {
+            database.execSQL(
+                "INSERT INTO hltb_data " +
+                    "(appId, hltbId, mainStoryMinutes, mainExtraMinutes, completionistMinutes, " +
+                    "allStylesMinutes, fetchedAt, matchStatus, candidatesJson) VALUES " +
+                    "(620, 42, 300, 450, 600, 480, 1700000000000, 'RESOLVED', NULL)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                26,
+                true,
+                BacklogiumDatabase.MIGRATION_25_26,
+            )
+            try {
+                migrated.query(
+                    "SELECT appId, hltbId, completionistMinutes, fetchedAt, matchStatus, origin " +
+                        "FROM hltb_data WHERE appId = 620",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(620L, cursor.getLong(0))
+                    assertEquals(42L, cursor.getLong(1))
+                    assertEquals(600, cursor.getInt(2))
+                    assertEquals(1_700_000_000_000L, cursor.getLong(3))
+                    assertEquals("RESOLVED", cursor.getString(4))
+                    assertEquals("AUTOMATIC", cursor.getString(5))
+                    assertFalse(cursor.moveToNext())
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private data class ColumnInfo(val name: String, val type: String, val notNull: Boolean, val pk: Int)
 
     private fun assertTableInfo(database: SupportSQLiteDatabase, table: String, expected: List<ColumnInfo>) {
