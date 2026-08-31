@@ -1,6 +1,6 @@
 ## 1. Dataset format and repo-side tooling
 
-- [ ] 1.1 Settle the published serialization (design.md Open Questions) and write
+- [x] 1.1 Settle the published serialization (design.md Open Questions) and write
   `tools/hltb-dataset/FORMAT.md` documenting the mapping relation, the lengths relation, the
   dataset-level version and gathered-at metadata, and the plausibility ceiling for a completion
   length; verify by having a hand-written two-row sample file that conforms to it
