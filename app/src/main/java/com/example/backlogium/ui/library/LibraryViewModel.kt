@@ -70,8 +70,8 @@ data class GoalGameUi(
     override val xpContributed: Int = 0,
     /** HowLongToBeat Completionist length, if resolved. Null → no completion-based progress. */
     val completionistMinutes: Int? = null,
-    /** Persisted match status from the cache, or null when no lookup has been stored yet. */
-    val hltbStatus: HltbMatchState? = null,
+    /** Persisted match status, or NOT_COVERED when no lookup/dataset row has been stored. */
+    val hltbStatus: HltbMatchState = HltbMatchState.NOT_COVERED,
     /** In-flight/failed state of a manual lookup, layered over [hltbStatus]. */
     val fetchOp: HltbFetchOp? = null,
     /** Unlocked/total achievement counts, null when no achievement data is stored yet. */
@@ -104,7 +104,7 @@ data class BacklogGameUi(
      * leftover from when only tagged games had a target at all.
      */
     val completionistMinutes: Int? = null,
-    val hltbStatus: HltbMatchState? = null,
+    val hltbStatus: HltbMatchState = HltbMatchState.NOT_COVERED,
     val fetchOp: HltbFetchOp? = null,
     val achievementUnlocked: Int? = null,
     val achievementTotal: Int? = null,

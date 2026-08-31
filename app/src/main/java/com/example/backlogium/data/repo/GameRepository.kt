@@ -22,10 +22,13 @@ import javax.inject.Singleton
 private const val CURRENT_PLAYERS_SUCCESS = 1
 
 /**
- * Outcome of matching a game to HowLongToBeat, as consumers above `data/` see it. Mirrors the
- * stored [HltbMatchStatus] so no consumer depends on the storage enum.
+ * Completion-times coverage/match state as consumers above `data/` see it. It adds an explicit
+ * missing-row state to the stored [HltbMatchStatus] outcomes so consumers never infer coverage.
  */
 enum class HltbMatchState {
+    /** No stored lookup or applied-dataset row exists; distinct from a lookup finding no match. */
+    NOT_COVERED,
+
     /** A single confident match was resolved automatically (or confirmed via review). */
     RESOLVED,
 
@@ -40,10 +43,11 @@ enum class HltbMatchState {
  * A library game as consumers see it: the Steam facts they render plus the resolved
  * HowLongToBeat state, joined here so no consumer has to read the HLTB cache itself.
  *
- * The four HLTB lengths are null until a match resolves; [hltbMatchState] is null when no
- * lookup has been stored for this game yet. All four are carried (not just the two the Library
- * itself renders) so the game detail screen can present the full set from this one join rather
- * than opening a second read path into the HLTB cache — see enhance-game-detail.
+ * The four HLTB lengths are null until a match resolves; [hltbMatchState] is
+ * [HltbMatchState.NOT_COVERED] when no lookup or applied-dataset row has been stored for this game.
+ * All four are carried (not just the two the Library itself renders) so the game detail screen can
+ * present the full set from this one join rather than opening a second read path into the HLTB
+ * cache — see enhance-game-detail.
  *
  * [playtime2Weeks] and [backfillMinutes] exist on the `Game` entity and were previously dropped
  * here; they are carried through because the Library sorts by recent activity and derives each
@@ -67,7 +71,7 @@ data class LibraryGame(
     val mainStoryMinutes: Int? = null,
     val mainExtraMinutes: Int? = null,
     val allStylesMinutes: Int? = null,
-    val hltbMatchState: HltbMatchState? = null,
+    val hltbMatchState: HltbMatchState = HltbMatchState.NOT_COVERED,
     /** Tagged as a "Focus" game — drives History's per-day Focus-minutes breakdown. */
     val isGoal: Boolean = false,
     /** Ordered Steam Store genres; empty while unknown, unavailable, or malformed in cache. */
@@ -207,7 +211,7 @@ private fun Game.toDomain(
     mainStoryMinutes = hltb?.mainStoryMinutes,
     mainExtraMinutes = hltb?.mainExtraMinutes,
     allStylesMinutes = hltb?.allStylesMinutes,
-    hltbMatchState = hltb?.matchStatus?.toDomain(),
+    hltbMatchState = hltb?.matchStatus.toDomain(),
     isGoal = isGoal,
     genres = genres,
     recencyState = recencyState,
@@ -215,8 +219,9 @@ private fun Game.toDomain(
     source = source,
 )
 
-/** Storage → domain status mapping; internal so [HltbRepository] can report batch outcomes. */
-internal fun HltbMatchStatus.toDomain() = when (this) {
+/** Storage → domain status mapping; a missing row is an explicit lack of dataset coverage. */
+internal fun HltbMatchStatus?.toDomain() = when (this) {
+    null -> HltbMatchState.NOT_COVERED
     HltbMatchStatus.RESOLVED -> HltbMatchState.RESOLVED
     HltbMatchStatus.NEEDS_REVIEW -> HltbMatchState.NEEDS_REVIEW
     HltbMatchStatus.UNMATCHED -> HltbMatchState.UNMATCHED

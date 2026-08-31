@@ -77,7 +77,7 @@
 - [ ] 5.2 Present dataset download and application progress and its outcome, including how many games
   gained lengths, with the Library reflecting them without being reopened; verify by applying a
   dataset while the Library is visible
-- [ ] 5.3 Add the not-covered per-game state and the Library filter for uncovered games; verify a
+- [x] 5.3 Add the not-covered per-game state and the Library filter for uncovered games; verify a
   not-covered game is visually distinct from a no-match game and that a completed lookup clears the
   state
 - [ ] 5.4 Move the processed-of-total indicator, per-game outcome log, and stop control from the
