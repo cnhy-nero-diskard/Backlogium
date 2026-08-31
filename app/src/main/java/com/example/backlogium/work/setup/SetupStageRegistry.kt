@@ -2,8 +2,10 @@ package com.example.backlogium.work.setup
 
 import android.content.Context
 import androidx.work.WorkManager
+import com.example.backlogium.data.repo.HltbDatasetCheckResult
+import com.example.backlogium.data.repo.HltbDatasetProgress
+import com.example.backlogium.data.repo.HltbDatasetRepository
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
-import com.example.backlogium.work.HltbRefreshWorker
 import com.example.backlogium.work.SteamAssetDownloadWorker
 import com.example.backlogium.work.SteamSyncWorker
 import com.example.backlogium.work.SyncScheduler
@@ -28,6 +30,7 @@ import javax.inject.Singleton
 class SetupStageRegistry @Inject constructor(
     @ApplicationContext context: Context,
     private val scheduler: SyncScheduler,
+    private val hltbDatasetRepository: HltbDatasetRepository,
 ) : SetupStageSource {
 
     private val workManager: WorkManager = WorkManager.getInstance(context)
@@ -80,25 +83,19 @@ class SetupStageRegistry @Inject constructor(
         SetupStage(
             id = STAGE_COMPLETION_TIMES,
             title = "Fetch completion times",
-            detail = "Looks up how long each game takes to beat. Paced, so it can run a while.",
-            defaultOptIn = false,
+            detail = "Downloads the shared HowLongToBeat dataset so most of your library already " +
+                "has completion times. One small download.",
+            defaultOptIn = true,
             execution = SetupStageExecution.DETACHED,
-            run = WorkStageRunner(
-                workManager = workManager,
-                uniqueWorkName = HltbRefreshWorker.ONE_TIME_NAME,
-                // Unforced: the repository's freshness gate is the right authority on what needs
-                // fetching, and forcing would re-fetch a library that a restore may have filled in.
-                trigger = { scheduler.refreshHltbNow(force = false) },
-                progressOf = { data ->
-                    SetupStageProgress(
-                        processed = data.getInt(HltbRefreshWorker.KEY_PROGRESS, 0),
-                        total = data.getInt(HltbRefreshWorker.KEY_TOTAL, 0),
-                        label = data.getString(HltbRefreshWorker.KEY_CURRENT_GAME).orEmpty(),
-                    )
-                },
-                failureReason = "Completion times didn't finish downloading. " +
-                    "Re-run it from Settings.",
-            ),
+            run = SetupStageRunner { onProgress ->
+                when (val result = hltbDatasetRepository.checkAndApply(onProgress = { progress ->
+                    onProgress(progress.toSetupStageProgress())
+                })) {
+                    is HltbDatasetCheckResult.Applied, is HltbDatasetCheckResult.UpToDate ->
+                        SetupOutcome.Succeeded
+                    is HltbDatasetCheckResult.Failed -> SetupOutcome.Failed(result.message)
+                }
+            },
         ),
     )
 
@@ -111,4 +108,28 @@ class SetupStageRegistry @Inject constructor(
         const val STAGE_STEAM_ASSETS = "steam_assets"
         const val STAGE_COMPLETION_TIMES = "completion_times"
     }
+}
+
+/** Adapts the dataset repository's own progress union onto the generic setup progress shape. */
+private fun HltbDatasetProgress.toSetupStageProgress(): SetupStageProgress = when (this) {
+    HltbDatasetProgress.Checking -> SetupStageProgress(
+        processed = 0,
+        total = 0,
+        label = "Checking for a completion-times dataset",
+    )
+    is HltbDatasetProgress.Downloading -> SetupStageProgress(
+        processed = bytesRead.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt(),
+        total = (totalBytes ?: 0L).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt(),
+        label = "Downloading completion times",
+    )
+    HltbDatasetProgress.Verifying -> SetupStageProgress(
+        processed = 0,
+        total = 0,
+        label = "Verifying the dataset",
+    )
+    HltbDatasetProgress.Applying -> SetupStageProgress(
+        processed = 0,
+        total = 0,
+        label = "Applying completion times",
+    )
 }
