@@ -17,7 +17,7 @@
 - [ ] 1.5 Add a CI workflow running validate-and-regenerate on pull requests touching the dataset,
   failing when the committed output differs from the regenerated one; verify by opening a PR with a
   deliberately unsorted dataset and confirming CI rejects it
-- [ ] 1.6 Write `tools/hltb-dataset/README.md` covering how to contribute, what the export reveals,
+- [x] 1.6 Write `tools/hltb-dataset/README.md` covering how to contribute, what the export reveals,
   and how a correspondence conflict gets resolved; verify a reader can follow it end to end without
   reading the script
 
