@@ -5,9 +5,14 @@ on:
     paths:
       - 'tools/hltb-dataset/**'
       - '.github/workflows/hltb-dataset.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'tools/hltb-dataset/dataset.json'
 
 jobs:
   validate:
+    if: github.event_name == 'pull_request'
     name: Validate and regenerate
     runs-on: ubuntu-latest
     steps:
@@ -23,3 +28,61 @@ jobs:
 
       - name: Validate and regenerate committed dataset
         run: node tools/hltb-dataset/merge.mjs --check tools/hltb-dataset/dataset.json
+
+  publish:
+    if: github.event_name == 'push'
+    name: Publish dataset release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Defense-in-depth: the PR that landed this should already have passed --check, but a
+      # direct push or an unusual merge could still land something the gate would reject.
+      - name: Validate the committed dataset
+        run: node tools/hltb-dataset/merge.mjs --check tools/hltb-dataset/dataset.json
+
+      - name: Read dataset version
+        id: version
+        run: |
+          version=$(node -e "console.log(require('./tools/hltb-dataset/dataset.json').datasetVersion)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=hltb-dataset-v$version" >> "$GITHUB_OUTPUT"
+
+      # Idempotency: a push that doesn't change datasetVersion (or a re-run) must not try to
+      # recreate a release that already exists.
+      - name: Check whether this version is already published
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release assets
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          cp tools/hltb-dataset/dataset.json hltb-dataset.json
+          sha256sum hltb-dataset.json > hltb-dataset.json.sha256
+
+      # Not a draft, not a prerelease, tagged hltb-dataset-vN: app-updates' vX.Y.Z-only tag
+      # filter already ignores this series by construction, so no app update is offered on it.
+      - name: Publish release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            hltb-dataset.json hltb-dataset.json.sha256 \
+            --target "${{ github.sha }}" \
+            --title "HLTB dataset v${{ steps.version.outputs.version }}" \
+            --notes "Published automatically from tools/hltb-dataset/dataset.json at ${{ github.sha }}."
