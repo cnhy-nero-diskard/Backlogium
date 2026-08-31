@@ -146,10 +146,12 @@
 
 - [x] 7.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm the full suite passes.
   Passes, along with `:app:assembleDebug` and `:app:compileDebugAndroidTestKotlin`.
-- [ ] 7.2 Verify on device: fresh install with no dataset shows every game as not covered; applying
+- [x] 7.2 Verify on device: fresh install with no dataset shows every game as not covered; applying
   a dataset fills the library; a not-covered game resolves via a single-game lookup; an explicit
-  multi-selection reports progress and can be stopped. **Not done** — requires an interactive device
-  session; left for the user or a follow-up run.
+  multi-selection reports progress and can be stopped. Manually verified on device by the maintainer:
+  fresh-install not-covered state, dataset check/apply reflected live in the Library, single-game
+  lookup via the goal dialog's "Refresh HowLongToBeat", and a multi-selection lookup with live
+  progress, per-game log, working stop, and correct review-entry-point handoff — all confirmed good.
 - [x] 7.3 Confirm no code path issues a HowLongToBeat request for a game the user did not name —
   `grep -rn "HltbDataSource\|searchCandidates\|refreshHltbNow" app/src/main/java` and check every
   caller originates in an explicit user action. `refreshHltbNow` no longer exists anywhere;
