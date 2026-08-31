@@ -4,14 +4,14 @@
   `tools/hltb-dataset/FORMAT.md` documenting the mapping relation, the lengths relation, the
   dataset-level version and gathered-at metadata, and the plausibility ceiling for a completion
   length; verify by having a hand-written two-row sample file that conforms to it
-- [ ] 1.2 Implement contribution validation in `tools/hltb-dataset/merge.mjs` — positive integer
+- [x] 1.2 Implement contribution validation in `tools/hltb-dataset/merge.mjs` — positive integer
   identifiers, non-negative lengths under the documented ceiling, no duplicate app id within one
   file; verify with fixture contributions covering each rejection and one clean file, and that each
   rejection names the offending row
-- [ ] 1.3 Implement the merge — new rows added, differing lengths for one HLTB id resolved
+- [x] 1.3 Implement the merge — new rows added, differing lengths for one HLTB id resolved
   newest-wins, a differing HLTB id for one app id blocking with both correspondences reported;
   verify with fixtures for add, length-drift, conflict, and fully-redundant contributions
-- [ ] 1.4 Make merge output deterministic (stable sort by app id, fixed field order and formatting);
+- [x] 1.4 Make merge output deterministic (stable sort by app id, fixed field order and formatting);
   verify that merging the same inputs twice is byte-identical, that reordering non-conflicting
   contributions is byte-identical, and that a redundant merge leaves the file unchanged
 - [ ] 1.5 Add a CI workflow running validate-and-regenerate on pull requests touching the dataset,

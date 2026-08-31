@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "datasetVersion": 0,
+  "gatheredAt": 1700000100000,
+  "mappings": [
+    [10,100],
+    [10,100]
+  ],
+  "lengths": [
+    [100,10,20,30,25]
+  ]
+}
