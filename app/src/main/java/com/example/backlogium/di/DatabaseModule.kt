@@ -12,6 +12,7 @@ import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HltbDataDao
+import com.example.backlogium.data.local.dao.HltbDatasetDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.dao.SteamAssetDao
@@ -80,6 +81,9 @@ object DatabaseModule {
 
     @Provides
     fun provideHltbDataDao(db: BacklogiumDatabase): HltbDataDao = db.hltbDataDao()
+
+    @Provides
+    fun provideHltbDatasetDao(db: BacklogiumDatabase): HltbDatasetDao = db.hltbDatasetDao()
 
     @Provides
     fun provideAchievementDao(db: BacklogiumDatabase): AchievementDao = db.achievementDao()

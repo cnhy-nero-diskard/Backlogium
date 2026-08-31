@@ -824,6 +824,10 @@ class MigrationTest {
                     assertEquals("AUTOMATIC", cursor.getString(5))
                     assertFalse(cursor.moveToNext())
                 }
+                migrated.query("SELECT COUNT(*) FROM hltb_dataset_state").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
             } finally {
                 migrated.close()
             }

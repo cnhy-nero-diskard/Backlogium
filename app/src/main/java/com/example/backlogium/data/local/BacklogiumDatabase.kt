@@ -17,6 +17,7 @@ import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HltbDataDao
+import com.example.backlogium.data.local.dao.HltbDatasetDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.dao.SteamAssetDao
@@ -30,6 +31,7 @@ import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.local.entity.GameGenreCache
 import com.example.backlogium.data.local.entity.HltbData
+import com.example.backlogium.data.local.entity.HltbDatasetState
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.WishlistItem
@@ -48,6 +50,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         DailyProgress::class,
         PlayerProfile::class,
         HltbData::class,
+        HltbDatasetState::class,
         Achievement::class,
         SyncRun::class,
         RequestBreakdown::class,
@@ -73,6 +76,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun dailyProgressDao(): DailyProgressDao
     abstract fun playerProfileDao(): PlayerProfileDao
     abstract fun hltbDataDao(): HltbDataDao
+    abstract fun hltbDatasetDao(): HltbDatasetDao
     abstract fun achievementDao(): AchievementDao
     abstract fun diagnosticsDao(): DiagnosticsDao
     abstract fun collectionDao(): CollectionDao
@@ -629,6 +633,15 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE `hltb_data` ADD COLUMN " +
                         "`origin` TEXT NOT NULL DEFAULT 'AUTOMATIC'",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `hltb_dataset_state` (" +
+                        "`id` INTEGER NOT NULL, " +
+                        "`schemaVersion` INTEGER NOT NULL, " +
+                        "`datasetVersion` INTEGER NOT NULL, " +
+                        "`gatheredAt` INTEGER NOT NULL, " +
+                        "`payloadJson` TEXT NOT NULL, " +
+                        "PRIMARY KEY(`id`))",
                 )
             }
         }
