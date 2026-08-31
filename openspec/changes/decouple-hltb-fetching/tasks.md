@@ -14,7 +14,7 @@
 - [x] 1.4 Make merge output deterministic (stable sort by app id, fixed field order and formatting);
   verify that merging the same inputs twice is byte-identical, that reordering non-conflicting
   contributions is byte-identical, and that a redundant merge leaves the file unchanged
-- [ ] 1.5 Add a CI workflow running validate-and-regenerate on pull requests touching the dataset,
+- [x] 1.5 Add a CI workflow running validate-and-regenerate on pull requests touching the dataset,
   failing when the committed output differs from the regenerated one; verify by opening a PR with a
   deliberately unsorted dataset and confirming CI rejects it
 - [x] 1.6 Write `tools/hltb-dataset/README.md` covering how to contribute, what the export reveals,
