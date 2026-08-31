@@ -67,6 +67,7 @@ class GameRepositoryGenreJoinTest {
             hltbRepository = HltbRepository(
                 dataSource = OfflineHltb,
                 hltbDataDao = db.hltbDataDao(),
+                datasetLookup = HltbDatasetLookup { null },
                 json = Json,
                 time = OfflineTime,
             ),

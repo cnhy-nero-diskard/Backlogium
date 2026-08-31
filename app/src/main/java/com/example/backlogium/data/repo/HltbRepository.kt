@@ -13,6 +13,7 @@ import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -40,6 +41,7 @@ data class HltbReviewGame(
 class HltbRepository @Inject constructor(
     private val dataSource: HltbDataSource,
     private val hltbDataDao: HltbDataDao,
+    private val datasetLookup: HltbDatasetLookup,
     private val json: Json,
     private val time: TimeProvider,
 ) {
@@ -50,17 +52,32 @@ class HltbRepository @Inject constructor(
     /** How many games await manual review — the Library's review badge. */
     val reviewCount: Flow<Int> = hltbDataDao.observeNeedsReview().map { it.size }
 
-    /** All cached HLTB rows. Consumed inside `data/` only: joined into `LibraryGame`. */
-    val allData: Flow<List<HltbData>> = hltbDataDao.observeAll()
+    /** Cached rows overlaid onto the locally applied dataset; no network work occurs here. */
+    val allData: Flow<List<HltbData>> = combine(
+        datasetLookup.observeAll(),
+        hltbDataDao.observeAll(),
+    ) { datasetRows, cachedRows ->
+        buildMap<Long, HltbData> {
+            datasetRows.forEach { put(it.appId, it) }
+            cachedRows.forEach { put(it.appId, it) }
+        }.values.toList()
+    }
 
     suspend fun getForGame(appId: Long): HltbData? = hltbDataDao.getByAppId(appId)
 
     /**
-     * Cache-first: returns the existing cached row untouched when present, otherwise queries
-     * HowLongToBeat, classifies, and stores the result. Returns null only on lookup failure.
+     * Cache first, then the applied dataset, and only then the live source. A dataset hit is
+     * materialized in the cache without contacting HowLongToBeat. Returns null only on lookup
+     * failure.
      */
-    suspend fun fetchForGame(appId: Long, name: String): HltbData? =
-        hltbDataDao.getByAppId(appId) ?: query(appId, name)
+    suspend fun fetchForGame(appId: Long, name: String): HltbData? {
+        hltbDataDao.getByAppId(appId)?.let { return it }
+        datasetLookup.find(appId)?.let { datasetRow ->
+            hltbDataDao.upsert(datasetRow)
+            return datasetRow
+        }
+        return query(appId, name)
+    }
 
     /** Force a network lookup regardless of cache; never clears cache on failure. */
     suspend fun refresh(appId: Long, name: String): HltbData? = query(appId, name)
