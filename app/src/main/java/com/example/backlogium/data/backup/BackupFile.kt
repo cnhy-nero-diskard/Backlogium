@@ -119,6 +119,10 @@ data class BackupHltbData(
     val completionistMinutes: Int?,
     val allStylesMinutes: Int?,
     val matchStatus: String,
+    /** Original gathered-at time. Defaults old backups to unknown age rather than import time. */
+    val fetchedAt: Long = 0L,
+    /** Added compatibly so new backups preserve manual resolutions across a restore. */
+    val origin: String = "AUTOMATIC",
 )
 
 /**

@@ -11,7 +11,7 @@ local backup. An independent presence poller records server-side observations to
 Firestore while the phone is asleep; the app itself does not read that data yet,
 and works entirely without it. An OBS overlay remains a roadmap item.
 
-## Status snapshot — 2026-08-27
+## Status snapshot — 2026-08-31
 
 The current branch contains the implemented offline-first Android product loop,
 including the guided first-run setup, in-app updates, offline Steam asset download,
@@ -25,11 +25,15 @@ optimization (August 11) that preceded it. The source is actively maintained; it
 presented here as a claim that every device-only check or future cloud consumer is
 complete.
 
+HowLongToBeat completion data now arrives primarily through a shared, release-served dataset.
+Library-wide scraping is gone: uncovered games can be looked up deliberately one at a time, and
+resolved matches can be exported as privacy-disclosed contributions to grow shared coverage.
+
 | Area | Current state |
 |---|---|
 | Android client | Five top-level destinations — Home, Library, History, Analytics, and Settings — with onboarding (and its guided first-run setup takeover), game detail, HLTB review, collections, and diagnostics as pushed surfaces. |
-| Local product loop | Implemented: Steam onboarding/sync, credential verification, local sessions and XP, quests/streaks, HLTB data, genres, custom collections, analytics, live monitoring, backups, and settings. |
-| First-run setup | Credentials are verified against Steam before they are accepted. A guided setup then offers an opt-in checklist — initial sync, offline Steam asset download, and HLTB completion fetch — each with its own progress, failure isolation, and retry; any stage can be re-run later from Settings. |
+| Local product loop | Implemented: Steam onboarding/sync, credential verification, local sessions and XP, quests/streaks, shared HLTB data with explicit per-game lookup, genres, custom collections, analytics, live monitoring, backups, and settings. |
+| First-run setup | Credentials are verified against Steam before they are accepted. A guided setup then offers an opt-in checklist — initial sync, offline Steam asset download, and shared HLTB dataset download — each with its own progress, failure isolation, and retry; any stage can be re-run later from Settings. |
 | In-app updates | Release builds discover newer GitHub Releases (≈ daily, plus on demand), present readable categorized release notes, and install after two-stage verification. The whole path is absent from builds a published release cannot upgrade. |
 | Offline Steam assets | A manually triggered, one-time asset download (game icons / headers / hero art, profile avatar, achievement icons) stored in app-private storage with an integrity-checked manifest; it never chains off sync or any schedule. |
 | Sync write integrity | A poll's raw persistence (sessions, playtime baselines, daily progress, profile fields) commits as one atomic unit; concurrent polls re-read baselines at commit so an increase is never double-counted; the sync writes only Steam-owned game/profile columns, never app-owned ones; rule-config changes are versioned and compared at commit so derived values can't persist under superseded rules. |
@@ -42,12 +46,13 @@ complete.
 
 - Steam onboarding from inside the app — API key, SteamID64, or profile URL — verified
   against Steam before they are saved, then an optional guided first-run setup
-  (initial sync, offline Steam asset download, HLTB completion fetch) with per-stage
+  (initial sync, offline Steam asset download, shared HLTB dataset download) with per-stage
   progress and retry.
 - Library sync from Steam Web API, including owned games, recent playtime, profile
   summary, player level, achievements, achievement schema, and live presence.
-- HowLongToBeat lookups with batch refresh, ambiguous-match review, and per-game
-  completionist progress.
+- Shared HowLongToBeat completion data, explicit lookup for uncovered games,
+  ambiguous-match review, privacy-disclosed contribution export, and per-game completionist
+  progress.
 - XP, levels, quests, streaks, Focus games, Steam history import, and rarity-weighted
   achievement XP.
 - Custom collections with descriptions, accents, display order, completion/deadline/queue modes,
@@ -84,7 +89,8 @@ complete.
 - **Local storage:** Room for game/session/achievement data; Preferences DataStore
   for encrypted Steam credentials and app state
 - **Gamification:** standalone `:gamification` JVM module
-- **Extra data:** HowLongToBeat completionist times used to taper playtime XP
+- **Extra data:** shared HowLongToBeat completion times, with explicit per-game lookup for gaps,
+  used to taper playtime XP
 - **Cloud:** Firebase Cloud Functions (Node/TypeScript) on a one-minute schedule,
   writing a presence log to Firestore in `asia-southeast1`
 - **Not implemented yet:** app-side backfill from the presence log and an OBS
@@ -93,19 +99,19 @@ complete.
 ## Architecture
 
 ```text
-Steam Web API --\
-HowLongToBeat ----> Android app (Compose + repositories + Room/DataStore)
-                    |-> WorkManager sync, HLTB refresh, genre enrichment,
-                    |   reconciliation, local backup/restore, gamification
-                    \-> planned: app-side backfill from the presence log below
+Steam Web API ------------------------\
+GitHub Releases -> shared HLTB dataset ---> Android app (Compose + repositories + Room/DataStore)
+HowLongToBeat -> named-game lookup ---/     |-> WorkManager sync, dataset import, genre enrichment,
+                                            |   reconciliation, local backup/restore, gamification
+                                            \-> planned: app-side backfill from the presence log below
 
 Steam Web API ----> Cloud Function (1/min) -> Firestore presence log
                                               \-> planned OBS browser overlay
 ```
 
-The app runs on-device: it pulls from the Steam Web API, gathers HowLongToBeat
-completion estimates, stores data locally, and computes XP locally. It does not
-depend on the cloud for anything.
+The app runs on-device: it pulls from the Steam Web API, applies a shared HowLongToBeat dataset,
+stores data locally, and computes XP locally. Direct HowLongToBeat requests happen only for a game
+the user explicitly names. The app does not depend on the cloud for anything.
 
 The Cloud Function is a separate, independent writer. It records presence
 observations only — never sessions, playtime, or XP — so that the on-device engine
@@ -186,14 +192,14 @@ than claiming new territory.
   Steam account summary, Steam history import, manual sync, and collection cards.
 - **Library:** searchable owned-games list split into Focus and Your games,
   independent sorting, completion progress, XP badges, live-game indicators, HLTB
-  refresh controls, multi-select lookup, and genre filtering.
+  coverage filtering, explicit per-game lookup, and genre filtering.
 - **History:** day-grouped play sessions, daily quest results, achievement unlocks,
   expandable game/session detail, and older-history pagination.
 - **Analytics:** selectable rolling/calendar windows, daily playtime chart, streak and
   session summaries, time-of-day pattern, rarity breakdown, and most-played games.
-- **Settings:** sync controls, tiered achievement refresh, genre status, live monitor,
-  backup/restore and automatic snapshots, history import, diagnostics, and editable
-  gamification rules.
+- **Settings:** sync controls, shared HLTB dataset status/check and contribution export, tiered
+  achievement refresh, genre status, live monitor, backup/restore and automatic snapshots,
+  history import, diagnostics, and editable gamification rules.
 - **Collections:** pushed from Home for collection overview/editing, pacing/deadline
   planning, member management, ordering, and game-detail overlays.
 - **Game detail:** game summary, store art, HLTB lengths, current player count,
@@ -252,14 +258,27 @@ verifies them against Steam before saving:
    works and the SteamID names an existing profile before persisting anything.
 
 After credentials are accepted, an optional guided first-run setup offers an opt-in
-checklist — initial Steam sync, offline Steam asset download, and HLTB completion
-fetch — each stage with its own progress, failure isolation, and retry. You can
+checklist — initial Steam sync, offline Steam asset download, and shared HLTB dataset
+download — each stage with its own progress, failure isolation, and retry. You can
 decline setup entirely and run it later from Settings.
 
 Credentials are encrypted at rest with an Android Keystore-backed key and stored
 in encrypted DataStore. The API key is masked wherever it is displayed.
 
 Your Steam profile and game details must be public for playtime to be visible.
+
+### Shared HowLongToBeat Dataset
+
+Completion times primarily come from a small shared dataset published independently of app
+releases. It is optional, stored locally, and can be downloaded during guided setup or checked from
+Settings. A game outside the dataset remains visibly “not covered” until the user deliberately
+looks up that game; there is no library-wide background lookup.
+
+Settings can export resolved matches as `backlogium-hltb-contribution.json`. Before writing it,
+the app discloses that publishing the contribution reveals which included Steam app ids the user
+owns. The file contains only resolved Steam-to-HLTB correspondences and completion lengths—not
+account identifiers, playtime, sessions, achievements, or streaks. Repository-side validation and
+merge instructions are in [`tools/hltb-dataset/README.md`](tools/hltb-dataset/README.md).
 
 ### Optional Build-Time Seed
 
@@ -311,6 +330,8 @@ Remaining roadmap items:
 
 - Do not commit `local.properties`, API keys, keystores, or backup files containing
   personal library data.
+- An HLTB contribution deliberately reveals the included Steam app ids and therefore which games
+  the contributor owns; inspect the export and its disclosure before publishing it.
 - If a Steam API key is exposed, rotate it at
   <https://steamcommunity.com/dev/apikey>.
 - Security reporting details are in [SECURITY.md](SECURITY.md).
@@ -319,5 +340,6 @@ Remaining roadmap items:
 
 - UI screen reference: [docs/ui-screens-descriptor.md](docs/ui-screens-descriptor.md)
 - Architecture map: [docs/architecture-map.md](docs/architecture-map.md)
+- HLTB dataset format and contribution tooling: [tools/hltb-dataset](tools/hltb-dataset)
 - OpenSpec specs: [openspec/specs](openspec/specs)
 - Current and archived changes: [openspec/changes](openspec/changes)

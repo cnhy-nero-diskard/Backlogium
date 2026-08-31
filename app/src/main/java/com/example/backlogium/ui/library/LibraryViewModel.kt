@@ -27,19 +27,12 @@ import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.domain.LibraryXp
 import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.ui.search.gameSearchMatchTier
-import com.example.backlogium.work.HltbBatchProgress
-import com.example.backlogium.work.HltbRefreshStatus
-import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -70,8 +63,8 @@ data class GoalGameUi(
     override val xpContributed: Int = 0,
     /** HowLongToBeat Completionist length, if resolved. Null → no completion-based progress. */
     val completionistMinutes: Int? = null,
-    /** Persisted match status from the cache, or null when no lookup has been stored yet. */
-    val hltbStatus: HltbMatchState? = null,
+    /** Persisted match status, or NOT_COVERED when no lookup/dataset row has been stored. */
+    val hltbStatus: HltbMatchState = HltbMatchState.NOT_COVERED,
     /** In-flight/failed state of a manual lookup, layered over [hltbStatus]. */
     val fetchOp: HltbFetchOp? = null,
     /** Unlocked/total achievement counts, null when no achievement data is stored yet. */
@@ -104,7 +97,7 @@ data class BacklogGameUi(
      * leftover from when only tagged games had a target at all.
      */
     val completionistMinutes: Int? = null,
-    val hltbStatus: HltbMatchState? = null,
+    val hltbStatus: HltbMatchState = HltbMatchState.NOT_COVERED,
     val fetchOp: HltbFetchOp? = null,
     val achievementUnlocked: Int? = null,
     val achievementTotal: Int? = null,
@@ -120,8 +113,16 @@ data class BacklogGameUi(
     val isFamilyShared: Boolean = false,
 ) : LibraryRow
 
-/** One processed game in a running batch sweep, including structured failure evidence. */
+/** One processed game in a running selection lookup, including structured failure evidence. */
 data class HltbLogEntry(val gameName: String, val outcome: HltbRefreshOutcome)
+
+/** One progress snapshot of a running explicit-selection HowLongToBeat lookup. */
+data class HltbSelectionProgress(
+    val done: Int,
+    val total: Int,
+    val gameName: String,
+    val outcome: HltbRefreshOutcome,
+)
 
 data class LibraryUiState(
     val loading: Boolean = true,
@@ -153,9 +154,7 @@ data class LibraryUiState(
      * field that produced it.
      */
     val libraryEmpty: Boolean = true,
-    val hltbRefreshStatus: HltbRefreshStatus = HltbRefreshStatus.IDLE,
-    val hltbWaitRemainingSeconds: Int? = null,
-    val batchProgress: HltbBatchProgress? = null,
+    val batchProgress: HltbSelectionProgress? = null,
     val batchLog: List<HltbLogEntry> = emptyList(),
 ) {
     val selectionMode: Boolean get() = selection.isNotEmpty()
@@ -172,7 +171,6 @@ class LibraryViewModel @Inject constructor(
     private val achievementRepository: AchievementRepository,
     private val sessionRepository: SessionRepository,
     private val settings: SettingsRepository,
-    private val syncScheduler: SyncScheduler,
     private val credentials: CredentialsRepository,
     private val liveStatusRepository: LiveStatusRepository,
 ) : ViewModel() {
@@ -187,27 +185,15 @@ class LibraryViewModel @Inject constructor(
 
     /** Transient multi-select for the targeted refresh. Never persisted (see [clearSelection]). */
     private val selection = MutableStateFlow<Set<Long>>(emptySet())
-    private val hltbWaitRemainingSeconds = MutableStateFlow<Int?>(null)
 
-    init {
-        viewModelScope.launch {
-            syncScheduler.hltbRefreshStatus.collectLatest { status ->
-                if (status != HltbRefreshStatus.WAITING_FOR_NETWORK) {
-                    hltbWaitRemainingSeconds.value = null
-                    return@collectLatest
-                }
-
-                runHltbOfflineWaitTimer(
-                    onTick = { hltbWaitRemainingSeconds.value = it },
-                    onTimeout = {
-                        // WorkManager owns the persistent cancellation watchdog. This callback
-                        // only clears the screen-local countdown when the UI remains visible.
-                        hltbWaitRemainingSeconds.value = null
-                    },
-                )
-            }
-        }
-    }
+    /**
+     * The running explicit-selection lookup, owned by this ViewModel rather than WorkManager: it
+     * runs only while this screen is watching it, and leaving the screen cancels it — there is no
+     * detached background HLTB work any more. Every game already processed keeps the data it
+     * received, since each result is written to Room as it is looked up.
+     */
+    private val selectionLookup = MutableStateFlow(SelectionLookupState())
+    private var selectionLookupJob: Job? = null
 
     private val content = combine(
         gameRepository.goalGames,
@@ -257,29 +243,13 @@ class LibraryViewModel @Inject constructor(
         settings.libraryDensity,
     ) { prefs, density -> prefs.copy(density = density) }
 
-    /**
-     * The sweep's progress plus the log accumulated from it. WorkManager progress carries one
-     * snapshot, so the history is rebuilt on this side — which means it only covers the period the
-     * screen has been observed. Leaving mid-run and returning shows correct progress with a log
-     * that resumes from that point; documented behavior, not a bug.
-     */
-    private val batchState = combine(
-        syncScheduler.hltbRefreshStatus,
-        syncScheduler.hltbRefreshProgress
-            .distinctUntilChanged()
-            .runningFold(BatchLog()) { acc, next -> acc.accumulate(next) },
-        hltbWaitRemainingSeconds,
-    ) { status, log, waitRemainingSeconds ->
-        BatchState(status, log, waitRemainingSeconds)
-    }
-
     val uiState: StateFlow<LibraryUiState> = combine(
         content,
         xpInputs,
         achievementRepository.counts,
         viewPrefs,
-        batchState,
-    ) { content, xp, counts, view, batch ->
+        selectionLookup,
+    ) { content, xp, counts, view, lookup ->
         val goals = content.goals
             .map { it.toGoalUi(xp, counts, view.ops, content.playingAppId) }
             .matching(view.query)
@@ -304,7 +274,7 @@ class LibraryViewModel @Inject constructor(
             reviewCount = content.reviewCount,
             hltbCandidatesByAppId = content.hltbCandidatesByAppId,
             pickerStates = view.pickerStates,
-            refreshing = batch.status != HltbRefreshStatus.IDLE,
+            refreshing = lookup.running,
             query = view.query,
             focusSort = view.sort.focus,
             librarySort = view.sort.library,
@@ -318,10 +288,8 @@ class LibraryViewModel @Inject constructor(
                 .toList(),
             selection = view.selection,
             libraryEmpty = content.goals.isEmpty() && content.backlog.isEmpty(),
-            hltbRefreshStatus = batch.status,
-            hltbWaitRemainingSeconds = batch.waitRemainingSeconds,
-            batchProgress = batch.log.progress,
-            batchLog = batch.log.entries,
+            batchProgress = lookup.progress,
+            batchLog = lookup.log,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -376,14 +344,32 @@ class LibraryViewModel @Inject constructor(
     }
 
     /**
-     * Run the HowLongToBeat lookup over the current selection only, forced. Cleared afterward so
-     * the action bar does not linger over a run the user can already see in the progress panel.
+     * Run the HowLongToBeat lookup over an explicit [games] selection (appId to name),
+     * unconditionally — an explicit selection is always looked up regardless of any cached or
+     * dataset-supplied data. Runs on this ViewModel's own scope: leaving the screen cancels it,
+     * and any game already processed keeps the data it received, since each result is written to
+     * Room as it is looked up. Cleared afterward so the action bar does not linger over a run the
+     * user can already see in the progress panel.
      */
-    fun refreshSelection() {
-        val appIds = selection.value
-        if (appIds.isEmpty()) return
-        syncScheduler.refreshHltbNow(appIds)
+    fun refreshSelection(games: List<Pair<Long, String>>) {
+        if (games.isEmpty()) return
         clearSelection()
+        selectionLookupJob?.cancel()
+        selectionLookupJob = viewModelScope.launch {
+            selectionLookup.value = SelectionLookupState(running = true)
+            try {
+                hltbRepository.refreshSelection(games) { done, total, name, outcome ->
+                    selectionLookup.update { current ->
+                        current.copy(
+                            progress = HltbSelectionProgress(done, total, name, outcome),
+                            log = (current.log + HltbLogEntry(name, outcome)).takeLast(SELECTION_LOG_LIMIT),
+                        )
+                    }
+                }
+            } finally {
+                selectionLookup.value = SelectionLookupState()
+            }
+        }
     }
 
     /**
@@ -429,30 +415,13 @@ class LibraryViewModel @Inject constructor(
         pickerStates.update { it - appId }
     }
 
-    /** Enqueue the batch HLTB refresh. [force] re-fetches every game regardless of freshness. */
-    fun refreshHltb(force: Boolean) = syncScheduler.refreshHltbNow(force)
+    /** Stop a running selection lookup. Every game already processed keeps its data. */
+    fun stopHltbRefresh() = selectionLookupJob?.cancel()
 
-    /**
-     * Stop a running sweep. Games already fetched keep their data, so a later plain refresh picks
-     * up where this left off — the freshness window skips everything the stopped run completed.
-     */
-    fun stopHltbRefresh() = syncScheduler.cancelHltbRefresh()
-}
-
-internal const val HLTB_OFFLINE_WAIT_SECONDS = 30
-private const val HLTB_WAIT_TICK_MILLIS = 1_000L
-
-/** Counts down an offline HLTB wait and invokes [onTimeout] only after the full interval. */
-internal suspend fun runHltbOfflineWaitTimer(
-    onTick: (remainingSeconds: Int) -> Unit,
-    onTimeout: () -> Unit,
-) {
-    for (remainingSeconds in HLTB_OFFLINE_WAIT_SECONDS downTo 1) {
-        onTick(remainingSeconds)
-        delay(HLTB_WAIT_TICK_MILLIS)
+    private companion object {
+        /** The log is a progress aid, not a record: only the recent tail is worth keeping. */
+        const val SELECTION_LOG_LIMIT = 50
     }
-    onTick(0)
-    onTimeout()
 }
 
 /** The two Room-backed lists plus the two screen-wide facts, before any per-row derivation. */
@@ -483,38 +452,12 @@ private data class ViewPrefs(
     val density: GameListDensity,
 )
 
-private data class BatchState(
-    val status: HltbRefreshStatus,
-    val log: BatchLog,
-    val waitRemainingSeconds: Int?,
+/** The running selection lookup's state: whether it is active, its latest snapshot, and its log. */
+private data class SelectionLookupState(
+    val running: Boolean = false,
+    val progress: HltbSelectionProgress? = null,
+    val log: List<HltbLogEntry> = emptyList(),
 )
-
-/** Progress snapshot plus the entries accumulated from earlier snapshots of the same run. */
-private data class BatchLog(
-    val progress: HltbBatchProgress? = null,
-    val entries: List<HltbLogEntry> = emptyList(),
-) {
-    /**
-     * Fold one snapshot in. A null snapshot means no run is reporting — including a *finished*
-     * one, since WorkManager clears progress on completion — so both progress and log reset rather
-     * than freezing at the last game. A count that does not advance past the previous one is a new
-     * run, which starts a fresh log.
-     */
-    fun accumulate(next: HltbBatchProgress?): BatchLog {
-        if (next == null) return BatchLog()
-        val entry = HltbLogEntry(next.gameName, next.outcome)
-        val restarted = progress == null || next.done <= progress.done
-        return BatchLog(
-            progress = next,
-            entries = if (restarted) listOf(entry) else (entries + entry).takeLast(LOG_LIMIT),
-        )
-    }
-
-    private companion object {
-        /** The log is a progress aid, not a record: only the recent tail is worth keeping. */
-        const val LOG_LIMIT = 50
-    }
-}
 
 private fun LibraryGame.toGoalUi(
     xp: XpInputs,

@@ -158,6 +158,30 @@ class GamificationUpdaterTest {
     }
 
     @Test
+    fun recompute_usesDatasetOnlyCompletionistLengthForTaperAfterSync() = runTest {
+        // Game 1 has no cached HLTB row of its own; its completionist length is covered only
+        // by the applied dataset. The updater must read it via the cache-over-dataset query,
+        // not skip taper entirely for games the device never looked up.
+        val profileDao = FakePlayerProfileDao()
+        val updater = GamificationUpdater(
+            sessionDao = FakeSessionDao(listOf(testSession(minutes = 100))),
+            dailyProgressDao = FakeDailyProgressDao(emptyList()),
+            playerProfileDao = profileDao,
+            hltbDataDao = FakeHltbDataDao(datasetOnlyCompletionistByAppId = mapOf(1L to 1_000)),
+            achievementDao = FakeAchievementDao(emptyList()),
+            gameDao = FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 5_000))),
+        )
+
+        updater.recompute(
+            today = LocalDate.parse("2026-07-17"),
+            source = RecomputeSource.SYNC,
+            config = RuleConfig(),
+        )
+
+        assertEquals(400, profileDao.get()!!.totalXp)
+    }
+
+    @Test
     fun compute_readsHltbFixtureWithOneBulkQuery() = runTest {
         val appIds = (1L..100L).toList()
         val hltbDao = FakeHltbDataDao(appIds.associateWith { 1_000 })

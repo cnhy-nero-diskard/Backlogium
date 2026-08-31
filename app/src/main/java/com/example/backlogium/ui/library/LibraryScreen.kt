@@ -91,9 +91,8 @@ import com.example.backlogium.ui.components.RecencyBadge
 import com.example.backlogium.ui.util.HapticIntent
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.ui.util.rememberHaptics
-import com.example.backlogium.work.HltbBatchProgress
-import com.example.backlogium.work.HltbRefreshStatus
 import compose.icons.TablerIcons
+import compose.icons.tablericons.AlertCircle
 import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.Bolt
 import compose.icons.tablericons.Check
@@ -129,7 +128,7 @@ private data class LibraryDisplayGame(
     val heroCapsuleUrl: String,
     val playtimeForever: Int,
     val completionistMinutes: Int?,
-    val hltbStatus: HltbMatchState?,
+    val hltbStatus: HltbMatchState,
     val fetchOp: HltbFetchOp?,
     val achievementUnlocked: Int?,
     val achievementTotal: Int?,
@@ -196,19 +195,24 @@ fun LibraryScreen(
     var dialogTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
     var pickerTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
     var selectedGenreIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var showNotCoveredOnly by rememberSaveable { mutableStateOf(false) }
     var showGenreSheet by rememberSaveable { mutableStateOf(false) }
     val selectedGenreSet = selectedGenreIds.toSet()
     val genreCatalog = remember(state.availableGenres) {
         genreFilterCatalog(state.availableGenres)
     }
-    val visibleGoalGames = remember(state.goalGames, selectedGenreIds) {
-        state.goalGames.filterByGenres(selectedGenreSet)
+    val visibleGoalGames = remember(state.goalGames, selectedGenreIds, showNotCoveredOnly) {
+        state.goalGames
+            .filterByGenres(selectedGenreSet)
+            .filterByHltbCoverage(showNotCoveredOnly) { it.hltbStatus }
     }
-    val visibleBacklog = remember(state.backlog, selectedGenreIds) {
-        state.backlog.filterByGenres(selectedGenreSet)
+    val visibleBacklog = remember(state.backlog, selectedGenreIds, showNotCoveredOnly) {
+        state.backlog
+            .filterByGenres(selectedGenreSet)
+            .filterByHltbCoverage(showNotCoveredOnly) { it.hltbStatus }
     }
     val noVisibleMatches =
-        (state.query.isNotBlank() || selectedGenreSet.isNotEmpty()) &&
+        (state.query.isNotBlank() || selectedGenreSet.isNotEmpty() || showNotCoveredOnly) &&
             visibleGoalGames.isEmpty() &&
             visibleBacklog.isEmpty()
 
@@ -235,6 +239,7 @@ fun LibraryScreen(
         onDispose {
             viewModel.clearSelection()
             selectedGenreIds = emptyList()
+            showNotCoveredOnly = false
             showGenreSheet = false
         }
     }
@@ -285,10 +290,13 @@ fun LibraryScreen(
         if (state.selectionMode) {
             SelectionBar(
                 count = state.selection.size,
-                // Both paths enqueue under one unique work name with KEEP, so a selection tapped
-                // during a sweep would be dropped with no error — gate it like HltbControls does.
                 refreshing = state.refreshing,
-                onRefreshSelection = { exitSelectionMode(viewModel::refreshSelection) },
+                onRefreshSelection = {
+                    val games = (state.goalGames + state.backlog)
+                        .filter { it.appId in state.selection }
+                        .map { it.appId to it.name }
+                    exitSelectionMode { viewModel.refreshSelection(games) }
+                },
                 onClear = { exitSelectionMode(viewModel::clearSelection) },
             )
         }
@@ -314,22 +322,27 @@ fun LibraryScreen(
                             density = state.density,
                             onDensityChange = viewModel::setDensity,
                         )
-                        HltbMenuButton(
-                            refreshing = state.refreshing,
-                            reviewCount = state.reviewCount,
-                            onRefresh = { viewModel.refreshHltb(force = false) },
-                            onForceRefresh = { viewModel.refreshHltb(force = true) },
-                            onOpenReview = onOpenReview,
-                        )
+                        if (state.reviewCount > 0) {
+                            HltbReviewEntryPoint(
+                                reviewCount = state.reviewCount,
+                                onOpenReview = onOpenReview,
+                            )
+                        }
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         GenreFilterButton(
                             selectedCount = selectedGenreSet.size,
                             enabled = genreCatalog.isNotEmpty(),
                             onClick = { showGenreSheet = true },
+                        )
+                        FilterChip(
+                            selected = showNotCoveredOnly,
+                            onClick = { showNotCoveredOnly = !showNotCoveredOnly },
+                            label = { Text("Not covered") },
                         )
                     }
                 }
@@ -349,9 +362,7 @@ fun LibraryScreen(
 
             if (state.refreshing) {
                 item {
-                    BatchProgressPanel(
-                        status = state.hltbRefreshStatus,
-                        waitRemainingSeconds = state.hltbWaitRemainingSeconds,
+                    SelectionLookupPanel(
                         progress = state.batchProgress,
                         log = state.batchLog,
                         onStop = viewModel::stopHltbRefresh,
@@ -362,7 +373,7 @@ fun LibraryScreen(
             // Above the owned lists, and only while nothing is being searched or filtered:
             // those controls act on the owned library, and an unfiltered wishlist sitting under a
             // query would read as a result of it.
-            if (state.query.isBlank() && selectedGenreSet.isEmpty()) {
+            if (state.query.isBlank() && selectedGenreSet.isEmpty() && !showNotCoveredOnly) {
                 wishlistSection(
                     state = wishlistState,
                     density = state.density,
@@ -440,8 +451,10 @@ fun LibraryScreen(
                     NoMatchesRow(
                         query = state.query,
                         hasGenreFilter = selectedGenreSet.isNotEmpty(),
+                        hasCoverageFilter = showNotCoveredOnly,
                         onClear = viewModel::clearQuery,
                         onClearGenres = { selectedGenreIds = emptyList() },
+                        onClearCoverage = { showNotCoveredOnly = false },
                     )
                 }
             }
@@ -454,7 +467,9 @@ fun LibraryScreen(
         val liveBacklog = state.backlog.firstOrNull { it.appId == target.appId }
         GoalDialog(
             target = target,
-            hltbStatus = liveGoal?.hltbStatus ?: liveBacklog?.hltbStatus,
+            hltbStatus = liveGoal?.hltbStatus
+                ?: liveBacklog?.hltbStatus
+                ?: HltbMatchState.NOT_COVERED,
             fetchOp = liveGoal?.fetchOp ?: liveBacklog?.fetchOp,
             onDismiss = { dialogTarget = null },
             onTag = {
@@ -721,103 +736,54 @@ private fun <T : LibraryRow> List<T>.filterByGenres(selectedGenreIds: Set<String
         filter { game -> game.genres.any { it.id in selectedGenreIds } }
     }
 
+/** Pure presentation filter: selected IDs live in the ViewModel and are intentionally untouched. */
+internal fun <T> List<T>.filterByHltbCoverage(
+    notCoveredOnly: Boolean,
+    statusOf: (T) -> HltbMatchState,
+): List<T> = if (notCoveredOnly) {
+    filter { statusOf(it) == HltbMatchState.NOT_COVERED }
+} else {
+    this
+}
+
 /**
- * Batch HLTB refresh (with a force-all option) plus the match-review entry point, tucked behind a
- * single icon button next to the search field. These are a one-time-setup action a player taps
- * heavily on first run and rarely afterward, so they no longer earn permanent top-of-screen real
- * estate — the pending [reviewCount] surfaces as a badge instead so it stays noticeable without a
- * standing button.
+ * Entry point into the match-review surface, shown only while at least one game is flagged as
+ * needing review. There is no other control in this menu any more: the whole-library sweep this
+ * button used to also trigger is gone, so a standing icon with nothing to open would only be
+ * confusing when [reviewCount] is zero.
  */
 @Composable
-private fun HltbMenuButton(
-    refreshing: Boolean,
-    reviewCount: Int,
-    onRefresh: () -> Unit,
-    onForceRefresh: () -> Unit,
-    onOpenReview: () -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        IconButton(onClick = { expanded = true }) {
-            if (refreshing) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-            } else {
-                BadgedBox(
-                    badge = {
-                        if (reviewCount > 0) {
-                            Badge { Text(reviewCount.toString()) }
-                        }
-                    },
-                ) {
-                    Icon(imageVector = TablerIcons.Clock, contentDescription = "HowLongToBeat options")
-                }
-            }
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(
-                text = { Text(if (refreshing) "Refreshing…" else "Refresh HLTB library") },
-                enabled = !refreshing,
-                onClick = {
-                    expanded = false
-                    onRefresh()
-                },
+private fun HltbReviewEntryPoint(reviewCount: Int, onOpenReview: () -> Unit) {
+    IconButton(onClick = onOpenReview) {
+        BadgedBox(badge = { Badge { Text(reviewCount.toString()) } }) {
+            Icon(
+                imageVector = TablerIcons.Clock,
+                contentDescription = "Review HowLongToBeat matches ($reviewCount)",
             )
-            DropdownMenuItem(
-                text = { Text("Force refresh all") },
-                enabled = !refreshing,
-                onClick = {
-                    expanded = false
-                    onForceRefresh()
-                },
-            )
-            if (reviewCount > 0) {
-                DropdownMenuItem(
-                    text = { Text("Review HLTB matches ($reviewCount)") },
-                    onClick = {
-                        expanded = false
-                        onOpenReview()
-                    },
-                )
-            }
         }
     }
 }
 
 /**
- * Live state of a running sweep: how far it has got, and what each processed game resolved to.
+ * Live state of a running explicit-selection lookup: how far it has got, and what each processed
+ * game resolved to.
  *
- * A null [progress] is not a stalled run. It covers a sweep that is enqueued but has not reported
- * its first game yet, and a sweep whose target set turned out to be empty (the repository only
- * reports from inside its loop) — so it renders as indeterminate rather than as `0 / 0`.
+ * A null [progress] is not a stalled run. It covers a lookup that has started but has not reported
+ * its first game yet, and one whose selection turned out to be empty (the repository only reports
+ * from inside its loop) — so it renders as indeterminate rather than as `0 / 0`.
  */
 @Composable
-private fun BatchProgressPanel(
-    status: HltbRefreshStatus,
-    waitRemainingSeconds: Int?,
-    progress: HltbBatchProgress?,
+private fun SelectionLookupPanel(
+    progress: HltbSelectionProgress?,
     log: List<HltbLogEntry>,
     onStop: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
         Column(modifier = Modifier.padding(12.dp)) {
             if (progress == null || progress.total <= 0) {
-                val waitSuffix = if (status == HltbRefreshStatus.WAITING_FOR_NETWORK) {
-                    " ${waitRemainingSeconds ?: HLTB_OFFLINE_WAIT_SECONDS}s"
-                } else {
-                    ""
-                }
-                val statusText = when (status) {
-                    HltbRefreshStatus.WAITING_FOR_NETWORK ->
-                        "Waiting for an internet connection…$waitSuffix"
-                    HltbRefreshStatus.RETRYING -> "Retrying HowLongToBeat refresh…"
-                    HltbRefreshStatus.IDLE,
-                    HltbRefreshStatus.QUEUED,
-                    HltbRefreshStatus.RUNNING,
-                    -> "Starting HowLongToBeat refresh…"
-                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = statusText,
+                        text = "Starting HowLongToBeat lookup…",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
@@ -866,9 +832,8 @@ private fun BatchProgressPanel(
 }
 
 /**
- * Stops the sweep where it stands. Not a pause, but it behaves like one: every game already
- * fetched is now inside the freshness window, so tapping "Refresh HLTB library" again resumes from
- * roughly where this left off instead of starting over. ("Force all" deliberately does start over.)
+ * Stops the running selection lookup where it stands. Every game already fetched keeps its data;
+ * selecting the remaining games and running the lookup again is how it is continued.
  */
 @Composable
 private fun StopScanButton(onStop: () -> Unit) {
@@ -886,6 +851,7 @@ private fun StopScanButton(onStop: () -> Unit) {
 /** The rolling log distinguishes a failed lookup from a successful no-match. */
 private fun outcomeLabel(outcome: HltbRefreshOutcome): String = when (outcome) {
     is HltbRefreshOutcome.Refreshed -> when (outcome.state) {
+        HltbMatchState.NOT_COVERED -> "not covered"
         HltbMatchState.RESOLVED -> "matched"
         HltbMatchState.NEEDS_REVIEW -> "needs review"
         HltbMatchState.UNMATCHED -> "no match"
@@ -1032,15 +998,20 @@ private fun SortControl(
 private fun NoMatchesRow(
     query: String,
     hasGenreFilter: Boolean,
+    hasCoverageFilter: Boolean,
     onClear: () -> Unit,
     onClearGenres: () -> Unit,
+    onClearCoverage: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp)) {
         Text(
-            text = if (query.isBlank()) {
-                "No games match the selected genres"
-            } else {
-                "No games match \"$query\""
+            text = when {
+                query.isNotBlank() && (hasGenreFilter || hasCoverageFilter) ->
+                    "No games match \"$query\" and the active filters"
+                query.isNotBlank() -> "No games match \"$query\""
+                hasGenreFilter && hasCoverageFilter -> "No games match the active filters"
+                hasGenreFilter -> "No games match the selected genres"
+                else -> "No games are marked not covered"
             },
             style = MaterialTheme.typography.bodyMedium,
         )
@@ -1053,6 +1024,11 @@ private fun NoMatchesRow(
             if (hasGenreFilter) {
                 TextButton(onClick = onClearGenres, modifier = Modifier.padding(top = 4.dp)) {
                     Text("Clear genres")
+                }
+            }
+            if (hasCoverageFilter) {
+                TextButton(onClick = onClearCoverage, modifier = Modifier.padding(top = 4.dp)) {
+                    Text("Show all coverage")
                 }
             }
         }
@@ -1580,7 +1556,7 @@ private fun CompletionProgress(playtimeMinutes: Int, completionistMinutes: Int?)
 /** Compact, live HLTB state for a game: in-flight, failed, or the persisted match status. */
 @Composable
 private fun HltbStatusLabel(
-    status: HltbMatchState?,
+    status: HltbMatchState,
     op: HltbFetchOp?,
     modifier: Modifier = Modifier,
 ) {
@@ -1608,6 +1584,13 @@ private fun HltbStatusLabel(
             modifier = modifier,
         )
 
+        status == HltbMatchState.NOT_COVERED -> Text(
+            text = "Not covered by completion-times dataset",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = modifier,
+        )
+
         status == HltbMatchState.RESOLVED -> Text(
             text = "HowLongToBeat matched",
             style = MaterialTheme.typography.bodySmall,
@@ -1629,24 +1612,18 @@ private fun HltbStatusLabel(
             modifier = modifier,
         )
 
-        else -> Text(
-            text = "No HowLongToBeat data yet",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = modifier,
-        )
+        else -> error("Unreachable HLTB state")
     }
 }
 
 /**
- * A single clock glyph standing in for the HowLongToBeat brand mark (no licensed asset to draw
- * on), tinted by match status: full color once a length is matched, greyed out otherwise. Row
- * real estate is scarce and every game gets one of these, so the full sentence [HltbStatusLabel]
- * spells out lives only in this icon's content description and in the focus-management dialog.
+ * A clock glyph stands in for a stored HowLongToBeat outcome; not-covered uses an alert-circle
+ * glyph as a non-colour-only distinction. Row real estate is scarce, so the full sentence from
+ * [HltbStatusLabel] also lives in the icon's content description and focus-management dialog.
  */
 @Composable
 private fun HltbIndicator(
-    status: HltbMatchState?,
+    status: HltbMatchState,
     op: HltbFetchOp?,
     modifier: Modifier = Modifier,
     size: Dp = 14.dp,
@@ -1661,20 +1638,33 @@ private fun HltbIndicator(
         return
     }
     val greyedOut = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
-    val (tint, description) = when {
+    val (icon, tint, description) = when {
         op == HltbFetchOp.FAILED ->
-            MaterialTheme.colorScheme.error to "HowLongToBeat lookup failed"
+            Triple(
+                TablerIcons.Clock,
+                MaterialTheme.colorScheme.error,
+                "HowLongToBeat lookup failed",
+            )
+        status == HltbMatchState.NOT_COVERED ->
+            Triple(
+                TablerIcons.AlertCircle,
+                greyedOut,
+                "Not covered by completion-times dataset",
+            )
         status == HltbMatchState.RESOLVED ->
-            MaterialTheme.colorScheme.primary to "HowLongToBeat matched"
+            Triple(TablerIcons.Clock, MaterialTheme.colorScheme.primary, "HowLongToBeat matched")
         status == HltbMatchState.NEEDS_REVIEW ->
-            MaterialTheme.colorScheme.tertiary to "Needs HowLongToBeat match review"
+            Triple(
+                TablerIcons.Clock,
+                MaterialTheme.colorScheme.tertiary,
+                "Needs HowLongToBeat match review",
+            )
         status == HltbMatchState.UNMATCHED ->
-            greyedOut to "No HowLongToBeat match"
-        else ->
-            greyedOut to "No HowLongToBeat data yet"
+            Triple(TablerIcons.Clock, greyedOut, "No HowLongToBeat match")
+        else -> error("Unreachable HLTB state")
     }
     Icon(
-        imageVector = TablerIcons.Clock,
+        imageVector = icon,
         contentDescription = description,
         tint = tint,
         modifier = modifier.size(size),
@@ -1692,7 +1682,7 @@ private fun HltbIndicator(
 @Composable
 private fun GameIconWithHltbBadge(
     iconUrl: String,
-    status: HltbMatchState?,
+    status: HltbMatchState,
     op: HltbFetchOp?,
     isCurrentlyPlaying: Boolean,
     iconSize: Dp = 40.dp,
@@ -1893,7 +1883,7 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifie
 @Composable
 private fun GoalDialog(
     target: GoalDialogTarget,
-    hltbStatus: HltbMatchState?,
+    hltbStatus: HltbMatchState,
     fetchOp: HltbFetchOp?,
     onDismiss: () -> Unit,
     onTag: () -> Unit,

@@ -17,6 +17,7 @@ import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HltbDataDao
+import com.example.backlogium.data.local.dao.HltbDatasetDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.dao.SteamAssetDao
@@ -30,6 +31,9 @@ import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.local.entity.GameGenreCache
 import com.example.backlogium.data.local.entity.HltbData
+import com.example.backlogium.data.local.entity.HltbDatasetLength
+import com.example.backlogium.data.local.entity.HltbDatasetMapping
+import com.example.backlogium.data.local.entity.HltbDatasetState
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.WishlistItem
@@ -48,6 +52,9 @@ import com.example.backlogium.data.local.entity.SyncRun
         DailyProgress::class,
         PlayerProfile::class,
         HltbData::class,
+        HltbDatasetState::class,
+        HltbDatasetMapping::class,
+        HltbDatasetLength::class,
         Achievement::class,
         SyncRun::class,
         RequestBreakdown::class,
@@ -63,7 +70,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         WishlistItem::class,
         WishlistPriceObservation::class,
     ],
-    version = 25,
+    version = 26,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -73,6 +80,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun dailyProgressDao(): DailyProgressDao
     abstract fun playerProfileDao(): PlayerProfileDao
     abstract fun hltbDataDao(): HltbDataDao
+    abstract fun hltbDatasetDao(): HltbDatasetDao
     abstract fun achievementDao(): AchievementDao
     abstract fun diagnosticsDao(): DiagnosticsDao
     abstract fun collectionDao(): CollectionDao
@@ -619,6 +627,43 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE `player_profile` ADD COLUMN " +
                         "`lastSuccessfulWishlistReadAt` INTEGER",
+                )
+            }
+        }
+
+        /** v25 -> v26: record whether each HLTB correspondence is dataset, automatic, or manual. */
+        val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `hltb_data` ADD COLUMN " +
+                        "`origin` TEXT NOT NULL DEFAULT 'AUTOMATIC'",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `hltb_dataset_state` (" +
+                        "`id` INTEGER NOT NULL, " +
+                        "`schemaVersion` INTEGER NOT NULL, " +
+                        "`datasetVersion` INTEGER NOT NULL, " +
+                        "`gatheredAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `hltb_dataset_mappings` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`hltbId` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_hltb_dataset_mappings_hltbId` " +
+                        "ON `hltb_dataset_mappings` (`hltbId`)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `hltb_dataset_lengths` (" +
+                        "`hltbId` INTEGER NOT NULL, " +
+                        "`mainStoryMinutes` INTEGER, " +
+                        "`mainExtraMinutes` INTEGER, " +
+                        "`completionistMinutes` INTEGER, " +
+                        "`allStylesMinutes` INTEGER, " +
+                        "PRIMARY KEY(`hltbId`))",
                 )
             }
         }

@@ -105,7 +105,7 @@ class GamificationUpdater @Inject constructor(
         // null -> flat fallback. The union covers backfilled games with no tracked sessions.
         val trackedByGame = sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes }
         val backfillByGame = gameDao.getAll().associate { it.appId to it.backfillMinutes }
-        val hltbByGame = hltbDataDao.getAll().associateBy { it.appId }
+        val hltbByGame = hltbDataDao.getAllWithDataset().associateBy { it.appId }
         val games = (trackedByGame.keys + backfillByGame.keys)
             .map { appId -> appId to (backfillByGame[appId] ?: 0) + (trackedByGame[appId] ?: 0) }
             .filter { (_, minutes) -> minutes > 0 }

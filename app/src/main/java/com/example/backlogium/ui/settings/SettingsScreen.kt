@@ -104,6 +104,19 @@ fun SettingsScreen(
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let(viewModel::onImportBackupPicked) }
+    val contributionExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        val resolver = context.contentResolver
+        if (uri != null) {
+            viewModel.onContributionDestinationPicked(uri, resolver)
+        } else {
+            viewModel.onContributionExportCancelled()
+        }
+    }
+    LaunchedEffect(viewModel) {
+        viewModel.contributionExportRequests.collect { fileName -> contributionExportLauncher.launch(fileName) }
+    }
 
     SettingsScreen(
         state = state,
@@ -142,6 +155,10 @@ fun SettingsScreen(
                 onRestoreSharedGame = viewModel::restoreSharedGame,
                 onManualSharedGameInputChanged = viewModel::onManualSharedGameInputChanged,
                 onImportManualSharedGame = viewModel::importManualSharedGame,
+                onCheckHltbDataset = viewModel::checkHltbDataset,
+                onRequestContributionExport = viewModel::onRequestContributionExport,
+                onDismissContributionDisclosure = viewModel::onDismissContributionDisclosure,
+                onConfirmContributionDisclosure = viewModel::onConfirmContributionDisclosure,
             )
         },
     )
@@ -178,6 +195,10 @@ data class SettingsActions(
     val onRestoreSharedGame: (Long) -> Unit = {},
     val onManualSharedGameInputChanged: (String) -> Unit = {},
     val onImportManualSharedGame: () -> Unit = {},
+    val onCheckHltbDataset: () -> Unit = {},
+    val onRequestContributionExport: () -> Unit = {},
+    val onDismissContributionDisclosure: () -> Unit = {},
+    val onConfirmContributionDisclosure: () -> Unit = {},
 )
 
 /** The stateless half: renders [state] and raises [actions]. */
@@ -218,6 +239,18 @@ fun SettingsScreen(
             genreStatus = state.genreEnrichmentStatus,
             onSyncNow = actions.onSyncNow,
             onReconcileNow = actions.onReconcileNow,
+        )
+
+        SectionHeader("Completion times")
+        CompletionTimesCard(
+            gatheredAt = state.hltbDatasetGatheredAt,
+            coveredGameCount = state.hltbDatasetCoveredGameCount,
+            checking = state.hltbDatasetCheckInProgress,
+            checkMessage = state.hltbDatasetCheckMessage,
+            contributionBusy = state.hltbContributionBusy,
+            contributionMessage = state.hltbContributionMessage,
+            onCheck = actions.onCheckHltbDataset,
+            onRequestContributionExport = actions.onRequestContributionExport,
         )
 
         SectionHeader("Offline Steam assets")
@@ -308,6 +341,27 @@ fun SettingsScreen(
             text = { Text(message) },
             confirmButton = {
                 TextButton(onClick = actions.onDismissBackupMessage) { Text("OK") }
+            },
+        )
+    }
+
+    if (state.hltbContributionDisclosurePending) {
+        AlertDialog(
+            onDismissRequest = actions.onDismissContributionDisclosure,
+            title = { Text("Share completion times?") },
+            text = {
+                Text(
+                    "The file lists which Steam games you own — every app id with a resolved " +
+                        "HowLongToBeat match. No playtime, sessions, achievements, or account " +
+                        "details are included. Contributing publishes that list of games in a " +
+                        "public pull request.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = actions.onConfirmContributionDisclosure) { Text("Continue") }
+            },
+            dismissButton = {
+                TextButton(onClick = actions.onDismissContributionDisclosure) { Text("Cancel") }
             },
         )
     }
@@ -505,6 +559,72 @@ private fun UpdateCard(
                     Spacer(Modifier.width(8.dp))
                 }
                 Text(if (checking) "Checking…" else "Check for updates")
+            }
+        }
+    }
+}
+
+/**
+ * The state of the applied shared HowLongToBeat dataset and the two operations it offers: an
+ * explicit check for a newer one, and producing a contribution file. Deliberately offers no
+ * control that looks up HowLongToBeat across the library — that sweep no longer exists.
+ */
+@Composable
+private fun CompletionTimesCard(
+    gatheredAt: Long?,
+    coveredGameCount: Int,
+    checking: Boolean,
+    checkMessage: String?,
+    contributionBusy: Boolean,
+    contributionMessage: String?,
+    onCheck: () -> Unit,
+    onRequestContributionExport: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("completion_times_section"),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (gatheredAt != null) {
+                Text(
+                    text = "Gathered ${UiFormat.dateTime(gatheredAt)} · covers $coveredGameCount games",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                Text(
+                    text = "No completion-times dataset applied yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            checkMessage?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = onCheck, enabled = !checking) {
+                    if (checking) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (checking) "Checking…" else "Check for a newer dataset")
+                }
+            }
+
+            HorizontalDivider()
+
+            Text(
+                text = "Contribute your resolved games back to the shared dataset.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            contributionMessage?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            OutlinedButton(onClick = onRequestContributionExport, enabled = !contributionBusy) {
+                Text(if (contributionBusy) "Preparing…" else "Export contribution")
             }
         }
     }

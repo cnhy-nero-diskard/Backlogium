@@ -1,8 +1,8 @@
 package com.example.backlogium.data.achievement
 
 /**
- * Pure tier selection for the achievement sync. Mirrors `HltbFreshness` so selection logic is
- * unit-testable without Room, network, or WorkManager.
+ * Pure tier selection for the achievement sync, unit-testable without Room, network, or
+ * WorkManager.
  *
  * Tiers classification uses free signals already present in the sync:
  * - HOT: playtime increased since the last sync (`playtimeDelta > 0`)

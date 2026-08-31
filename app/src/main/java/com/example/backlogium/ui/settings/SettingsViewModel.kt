@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.settings
 
+import android.content.ContentResolver
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,6 +10,9 @@ import com.example.backlogium.data.backup.BackupValidationProblem
 import com.example.backlogium.data.backup.ParsedBackup
 import com.example.backlogium.data.backup.SnapshotMeta
 import com.example.backlogium.data.credentials.maskApiKey
+import com.example.backlogium.data.hltb.HltbContributionExporter
+import com.example.backlogium.data.hltb.HltbContributionPreparation
+import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.SteamAssetDao
 import com.example.backlogium.data.local.entity.SteamAssetDownloadState
 import com.example.backlogium.data.local.dao.SteamAssetStoredSummary
@@ -21,6 +25,9 @@ import com.example.backlogium.data.repo.ManualSharedGameImportResult
 import com.example.backlogium.data.repo.PlayerDataProbe
 import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.RemovedSharedGame
+import com.example.backlogium.data.repo.HltbDatasetCheckResult
+import com.example.backlogium.data.repo.HltbDatasetProgress
+import com.example.backlogium.data.repo.HltbDatasetRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.updates.AppUpdateRepository
 import com.example.backlogium.data.updates.AppUpdateState
@@ -45,7 +52,9 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /**
@@ -121,6 +130,16 @@ data class SettingsUiState(
      * explanation of a feature most players never touch.
      */
     val removedSharedGames: List<RemovedSharedGame> = emptyList(),
+    /** Gathered-at time of the currently applied HLTB dataset; null if none has ever been applied. */
+    val hltbDatasetGatheredAt: Long? = null,
+    /** How many of the user's owned games the applied dataset covers. */
+    val hltbDatasetCoveredGameCount: Int = 0,
+    val hltbDatasetCheckInProgress: Boolean = false,
+    val hltbDatasetCheckMessage: String? = null,
+    /** True while the contribution-export disclosure awaits the user's confirm/decline. */
+    val hltbContributionDisclosurePending: Boolean = false,
+    val hltbContributionBusy: Boolean = false,
+    val hltbContributionMessage: String? = null,
 ) {
     /** The candidate config, or null while any field is invalid. */
     val candidate: RuleConfig? get() = draft.toConfig(savedConfig)
@@ -153,6 +172,9 @@ class SettingsViewModel @Inject constructor(
     private val appUpdates: AppUpdateRepository,
     private val steamAssetDao: SteamAssetDao,
     private val sharedGames: FamilySharedGameRepository,
+    private val gameDao: GameDao,
+    private val hltbDatasetRepository: HltbDatasetRepository,
+    private val hltbContributionExporter: HltbContributionExporter,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -173,10 +195,21 @@ class SettingsViewModel @Inject constructor(
     private val manualSharedGameInput = MutableStateFlow("")
     private val manualSharedGameBusy = MutableStateFlow(false)
     private val manualSharedGameFeedback = MutableStateFlow<ManualImportFeedback?>(null)
+    private val hltbDatasetCheckInProgress = MutableStateFlow(false)
+    private val hltbDatasetCheckMessage = MutableStateFlow<String?>(null)
+    private val hltbDatasetProgress = MutableStateFlow<HltbDatasetProgress?>(null)
+    private val hltbContributionDisclosurePending = MutableStateFlow(false)
+    private val hltbContributionBusy = MutableStateFlow(false)
+    private val hltbContributionMessage = MutableStateFlow<String?>(null)
+    /** Held only between a successful [prepareContributionExport] and the SAF destination pick. */
+    private var preparedContribution: HltbContributionPreparation.Ready? = null
     private val _hapticIntents = MutableSharedFlow<HapticIntent>(extraBufferCapacity = 4)
     private val _toastMessages = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    /** Emits a suggested file name once a contribution is prepared and ready to be written. */
+    private val _contributionExportRequests = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val toastMessages: SharedFlow<String> = _toastMessages.asSharedFlow()
     val hapticIntents: SharedFlow<HapticIntent> = _hapticIntents.asSharedFlow()
+    val contributionExportRequests: SharedFlow<String> = _contributionExportRequests.asSharedFlow()
 
     init {
         refreshSnapshots()
@@ -263,6 +296,31 @@ class SettingsViewModel @Inject constructor(
         manualSharedGameFeedback,
     ) { input, busy, message -> Triple(input, busy, message) }
 
+    private val hltbDatasetLocalState = combine(
+        hltbDatasetRepository.appliedState,
+        gameDao.observeAppIds(),
+        hltbDatasetCheckInProgress,
+        combine(hltbDatasetCheckMessage, hltbDatasetProgress) { message, progress ->
+            progress?.describe() ?: message
+        },
+    ) { applied, ownedAppIds, checking, message ->
+        val coveredCount = applied?.coveredAppIds?.let { covered -> ownedAppIds.count { it in covered } } ?: 0
+        HltbDatasetLocal(applied?.gatheredAt, coveredCount, checking, message)
+    }
+
+    private val hltbContributionLocalState = combine(
+        hltbContributionDisclosurePending,
+        hltbContributionBusy,
+        hltbContributionMessage,
+    ) { disclosurePending, busy, message ->
+        HltbContributionLocal(disclosurePending, busy, message)
+    }
+
+    private val hltbLocalState = combine(
+        hltbDatasetLocalState,
+        hltbContributionLocalState,
+    ) { dataset, contribution -> HltbLocal(dataset, contribution) }
+
     val uiState: StateFlow<SettingsUiState> = combine(
         combine(storedState, localState) { stored, local ->
             stored.copy(
@@ -293,6 +351,16 @@ class SettingsViewModel @Inject constructor(
             manualSharedGameInput = manual.first,
             manualSharedGameBusy = manual.second,
             manualSharedGameFeedback = manual.third,
+        )
+    }.combine(hltbLocalState) { state, hltb ->
+        state.copy(
+            hltbDatasetGatheredAt = hltb.dataset.gatheredAt,
+            hltbDatasetCoveredGameCount = hltb.dataset.coveredCount,
+            hltbDatasetCheckInProgress = hltb.dataset.checking,
+            hltbDatasetCheckMessage = hltb.dataset.checkMessage,
+            hltbContributionDisclosurePending = hltb.contribution.disclosurePending,
+            hltbContributionBusy = hltb.contribution.busy,
+            hltbContributionMessage = hltb.contribution.message,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -378,6 +446,112 @@ class SettingsViewModel @Inject constructor(
                 updateCheckMessage.value = "Check did not complete. Try again later."
             } finally {
                 updateCheckInProgress.value = false
+            }
+        }
+    }
+
+    /** Checks the release service for a newer completion-times dataset and applies it if found. */
+    fun checkHltbDataset() {
+        if (hltbDatasetCheckInProgress.value) return
+        viewModelScope.launch {
+            hltbDatasetCheckInProgress.value = true
+            hltbDatasetCheckMessage.value = null
+            try {
+                val result = hltbDatasetRepository.checkAndApply { progress ->
+                    hltbDatasetProgress.value = progress
+                }
+                when (result) {
+                    is HltbDatasetCheckResult.Applied ->
+                        hltbDatasetCheckMessage.value =
+                            "Updated — ${result.gamesGainingLengths} games gained completion times."
+                    is HltbDatasetCheckResult.UpToDate ->
+                        hltbDatasetCheckMessage.value = "Already up to date."
+                    is HltbDatasetCheckResult.Failed ->
+                        hltbDatasetCheckMessage.value = "Check did not complete. Try again later."
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                hltbDatasetCheckMessage.value = "Check did not complete. Try again later."
+            } finally {
+                hltbDatasetCheckInProgress.value = false
+                hltbDatasetProgress.value = null
+            }
+        }
+    }
+
+    private fun HltbDatasetProgress.describe(): String = when (this) {
+        HltbDatasetProgress.Checking -> "Checking for a newer dataset…"
+        is HltbDatasetProgress.Downloading -> "Downloading…"
+        HltbDatasetProgress.Verifying -> "Verifying…"
+        HltbDatasetProgress.Applying -> "Applying…"
+    }
+
+    /** Step 1 of the contribution export: show what the file reveals before anything is written. */
+    fun onRequestContributionExport() {
+        hltbContributionDisclosurePending.value = true
+    }
+
+    fun onDismissContributionDisclosure() {
+        hltbContributionDisclosurePending.value = false
+    }
+
+    /**
+     * The user proceeded past the disclosure. Prepares the contribution now, before any SAF
+     * destination is chosen, so "nothing to contribute" never opens a file picker for nothing.
+     */
+    fun onConfirmContributionDisclosure() {
+        hltbContributionDisclosurePending.value = false
+        if (hltbContributionBusy.value) return
+        viewModelScope.launch {
+            hltbContributionBusy.value = true
+            hltbContributionMessage.value = null
+            try {
+                when (val prepared = hltbContributionExporter.prepare()) {
+                    HltbContributionPreparation.NothingToContribute -> {
+                        hltbContributionMessage.value = "No resolved games to contribute yet."
+                        hltbContributionBusy.value = false
+                    }
+                    is HltbContributionPreparation.Ready -> {
+                        preparedContribution = prepared
+                        _contributionExportRequests.tryEmit(HltbContributionExporter.DEFAULT_FILE_NAME)
+                        // hltbContributionBusy stays true until the destination is picked or cancelled.
+                    }
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                hltbContributionMessage.value = "Couldn't prepare the contribution. Try again."
+                hltbContributionBusy.value = false
+            }
+        }
+    }
+
+    /** The SAF picker returned without a destination — nothing was written. */
+    fun onContributionExportCancelled() {
+        preparedContribution = null
+        hltbContributionBusy.value = false
+    }
+
+    fun onContributionDestinationPicked(destination: Uri, contentResolver: ContentResolver) {
+        val prepared = preparedContribution
+        preparedContribution = null
+        if (prepared == null) {
+            hltbContributionBusy.value = false
+            return
+        }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    hltbContributionExporter.writeTo(prepared, destination, contentResolver)
+                }
+                hltbContributionMessage.value = "Saved ${prepared.mappingCount} games to contribute."
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                hltbContributionMessage.value = "Couldn't save the contribution file."
+            } finally {
+                hltbContributionBusy.value = false
             }
         }
     }
@@ -616,6 +790,21 @@ class SettingsViewModel @Inject constructor(
     )
 
     private data class Local(val rule: RuleLocal, val backup: BackupLocal)
+
+    private data class HltbDatasetLocal(
+        val gatheredAt: Long?,
+        val coveredCount: Int,
+        val checking: Boolean,
+        val checkMessage: String?,
+    )
+
+    private data class HltbContributionLocal(
+        val disclosurePending: Boolean,
+        val busy: Boolean,
+        val message: String?,
+    )
+
+    private data class HltbLocal(val dataset: HltbDatasetLocal, val contribution: HltbContributionLocal)
 }
     private data class AssetStoredState(
         val summary: SteamAssetStoredSummary,

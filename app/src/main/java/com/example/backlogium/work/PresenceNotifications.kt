@@ -20,12 +20,12 @@ import javax.inject.Singleton
 
 /**
  * Builds and posts the ongoing "Playing X · 47m" notification while [PresenceService] runs, on
- * its own channel separate from `hltb_refresh` (`IMPORTANCE_LOW`, silent, updated in place).
+ * its own channel (`IMPORTANCE_LOW`, silent, updated in place).
  *
  * [initial] is always built and returned unconditionally: [android.app.Service.startForeground]
- * requires *a* notification regardless of the runtime permission. [update] mirrors
- * [HltbRefreshWorker.notifyComplete]'s POST_NOTIFICATIONS gate and skips silently without it —
- * the foreground service keeps running either way, just without a visible notification.
+ * requires *a* notification regardless of the runtime permission. [update] gates on the
+ * POST_NOTIFICATIONS runtime permission and skips silently without it — the foreground service
+ * keeps running either way, just without a visible notification.
  */
 @Singleton
 class PresenceNotifications @Inject constructor(

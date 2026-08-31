@@ -6,6 +6,7 @@ import com.example.backlogium.data.hltb.HltbFailureClass
 import com.example.backlogium.data.hltb.HltbMatcher
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.entity.HltbData
+import com.example.backlogium.data.local.entity.HltbDataOrigin
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.Flow
@@ -31,6 +32,124 @@ import java.time.ZoneId
  * the request never got through.
  */
 class HltbRepositoryTest {
+    @Test
+    fun fetchForGame_usesCacheBeforeDatasetAndNetwork() = runTest {
+        val cached = HltbData(
+            appId = 1L,
+            hltbId = 11L,
+            completionistMinutes = 100,
+            fetchedAt = 1_000L,
+            matchStatus = HltbMatchStatus.RESOLVED,
+            origin = HltbDataOrigin.AUTOMATIC,
+        )
+        val dataset = cached.copy(
+            hltbId = 22L,
+            completionistMinutes = 200,
+            origin = HltbDataOrigin.DATASET,
+        )
+        val repository = repository(
+            dao = FakeHltbDataDao(listOf(cached)),
+            datasetRows = mapOf(1L to dataset),
+            failing = setOf("Portal"),
+        )
+
+        assertEquals(cached, repository.fetchForGame(1L, "Portal"))
+    }
+
+    @Test
+    fun fetchForGame_materializesDatasetBeforeTryingNetwork() = runTest {
+        val dao = FakeHltbDataDao()
+        val dataset = HltbData(
+            appId = 1L,
+            hltbId = 22L,
+            mainStoryMinutes = null,
+            fetchedAt = 1_234L,
+            matchStatus = HltbMatchStatus.RESOLVED,
+            origin = HltbDataOrigin.DATASET,
+        )
+        val repository = repository(
+            dao = dao,
+            datasetRows = mapOf(1L to dataset),
+            failing = setOf("Portal"),
+        )
+
+        assertEquals(dataset, repository.fetchForGame(1L, "Portal"))
+        assertEquals(dataset, dao.getByAppId(1L))
+    }
+
+    @Test
+    fun fetchForGame_queriesNetworkOnlyWhenCacheAndDatasetMiss() = runTest {
+        val repository = repository(results = mapOf("Portal" to listOf(candidate("Portal"))))
+
+        val result = repository.fetchForGame(1L, "Portal")
+
+        assertEquals(HltbDataOrigin.AUTOMATIC, result?.origin)
+        assertEquals(HltbMatchStatus.RESOLVED, result?.matchStatus)
+    }
+
+    @Test
+    fun allDataIncludesGameAddedAfterDatasetApplicationWithoutNetworkLookup() = runTest {
+        // allData reads hltbDataDao.observeAllWithDataset() directly (one Room query joining the
+        // cache table with the normalized dataset tables), so this exercises the DAO-level
+        // cache-over-dataset precedence rather than HltbRepository's own dataset lookup seam.
+        val cached = HltbData(
+            appId = 1L,
+            hltbId = 11L,
+            completionistMinutes = 111,
+            fetchedAt = 2_000L,
+            matchStatus = HltbMatchStatus.RESOLVED,
+            origin = HltbDataOrigin.MANUAL,
+        )
+        val datasetOnly = HltbData(
+            appId = 99L,
+            hltbId = 990L,
+            completionistMinutes = 900,
+            fetchedAt = 1_234L,
+            matchStatus = HltbMatchStatus.RESOLVED,
+            origin = HltbDataOrigin.DATASET,
+        )
+        val dao = FakeHltbDataDao(
+            initial = listOf(cached),
+            datasetOnlyRows = mapOf(
+                1L to cached.copy(
+                    hltbId = 12L,
+                    completionistMinutes = 222,
+                    origin = HltbDataOrigin.DATASET,
+                ),
+                99L to datasetOnly,
+            ),
+        )
+        val repository = repository(dao = dao)
+
+        val allData = repository.allData.first().associateBy(HltbData::appId)
+        assertEquals(cached, allData[1L])
+        assertEquals(datasetOnly, allData[99L])
+    }
+
+    @Test
+    fun lookupWritesAutomaticOriginAndReviewResolutionWritesManualOrigin() = runTest {
+        val dao = FakeHltbDataDao()
+        val repository = repository(
+            dao = dao,
+            results = mapOf(
+                "Portal" to listOf(candidate("Portal")),
+                "Ambiguous" to listOf(candidate("First"), candidate("Second", id = 2L)),
+                "Missing" to emptyList(),
+            ),
+        )
+
+        repository.refresh(1L, "Portal")
+        repository.refresh(2L, "Ambiguous")
+        repository.refresh(3L, "Missing")
+
+        assertEquals(HltbDataOrigin.AUTOMATIC, dao.getByAppId(1L)?.origin)
+        assertEquals(HltbDataOrigin.AUTOMATIC, dao.getByAppId(2L)?.origin)
+        assertEquals(HltbDataOrigin.AUTOMATIC, dao.getByAppId(3L)?.origin)
+
+        repository.resolveMatch(2L, candidate("Chosen", id = 22L))
+
+        assertEquals(HltbDataOrigin.MANUAL, dao.getByAppId(2L)?.origin)
+    }
 
     @Test
     fun searchCandidates_returnsAllScoredCandidatesWithoutClassifying() = runTest {
@@ -115,9 +234,8 @@ class HltbRepositoryTest {
         )
 
         val reported = mutableListOf<Triple<String, HltbRefreshOutcome, Pair<Int, Int>>>()
-        val result = repository.refreshBatch(
+        val result = repository.refreshSelection(
             games = listOf(1L to "Portal", 2L to "Hades", 3L to "Obscure Indie"),
-            force = true,
         ) { done, total, name, outcome ->
             reported += Triple(name, outcome, done to total)
         }
@@ -155,9 +273,8 @@ class HltbRepositoryTest {
         )
 
         val outcomes = mutableMapOf<String, HltbRefreshOutcome>()
-        val result = repository.refreshBatch(
+        val result = repository.refreshSelection(
             games = listOf(1L to "Transport Broken", 2L to "Nothing Found"),
-            force = true,
         ) { _, _, name, outcome -> outcomes[name] = outcome }
 
         val failure = outcomes["Transport Broken"] as HltbRefreshOutcome.Failed
@@ -178,24 +295,21 @@ class HltbRepositoryTest {
         val repository = repository(cancellation = setOf("Cancelled"))
 
         val failure = runCatching {
-            repository.refreshBatch(
-                games = listOf(1L to "Cancelled"),
-                force = true,
-            )
+            repository.refreshSelection(games = listOf(1L to "Cancelled"))
         }.exceptionOrNull()
 
         assertTrue(failure is CancellationException)
     }
 
     @Test
-    fun anEmptyTargetSetReportsNothingAtAll() = runTest {
-        // The freshness gate can filter every game out. `onProgress` is only called from inside the
-        // loop, so nothing is reported — a caller rendering progress must not read the absence of
-        // emissions as a stalled run.
+    fun anEmptySelectionReportsNothingAtAll() = runTest {
+        // `onProgress` is only called from inside the loop, so an empty selection reports
+        // nothing — a caller rendering progress must not read the absence of emissions as a
+        // stalled run.
         val repository = repository(results = mapOf("Portal" to listOf(candidate("Portal"))))
 
         var calls = 0
-        repository.refreshBatch(games = listOf(1L to "Portal"), force = false) { _, _, _, _ ->
+        repository.refreshSelection(games = emptyList()) { _, _, _, _ ->
             calls++
         }
 
@@ -207,9 +321,12 @@ class HltbRepositoryTest {
         results: Map<String, List<HltbCandidate>> = emptyMap(),
         failing: Set<String> = emptySet(),
         cancellation: Set<String> = emptySet(),
+        datasetRows: Map<Long, HltbData> = emptyMap(),
+        searches: MutableList<String>? = null,
     ) = HltbRepository(
-        dataSource = FakeHltbDataSource(results, failing, cancellation),
+        dataSource = FakeHltbDataSource(results, failing, cancellation, searches),
         hltbDataDao = dao,
+        datasetLookup = FakeHltbDatasetLookup(datasetRows),
         json = Json,
         time = FixedTime,
     )
@@ -225,33 +342,57 @@ class HltbRepositoryTest {
         private val results: Map<String, List<HltbCandidate>>,
         private val failing: Set<String>,
         private val cancellation: Set<String>,
+        private val searches: MutableList<String>?,
     ) : HltbDataSource {
         override suspend fun search(name: String): List<HltbCandidate> {
+            searches?.add(name)
             if (name in cancellation) throw CancellationException("cancelled")
             if (name in failing) throw IOException("transport failed")
             return results[name].orEmpty()
         }
     }
 
-    /**
-     * In-memory cache. [appIdsStaleOrMissing] returns nothing, so an unforced sweep has no
-     * targets — the freshness gate's "everything is fresh" case.
-     */
-    private class FakeHltbDataDao(initial: List<HltbData> = emptyList()) : HltbDataDao {
+    private class FakeHltbDatasetLookup(
+        private val rows: Map<Long, HltbData>,
+    ) : HltbDatasetLookup {
+        override suspend fun find(appId: Long): HltbData? = rows[appId]
+        override suspend fun getAll(): List<HltbData> = rows.values.toList()
+        override fun observeAll(): Flow<List<HltbData>> = flowOf(rows.values.toList())
+    }
+
+    /** In-memory cache. */
+    private class FakeHltbDataDao(
+        initial: List<HltbData> = emptyList(),
+        /** Rows visible only through the cache-over-dataset read, mirroring the normalized dataset tables. */
+        private val datasetOnlyRows: Map<Long, HltbData> = emptyMap(),
+    ) : HltbDataDao {
         private val store = initial.associateBy { it.appId }.toMutableMap()
 
         override suspend fun upsert(data: HltbData) {
             store[data.appId] = data
         }
 
+        override suspend fun upsertAll(data: List<HltbData>) {
+            data.forEach { upsert(it) }
+        }
+
+        override suspend fun deleteDatasetRows() {
+            store.values.removeAll { it.origin == HltbDataOrigin.DATASET }
+        }
+
         override suspend fun getByAppId(appId: Long): HltbData? = store[appId]
         override fun observeAll(): Flow<List<HltbData>> = flowOf(store.values.toList())
         override suspend fun getAll(): List<HltbData> = store.values.toList()
+
+        override fun observeAllWithDataset(): Flow<List<HltbData>> = flowOf(withDatasetRows())
+        override suspend fun getAllWithDataset(): List<HltbData> = withDatasetRows()
+
         override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(
             store.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW },
         )
 
-        override suspend fun appIdsStaleOrMissing(cutoff: Long): List<Long> = emptyList()
+        private fun withDatasetRows(): List<HltbData> =
+            store.values.toList() + datasetOnlyRows.filterKeys { it !in store }.values
     }
 
     private object FixedTime : TimeProvider {
