@@ -93,18 +93,24 @@ class SetupStageRegistryTest {
     }
 
     @Test
-    fun theLibrarySyncRunsInScreenAndIsTheOnlyDefault() {
+    fun theLibrarySyncRunsInScreenAndOptsInByDefault() {
         val sync = registry.stages.single { it.id == SetupStageRegistry.STAGE_LIBRARY_SYNC }
         assertEquals(SetupStageExecution.IN_SCREEN, sync.execution)
         // Ticked: it is fast, and the app is meaningless without it.
         assertTrue(sync.defaultOptIn)
+    }
 
-        // The expensive two are unticked, so someone setting up on mobile data has to choose them.
-        registry.stages.filterNot { it.id == SetupStageRegistry.STAGE_LIBRARY_SYNC }
-            .forEach { stage ->
-                assertFalse("${stage.id} must not be ticked by default", stage.defaultOptIn)
-                assertEquals(SetupStageExecution.DETACHED, stage.execution)
-            }
+    @Test
+    fun completionTimesOptsInByDefaultButArtworkDoesNot() {
+        // Completion times is one small dataset download, unlike the whole-library sweep it
+        // replaced — see decouple-hltb-fetching's design. Artwork remains unticked: it is
+        // measured in tens of megabytes, and someone setting up on mobile data should choose it.
+        val completionTimes = registry.stages.single { it.id == SetupStageRegistry.STAGE_COMPLETION_TIMES }
+        val assets = registry.stages.single { it.id == SetupStageRegistry.STAGE_STEAM_ASSETS }
+        assertEquals(SetupStageExecution.DETACHED, completionTimes.execution)
+        assertEquals(SetupStageExecution.DETACHED, assets.execution)
+        assertTrue(completionTimes.defaultOptIn)
+        assertFalse(assets.defaultOptIn)
     }
 
     @Test

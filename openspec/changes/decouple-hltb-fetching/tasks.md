@@ -80,7 +80,7 @@
 - [x] 5.3 Add the not-covered per-game state and the Library filter for uncovered games; verify a
   not-covered game is visually distinct from a no-match game and that a completed lookup clears the
   state
-- [ ] 5.4 Move the processed-of-total indicator, per-game outcome log, and stop control from the
+- [x] 5.4 Move the processed-of-total indicator, per-game outcome log, and stop control from the
   batch refresh onto the explicit multi-selection lookup; verify progress, logging, stopping with
   data retained, and completion routing review-flagged games to the review surface
 - [ ] 5.5 Verify the match-review surface and its entry-point count still behave per the `app-ui`
@@ -89,19 +89,23 @@
 
 ## 6. Removing the sweep
 
-- [ ] 6.1 Delete `HltbRefreshWorker`, `HltbRefreshTimeoutWorker`, `HltbBatchProgress`, and
+- [x] 6.1 Delete `HltbRefreshWorker`, `HltbRefreshTimeoutWorker`, `HltbBatchProgress`, and
   `HltbNetworkConnectivity` along with their tests and Hilt bindings; verify `./gradlew assembleDebug`
   succeeds and no reference to the removed types remains
-- [ ] 6.2 Remove `SyncScheduler.refreshHltbNow(force)`, `hltbRefreshStatus`, `hltbRefreshInProgress`,
+- [x] 6.2 Remove `SyncScheduler.refreshHltbNow(force)`, `hltbRefreshStatus`, `hltbRefreshInProgress`,
   `hltbRefreshProgress`, `HltbRefreshStatus`, `hltbRefreshStatusFor`, and the offline-wait store,
-  keeping `refreshHltbNow(appIds)`; verify the remaining selection path still enqueues and reports
-- [ ] 6.3 Remove `HltbRepository.refreshBatch` and `staleOrMissingAppIds`, `HltbDataDao.appIdsStaleOrMissing`,
+  keeping `refreshHltbNow(appIds)`; verify the remaining selection path still enqueues and reports.
+  Landed as `LibraryViewModel.refreshSelection(games)` calling `HltbRepository.refreshSelection`
+  directly on `viewModelScope` rather than staying a `SyncScheduler`/WorkManager entry point: per
+  design.md's "Delete the sweep; do not gate it", a selection lookup now runs only while the screen
+  is watching it, with no detached background job to survive navigating away.
+- [x] 6.3 Remove `HltbRepository.refreshBatch` and `staleOrMissingAppIds`, `HltbDataDao.appIdsStaleOrMissing`,
   `FRESHNESS_WINDOW_MILLIS`, and `INTER_REQUEST_DELAY_MS`'s batch-only usage, keeping request spacing
   for the selection path; verify `:app:testDebugUnitTest` passes and no code path can look up a game
   the user did not name
-- [ ] 6.4 Remove the "Refresh HLTB library" Library trigger and its completion reporting; verify no
+- [x] 6.4 Remove the "Refresh HLTB library" Library trigger and its completion reporting; verify no
   remaining control starts a library-wide lookup
-- [ ] 6.5 Swap `SetupStageRegistry`'s `STAGE_COMPLETION_TIMES` runner to the dataset download, keeping
+- [x] 6.5 Swap `SetupStageRegistry`'s `STAGE_COMPLETION_TIMES` runner to the dataset download, keeping
   its id and position, and set `defaultOptIn = true`; verify first-run setup offers it selected by
   default and that it completes in one download
 
