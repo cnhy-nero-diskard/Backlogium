@@ -20,7 +20,12 @@ The system SHALL read HowLongToBeat completion-length data through an abstractio
 - **THEN** no change is required in the goal, gamification, batch, or review code that consumes HLTB data
 
 ### Requirement: Client-side HLTB lookup
-The system SHALL query HowLongToBeat directly from the device with no application backend and no API key, resolving the site's current search endpoint and any required request token at call time rather than relying on hard-coded values.
+The system SHALL query HowLongToBeat directly from the device with no application backend and no
+API key, resolving the site's current search endpoint and any required request token at call time
+rather than relying on hard-coded values. A lookup SHALL be issued only for games the user named —
+a single game, or an explicit selection of games. The system SHALL NOT issue a lookup for a game
+the user did not name, and SHALL NOT derive the set of games to look up from the library, from a
+freshness threshold, or from any other implicit criterion.
 
 #### Scenario: Endpoint or token has rotated
 - **WHEN** a lookup is attempted and HowLongToBeat has changed its search endpoint path or request token since the last call
@@ -30,8 +35,24 @@ The system SHALL query HowLongToBeat directly from the device with no applicatio
 - **WHEN** an HLTB lookup fails (network error, unresolvable endpoint, or empty response)
 - **THEN** the failure is surfaced to the caller and no cached HLTB data for the affected game is overwritten or cleared
 
+#### Scenario: No lookup without an explicit target
+- **WHEN** no game has been explicitly named for lookup
+- **THEN** no request is issued to HowLongToBeat
+
+#### Scenario: Library size does not imply lookups
+- **WHEN** the library grows, whether by sync, import, or restore
+- **THEN** no lookup is issued as a consequence
+
+#### Scenario: Age does not imply lookups
+- **WHEN** stored HowLongToBeat data becomes old
+- **THEN** no lookup is issued as a consequence, and the data remains in use until the user
+  looks the game up or a dataset supersedes it
+
 ### Requirement: Per-game HLTB cache with freshness
-The system SHALL store HowLongToBeat data per game keyed by the Steam app id, retaining the resolved HLTB id, the Main Story, Main+Extras, Completionist, and All-Styles completion lengths, and the time the data was fetched.
+The system SHALL store HowLongToBeat data per game keyed by the Steam app id, retaining the
+resolved HLTB id, the Main Story, Main+Extras, Completionist, and All-Styles completion lengths,
+the time the data was gathered, and whether it was gathered by a lookup on this device or supplied
+by an applied dataset.
 
 #### Scenario: Storing a resolved game
 - **WHEN** a game is successfully matched and its HLTB data fetched
@@ -41,35 +62,30 @@ The system SHALL store HowLongToBeat data per game keyed by the Steam app id, re
 - **WHEN** HLTB data is stored for a game
 - **THEN** all four completion-length metrics are retained so a consumer can later select a different metric without re-fetching
 
-### Requirement: Per-game fetch on goal tagging
-The system SHALL fetch a game's HowLongToBeat data when it is tagged as a goal, using cached data when present and only querying HowLongToBeat when the game has no cached data.
+#### Scenario: Origin retained
+- **WHEN** HLTB data is stored for a game
+- **THEN** whether it came from a device lookup or from an applied dataset is retained alongside it
 
-#### Scenario: Goal tagged with no cached data
-- **WHEN** a game with no cached HLTB data is tagged as a goal
-- **THEN** the system queries HowLongToBeat for that game and stores the result
+#### Scenario: Rows stored before origin was recorded
+- **WHEN** a row was stored before origin was retained
+- **THEN** it remains readable and usable, and is treated as having come from a device lookup
+
+### Requirement: Per-game fetch on goal tagging
+The system SHALL resolve a game's HowLongToBeat data when it is tagged as a goal, using cached data
+when present, then data supplied by an applied dataset, and only querying HowLongToBeat when
+neither has an answer for that game.
 
 #### Scenario: Goal tagged with cached data present
 - **WHEN** a game that already has cached HLTB data is tagged as a goal
 - **THEN** the system uses the cached data and does not issue a new HowLongToBeat query
 
-### Requirement: Batch library refresh with freshness gate
-The system SHALL provide a manually triggered batch refresh that resolves HowLongToBeat data across the library, skipping games whose cached data is younger than a freshness window, unless a force option is chosen that re-fetches regardless of age.
+#### Scenario: Goal tagged with dataset coverage
+- **WHEN** a game with no cached HLTB data but covered by an applied dataset is tagged as a goal
+- **THEN** the dataset's values are used and no HowLongToBeat query is issued
 
-#### Scenario: Fresh data skipped
-- **WHEN** a batch refresh runs without the force option and a game's cached data is younger than the freshness window
-- **THEN** that game is skipped and not re-queried
-
-#### Scenario: Stale or missing data refreshed
-- **WHEN** a batch refresh runs and a game has no cached data or its cached data is at least as old as the freshness window
-- **THEN** that game is queried and its cached data updated
-
-#### Scenario: Force re-fetch
-- **WHEN** a batch refresh runs with the force option
-- **THEN** every game is queried regardless of the age of its cached data
-
-#### Scenario: Request volume limited during a sweep
-- **WHEN** a batch refresh queries multiple games in one run
-- **THEN** the system reuses a single resolved endpoint and token for the run and spaces the queries so it does not issue them as an unthrottled burst
+#### Scenario: Goal tagged with no cached data
+- **WHEN** a game with no cached HLTB data and no dataset coverage is tagged as a goal
+- **THEN** the system queries HowLongToBeat for that game and stores the result
 
 ### Requirement: Name matching with confidence flagging
 The system SHALL match a Steam game name to HowLongToBeat entries and classify the result: a single sufficiently-confident match resolves automatically, while an ambiguous or low-confidence result is flagged for review with its candidate entries retained.
@@ -140,28 +156,40 @@ The system SHALL allow the user to resolve a game flagged for review by selectin
 - **THEN** the system stores that entry's HLTB id and completion lengths and clears the review flag
 
 ### Requirement: Refresh an explicit subset of games
-The batch HowLongToBeat refresh SHALL accept an explicit set of games to refresh, and SHALL refresh
-exactly those games regardless of how recently their data was fetched.
+The HowLongToBeat lookup SHALL accept an explicit set of games, and SHALL look up exactly those
+games regardless of how recently their data was gathered. An explicit set is the only way to look
+up more than one game.
 
 #### Scenario: Refreshing a subset
-- **WHEN** a refresh is requested for an explicit set of games
+- **WHEN** a lookup is requested for an explicit set of games
 - **THEN** only those games are queried
 
 #### Scenario: Freshness window bypassed for an explicit selection
-- **WHEN** a game in an explicit selection has data fetched more recently than the freshness window
-- **THEN** it is still refreshed, because the explicit selection expresses intent
+- **WHEN** a game in an explicit selection has data gathered very recently
+- **THEN** it is still looked up, because the explicit selection expresses intent — there is no
+  longer any age threshold that could exempt it
+
+#### Scenario: Dataset coverage bypassed for an explicit selection
+- **WHEN** a game in an explicit selection is already covered by an applied dataset
+- **THEN** it is still looked up, and the result supersedes the dataset's values for that game
 
 #### Scenario: Whole-library refresh unchanged
-- **WHEN** a refresh is requested without an explicit subset
-- **THEN** it behaves as today: stale and missing games only, unless a force refresh was requested
+- **WHEN** a lookup is requested without an explicit set of games
+- **THEN** the request is not satisfiable, because no whole-library variant remains — the set of
+  games to look up can only be named by the user
+
+#### Scenario: Request volume limited across a selection
+- **WHEN** a lookup runs over an explicit selection of several games
+- **THEN** the system reuses a single resolved endpoint and token for the run and spaces the
+  queries so it does not issue them as an unthrottled burst
 
 ### Requirement: Per-game batch outcomes reported
-The batch refresh SHALL report, as it proceeds, which game was just processed and what its outcome
-was, so a caller can present a live log.
+A lookup over an explicit selection SHALL report, as it proceeds, which game was just processed and
+what its outcome was, so a caller can present a live log.
 
 #### Scenario: Outcome reported per game
-- **WHEN** a game in the batch has been processed
-- **THEN** the batch reports that game along with whether it resolved, needs review, had no match,
+- **WHEN** a game in the selection has been processed
+- **THEN** the run reports that game along with whether it resolved, needs review, had no match,
   or failed to look up
 
 #### Scenario: Failed lookup distinguished from no match
@@ -206,45 +234,27 @@ does not multiply requests against the scraped service.
   text of an error message
 
 ### Requirement: Batch outcomes reported reflect what actually happened
-A batch refresh SHALL distinguish games that were refreshed, games for which no match exists,
-and games whose lookup failed. Progress reported to the user on completion SHALL state the number
-actually refreshed, and SHALL NOT report attempted work as refreshed work.
+A lookup over an explicit selection SHALL distinguish games that were resolved, games for which no
+match exists, and games whose lookup failed. Progress reported to the user on completion SHALL
+state the number actually resolved, and SHALL NOT report attempted work as completed work.
 
 #### Scenario: Every lookup in a batch fails
-- **WHEN** all lookups in a batch fail
-- **THEN** the completion report states that none were refreshed
+- **WHEN** all lookups in a selection fail
+- **THEN** the completion report states that none were resolved
 
 #### Scenario: Genuine absence of a match
 - **WHEN** a lookup succeeds and establishes that no match exists
 - **THEN** that game is reported as having no match rather than as a failure
 
 #### Scenario: Progress still advances on failure
-- **WHEN** a lookup fails partway through a batch
+- **WHEN** a lookup fails partway through a selection
 - **THEN** the attempted-progress count still advances, so a progress indicator continues and
   terminates
 
 #### Scenario: Mixed batch
-- **WHEN** a batch contains refreshed games, no-match games, and failures
-- **THEN** the completion report states the refreshed count, not the batch size
-
-### Requirement: A batch that accomplished nothing is not reported as successful work
-The scheduler outcome for a batch refresh SHALL reflect whether the batch made progress, so that
-a wholesale transient failure becomes eligible for retry and backoff rather than being recorded
-as completed work.
-
-#### Scenario: Wholesale transient failure
-- **WHEN** no game in a batch was refreshed and at least one failure was transient
-- **THEN** the batch is reported to the scheduler as needing retry
-
-#### Scenario: Partial progress
-- **WHEN** some games in a batch were refreshed
-- **THEN** the batch is reported as complete, and the remainder is left to a later pass
-
-#### Scenario: Failure unlikely to resolve on retry
-- **WHEN** a batch fails wholesale in a way that retrying cannot fix
-- **THEN** the batch is not retried, so the same failure is not repeated on a schedule
+- **WHEN** a selection contains resolved games, no-match games, and failures
+- **THEN** the completion report states the resolved count, not the selection size
 
 #### Scenario: Cancellation is not a failure
-- **WHEN** a batch is cancelled
-- **THEN** cancellation propagates rather than being classified as a lookup failure or a
-  retryable outcome
+- **WHEN** a run over a selection is cancelled
+- **THEN** cancellation propagates rather than being classified as a lookup failure
