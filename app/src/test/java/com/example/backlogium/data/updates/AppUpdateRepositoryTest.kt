@@ -124,6 +124,56 @@ class AppUpdateRepositoryTest {
         }
     }
 
+    @Test
+    fun newerDatasetPublicationDoesNotMaskNewestEligibleAppRelease() = runTest {
+        val api = FakeReleaseApi().apply {
+            responses = listOf(
+                GitHubReleaseDto(tagName = "hltb-dataset-v20"),
+                release("v1.8.0"),
+                release("v1.7.0"),
+            )
+        }
+
+        val result = repository(api, FakeUpdateStateStore(), FakeTime(10_000L))
+            .check(force = true)
+
+        assertTrue(result is UpdateCheckResult.Available)
+        assertEquals("v1.8.0", (result as UpdateCheckResult.Available).update.tag)
+        assertEquals(1, api.calls)
+    }
+
+    @Test
+    fun oneHundredDatasetPublicationsDoNotHideAppReleaseOnSecondPage() = runTest {
+        val api = FakeReleaseApi().apply {
+            responses = List(100) { index ->
+                GitHubReleaseDto(tagName = "hltb-dataset-v${index + 1}")
+            } + release("v1.8.0")
+        }
+
+        val result = repository(api, FakeUpdateStateStore(), FakeTime(10_000L))
+            .check(force = true)
+
+        assertTrue(result is UpdateCheckResult.Available)
+        assertEquals("v1.8.0", (result as UpdateCheckResult.Available).update.tag)
+        assertEquals(2, api.calls)
+    }
+
+    @Test
+    fun datasetOnlyReleaseListDoesNotOfferAnAppUpdate() = runTest {
+        val store = FakeUpdateStateStore()
+        val api = FakeReleaseApi().apply {
+            responses = listOf(GitHubReleaseDto(tagName = "hltb-dataset-v20"))
+        }
+
+        val result = repository(api, store, FakeTime(10_000L)).check(force = true)
+
+        assertTrue(result is UpdateCheckResult.NoUpdate)
+        assertEquals(NoUpdateReason.INVALID_RELEASE, (result as UpdateCheckResult.NoUpdate).reason)
+        assertEquals(null, store.state.first().available)
+        assertEquals(null, store.state.first().lastSeenTag)
+        assertEquals(1, api.calls)
+    }
+
     private fun repository(
         api: FakeReleaseApi,
         store: FakeUpdateStateStore,
@@ -160,13 +210,18 @@ class AppUpdateRepositoryTest {
     private inner class FakeReleaseApi : GitHubReleaseApi {
         var calls = 0
         var response: GitHubReleaseDto = release("v1.0.0")
+        var responses: List<GitHubReleaseDto>? = null
         var failure: Throwable? = null
         var notesResponse: Response<okhttp3.ResponseBody> = Response.success("".toResponseBody())
 
-        override suspend fun latestRelease(): GitHubReleaseDto {
+        override suspend fun latestRelease(): GitHubReleaseDto = error("unused")
+
+        override suspend fun releases(perPage: Int, page: Int): List<GitHubReleaseDto> {
             calls++
             failure?.let { throw it }
-            return response
+            return (responses ?: listOf(response))
+                .drop((page - 1) * perPage)
+                .take(perPage)
         }
 
         override suspend fun structuredNotes(url: String): Response<okhttp3.ResponseBody> =

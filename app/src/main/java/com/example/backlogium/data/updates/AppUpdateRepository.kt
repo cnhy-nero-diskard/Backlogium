@@ -49,7 +49,16 @@ class DataStoreAppUpdateRepository @Inject constructor(
         }
 
         return try {
-            val response = api.latestRelease()
+            val response = api.allReleases().newestAppRelease()
+            if (response == null) {
+                dataStore.recordCheck(
+                    atMillis = now,
+                    seenTag = null,
+                    available = null,
+                )
+                artifactStore.sweep(null)
+                return UpdateCheckResult.NoUpdate(NoUpdateReason.INVALID_RELEASE)
+            }
             val parsed = ReleaseVersion.parse(response.tagName)
             val available = response.toAvailableUpdate(installed.versionCode)
                 ?.let { enrichWithStructuredNotes(it) }
@@ -124,3 +133,12 @@ class DataStoreAppUpdateRepository @Inject constructor(
         }
     }
 }
+
+private fun Iterable<GitHubReleaseDto>.newestAppRelease(): GitHubReleaseDto? =
+    asSequence()
+        .filterNot { it.draft || it.prerelease }
+        .mapNotNull { release ->
+            ReleaseVersion.parse(release.tagName)?.let { version -> release to version }
+        }
+        .maxByOrNull { (_, version) -> version.versionCode }
+        ?.first
