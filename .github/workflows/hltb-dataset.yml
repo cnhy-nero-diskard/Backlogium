@@ -1,0 +1,25 @@
+name: HLTB dataset
+
+on:
+  pull_request:
+    paths:
+      - 'tools/hltb-dataset/**'
+      - '.github/workflows/hltb-dataset.yml'
+
+jobs:
+  validate:
+    name: Validate and regenerate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run dataset tooling tests
+        run: node --test tools/hltb-dataset/test/merge.test.mjs
+
+      - name: Validate and regenerate committed dataset
+        run: node tools/hltb-dataset/merge.mjs --check tools/hltb-dataset/dataset.json
