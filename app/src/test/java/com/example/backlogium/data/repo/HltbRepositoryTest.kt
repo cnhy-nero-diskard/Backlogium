@@ -89,7 +89,9 @@ class HltbRepositoryTest {
 
     @Test
     fun allDataIncludesGameAddedAfterDatasetApplicationWithoutNetworkLookup() = runTest {
-        val searches = mutableListOf<String>()
+        // allData reads hltbDataDao.observeAllWithDataset() directly (one Room query joining the
+        // cache table with the normalized dataset tables), so this exercises the DAO-level
+        // cache-over-dataset precedence rather than HltbRepository's own dataset lookup seam.
         val cached = HltbData(
             appId = 1L,
             hltbId = 11L,
@@ -98,7 +100,7 @@ class HltbRepositoryTest {
             matchStatus = HltbMatchStatus.RESOLVED,
             origin = HltbDataOrigin.MANUAL,
         )
-        val dataset = HltbData(
+        val datasetOnly = HltbData(
             appId = 99L,
             hltbId = 990L,
             completionistMinutes = 900,
@@ -106,23 +108,22 @@ class HltbRepositoryTest {
             matchStatus = HltbMatchStatus.RESOLVED,
             origin = HltbDataOrigin.DATASET,
         )
-        val repository = repository(
-            dao = FakeHltbDataDao(listOf(cached)),
-            datasetRows = mapOf(
+        val dao = FakeHltbDataDao(
+            initial = listOf(cached),
+            datasetOnlyRows = mapOf(
                 1L to cached.copy(
                     hltbId = 12L,
                     completionistMinutes = 222,
                     origin = HltbDataOrigin.DATASET,
                 ),
-                99L to dataset,
+                99L to datasetOnly,
             ),
-            searches = searches,
         )
+        val repository = repository(dao = dao)
 
         val allData = repository.allData.first().associateBy(HltbData::appId)
         assertEquals(cached, allData[1L])
-        assertEquals(dataset, allData[99L])
-        assertTrue(searches.isEmpty())
+        assertEquals(datasetOnly, allData[99L])
     }
 
     @Test
@@ -368,7 +369,11 @@ class HltbRepositoryTest {
      * In-memory cache. [appIdsStaleOrMissing] returns nothing, so an unforced sweep has no
      * targets — the freshness gate's "everything is fresh" case.
      */
-    private class FakeHltbDataDao(initial: List<HltbData> = emptyList()) : HltbDataDao {
+    private class FakeHltbDataDao(
+        initial: List<HltbData> = emptyList(),
+        /** Rows visible only through the cache-over-dataset read, mirroring the normalized dataset tables. */
+        private val datasetOnlyRows: Map<Long, HltbData> = emptyMap(),
+    ) : HltbDataDao {
         private val store = initial.associateBy { it.appId }.toMutableMap()
 
         override suspend fun upsert(data: HltbData) {
@@ -386,11 +391,18 @@ class HltbRepositoryTest {
         override suspend fun getByAppId(appId: Long): HltbData? = store[appId]
         override fun observeAll(): Flow<List<HltbData>> = flowOf(store.values.toList())
         override suspend fun getAll(): List<HltbData> = store.values.toList()
+
+        override fun observeAllWithDataset(): Flow<List<HltbData>> = flowOf(withDatasetRows())
+        override suspend fun getAllWithDataset(): List<HltbData> = withDatasetRows()
+
         override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(
             store.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW },
         )
 
         override suspend fun appIdsStaleOrMissing(cutoff: Long): List<Long> = emptyList()
+
+        private fun withDatasetRows(): List<HltbData> =
+            store.values.toList() + datasetOnlyRows.filterKeys { it !in store }.values
     }
 
     private object FixedTime : TimeProvider {

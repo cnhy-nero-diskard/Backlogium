@@ -5,12 +5,17 @@ import com.example.backlogium.data.hltb.HLTB_DATASET_ASSET_NAME
 import com.example.backlogium.data.hltb.HLTB_DATASET_CHECKSUM_ASSET_NAME
 import com.example.backlogium.data.hltb.HltbContributionFormatter
 import com.example.backlogium.data.hltb.HltbContributionPreparation
+import com.example.backlogium.data.hltb.HltbDataset
 import com.example.backlogium.data.hltb.HltbDatasetArtifactStore
+import com.example.backlogium.data.hltb.HltbDatasetCodec
 import com.example.backlogium.data.hltb.HltbDatasetConnectivity
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.HltbDatasetDao
+import com.example.backlogium.data.local.dao.HltbDatasetSnapshotRow
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDataOrigin
+import com.example.backlogium.data.local.entity.HltbDatasetLength
+import com.example.backlogium.data.local.entity.HltbDatasetMapping
 import com.example.backlogium.data.local.entity.HltbDatasetState
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.updates.GitHubReleaseApi
@@ -26,6 +31,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.runCurrent
 import okhttp3.ResponseBody
@@ -80,7 +86,10 @@ class HltbDatasetRepositoryTest {
             assertEquals(60L, harness.hltb.rows.getValue(6L).hltbId)
             assertNull(harness.hltb.rows[5L])
             assertEquals(2L, harness.dataset.state.value?.datasetVersion)
-            assertEquals(payload, harness.dataset.state.value?.payloadJson)
+            assertEquals(
+                mapOf(1L to 10L, 2L to 20L, 3L to 99L, 4L to 30L, 6L to 60L),
+                harness.dataset.mappings,
+            )
         } finally {
             harness.close()
         }
@@ -320,7 +329,10 @@ class HltbDatasetRepositoryTest {
             assertEquals(501L, harness.hltb.rows[50L]?.hltbId)
             assertEquals(HltbDataOrigin.DATASET, harness.hltb.rows[50L]?.origin)
             assertNull(harness.hltb.rows[99L])
-            assertEquals(releasePayload, harness.dataset.state.value?.payloadJson)
+            assertEquals(
+                mapOf(1L to 10L, 50L to 501L, 99L to 990L),
+                harness.dataset.mappings,
+            )
             assertEquals(990L, harness.repository.find(99L)?.hltbId)
 
             val export = HltbContributionFormatter.prepare(
@@ -350,7 +362,7 @@ class HltbDatasetRepositoryTest {
         releases: List<GitHubReleaseDto>? = null,
     ): Harness {
         val root = createTempDir(prefix = "backlogium-hltb-dataset")
-        val datasetDao = FakeHltbDatasetDao(currentPayload?.toState())
+        val datasetDao = FakeHltbDatasetDao(currentPayload?.let { HltbDatasetCodec.decode(it) })
         val hltbDao = FakeHltbDataDao(rows, failDuringUpsert)
         val api = FakeReleaseApi(
             releases ?: listOf(release(releasePayload.datasetVersion(), releasePayload)),
@@ -389,17 +401,6 @@ class HltbDatasetRepositoryTest {
 
     private fun String.datasetVersion(): Long =
         Regex("\"datasetVersion\"\\s*:\\s*(\\d+)").find(this)!!.groupValues[1].toLong()
-
-    private fun String.toState(): HltbDatasetState {
-        val version = datasetVersion()
-        val gatheredAt = Regex("\"gatheredAt\"\\s*:\\s*(\\d+)").find(this)!!.groupValues[1].toLong()
-        return HltbDatasetState(
-            schemaVersion = 1,
-            datasetVersion = version,
-            gatheredAt = gatheredAt,
-            payloadJson = this,
-        )
-    }
 
     private fun row(
         appId: Long,
@@ -500,17 +501,108 @@ class HltbDatasetRepositoryTest {
         }
     }
 
-    private class FakeHltbDatasetDao(initial: HltbDatasetState?) : HltbDatasetDao {
-        val state = MutableStateFlow(initial)
-        override fun observeState(): Flow<HltbDatasetState?> = state
+    /** Mirrors the normalized dataset tables: one metadata row plus separate mapping/length maps. */
+    private class FakeHltbDatasetDao(initial: HltbDataset? = null) : HltbDatasetDao {
+        val state = MutableStateFlow(
+            initial?.let {
+                HltbDatasetState(
+                    schemaVersion = it.schemaVersion,
+                    datasetVersion = it.datasetVersion,
+                    gatheredAt = it.gatheredAt,
+                )
+            },
+        )
+        val mappings = mutableMapOf<Long, Long>().apply { initial?.mappings?.let(::putAll) }
+        val lengths = mutableMapOf<Long, HltbDatasetLength>().apply {
+            initial?.lengths?.forEach { (hltbId, cells) ->
+                put(
+                    hltbId,
+                    HltbDatasetLength(
+                        hltbId = hltbId,
+                        mainStoryMinutes = cells.mainStoryMinutes,
+                        mainExtraMinutes = cells.mainExtraMinutes,
+                        completionistMinutes = cells.completionistMinutes,
+                        allStylesMinutes = cells.allStylesMinutes,
+                    ),
+                )
+            }
+        }
+
+        override fun observeSnapshot(): Flow<List<HltbDatasetSnapshotRow>> = state.map { snapshotRows(it) }
+        override suspend fun getSnapshot(): List<HltbDatasetSnapshotRow> = snapshotRows(state.value)
         override suspend fun getState(): HltbDatasetState? = state.value
+
+        override fun observeAllRows(): Flow<List<HltbData>> = state.map { datasetRows() }
+        override suspend fun getAllRows(): List<HltbData> = datasetRows()
+        override suspend fun getRow(): HltbData? = datasetRows().firstOrNull()
+        override suspend fun getRow(appId: Long): HltbData? = datasetRows().firstOrNull { it.appId == appId }
+
         override suspend fun upsert(state: HltbDatasetState) {
             this.state.value = state
         }
 
-        fun restore(value: HltbDatasetState?) {
-            state.value = value
+        override suspend fun upsertMappings(rows: List<HltbDatasetMapping>) {
+            rows.forEach { mappings[it.appId] = it.hltbId }
         }
+
+        override suspend fun upsertLengths(rows: List<HltbDatasetLength>) {
+            rows.forEach { lengths[it.hltbId] = it }
+        }
+
+        override suspend fun deleteMappings() {
+            mappings.clear()
+        }
+
+        override suspend fun deleteLengths() {
+            lengths.clear()
+        }
+
+        private fun snapshotRows(metadata: HltbDatasetState?): List<HltbDatasetSnapshotRow> {
+            if (metadata == null) return emptyList()
+            if (mappings.isEmpty()) {
+                return listOf(
+                    HltbDatasetSnapshotRow(metadata.schemaVersion, metadata.datasetVersion, metadata.gatheredAt, null),
+                )
+            }
+            return mappings.keys.sorted().map { appId ->
+                HltbDatasetSnapshotRow(metadata.schemaVersion, metadata.datasetVersion, metadata.gatheredAt, appId)
+            }
+        }
+
+        private fun datasetRows(): List<HltbData> {
+            val metadata = state.value ?: return emptyList()
+            return mappings.entries.sortedBy { it.key }.map { (appId, hltbId) ->
+                val cells = lengths[hltbId]
+                HltbData(
+                    appId = appId,
+                    hltbId = hltbId,
+                    mainStoryMinutes = cells?.mainStoryMinutes,
+                    mainExtraMinutes = cells?.mainExtraMinutes,
+                    completionistMinutes = cells?.completionistMinutes,
+                    allStylesMinutes = cells?.allStylesMinutes,
+                    fetchedAt = metadata.gatheredAt,
+                    matchStatus = HltbMatchStatus.RESOLVED,
+                    candidatesJson = null,
+                    origin = HltbDataOrigin.DATASET,
+                )
+            }
+        }
+
+        fun snapshot() = DatasetSnapshot(state.value, mappings.toMap(), lengths.toMap())
+
+        fun restore(snapshot: DatasetSnapshot) {
+            state.value = snapshot.state
+            mappings.clear()
+            mappings.putAll(snapshot.mappings)
+            lengths.clear()
+            lengths.putAll(snapshot.lengths)
+        }
+
+        data class DatasetSnapshot(
+            val state: HltbDatasetState?,
+            val mappings: Map<Long, Long>,
+            val lengths: Map<Long, HltbDatasetLength>,
+        )
     }
 
     private class FakeHltbDataDao(
@@ -537,6 +629,8 @@ class HltbDatasetRepositoryTest {
         override suspend fun getByAppId(appId: Long): HltbData? = rows[appId]
         override fun observeAll(): Flow<List<HltbData>> = flowOf(rows.values.toList())
         override suspend fun getAll(): List<HltbData> = rows.values.toList()
+        override fun observeAllWithDataset(): Flow<List<HltbData>> = flowOf(rows.values.toList())
+        override suspend fun getAllWithDataset(): List<HltbData> = rows.values.toList()
         override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(
             rows.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW },
         )
@@ -554,12 +648,12 @@ class HltbDatasetRepositoryTest {
     ) : DatabaseTransactionScope {
         override suspend fun <R> run(block: suspend () -> R): R {
             val rowsBefore = hltb.rows.toMap()
-            val stateBefore = dataset.state.value
+            val datasetBefore = dataset.snapshot()
             return try {
                 block()
             } catch (failure: Throwable) {
                 hltb.restore(rowsBefore)
-                dataset.restore(stateBefore)
+                dataset.restore(datasetBefore)
                 throw failure
             }
         }

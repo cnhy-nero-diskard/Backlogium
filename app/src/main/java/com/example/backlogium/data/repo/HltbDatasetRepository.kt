@@ -9,8 +9,11 @@ import com.example.backlogium.data.hltb.HltbDatasetEntry
 import com.example.backlogium.data.hltb.newestHltbDatasetRelease
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.HltbDatasetDao
+import com.example.backlogium.data.local.dao.HltbDatasetSnapshotRow
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDataOrigin
+import com.example.backlogium.data.local.entity.HltbDatasetLength
+import com.example.backlogium.data.local.entity.HltbDatasetMapping
 import com.example.backlogium.data.local.entity.HltbDatasetState
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.updates.GitHubReleaseApi
@@ -95,22 +98,15 @@ class HltbDatasetRepository @Inject constructor(
 ) : HltbDatasetLookup {
     private val checkMutex = Mutex()
 
-    val appliedState: Flow<AppliedHltbDataset?> = datasetDao.observeState().map { state ->
-        state?.decodeVerifiedState()?.toAppliedState()
+    val appliedState: Flow<AppliedHltbDataset?> = datasetDao.observeSnapshot().map { rows ->
+        rows.toAppliedState()
     }
 
-    override fun observeAll(): Flow<List<HltbData>> = datasetDao.observeState().map { state ->
-        state?.decodeVerifiedState()?.toHltbDataRows().orEmpty()
-    }
+    override fun observeAll(): Flow<List<HltbData>> = datasetDao.observeAllRows()
 
-    override suspend fun getAll(): List<HltbData> =
-        datasetDao.getState()?.decodeVerifiedState()?.toHltbDataRows().orEmpty()
+    override suspend fun getAll(): List<HltbData> = datasetDao.getAllRows()
 
-    override suspend fun find(appId: Long): HltbData? =
-        datasetDao.getState()
-            ?.decodeVerifiedState()
-            ?.entryFor(appId)
-            ?.toHltbData()
+    override suspend fun find(appId: Long): HltbData? = datasetDao.getRow(appId)
 
     suspend fun checkAndApply(
         onProgress: suspend (HltbDatasetProgress) -> Unit = {},
@@ -134,11 +130,11 @@ class HltbDatasetRepository @Inject constructor(
             throw cancellation
         } catch (failure: Exception) {
             return failure.asResult(HltbDatasetFailureStage.CHECK, "Dataset check failed")
-        } ?: return HltbDatasetCheckResult.UpToDate(datasetDao.getState()?.toAppliedState())
+        } ?: return HltbDatasetCheckResult.UpToDate(datasetDao.getSnapshot().toAppliedState())
 
         val current = datasetDao.getState()
         if (current != null && release.version <= current.datasetVersion) {
-            return HltbDatasetCheckResult.UpToDate(current.toAppliedState())
+            return HltbDatasetCheckResult.UpToDate(datasetDao.getSnapshot().toAppliedState())
         }
         if (release.declaredSize > MAX_DATASET_BYTES) {
             return HltbDatasetCheckResult.Failed(
@@ -212,7 +208,7 @@ class HltbDatasetRepository @Inject constructor(
 
             onProgress(HltbDatasetProgress.Applying)
             val summary = try {
-                applyVerified(dataset, payload)
+                applyVerified(dataset)
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
@@ -227,10 +223,7 @@ class HltbDatasetRepository @Inject constructor(
         }
     }
 
-    private suspend fun applyVerified(
-        dataset: HltbDataset,
-        payload: String,
-    ): HltbDatasetApplySummary = transaction.run {
+    private suspend fun applyVerified(dataset: HltbDataset): HltbDatasetApplySummary = transaction.run {
         val existingRows = hltbDataDao.getAll()
         val existingByAppId = existingRows.associateBy(HltbData::appId)
         val libraryAppIds = libraryCatalog.appIds()
@@ -263,12 +256,29 @@ class HltbDatasetRepository @Inject constructor(
         hltbDataDao.deleteDatasetRows()
         val appliedRows = datasetRows + refreshedManualRows
         if (appliedRows.isNotEmpty()) hltbDataDao.upsertAll(appliedRows)
+        datasetDao.deleteMappings()
+        datasetDao.deleteLengths()
+        datasetDao.upsertMappings(
+            dataset.mappings.map { (appId, hltbId) ->
+                HltbDatasetMapping(appId = appId, hltbId = hltbId)
+            },
+        )
+        datasetDao.upsertLengths(
+            dataset.lengths.map { (hltbId, lengths) ->
+                HltbDatasetLength(
+                    hltbId = hltbId,
+                    mainStoryMinutes = lengths.mainStoryMinutes,
+                    mainExtraMinutes = lengths.mainExtraMinutes,
+                    completionistMinutes = lengths.completionistMinutes,
+                    allStylesMinutes = lengths.allStylesMinutes,
+                )
+            },
+        )
         datasetDao.upsert(
             HltbDatasetState(
                 schemaVersion = dataset.schemaVersion,
                 datasetVersion = dataset.datasetVersion,
                 gatheredAt = dataset.gatheredAt,
-                payloadJson = payload,
             ),
         )
 
@@ -282,17 +292,15 @@ class HltbDatasetRepository @Inject constructor(
         HltbDatasetApplySummary(gamesGainingLengths)
     }
 
-    private fun HltbDatasetState.decodeVerifiedState(): HltbDataset? =
-        runCatching { HltbDatasetCodec.decode(payloadJson) }
-            .getOrNull()
-            ?.takeIf {
-                it.schemaVersion == schemaVersion &&
-                    it.datasetVersion == datasetVersion &&
-                    it.gatheredAt == gatheredAt
-            }
-
-    private fun HltbDatasetState.toAppliedState(): AppliedHltbDataset? =
-        decodeVerifiedState()?.toAppliedState()
+    private fun List<HltbDatasetSnapshotRow>.toAppliedState(): AppliedHltbDataset? {
+        val metadata = firstOrNull() ?: return null
+        return AppliedHltbDataset(
+            schemaVersion = metadata.schemaVersion,
+            datasetVersion = metadata.datasetVersion,
+            gatheredAt = metadata.gatheredAt,
+            coveredAppIds = mapNotNullTo(linkedSetOf(), HltbDatasetSnapshotRow::appId),
+        )
+    }
 
     private fun HltbDataset.toAppliedState() = AppliedHltbDataset(
         schemaVersion = schemaVersion,
@@ -300,9 +308,6 @@ class HltbDatasetRepository @Inject constructor(
         gatheredAt = gatheredAt,
         coveredAppIds = mappings.keys,
     )
-
-    private fun HltbDataset.toHltbDataRows(): List<HltbData> =
-        mappings.keys.mapNotNull { appId -> entryFor(appId)?.toHltbData() }
 
     private fun HltbDatasetEntry.toHltbData() = HltbData(
         appId = appId,

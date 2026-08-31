@@ -31,6 +31,8 @@ import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.local.entity.GameGenreCache
 import com.example.backlogium.data.local.entity.HltbData
+import com.example.backlogium.data.local.entity.HltbDatasetLength
+import com.example.backlogium.data.local.entity.HltbDatasetMapping
 import com.example.backlogium.data.local.entity.HltbDatasetState
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
@@ -51,6 +53,8 @@ import com.example.backlogium.data.local.entity.SyncRun
         PlayerProfile::class,
         HltbData::class,
         HltbDatasetState::class,
+        HltbDatasetMapping::class,
+        HltbDatasetLength::class,
         Achievement::class,
         SyncRun::class,
         RequestBreakdown::class,
@@ -640,8 +644,26 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "`schemaVersion` INTEGER NOT NULL, " +
                         "`datasetVersion` INTEGER NOT NULL, " +
                         "`gatheredAt` INTEGER NOT NULL, " +
-                        "`payloadJson` TEXT NOT NULL, " +
                         "PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `hltb_dataset_mappings` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`hltbId` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_hltb_dataset_mappings_hltbId` " +
+                        "ON `hltb_dataset_mappings` (`hltbId`)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `hltb_dataset_lengths` (" +
+                        "`hltbId` INTEGER NOT NULL, " +
+                        "`mainStoryMinutes` INTEGER, " +
+                        "`mainExtraMinutes` INTEGER, " +
+                        "`completionistMinutes` INTEGER, " +
+                        "`allStylesMinutes` INTEGER, " +
+                        "PRIMARY KEY(`hltbId`))",
                 )
             }
         }

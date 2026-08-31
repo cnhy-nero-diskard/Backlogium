@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 26,
-    "identityHash": "bf4efde71f258639b97f6db80c4abc24",
+    "identityHash": "d6ba95b11657e4e81694b1322fbe007c",
     "entities": [
       {
         "tableName": "games",
@@ -385,7 +385,7 @@
       },
       {
         "tableName": "hltb_dataset_state",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `schemaVersion` INTEGER NOT NULL, `datasetVersion` INTEGER NOT NULL, `gatheredAt` INTEGER NOT NULL, `payloadJson` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `schemaVersion` INTEGER NOT NULL, `datasetVersion` INTEGER NOT NULL, `gatheredAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -410,18 +410,85 @@
             "columnName": "gatheredAt",
             "affinity": "INTEGER",
             "notNull": true
-          },
-          {
-            "fieldPath": "payloadJson",
-            "columnName": "payloadJson",
-            "affinity": "TEXT",
-            "notNull": true
           }
         ],
         "primaryKey": {
           "autoGenerate": false,
           "columnNames": [
             "id"
+          ]
+        }
+      },
+      {
+        "tableName": "hltb_dataset_mappings",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`appId` INTEGER NOT NULL, `hltbId` INTEGER NOT NULL, PRIMARY KEY(`appId`))",
+        "fields": [
+          {
+            "fieldPath": "appId",
+            "columnName": "appId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hltbId",
+            "columnName": "hltbId",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "appId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_hltb_dataset_mappings_hltbId",
+            "unique": false,
+            "columnNames": [
+              "hltbId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_hltb_dataset_mappings_hltbId` ON `${TABLE_NAME}` (`hltbId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "hltb_dataset_lengths",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`hltbId` INTEGER NOT NULL, `mainStoryMinutes` INTEGER, `mainExtraMinutes` INTEGER, `completionistMinutes` INTEGER, `allStylesMinutes` INTEGER, PRIMARY KEY(`hltbId`))",
+        "fields": [
+          {
+            "fieldPath": "hltbId",
+            "columnName": "hltbId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mainStoryMinutes",
+            "columnName": "mainStoryMinutes",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "mainExtraMinutes",
+            "columnName": "mainExtraMinutes",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "completionistMinutes",
+            "columnName": "completionistMinutes",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "allStylesMinutes",
+            "columnName": "allStylesMinutes",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "hltbId"
           ]
         }
       },
@@ -1314,7 +1381,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'bf4efde71f258639b97f6db80c4abc24')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd6ba95b11657e4e81694b1322fbe007c')"
     ]
   }
 }

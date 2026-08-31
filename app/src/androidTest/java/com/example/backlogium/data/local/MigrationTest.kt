@@ -828,6 +828,14 @@ class MigrationTest {
                     assertTrue(cursor.moveToFirst())
                     assertEquals(0, cursor.getInt(0))
                 }
+                migrated.query("SELECT COUNT(*) FROM hltb_dataset_mappings").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+                migrated.query("SELECT COUNT(*) FROM hltb_dataset_lengths").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
             } finally {
                 migrated.close()
             }

@@ -16,6 +16,7 @@ import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HltbData
+import com.example.backlogium.data.local.entity.HltbDataOrigin
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
@@ -95,6 +96,8 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
  */
 internal class FakeHltbDataDao(
     private val completionistByAppId: Map<Long, Int> = emptyMap(),
+    /** Rows visible only through the cache-over-dataset read, never through [getAll]/[getByAppId]. */
+    private val datasetOnlyCompletionistByAppId: Map<Long, Int> = emptyMap(),
 ) : HltbDataDao {
     var getByAppIdCalls = 0
         private set
@@ -106,30 +109,37 @@ internal class FakeHltbDataDao(
     override suspend fun deleteDatasetRows() = Unit
     override suspend fun getByAppId(appId: Long): HltbData? {
         getByAppIdCalls++
-        return completionistByAppId[appId]?.let { minutes ->
-            HltbData(
-                appId = appId,
-                completionistMinutes = minutes,
-                fetchedAt = 0L,
-                matchStatus = HltbMatchStatus.RESOLVED,
-            )
-        }
+        return completionistByAppId[appId]?.let { minutes -> hltbRow(appId, minutes) }
     }
 
-    override fun observeAll(): Flow<List<HltbData>> = flowOf(emptyList())
-    override suspend fun getAll(): List<HltbData> {
+    override fun observeAll(): Flow<List<HltbData>> = flowOf(cacheRows())
+    override suspend fun getAll(): List<HltbData> = cacheRows()
+
+    override fun observeAllWithDataset(): Flow<List<HltbData>> = flowOf(withDatasetRows())
+    override suspend fun getAllWithDataset(): List<HltbData> {
         getAllCalls++
-        return completionistByAppId.map { (appId, minutes) ->
-            HltbData(
-                appId = appId,
-                completionistMinutes = minutes,
-                fetchedAt = 0L,
-                matchStatus = HltbMatchStatus.RESOLVED,
-            )
-        }
+        return withDatasetRows()
     }
+
     override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(emptyList())
     override suspend fun appIdsStaleOrMissing(cutoff: Long): List<Long> = emptyList()
+
+    private fun cacheRows(): List<HltbData> =
+        completionistByAppId.map { (appId, minutes) -> hltbRow(appId, minutes) }
+
+    private fun withDatasetRows(): List<HltbData> =
+        cacheRows() + datasetOnlyCompletionistByAppId
+            .filterKeys { it !in completionistByAppId }
+            .map { (appId, minutes) -> hltbRow(appId, minutes, origin = HltbDataOrigin.DATASET) }
+
+    private fun hltbRow(appId: Long, minutes: Int, origin: HltbDataOrigin = HltbDataOrigin.AUTOMATIC) =
+        HltbData(
+            appId = appId,
+            completionistMinutes = minutes,
+            fetchedAt = 0L,
+            matchStatus = HltbMatchStatus.RESOLVED,
+            origin = origin,
+        )
 }
 
 /** Seeded game store; only [getAll] is exercised by the updater. */

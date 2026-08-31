@@ -13,7 +13,6 @@ import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -52,16 +51,8 @@ class HltbRepository @Inject constructor(
     /** How many games await manual review — the Library's review badge. */
     val reviewCount: Flow<Int> = hltbDataDao.observeNeedsReview().map { it.size }
 
-    /** Cached rows overlaid onto the locally applied dataset; no network work occurs here. */
-    val allData: Flow<List<HltbData>> = combine(
-        datasetLookup.observeAll(),
-        hltbDataDao.observeAll(),
-    ) { datasetRows, cachedRows ->
-        buildMap<Long, HltbData> {
-            datasetRows.forEach { put(it.appId, it) }
-            cachedRows.forEach { put(it.appId, it) }
-        }.values.toList()
-    }
+    /** Cache-over-dataset rows from one SQLite query and one transaction snapshot. */
+    val allData: Flow<List<HltbData>> = hltbDataDao.observeAllWithDataset()
 
     suspend fun getForGame(appId: Long): HltbData? = hltbDataDao.getByAppId(appId)
 

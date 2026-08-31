@@ -1041,6 +1041,8 @@ private class FakeHltbDataDao(private val store: MutableMap<Long, HltbData>) : H
     override suspend fun getByAppId(appId: Long): HltbData? = store[appId]
     override fun observeAll(): Flow<List<HltbData>> = flowOf(store.values.toList())
     override suspend fun getAll(): List<HltbData> = store.values.toList()
+    override fun observeAllWithDataset(): Flow<List<HltbData>> = flowOf(store.values.toList())
+    override suspend fun getAllWithDataset(): List<HltbData> = store.values.toList()
     override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(emptyList())
     override suspend fun appIdsStaleOrMissing(cutoff: Long): List<Long> = emptyList()
 }
