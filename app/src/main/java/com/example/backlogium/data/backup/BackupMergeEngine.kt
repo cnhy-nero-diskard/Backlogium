@@ -15,6 +15,7 @@ import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HltbData
+import com.example.backlogium.data.local.entity.HltbDataOrigin
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.CollectionAccent
@@ -239,7 +240,7 @@ class BackupMergeEngine @Inject constructor(
                 mainExtraMinutes = backupHltb.mainExtraMinutes,
                 completionistMinutes = backupHltb.completionistMinutes,
                 allStylesMinutes = backupHltb.allStylesMinutes,
-                fetchedAt = time.nowMillis(),
+                fetchedAt = backupHltb.fetchedAt,
                 // Audited against tasks.md 3.6: forward-compatible tolerance for an enum name the
                 // preflight validator does not check (2.2's categories are dates, timestamps,
                 // appIds, references, and ranges — never enum-name spelling), so this stays a
@@ -247,6 +248,8 @@ class BackupMergeEngine @Inject constructor(
                 matchStatus = runCatching { HltbMatchStatus.valueOf(backupHltb.matchStatus) }
                     .getOrDefault(HltbMatchStatus.UNMATCHED),
                 candidatesJson = null,
+                origin = runCatching { HltbDataOrigin.valueOf(backupHltb.origin) }
+                    .getOrDefault(HltbDataOrigin.AUTOMATIC),
             ),
         )
     }

@@ -107,6 +107,8 @@ class BackupExportMapper @Inject constructor(
                     completionistMinutes = data.completionistMinutes,
                     allStylesMinutes = data.allStylesMinutes,
                     matchStatus = data.matchStatus.name,
+                    fetchedAt = data.fetchedAt,
+                    origin = data.origin.name,
                 )
             },
             librarySortPrefs = BackupLibrarySortPrefs(

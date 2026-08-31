@@ -24,6 +24,8 @@ import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HltbData
+import com.example.backlogium.data.local.entity.HltbDataOrigin
+import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.CollectionMode
@@ -100,6 +102,7 @@ class BackupMergeEngineTest {
         collections: List<BackupCollection> = emptyList(),
         collectionMembers: List<BackupCollectionMember> = emptyList(),
         excludedSharedGames: List<BackupExcludedSharedGame> = emptyList(),
+        hltbData: List<BackupHltbData> = emptyList(),
     ) = BackupFile(
         exportedAt = "2026-07-01T00:00:00Z",
         identity = BackupIdentity(steamId64 = "1"),
@@ -108,7 +111,7 @@ class BackupMergeEngineTest {
         achievements = achievements,
         sessions = sessions,
         dailyProgress = emptyList(),
-        hltbData = emptyList(),
+        hltbData = hltbData,
         librarySortPrefs = BackupLibrarySortPrefs(focus = "NAME", library = "PLAYTIME"),
         playerProfile = BackupPlayerProfile(
             totalXp = totalXp,
@@ -122,6 +125,36 @@ class BackupMergeEngineTest {
         collectionMembers = collectionMembers,
         excludedSharedGames = excludedSharedGames,
     )
+
+    @Test
+    fun hltbImportKeepsBackupGatheredAtAndOrigin() = runTest {
+        val stored = mutableMapOf<Long, HltbData>()
+        val harness = newEngine(hltb = stored, nowMillis = 9_999L)
+        val file = baseFile(
+            games = listOf(
+                BackupGame(appId = 620L, name = "Portal 2", isGoal = false, backfillMinutes = 0),
+            ),
+            hltbData = listOf(
+                BackupHltbData(
+                    appId = 620L,
+                    hltbId = 42L,
+                    mainStoryMinutes = 300,
+                    mainExtraMinutes = 450,
+                    completionistMinutes = 600,
+                    allStylesMinutes = 480,
+                    matchStatus = HltbMatchStatus.RESOLVED.name,
+                    fetchedAt = 1_234L,
+                    origin = HltbDataOrigin.MANUAL.name,
+                ),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        assertEquals(1_234L, stored.getValue(620L).fetchedAt)
+        assertEquals(HltbDataOrigin.MANUAL, stored.getValue(620L).origin)
+    }
+
     @Test
     fun restore_preservesSharedSourceAndStickyExclusion() = runTest {
         val excludedAt = "2026-06-20T12:00:00Z"

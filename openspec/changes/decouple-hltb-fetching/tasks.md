@@ -29,7 +29,7 @@
 - [x] 2.2 Set provenance at every write site in `HltbRepository` — `query` writes automatic,
   `resolveMatch` writes manual; verify with repository tests asserting the recorded origin for a
   confident match, a review resolution, and an unmatched result
-- [ ] 2.3 Stop `BackupMergeEngine.mergeHltbData` stamping `time.nowMillis()` as `fetchedAt` and
+- [x] 2.3 Stop `BackupMergeEngine.mergeHltbData` stamping `time.nowMillis()` as `fetchedAt` and
   carry the imported row's own gathered-at time instead; verify with a merge test asserting an
   imported row's age is the backup's, not the import's
 
