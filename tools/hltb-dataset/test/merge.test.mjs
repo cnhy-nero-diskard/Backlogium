@@ -16,6 +16,21 @@ const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const toolDirectory = path.dirname(testDirectory);
 const fixtureDirectory = path.join(testDirectory, "fixtures");
 const mergeScript = path.join(toolDirectory, "merge.mjs");
+const appExportGolden = path.resolve(
+  toolDirectory,
+  "..",
+  "..",
+  "app",
+  "src",
+  "test",
+  "resources",
+  "com",
+  "example",
+  "backlogium",
+  "data",
+  "hltb",
+  "backlogium-hltb-contribution.json",
+);
 
 function fixtureText(name) {
   return readFileSync(path.join(fixtureDirectory, name), "utf8");
@@ -35,6 +50,21 @@ test("the hand-written two-row sample is a clean contribution", () => {
   assert.equal(sample.mappings.length, 2);
   assert.equal(sample.lengths.length, 2);
   assert.equal(serializeDataset(sample), fixtureText("sample-two-row.json"));
+});
+
+test("the exact Android contribution golden is canonical schema-v1 input", () => {
+  const goldenText = readFileSync(appExportGolden, "utf8");
+  const golden = parseDataset(goldenText, "Android contribution golden");
+
+  assert.deepEqual(Object.keys(golden), [
+    "schemaVersion",
+    "datasetVersion",
+    "gatheredAt",
+    "mappings",
+    "lengths",
+  ]);
+  assert.equal(golden.datasetVersion, 0);
+  assert.equal(serializeDataset(golden), goldenText);
 });
 
 for (const rejection of [
