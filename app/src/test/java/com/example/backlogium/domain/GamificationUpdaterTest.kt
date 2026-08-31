@@ -2,7 +2,11 @@ package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.DailyProgress
+import com.example.backlogium.data.local.entity.HltbData
+import com.example.backlogium.data.local.entity.HltbDataOrigin
+import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.data.repo.HltbDatasetLookup
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -153,6 +157,42 @@ class GamificationUpdaterTest {
         val updater =
             GamificationUpdater(sessionDao, dailyDao, profileDao, hltbDao, achievementDao, gameDao)
         updater.recompute(today = LocalDate.parse("2026-07-17"), config = RuleConfig())
+
+        assertEquals(400, profileDao.get()!!.totalXp)
+    }
+
+    @Test
+    fun recompute_usesDatasetOnlyCompletionistLengthForTaperAfterSync() = runTest {
+        val profileDao = FakePlayerProfileDao()
+        val datasetRow = HltbData(
+            appId = 1L,
+            hltbId = 10L,
+            completionistMinutes = 1_000,
+            fetchedAt = 1_000L,
+            matchStatus = HltbMatchStatus.RESOLVED,
+            origin = HltbDataOrigin.DATASET,
+        )
+        val datasetLookup = object : HltbDatasetLookup {
+            override suspend fun find(appId: Long): HltbData? =
+                datasetRow.takeIf { it.appId == appId }
+
+            override suspend fun getAll(): List<HltbData> = listOf(datasetRow)
+        }
+        val updater = GamificationUpdater(
+            sessionDao = FakeSessionDao(listOf(testSession(minutes = 100))),
+            dailyProgressDao = FakeDailyProgressDao(emptyList()),
+            playerProfileDao = profileDao,
+            hltbDataDao = FakeHltbDataDao(),
+            achievementDao = FakeAchievementDao(emptyList()),
+            gameDao = FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 5_000))),
+            hltbDatasetLookup = datasetLookup,
+        )
+
+        updater.recompute(
+            today = LocalDate.parse("2026-07-17"),
+            source = RecomputeSource.SYNC,
+            config = RuleConfig(),
+        )
 
         assertEquals(400, profileDao.get()!!.totalXp)
     }

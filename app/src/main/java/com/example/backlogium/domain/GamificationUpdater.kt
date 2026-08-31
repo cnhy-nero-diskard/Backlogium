@@ -7,6 +7,7 @@ import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.data.repo.HltbDatasetLookup
 import com.example.backlogium.gamification.AchievementInput
 import com.example.backlogium.gamification.DayInput
 import com.example.backlogium.gamification.Gamification
@@ -78,6 +79,7 @@ class GamificationUpdater @Inject constructor(
      * consumer, which must be handed the same coordinator instance.
      */
     private val transitionCoordinator: ProgressTransitionCoordinator = ProgressTransitionCoordinator(),
+    private val hltbDatasetLookup: HltbDatasetLookup = HltbDatasetLookup { null },
 ) {
 
     /**
@@ -105,7 +107,10 @@ class GamificationUpdater @Inject constructor(
         // null -> flat fallback. The union covers backfilled games with no tracked sessions.
         val trackedByGame = sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes }
         val backfillByGame = gameDao.getAll().associate { it.appId to it.backfillMinutes }
-        val hltbByGame = hltbDataDao.getAll().associateBy { it.appId }
+        val hltbByGame = buildMap {
+            hltbDatasetLookup.getAll().forEach { put(it.appId, it) }
+            hltbDataDao.getAll().forEach { put(it.appId, it) }
+        }
         val games = (trackedByGame.keys + backfillByGame.keys)
             .map { appId -> appId to (backfillByGame[appId] ?: 0) + (trackedByGame[appId] ?: 0) }
             .filter { (_, minutes) -> minutes > 0 }
