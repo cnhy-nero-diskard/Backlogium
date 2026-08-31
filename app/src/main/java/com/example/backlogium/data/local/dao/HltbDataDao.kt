@@ -12,6 +12,12 @@ interface HltbDataDao {
     @Upsert
     suspend fun upsert(data: HltbData)
 
+    @Upsert
+    suspend fun upsertAll(data: List<HltbData>)
+
+    @Query("DELETE FROM hltb_data WHERE origin = 'DATASET'")
+    suspend fun deleteDatasetRows()
+
     @Query("SELECT * FROM hltb_data WHERE appId = :appId")
     suspend fun getByAppId(appId: Long): HltbData?
 

@@ -270,6 +270,14 @@ class HltbRepositoryTest {
             store[data.appId] = data
         }
 
+        override suspend fun upsertAll(data: List<HltbData>) {
+            data.forEach { upsert(it) }
+        }
+
+        override suspend fun deleteDatasetRows() {
+            store.values.removeAll { it.origin == HltbDataOrigin.DATASET }
+        }
+
         override suspend fun getByAppId(appId: Long): HltbData? = store[appId]
         override fun observeAll(): Flow<List<HltbData>> = flowOf(store.values.toList())
         override suspend fun getAll(): List<HltbData> = store.values.toList()

@@ -102,6 +102,8 @@ internal class FakeHltbDataDao(
         private set
 
     override suspend fun upsert(data: HltbData) = Unit
+    override suspend fun upsertAll(data: List<HltbData>) = Unit
+    override suspend fun deleteDatasetRows() = Unit
     override suspend fun getByAppId(appId: Long): HltbData? {
         getByAppIdCalls++
         return completionistByAppId[appId]?.let { minutes ->
