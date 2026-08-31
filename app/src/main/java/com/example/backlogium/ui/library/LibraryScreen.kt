@@ -91,8 +91,6 @@ import com.example.backlogium.ui.components.RecencyBadge
 import com.example.backlogium.ui.util.HapticIntent
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.ui.util.rememberHaptics
-import com.example.backlogium.work.HltbBatchProgress
-import com.example.backlogium.work.HltbRefreshStatus
 import compose.icons.TablerIcons
 import compose.icons.tablericons.AlertCircle
 import compose.icons.tablericons.ArrowsSort
@@ -292,10 +290,13 @@ fun LibraryScreen(
         if (state.selectionMode) {
             SelectionBar(
                 count = state.selection.size,
-                // Both paths enqueue under one unique work name with KEEP, so a selection tapped
-                // during a sweep would be dropped with no error — gate it like HltbControls does.
                 refreshing = state.refreshing,
-                onRefreshSelection = { exitSelectionMode(viewModel::refreshSelection) },
+                onRefreshSelection = {
+                    val games = (state.goalGames + state.backlog)
+                        .filter { it.appId in state.selection }
+                        .map { it.appId to it.name }
+                    exitSelectionMode { viewModel.refreshSelection(games) }
+                },
                 onClear = { exitSelectionMode(viewModel::clearSelection) },
             )
         }
@@ -321,13 +322,12 @@ fun LibraryScreen(
                             density = state.density,
                             onDensityChange = viewModel::setDensity,
                         )
-                        HltbMenuButton(
-                            refreshing = state.refreshing,
-                            reviewCount = state.reviewCount,
-                            onRefresh = { viewModel.refreshHltb(force = false) },
-                            onForceRefresh = { viewModel.refreshHltb(force = true) },
-                            onOpenReview = onOpenReview,
-                        )
+                        if (state.reviewCount > 0) {
+                            HltbReviewEntryPoint(
+                                reviewCount = state.reviewCount,
+                                onOpenReview = onOpenReview,
+                            )
+                        }
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -362,9 +362,7 @@ fun LibraryScreen(
 
             if (state.refreshing) {
                 item {
-                    BatchProgressPanel(
-                        status = state.hltbRefreshStatus,
-                        waitRemainingSeconds = state.hltbWaitRemainingSeconds,
+                    SelectionLookupPanel(
                         progress = state.batchProgress,
                         log = state.batchLog,
                         onStop = viewModel::stopHltbRefresh,
@@ -749,102 +747,43 @@ internal fun <T> List<T>.filterByHltbCoverage(
 }
 
 /**
- * Batch HLTB refresh (with a force-all option) plus the match-review entry point, tucked behind a
- * single icon button next to the search field. These are a one-time-setup action a player taps
- * heavily on first run and rarely afterward, so they no longer earn permanent top-of-screen real
- * estate — the pending [reviewCount] surfaces as a badge instead so it stays noticeable without a
- * standing button.
+ * Entry point into the match-review surface, shown only while at least one game is flagged as
+ * needing review. There is no other control in this menu any more: the whole-library sweep this
+ * button used to also trigger is gone, so a standing icon with nothing to open would only be
+ * confusing when [reviewCount] is zero.
  */
 @Composable
-private fun HltbMenuButton(
-    refreshing: Boolean,
-    reviewCount: Int,
-    onRefresh: () -> Unit,
-    onForceRefresh: () -> Unit,
-    onOpenReview: () -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        IconButton(onClick = { expanded = true }) {
-            if (refreshing) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-            } else {
-                BadgedBox(
-                    badge = {
-                        if (reviewCount > 0) {
-                            Badge { Text(reviewCount.toString()) }
-                        }
-                    },
-                ) {
-                    Icon(imageVector = TablerIcons.Clock, contentDescription = "HowLongToBeat options")
-                }
-            }
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(
-                text = { Text(if (refreshing) "Refreshing…" else "Refresh HLTB library") },
-                enabled = !refreshing,
-                onClick = {
-                    expanded = false
-                    onRefresh()
-                },
+private fun HltbReviewEntryPoint(reviewCount: Int, onOpenReview: () -> Unit) {
+    IconButton(onClick = onOpenReview) {
+        BadgedBox(badge = { Badge { Text(reviewCount.toString()) } }) {
+            Icon(
+                imageVector = TablerIcons.Clock,
+                contentDescription = "Review HowLongToBeat matches ($reviewCount)",
             )
-            DropdownMenuItem(
-                text = { Text("Force refresh all") },
-                enabled = !refreshing,
-                onClick = {
-                    expanded = false
-                    onForceRefresh()
-                },
-            )
-            if (reviewCount > 0) {
-                DropdownMenuItem(
-                    text = { Text("Review HLTB matches ($reviewCount)") },
-                    onClick = {
-                        expanded = false
-                        onOpenReview()
-                    },
-                )
-            }
         }
     }
 }
 
 /**
- * Live state of a running sweep: how far it has got, and what each processed game resolved to.
+ * Live state of a running explicit-selection lookup: how far it has got, and what each processed
+ * game resolved to.
  *
- * A null [progress] is not a stalled run. It covers a sweep that is enqueued but has not reported
- * its first game yet, and a sweep whose target set turned out to be empty (the repository only
- * reports from inside its loop) — so it renders as indeterminate rather than as `0 / 0`.
+ * A null [progress] is not a stalled run. It covers a lookup that has started but has not reported
+ * its first game yet, and one whose selection turned out to be empty (the repository only reports
+ * from inside its loop) — so it renders as indeterminate rather than as `0 / 0`.
  */
 @Composable
-private fun BatchProgressPanel(
-    status: HltbRefreshStatus,
-    waitRemainingSeconds: Int?,
-    progress: HltbBatchProgress?,
+private fun SelectionLookupPanel(
+    progress: HltbSelectionProgress?,
     log: List<HltbLogEntry>,
     onStop: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
         Column(modifier = Modifier.padding(12.dp)) {
             if (progress == null || progress.total <= 0) {
-                val waitSuffix = if (status == HltbRefreshStatus.WAITING_FOR_NETWORK) {
-                    " ${waitRemainingSeconds ?: HLTB_OFFLINE_WAIT_SECONDS}s"
-                } else {
-                    ""
-                }
-                val statusText = when (status) {
-                    HltbRefreshStatus.WAITING_FOR_NETWORK ->
-                        "Waiting for an internet connection…$waitSuffix"
-                    HltbRefreshStatus.RETRYING -> "Retrying HowLongToBeat refresh…"
-                    HltbRefreshStatus.IDLE,
-                    HltbRefreshStatus.QUEUED,
-                    HltbRefreshStatus.RUNNING,
-                    -> "Starting HowLongToBeat refresh…"
-                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = statusText,
+                        text = "Starting HowLongToBeat lookup…",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
@@ -893,9 +832,8 @@ private fun BatchProgressPanel(
 }
 
 /**
- * Stops the sweep where it stands. Not a pause, but it behaves like one: every game already
- * fetched is now inside the freshness window, so tapping "Refresh HLTB library" again resumes from
- * roughly where this left off instead of starting over. ("Force all" deliberately does start over.)
+ * Stops the running selection lookup where it stands. Every game already fetched keeps its data;
+ * selecting the remaining games and running the lookup again is how it is continued.
  */
 @Composable
 private fun StopScanButton(onStop: () -> Unit) {
