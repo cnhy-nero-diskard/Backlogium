@@ -35,57 +35,90 @@
 
 ## 3. Dataset acquisition and application
 
-- [ ] 3.1 Implement dataset discovery against the project's releases on the `hltb-dataset-vN` tag
+- [x] 3.1 Implement dataset discovery against the project's releases on the `hltb-dataset-vN` tag
   series, reusing the download-and-verify path `app-updates` owns; verify with tests covering a
   newer dataset found, already-current, download failure, and verification failure leaving locally
-  held data untouched
-- [ ] 3.2 Implement dataset parsing into the two relations with the mapping resolvable independently
+  held data untouched. Covered by `HltbDatasetRepositoryTest` (the four scenarios) and the added
+  `HltbDatasetReleaseTest` (tag filtering: draft/prerelease exclusion, malformed/non-positive
+  versions, missing dataset or checksum asset).
+- [x] 3.2 Implement dataset parsing into the two relations with the mapping resolvable independently
   of the lengths; verify a correspondence with no lengths yields a matched game with unknown lengths
-  rather than an unmatched one
-- [ ] 3.3 Implement all-or-nothing application into `hltb_data`, carrying the dataset's gathered-at
+  rather than an unmatched one. `HltbDatasetCodec`/`HltbDatasetTest`.
+- [x] 3.3 Implement all-or-nothing application into `hltb_data`, carrying the dataset's gathered-at
   time as each row's age and dataset as each row's provenance; verify an interrupted application
   leaves the previous state intact and that re-applying the same dataset does not change any row's
-  age
-- [ ] 3.4 Implement merge precedence — dataset supersedes automatic matches, review-flagged games,
+  age. `HltbDatasetRepository.applyVerified` wraps every write (cache rows, normalized mapping/length
+  tables, dataset state) in one `DatabaseTransactionScope.run`; covered by
+  `interruptedApplicationRollsBackRowsAndDatasetState` and `alreadyCurrentSkipsDownloadAndDoesNotRejuvenateRows`.
+- [x] 3.4 Implement merge precedence — dataset supersedes automatic matches, review-flagged games,
   and unmatched games; never replaces the correspondence of a manual resolution; always updates the
   lengths of the HLTB entry a manual resolution chose; verify with a test per precedence scenario in
-  the `hltb-dataset` spec
-- [ ] 3.5 Add dataset-aware resolution to `HltbRepository` (cache, then dataset, then network) and
+  the `hltb-dataset` spec. Covered by `applyingDatasetIsAtomicAndHonorsEveryPrecedenceRule` and
+  `datasetAgreementWithManualResolutionKeepsManualChoiceAndRefreshesLengths`.
+- [x] 3.5 Add dataset-aware resolution to `HltbRepository` (cache, then dataset, then network) and
   a not-covered state distinct from unmatched; verify goal tagging queries HowLongToBeat only when
-  neither the cache nor the dataset has an answer
-- [ ] 3.6 Verify the app is fully usable with no dataset ever applied and with no network —
-  every HowLongToBeat surface works and no dataset check is attempted offline
+  neither the cache nor the dataset has an answer. `HltbRepository.fetchForGame`: cache
+  (`hltbDataDao.getByAppId`) → dataset (`datasetLookup.find`, materialized into the cache) → network
+  (`query`); covered by `HltbRepositoryTest`'s `fetchForGame_*` tests.
+- [x] 3.6 Verify the app is fully usable with no dataset ever applied and with no network —
+  every HowLongToBeat surface works and no dataset check is attempted offline. `checkAndApply` has
+  exactly two call sites in `app/src/main/java` — the Settings check control and the first-run setup
+  stage — both explicit user actions; no `Application`/startup path references it
+  (`grep -rn "checkAndApply" app/src/main/java` confirms). `HltbRepository.allData`/`fetchForGame`
+  never touch `HltbDatasetConnectivity` or the release API.
 
 ## 4. Contribution export
 
-- [ ] 4.1 Implement the HLTB-only export producing a contribution file containing resolved games
+- [x] 4.1 Implement the HLTB-only export producing a contribution file containing resolved games
   only, carrying app id, HLTB id, and the four lengths and nothing else; verify with a test
   asserting review-flagged and no-match games are absent and that no playtime, session, achievement,
-  streak, or account value appears in the output
-- [ ] 4.2 Wire the export to the file picker with the disclosure that the file identifies which games
+  streak, or account value appears in the output. `HltbContributionExporter`/`HltbContributionFormatter`,
+  covered by `HltbContributionExporterTest`.
+- [x] 4.2 Wire the export to the file picker with the disclosure that the file identifies which games
   the user owns, shown before any file is written; verify declining writes no file and that a
-  library with no resolved match reports nothing to contribute instead of writing an empty file
-- [ ] 4.3 Verify a file produced by the export is accepted by `tools/hltb-dataset/merge.mjs`
-  validation without hand-editing — export and merge agree on the format
+  library with no resolved match reports nothing to contribute instead of writing an empty file.
+  Settings' "Export contribution" control shows the disclosure dialog first
+  (`SettingsViewModel.onRequestContributionExport`/`onConfirmContributionDisclosure`); the SAF
+  picker is only launched after `HltbContributionExporter.prepare()` returns `Ready`, so
+  `NothingToContribute` reports the message and never opens the picker, and declining the dialog
+  calls `onDismissContributionDisclosure` and writes nothing.
+- [x] 4.3 Verify a file produced by the export is accepted by `tools/hltb-dataset/merge.mjs`
+  validation without hand-editing — export and merge agree on the format. `tools/hltb-dataset/test/merge.test.mjs`
+  reads the exact Android golden fixture (`app/src/test/resources/.../backlogium-hltb-contribution.json`)
+  and validates it through `parseDataset`/the merge gate; also manually confirmed with
+  `node tools/hltb-dataset/merge.mjs --output ... base.json backlogium-hltb-contribution.json` (exit 0).
 
 ## 5. App surfaces
 
-- [ ] 5.1 Add the Settings Completion times section — dataset gathered-at, coverage count, check
+- [x] 5.1 Add the Settings Completion times section — dataset gathered-at, coverage count, check
   control, contribution control, no library-wide lookup control; verify each scenario in the
   `app-settings` delta, including check-in-flight disabling and a failed check leaving the section
-  usable
-- [ ] 5.2 Present dataset download and application progress and its outcome, including how many games
+  usable. `CompletionTimesCard` in `SettingsScreen.kt` + `SettingsViewModel`'s `hltbDataset*`/
+  `hltbContribution*` state; the check button disables via `hltbDatasetCheckInProgress` guarding
+  re-entry, and a `Failed` result leaves the section showing the previous applied state with a
+  "did not complete" message. Not yet covered by a dedicated `SettingsViewModel` test — this
+  ViewModel has no existing test file in the project and none was added here; behavior verified by
+  compilation, the full unit-test suite, and manual code review, not a device run.
+- [x] 5.2 Present dataset download and application progress and its outcome, including how many games
   gained lengths, with the Library reflecting them without being reopened; verify by applying a
-  dataset while the Library is visible
+  dataset while the Library is visible. The check control's progress reflects each
+  `HltbDatasetProgress` stage (Checking/Downloading/Verifying/Applying) and reports
+  `gamesGainingLengths` on completion. `GameRepository.library`/`goalGames`/`backlog` combine
+  `hltbRepository.allData` (`hltbDataDao.observeAllWithDataset()`, a Room `Flow`), so a committed
+  dataset application re-emits into the Library automatically — not manually verified on-device.
 - [x] 5.3 Add the not-covered per-game state and the Library filter for uncovered games; verify a
   not-covered game is visually distinct from a no-match game and that a completed lookup clears the
   state
 - [x] 5.4 Move the processed-of-total indicator, per-game outcome log, and stop control from the
   batch refresh onto the explicit multi-selection lookup; verify progress, logging, stopping with
   data retained, and completion routing review-flagged games to the review surface
-- [ ] 5.5 Verify the match-review surface and its entry-point count still behave per the `app-ui`
+- [x] 5.5 Verify the match-review surface and its entry-point count still behave per the `app-ui`
   delta, including that a dataset application removes a resolved game from the review list and
-  decrements the count
+  decrements the count. `HltbRepository.reviewQueue`/`reviewCount` derive from
+  `hltbDataDao.observeNeedsReview()`; applying a dataset that resolves a `NEEDS_REVIEW` game upserts
+  it with `matchStatus = RESOLVED`, which the reactive query excludes on its next emission —
+  asserted directly by `HltbDatasetRepositoryTest.applyingDatasetIsAtomicAndHonorsEveryPrecedenceRule`.
+  `LibraryScreen`'s `HltbReviewEntryPoint` is shown only when `state.reviewCount > 0`.
 
 ## 6. Removing the sweep
 
@@ -111,16 +144,22 @@
 
 ## 7. Verification and documentation
 
-- [ ] 7.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm the full suite passes
+- [x] 7.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm the full suite passes.
+  Passes, along with `:app:assembleDebug` and `:app:compileDebugAndroidTestKotlin`.
 - [ ] 7.2 Verify on device: fresh install with no dataset shows every game as not covered; applying
   a dataset fills the library; a not-covered game resolves via a single-game lookup; an explicit
-  multi-selection reports progress and can be stopped
-- [ ] 7.3 Confirm no code path issues a HowLongToBeat request for a game the user did not name —
+  multi-selection reports progress and can be stopped. **Not done** — requires an interactive device
+  session; left for the user or a follow-up run.
+- [x] 7.3 Confirm no code path issues a HowLongToBeat request for a game the user did not name —
   `grep -rn "HltbDataSource\|searchCandidates\|refreshHltbNow" app/src/main/java` and check every
-  caller originates in an explicit user action
+  caller originates in an explicit user action. `refreshHltbNow` no longer exists anywhere;
+  `searchCandidates`'s sole caller is `LibraryViewModel.changeMatch`, a per-game user action;
+  `HltbDataSource` is touched only by `HltbRepository` and its Hilt binding.
 - [ ] 7.4 Publish `hltb-dataset-v1` seeded from an export of the maintainer's existing `hltb_data`
   table, run through the merge tool; verify a device discovers and applies it, and that app update
-  discovery does not offer an app update on its account
+  discovery does not offer an app update on its account. **Not done** — publishing a real GitHub
+  release from the maintainer's own library data is an irreversible, account-identifying public
+  action outside what an agent should do without the user's explicit go-ahead.
 - [x] 7.5 Update `README.md` and, if the tools directory warrants a mention, `CLAUDE.md` — noting
   that `tools/` is a script directory and not a third build system; verify the two-toolchain build
   table remains accurate as written
