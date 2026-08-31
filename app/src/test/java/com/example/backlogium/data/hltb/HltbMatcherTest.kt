@@ -83,32 +83,4 @@ class HltbMatcherTest {
         assertEquals(1.0, HltbMatcher.similarity("NieR: Automata™", "nier automata"), 0.0001)
     }
 
-    @Test
-    fun freshness_selectsMissingAndStaleOnly() {
-        val now = 1_000_000_000L
-        val window = 1000L
-        val selected = HltbFreshness.selectStaleOrMissing(
-            now = now,
-            window = window,
-            appIds = listOf(1L, 2L, 3L),
-            fetchedAtByAppId = mapOf(
-                1L to now - 500, // fresh -> skip
-                2L to now - 2000, // stale -> refresh
-                // 3L missing -> refresh
-            ),
-        )
-        assertEquals(listOf(2L, 3L), selected)
-    }
-
-    @Test
-    fun freshness_boundaryAtWindowIsStale() {
-        val now = 100L
-        val selected = HltbFreshness.selectStaleOrMissing(
-            now = now,
-            window = 50L,
-            appIds = listOf(1L),
-            fetchedAtByAppId = mapOf(1L to 50L), // exactly window-old -> refresh
-        )
-        assertEquals(listOf(1L), selected)
-    }
 }

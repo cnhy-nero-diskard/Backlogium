@@ -234,9 +234,8 @@ class HltbRepositoryTest {
         )
 
         val reported = mutableListOf<Triple<String, HltbRefreshOutcome, Pair<Int, Int>>>()
-        val result = repository.refreshBatch(
+        val result = repository.refreshSelection(
             games = listOf(1L to "Portal", 2L to "Hades", 3L to "Obscure Indie"),
-            force = true,
         ) { done, total, name, outcome ->
             reported += Triple(name, outcome, done to total)
         }
@@ -274,9 +273,8 @@ class HltbRepositoryTest {
         )
 
         val outcomes = mutableMapOf<String, HltbRefreshOutcome>()
-        val result = repository.refreshBatch(
+        val result = repository.refreshSelection(
             games = listOf(1L to "Transport Broken", 2L to "Nothing Found"),
-            force = true,
         ) { _, _, name, outcome -> outcomes[name] = outcome }
 
         val failure = outcomes["Transport Broken"] as HltbRefreshOutcome.Failed
@@ -297,24 +295,21 @@ class HltbRepositoryTest {
         val repository = repository(cancellation = setOf("Cancelled"))
 
         val failure = runCatching {
-            repository.refreshBatch(
-                games = listOf(1L to "Cancelled"),
-                force = true,
-            )
+            repository.refreshSelection(games = listOf(1L to "Cancelled"))
         }.exceptionOrNull()
 
         assertTrue(failure is CancellationException)
     }
 
     @Test
-    fun anEmptyTargetSetReportsNothingAtAll() = runTest {
-        // The freshness gate can filter every game out. `onProgress` is only called from inside the
-        // loop, so nothing is reported — a caller rendering progress must not read the absence of
-        // emissions as a stalled run.
+    fun anEmptySelectionReportsNothingAtAll() = runTest {
+        // `onProgress` is only called from inside the loop, so an empty selection reports
+        // nothing — a caller rendering progress must not read the absence of emissions as a
+        // stalled run.
         val repository = repository(results = mapOf("Portal" to listOf(candidate("Portal"))))
 
         var calls = 0
-        repository.refreshBatch(games = listOf(1L to "Portal"), force = false) { _, _, _, _ ->
+        repository.refreshSelection(games = emptyList()) { _, _, _, _ ->
             calls++
         }
 
@@ -365,10 +360,7 @@ class HltbRepositoryTest {
         override fun observeAll(): Flow<List<HltbData>> = flowOf(rows.values.toList())
     }
 
-    /**
-     * In-memory cache. [appIdsStaleOrMissing] returns nothing, so an unforced sweep has no
-     * targets — the freshness gate's "everything is fresh" case.
-     */
+    /** In-memory cache. */
     private class FakeHltbDataDao(
         initial: List<HltbData> = emptyList(),
         /** Rows visible only through the cache-over-dataset read, mirroring the normalized dataset tables. */
@@ -398,8 +390,6 @@ class HltbRepositoryTest {
         override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(
             store.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW },
         )
-
-        override suspend fun appIdsStaleOrMissing(cutoff: Long): List<Long> = emptyList()
 
         private fun withDatasetRows(): List<HltbData> =
             store.values.toList() + datasetOnlyRows.filterKeys { it !in store }.values

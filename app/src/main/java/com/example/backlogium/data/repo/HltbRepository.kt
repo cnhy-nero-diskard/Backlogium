@@ -105,40 +105,30 @@ class HltbRepository @Inject constructor(
             runCatching { json.decodeFromString(CANDIDATE_LIST_SERIALIZER, it) }.getOrNull()
         } ?: emptyList()
 
-    /** App ids whose cache is missing or older than the freshness window. */
-    suspend fun staleOrMissingAppIds(): List<Long> =
-        hltbDataDao.appIdsStaleOrMissing(time.nowMillis() - FRESHNESS_WINDOW_MILLIS)
-
     /**
-     * Refresh HLTB data across [games] (appId → name). Without [force], only stale/missing
-     * games are queried; with it, every game. Requests are spaced by a fixed delay and reuse a
-     * single resolved endpoint/token (held in the data source for the run).
+     * Look up every game in an explicit [games] selection (appId → name), unconditionally — an
+     * explicit selection expresses intent, so there is no age or dataset-coverage threshold that
+     * could exempt a game from it. Requests are spaced by a fixed delay and reuse a single
+     * resolved endpoint/token (held in the data source for the run).
      *
      * [onProgress] is invoked after each query with the running count, the game just processed,
      * and its outcome. A failed outcome carries its structured failure class rather than null.
      * The explicit outcome distinguishes a stored match, a genuine no-match, and a failed lookup;
      * no consumer above `data/` has to learn about `HltbMatchStatus`.
      *
-     * Note it is only called from inside the loop: an empty target set reports nothing at all, so
+     * Note it is only called from inside the loop: an empty selection reports nothing at all, so
      * a caller rendering progress must not read "no emissions yet" as a stalled run.
      */
-    suspend fun refreshBatch(
+    suspend fun refreshSelection(
         games: List<Pair<Long, String>>,
-        force: Boolean,
         onProgress: suspend (done: Int, total: Int, name: String, outcome: HltbRefreshOutcome) -> Unit =
             { _, _, _, _ -> },
     ): HltbBatchResult {
-        val targets = if (force) {
-            games
-        } else {
-            val stale = staleOrMissingAppIds().toSet()
-            games.filter { it.first in stale }
-        }
         var refreshed = 0
         var noMatch = 0
         var failed = 0
         val failureClasses = mutableSetOf<HltbFailureClass>()
-        targets.forEachIndexed { index, (appId, name) ->
+        games.forEachIndexed { index, (appId, name) ->
             if (index > 0) delay(INTER_REQUEST_DELAY_MS)
             val outcome = queryResult(appId, name).outcome
             when (outcome) {
@@ -149,10 +139,10 @@ class HltbRepository @Inject constructor(
                     failureClasses += outcome.failureClass
                 }
             }
-            onProgress(index + 1, targets.size, name, outcome)
+            onProgress(index + 1, games.size, name, outcome)
         }
         return HltbBatchResult(
-            attempted = targets.size,
+            attempted = games.size,
             refreshed = refreshed,
             noMatch = noMatch,
             failed = failed,
@@ -225,10 +215,7 @@ class HltbRepository @Inject constructor(
     }
 
     companion object {
-        /** Batch sweep skips games fetched more recently than this (~2 months). */
-        const val FRESHNESS_WINDOW_MILLIS = 60L * 24 * 60 * 60 * 1000
-
-        /** Fixed inter-request delay during a sweep; conservative to avoid rate limiting. */
+        /** Fixed inter-request delay across a selection; conservative to avoid rate limiting. */
         const val INTER_REQUEST_DELAY_MS = 1_500L
 
         private val CANDIDATE_LIST_SERIALIZER = ListSerializer(HltbCandidate.serializer())

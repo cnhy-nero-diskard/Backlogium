@@ -122,7 +122,6 @@ internal class FakeHltbDataDao(
     }
 
     override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(emptyList())
-    override suspend fun appIdsStaleOrMissing(cutoff: Long): List<Long> = emptyList()
 
     private fun cacheRows(): List<HltbData> =
         completionistByAppId.map { (appId, minutes) -> hltbRow(appId, minutes) }

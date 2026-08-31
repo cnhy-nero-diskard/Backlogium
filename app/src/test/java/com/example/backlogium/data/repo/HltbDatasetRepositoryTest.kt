@@ -634,7 +634,6 @@ class HltbDatasetRepositoryTest {
         override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(
             rows.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW },
         )
-        override suspend fun appIdsStaleOrMissing(cutoff: Long): List<Long> = emptyList()
 
         fun restore(snapshot: Map<Long, HltbData>) {
             rows.clear()
