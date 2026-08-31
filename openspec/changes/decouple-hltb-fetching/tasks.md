@@ -117,6 +117,6 @@
 - [ ] 7.4 Publish `hltb-dataset-v1` seeded from an export of the maintainer's existing `hltb_data`
   table, run through the merge tool; verify a device discovers and applies it, and that app update
   discovery does not offer an app update on its account
-- [ ] 7.5 Update `README.md` and, if the tools directory warrants a mention, `CLAUDE.md` — noting
+- [x] 7.5 Update `README.md` and, if the tools directory warrants a mention, `CLAUDE.md` — noting
   that `tools/` is a script directory and not a third build system; verify the two-toolchain build
   table remains accurate as written

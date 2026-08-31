@@ -44,10 +44,15 @@ through a change with a delta spec, which is then synced on archive.
 They are fully independent. `functions/` is invisible to Gradle; a Gradle build
 neither needs nor touches it. Do not add one to the other's build graph.
 
+`tools/` is not a third build system. It holds dependency-free repository scripts, including the
+Node 22 HLTB dataset validator/merger; it has no package manifest or install step and belongs to
+neither the Gradle graph nor the `functions/` npm graph.
+
 ```bash
 ./gradlew assembleDebug                              # Android debug APK
 ./gradlew :gamification:test :app:testDebugUnitTest  # unit tests
 npm --prefix functions run build                     # typecheck + compile functions
+node tools/hltb-dataset/merge.mjs --check tools/hltb-dataset/dataset.json  # dataset gate
 firebase deploy --only functions,firestore:rules     # deploy cloud side
 ```
 
