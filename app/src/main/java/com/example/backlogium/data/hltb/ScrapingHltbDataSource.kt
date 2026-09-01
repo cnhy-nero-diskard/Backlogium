@@ -60,6 +60,29 @@ class ScrapingHltbDataSource @Inject constructor(
     @Volatile
     private var session: Session? = null
 
+    override suspend fun lookupById(hltbId: Long): HltbDirectLookupResult = withContext(Dispatchers.IO) {
+        require(hltbId > 0) { "hltbId must be positive" }
+        val url = HltbRoutes.canonicalGameUrl(hltbId)
+        val html = try {
+            httpGet(url)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: HltbHttpException) {
+            // 404 is not-found rather than transport; other HTTP codes are failures
+            if (failure.statusCode == 404) return@withContext HltbDirectLookupResult.NotFound
+            return@withContext HltbDirectLookupResult.Failure(classifyHltbFailure(failure))
+        } catch (failure: HltbEmptyBodyException) {
+            return@withContext HltbDirectLookupResult.Failure(HltbFailureClass.PARSE)
+        } catch (failure: Exception) {
+            return@withContext HltbDirectLookupResult.Failure(classifyHltbFailure(failure))
+        }
+        when (val result = HltbGamePageParser.parse(html, hltbId)) {
+            is HltbGamePageParser.ParseResult.Success -> HltbDirectLookupResult.Success(result.candidate)
+            is HltbGamePageParser.ParseResult.NotFound -> HltbDirectLookupResult.NotFound
+            is HltbGamePageParser.ParseResult.ParseFailure -> HltbDirectLookupResult.Failure(HltbFailureClass.PARSE)
+        }
+    }
+
     override suspend fun search(name: String): List<HltbCandidate> = withContext(Dispatchers.IO) {
         val terms = name.trim().split(WHITESPACE).filter { it.isNotBlank() }
         val body = try {

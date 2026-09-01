@@ -1,9 +1,13 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.hltb.HltbCandidate
+import com.example.backlogium.data.hltb.HltbCandidateSource
 import com.example.backlogium.data.hltb.HltbDataSource
+import com.example.backlogium.data.hltb.HltbDirectLookupResult
 import com.example.backlogium.data.hltb.HltbFailureClass
+import com.example.backlogium.data.hltb.HltbGameLink
 import com.example.backlogium.data.hltb.HltbMatcher
+import com.example.backlogium.data.hltb.HltbQueryGenerator
 import com.example.backlogium.data.hltb.classifyHltbFailure
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.entity.HltbData
@@ -27,7 +31,24 @@ import javax.inject.Singleton
 data class HltbReviewGame(
     val appId: Long,
     val candidates: List<HltbCandidate>,
+    val matchStatus: HltbMatchStatus = if (candidates.isEmpty()) HltbMatchStatus.UNMATCHED else HltbMatchStatus.NEEDS_REVIEW,
 )
+
+/** Result of a user-triggered broader HLTB search (user-triggered rescue). */
+sealed interface BroaderResult {
+    data class Success(val candidates: List<HltbCandidate>) : BroaderResult
+    data object Exhausted : BroaderResult
+    data class Failed(val failureClass: HltbFailureClass) : BroaderResult
+    data object NotEligible : BroaderResult
+}
+
+/** Result of a manual HLTB link preview (non-persisting). */
+sealed interface ManualLinkPreviewResult {
+    data class Preview(val candidate: HltbCandidate) : ManualLinkPreviewResult
+    data class Invalid(val reason: String) : ManualLinkPreviewResult
+    data object NotFound : ManualLinkPreviewResult
+    data class Failed(val failureClass: HltbFailureClass) : ManualLinkPreviewResult
+}
 
 /**
  * Owns HowLongToBeat lookups, name-match classification, and the local cache. All consumers
@@ -46,10 +67,18 @@ class HltbRepository @Inject constructor(
 ) {
     /** Games flagged for manual match review, with their candidates. */
     val reviewQueue: Flow<List<HltbReviewGame>> = hltbDataDao.observeNeedsReview()
-        .map { rows -> rows.map { HltbReviewGame(it.appId, candidatesOf(it)) } }
+        .map { rows -> rows.map { HltbReviewGame(it.appId, candidatesOf(it), it.matchStatus) } }
 
-    /** How many games await manual review — the Library's review badge. */
+    /** How many games await manual review — the Library's review badge (still review-only). */
     val reviewCount: Flow<Int> = hltbDataDao.observeNeedsReview().map { it.size }
+
+    /** Match-center actionable set: both NEEDS_REVIEW and UNMATCHED, for rescue. */
+    val matchCenterQueue: Flow<List<HltbReviewGame>> = hltbDataDao.observeMatchCenter()
+        .map { rows ->
+            rows.map { row ->
+                HltbReviewGame(row.appId, candidatesOf(row), row.matchStatus)
+            }
+        }
 
     /** Cache-over-dataset rows from one SQLite query and one transaction snapshot. */
     val allData: Flow<List<HltbData>> = hltbDataDao.observeAllWithDataset()
@@ -76,6 +105,84 @@ class HltbRepository @Inject constructor(
     /** Search and score candidates for a fresh pick without changing any stored HLTB row. */
     suspend fun searchCandidates(name: String): List<HltbCandidate> =
         HltbMatcher.scored(name, dataSource.search(name))
+
+    /**
+     * User-triggered broader search: only for an existing UNMATCHED game.
+     * Runs variants sequentially with the fixed inter-request delay, reuses the HLTB
+     * data-source session, merges and scores against the original title, and persists
+     * successful results as NEEDS_REVIEW without changing the original fetch timestamp.
+     * On exhausted search or failure the UNMATCHED row is preserved.
+     */
+    suspend fun searchBroaderCandidates(appId: Long, originalName: String): BroaderResult {
+        val existing = hltbDataDao.getByAppId(appId) ?: return BroaderResult.NotEligible
+        if (existing.matchStatus != HltbMatchStatus.UNMATCHED) return BroaderResult.NotEligible
+
+        val variants = HltbQueryGenerator.variants(originalName)
+        if (variants.isEmpty()) return BroaderResult.Exhausted
+
+        val collected = mutableListOf<HltbCandidate>()
+        var lastFailure: HltbFailureClass? = null
+        var hadSuccess = false
+
+        variants.forEachIndexed { index, query ->
+            if (index > 0) delay(INTER_REQUEST_DELAY_MS)
+            try {
+                val raw = dataSource.search(query)
+                hadSuccess = true
+                if (raw.isNotEmpty()) {
+                    // Score against original title, mark as BROADER_SEARCH
+                    val scored = HltbMatcher.scoredBroader(originalName, raw)
+                    collected += scored
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                lastFailure = classifyHltbFailure(failure)
+                // continue to next variant; failure doesn't abort entire rescue unless no candidates found
+            }
+        }
+
+        if (collected.isNotEmpty()) {
+            val deduped = HltbMatcher.deduplicateBroader(collected)
+            val scoredFinal = deduped.sortedByDescending { it.confidence }
+            // Persist as NEEDS_REVIEW preserving fetchedAt
+            val updated = HltbData(
+                appId = appId,
+                fetchedAt = existing.fetchedAt,
+                matchStatus = HltbMatchStatus.NEEDS_REVIEW,
+                candidatesJson = json.encodeToString(CANDIDATE_LIST_SERIALIZER, scoredFinal),
+                origin = existing.origin,
+            )
+            hltbDataDao.upsert(updated)
+            return BroaderResult.Success(scoredFinal)
+        }
+
+        // No candidates found
+        return if (hadSuccess) {
+            BroaderResult.Exhausted
+        } else {
+            BroaderResult.Failed(lastFailure ?: HltbFailureClass.TRANSPORT)
+        }
+    }
+
+    /**
+     * Non-persisting manual-link preview: validates locally, performs direct-id lookup
+     * through the data-source seam, and returns a MANUAL_LINK candidate for preview.
+     */
+    suspend fun previewLinkedCandidate(rawUrl: String): ManualLinkPreviewResult {
+        val parsed = HltbGameLink.parse(rawUrl)
+        if (parsed is HltbGameLink.ParseResult.Invalid) {
+            return ManualLinkPreviewResult.Invalid(parsed.reason)
+        }
+        val valid = parsed as HltbGameLink.ParseResult.Valid
+        return when (val result = dataSource.lookupById(valid.hltbId)) {
+            is HltbDirectLookupResult.Success -> ManualLinkPreviewResult.Preview(
+                result.candidate.copy(source = HltbCandidateSource.MANUAL_LINK),
+            )
+            is HltbDirectLookupResult.NotFound -> ManualLinkPreviewResult.NotFound
+            is HltbDirectLookupResult.Failure -> ManualLinkPreviewResult.Failed(result.failureClass)
+        }
+    }
 
     /**
      * Resolve a review-flagged game to the [chosen] candidate: store its id and completion

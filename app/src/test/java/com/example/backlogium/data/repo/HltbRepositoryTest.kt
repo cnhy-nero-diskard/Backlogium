@@ -343,12 +343,21 @@ class HltbRepositoryTest {
         private val failing: Set<String>,
         private val cancellation: Set<String>,
         private val searches: MutableList<String>?,
+        private val lookupResults: Map<Long, HltbCandidate> = emptyMap(),
+        private val lookupFailures: Set<Long> = emptySet(),
+        private val lookupNotFound: Set<Long> = emptySet(),
     ) : HltbDataSource {
         override suspend fun search(name: String): List<HltbCandidate> {
             searches?.add(name)
             if (name in cancellation) throw CancellationException("cancelled")
             if (name in failing) throw IOException("transport failed")
             return results[name].orEmpty()
+        }
+        override suspend fun lookupById(hltbId: Long): com.example.backlogium.data.hltb.HltbDirectLookupResult {
+            if (hltbId in lookupNotFound) return com.example.backlogium.data.hltb.HltbDirectLookupResult.NotFound
+            if (hltbId in lookupFailures) return com.example.backlogium.data.hltb.HltbDirectLookupResult.Failure(com.example.backlogium.data.hltb.HltbFailureClass.TRANSPORT)
+            val cand = lookupResults[hltbId] ?: return com.example.backlogium.data.hltb.HltbDirectLookupResult.NotFound
+            return com.example.backlogium.data.hltb.HltbDirectLookupResult.Success(cand)
         }
     }
 
@@ -390,6 +399,11 @@ class HltbRepositoryTest {
         override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(
             store.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW },
         )
+        override fun observeMatchCenter(): Flow<List<HltbData>> = flowOf(
+            store.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW || it.matchStatus == HltbMatchStatus.UNMATCHED },
+        )
+        override suspend fun getMatchCenter(): List<HltbData> =
+            store.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW || it.matchStatus == HltbMatchStatus.UNMATCHED }
 
         private fun withDatasetRows(): List<HltbData> =
             store.values.toList() + datasetOnlyRows.filterKeys { it !in store }.values

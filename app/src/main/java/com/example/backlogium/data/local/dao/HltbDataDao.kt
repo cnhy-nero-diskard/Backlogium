@@ -38,6 +38,13 @@ interface HltbDataDao {
     /** Games flagged for manual match review, observed for the review surface. */
     @Query("SELECT * FROM hltb_data WHERE matchStatus = 'NEEDS_REVIEW'")
     fun observeNeedsReview(): Flow<List<HltbData>>
+
+    /** Match-center actionable set: ambiguous plus genuine no-match, for rescue. */
+    @Query("SELECT * FROM hltb_data WHERE matchStatus IN ('NEEDS_REVIEW', 'UNMATCHED')")
+    fun observeMatchCenter(): Flow<List<HltbData>>
+
+    @Query("SELECT * FROM hltb_data WHERE matchStatus IN ('NEEDS_REVIEW', 'UNMATCHED')")
+    suspend fun getMatchCenter(): List<HltbData>
 }
 
 private const val HLTB_DATA_WITH_DATASET_QUERY =
