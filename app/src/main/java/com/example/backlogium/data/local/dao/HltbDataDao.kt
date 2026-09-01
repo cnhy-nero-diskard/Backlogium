@@ -45,6 +45,19 @@ interface HltbDataDao {
 
     @Query("SELECT * FROM hltb_data WHERE matchStatus IN ('NEEDS_REVIEW', 'UNMATCHED')")
     suspend fun getMatchCenter(): List<HltbData>
+
+    /**
+     * Atomically promote an UNMATCHED row to NEEDS_REVIEW with [candidatesJson] (broader-search
+     * rescue). The WHERE clause is the commit-time eligibility re-check: a row resolved or
+     * rewritten while the search ran is left untouched and 0 is returned, so the caller can
+     * discard the stale result instead of overwriting newer state. fetchedAt and origin are
+     * deliberately untouched.
+     */
+    @Query(
+        "UPDATE hltb_data SET matchStatus = 'NEEDS_REVIEW', candidatesJson = :candidatesJson " +
+            "WHERE appId = :appId AND matchStatus = 'UNMATCHED'",
+    )
+    suspend fun markNeedsReviewWithBroaderCandidates(appId: Long, candidatesJson: String): Int
 }
 
 private const val HLTB_DATA_WITH_DATASET_QUERY =

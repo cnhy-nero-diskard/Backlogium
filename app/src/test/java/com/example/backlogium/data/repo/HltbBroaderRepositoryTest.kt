@@ -10,11 +10,14 @@ import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDataOrigin
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.domain.TimeProvider
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -36,6 +39,44 @@ class HltbBroaderRepositoryTest {
         val repo = repoWith(dao = dao)
         val result = repo.searchBroaderCandidates(1L, "Portal")
         assertTrue(result is BroaderResult.NotEligible)
+    }
+
+    @Test
+    fun broaderSearch_discardsResult_whenRowResolvedWhileRequestsInFlight() = runTest {
+        // The match-center UI keeps the manual-link flow available while broader search is
+        // loading: a manual confirmation must survive a late broader response, which commits
+        // atomically only if the row is still UNMATCHED.
+        val dao = FakeDao(initial = listOf(HltbData(appId = 1L, fetchedAt = 1000L, matchStatus = HltbMatchStatus.UNMATCHED)))
+        val enteredSearch = CompletableDeferred<Unit>()
+        val releaseSearch = CompletableDeferred<Unit>()
+        val repo = repoWith(
+            dao = dao,
+            dataSource = object : HltbDataSource {
+                override suspend fun search(name: String): List<HltbCandidate> {
+                    enteredSearch.complete(Unit)
+                    releaseSearch.await()
+                    return listOf(HltbCandidate(hltbId = 55L, name = "Late Match", mainStoryMinutes = 600, imageUrl = null))
+                }
+                override suspend fun lookupById(hltbId: Long): HltbDirectLookupResult = HltbDirectLookupResult.NotFound
+            },
+        )
+        var result: BroaderResult? = null
+        // The title must produce non-empty variants (edition terms/subtitle), otherwise the
+        // repository exhausts before issuing any request and the race below never happens.
+        val broader = launch { result = repo.searchBroaderCandidates(1L, "Late Match: Enhanced Edition") }
+
+        // The broader run has passed its pre-flight eligibility check and is waiting on the network.
+        enteredSearch.await()
+        // A manual resolution lands while the broader requests are in flight.
+        repo.resolveMatch(1L, HltbCandidate(hltbId = 999L, name = "Manual Pick", imageUrl = null))
+        releaseSearch.complete(Unit)
+        broader.join()
+
+        assertTrue(result is BroaderResult.NotEligible)
+        val row = dao.getByAppId(1L)!!
+        assertEquals(HltbMatchStatus.RESOLVED, row.matchStatus)
+        assertEquals(999L, row.hltbId)
+        assertNull(row.candidatesJson)
     }
 
     @Test
@@ -190,6 +231,14 @@ class HltbBroaderRepositoryTest {
         override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(store.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW })
         override fun observeMatchCenter(): Flow<List<HltbData>> = flowOf(store.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW || it.matchStatus == HltbMatchStatus.UNMATCHED })
         override suspend fun getMatchCenter(): List<HltbData> = store.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW || it.matchStatus == HltbMatchStatus.UNMATCHED }
+
+        /** Mirrors the conditional UPDATE: only an UNMATCHED row moves, keeping fetchedAt/origin. */
+        override suspend fun markNeedsReviewWithBroaderCandidates(appId: Long, candidatesJson: String): Int {
+            val row = store[appId] ?: return 0
+            if (row.matchStatus != HltbMatchStatus.UNMATCHED) return 0
+            store[appId] = row.copy(matchStatus = HltbMatchStatus.NEEDS_REVIEW, candidatesJson = candidatesJson)
+            return 1
+        }
     }
 
     private object FixedTime : TimeProvider {

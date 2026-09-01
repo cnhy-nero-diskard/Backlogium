@@ -9,8 +9,9 @@ import org.junit.Test
 /**
  * Regression coverage for match-center selection stability (task 5.5): the selection tracks a
  * game's appId rather than its index, because the queue reorders across the ambiguous/unmatched
- * partitions whenever a match status changes, and clamping must be persisted so a selection that
- * fell out of the queue cannot become active again when the queue later grows.
+ * partitions whenever a match status changes. Every case below goes through the ViewModel's
+ * ordering path — partition into `ambiguous + unmatched` first, then derive — because deriving
+ * from raw DAO order (which has no ORDER BY) applies the index to a different list.
  */
 class HltbMatchCenterSelectionTest {
 
@@ -23,55 +24,111 @@ class HltbMatchCenterSelectionTest {
 
     private fun queue(vararg games: MatchCenterGameUi) = games.toList()
 
+    /** The ViewModel's ordering path: partition first, derive from the display order second. */
+    private fun deriveViewModelSelection(
+        prior: MatchCenterSelection,
+        rawDaoOrder: List<MatchCenterGameUi>,
+    ): MatchCenterSelection = resolveMatchCenterSelection(
+        prior,
+        rawDaoOrder.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW } +
+            rawDaoOrder.filter { it.matchStatus == HltbMatchStatus.UNMATCHED },
+    )
+
+    private fun stateFor(rawDaoOrder: List<MatchCenterGameUi>, selection: MatchCenterSelection) =
+        HltbMatchCenterUiState(
+            ambiguous = rawDaoOrder.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW },
+            unmatched = rawDaoOrder.filter { it.matchStatus == HltbMatchStatus.UNMATCHED },
+            selectedIndex = selection.index,
+        )
+
     @Test
     fun unmatchedToNeedsReview_reorder_keepsSelectionOnTheSameGame() {
         // Broader search success moves the selected game from the unmatched partition into the
-        // review partition: [A, B, C] becomes [B, A, C]. An index would now point at A.
+        // review partition: [U1, U2, U3] becomes [N2, U1, U3]. An index would now point at U1.
         val before = queue(
             game(1, HltbMatchStatus.UNMATCHED),
             game(2, HltbMatchStatus.UNMATCHED),
             game(3, HltbMatchStatus.UNMATCHED),
         )
-        val selection = resolveMatchCenterSelection(selectedAppId = 2L, games = before)
-        assertEquals(1, selection.index)
+        val initial = deriveViewModelSelection(MatchCenterSelection(0, null), before)
+        assertEquals(1L, initial.persistedAppId)
+        // The user picks game 2 at its display position.
+        val picked = MatchCenterSelection(index = 1, persistedAppId = 2L)
 
         val after = queue(
             game(2, HltbMatchStatus.NEEDS_REVIEW),
             game(1, HltbMatchStatus.UNMATCHED),
             game(3, HltbMatchStatus.UNMATCHED),
         )
-        val reordered = resolveMatchCenterSelection(selectedAppId = selection.persistedAppId, games = after)
+        val reordered = deriveViewModelSelection(picked, after)
 
         assertEquals(0, reordered.index)
         assertEquals(2L, reordered.persistedAppId)
         // The derived index still selects the same game through the state's own derivation.
-        assertEquals(2L, after[reordered.index].appId)
+        assertEquals(2L, stateFor(after, reordered).selectedGame?.appId)
     }
 
     @Test
-    fun selectedGameRemoved_clampsToFirstAndPersistsTheReplacement() {
-        val queue3 = queue(
-            game(1, HltbMatchStatus.NEEDS_REVIEW),
+    fun interleavedDaoOrder_derivesSelectionFromTheDisplayOrder() {
+        // observeMatchCenter() has no ORDER BY, so raw DAO rows can interleave statuses:
+        // [U1, N2, U3] displays as [N2, U1, U3]. Deriving the index from raw order would select
+        // N2 when the user picked U1.
+        val raw = queue(
+            game(1, HltbMatchStatus.UNMATCHED),
             game(2, HltbMatchStatus.NEEDS_REVIEW),
-            game(3, HltbMatchStatus.NEEDS_REVIEW),
+            game(3, HltbMatchStatus.UNMATCHED),
         )
-        assertEquals(2, resolveMatchCenterSelection(selectedAppId = 3L, games = queue3).index)
+        val derived = deriveViewModelSelection(MatchCenterSelection(index = 1, persistedAppId = 1L), raw)
 
-        // The selected game is resolved away; the clamp lands on the first remaining game and is
-        // persisted, so the removed id cannot become active again when the queue later grows.
+        val state = stateFor(raw, derived)
+        assertEquals(1L, state.selectedGame?.appId)
+        assertEquals(2, state.currentPosition)
+    }
+
+    @Test
+    fun lastGameRemoved_clampsToTheSurvivingNeighbor() {
+        // Resolving the last game must clamp onto the neighbor of the old position (B), not
+        // jump back to the first game.
         val queue2 = queue(
             game(1, HltbMatchStatus.NEEDS_REVIEW),
             game(2, HltbMatchStatus.NEEDS_REVIEW),
         )
-        val clamped = resolveMatchCenterSelection(selectedAppId = 3L, games = queue2)
+        val clamped = deriveViewModelSelection(MatchCenterSelection(index = 2, persistedAppId = 3L), queue2)
 
-        assertEquals(0, clamped.index)
-        assertEquals(1L, clamped.persistedAppId)
+        assertEquals(1, clamped.index)
+        assertEquals(2L, clamped.persistedAppId)
+        assertEquals(2L, stateFor(queue2, clamped).selectedGame?.appId)
     }
 
     @Test
-    fun emptyQueue_clearsSelection() {
-        val selection = resolveMatchCenterSelection(selectedAppId = 2L, games = emptyList())
+    fun middleGameRemoved_keepsTheOldPosition() {
+        // Resolving the middle game keeps the old position, which now lands on the next game.
+        val queue2 = queue(
+            game(1, HltbMatchStatus.NEEDS_REVIEW),
+            game(3, HltbMatchStatus.NEEDS_REVIEW),
+        )
+        val clamped = deriveViewModelSelection(MatchCenterSelection(index = 1, persistedAppId = 2L), queue2)
+
+        assertEquals(1, clamped.index)
+        assertEquals(3L, clamped.persistedAppId)
+        assertEquals(3L, stateFor(queue2, clamped).selectedGame?.appId)
+    }
+
+    @Test
+    fun firstGameRemoved_clampsToTheNewFirstGame() {
+        val queue2 = queue(
+            game(2, HltbMatchStatus.NEEDS_REVIEW),
+            game(3, HltbMatchStatus.NEEDS_REVIEW),
+        )
+        val clamped = deriveViewModelSelection(MatchCenterSelection(index = 0, persistedAppId = 1L), queue2)
+
+        assertEquals(0, clamped.index)
+        assertEquals(2L, clamped.persistedAppId)
+    }
+
+    @Test
+    fun emptyQueue_clearsSelectionEvenFromARemovedPosition() {
+        val selection = deriveViewModelSelection(MatchCenterSelection(index = 4, persistedAppId = 2L), emptyList())
 
         assertEquals(0, selection.index)
         assertNull(selection.persistedAppId)
@@ -84,11 +141,11 @@ class HltbMatchCenterSelectionTest {
             game(2, HltbMatchStatus.UNMATCHED),
         )
 
-        val fromNull = resolveMatchCenterSelection(selectedAppId = null, games = games)
+        val fromNull = deriveViewModelSelection(MatchCenterSelection(0, null), games)
         assertEquals(0, fromNull.index)
         assertEquals(1L, fromNull.persistedAppId)
 
-        val fromUnknown = resolveMatchCenterSelection(selectedAppId = 99L, games = games)
+        val fromUnknown = deriveViewModelSelection(MatchCenterSelection(index = 0, persistedAppId = 99L), games)
         assertEquals(0, fromUnknown.index)
         assertEquals(1L, fromUnknown.persistedAppId)
     }
@@ -99,12 +156,8 @@ class HltbMatchCenterSelectionTest {
             game(1, HltbMatchStatus.NEEDS_REVIEW),
             game(2, HltbMatchStatus.UNMATCHED),
         )
-        val selection = resolveMatchCenterSelection(selectedAppId = 2L, games = games)
-        val state = HltbMatchCenterUiState(
-            ambiguous = games.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW },
-            unmatched = games.filter { it.matchStatus == HltbMatchStatus.UNMATCHED },
-            selectedIndex = selection.index,
-        )
+        val selection = deriveViewModelSelection(MatchCenterSelection(index = 1, persistedAppId = 2L), games)
+        val state = stateFor(games, selection)
 
         assertEquals(2L, state.selectedGame?.appId)
         assertEquals(2, state.currentPosition)

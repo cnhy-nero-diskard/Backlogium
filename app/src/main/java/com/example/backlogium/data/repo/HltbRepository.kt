@@ -111,7 +111,10 @@ class HltbRepository @Inject constructor(
      * Runs variants sequentially with the fixed inter-request delay, reuses the HLTB
      * data-source session, merges and scores against the original title, and persists
      * successful results as NEEDS_REVIEW without changing the original fetch timestamp.
-     * On exhausted search or failure the UNMATCHED row is preserved.
+     * The persist step re-checks eligibility atomically at commit time, so a row resolved
+     * or rewritten while the requests were in flight is left untouched and the stale
+     * result is discarded as [BroaderResult.NotEligible]. On exhausted search or failure
+     * the UNMATCHED row is preserved.
      */
     suspend fun searchBroaderCandidates(appId: Long, originalName: String): BroaderResult {
         val existing = hltbDataDao.getByAppId(appId) ?: return BroaderResult.NotEligible
@@ -143,15 +146,17 @@ class HltbRepository @Inject constructor(
         if (collected.isNotEmpty()) {
             val deduped = HltbMatcher.deduplicateBroader(collected)
             val scoredFinal = deduped.sortedByDescending { it.confidence }
-            // Persist as NEEDS_REVIEW preserving fetchedAt
-            val updated = HltbData(
+            // Commit-time eligibility re-check, atomic with the write: a manual resolution or a
+            // refresh/dataset write can land while the broader requests are in flight, and this
+            // call's stale snapshot must never overwrite that newer state (e.g. demote a RESOLVED
+            // row back to NEEDS_REVIEW). The conditional update touches only matchStatus and
+            // candidatesJson, so fetchedAt and origin are preserved; 0 updated rows means the row
+            // is no longer UNMATCHED and the stale result is discarded.
+            val updated = hltbDataDao.markNeedsReviewWithBroaderCandidates(
                 appId = appId,
-                fetchedAt = existing.fetchedAt,
-                matchStatus = HltbMatchStatus.NEEDS_REVIEW,
                 candidatesJson = json.encodeToString(CANDIDATE_LIST_SERIALIZER, scoredFinal),
-                origin = existing.origin,
             )
-            hltbDataDao.upsert(updated)
+            if (updated == 0) return BroaderResult.NotEligible
             return BroaderResult.Success(scoredFinal)
         }
 
