@@ -48,6 +48,17 @@ data class HltbPickerUiState(
     val failed: Boolean = false,
 )
 
+/** Transient manual-link state for the inline picker footer. */
+data class PickerManualLinkUiState(
+    val input: String = "",
+    val validationError: String? = null,
+    val loading: Boolean = false,
+    val preview: HltbCandidate? = null,
+    val notFound: Boolean = false,
+    val failed: Boolean = false,
+    val failureClass: com.example.backlogium.data.hltb.HltbFailureClass? = null,
+)
+
 data class GoalGameUi(
     override val appId: Long,
     override val name: String,
@@ -134,6 +145,7 @@ data class LibraryUiState(
     val reviewCount: Int = 0,
     val hltbCandidatesByAppId: Map<Long, List<HltbCandidate>> = emptyMap(),
     val pickerStates: Map<Long, HltbPickerUiState> = emptyMap(),
+    val pickerManualLinkStates: Map<Long, PickerManualLinkUiState> = emptyMap(),
     val refreshing: Boolean = false,
     val query: String = "",
     val focusSort: LibrarySortKey = LibrarySortKey.NAME,
@@ -179,6 +191,8 @@ class LibraryViewModel @Inject constructor(
     private val fetchOps = MutableStateFlow<Map<Long, HltbFetchOp>>(emptyMap())
     private val pickerStates = MutableStateFlow<Map<Long, HltbPickerUiState>>(emptyMap())
     private val pickerJobs = mutableMapOf<Long, Job>()
+    private val pickerManualLinkStates = MutableStateFlow<Map<Long, PickerManualLinkUiState>>(emptyMap())
+    private val pickerManualLinkJobs = mutableMapOf<Long, Job>()
 
     /** Name filter. Applied in memory: the library is already loaded, so no query per keystroke. */
     private val query = MutableStateFlow("")
@@ -228,14 +242,20 @@ class LibraryViewModel @Inject constructor(
         settings.ruleConfig,
     ) { tracked, rarity, cfg -> XpInputs(tracked, rarity, cfg) }
 
+    private val pickerCombined = combine(pickerStates, pickerManualLinkStates) { picker, manual ->
+        picker to manual
+    }
+
     private val viewPrefs = combine(
-        combine(query, selection, fetchOps, pickerStates, settings.librarySort) {
-                query, selection, ops, pickerStates, sort ->
+        combine(query, selection, fetchOps, pickerCombined, settings.librarySort) {
+                query, selection, ops, pickerPair, sort ->
+            val (pickerStates, manualLinkStates) = pickerPair
             ViewPrefs(
                 query = query,
                 selection = selection,
                 ops = ops,
                 pickerStates = pickerStates,
+                pickerManualLinkStates = manualLinkStates,
                 sort = sort,
                 density = GameListDensity.LIST,
             )
@@ -274,6 +294,7 @@ class LibraryViewModel @Inject constructor(
             reviewCount = content.reviewCount,
             hltbCandidatesByAppId = content.hltbCandidatesByAppId,
             pickerStates = view.pickerStates,
+            pickerManualLinkStates = view.pickerManualLinkStates,
             refreshing = lookup.running,
             query = view.query,
             focusSort = view.sort.focus,
@@ -413,6 +434,65 @@ class LibraryViewModel @Inject constructor(
     fun clearPicker(appId: Long) {
         pickerJobs.remove(appId)?.cancel()
         pickerStates.update { it - appId }
+        clearPickerManualLink(appId)
+    }
+
+    fun updatePickerManualLinkInput(appId: Long, input: String) {
+        pickerManualLinkStates.update { map ->
+            val existing = map[appId] ?: PickerManualLinkUiState()
+            map + (appId to existing.copy(input = input, validationError = null, notFound = false, failed = false, preview = null))
+        }
+    }
+
+    fun previewPickerManualLink(appId: Long) {
+        if (pickerManualLinkJobs[appId]?.isActive == true) return
+        val state = pickerManualLinkStates.value[appId] ?: PickerManualLinkUiState()
+        if (state.loading) return
+        val input = state.input.trim()
+        if (input.isEmpty()) {
+            pickerManualLinkStates.update { it + (appId to state.copy(validationError = "Enter an HLTB link")) }
+            return
+        }
+        pickerManualLinkStates.update { it + (appId to state.copy(loading = true, validationError = null, notFound = false, failed = false, preview = null)) }
+        val job = viewModelScope.launch {
+            when (val result = hltbRepository.previewLinkedCandidate(input)) {
+                is com.example.backlogium.data.repo.ManualLinkPreviewResult.Preview -> {
+                    pickerManualLinkStates.update { it + (appId to state.copy(loading = false, preview = result.candidate)) }
+                }
+                is com.example.backlogium.data.repo.ManualLinkPreviewResult.Invalid -> {
+                    pickerManualLinkStates.update { it + (appId to state.copy(loading = false, validationError = "Invalid HLTB link: ${result.reason}")) }
+                }
+                is com.example.backlogium.data.repo.ManualLinkPreviewResult.NotFound -> {
+                    pickerManualLinkStates.update { it + (appId to state.copy(loading = false, notFound = true)) }
+                }
+                is com.example.backlogium.data.repo.ManualLinkPreviewResult.Failed -> {
+                    pickerManualLinkStates.update { it + (appId to state.copy(loading = false, failed = true, failureClass = result.failureClass)) }
+                }
+            }
+        }
+        pickerManualLinkJobs[appId] = job
+        job.invokeOnCompletion { if (pickerManualLinkJobs[appId] === job) pickerManualLinkJobs.remove(appId) }
+    }
+
+    fun dismissPickerManualLinkPreview(appId: Long) {
+        pickerManualLinkJobs[appId]?.cancel()
+        pickerManualLinkJobs.remove(appId)
+        pickerManualLinkStates.update { map ->
+            val existing = map[appId] ?: return@update map
+            map + (appId to existing.copy(preview = null, loading = false, notFound = false, failed = false, validationError = null))
+        }
+    }
+
+    fun clearPickerManualLink(appId: Long) {
+        pickerManualLinkJobs[appId]?.cancel()
+        pickerManualLinkJobs.remove(appId)
+        pickerManualLinkStates.update { it - appId }
+    }
+
+    fun confirmPickerManualLink(appId: Long) = viewModelScope.launch {
+        val preview = pickerManualLinkStates.value[appId]?.preview ?: return@launch
+        hltbRepository.resolveMatch(appId, preview)
+        clearPicker(appId)
     }
 
     /** Stop a running selection lookup. Every game already processed keeps its data. */
@@ -448,6 +528,7 @@ private data class ViewPrefs(
     val selection: Set<Long>,
     val ops: Map<Long, HltbFetchOp>,
     val pickerStates: Map<Long, HltbPickerUiState>,
+    val pickerManualLinkStates: Map<Long, PickerManualLinkUiState> = emptyMap(),
     val sort: LibrarySortPrefs,
     val density: GameListDensity,
 )

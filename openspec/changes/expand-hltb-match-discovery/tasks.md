@@ -35,25 +35,25 @@
 - [x] 5.1 Replace review-only view-model state with match-center state containing ambiguous and unmatched games joined to Steam name/icon/artwork, selected position, candidates, and per-game rescue operations.
 - [x] 5.2 Add next/previous or equivalent selection navigation with stable behavior when resolving a game removes it from the actionable set.
 - [x] 5.3 Add independent transient states for broader-search loading/failure/exhaustion and manual-link input/validation/loading/preview/failure, guarding duplicate operations per game.
-- [ ] 5.4 Keep the HLTB match-center menu item available even with no ambiguous rows, and show its badge only for `NEEDS_REVIEW` games.
+- [x] 5.4 Keep the HLTB match-center menu item available even with no ambiguous rows, and show its badge only for `NEEDS_REVIEW` games.
 - [ ] 5.5 Add view-model/navigation tests for unmatched-only access, empty state, badge count, selected-game removal, operation cancellation, and state preservation across candidate updates.
 
 ## 6. Candidate card and Steam header UI
 
-- [ ] 6.1 Add a Steam-game review header with icon or artwork, Steam title, current match state, current-versus-total position, and a non-mutating external Steam Store action.
-- [ ] 6.2 Add adaptive HLTB candidate cards with larger cover art, themed fixed-geometry fallback, name, available Main/Main + Extras/Completionist/All Styles lengths, provenance/confidence guidance, and an explicit `Use match` action.
-- [ ] 6.3 Add a separate external HLTB action to each candidate card and prove its click target cannot invoke match selection.
-- [ ] 6.4 Build the responsive candidate grid with one readable column on narrow widths and additional minimum-width columns on wider devices, preserving scrolling for every candidate.
-- [ ] 6.5 Share route builders, length formatting, image fallback, accessibility descriptions, and selection semantics with the existing inline picker without forcing the grid layout into its bottom sheet.
+- [x] 6.1 Add a Steam-game review header with icon or artwork, Steam title, current match state, current-versus-total position, and a non-mutating external Steam Store action.
+- [x] 6.2 Add adaptive HLTB candidate cards with larger cover art, themed fixed-geometry fallback, name, available Main/Main + Extras/Completionist/All Styles lengths, provenance/confidence guidance, and an explicit `Use match` action.
+- [x] 6.3 Add a separate external HLTB action to each candidate card and prove its click target cannot invoke match selection.
+- [x] 6.4 Build the responsive candidate grid with one readable column on narrow widths and additional minimum-width columns on wider devices, preserving scrolling for every candidate.
+- [x] 6.5 Share route builders, length formatting, image fallback, accessibility descriptions, and selection semantics with the existing inline picker without forcing the grid layout into its bottom sheet.
 - [ ] 6.6 Add Compose tests for Steam-header separation, all available/absent length combinations, cover failure, adaptive column behavior, external-link isolation, candidate selection, game navigation, and accessibility labels.
 
 ## 7. Broader-search and manual-link UI
 
-- [ ] 7.1 Add `Try broader search` only to unmatched-game management and match-center states, with explanatory copy and distinct loading, failed, exhausted, and candidates-found presentations.
-- [ ] 7.2 Move a game from unmatched rescue into candidate review immediately after broader results are persisted, labeling the results as requiring manual verification.
-- [ ] 7.3 Add manual HLTB link entry to unmatched and needs-review match-center states and as a last-resort footer in the inline change-match picker.
-- [ ] 7.4 Add field-level invalid-link feedback, direct-lookup progress, distinct not-found/transport/parse failures, and retry/correction behavior without dismissing useful prior candidates.
-- [ ] 7.5 Add the linked-candidate preview comparing the original Steam title with HLTB cover/title/all available lengths and separate `Confirm match` and dismiss actions.
+- [x] 7.1 Add `Try broader search` only to unmatched-game management and match-center states, with explanatory copy and distinct loading, failed, exhausted, and candidates-found presentations.
+- [x] 7.2 Move a game from unmatched rescue into candidate review immediately after broader results are persisted, labeling the results as requiring manual verification.
+- [x] 7.3 Add manual HLTB link entry to unmatched and needs-review match-center states and as a last-resort footer in the inline change-match picker.
+- [x] 7.4 Add field-level invalid-link feedback, direct-lookup progress, distinct not-found/transport/parse failures, and retry/correction behavior without dismissing useful prior candidates.
+- [x] 7.5 Add the linked-candidate preview comparing the original Steam title with HLTB cover/title/all available lengths and separate `Confirm match` and dismiss actions.
 - [ ] 7.6 Add Compose tests for rescue-action eligibility, duplicate-trigger blocking, exhausted versus failed copy, manual input validation, preview confirmation, preview dismissal, prior-match preservation, and inline-picker access.
 
 ## 8. Integration and validation

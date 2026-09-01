@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -322,12 +323,10 @@ fun LibraryScreen(
                             density = state.density,
                             onDensityChange = viewModel::setDensity,
                         )
-                        if (state.reviewCount > 0) {
-                            HltbReviewEntryPoint(
-                                reviewCount = state.reviewCount,
-                                onOpenReview = onOpenReview,
-                            )
-                        }
+                        HltbMatchCenterEntryPoint(
+                            reviewCount = state.reviewCount,
+                            onOpenReview = onOpenReview,
+                        )
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -497,11 +496,13 @@ fun LibraryScreen(
     pickerTarget?.let { target ->
         val retainedCandidates = state.hltbCandidatesByAppId[target.appId].orEmpty()
         val transient = state.pickerStates[target.appId]
+        val manualState = state.pickerManualLinkStates[target.appId] ?: PickerManualLinkUiState()
         HltbPickerSheet(
             gameName = target.name,
             candidates = transient?.candidates ?: retainedCandidates,
             loading = transient?.loading == true,
             failed = transient?.failed == true,
+            manualState = manualState,
             onDismiss = {
                 viewModel.clearPicker(target.appId)
                 pickerTarget = null
@@ -509,6 +510,13 @@ fun LibraryScreen(
             onSelect = { candidate ->
                 viewModel.resolveMatch(target.appId, candidate)
                 viewModel.clearPicker(target.appId)
+                pickerTarget = null
+            },
+            onManualInputChange = { viewModel.updatePickerManualLinkInput(target.appId, it) },
+            onManualPreview = { viewModel.previewPickerManualLink(target.appId) },
+            onManualDismissPreview = { viewModel.dismissPickerManualLinkPreview(target.appId) },
+            onManualConfirm = {
+                viewModel.confirmPickerManualLink(target.appId)
                 pickerTarget = null
             },
         )
@@ -543,6 +551,10 @@ fun LibraryScreen(
     }
 }
 
+/**
+ * Inline picker — retains list presentation but shares manual-link footer with the match center.
+ * The footer is always available as a last resort, with field-level validation and preview.
+ */
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
 private fun HltbPickerSheet(
@@ -550,8 +562,13 @@ private fun HltbPickerSheet(
     candidates: List<HltbCandidate>,
     loading: Boolean,
     failed: Boolean,
+    manualState: PickerManualLinkUiState,
     onDismiss: () -> Unit,
     onSelect: (HltbCandidate) -> Unit,
+    onManualInputChange: (String) -> Unit,
+    onManualPreview: () -> Unit,
+    onManualDismissPreview: () -> Unit,
+    onManualConfirm: () -> Unit,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -561,6 +578,7 @@ private fun HltbPickerSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 12.dp),
         ) {
             Text("Choose HowLongToBeat match", style = MaterialTheme.typography.titleLarge)
@@ -575,44 +593,25 @@ private fun HltbPickerSheet(
 
             when {
                 loading -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Looking up candidates…")
-                        }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Looking up candidates…")
                     }
+                    Spacer(Modifier.height(12.dp))
                 }
 
                 failed -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = "HowLongToBeat lookup failed. Try again from Change match.",
-                            color = MaterialTheme.colorScheme.error,
-                            textAlign = TextAlign.Center,
-                        )
-                    }
+                    Text(
+                        text = "HowLongToBeat lookup failed. Try again from Change match.",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(Modifier.height(12.dp))
                 }
 
                 candidates.isEmpty() -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text("No candidate matches found.")
-                    }
+                    Text("No candidate matches found.")
+                    Spacer(Modifier.height(12.dp))
                 }
 
                 else -> {
@@ -620,24 +619,80 @@ private fun HltbPickerSheet(
                         text = "Choose the correct entry:",
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                    ) {
-                        items(
-                            items = candidates,
-                            key = { candidate -> candidate.hltbId },
-                        ) { candidate ->
-                            HltbCandidateRow(
-                                candidate = candidate,
-                                enabled = !loading,
-                                onClick = { onSelect(candidate) },
-                            )
+                    Spacer(Modifier.height(4.dp))
+                    candidates.forEach { candidate ->
+                        HltbCandidateRow(
+                            candidate = candidate,
+                            enabled = !loading,
+                            onClick = { onSelect(candidate) },
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
+            }
+
+            // Last-resort manual HLTB link footer — always available, never auto-resolves
+            androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            Text("Or paste an HLTB link", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Paste a HowLongToBeat game link (https://howlongtobeat.com/game/{id}) if search found nothing.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = manualState.input,
+                onValueChange = onManualInputChange,
+                label = { Text("HLTB game link") },
+                placeholder = { Text("https://howlongtobeat.com/game/12345") },
+                isError = manualState.validationError != null,
+                supportingText = manualState.validationError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            if (manualState.loading) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Loading HLTB entry…", style = MaterialTheme.typography.bodySmall)
+                }
+            } else {
+                Button(onClick = onManualPreview, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                    Text("Preview link")
+                }
+            }
+            if (manualState.notFound) {
+                Text("HLTB page not found for that link.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+            }
+            if (manualState.failed) {
+                Text(
+                    "Lookup failed (${manualState.failureClass?.name?.lowercase() ?: "transport"}). Correct the link and retry — your existing match is untouched.",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            manualState.preview?.let { preview ->
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Preview — verify before confirming:", style = MaterialTheme.typography.labelMedium)
+                        Text("Steam: $gameName", style = MaterialTheme.typography.bodySmall)
+                        HltbCandidateRow(candidate = preview, onClick = {})
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Button(onClick = onManualConfirm, modifier = Modifier.weight(1f)) { Text("Confirm match") }
+                            OutlinedButton(onClick = onManualDismissPreview, modifier = Modifier.weight(1f)) { Text("Dismiss") }
                         }
                     }
                 }
             }
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
@@ -747,22 +802,33 @@ internal fun <T> List<T>.filterByHltbCoverage(
 }
 
 /**
- * Entry point into the match-review surface, shown only while at least one game is flagged as
- * needing review. There is no other control in this menu any more: the whole-library sweep this
- * button used to also trigger is gone, so a standing icon with nothing to open would only be
- * confusing when [reviewCount] is zero.
+ * Always-accessible entry point into the HLTB match center. The attention badge counts only
+ * ambiguous (`NEEDS_REVIEW`) games, while unmatched games remain discoverable without inflating
+ * the badge — per `hltb-data` / `app-ui` spec.
  */
 @Composable
-private fun HltbReviewEntryPoint(reviewCount: Int, onOpenReview: () -> Unit) {
+private fun HltbMatchCenterEntryPoint(reviewCount: Int, onOpenReview: () -> Unit) {
     IconButton(onClick = onOpenReview) {
-        BadgedBox(badge = { Badge { Text(reviewCount.toString()) } }) {
+        if (reviewCount > 0) {
+            BadgedBox(badge = { Badge { Text(reviewCount.toString()) } }) {
+                Icon(
+                    imageVector = TablerIcons.Clock,
+                    contentDescription = "HLTB match center ($reviewCount awaiting review)",
+                )
+            }
+        } else {
             Icon(
                 imageVector = TablerIcons.Clock,
-                contentDescription = "Review HowLongToBeat matches ($reviewCount)",
+                contentDescription = "HLTB match center",
             )
         }
     }
 }
+
+@Deprecated("Use HltbMatchCenterEntryPoint")
+@Composable
+private fun HltbReviewEntryPoint(reviewCount: Int, onOpenReview: () -> Unit) =
+    HltbMatchCenterEntryPoint(reviewCount, onOpenReview)
 
 /**
  * Live state of a running explicit-selection lookup: how far it has got, and what each processed
