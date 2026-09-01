@@ -236,19 +236,27 @@ class HltbReviewViewModel @Inject constructor(
         }
         manualLinkStates.update { it + (appId to state.copy(loading = true, validationError = null, notFound = false, failed = false, preview = null)) }
         val job = viewModelScope.launch {
-            when (val result = hltbRepository.previewLinkedCandidate(input)) {
+            // Resolve into the *latest* entry, never the snapshot taken before launch, and drop a
+            // result whose submitted input was since edited (clearing loading so the new input
+            // can be previewed) — a stale preview must never overwrite newer user input.
+            val resolved: (ManualLinkUiState) -> ManualLinkUiState = when (val result = hltbRepository.previewLinkedCandidate(input)) {
                 is ManualLinkPreviewResult.Preview -> {
-                    manualLinkStates.update { it + (appId to state.copy(loading = false, preview = result.candidate)) }
+                    { it.copy(loading = false, preview = result.candidate) }
                 }
                 is ManualLinkPreviewResult.Invalid -> {
-                    manualLinkStates.update { it + (appId to state.copy(loading = false, validationError = "Invalid HLTB link: ${result.reason}")) }
+                    { it.copy(loading = false, validationError = "Invalid HLTB link: ${result.reason}") }
                 }
                 is ManualLinkPreviewResult.NotFound -> {
-                    manualLinkStates.update { it + (appId to state.copy(loading = false, notFound = true)) }
+                    { it.copy(loading = false, notFound = true) }
                 }
                 is ManualLinkPreviewResult.Failed -> {
-                    manualLinkStates.update { it + (appId to state.copy(loading = false, failed = true, failureClass = result.failureClass)) }
+                    { it.copy(loading = false, failed = true, failureClass = result.failureClass) }
                 }
+            }
+            manualLinkStates.update { map ->
+                val current = map[appId] ?: return@update map
+                val next = if (current.input.trim() == input) resolved(current) else current.copy(loading = false)
+                map + (appId to next)
             }
         }
         manualLinkJobs[appId] = job

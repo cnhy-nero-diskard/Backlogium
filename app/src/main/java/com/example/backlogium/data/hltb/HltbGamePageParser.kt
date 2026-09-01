@@ -130,7 +130,11 @@ object HltbGamePageParser {
             ?: obj["game_id"]?.jsonPrimitive?.content?.toLongOrNull()
             ?: return ParseResult.ParseFailure("missing game_id")
         if (gameId <= 0) return ParseResult.ParseFailure("non-positive game_id")
-        // The requestedId is used only for URL construction; parsed id is authoritative
+        // Reject a mismatch: the transport follows redirects by default, so the fetched page can
+        // describe a different entry than the requested one. The requested id must win.
+        if (gameId != requestedId) {
+            return ParseResult.ParseFailure("game id mismatch: requested $requestedId, page contains $gameId")
+        }
         val name = obj["game_name"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
             ?: obj["gameName"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
             ?: return ParseResult.ParseFailure("missing game_name")
@@ -164,6 +168,11 @@ object HltbGamePageParser {
         val id = GAME_ID_REGEX.find(html)?.groupValues?.getOrNull(1)?.toLongOrNull()
             ?: return ParseResult.ParseFailure("game_id not found via regex")
         if (id <= 0) return ParseResult.ParseFailure("non-positive game_id regex")
+        // Same redirect/mismatch guard as the structured path: a page describing another
+        // entry must never preview or resolve as the requested id.
+        if (id != requestedId) {
+            return ParseResult.ParseFailure("game id mismatch via regex: requested $requestedId, page contains $id")
+        }
         val nameRaw = GAME_NAME_REGEX.find(html)?.groupValues?.getOrNull(1) ?: return ParseResult.ParseFailure("game_name missing")
         val name = unescapeJsonString(nameRaw).trim()
         if (name.isEmpty()) return ParseResult.ParseFailure("empty game_name")

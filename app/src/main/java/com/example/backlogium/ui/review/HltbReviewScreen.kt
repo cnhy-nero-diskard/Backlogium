@@ -2,18 +2,15 @@ package com.example.backlogium.ui.review
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -33,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -114,10 +112,10 @@ fun HltbReviewScreen(viewModel: HltbReviewViewModel = hiltViewModel()) {
                 },
                 style = MaterialTheme.typography.bodySmall,
             )
-            // Adaptive grid: one column on narrow widths, additional minimum-width columns on wider
-            // devices. Uses GridCells.Adaptive(minSize) to let the system choose column count.
-            // We embed the grid via height estimation; to keep every candidate reachable by scrolling,
-            // the parent Column is scrollable and the grid is not independently scrollable.
+            // Adaptive grid: one column on narrow widths, additional minimum-width columns on
+            // wider devices. Column count comes from adaptiveColumnCount (GridCells.Adaptive
+            // semantics); the non-lazy grid lives inside the screen's single vertical scroll so
+            // every candidate stays reachable.
             AdaptiveCandidateGrid(
                 candidates = selected.candidates,
                 onSelect = { candidate -> viewModel.resolve(selected.appId, candidate) },
@@ -157,44 +155,40 @@ private fun AdaptiveCandidateGrid(
     onSelect: (com.example.backlogium.data.hltb.HltbCandidate) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Use a non-lazy column of cards for simplicity and to preserve scrolling for every candidate
-    // Adaptive behavior is approximated via width-aware column count would require BoxWithConstraints.
-    // For instrumentation we expose the grid via LazyVerticalGrid with adaptive cells in a fixed-height
-    // companion — the visual result is one column on narrow ( <600dp) and two+ on wider.
-    // Here we render as a vertical list that wraps to adaptive columns on tablet: we use
-    // LazyVerticalGrid with Adaptive(280.dp) and a constrained height that still scrolls via parent.
-    // To avoid nested scrolling issues, we render cards in a Column and rely on adaptive width via
-    // Modifier — simpler and still passes the column-count contract via BoxWithConstraints check in tests.
-
-    // Simplified: just emit cards vertically; adaptive test will verify GridCells.Adaptive usage
-    // via a dedicated composable used for instrumentation. Real layout uses GridCells.Adaptive.
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = modifier) {
-        candidates.forEach { candidate ->
-            HltbCandidateCard(
-                candidate = candidate,
-                onSelect = { onSelect(candidate) },
-            )
+    // Non-lazy adaptive grid: computes the column count from the available width (one column on
+    // narrow viewports, additional minimum-width columns on wider ones) and lays cards out
+    // row-wise inside the screen's outer vertical scroll, so every candidate stays reachable
+    // without a nested scrolling container or a fixed-height estimate.
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val columnCount = adaptiveColumnCount(maxWidth)
+        val rows = candidates.chunked(columnCount)
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            rows.forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    row.forEach { candidate ->
+                        HltbCandidateCard(
+                            candidate = candidate,
+                            onSelect = { onSelect(candidate) },
+                            // Fill its grid cell; the column count itself is adaptive.
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
-/** Visible adaptive grid used for instrumentation: proves GridCells.Adaptive behavior. */
-@Composable
-fun AdaptiveCandidateGridForTest(
-    candidates: List<com.example.backlogium.data.hltb.HltbCandidate>,
-    onSelect: (com.example.backlogium.data.hltb.HltbCandidate) -> Unit,
-) {
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 280.dp),
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        items(candidates, key = { it.hltbId }) { candidate ->
-            HltbCandidateCard(candidate = candidate, onSelect = { onSelect(candidate) })
-        }
-    }
-}
+/**
+ * Adaptive column count for the candidate grid, matching `GridCells.Adaptive(280.dp)` semantics:
+ * as many 280dp-minimum columns as the available width supports, and never fewer than one.
+ * Exposed (non-private) so unit tests can verify the production adaptive behavior directly.
+ */
+internal fun adaptiveColumnCount(availableWidthDp: Dp): Int =
+    (availableWidthDp / 280.dp).toInt().coerceAtLeast(1)
 
 @Composable
 private fun BroaderSearchSection(
@@ -301,8 +295,9 @@ private fun ManualHltbLinkSection(
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Preview — compare with Steam title:", style = MaterialTheme.typography.labelMedium)
                         Text("Steam: $gameName", style = MaterialTheme.typography.bodySmall)
-                        HltbCandidateCard(candidate = preview, onSelect = {})
-                        // Override the inner card's Use match; use explicit Confirm match instead
+                        HltbCandidateCard(candidate = preview, onSelect = {}, showSelectionButton = false)
+                        // Preview presentation only: no selection button on the card; the explicit
+                        // Confirm match / Dismiss actions below are the only commit path.
                         Text("HLTB: ${preview.name}", style = MaterialTheme.typography.bodyMedium)
                         HltbLengthsRow(preview)
                         Row(

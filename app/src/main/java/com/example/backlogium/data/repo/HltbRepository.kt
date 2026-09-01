@@ -122,13 +122,11 @@ class HltbRepository @Inject constructor(
 
         val collected = mutableListOf<HltbCandidate>()
         var lastFailure: HltbFailureClass? = null
-        var hadSuccess = false
 
         variants.forEachIndexed { index, query ->
             if (index > 0) delay(INTER_REQUEST_DELAY_MS)
             try {
                 val raw = dataSource.search(query)
-                hadSuccess = true
                 if (raw.isNotEmpty()) {
                     // Score against original title, mark as BROADER_SEARCH
                     val scored = HltbMatcher.scoredBroader(originalName, raw)
@@ -157,11 +155,14 @@ class HltbRepository @Inject constructor(
             return BroaderResult.Success(scoredFinal)
         }
 
-        // No candidates found
-        return if (hadSuccess) {
+        // No candidates found: exhausted only when every broader query completed
+        // successfully without candidates; any failure means the search did not
+        // actually cover every variant, so it surfaces as Failed instead.
+        val failure = lastFailure
+        return if (failure == null) {
             BroaderResult.Exhausted
         } else {
-            BroaderResult.Failed(lastFailure ?: HltbFailureClass.TRANSPORT)
+            BroaderResult.Failed(failure)
         }
     }
 

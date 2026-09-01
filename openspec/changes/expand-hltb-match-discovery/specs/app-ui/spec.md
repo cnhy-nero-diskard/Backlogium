@@ -140,10 +140,6 @@ games remain discoverable in the destination without inflating that badge.
 - **WHEN** the user opens the match-review surface and no games are flagged
 - **THEN** the surface indicates there is nothing to review
 
-#### Scenario: Entry point hidden when nothing is flagged
-- **WHEN** no games are flagged as needing review
-- **THEN** no entry point to the match-review surface is presented
-
 #### Scenario: Entry point shown with a count
 - **WHEN** one or more games are flagged as needing review
 - **THEN** the entry point is presented and indicates how many games are awaiting review

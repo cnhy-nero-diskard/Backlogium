@@ -92,6 +92,31 @@ class HltbBroaderRepositoryTest {
     }
 
     @Test
+    fun broaderSearch_failed_whenMixedSuccessEmptyAndFailure() = runTest {
+        // Regression: some variants succeed empty, one fails. Exhausted requires *every*
+        // broader query to complete without candidates, so a single failure must surface
+        // as Failed, not Exhausted.
+        val dao = FakeDao(initial = listOf(HltbData(appId = 1L, fetchedAt = 1000L, matchStatus = HltbMatchStatus.UNMATCHED)))
+        var calls = 0
+        val repo = repoWith(
+            dao = dao,
+            dataSource = object : HltbDataSource {
+                override suspend fun search(name: String): List<HltbCandidate> {
+                    calls += 1
+                    if (calls == 2) throw IOException("transport blip on second variant")
+                    return emptyList()
+                }
+                override suspend fun lookupById(hltbId: Long): HltbDirectLookupResult = HltbDirectLookupResult.NotFound
+            },
+        )
+        val result = repo.searchBroaderCandidates(1L, "The Elder Scrolls V: Skyrim Definitive Edition")
+        assertTrue(calls >= 2)
+        assertTrue(result is BroaderResult.Failed)
+        assertEquals(HltbFailureClass.TRANSPORT, (result as BroaderResult.Failed).failureClass)
+        assertEquals(HltbMatchStatus.UNMATCHED, dao.getByAppId(1L)!!.matchStatus)
+    }
+
+    @Test
     fun manualLinkPreview_validReturnsManualLinkCandidate() = runTest {
         val repo = repoWith(
             dataSource = object : HltbDataSource {
