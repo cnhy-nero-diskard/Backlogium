@@ -49,7 +49,7 @@ object HltbQueryGenerator {
     private val LEADING_ARTICLE_REGEX = Regex("""^(?i)(the|a|an)\s+""")
 
     private val TRAILING_ARABIC_REGEX = Regex("""^(.*\D)(\d+)\s*$""")
-    private val TRAILING_ROMAN_REGEX = Regex("""^(.*\D)([IVXLCDM]+)\s*$""", RegexOption.IGNORE_CASE)
+    private val TRAILING_ROMAN_REGEX = Regex("""^(.*\s)([IVXLCDM]+)\s*$""", RegexOption.IGNORE_CASE)
 
     private val ROMAN_TO_ARABIC = mapOf(
         "I" to 1, "II" to 2, "III" to 3, "IV" to 4, "V" to 5,

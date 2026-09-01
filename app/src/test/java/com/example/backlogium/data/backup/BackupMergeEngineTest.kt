@@ -1044,6 +1044,8 @@ private class FakeHltbDataDao(private val store: MutableMap<Long, HltbData>) : H
     override fun observeAllWithDataset(): Flow<List<HltbData>> = flowOf(store.values.toList())
     override suspend fun getAllWithDataset(): List<HltbData> = store.values.toList()
     override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(emptyList())
+    override fun observeMatchCenter(): Flow<List<HltbData>> = flowOf(emptyList())
+    override suspend fun getMatchCenter(): List<HltbData> = emptyList()
 }
 
 private class FakeAchievementDao(private val store: MutableList<Achievement>) : AchievementDao {

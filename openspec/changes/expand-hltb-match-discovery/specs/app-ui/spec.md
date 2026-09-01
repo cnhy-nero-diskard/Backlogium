@@ -136,6 +136,22 @@ games remain discoverable in the destination without inflating that badge.
 - **THEN** the match-center entry remains available
 - **AND** the attention badge is absent or zero while unmatched games remain reachable for rescue
 
+#### Scenario: No games need review
+- **WHEN** the user opens the match-review surface and no games are flagged
+- **THEN** the surface indicates there is nothing to review
+
+#### Scenario: Entry point hidden when nothing is flagged
+- **WHEN** no games are flagged as needing review
+- **THEN** no entry point to the match-review surface is presented
+
+#### Scenario: Entry point shown with a count
+- **WHEN** one or more games are flagged as needing review
+- **THEN** the entry point is presented and indicates how many games are awaiting review
+
+#### Scenario: A dataset resolves a flagged game
+- **WHEN** an applied dataset resolves a game that was flagged for review
+- **THEN** the game leaves the review list and the entry point's count reflects its departure
+
 #### Scenario: No games need review or rescue
 - **WHEN** the user opens the match center and no game is flagged or unmatched
 - **THEN** the surface indicates there is nothing to review or rescue
