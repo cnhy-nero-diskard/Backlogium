@@ -161,19 +161,18 @@ private fun AdaptiveCandidateGrid(
     // without a nested scrolling container or a fixed-height estimate.
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val columnCount = adaptiveColumnCount(maxWidth)
+        // Every cell keeps the same geometry whether or not its row fills, so a partially
+        // filled final row does not stretch its cards to full-row width.
+        val cellWidth = (maxWidth - CandidateGridSpacing * (columnCount - 1)) / columnCount
         val rows = candidates.chunked(columnCount)
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(CandidateGridSpacing)) {
             rows.forEach { row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(CandidateGridSpacing)) {
                     row.forEach { candidate ->
                         HltbCandidateCard(
                             candidate = candidate,
                             onSelect = { onSelect(candidate) },
-                            // Fill its grid cell; the column count itself is adaptive.
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.width(cellWidth),
                         )
                     }
                 }
@@ -182,13 +181,19 @@ private fun AdaptiveCandidateGrid(
     }
 }
 
+/** Gap between candidate-grid cells, shared by the layout and [adaptiveColumnCount]. */
+private val CandidateGridSpacing = 12.dp
+
 /**
- * Adaptive column count for the candidate grid, matching `GridCells.Adaptive(280.dp)` semantics:
- * as many 280dp-minimum columns as the available width supports, and never fewer than one.
+ * Adaptive column count for the candidate grid, matching `GridCells.Adaptive(280.dp)` semantics
+ * including the [CandidateGridSpacing] between columns: the largest count whose cells all keep
+ * their 280dp minimum (`n * 280 + (n - 1) * spacing <= available width`), and never fewer than one.
  * Exposed (non-private) so unit tests can verify the production adaptive behavior directly.
  */
-internal fun adaptiveColumnCount(availableWidthDp: Dp): Int =
-    (availableWidthDp / 280.dp).toInt().coerceAtLeast(1)
+internal fun adaptiveColumnCount(availableWidthDp: Dp): Int {
+    val slotWidth = 280.dp + CandidateGridSpacing
+    return ((availableWidthDp + CandidateGridSpacing) / slotWidth).toInt().coerceAtLeast(1)
+}
 
 @Composable
 private fun BroaderSearchSection(

@@ -60,6 +60,34 @@ data class ManualLinkUiState(
     val failureClass: HltbFailureClass? = null,
 )
 
+/**
+ * Match-center selection derived from the tracked game identity. [persistedAppId] is what the
+ * backing selection state must hold after this derivation: the tracked game while it is present,
+ * the clamped replacement (first game, or none for an empty queue) when it is not — so a selection
+ * that fell out of the queue cannot become active again when the queue later grows.
+ */
+internal data class MatchCenterSelection(
+    val index: Int,
+    val persistedAppId: Long?,
+)
+
+/**
+ * Derives the selected position from a game identity rather than a raw index: the queue reorders
+ * across partitions (`ambiguous` + `unmatched`) whenever a game's match status changes — e.g. a
+ * broader search moves the selected game from `unmatched` into `ambiguous` — so an index would
+ * silently follow a different game. Tracking by appId keeps the selection on the same game, and
+ * clamps to the first game when it is absent (resolved away, or not yet in the queue).
+ */
+internal fun resolveMatchCenterSelection(selectedAppId: Long?, games: List<MatchCenterGameUi>): MatchCenterSelection {
+    if (games.isEmpty()) return MatchCenterSelection(index = 0, persistedAppId = null)
+    val trackedIndex = games.indexOfFirst { it.appId == selectedAppId }
+    return if (trackedIndex >= 0) {
+        MatchCenterSelection(index = trackedIndex, persistedAppId = selectedAppId)
+    } else {
+        MatchCenterSelection(index = 0, persistedAppId = games.first().appId)
+    }
+}
+
 data class HltbMatchCenterUiState(
     val loading: Boolean = true,
     val ambiguous: List<MatchCenterGameUi> = emptyList(),
@@ -109,7 +137,10 @@ class HltbReviewViewModel @Inject constructor(
         initialValue = HltbReviewUiState(),
     )
 
-    private val selectedIndex = MutableStateFlow(0)
+    // Selection tracks the game's appId, not its index: the queue reorders across the
+    // ambiguous/unmatched partitions whenever a match status changes, so an index would
+    // silently follow a different game. See [resolveMatchCenterSelection].
+    private val selectedAppId = MutableStateFlow<Long?>(null)
     private val broaderStates = MutableStateFlow<Map<Long, BroaderSearchUiState>>(emptyMap())
     private val manualLinkStates = MutableStateFlow<Map<Long, ManualLinkUiState>>(emptyMap())
 
@@ -119,10 +150,10 @@ class HltbReviewViewModel @Inject constructor(
     val matchCenterState: StateFlow<HltbMatchCenterUiState> = combine(
         hltbRepository.matchCenterQueue,
         gameRepository.library,
-        selectedIndex,
+        selectedAppId,
         broaderStates,
         manualLinkStates,
-    ) { matchCenter, games, idx, broader, manual ->
+    ) { matchCenter, games, selectedId, broader, manual ->
         val infoByAppId = games.associate { it.appId to it }
         val all = matchCenter.map { entry ->
             val game = infoByAppId[entry.appId]
@@ -138,17 +169,16 @@ class HltbReviewViewModel @Inject constructor(
         }
         val ambiguous = all.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW }
         val unmatched = all.filter { it.matchStatus == HltbMatchStatus.UNMATCHED }
-        val total = all.size
-        val clampedIndex = when {
-            total == 0 -> 0
-            idx >= total -> (total - 1).coerceAtLeast(0)
-            else -> idx
-        }
+        val selection = resolveMatchCenterSelection(selectedId, all)
+        // Persist clamping back into the backing selection state so a selection that fell out
+        // of the queue (resolved away, or clamped) cannot become active again when the queue
+        // later grows. Guarded, so the write-back settles instead of re-triggering combine.
+        if (selectedAppId.value != selection.persistedAppId) selectedAppId.value = selection.persistedAppId
         HltbMatchCenterUiState(
             loading = false,
             ambiguous = ambiguous,
             unmatched = unmatched,
-            selectedIndex = clampedIndex,
+            selectedIndex = selection.index,
             broaderStates = broader,
             manualLinkStates = manual,
         )
@@ -159,36 +189,30 @@ class HltbReviewViewModel @Inject constructor(
     )
 
     fun selectNext() {
-        val total = matchCenterState.value.total
-        if (total == 0) return
-        selectedIndex.update { current ->
-            val clamped = current.coerceIn(0, total - 1)
-            if (clamped + 1 < total) clamped + 1 else clamped
-        }
+        val state = matchCenterState.value
+        if (state.total == 0) return
+        val target = (state.selectedIndex + 1).coerceAtMost(state.total - 1)
+        selectedAppId.value = state.allGames[target].appId
     }
 
     fun selectPrevious() {
-        val total = matchCenterState.value.total
-        if (total == 0) return
-        selectedIndex.update { current ->
-            val clamped = current.coerceIn(0, total - 1)
-            if (clamped > 0) clamped - 1 else clamped
-        }
+        val state = matchCenterState.value
+        if (state.total == 0) return
+        val target = (state.selectedIndex - 1).coerceAtLeast(0)
+        selectedAppId.value = state.allGames[target].appId
     }
 
     fun selectIndex(index: Int) {
-        val total = matchCenterState.value.total
-        if (total == 0) return
-        selectedIndex.value = index.coerceIn(0, total - 1)
+        val state = matchCenterState.value
+        if (state.total == 0) return
+        selectedAppId.value = state.allGames[index.coerceIn(0, state.total - 1)].appId
     }
 
     fun resolve(appId: Long, candidate: HltbCandidate) = viewModelScope.launch {
         hltbRepository.resolveMatch(appId, candidate)
-        // Selection stability: if the resolved game was selected, keep index at same position
-        // which now points to next game; if it was last, clamp to previous.
-        // The combine's clamping handles it; no extra adjust needed beyond ensuring the flow
-        // re-evaluates. But we proactively adjust if the selected game was the one resolved
-        // and it was the last item.
+        // Selection is tracked by appId (see matchCenterState): once the resolved game leaves the
+        // queue, the combine's clamping persists the replacement selection, so no index surgery
+        // is needed here.
     }
 
     fun startBroaderSearch(appId: Long, originalName: String) {
