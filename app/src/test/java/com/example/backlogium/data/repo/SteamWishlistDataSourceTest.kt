@@ -91,6 +91,19 @@ class SteamWishlistDataSourceTest {
         assertTrue("\"appid\":440" in api.lastStoreItemsInput.orEmpty())
     }
 
+    /**
+     * `include_basic_info` is what actually carries the `name` field on this endpoint — without
+     * it Steam answers `success:1` with assets attached but an empty name, and every entry falls
+     * back to its bare app id. Regression coverage for that exact failure mode.
+     */
+    @Test fun theStoreRequest_asksForBasicInfoSoNamesComeBack() = runBlocking {
+        val api = api(storeItems = STORE_ITEMS)
+
+        SteamWishlistDataSource(api).detailsFor(listOf(440), "PH")
+
+        assertTrue("\"include_basic_info\":true" in api.lastStoreItemsInput.orEmpty())
+    }
+
     private fun source(
         wishlist: String = NOT_READABLE,
         wishlistFailure: Throwable? = null,

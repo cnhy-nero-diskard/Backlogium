@@ -143,7 +143,12 @@ class SteamWishlistDataSource @Inject constructor(
                     },
                 ),
                 "data_request" to JsonObject(
-                    mapOf("include_assets" to JsonPrimitive(true)),
+                    mapOf(
+                        // Without this, Steam still answers success:1 with assets attached but an
+                        // empty name — the name field rides on basic_info, not on the base item.
+                        "include_basic_info" to JsonPrimitive(true),
+                        "include_assets" to JsonPrimitive(true),
+                    ),
                 ),
             ),
         )
