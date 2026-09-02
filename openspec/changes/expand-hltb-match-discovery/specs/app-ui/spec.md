@@ -144,6 +144,13 @@ games remain discoverable in the destination without inflating that badge.
 - **WHEN** one or more games are flagged as needing review
 - **THEN** the entry point is presented and indicates how many games are awaiting review
 
+#### Scenario: Entry point hidden when nothing is flagged
+- **WHEN** no games are flagged as needing review
+- **THEN** superseded by the always-accessible entry point: the match-center entry is no longer
+  hidden in this state — it remains available with no attention badge (see "Only unmatched games
+  exist" and "Match center entry has no attention items"), since an unmatched game may still need
+  rescue even when nothing is ambiguous
+
 #### Scenario: A dataset resolves a flagged game
 - **WHEN** an applied dataset resolves a game that was flagged for review
 - **THEN** the game leaves the review list and the entry point's count reflects its departure
