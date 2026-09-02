@@ -233,11 +233,28 @@ class HltbReviewViewModel @Inject constructor(
             MatchCenterSelection(index = target, persistedAppId = state.allGames[target].appId)
     }
 
-    fun resolve(appId: Long, candidate: HltbCandidate) = viewModelScope.launch {
+    /**
+     * Select a game by identity rather than position — used when the caller (e.g. a single-game
+     * lookup from the Library) already knows which game needs attention but not its position in
+     * the queue. The seeded index of 0 is only a fallback: [resolveMatchCenterSelection] re-derives
+     * the real position by [appId] once `matchCenterQueue` includes it, and only falls back to that
+     * seed if the game is never found there.
+     */
+    fun selectGame(appId: Long) {
+        trackedSelection.value = MatchCenterSelection(index = 0, persistedAppId = appId)
+    }
+
+    /**
+     * [onResolved] fires only after the match is persisted, never before — a caller that pops the
+     * back stack from it (leaving via a single-game deep link) must not risk cancelling this
+     * ViewModel's scope, and the write it owns, before `resolveMatch` returns.
+     */
+    fun resolve(appId: Long, candidate: HltbCandidate, onResolved: () -> Unit = {}) = viewModelScope.launch {
         hltbRepository.resolveMatch(appId, candidate)
         // Selection is tracked by appId (see matchCenterState): once the resolved game leaves the
         // queue, the combine's clamping persists the replacement selection, so no index surgery
         // is needed here.
+        onResolved()
     }
 
     fun startBroaderSearch(appId: Long, originalName: String) {
@@ -327,11 +344,13 @@ class HltbReviewViewModel @Inject constructor(
         manualLinkStates.update { it - appId }
     }
 
-    fun confirmManualLink(appId: Long) = viewModelScope.launch {
+    /** See [resolve] for why [onResolved] fires only after the match is persisted. */
+    fun confirmManualLink(appId: Long, onResolved: () -> Unit = {}) = viewModelScope.launch {
         val preview = manualLinkStates.value[appId]?.preview ?: return@launch
         hltbRepository.resolveMatch(appId, preview)
         clearManualLink(appId)
         // Also clear broader state for that game if present
         clearBroaderState(appId)
+        onResolved()
     }
 }

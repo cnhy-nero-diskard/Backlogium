@@ -23,6 +23,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,10 +44,25 @@ import com.example.backlogium.ui.components.HltbLengthsRow
  * HLTB match-center surface — one Steam game at a time with an adaptive candidate grid.
  * Presents Steam identity separately from HLTB candidates, with navigation between games,
  * broader-search rescue for unmatched games, and manual HLTB link entry.
+ *
+ * [initialAppId], when present, seeds the selection on entry — used when a caller (e.g. a
+ * single-game lookup from the Library) navigates here already knowing which game needs attention,
+ * so the user lands directly on it instead of the default first-in-queue game. Resolving *that*
+ * game (and only that game — browsing to a different one first does not) then calls [onDone],
+ * so a single-game deep link returns the user straight to where they came from instead of leaving
+ * them in a multi-game review surface they never asked to browse.
  */
 @Composable
-fun HltbReviewScreen(viewModel: HltbReviewViewModel = hiltViewModel()) {
+fun HltbReviewScreen(
+    initialAppId: Long? = null,
+    onDone: () -> Unit = {},
+    viewModel: HltbReviewViewModel = hiltViewModel(),
+) {
     val state by viewModel.matchCenterState.collectAsStateWithLifecycle()
+
+    LaunchedEffect(initialAppId) {
+        if (initialAppId != null) viewModel.selectGame(initialAppId)
+    }
 
     if (!state.loading && state.total == 0) {
         EmptyState(
@@ -118,7 +134,11 @@ fun HltbReviewScreen(viewModel: HltbReviewViewModel = hiltViewModel()) {
             // every candidate stays reachable.
             AdaptiveCandidateGrid(
                 candidates = selected.candidates,
-                onSelect = { candidate -> viewModel.resolve(selected.appId, candidate) },
+                onSelect = { candidate ->
+                    viewModel.resolve(selected.appId, candidate) {
+                        if (selected.appId == initialAppId) onDone()
+                    }
+                },
             )
             if (selected.candidates.any { it.source == com.example.backlogium.data.hltb.HltbCandidateSource.BROADER_SEARCH }) {
                 Text(
@@ -143,7 +163,11 @@ fun HltbReviewScreen(viewModel: HltbReviewViewModel = hiltViewModel()) {
             onInputChange = { viewModel.updateManualLinkInput(selected.appId, it) },
             onPreview = { viewModel.previewManualLink(selected.appId) },
             onDismissPreview = { viewModel.dismissManualLinkPreview(selected.appId) },
-            onConfirm = { viewModel.confirmManualLink(selected.appId) },
+            onConfirm = {
+                viewModel.confirmManualLink(selected.appId) {
+                    if (selected.appId == initialAppId) onDone()
+                }
+            },
             onClear = { viewModel.clearManualLink(selected.appId) },
         )
     }

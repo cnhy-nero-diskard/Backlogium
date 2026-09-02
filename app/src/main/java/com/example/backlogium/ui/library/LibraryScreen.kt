@@ -184,7 +184,7 @@ private fun LibraryEmptyNotice() {
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
 fun LibraryScreen(
-    onOpenReview: () -> Unit = {},
+    onOpenReview: (appId: Long?) -> Unit = {},
     onOpenGameDetail: (Long) -> Unit = {},
     viewModel: LibraryViewModel = hiltViewModel(),
     wishlistViewModel: WishlistViewModel = hiltViewModel(),
@@ -325,7 +325,7 @@ fun LibraryScreen(
                         )
                         HltbMatchCenterEntryPoint(
                             reviewCount = state.reviewCount,
-                            onOpenReview = onOpenReview,
+                            onOpenReview = { onOpenReview(null) },
                         )
                     }
                     Row(
@@ -479,7 +479,15 @@ fun LibraryScreen(
                 viewModel.untagGoal(target.appId)
                 dialogTarget = null
             },
-            onRefresh = { viewModel.refreshGame(target.appId, target.name) },
+            onRefresh = {
+                viewModel.refreshGame(target.appId, target.name) {
+                    // An ambiguous or no-match outcome needs the match center to resolve, not
+                    // this dialog's small inline picker — dismiss and land the user there
+                    // directly rather than requiring a separate trip through the clock icon.
+                    dialogTarget = null
+                    onOpenReview(target.appId)
+                }
+            },
             onChooseMatch = {
                 viewModel.clearPicker(target.appId)
                 pickerTarget = target

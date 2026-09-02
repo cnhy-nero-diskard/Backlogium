@@ -36,6 +36,8 @@
 - [x] 5.2 Add next/previous or equivalent selection navigation with stable behavior when resolving a game removes it from the actionable set.
 - [x] 5.3 Add independent transient states for broader-search loading/failure/exhaustion and manual-link input/validation/loading/preview/failure, guarding duplicate operations per game.
 - [x] 5.4 Keep the HLTB match-center menu item available even with no ambiguous rows, and show its badge only for `NEEDS_REVIEW` games.
+- [x] 5.4.1 Navigate a single-game Library lookup directly to the match center, scoped to that game, when it persists as needing review or unmatched; leave a resolved or failed lookup in place.
+- [x] 5.4.2 Return directly to the Library once a single-game deep-linked match center resolves that same game's match (candidate selection or manual-link confirmation), without cancelling the in-flight persist.
 - [ ] 5.5 Add view-model/navigation tests for unmatched-only access, empty state, badge count, selected-game removal, operation cancellation, and state preservation across candidate updates. (Review resolution: selection-stability regressions — unmatched→needs-review reorder preserving the selected game, removal clamping persisted to the backing selection, and empty/missing-selection fallback — are covered by `HltbMatchCenterSelectionTest` against the production selection derivation; the remaining view-model/navigation scenarios and Compose/instrumentation coverage are pending, so this PR is not complete.)
 
 ## 6. Candidate card and Steam header UI

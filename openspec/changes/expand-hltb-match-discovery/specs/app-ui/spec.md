@@ -155,3 +155,19 @@ games remain discoverable in the destination without inflating that badge.
 #### Scenario: Match center entry has no attention items
 - **WHEN** no ambiguous candidate set awaits a decision
 - **THEN** the HLTB match-center menu item remains available without an attention badge
+
+#### Scenario: A single-game lookup needs attention
+- **WHEN** the user forces a fresh HowLongToBeat lookup for one game from the Library and it persists as needing review or unmatched
+- **THEN** the app navigates directly to the match center scoped to that game instead of requiring a separate trip through the entry point
+
+#### Scenario: A single-game lookup resolves outright
+- **WHEN** the user forces a fresh HowLongToBeat lookup for one game from the Library and it resolves to a confirmed match, or the request itself fails
+- **THEN** the app does not navigate to the match center
+
+#### Scenario: A single-game deep link resolves its game
+- **WHEN** the match center was entered scoped to one game (a single-game lookup landed here) and the user resolves that same game's match, whether by candidate selection or manual-link confirmation
+- **THEN** the app returns directly to the Library instead of leaving the user in the match center
+
+#### Scenario: A single-game deep link resolves a different game first
+- **WHEN** the match center was entered scoped to one game but the user navigates to and resolves a different game before returning to the original one
+- **THEN** the app stays in the match center; only resolving the originally scoped game returns to the Library

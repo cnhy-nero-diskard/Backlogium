@@ -18,6 +18,7 @@ import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.data.repo.toDomain
 import com.example.backlogium.domain.GameXpInput
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.GameRecencyState
@@ -397,13 +398,20 @@ class LibraryViewModel @Inject constructor(
      * Force a fresh HowLongToBeat lookup for a single game (ignoring the cache) and surface the
      * outcome: [HltbFetchOp.IN_PROGRESS] while it runs, then either [HltbFetchOp.FAILED] (the
      * request itself failed — cached data is left intact) or the persisted match status once it
-     * succeeds (matched / needs review / no match).
+     * succeeds (matched / needs review / no match). [onNeedsAttention] fires once, only when the
+     * persisted result requires a manual match decision (ambiguous or no match), so the caller can
+     * jump straight into the match center instead of leaving the game to be found later from its
+     * badge.
      */
-    fun refreshGame(appId: Long, name: String) = viewModelScope.launch {
+    fun refreshGame(appId: Long, name: String, onNeedsAttention: () -> Unit = {}) = viewModelScope.launch {
         fetchOps.update { it + (appId to HltbFetchOp.IN_PROGRESS) }
         val result = hltbRepository.refresh(appId, name)
         fetchOps.update {
             if (result == null) it + (appId to HltbFetchOp.FAILED) else it - appId
+        }
+        when (result?.matchStatus.toDomain()) {
+            HltbMatchState.NEEDS_REVIEW, HltbMatchState.UNMATCHED -> onNeedsAttention()
+            else -> Unit
         }
     }
 
