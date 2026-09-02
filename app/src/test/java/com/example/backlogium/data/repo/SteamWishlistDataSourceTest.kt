@@ -82,12 +82,19 @@ class SteamWishlistDataSourceTest {
         assertTrue(details.isEmpty())
     }
 
-    @Test fun anUnknownRegion_isOmittedFromTheStoreContext() = runBlocking {
+    /**
+     * Unlike the price request, this endpoint answers `x-eresult: 8` (`InvalidParam`) — an empty
+     * `{"response":{}}` indistinguishable from any other failure — when `country_code` is absent
+     * from `context` entirely. An unknown region falls back to a technical default rather than
+     * omitting the field, so a name and asset path still come back; pricing is unaffected, since
+     * it is a separate request that already carries the real configured region.
+     */
+    @Test fun anUnknownRegion_fallsBackToATechnicalDefault_ratherThanOmittingTheField() = runBlocking {
         val api = api(storeItems = STORE_ITEMS)
 
         SteamWishlistDataSource(api).detailsFor(listOf(440), null)
 
-        assertTrue("country_code" !in api.lastStoreItemsInput.orEmpty())
+        assertTrue("\"country_code\":\"US\"" in api.lastStoreItemsInput.orEmpty())
         assertTrue("\"appid\":440" in api.lastStoreItemsInput.orEmpty())
     }
 
