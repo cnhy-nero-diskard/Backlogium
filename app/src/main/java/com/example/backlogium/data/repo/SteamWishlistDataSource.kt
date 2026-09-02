@@ -126,6 +126,13 @@ class SteamWishlistDataSource @Inject constructor(
      * This endpoint's calling convention: ids, context, and requested blocks as one JSON query
      * parameter. Built rather than string-formatted so an app id can never break out of the
      * document.
+     *
+     * Unlike the price request, this endpoint answers `x-eresult: 8` (`InvalidParam`) — an empty
+     * `{"response":{}}`, indistinguishable from every other failure this class already treats as
+     * "answered nothing" — when `country_code` is absent from `context` at all. A fallback of "US"
+     * here is a technical default for resolving a name and an asset path, not a stand-in for the
+     * player's real store region: pricing is a separate request that already carries the actual
+     * configured region, and this fallback never reaches it.
      */
     private fun storeItemsInput(appIds: List<Long>, countryCode: String?): String {
         val input = JsonObject(
@@ -136,10 +143,7 @@ class SteamWishlistDataSource @Inject constructor(
                 "context" to JsonObject(
                     buildMap {
                         put("language", JsonPrimitive(LANGUAGE))
-                        // Omitted when unknown, exactly as `cc` is on the price request.
-                        if (!countryCode.isNullOrBlank()) {
-                            put("country_code", JsonPrimitive(countryCode))
-                        }
+                        put("country_code", JsonPrimitive(countryCode?.takeIf { it.isNotBlank() } ?: "US"))
                     },
                 ),
                 "data_request" to JsonObject(
