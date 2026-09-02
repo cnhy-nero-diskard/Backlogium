@@ -147,6 +147,12 @@ data class LibraryUiState(
     val hltbCandidatesByAppId: Map<Long, List<HltbCandidate>> = emptyMap(),
     val pickerStates: Map<Long, HltbPickerUiState> = emptyMap(),
     val pickerManualLinkStates: Map<Long, PickerManualLinkUiState> = emptyMap(),
+    /**
+     * One-shot: the appId whose just-finished lookup needs the match center. The active screen
+     * navigates on this and clears it via [LibraryViewModel.consumeNeedsAttention] — never a
+     * captured callback, which could outlive the composition that started the lookup.
+     */
+    val needsAttentionAppId: Long? = null,
     val refreshing: Boolean = false,
     val query: String = "",
     val focusSort: LibrarySortKey = LibrarySortKey.NAME,
@@ -194,6 +200,15 @@ class LibraryViewModel @Inject constructor(
     private val pickerJobs = mutableMapOf<Long, Job>()
     private val pickerManualLinkStates = MutableStateFlow<Map<Long, PickerManualLinkUiState>>(emptyMap())
     private val pickerManualLinkJobs = mutableMapOf<Long, Job>()
+
+    /**
+     * One-shot signal that a finished per-game lookup needs the match center (see [refreshGame]).
+     * The ViewModel holds the appId as state rather than invoking a captured navigation lambda:
+     * the lookup job lives in `viewModelScope` and can outlive the composition that started it
+     * (dialog dismissed, tab changed, configuration change), so the active screen consumes this
+     * under lifecycle collection and performs the navigation itself. Cleared by [consumeNeedsAttention].
+     */
+    private val needsAttention = MutableStateFlow<Long?>(null)
 
     /** Name filter. Applied in memory: the library is already loaded, so no query per keystroke. */
     private val query = MutableStateFlow("")
@@ -243,20 +258,24 @@ class LibraryViewModel @Inject constructor(
         settings.ruleConfig,
     ) { tracked, rarity, cfg -> XpInputs(tracked, rarity, cfg) }
 
-    private val pickerCombined = combine(pickerStates, pickerManualLinkStates) { picker, manual ->
-        picker to manual
-    }
+    private val pickerCombined = combine(
+        pickerStates,
+        pickerManualLinkStates,
+        needsAttention,
+        ::Triple,
+    )
 
     private val viewPrefs = combine(
         combine(query, selection, fetchOps, pickerCombined, settings.librarySort) {
-                query, selection, ops, pickerPair, sort ->
-            val (pickerStates, manualLinkStates) = pickerPair
+                query, selection, ops, pickerTriple, sort ->
+            val (pickerStates, manualLinkStates, needsAttention) = pickerTriple
             ViewPrefs(
                 query = query,
                 selection = selection,
                 ops = ops,
                 pickerStates = pickerStates,
                 pickerManualLinkStates = manualLinkStates,
+                needsAttention = needsAttention,
                 sort = sort,
                 density = GameListDensity.LIST,
             )
@@ -296,6 +315,7 @@ class LibraryViewModel @Inject constructor(
             hltbCandidatesByAppId = content.hltbCandidatesByAppId,
             pickerStates = view.pickerStates,
             pickerManualLinkStates = view.pickerManualLinkStates,
+            needsAttentionAppId = view.needsAttention,
             refreshing = lookup.running,
             query = view.query,
             focusSort = view.sort.focus,
@@ -398,21 +418,27 @@ class LibraryViewModel @Inject constructor(
      * Force a fresh HowLongToBeat lookup for a single game (ignoring the cache) and surface the
      * outcome: [HltbFetchOp.IN_PROGRESS] while it runs, then either [HltbFetchOp.FAILED] (the
      * request itself failed — cached data is left intact) or the persisted match status once it
-     * succeeds (matched / needs review / no match). [onNeedsAttention] fires once, only when the
-     * persisted result requires a manual match decision (ambiguous or no match), so the caller can
-     * jump straight into the match center instead of leaving the game to be found later from its
-     * badge.
+     * succeeds (matched / needs review / no match). When the persisted result requires a manual
+     * match decision (ambiguous or no match), the appId is raised as one-shot state (see
+     * [needsAttention]) so the active screen can jump into the match center: holding it as state,
+     * not invoking a callback, keeps the completion signal alive across the originating
+     * composition being disposed or recreated while this `viewModelScope` job is still running.
      */
-    fun refreshGame(appId: Long, name: String, onNeedsAttention: () -> Unit = {}) = viewModelScope.launch {
+    fun refreshGame(appId: Long, name: String) = viewModelScope.launch {
         fetchOps.update { it + (appId to HltbFetchOp.IN_PROGRESS) }
         val result = hltbRepository.refresh(appId, name)
         fetchOps.update {
             if (result == null) it + (appId to HltbFetchOp.FAILED) else it - appId
         }
         when (result?.matchStatus.toDomain()) {
-            HltbMatchState.NEEDS_REVIEW, HltbMatchState.UNMATCHED -> onNeedsAttention()
+            HltbMatchState.NEEDS_REVIEW, HltbMatchState.UNMATCHED -> needsAttention.value = appId
             else -> Unit
         }
+    }
+
+    /** Consume the one-shot match-center request raised by [refreshGame]. */
+    fun consumeNeedsAttention() {
+        needsAttention.value = null
     }
 
     fun resolveMatch(appId: Long, candidate: HltbCandidate) = viewModelScope.launch {
@@ -545,6 +571,8 @@ private data class ViewPrefs(
     val ops: Map<Long, HltbFetchOp>,
     val pickerStates: Map<Long, HltbPickerUiState>,
     val pickerManualLinkStates: Map<Long, PickerManualLinkUiState> = emptyMap(),
+    /** One-shot match-center navigation request; see [LibraryViewModel.consumeNeedsAttention]. */
+    val needsAttention: Long? = null,
     val sort: LibrarySortPrefs,
     val density: GameListDensity,
 )

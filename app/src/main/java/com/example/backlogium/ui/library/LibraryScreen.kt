@@ -50,6 +50,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -216,6 +217,20 @@ fun LibraryScreen(
         (state.query.isNotBlank() || selectedGenreSet.isNotEmpty() || showNotCoveredOnly) &&
             visibleGoalGames.isEmpty() &&
             visibleBacklog.isEmpty()
+
+    // A finished per-game lookup can raise a one-shot "needs the match center" request as state:
+    // its ViewModel job lives in `viewModelScope` and may outlive the dialog composition that
+    // started it (dismissed, tab changed, recreated on configuration change). The currently
+    // active screen therefore performs the navigation here — under lifecycle-aware collection —
+    // and consumes the request so it fires exactly once. An ambiguous or no-match outcome needs
+    // the match center to resolve, not the dialog's small inline picker: dismiss and land the
+    // user there directly rather than requiring a separate trip through the clock icon.
+    LaunchedEffect(state.needsAttentionAppId) {
+        val appId = state.needsAttentionAppId ?: return@LaunchedEffect
+        viewModel.consumeNeedsAttention()
+        dialogTarget = null
+        onOpenReview(appId)
+    }
 
     fun toggleSelection(appId: Long) {
         val entering = !state.selectionMode
@@ -480,13 +495,10 @@ fun LibraryScreen(
                 dialogTarget = null
             },
             onRefresh = {
-                viewModel.refreshGame(target.appId, target.name) {
-                    // An ambiguous or no-match outcome needs the match center to resolve, not
-                    // this dialog's small inline picker — dismiss and land the user there
-                    // directly rather than requiring a separate trip through the clock icon.
-                    dialogTarget = null
-                    onOpenReview(target.appId)
-                }
+                // Any "needs the match center" outcome arrives later as one-shot state (see
+                // the LaunchedEffect below): the lookup can outlive this dialog's composition,
+                // so navigation is driven by the active screen, not a callback captured here.
+                viewModel.refreshGame(target.appId, target.name)
             },
             onChooseMatch = {
                 viewModel.clearPicker(target.appId)

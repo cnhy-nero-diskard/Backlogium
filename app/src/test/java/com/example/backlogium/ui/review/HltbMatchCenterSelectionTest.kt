@@ -3,7 +3,9 @@ package com.example.backlogium.ui.review
 import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -161,5 +163,65 @@ class HltbMatchCenterSelectionTest {
 
         assertEquals(2L, state.selectedGame?.appId)
         assertEquals(2, state.currentPosition)
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Scoped single-game routes (selectGame): the requested identity is preserved separately from
+    // ordinary selection, and once loading has completed an absent scoped app means the route is
+    // complete — it must finish, never clamp onto another game that still needs review.
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    fun scopedAppMissingWhileOthersRemain_derivationStillClampsButRouteIsComplete() {
+        // The repro: navigate scoped to A, but A leaves the queue (resolved concurrently, stale
+        // navigation, process death after persist) while B still needs attention. The ordinary
+        // derivation still clamps for the transient frame — the screen, however, sees the scoped
+        // completion flag and finishes instead of stranding the user in B's review flow.
+        val queue2 = queue(
+            game(2, HltbMatchStatus.NEEDS_REVIEW),
+            game(3, HltbMatchStatus.UNMATCHED),
+        )
+        val display = queue2.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW } +
+            queue2.filter { it.matchStatus == HltbMatchStatus.UNMATCHED }
+
+        val clamped = resolveMatchCenterSelection(MatchCenterSelection(index = 0, persistedAppId = 1L), display)
+        assertEquals(0, clamped.index)
+        assertEquals(2L, clamped.persistedAppId)
+
+        assertTrue(isScopedAppMissing(scopedAppId = 1L, games = display))
+    }
+
+    @Test
+    fun scopedAppPresent_routeIsNotComplete() {
+        val games = queue(
+            game(1, HltbMatchStatus.NEEDS_REVIEW),
+            game(2, HltbMatchStatus.UNMATCHED),
+        )
+        assertFalse(isScopedAppMissing(scopedAppId = 1L, games = games))
+    }
+
+    @Test
+    fun unscopedRoute_neverCompletesViaTheScopedFlag() {
+        val games = queue(game(1, HltbMatchStatus.NEEDS_REVIEW))
+        assertFalse(isScopedAppMissing(scopedAppId = null, games = games))
+        assertFalse(isScopedAppMissing(scopedAppId = null, games = emptyList()))
+    }
+
+    @Test
+    fun scopedCompletion_onlySurfacesOnProducedStates_notTheInitialLoadingValue() {
+        // The state's initial value (loading = true) is not produced by the derivation, so a
+        // queue that simply has not arrived yet cannot finish a scoped route prematurely: the
+        // flag only ever appears on emissions built after loading has completed.
+        val initial = HltbMatchCenterUiState()
+        assertTrue(initial.loading)
+        assertFalse(initial.scopedAppMissing)
+
+        val produced = HltbMatchCenterUiState(
+            loading = false,
+            ambiguous = listOf(game(2, HltbMatchStatus.NEEDS_REVIEW)),
+            scopedAppMissing = isScopedAppMissing(1L, listOf(game(2, HltbMatchStatus.NEEDS_REVIEW))),
+        )
+        assertFalse(produced.loading)
+        assertTrue(produced.scopedAppMissing)
     }
 }

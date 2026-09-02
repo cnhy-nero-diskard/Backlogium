@@ -102,6 +102,20 @@ internal fun resolveMatchCenterSelection(
     }
 }
 
+/**
+ * A scoped single-game route's completion test: its requested app is absent from the actionable
+ * queue. The ordinary selection would clamp onto a surviving neighbor here — right for a general
+ * selection the user navigated into, wrong for a route that is about exactly one app, where
+ * landing on another game strands the user in an unrelated review flow. [isScopedAppMissing]
+ * lets the route finish instead; it only ever surfaces on emissions produced after loading has
+ * completed (the state's initial `loading = true` value is never produced by the derivation), so
+ * a queue that simply has not arrived yet cannot finish the route prematurely.
+ */
+internal fun isScopedAppMissing(
+    scopedAppId: Long?,
+    games: List<MatchCenterGameUi>,
+): Boolean = scopedAppId != null && games.none { it.appId == scopedAppId }
+
 data class HltbMatchCenterUiState(
     val loading: Boolean = true,
     val ambiguous: List<MatchCenterGameUi> = emptyList(),
@@ -109,6 +123,14 @@ data class HltbMatchCenterUiState(
     val selectedIndex: Int = 0,
     val broaderStates: Map<Long, BroaderSearchUiState> = emptyMap(),
     val manualLinkStates: Map<Long, ManualLinkUiState> = emptyMap(),
+    /**
+     * True when the scoped single-game route (see [HltbReviewViewModel.selectGame]) is complete:
+     * its requested app is absent from the actionable queue now that loading has finished. The
+     * screen finishes the route instead of presenting whatever the ordinary selection clamped
+     * onto — the derivation still clamps for that transient frame, but the screen returns on
+     * this flag before rendering it, so no unrelated game is ever shown as the scoped target.
+     */
+    val scopedAppMissing: Boolean = false,
 ) {
     val allGames: List<MatchCenterGameUi> get() = ambiguous + unmatched
     val selectedGame: MatchCenterGameUi? get() = allGames.getOrNull(selectedIndex)
@@ -157,6 +179,12 @@ class HltbReviewViewModel @Inject constructor(
     // the surviving neighbor of the old position. See [resolveMatchCenterSelection].
     private val trackedSelection =
         MutableStateFlow(MatchCenterSelection(index = 0, persistedAppId = null))
+
+    // The scoped single-game route's requested identity (see [selectGame]), kept separate from
+    // [trackedSelection] so ordinary selection changes can never rewrite it: when that app is
+    // absent from the queue once loading has completed, the route is complete and must finish
+    // rather than clamp onto another game. See [isScopedAppMissing].
+    private val scopedAppId = MutableStateFlow<Long?>(null)
     private val broaderStates = MutableStateFlow<Map<Long, BroaderSearchUiState>>(emptyMap())
     private val manualLinkStates = MutableStateFlow<Map<Long, ManualLinkUiState>>(emptyMap())
 
@@ -168,8 +196,10 @@ class HltbReviewViewModel @Inject constructor(
         gameRepository.library,
         trackedSelection,
         broaderStates,
-        manualLinkStates,
-    ) { matchCenter, games, prior, broader, manual ->
+        // manualLinkStates folded with the scoped identity so the single combine that derives the
+        // selection also derives — atomically with it — whether the scoped route is complete.
+        combine(manualLinkStates, scopedAppId, ::Pair),
+    ) { matchCenter, games, prior, broader, (manual, scoped) ->
         val infoByAppId = games.associate { it.appId to it }
         val all = matchCenter.map { entry ->
             val game = infoByAppId[entry.appId]
@@ -202,6 +232,7 @@ class HltbReviewViewModel @Inject constructor(
             selectedIndex = selection.index,
             broaderStates = broader,
             manualLinkStates = manual,
+            scopedAppMissing = isScopedAppMissing(scoped, ambiguous + unmatched),
         )
     }.stateIn(
         scope = viewModelScope,
@@ -237,24 +268,28 @@ class HltbReviewViewModel @Inject constructor(
      * Select a game by identity rather than position — used when the caller (e.g. a single-game
      * lookup from the Library) already knows which game needs attention but not its position in
      * the queue. The seeded index of 0 is only a fallback: [resolveMatchCenterSelection] re-derives
-     * the real position by [appId] once `matchCenterQueue` includes it, and only falls back to that
-     * seed if the game is never found there.
+     * the real position by [appId] once `matchCenterQueue` includes it. The requested [appId] is
+     * also preserved as the route's scoped identity (see [scopedAppId]): if that game is absent
+     * from the queue once loading has completed — already resolved elsewhere, or gone before the
+     * screen observed Room — the route is complete and finishes instead of clamping onto another
+     * game, so the user can never be stranded reviewing an unrelated title.
      */
     fun selectGame(appId: Long) {
+        scopedAppId.value = appId
         trackedSelection.value = MatchCenterSelection(index = 0, persistedAppId = appId)
     }
 
     /**
-     * [onResolved] fires only after the match is persisted, never before — a caller that pops the
-     * back stack from it (leaving via a single-game deep link) must not risk cancelling this
-     * ViewModel's scope, and the write it owns, before `resolveMatch` returns.
+     * Resolves the match and lets the queue drive any navigation: once the persist completes, the
+     * game leaves the actionable queue, which is exactly the condition a scoped single-game route
+     * finishes on (see [isScopedAppMissing]) — so the active screen pops from state, never from a
+     * callback captured in this scope that could outlive the composition that created it.
      */
-    fun resolve(appId: Long, candidate: HltbCandidate, onResolved: () -> Unit = {}) = viewModelScope.launch {
+    fun resolve(appId: Long, candidate: HltbCandidate) = viewModelScope.launch {
         hltbRepository.resolveMatch(appId, candidate)
         // Selection is tracked by appId (see matchCenterState): once the resolved game leaves the
         // queue, the combine's clamping persists the replacement selection, so no index surgery
         // is needed here.
-        onResolved()
     }
 
     fun startBroaderSearch(appId: Long, originalName: String) {
@@ -344,13 +379,12 @@ class HltbReviewViewModel @Inject constructor(
         manualLinkStates.update { it - appId }
     }
 
-    /** See [resolve] for why [onResolved] fires only after the match is persisted. */
-    fun confirmManualLink(appId: Long, onResolved: () -> Unit = {}) = viewModelScope.launch {
+    /** See [resolve] for how completion is signaled: from the queue-driven state, post-persist. */
+    fun confirmManualLink(appId: Long) = viewModelScope.launch {
         val preview = manualLinkStates.value[appId]?.preview ?: return@launch
         hltbRepository.resolveMatch(appId, preview)
         clearManualLink(appId)
         // Also clear broader state for that game if present
         clearBroaderState(appId)
-        onResolved()
     }
 }

@@ -60,6 +60,17 @@ fun HltbReviewScreen(
 ) {
     val state by viewModel.matchCenterState.collectAsStateWithLifecycle()
 
+    // A scoped single-game route is complete when its requested app is absent from the queue once
+    // loading has finished (see [isScopedAppMissing]): finish the route instead of presenting
+    // whatever the ordinary selection clamped onto, so the user is never stranded reviewing an
+    // unrelated game. `initialAppId` stays fixed for the route's lifetime, so this effect does
+    // not re-run if Room emits a different queue — the check re-evaluates through `state` alone.
+    // The early return keeps the clamped frame from ever rendering below.
+    if (initialAppId != null && state.scopedAppMissing) {
+        LaunchedEffect(Unit) { onDone() }
+        return
+    }
+
     LaunchedEffect(initialAppId) {
         if (initialAppId != null) viewModel.selectGame(initialAppId)
     }
@@ -135,9 +146,9 @@ fun HltbReviewScreen(
             AdaptiveCandidateGrid(
                 candidates = selected.candidates,
                 onSelect = { candidate ->
-                    viewModel.resolve(selected.appId, candidate) {
-                        if (selected.appId == initialAppId) onDone()
-                    }
+                    // Completion/navigation is queue-driven (see the scoped check above): once
+                    // the persist lands, the game leaves the queue and the route finishes.
+                    viewModel.resolve(selected.appId, candidate)
                 },
             )
             if (selected.candidates.any { it.source == com.example.backlogium.data.hltb.HltbCandidateSource.BROADER_SEARCH }) {
@@ -164,9 +175,7 @@ fun HltbReviewScreen(
             onPreview = { viewModel.previewManualLink(selected.appId) },
             onDismissPreview = { viewModel.dismissManualLinkPreview(selected.appId) },
             onConfirm = {
-                viewModel.confirmManualLink(selected.appId) {
-                    if (selected.appId == initialAppId) onDone()
-                }
+                viewModel.confirmManualLink(selected.appId)
             },
             onClear = { viewModel.clearManualLink(selected.appId) },
         )
