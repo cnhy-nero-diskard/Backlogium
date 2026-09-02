@@ -18,6 +18,7 @@ import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.data.repo.toDomain
 import com.example.backlogium.domain.GameXpInput
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.GameRecencyState
@@ -46,6 +47,17 @@ data class HltbPickerUiState(
     val candidates: List<HltbCandidate> = emptyList(),
     val loading: Boolean = false,
     val failed: Boolean = false,
+)
+
+/** Transient manual-link state for the inline picker footer. */
+data class PickerManualLinkUiState(
+    val input: String = "",
+    val validationError: String? = null,
+    val loading: Boolean = false,
+    val preview: HltbCandidate? = null,
+    val notFound: Boolean = false,
+    val failed: Boolean = false,
+    val failureClass: com.example.backlogium.data.hltb.HltbFailureClass? = null,
 )
 
 data class GoalGameUi(
@@ -134,6 +146,13 @@ data class LibraryUiState(
     val reviewCount: Int = 0,
     val hltbCandidatesByAppId: Map<Long, List<HltbCandidate>> = emptyMap(),
     val pickerStates: Map<Long, HltbPickerUiState> = emptyMap(),
+    val pickerManualLinkStates: Map<Long, PickerManualLinkUiState> = emptyMap(),
+    /**
+     * One-shot: the appId whose just-finished lookup needs the match center. The active screen
+     * navigates on this and clears it via [LibraryViewModel.consumeNeedsAttention] — never a
+     * captured callback, which could outlive the composition that started the lookup.
+     */
+    val needsAttentionAppId: Long? = null,
     val refreshing: Boolean = false,
     val query: String = "",
     val focusSort: LibrarySortKey = LibrarySortKey.NAME,
@@ -179,6 +198,17 @@ class LibraryViewModel @Inject constructor(
     private val fetchOps = MutableStateFlow<Map<Long, HltbFetchOp>>(emptyMap())
     private val pickerStates = MutableStateFlow<Map<Long, HltbPickerUiState>>(emptyMap())
     private val pickerJobs = mutableMapOf<Long, Job>()
+    private val pickerManualLinkStates = MutableStateFlow<Map<Long, PickerManualLinkUiState>>(emptyMap())
+    private val pickerManualLinkJobs = mutableMapOf<Long, Job>()
+
+    /**
+     * One-shot signal that a finished per-game lookup needs the match center (see [refreshGame]).
+     * The ViewModel holds the appId as state rather than invoking a captured navigation lambda:
+     * the lookup job lives in `viewModelScope` and can outlive the composition that started it
+     * (dialog dismissed, tab changed, configuration change), so the active screen consumes this
+     * under lifecycle collection and performs the navigation itself. Cleared by [consumeNeedsAttention].
+     */
+    private val needsAttention = MutableStateFlow<Long?>(null)
 
     /** Name filter. Applied in memory: the library is already loaded, so no query per keystroke. */
     private val query = MutableStateFlow("")
@@ -228,14 +258,24 @@ class LibraryViewModel @Inject constructor(
         settings.ruleConfig,
     ) { tracked, rarity, cfg -> XpInputs(tracked, rarity, cfg) }
 
+    private val pickerCombined = combine(
+        pickerStates,
+        pickerManualLinkStates,
+        needsAttention,
+        ::Triple,
+    )
+
     private val viewPrefs = combine(
-        combine(query, selection, fetchOps, pickerStates, settings.librarySort) {
-                query, selection, ops, pickerStates, sort ->
+        combine(query, selection, fetchOps, pickerCombined, settings.librarySort) {
+                query, selection, ops, pickerTriple, sort ->
+            val (pickerStates, manualLinkStates, needsAttention) = pickerTriple
             ViewPrefs(
                 query = query,
                 selection = selection,
                 ops = ops,
                 pickerStates = pickerStates,
+                pickerManualLinkStates = manualLinkStates,
+                needsAttention = needsAttention,
                 sort = sort,
                 density = GameListDensity.LIST,
             )
@@ -274,6 +314,8 @@ class LibraryViewModel @Inject constructor(
             reviewCount = content.reviewCount,
             hltbCandidatesByAppId = content.hltbCandidatesByAppId,
             pickerStates = view.pickerStates,
+            pickerManualLinkStates = view.pickerManualLinkStates,
+            needsAttentionAppId = view.needsAttention,
             refreshing = lookup.running,
             query = view.query,
             focusSort = view.sort.focus,
@@ -376,7 +418,11 @@ class LibraryViewModel @Inject constructor(
      * Force a fresh HowLongToBeat lookup for a single game (ignoring the cache) and surface the
      * outcome: [HltbFetchOp.IN_PROGRESS] while it runs, then either [HltbFetchOp.FAILED] (the
      * request itself failed — cached data is left intact) or the persisted match status once it
-     * succeeds (matched / needs review / no match).
+     * succeeds (matched / needs review / no match). When the persisted result requires a manual
+     * match decision (ambiguous or no match), the appId is raised as one-shot state (see
+     * [needsAttention]) so the active screen can jump into the match center: holding it as state,
+     * not invoking a callback, keeps the completion signal alive across the originating
+     * composition being disposed or recreated while this `viewModelScope` job is still running.
      */
     fun refreshGame(appId: Long, name: String) = viewModelScope.launch {
         fetchOps.update { it + (appId to HltbFetchOp.IN_PROGRESS) }
@@ -384,6 +430,15 @@ class LibraryViewModel @Inject constructor(
         fetchOps.update {
             if (result == null) it + (appId to HltbFetchOp.FAILED) else it - appId
         }
+        when (result?.matchStatus.toDomain()) {
+            HltbMatchState.NEEDS_REVIEW, HltbMatchState.UNMATCHED -> needsAttention.value = appId
+            else -> Unit
+        }
+    }
+
+    /** Consume the one-shot match-center request raised by [refreshGame]. */
+    fun consumeNeedsAttention() {
+        needsAttention.value = null
     }
 
     fun resolveMatch(appId: Long, candidate: HltbCandidate) = viewModelScope.launch {
@@ -413,6 +468,73 @@ class LibraryViewModel @Inject constructor(
     fun clearPicker(appId: Long) {
         pickerJobs.remove(appId)?.cancel()
         pickerStates.update { it - appId }
+        clearPickerManualLink(appId)
+    }
+
+    fun updatePickerManualLinkInput(appId: Long, input: String) {
+        pickerManualLinkStates.update { map ->
+            val existing = map[appId] ?: PickerManualLinkUiState()
+            map + (appId to existing.copy(input = input, validationError = null, notFound = false, failed = false, preview = null))
+        }
+    }
+
+    fun previewPickerManualLink(appId: Long) {
+        if (pickerManualLinkJobs[appId]?.isActive == true) return
+        val state = pickerManualLinkStates.value[appId] ?: PickerManualLinkUiState()
+        if (state.loading) return
+        val input = state.input.trim()
+        if (input.isEmpty()) {
+            pickerManualLinkStates.update { it + (appId to state.copy(validationError = "Enter an HLTB link")) }
+            return
+        }
+        pickerManualLinkStates.update { it + (appId to state.copy(loading = true, validationError = null, notFound = false, failed = false, preview = null)) }
+        val job = viewModelScope.launch {
+            // Resolve into the *latest* entry, never the snapshot taken before launch, and drop a
+            // result whose submitted input was since edited (clearing loading so the new input
+            // can be previewed) — a stale preview must never overwrite newer user input.
+            val resolved: (PickerManualLinkUiState) -> PickerManualLinkUiState = when (val result = hltbRepository.previewLinkedCandidate(input)) {
+                is com.example.backlogium.data.repo.ManualLinkPreviewResult.Preview -> {
+                    { it.copy(loading = false, preview = result.candidate) }
+                }
+                is com.example.backlogium.data.repo.ManualLinkPreviewResult.Invalid -> {
+                    { it.copy(loading = false, validationError = "Invalid HLTB link: ${result.reason}") }
+                }
+                is com.example.backlogium.data.repo.ManualLinkPreviewResult.NotFound -> {
+                    { it.copy(loading = false, notFound = true) }
+                }
+                is com.example.backlogium.data.repo.ManualLinkPreviewResult.Failed -> {
+                    { it.copy(loading = false, failed = true, failureClass = result.failureClass) }
+                }
+            }
+            pickerManualLinkStates.update { map ->
+                val current = map[appId] ?: return@update map
+                val next = if (current.input.trim() == input) resolved(current) else current.copy(loading = false)
+                map + (appId to next)
+            }
+        }
+        pickerManualLinkJobs[appId] = job
+        job.invokeOnCompletion { if (pickerManualLinkJobs[appId] === job) pickerManualLinkJobs.remove(appId) }
+    }
+
+    fun dismissPickerManualLinkPreview(appId: Long) {
+        pickerManualLinkJobs[appId]?.cancel()
+        pickerManualLinkJobs.remove(appId)
+        pickerManualLinkStates.update { map ->
+            val existing = map[appId] ?: return@update map
+            map + (appId to existing.copy(preview = null, loading = false, notFound = false, failed = false, validationError = null))
+        }
+    }
+
+    fun clearPickerManualLink(appId: Long) {
+        pickerManualLinkJobs[appId]?.cancel()
+        pickerManualLinkJobs.remove(appId)
+        pickerManualLinkStates.update { it - appId }
+    }
+
+    fun confirmPickerManualLink(appId: Long) = viewModelScope.launch {
+        val preview = pickerManualLinkStates.value[appId]?.preview ?: return@launch
+        hltbRepository.resolveMatch(appId, preview)
+        clearPicker(appId)
     }
 
     /** Stop a running selection lookup. Every game already processed keeps its data. */
@@ -448,6 +570,9 @@ private data class ViewPrefs(
     val selection: Set<Long>,
     val ops: Map<Long, HltbFetchOp>,
     val pickerStates: Map<Long, HltbPickerUiState>,
+    val pickerManualLinkStates: Map<Long, PickerManualLinkUiState> = emptyMap(),
+    /** One-shot match-center navigation request; see [LibraryViewModel.consumeNeedsAttention]. */
+    val needsAttention: Long? = null,
     val sort: LibrarySortPrefs,
     val density: GameListDensity,
 )

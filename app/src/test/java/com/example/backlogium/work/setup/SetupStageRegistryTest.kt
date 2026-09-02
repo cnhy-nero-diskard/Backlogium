@@ -203,6 +203,9 @@ class SetupStageRegistryTest {
             override fun observeAllWithDataset(): Flow<List<HltbData>> = flowOf(emptyList())
             override suspend fun getAllWithDataset(): List<HltbData> = emptyList()
             override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(emptyList())
+            override fun observeMatchCenter(): Flow<List<HltbData>> = flowOf(emptyList())
+            override suspend fun getMatchCenter(): List<HltbData> = emptyList()
+            override suspend fun markNeedsReviewWithBroaderCandidates(appId: Long, candidatesJson: String): Int = 0
         },
         libraryCatalog = HltbLibraryCatalog { emptySet() },
         transaction = object : DatabaseTransactionScope {

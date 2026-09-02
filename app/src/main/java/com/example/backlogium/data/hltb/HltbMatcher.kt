@@ -60,6 +60,111 @@ object HltbMatcher {
         .map { it.copy(confidence = similarity(query, it.name)) }
         .sortedByDescending { it.confidence }
 
+    /**
+     * Extended scoring for broader-search candidates: combines normalized edit similarity
+     * with token overlap, core-title containment, low-value edition terms, and a strong
+     * conflicting-sequel-number penalty. Scoring is always against the original Steam title.
+     * Every broader-search result still requires manual review regardless of score.
+     */
+    fun scoredBroader(originalTitle: String, candidates: List<HltbCandidate>): List<HltbCandidate> {
+        val normalizedOriginal = normalize(originalTitle)
+        val originalTokens = tokenSet(normalizedOriginal)
+        val coreTitle = extractCoreTitle(normalizedOriginal)
+        return candidates.map { candidate ->
+            var score = similarity(originalTitle, candidate.name)
+            // Token overlap (Jaccard-ish)
+            val candidateTokens = tokenSet(normalize(candidate.name))
+            val overlap = if (originalTokens.isEmpty() || candidateTokens.isEmpty()) 0.0 else {
+                val inter = originalTokens.intersect(candidateTokens).size.toDouble()
+                val union = originalTokens.union(candidateTokens).size.toDouble()
+                if (union == 0.0) 0.0 else inter / union
+            }
+            score = score * 0.6 + overlap * 0.3
+
+            // Core-title containment bonus
+            if (coreTitle.isNotEmpty() && normalize(candidate.name).contains(coreTitle)) {
+                score += 0.05
+            }
+
+            // Low-value edition terms carry little weight: if candidate has them and original doesn't, slight penalty
+            if (hasEditionTerm(candidate.name) && !hasEditionTerm(originalTitle)) {
+                score -= 0.03
+            }
+
+            // Strong conflicting-sequel-number penalty
+            val origNum = trailingNumber(normalizedOriginal)
+            val candNum = trailingNumber(normalize(candidate.name))
+            if (origNum != null && candNum != null && origNum != candNum) {
+                score -= 0.35
+            }
+
+            score = score.coerceIn(0.0, 1.0)
+            candidate.copy(confidence = score, source = HltbCandidateSource.BROADER_SEARCH)
+        }.sortedByDescending { it.confidence }
+    }
+
+    /**
+     * Cross-query HLTB-id deduplication: retains the richest candidate payload and marks every
+     * merged result as BROADER_SEARCH.
+     */
+    fun deduplicateBroader(candidates: List<HltbCandidate>): List<HltbCandidate> {
+        val byId = linkedMapOf<Long, HltbCandidate>()
+        for (c in candidates) {
+            val existing = byId[c.hltbId]
+            if (existing == null) {
+                byId[c.hltbId] = c.copy(source = HltbCandidateSource.BROADER_SEARCH)
+            } else {
+                // Keep richest: most non-null lengths, then larger confidence, then image present
+                val existingRichness = richness(existing)
+                val newRichness = richness(c)
+                val chosen = when {
+                    newRichness > existingRichness -> c
+                    newRichness < existingRichness -> existing
+                    c.confidence > existing.confidence -> c
+                    else -> existing
+                }
+                byId[c.hltbId] = chosen.copy(source = HltbCandidateSource.BROADER_SEARCH)
+            }
+        }
+        return byId.values.toList()
+    }
+
+    private fun richness(c: HltbCandidate): Int =
+        listOf(c.mainStoryMinutes, c.mainExtraMinutes, c.completionistMinutes, c.allStylesMinutes).count { it != null } * 10 +
+            (if (c.imageUrl != null) 1 else 0)
+
+    private fun tokenSet(normalized: String): Set<String> =
+        normalized.split(WHITESPACE_REGEX).filter { it.isNotBlank() && it.length > 1 }.toSet()
+
+    private fun extractCoreTitle(normalized: String): String {
+        // Core is the substring before trailing number
+        val match = Regex("""^(.*\D)\d+\s*$""").find(normalized)
+        return (match?.groupValues?.getOrNull(1) ?: normalized).trim()
+    }
+
+    private fun hasEditionTerm(name: String): Boolean {
+        val lower = normalize(name)
+        return EDITION_TOKENS.any { lower.contains(it) }
+    }
+
+    private val EDITION_TOKENS = setOf(
+        "enhanced edition", "definitive edition", "game of the year", "goty", "remastered",
+        "complete edition", "deluxe edition", "ultimate edition",
+    )
+
+    // Terminal Roman sequel numeral on an already-normalized (lowercase) title
+    private val TRAILING_ROMAN_NUMERAL_REGEX = Regex("""(.*\s)?([ivxlcdm]+)$""")
+
+    private fun trailingNumber(normalized: String): Int? {
+        // Terminal Roman numerals count for the conflict comparison too
+        // (e.g. "final fantasy vii" vs "final fantasy viii").
+        TRAILING_ROMAN_NUMERAL_REGEX.find(normalized)?.let { match ->
+            HltbQueryGenerator.ROMAN_TO_ARABIC[match.groupValues[2].uppercase()]?.let { return it }
+        }
+        val match = Regex("""(\d+)\s*$""").find(normalized) ?: return null
+        return match.groupValues[1].toIntOrNull()
+    }
+
     /** Normalized similarity in 0.0..1.0 (1.0 = identical after normalization). */
     fun similarity(a: String, b: String): Double {
         val na = normalize(a)

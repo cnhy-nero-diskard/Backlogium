@@ -634,6 +634,13 @@ class HltbDatasetRepositoryTest {
         override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(
             rows.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW },
         )
+        override fun observeMatchCenter(): Flow<List<HltbData>> = flowOf(
+            rows.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW || it.matchStatus == HltbMatchStatus.UNMATCHED },
+        )
+        override suspend fun getMatchCenter(): List<HltbData> =
+            rows.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW || it.matchStatus == HltbMatchStatus.UNMATCHED }
+
+        override suspend fun markNeedsReviewWithBroaderCandidates(appId: Long, candidatesJson: String): Int = 0
 
         fun restore(snapshot: Map<Long, HltbData>) {
             rows.clear()

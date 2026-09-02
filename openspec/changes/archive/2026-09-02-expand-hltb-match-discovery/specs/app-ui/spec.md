@@ -136,6 +136,25 @@ games remain discoverable in the destination without inflating that badge.
 - **THEN** the match-center entry remains available
 - **AND** the attention badge is absent or zero while unmatched games remain reachable for rescue
 
+#### Scenario: No games need review
+- **WHEN** the user opens the match-review surface and no games are flagged
+- **THEN** the surface indicates there is nothing to review
+
+#### Scenario: Entry point shown with a count
+- **WHEN** one or more games are flagged as needing review
+- **THEN** the entry point is presented and indicates how many games are awaiting review
+
+#### Scenario: Entry point hidden when nothing is flagged
+- **WHEN** no games are flagged as needing review
+- **THEN** superseded by the always-accessible entry point: the match-center entry is no longer
+  hidden in this state — it remains available with no attention badge (see "Only unmatched games
+  exist" and "Match center entry has no attention items"), since an unmatched game may still need
+  rescue even when nothing is ambiguous
+
+#### Scenario: A dataset resolves a flagged game
+- **WHEN** an applied dataset resolves a game that was flagged for review
+- **THEN** the game leaves the review list and the entry point's count reflects its departure
+
 #### Scenario: No games need review or rescue
 - **WHEN** the user opens the match center and no game is flagged or unmatched
 - **THEN** the surface indicates there is nothing to review or rescue
@@ -143,3 +162,19 @@ games remain discoverable in the destination without inflating that badge.
 #### Scenario: Match center entry has no attention items
 - **WHEN** no ambiguous candidate set awaits a decision
 - **THEN** the HLTB match-center menu item remains available without an attention badge
+
+#### Scenario: A single-game lookup needs attention
+- **WHEN** the user forces a fresh HowLongToBeat lookup for one game from the Library and it persists as needing review or unmatched
+- **THEN** the app navigates directly to the match center scoped to that game instead of requiring a separate trip through the entry point
+
+#### Scenario: A single-game lookup resolves outright
+- **WHEN** the user forces a fresh HowLongToBeat lookup for one game from the Library and it resolves to a confirmed match, or the request itself fails
+- **THEN** the app does not navigate to the match center
+
+#### Scenario: A single-game deep link resolves its game
+- **WHEN** the match center was entered scoped to one game (a single-game lookup landed here) and the user resolves that same game's match, whether by candidate selection or manual-link confirmation
+- **THEN** the app returns directly to the Library instead of leaving the user in the match center
+
+#### Scenario: A single-game deep link resolves a different game first
+- **WHEN** the match center was entered scoped to one game but the user navigates to and resolves a different game before returning to the original one
+- **THEN** the app stays in the match center; only resolving the originally scoped game returns to the Library

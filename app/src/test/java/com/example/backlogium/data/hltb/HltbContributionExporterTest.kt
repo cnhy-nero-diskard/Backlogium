@@ -206,7 +206,7 @@ class HltbContributionExporterTest {
         javaClass.getResourceAsStream(
             "/com/example/backlogium/data/hltb/backlogium-hltb-contribution.json",
         ),
-    ).bufferedReader(Charsets.UTF_8).use { it.readText() }
+    ).bufferedReader(Charsets.UTF_8).use { it.readText().replace("\r\n", "\n") }
 
     private fun HltbContributionPreparation.ready(): HltbContributionPreparation.Ready {
         assertTrue(this is HltbContributionPreparation.Ready)

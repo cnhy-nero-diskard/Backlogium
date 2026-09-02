@@ -139,6 +139,7 @@ class GameRepositoryGenreJoinTest {
 
     private object OfflineHltb : HltbDataSource {
         override suspend fun search(name: String): List<HltbCandidate> = throw IOException("offline")
+        override suspend fun lookupById(hltbId: Long): com.example.backlogium.data.hltb.HltbDirectLookupResult = throw IOException("offline")
     }
 
     private object OfflineStore : SteamStoreApi {

@@ -122,6 +122,9 @@ internal class FakeHltbDataDao(
     }
 
     override fun observeNeedsReview(): Flow<List<HltbData>> = flowOf(emptyList())
+    override fun observeMatchCenter(): Flow<List<HltbData>> = flowOf(emptyList())
+    override suspend fun getMatchCenter(): List<HltbData> = emptyList()
+    override suspend fun markNeedsReviewWithBroaderCandidates(appId: Long, candidatesJson: String): Int = 0
 
     private fun cacheRows(): List<HltbData> =
         completionistByAppId.map { (appId, minutes) -> hltbRow(appId, minutes) }

@@ -25,6 +25,11 @@ does not line up with HowLongToBeat, such as edition-heavy or subtitled games.
   confirmation before replacing or creating a match.
 - Preserve existing exact lookup, refresh freshness, batch progress, cached-data protection,
   on-demand image loading, and backward compatibility with retained candidate JSON.
+- Navigate directly to the match center, scoped to the game just looked up, when a single-game
+  Library lookup persists as needing review or unmatched — rather than requiring the user to
+  separately open the match center and locate the game. Resolving that same game's match then
+  returns directly to the Library, closing the loop without leaving the user in a multi-game
+  review surface they never asked to browse.
 
 ## Capabilities
 

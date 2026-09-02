@@ -56,8 +56,14 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emptyFlow
 
-/** Route for the HLTB match-review surface — a sub-destination reached from the Library. */
-private const val ROUTE_HLTB_REVIEW = "hltb_review"
+/**
+ * Route for the HLTB match-review surface — a sub-destination reached from the Library.
+ * `appId` is an optional query argument: present when a single-game lookup already knows which
+ * game needs attention and wants the match center to land on it directly; absent for the plain
+ * match-center entry point, which falls back to its default first-in-queue selection.
+ */
+private const val ROUTE_HLTB_REVIEW = "hltb_review?appId={appId}"
+private fun hltbReviewRoute(appId: Long?) = if (appId == null) "hltb_review" else "hltb_review?appId=$appId"
 
 /** Route for the credentials onboarding flow — reached from the Settings account section. */
 private const val ROUTE_ONBOARDING = "onboarding"
@@ -212,7 +218,7 @@ fun BacklogiumAppRoot(
                 }
                 composable(Destination.LIBRARY.route) {
                     LibraryScreen(
-                        onOpenReview = { navController.navigate(ROUTE_HLTB_REVIEW) },
+                        onOpenReview = { appId -> navController.navigate(hltbReviewRoute(appId)) },
                         onOpenGameDetail = { appId -> navController.navigate(gameDetailRoute(appId)) },
                     )
                 }
@@ -231,7 +237,16 @@ fun BacklogiumAppRoot(
                 composable(ROUTE_ONBOARDING) {
                     OnboardingScreen(onCompleted = { navController.popBackStack() })
                 }
-                composable(ROUTE_HLTB_REVIEW) { HltbReviewScreen() }
+                composable(
+                    route = ROUTE_HLTB_REVIEW,
+                    arguments = listOf(navArgument("appId") { type = NavType.LongType; defaultValue = -1L }),
+                ) { entry ->
+                    val appId = entry.arguments?.getLong("appId")?.takeIf { it >= 0 }
+                    HltbReviewScreen(
+                        initialAppId = appId,
+                        onDone = { navController.popBackStack() },
+                    )
+                }
                 composable(
                     route = ROUTE_GAME_DETAIL,
                     arguments = listOf(navArgument("appId") { type = NavType.LongType }),
