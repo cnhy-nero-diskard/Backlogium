@@ -88,4 +88,19 @@ class HltbGamePageParserTest {
         val result = HltbGamePageParser.parse(html, 1L)
         assertTrue(result is HltbGamePageParser.ParseResult.ParseFailure)
     }
+
+    @Test
+    fun parse_structuredIdMismatch_isParseFailure() {
+        // The page payload describes a different entry than the requested id (e.g. after a
+        // redirect): the parsed id must never win over the requested one.
+        val result = HltbGamePageParser.parse(sampleHtml(), 1111L)
+        assertTrue(result is HltbGamePageParser.ParseResult.ParseFailure)
+    }
+
+    @Test
+    fun parse_regexFallbackIdMismatch_isParseFailure() {
+        // Same guard on the legacy regex path.
+        val result = HltbGamePageParser.parse(legacyHtml(), 54321L)
+        assertTrue(result is HltbGamePageParser.ParseResult.ParseFailure)
+    }
 }

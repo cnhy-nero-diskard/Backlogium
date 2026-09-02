@@ -35,9 +35,12 @@ class HltbQueryGeneratorTest {
 
     @Test
     fun trademarkBracketNoise_removed() {
+        // Trademark/bracket-only noise must yield the cleaned base title, not a no-op null
+        assertEquals("Game", HltbQueryGenerator.removeEditionNoise("Game™ [Deluxe]"))
         val variants = HltbQueryGenerator.variants("Game™ [Deluxe]")
-        // Trademark and bracket removed, normalized
-        assertTrue(variants.all { !it.contains("™") })
+        // The cleaned variant is actually emitted and differs from the normalized primary
+        assertTrue(variants.contains("game"))
+        assertTrue(variants.all { !it.contains("™") && !it.contains("[") })
     }
 
     @Test
@@ -77,6 +80,20 @@ class HltbQueryGeneratorTest {
         assertEquals(2L, scored.first().hltbId)
         assertTrue(scored.first().confidence > scored.last().confidence)
         assertTrue(scored.all { it.source == HltbCandidateSource.BROADER_SEARCH })
+    }
+
+    @Test
+    fun conflictingRomanSequelPenalty_scoresLower() {
+        val original = "Final Fantasy VII"
+        val candidates = listOf(
+            HltbCandidate(hltbId = 1L, name = "Final Fantasy VIII"),
+            HltbCandidate(hltbId = 2L, name = "Final Fantasy VII"),
+        )
+        val scored = HltbMatcher.scoredBroader(original, candidates)
+        // Exact VII should rank above conflicting sequel VIII
+        assertEquals(2L, scored.first().hltbId)
+        // The Roman conflict must incur the strong penalty, not just lose on similarity
+        assertTrue(scored.first().confidence - scored.last().confidence >= 0.4)
     }
 
     @Test

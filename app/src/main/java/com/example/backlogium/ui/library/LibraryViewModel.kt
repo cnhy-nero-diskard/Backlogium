@@ -455,19 +455,27 @@ class LibraryViewModel @Inject constructor(
         }
         pickerManualLinkStates.update { it + (appId to state.copy(loading = true, validationError = null, notFound = false, failed = false, preview = null)) }
         val job = viewModelScope.launch {
-            when (val result = hltbRepository.previewLinkedCandidate(input)) {
+            // Resolve into the *latest* entry, never the snapshot taken before launch, and drop a
+            // result whose submitted input was since edited (clearing loading so the new input
+            // can be previewed) — a stale preview must never overwrite newer user input.
+            val resolved: (PickerManualLinkUiState) -> PickerManualLinkUiState = when (val result = hltbRepository.previewLinkedCandidate(input)) {
                 is com.example.backlogium.data.repo.ManualLinkPreviewResult.Preview -> {
-                    pickerManualLinkStates.update { it + (appId to state.copy(loading = false, preview = result.candidate)) }
+                    { it.copy(loading = false, preview = result.candidate) }
                 }
                 is com.example.backlogium.data.repo.ManualLinkPreviewResult.Invalid -> {
-                    pickerManualLinkStates.update { it + (appId to state.copy(loading = false, validationError = "Invalid HLTB link: ${result.reason}")) }
+                    { it.copy(loading = false, validationError = "Invalid HLTB link: ${result.reason}") }
                 }
                 is com.example.backlogium.data.repo.ManualLinkPreviewResult.NotFound -> {
-                    pickerManualLinkStates.update { it + (appId to state.copy(loading = false, notFound = true)) }
+                    { it.copy(loading = false, notFound = true) }
                 }
                 is com.example.backlogium.data.repo.ManualLinkPreviewResult.Failed -> {
-                    pickerManualLinkStates.update { it + (appId to state.copy(loading = false, failed = true, failureClass = result.failureClass)) }
+                    { it.copy(loading = false, failed = true, failureClass = result.failureClass) }
                 }
+            }
+            pickerManualLinkStates.update { map ->
+                val current = map[appId] ?: return@update map
+                val next = if (current.input.trim() == input) resolved(current) else current.copy(loading = false)
+                map + (appId to next)
             }
         }
         pickerManualLinkJobs[appId] = job

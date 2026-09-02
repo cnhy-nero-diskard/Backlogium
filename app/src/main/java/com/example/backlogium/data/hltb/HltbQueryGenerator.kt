@@ -51,7 +51,8 @@ object HltbQueryGenerator {
     private val TRAILING_ARABIC_REGEX = Regex("""^(.*\D)(\d+)\s*$""")
     private val TRAILING_ROMAN_REGEX = Regex("""^(.*\s)([IVXLCDM]+)\s*$""", RegexOption.IGNORE_CASE)
 
-    private val ROMAN_TO_ARABIC = mapOf(
+    // Shared with HltbMatcher so conflicting-sequel scoring uses the same numeral table
+    internal val ROMAN_TO_ARABIC = mapOf(
         "I" to 1, "II" to 2, "III" to 3, "IV" to 4, "V" to 5,
         "VI" to 6, "VII" to 7, "VIII" to 8, "IX" to 9, "X" to 10,
         "XI" to 11, "XII" to 12, "XIII" to 13, "XIV" to 14, "XV" to 15,
@@ -112,10 +113,11 @@ object HltbQueryGenerator {
     /** Remove recognized edition/storefront noise while retaining meaningful base titles. */
     fun removeEditionNoise(title: String): String? {
         var cleaned = title
-        // Strip trademark/bracket noise first
-        cleaned = TRADEMARK_REGEX.replace(cleaned, "")
-        cleaned = BRACKET_REGEX.replace(cleaned, " ")
         var changed = false
+        // Strip trademark/bracket noise first; this counts as removable noise too
+        val withoutTrademark = TRADEMARK_REGEX.replace(cleaned, "")
+        cleaned = BRACKET_REGEX.replace(withoutTrademark, " ")
+        if (cleaned != title) changed = true
         val lower = cleaned.lowercase()
         for (term in EDITION_TERMS + PLATFORM_TERMS) {
             // Match term as a suffix or standalone: allow preceding space or start, followed by end

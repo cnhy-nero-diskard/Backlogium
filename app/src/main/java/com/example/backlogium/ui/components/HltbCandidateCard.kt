@@ -82,14 +82,17 @@ fun hltbLengthLabel(candidate: HltbCandidate): String {
 
 /**
  * Adaptive HLTB candidate card with larger cover art, themed fixed-geometry fallback,
- * name, available lengths, provenance/confidence guidance, and explicit `Use match` action.
- * The external HLTB link is a separate click target that cannot invoke match selection.
+ * name, available lengths, provenance/confidence guidance, and an explicit selection
+ * action (labeled by [selectionLabel]). The external HLTB link is a separate click target
+ * that cannot invoke match selection.
  */
 @Composable
 fun HltbCandidateCard(
     candidate: HltbCandidate,
     onSelect: () -> Unit,
     modifier: Modifier = Modifier,
+    selectionLabel: String = "Use match",
+    showSelectionButton: Boolean = true,
 ) {
     val uriHandler = LocalUriHandler.current
     Card(
@@ -187,11 +190,13 @@ fun HltbCandidateCard(
                 }
             }
             Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = onSelect,
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Use match for ${candidate.name}" },
-            ) {
-                Text("Use match")
+            if (showSelectionButton) {
+                Button(
+                    onClick = onSelect,
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "$selectionLabel for ${candidate.name}" },
+                ) {
+                    Text(selectionLabel)
+                }
             }
         }
     }

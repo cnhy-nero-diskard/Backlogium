@@ -152,7 +152,15 @@ object HltbMatcher {
         "complete edition", "deluxe edition", "ultimate edition",
     )
 
+    // Terminal Roman sequel numeral on an already-normalized (lowercase) title
+    private val TRAILING_ROMAN_NUMERAL_REGEX = Regex("""(.*\s)?([ivxlcdm]+)$""")
+
     private fun trailingNumber(normalized: String): Int? {
+        // Terminal Roman numerals count for the conflict comparison too
+        // (e.g. "final fantasy vii" vs "final fantasy viii").
+        TRAILING_ROMAN_NUMERAL_REGEX.find(normalized)?.let { match ->
+            HltbQueryGenerator.ROMAN_TO_ARABIC[match.groupValues[2].uppercase()]?.let { return it }
+        }
         val match = Regex("""(\d+)\s*$""").find(normalized) ?: return null
         return match.groupValues[1].toIntOrNull()
     }

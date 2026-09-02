@@ -405,6 +405,8 @@ class HltbRepositoryTest {
         override suspend fun getMatchCenter(): List<HltbData> =
             store.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW || it.matchStatus == HltbMatchStatus.UNMATCHED }
 
+        override suspend fun markNeedsReviewWithBroaderCandidates(appId: Long, candidatesJson: String): Int = 0
+
         private fun withDatasetRows(): List<HltbData> =
             store.values.toList() + datasetOnlyRows.filterKeys { it !in store }.values
     }

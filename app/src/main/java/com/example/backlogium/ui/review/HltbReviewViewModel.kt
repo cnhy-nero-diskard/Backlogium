@@ -60,6 +60,48 @@ data class ManualLinkUiState(
     val failureClass: HltbFailureClass? = null,
 )
 
+/**
+ * Match-center selection state: [index] is the selection's last known position in the display
+ * order (`ambiguous + unmatched`) and [persistedAppId] the tracked game identity. Both persist
+ * into the backing selection state after each derivation — the identity so a selection that fell
+ * out of the queue cannot become active again when the queue later grows, and the position so a
+ * removal can clamp onto the surviving neighbor of the old position.
+ */
+internal data class MatchCenterSelection(
+    val index: Int,
+    val persistedAppId: Long?,
+)
+
+/**
+ * Derives the selected position from a game identity rather than a raw index: the queue reorders
+ * across partitions (`ambiguous` + `unmatched`) whenever a game's match status changes — e.g. a
+ * broader search moves the selected game from `unmatched` into `ambiguous` — so an index would
+ * silently follow a different game. While the tracked game is present, the selection follows it
+ * by appId. When it is absent (resolved away), the last known position clamps onto the remaining
+ * queue so the selection moves to that position's surviving neighbor instead of jumping to the
+ * first game.
+ */
+internal fun resolveMatchCenterSelection(
+    prior: MatchCenterSelection,
+    games: List<MatchCenterGameUi>,
+): MatchCenterSelection {
+    if (games.isEmpty()) return MatchCenterSelection(index = 0, persistedAppId = null)
+    val trackedIndex = games.indexOfFirst { it.appId == prior.persistedAppId }
+    return when {
+        trackedIndex >= 0 ->
+            MatchCenterSelection(index = trackedIndex, persistedAppId = prior.persistedAppId)
+        // No selection yet: start on the first game.
+        prior.persistedAppId == null ->
+            MatchCenterSelection(index = 0, persistedAppId = games.first().appId)
+        // The tracked game was removed: clamp its last known position onto the surviving queue
+        // and persist the game now at that position as the new identity.
+        else -> {
+            val clamped = prior.index.coerceIn(0, games.lastIndex)
+            MatchCenterSelection(index = clamped, persistedAppId = games[clamped].appId)
+        }
+    }
+}
+
 data class HltbMatchCenterUiState(
     val loading: Boolean = true,
     val ambiguous: List<MatchCenterGameUi> = emptyList(),
@@ -109,7 +151,12 @@ class HltbReviewViewModel @Inject constructor(
         initialValue = HltbReviewUiState(),
     )
 
-    private val selectedIndex = MutableStateFlow(0)
+    // Selection state holds the tracked game's appId plus its last known display position, so the
+    // derivation can reorder-proof the selection by identity (the queue reorders across the
+    // ambiguous/unmatched partitions whenever a match status changes) and clamp a removal onto
+    // the surviving neighbor of the old position. See [resolveMatchCenterSelection].
+    private val trackedSelection =
+        MutableStateFlow(MatchCenterSelection(index = 0, persistedAppId = null))
     private val broaderStates = MutableStateFlow<Map<Long, BroaderSearchUiState>>(emptyMap())
     private val manualLinkStates = MutableStateFlow<Map<Long, ManualLinkUiState>>(emptyMap())
 
@@ -119,10 +166,10 @@ class HltbReviewViewModel @Inject constructor(
     val matchCenterState: StateFlow<HltbMatchCenterUiState> = combine(
         hltbRepository.matchCenterQueue,
         gameRepository.library,
-        selectedIndex,
+        trackedSelection,
         broaderStates,
         manualLinkStates,
-    ) { matchCenter, games, idx, broader, manual ->
+    ) { matchCenter, games, prior, broader, manual ->
         val infoByAppId = games.associate { it.appId to it }
         val all = matchCenter.map { entry ->
             val game = infoByAppId[entry.appId]
@@ -138,17 +185,21 @@ class HltbReviewViewModel @Inject constructor(
         }
         val ambiguous = all.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW }
         val unmatched = all.filter { it.matchStatus == HltbMatchStatus.UNMATCHED }
-        val total = all.size
-        val clampedIndex = when {
-            total == 0 -> 0
-            idx >= total -> (total - 1).coerceAtLeast(0)
-            else -> idx
-        }
+        // Derive from the exact display order (`ambiguous + unmatched`), not raw DAO order:
+        // observeMatchCenter() has no ORDER BY, so statuses can interleave and an index taken
+        // from raw order would silently select a different game through allGames.
+        val selection = resolveMatchCenterSelection(prior, ambiguous + unmatched)
+        // Persist the full derived selection back into the backing state so it is the next
+        // emit's prior: the position enables neighbor clamping on removal, and the identity
+        // means a selection that fell out of the queue (resolved away, or clamped) cannot
+        // become active again when the queue later grows. Guarded, so the write-back settles
+        // instead of re-triggering combine.
+        if (trackedSelection.value != selection) trackedSelection.value = selection
         HltbMatchCenterUiState(
             loading = false,
             ambiguous = ambiguous,
             unmatched = unmatched,
-            selectedIndex = clampedIndex,
+            selectedIndex = selection.index,
             broaderStates = broader,
             manualLinkStates = manual,
         )
@@ -159,36 +210,34 @@ class HltbReviewViewModel @Inject constructor(
     )
 
     fun selectNext() {
-        val total = matchCenterState.value.total
-        if (total == 0) return
-        selectedIndex.update { current ->
-            val clamped = current.coerceIn(0, total - 1)
-            if (clamped + 1 < total) clamped + 1 else clamped
-        }
+        val state = matchCenterState.value
+        if (state.total == 0) return
+        val target = (state.selectedIndex + 1).coerceAtMost(state.total - 1)
+        trackedSelection.value =
+            MatchCenterSelection(index = target, persistedAppId = state.allGames[target].appId)
     }
 
     fun selectPrevious() {
-        val total = matchCenterState.value.total
-        if (total == 0) return
-        selectedIndex.update { current ->
-            val clamped = current.coerceIn(0, total - 1)
-            if (clamped > 0) clamped - 1 else clamped
-        }
+        val state = matchCenterState.value
+        if (state.total == 0) return
+        val target = (state.selectedIndex - 1).coerceAtLeast(0)
+        trackedSelection.value =
+            MatchCenterSelection(index = target, persistedAppId = state.allGames[target].appId)
     }
 
     fun selectIndex(index: Int) {
-        val total = matchCenterState.value.total
-        if (total == 0) return
-        selectedIndex.value = index.coerceIn(0, total - 1)
+        val state = matchCenterState.value
+        if (state.total == 0) return
+        val target = index.coerceIn(0, state.total - 1)
+        trackedSelection.value =
+            MatchCenterSelection(index = target, persistedAppId = state.allGames[target].appId)
     }
 
     fun resolve(appId: Long, candidate: HltbCandidate) = viewModelScope.launch {
         hltbRepository.resolveMatch(appId, candidate)
-        // Selection stability: if the resolved game was selected, keep index at same position
-        // which now points to next game; if it was last, clamp to previous.
-        // The combine's clamping handles it; no extra adjust needed beyond ensuring the flow
-        // re-evaluates. But we proactively adjust if the selected game was the one resolved
-        // and it was the last item.
+        // Selection is tracked by appId (see matchCenterState): once the resolved game leaves the
+        // queue, the combine's clamping persists the replacement selection, so no index surgery
+        // is needed here.
     }
 
     fun startBroaderSearch(appId: Long, originalName: String) {
@@ -236,19 +285,27 @@ class HltbReviewViewModel @Inject constructor(
         }
         manualLinkStates.update { it + (appId to state.copy(loading = true, validationError = null, notFound = false, failed = false, preview = null)) }
         val job = viewModelScope.launch {
-            when (val result = hltbRepository.previewLinkedCandidate(input)) {
+            // Resolve into the *latest* entry, never the snapshot taken before launch, and drop a
+            // result whose submitted input was since edited (clearing loading so the new input
+            // can be previewed) — a stale preview must never overwrite newer user input.
+            val resolved: (ManualLinkUiState) -> ManualLinkUiState = when (val result = hltbRepository.previewLinkedCandidate(input)) {
                 is ManualLinkPreviewResult.Preview -> {
-                    manualLinkStates.update { it + (appId to state.copy(loading = false, preview = result.candidate)) }
+                    { it.copy(loading = false, preview = result.candidate) }
                 }
                 is ManualLinkPreviewResult.Invalid -> {
-                    manualLinkStates.update { it + (appId to state.copy(loading = false, validationError = "Invalid HLTB link: ${result.reason}")) }
+                    { it.copy(loading = false, validationError = "Invalid HLTB link: ${result.reason}") }
                 }
                 is ManualLinkPreviewResult.NotFound -> {
-                    manualLinkStates.update { it + (appId to state.copy(loading = false, notFound = true)) }
+                    { it.copy(loading = false, notFound = true) }
                 }
                 is ManualLinkPreviewResult.Failed -> {
-                    manualLinkStates.update { it + (appId to state.copy(loading = false, failed = true, failureClass = result.failureClass)) }
+                    { it.copy(loading = false, failed = true, failureClass = result.failureClass) }
                 }
+            }
+            manualLinkStates.update { map ->
+                val current = map[appId] ?: return@update map
+                val next = if (current.input.trim() == input) resolved(current) else current.copy(loading = false)
+                map + (appId to next)
             }
         }
         manualLinkJobs[appId] = job
