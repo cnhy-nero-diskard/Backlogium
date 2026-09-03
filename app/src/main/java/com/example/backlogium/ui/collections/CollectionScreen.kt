@@ -866,16 +866,18 @@ private fun CollectionGameCard(
                         .padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    member.iconUrl?.let { iconUrl ->
-                        Box {
-                            GameIcon(iconUrl = iconUrl, iconSize = 56.dp)
-                            CurrentPlayingDot(
-                                isCurrentlyPlaying = member.isCurrentlyPlaying,
-                                modifier = Modifier.align(Alignment.TopEnd),
-                            )
-                        }
-                        Spacer(Modifier.width(14.dp))
+                    // Unconditional: GameIcon's own themed placeholder covers a null/blank icon
+                    // (e.g. a family-shared game, whose small icon hash Steam never reports for a
+                    // game the player doesn't own) rather than the row silently losing its
+                    // thumbnail (fix-shared-game-achievement-visibility follow-up).
+                    Box {
+                        GameIcon(iconUrl = member.iconUrl.orEmpty(), iconSize = 56.dp)
+                        CurrentPlayingDot(
+                            isCurrentlyPlaying = member.isCurrentlyPlaying,
+                            modifier = Modifier.align(Alignment.TopEnd),
+                        )
                     }
+                    Spacer(Modifier.width(14.dp))
                     Column(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(3.dp),
@@ -1588,10 +1590,12 @@ private fun MemberRow(
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-            if (member.iconUrl != null) {
-                GameIcon(iconUrl = member.iconUrl)
-                Spacer(Modifier.width(12.dp))
-            }
+            // Unconditional: GameIcon's own themed placeholder covers a null/blank icon (e.g. a
+            // family-shared game, whose small icon hash Steam never reports for a game the
+            // player doesn't own) rather than the row silently losing its thumbnail
+            // (fix-shared-game-achievement-visibility follow-up).
+            GameIcon(iconUrl = member.iconUrl.orEmpty())
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     text = member.name,

@@ -334,10 +334,12 @@ private fun GameSummarySection(
             }
             Column(modifier = Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (summary.iconUrl.isNotBlank()) {
-                        GameIcon(summary.iconUrl)
-                        Spacer(Modifier.width(12.dp))
-                    }
+                    // Unconditional: GameIcon's own themed placeholder covers a blank icon (e.g. a
+                    // family-shared game, whose small icon hash Steam never reports for a game the
+                    // player doesn't own) rather than the row silently losing its thumbnail
+                    // (fix-shared-game-achievement-visibility follow-up).
+                    GameIcon(summary.iconUrl)
+                    Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = name,
