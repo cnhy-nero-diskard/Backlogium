@@ -91,6 +91,8 @@
       is how a clear is expressed — no separate `reset()`/`clear()` entry point is needed. Verify
       with unit tests: a `FAMILY_SHARED` game's minutes are set and XP recomputed; an owned game's
       attempt is rejected with no write and no recompute; a negative value is rejected.
+      Done: `SetSharedGamePlaytimeUseCaseTest.kt` covers set/clear/owned-rejected/negative-rejected/
+      unknown-appId-rejected.
 
 ## 4. Game detail UI
 
