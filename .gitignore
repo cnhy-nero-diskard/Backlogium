@@ -33,3 +33,7 @@ logs/
 
 # Scratch screenshots from local emulator / device testing
 .scratch_screens/
+
+# OpenSpec CLI agent tooling (machine-local, auto-generated)
+.agents/
+.opencode/
