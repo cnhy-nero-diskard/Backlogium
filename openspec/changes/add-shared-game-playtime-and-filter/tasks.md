@@ -122,21 +122,26 @@
 
 ## 5. Library filter
 
-- [ ] 5.1 Add `showFamilySharedOnly: Boolean` via `rememberSaveable` in `LibraryScreen.kt`, alongside
+- [x] 5.1 Add `showFamilySharedOnly: Boolean` via `rememberSaveable` in `LibraryScreen.kt`, alongside
       the existing `showNotCoveredOnly` (`LibraryScreen.kt:200`). Add a `List<T>.filterBySource`
       extension analogous to `filterByHltbCoverage` (`LibraryScreen.kt:815-822`), and fold it into
       the same `remember(...)` blocks that compute `visibleGoalGames`/`visibleBacklog`
       (`LibraryScreen.kt:206-215`) and the `noVisibleMatches` condition (`:216-219`). Reset it in the
       existing `DisposableEffect` (`:254-261`).
-- [ ] 5.2 Add a "Family Shared" `FilterChip` beside the existing "Not covered" one
+      Done: named `filterByFamilySharedOnly` (a selector-based function, not `LibraryRow`-bound,
+      since `isFamilyShared` lives on the concrete row types).
+- [x] 5.2 Add a "Family Shared" `FilterChip` beside the existing "Not covered" one
       (`LibraryScreen.kt:356-360`), and include it in the query.isBlank()-gated wishlist-visibility
       condition (`:390`) the same way `showNotCoveredOnly` already is, so an active filter hides the
       wishlist section consistently with the other filters.
-- [ ] 5.3 Verify with a `LibraryScreen`-level test or a pure filter-function unit test (matching
+      Done.
+- [x] 5.3 Verify with a `LibraryScreen`-level test or a pure filter-function unit test (matching
       however `filterByHltbCoverage`/`filterByGenres` are tested today, if at all — check first
       rather than assuming) that the filter isolates `isFamilyShared` rows and composes with genre
       and coverage filters as AND, per the delta spec's "Combined with other active filters"
       scenario.
+      Done: found `LibraryHltbCoverageFilterTest.kt` as the existing precedent and mirrored it in
+      `LibraryFamilySharedFilterTest.kt`, including an explicit AND-composition-with-coverage case.
 
 ## 6. Backup / restore
 
