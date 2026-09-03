@@ -74,14 +74,32 @@ approach fetches once and then falls back to the same delta/recency signals as a
 subsequent refreshes (a shared game's *derived sessions*, once observed, do produce nonzero tracked
 minutes and participate in hot/warm classification normally from then on).
 
-### 3. Admission-time fetch is fire-and-forget, not a precondition of admission
+### 3. Manual import fetches synchronously; automatic admission relies on Decision 2 plus the next sync, not a presence-layer fetch
 
-Both admission paths (manual import, automatic presence-based admission) persist the `Game` row
-first, exactly as today, and enqueue the achievement fetch as a follow-up rather than blocking
-admission on it. This matches the existing manual-import behavior (the row is created before the
-probe runs) and keeps a slow or failing Steam achievement request from blocking or failing game
-admission — consistent with `steam-achievements`' existing "Achievement fetch fails for a game"
-requirement (skip without failing the overall operation, leave prior data intact).
+Manual paste-link import already receives `apiKey`/`steamId` as call parameters (the player is in
+Settings, actively waiting on a result), so it calls the Task 1 entry point synchronously and the
+toast reflects genuinely persisted data.
+
+Automatic presence-based admission (`PresenceSessionRecorder` → `FamilySharedGameRepository.
+considerAdmission` → `admit`) is different: it runs on every successful presence observation, on a
+tight polling cadence (`LiveStatusRepository`'s ~30s tick), and has no Steam Web API key or steamId
+in scope — those live in `SettingsDataStore`/credentials storage, not on this call path, and it is
+not a resting point where a new async work item should be enqueued (WorkManager one-offs, a new
+credential lookup, and a new failure/retry surface, all for a path that already has one). Rather
+than thread credentials through a hot 30-second loop, this design leans entirely on Decision 2:
+once a family-shared game is admitted, it has no `GameAchievementSync` row and (per Decision 2)
+is never excluded as `NEVER` regardless of tracked playtime, so it is missing-data eligible from
+the moment it is admitted — and picked up automatically at the *library's very next periodic sync*
+(`SteamSyncWorker`, which already includes shared games in its achievement scope; ordinarily within
+its 15-minute schedule), with no separate enqueue step required. This is "eligible immediately,
+fetched at the next sync" rather than "fetched at the instant of admission" — a difference in
+degree, not in whether the game is ever reachable, and it costs no new failure mode or credential
+plumbing for a path that already runs unattended in the background.
+
+Both paths persist the `Game` row before any achievement fetch is attempted, exactly as today, so a
+slow or failing Steam achievement request never blocks or fails admission — consistent with
+`steam-achievements`' existing "Achievement fetch fails for a game" requirement (skip without
+failing the overall operation, leave prior data intact).
 
 ### 4. Backfill is a bounded, resumable pass, not a blanket reconciliation trigger
 

@@ -418,6 +418,60 @@ class AchievementRepositoryTest {
         assertEquals(20L, stored.fetchedAt)
     }
 
+    /**
+     * fix-shared-game-achievement-visibility: [AchievementRepository.refreshOne] exists precisely
+     * because tier selection would otherwise exclude a family-shared game with zero locally
+     * tracked playtime forever. It must persist through the normal merge path regardless.
+     */
+    @Test
+    fun `refreshOne persists achievement data independent of tier`() = runTest {
+        val api = FakeSteamApi()
+        val achievementDao = FakeAchievementDao()
+        val syncDao = FakeGameAchievementSyncDao()
+        val repo = repository(api, achievementDao = achievementDao, syncDao = syncDao)
+
+        val result = repo.refreshOne(KEY, STEAM_ID, appId = 42L)
+
+        assertTrue(result is SingleGameRefresh.Persisted)
+        assertEquals(1, (result as SingleGameRefresh.Persisted).total)
+        assertEquals(1, result.unlocked)
+        assertEquals(listOf(42L), api.playerAchievementCalls)
+        assertEquals(1, achievementDao.getForGame(42L).size)
+        assertEquals(NOW, syncDao.get(42L)?.playerStateFetchedAt)
+    }
+
+    @Test
+    fun `refreshOne persists nothing when Steam returns no usable player data`() = runTest {
+        val api = FakeSteamApi(noStatsFor = setOf(42L))
+        val achievementDao = FakeAchievementDao()
+        val syncDao = FakeGameAchievementSyncDao()
+        val repo = repository(api, achievementDao = achievementDao, syncDao = syncDao)
+
+        val result = repo.refreshOne(KEY, STEAM_ID, appId = 42L)
+
+        assertEquals(SingleGameRefresh.NoUsableData, result)
+        assertEquals(emptyList<Achievement>(), achievementDao.getForGame(42L))
+        assertNull("no sync metadata is written for an unusable response", syncDao.get(42L))
+    }
+
+    @Test
+    fun `refreshOne persists nothing on a transport error`() = runTest {
+        val api = FakeSteamApi(failPlayerAchievementsFor = setOf(42L))
+        val achievementDao = FakeAchievementDao()
+        val syncDao = FakeGameAchievementSyncDao()
+        val repo = repository(api, achievementDao = achievementDao, syncDao = syncDao)
+
+        val result = repo.refreshOne(KEY, STEAM_ID, appId = 42L)
+
+        assertEquals(
+            "a transport failure is distinct from a usable-but-empty answer, for messaging",
+            SingleGameRefresh.Unavailable,
+            result,
+        )
+        assertEquals(emptyList<Achievement>(), achievementDao.getForGame(42L))
+        assertNull(syncDao.get(42L))
+    }
+
     // --- helpers -----------------------------------------------------------------------------
 
     private fun repository(

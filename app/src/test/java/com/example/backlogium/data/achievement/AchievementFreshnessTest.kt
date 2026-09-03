@@ -1,5 +1,6 @@
 package com.example.backlogium.data.achievement
 
+import com.example.backlogium.domain.GameSource
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -113,6 +114,58 @@ class AchievementFreshnessTest {
         assertEquals(listOf(1L), result.cold)
     }
 
+    /**
+     * fix-shared-game-achievement-visibility: an owned game with zero playtime is genuinely
+     * never-played and is excluded, but a family-shared game's zero *locally tracked* playtime
+     * does not mean the same thing — Backlogium may simply never have observed a session for a
+     * game completed before it was admitted. Such a game must never land in NEVER.
+     */
+    @Test
+    fun `a family-shared game with zero tracked playtime is cold, not never`() {
+        val games = listOf(
+            sharedGame(1, forever = 0),
+            ownedGame(2, forever = 0, weeks = 0),
+        )
+        val result = AchievementFreshness.selectByTier(0L, games, emptyMap(), emptyMap())
+
+        assertEquals("the shared game is cold, and missing-data eligible", listOf(1L), result.cold)
+        assertEquals("the owned game is still excluded", listOf(2L), result.never)
+        assertEquals(listOf(1L), result.inlineSelected)
+    }
+
+    /**
+     * fix-shared-game-achievement-visibility, task 3.3: an already-admitted family-shared game
+     * with no stored achievement data — including one that would previously have been classified
+     * NEVER on zero tracked playtime alone — is naturally swept up by the existing bounded,
+     * oldest-first missing-data selection on its library's next sync. No separate backfill
+     * mechanism is needed once tiering stops excluding it.
+     */
+    @Test
+    fun `several already-admitted shared games with no stored data are missing-data eligible up to the cap`() {
+        val sharedGames = (1L..30L).map { sharedGame(it, forever = 0) }
+
+        val result = AchievementFreshness.selectByTier(0L, sharedGames, emptyMap(), emptyMap())
+
+        assertEquals("every shared game is cold, none are excluded as never-played", 30, result.cold.size)
+        assertEquals(emptyList<Long>(), result.never)
+        assertEquals(
+            "the missing-data override is still bounded, oldest-first, same as for owned games",
+            25,
+            result.missingDataOverride.size,
+        )
+    }
+
+    @Test
+    fun `a family-shared game with stored data and zero tracked playtime stays cold, not missing-data eligible`() {
+        val games = listOf(sharedGame(1, forever = 0))
+        val metadata = mapOf(1L to metadata(1, playerStateFetchedAt = 500))
+
+        val result = AchievementFreshness.selectByTier(0L, games, emptyMap(), metadata)
+
+        assertEquals(listOf(1L), result.cold)
+        assertEquals(emptyList<Long>(), result.missingDataOverride)
+    }
+
     private fun ownedGame(
         appId: Long,
         forever: Long,
@@ -121,6 +174,17 @@ class AchievementFreshnessTest {
         appId = appId,
         playtimeForever = forever,
         playtime2Weeks = weeks,
+        source = GameSource.STEAM_OWNED,
+    )
+
+    private fun sharedGame(
+        appId: Long,
+        forever: Long,
+    ) = AchievementFreshness.OwnedGame(
+        appId = appId,
+        playtimeForever = forever,
+        playtime2Weeks = 0L,
+        source = GameSource.FAMILY_SHARED,
     )
 
     private fun metadata(
