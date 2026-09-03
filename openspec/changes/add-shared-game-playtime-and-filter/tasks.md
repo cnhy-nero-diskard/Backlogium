@@ -171,7 +171,9 @@
 
 ## 7. Spec-facing verification
 
-- [ ] 7.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm all existing and new
+- [x] 7.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm all existing and new
       tests pass.
-- [ ] 7.2 Run `openspec validate add-shared-game-playtime-and-filter --strict` and confirm it passes
+      Done: `BUILD SUCCESSFUL`, all suites pass.
+- [x] 7.2 Run `openspec validate add-shared-game-playtime-and-filter --strict` and confirm it passes
       before this change is applied.
+      Done: `Change 'add-shared-game-playtime-and-filter' is valid`.
