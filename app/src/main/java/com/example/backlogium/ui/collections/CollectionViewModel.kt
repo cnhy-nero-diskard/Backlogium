@@ -61,7 +61,7 @@ data class CollectionMemberUi(
 )
 
 private fun LibraryGame.displayedPlaytimeMinutes(trackedByGame: Map<Long, Int>): Int =
-    source.displayedPlaytimeMinutes(playtimeForever, trackedByGame[appId] ?: 0)
+    source.displayedPlaytimeMinutes(playtimeForever, trackedByGame[appId] ?: 0, manualSharedMinutes)
 
 /** Full management-screen state for one collection (create or edit), all local/offline-first. */
 data class CollectionUiState(

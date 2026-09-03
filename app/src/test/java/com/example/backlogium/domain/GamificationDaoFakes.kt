@@ -390,7 +390,12 @@ internal fun testSession(minutes: Int, appId: Long = 1L) = Session(
     open = false,
 )
 
-internal fun testGame(appId: Long, backfillMinutes: Int) = Game(
+internal fun testGame(
+    appId: Long,
+    backfillMinutes: Int = 0,
+    source: GameSource = GameSource.STEAM_OWNED,
+    manualSharedMinutes: Int = 0,
+) = Game(
     appId = appId,
     name = "Game $appId",
     iconUrl = "",
@@ -398,4 +403,6 @@ internal fun testGame(appId: Long, backfillMinutes: Int) = Game(
     playtime2Weeks = 0,
     lastPlaytime = 0,
     backfillMinutes = backfillMinutes,
+    source = source,
+    manualSharedMinutes = manualSharedMinutes,
 )

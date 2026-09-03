@@ -84,6 +84,11 @@ data class GameSummaryUi(
     val importedMinutes: Int = 0,
     /** Minutes from sessions this app tracked itself. */
     val trackedMinutes: Int = 0,
+    /**
+     * A family-shared game's own hours-played estimate, in minutes; 0 for an owned game or when
+     * unset (add-shared-game-playtime-and-filter).
+     */
+    val manualMinutes: Int = 0,
     val mainStoryMinutes: Int? = null,
     val mainExtraMinutes: Int? = null,
     val completionistMinutes: Int? = null,
@@ -131,9 +136,10 @@ data class GameSummaryUi(
     /**
      * The playtime figure to lead with. Steam reports no lifetime total for a family-shared game,
      * so [playtimeMinutes] is structurally 0 for one and leading with it would read as "0m played"
-     * beside a history of real sessions. Tracked minutes are what the app actually knows.
+     * beside a history of real sessions. Tracked minutes are what the app actually knows, plus
+     * [manualMinutes] — the player's own estimate on top (add-shared-game-playtime-and-filter).
      */
-    val headlineMinutes: Int get() = if (isFamilyShared) trackedMinutes else playtimeMinutes
+    val headlineMinutes: Int get() = if (isFamilyShared) trackedMinutes + manualMinutes else playtimeMinutes
 
     val lastPlayed: LastPlayed
         get() = when {
@@ -380,6 +386,7 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
         playtimeMinutes = game.playtimeForever,
         importedMinutes = game.backfillMinutes,
         trackedMinutes = trackedMinutes,
+        manualMinutes = game.manualSharedMinutes,
         mainStoryMinutes = game.mainStoryMinutes,
         mainExtraMinutes = game.mainExtraMinutes,
         completionistMinutes = game.completionistMinutes,
@@ -391,7 +398,7 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
         xpContributed = LibraryXp.contribution(
             GameXpInput(
                 appId = game.appId,
-                minutesPlayed = game.backfillMinutes + trackedMinutes,
+                minutesPlayed = game.backfillMinutes + game.manualSharedMinutes + trackedMinutes,
                 completionistMinutes = game.completionistMinutes,
                 unlockedRarityPercents = achievements.filter { it.unlocked }.map { it.rarityPercent },
             ),

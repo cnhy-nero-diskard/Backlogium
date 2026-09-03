@@ -25,10 +25,10 @@ interface GameDao {
         "INSERT OR IGNORE INTO games " +
             "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
             "isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
-            "firstSeenAt, lastPlayedAt, returnedToPlayAt) " +
+            "firstSeenAt, lastPlayedAt, returnedToPlayAt, manualSharedMinutes) " +
             "VALUES (:appId, :name, :iconUrl, :playtimeForever, :playtime2Weeks, " +
             ":lastPlaytime, 0, NULL, :lastSyncedAt, 0, 'STEAM_OWNED', " +
-            ":firstSeenAt, :lastPlayedAt, NULL)",
+            ":firstSeenAt, :lastPlayedAt, NULL, 0)",
     )
     suspend fun insertSteamGameIfMissing(
         appId: Long,
@@ -110,8 +110,8 @@ interface GameDao {
     @Query(
         "INSERT OR IGNORE INTO games " +
             "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
-            "isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source) " +
-            "VALUES (:appId, :name, :iconUrl, 0, 0, 0, 0, NULL, :admittedAt, 0, 'FAMILY_SHARED')",
+            "isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, manualSharedMinutes) " +
+            "VALUES (:appId, :name, :iconUrl, 0, 0, 0, 0, NULL, :admittedAt, 0, 'FAMILY_SHARED', 0)",
     )
     suspend fun insertSharedGameIfMissing(
         appId: Long,

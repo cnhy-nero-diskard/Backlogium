@@ -157,6 +157,35 @@ class GamificationUpdaterTest {
         assertEquals(400, profileDao.get()!!.totalXp)
     }
 
+    /**
+     * add-shared-game-playtime-and-filter: a family-shared game's manual estimate feeds XP the
+     * same way an owned game's history backfill already does — folded into one cumulative,
+     * tapered total, not counted separately or ignored.
+     */
+    @Test
+    fun recompute_combinesManualSharedMinutesWithTrackedMinutesAndCapsViaTaper() = runTest {
+        val sessionDao = FakeSessionDao(listOf(testSession(minutes = 100)))
+        val hltbDao = FakeHltbDataDao(completionistByAppId = mapOf(1L to 1000))
+        val dailyDao = FakeDailyProgressDao(listOf(DailyProgress("2026-07-17", minutesPlayed = 40)))
+        val profileDao = FakePlayerProfileDao()
+        val achievementDao = FakeAchievementDao(emptyList())
+        val gameDao = FakeGameDao(
+            listOf(
+                testGame(
+                    appId = 1L,
+                    source = GameSource.FAMILY_SHARED,
+                    manualSharedMinutes = 5000,
+                ),
+            ),
+        )
+
+        val updater =
+            GamificationUpdater(sessionDao, dailyDao, profileDao, hltbDao, achievementDao, gameDao)
+        updater.recompute(today = LocalDate.parse("2026-07-17"), config = RuleConfig())
+
+        assertEquals(400, profileDao.get()!!.totalXp)
+    }
+
     @Test
     fun recompute_usesDatasetOnlyCompletionistLengthForTaperAfterSync() = runTest {
         // Game 1 has no cached HLTB row of its own; its completionist length is covered only

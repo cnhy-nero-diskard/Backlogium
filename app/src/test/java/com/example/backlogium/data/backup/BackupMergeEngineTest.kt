@@ -246,6 +246,80 @@ class BackupMergeEngineTest {
         assertEquals(30, merged.backfillMinutes)
     }
 
+    /**
+     * add-shared-game-playtime-and-filter: a family-shared game's manual playtime estimate must
+     * survive a backup round-trip, both for a fresh insert and for an update against an existing
+     * row, and an older backup with no `manualSharedMinutes` field must default to 0 without
+     * failing.
+     */
+    @Test
+    fun restore_manualSharedMinutesSurvivesInsert() = runTest {
+        val harness = newEngine(games = mutableMapOf(), nowMillis = 1_700_000_000_000L)
+        val file = baseFile(
+            games = listOf(
+                BackupGame(
+                    appId = 441L,
+                    name = "Borrowed Game",
+                    isGoal = false,
+                    backfillMinutes = 0,
+                    source = "FAMILY_SHARED",
+                    manualSharedMinutes = 90,
+                ),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        assertEquals(90, harness.gameDao.getById(441L)?.manualSharedMinutes)
+    }
+
+    @Test
+    fun restore_manualSharedMinutesSurvivesUpdate() = runTest {
+        val harness = newEngine(
+            games = mutableMapOf(441L to testGame(441L).copy(source = GameSource.FAMILY_SHARED)),
+            nowMillis = 1_700_000_000_000L,
+        )
+        val file = baseFile(
+            games = listOf(
+                BackupGame(
+                    appId = 441L,
+                    name = "Borrowed Game",
+                    isGoal = false,
+                    backfillMinutes = 0,
+                    source = "FAMILY_SHARED",
+                    manualSharedMinutes = 90,
+                ),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        assertEquals(90, harness.gameDao.getById(441L)?.manualSharedMinutes)
+    }
+
+    @Test
+    fun restore_backupPredatingManualSharedMinutesPreservesTheLocalEstimate() = runTest {
+        val harness = newEngine(
+            games = mutableMapOf(
+                441L to testGame(441L).copy(source = GameSource.FAMILY_SHARED, manualSharedMinutes = 45),
+            ),
+            nowMillis = 1_700_000_000_000L,
+        )
+        val file = baseFile(
+            games = listOf(
+                BackupGame(appId = 441L, name = "Borrowed Game", isGoal = false, backfillMinutes = 0),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        assertEquals(
+            "an absent field means the backup has no opinion, same as source/recency -- not a zero",
+            45,
+            harness.gameDao.getById(441L)?.manualSharedMinutes,
+        )
+    }
+
     @Test
     fun restore_absentRecencyFieldsDoNotEraseLocallyObservedOnes() = runTest {
         val locallyObserved = 1_699_900_000_000L

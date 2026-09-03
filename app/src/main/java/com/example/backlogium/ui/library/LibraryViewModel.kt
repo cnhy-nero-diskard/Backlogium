@@ -558,7 +558,7 @@ private data class LibraryContent(
 )
 
 /** Everything the XP badge needs, gathered once per change rather than per row. */
-private data class XpInputs(
+internal data class XpInputs(
     val trackedByGame: Map<Long, Int>,
     val rarityByGame: Map<Long, List<Double?>>,
     val cfg: RuleConfig,
@@ -647,11 +647,13 @@ private fun LibraryGame.toBacklogUi(
  * reports no total at all, so `playtimeForever` is structurally 0 and using it would render a game
  * with a real history of sessions as "0m" — and sort it to the bottom of every playtime ordering.
  * The observed session minutes are the only playtime such a game has, and the row labels them as
- * observed rather than presenting them as a Steam total.
+ * observed rather than presenting them as a Steam total. [manualSharedMinutes] is added on top —
+ * the player's own estimate, additive with what was actually tracked
+ * (add-shared-game-playtime-and-filter).
  */
-private fun LibraryGame.displayedPlaytimeMinutes(xp: XpInputs): Int = when (source) {
+internal fun LibraryGame.displayedPlaytimeMinutes(xp: XpInputs): Int = when (source) {
     GameSource.STEAM_OWNED -> playtimeForever
-    GameSource.FAMILY_SHARED -> xp.trackedByGame[appId] ?: 0
+    GameSource.FAMILY_SHARED -> (xp.trackedByGame[appId] ?: 0) + manualSharedMinutes
 }
 
 /**

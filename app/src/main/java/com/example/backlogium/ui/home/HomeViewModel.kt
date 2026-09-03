@@ -343,6 +343,7 @@ class HomeViewModel @Inject constructor(
                         it.source.displayedPlaytimeMinutes(
                             it.playtimeForever,
                             trackedMinutesByGame[member.appId] ?: 0,
+                            it.manualSharedMinutes,
                         )
                     } ?: 0,
                     completionistMinutes = game?.completionistMinutes,

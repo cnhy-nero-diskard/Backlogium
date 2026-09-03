@@ -170,6 +170,7 @@ class BackupMergeEngine @Inject constructor(
                     firstSeenAt = backupGame.firstSeenAt?.iso8601ToEpochMilli(),
                     lastPlayedAt = backupGame.lastPlayedAt?.iso8601ToEpochMilli(),
                     returnedToPlayAt = backupGame.returnedToPlayAt?.iso8601ToEpochMilli(),
+                    manualSharedMinutes = backupGame.manualSharedMinutes ?: 0,
                 ),
             )
         } else {
@@ -178,6 +179,10 @@ class BackupMergeEngine @Inject constructor(
             }
             gameDao.setGoalFlag(backupGame.appId, backupGame.isGoal)
             gameDao.setBackfillMinutes(backupGame.appId, backupGame.backfillMinutes)
+            // Null means an older backup predates this field, same as source/recency above -- the
+            // locally set estimate is left alone rather than zeroed by a backup that has no
+            // opinion on it.
+            backupGame.manualSharedMinutes?.let { gameDao.setManualSharedMinutes(backupGame.appId, it) }
             gameDao.setRecencyFromBackup(
                 appId = backupGame.appId,
                 firstSeenAt = backupGame.firstSeenAt?.iso8601ToEpochMilli(),

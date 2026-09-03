@@ -21,11 +21,18 @@ enum class GameSource {
     FAMILY_SHARED,
 }
 
-/** The playtime value that is truthful for a game source in player-facing summaries. */
+/**
+ * The playtime value that is truthful for a game source in player-facing summaries.
+ *
+ * [manualSharedMinutes] is a family-shared game's own hours-played estimate, additive with
+ * [trackedMinutes]; it defaults to 0 so every existing owned-game call site is unaffected
+ * (add-shared-game-playtime-and-filter).
+ */
 fun GameSource.displayedPlaytimeMinutes(
     steamPlaytimeMinutes: Int,
     trackedMinutes: Int,
+    manualSharedMinutes: Int = 0,
 ): Int = when (this) {
     GameSource.STEAM_OWNED -> steamPlaytimeMinutes
-    GameSource.FAMILY_SHARED -> trackedMinutes
+    GameSource.FAMILY_SHARED -> trackedMinutes + manualSharedMinutes
 }
