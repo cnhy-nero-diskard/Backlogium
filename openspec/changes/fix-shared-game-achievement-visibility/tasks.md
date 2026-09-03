@@ -79,11 +79,18 @@
 
 ## 4. Spec-facing verification
 
-- [ ] 4.1 Verify `SmartCollections`'s Completed derivation requires no code change: add a test
+- [x] 4.1 Verify `SmartCollections`'s Completed derivation requires no code change: add a test
       seeding a family-shared game with all achievements now persisted (post Task 2/3) and confirm it
       is classified completed, disclosed as achievement-determined, exercising the existing
       `smart-collections` "All achievements unlocked" scenario end-to-end through the fixed data path.
-- [ ] 4.2 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm all existing and new
+      Done: confirmed no `SmartCollections`/`SmartCollectionGame` change was needed (it never carried
+      a source field to filter on). Covered by `AchievementRepositoryTest`'s
+      `a family-shared game's persisted achievements complete it in SmartCollections`, which calls
+      `refreshOne`, reconstructs the same signal shape `smartCollectionSignals` derives, and asserts
+      `SmartCollections.derive` reaches Completed.
+- [x] 4.2 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm all existing and new
       tests pass.
-- [ ] 4.3 Run `openspec validate fix-shared-game-achievement-visibility --strict` and confirm it
+      Done: `BUILD SUCCESSFUL`, all suites pass.
+- [x] 4.3 Run `openspec validate fix-shared-game-achievement-visibility --strict` and confirm it
       passes before this change is applied.
+      Done: `Change 'fix-shared-game-achievement-visibility' is valid`.

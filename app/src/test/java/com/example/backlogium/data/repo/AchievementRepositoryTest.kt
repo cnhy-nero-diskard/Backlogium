@@ -28,6 +28,10 @@ import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
 import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
+import com.example.backlogium.domain.AchievementDataState
+import com.example.backlogium.domain.SmartCollectionAchievementSignals
+import com.example.backlogium.domain.SmartCollectionGame
+import com.example.backlogium.domain.SmartCollections
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -470,6 +474,56 @@ class AchievementRepositoryTest {
         )
         assertEquals(emptyList<Achievement>(), achievementDao.getForGame(42L))
         assertNull(syncDao.get(42L))
+    }
+
+    /**
+     * fix-shared-game-achievement-visibility, task 4.1: confirms `SmartCollections`'s Completed
+     * rule needs no code change — it is data-blind to source already. Once `refreshOne` persists a
+     * family-shared game's fully-unlocked achievements (the fix from tasks 1-3), the same
+     * `hasAchievements`/counts shape a normal sync would have produced is present, and the
+     * existing "All achievements unlocked" rule completes it exactly as it would an owned game.
+     */
+    @Test
+    fun `a family-shared game's persisted achievements complete it in SmartCollections`() = runTest {
+        val api = FakeSteamApi() // ACH_1, achieved = 1 -- fully unlocked
+        val achievementDao = FakeAchievementDao()
+        val syncDao = FakeGameAchievementSyncDao()
+        val repo = repository(api, achievementDao = achievementDao, syncDao = syncDao)
+
+        repo.refreshOne(KEY, STEAM_ID, appId = 42L)
+
+        // Same shape AchievementRepository.smartCollectionSignals derives from a sync row +
+        // counts; reconstructed here rather than through the reactive Flow so this test stays
+        // independent of FakeAchievementDao's static observeCounts() stub.
+        val persisted = achievementDao.getForGame(42L)
+        val syncRow = syncDao.get(42L)
+        assertTrue("refreshOne must have written a sync row", syncRow?.hasAchievements == true)
+        val signals = mapOf(
+            42L to SmartCollectionAchievementSignals(
+                unlocked = persisted.count { it.unlocked },
+                total = persisted.size,
+                state = AchievementDataState.HAS_ACHIEVEMENTS,
+            ),
+        )
+
+        val derived = SmartCollections.derive(
+            games = listOf(
+                SmartCollectionGame(
+                    appId = 42L,
+                    name = "Shared Game",
+                    playtimeMinutes = 0,
+                    mainStoryMinutes = null,
+                    lastPlayedAt = null,
+                ),
+            ),
+            achievementsByGame = signals,
+            today = LocalDate.of(2026, 1, 1),
+        )
+
+        assertTrue(
+            "a fully-unlocked family-shared game must reach Completed once its achievements are persisted",
+            derived.completed.any { it.game.appId == 42L },
+        )
     }
 
     // --- helpers -----------------------------------------------------------------------------
