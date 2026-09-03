@@ -203,4 +203,15 @@ interface GameDao {
     suspend fun applyBackfill(minutesByAppId: Map<Long, Int>) {
         minutesByAppId.forEach { (appId, minutes) -> setBackfillMinutes(appId, minutes) }
     }
+
+    /**
+     * Set (or clear, with 0) a family-shared game's manual playtime estimate. SQL-guarded to
+     * `FAMILY_SHARED`, same as [deleteSharedGame], so this write can never populate an owned
+     * game's row regardless of what the caller passes (add-shared-game-playtime-and-filter).
+     */
+    @Query(
+        "UPDATE games SET manualSharedMinutes = :minutes " +
+            "WHERE appId = :appId AND source = 'FAMILY_SHARED'",
+    )
+    suspend fun setManualSharedMinutes(appId: Long, minutes: Int)
 }

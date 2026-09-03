@@ -224,6 +224,12 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
         } else {
             0
         }
+
+    override suspend fun setManualSharedMinutes(appId: Long, minutes: Int) {
+        store[appId]?.takeIf { it.source == GameSource.FAMILY_SHARED }?.let {
+            store[appId] = it.copy(manualSharedMinutes = minutes)
+        }
+    }
 }
 
 internal class FakeDailyProgressDao(

@@ -70,7 +70,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         WishlistItem::class,
         WishlistPriceObservation::class,
     ],
-    version = 26,
+    version = 27,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -664,6 +664,19 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "`completionistMinutes` INTEGER, " +
                         "`allStylesMinutes` INTEGER, " +
                         "PRIMARY KEY(`hltbId`))",
+                )
+            }
+        }
+
+        /**
+         * v26 -> v27: a family-shared game's own freely-editable hours-played estimate, additive
+         * with tracked time. Independent of `backfillMinutes` — see `Game.manualSharedMinutes`'s
+         * doc for why it cannot share that column (add-shared-game-playtime-and-filter).
+         */
+        val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `games` ADD COLUMN `manualSharedMinutes` INTEGER NOT NULL DEFAULT 0",
                 )
             }
         }

@@ -769,6 +769,7 @@ class AchievementRepositoryTest {
         override suspend fun sharedGames(): List<Game> = games.filter { it.source == GameSource.FAMILY_SHARED }
         override suspend fun convertSharedToOwned(appId: Long, playtimeForever: Int, playtime2Weeks: Int, convertedAt: Long) = error("not used")
         override suspend fun deleteSharedGame(appId: Long) = error("not used")
+        override suspend fun setManualSharedMinutes(appId: Long, minutes: Int) = error("not used")
     }
 
     private class FixedTimeProvider(private val now: Long) : TimeProvider {

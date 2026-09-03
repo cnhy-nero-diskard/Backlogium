@@ -912,6 +912,12 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
         } else {
             0
         }
+
+    override suspend fun setManualSharedMinutes(appId: Long, minutes: Int) {
+        store[appId]?.takeIf { it.source == GameSource.FAMILY_SHARED }?.let {
+            store[appId] = it.copy(manualSharedMinutes = minutes)
+        }
+    }
 }
 
 private class FakeExcludedSharedGameDao : ExcludedSharedGameDao {
