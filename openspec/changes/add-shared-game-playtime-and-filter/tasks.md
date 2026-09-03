@@ -96,22 +96,29 @@
 
 ## 4. Game detail UI
 
-- [ ] 4.1 Wire `SetSharedGamePlaytimeUseCase` into `GameDetailViewModel` and add `fun
+- [x] 4.1 Wire `SetSharedGamePlaytimeUseCase` into `GameDetailViewModel` and add `fun
       setManualPlaytime(hours: Double)` (or an equivalent minutes-based signature — convert
       hours→minutes at the UI boundary per design.md Decision 5, not inside the use case, which
       stays minutes-only like every other playtime field), following the `removeSharedGame()`
       pattern (`GameDetailViewModel.kt:312-317`): resolve `appIdState.value`, launch in
       `viewModelScope`, call the use case.
-- [ ] 4.2 Add a "Set hours played" action + `AlertDialog` (numeric `OutlinedTextField`, decimal
+      Done.
+- [x] 4.2 Add a "Set hours played" action + `AlertDialog` (numeric `OutlinedTextField`, decimal
       keyboard) to `GameDetailScreen.kt`, in the same `if (summary.isFamilyShared)` block as
       `ObservedCoverageNotice`/`RemoveSharedGameAction` (`GameDetailScreen.kt:369-372`), following
       `RemoveSharedGameAction`'s local `remember { mutableStateOf(...) }` + confirm/dismiss shape
       (`GameDetailScreen.kt:519-559`). Pre-fill the field with the currently stored manual hours
       (0 shows as empty/placeholder, not literal "0.0"). Confirming with an empty/zero input clears
       the estimate, matching the "Clearing an estimate" scenario.
+      Done: `SetManualPlaytimeAction` added, gated on `summary.isFamilyShared` alongside
+      `RemoveSharedGameAction`. `formatHours` deliberately uses `Locale.ROOT` (not the device
+      default) since the pre-filled string is re-parsed by `toDoubleOrNull()`, which is
+      locale-invariant — a comma-decimal locale would otherwise make the pre-filled value fail its
+      own validation on open.
 - [ ] 4.3 Manually verify on-device/emulator: set an hours estimate on a family-shared game, confirm
       the detail screen's headline playtime and XP figure update immediately; confirm the action is
       absent on an owned game's detail screen.
+      Not done in this session: no device/emulator was attached. Left for the user to verify.
 
 ## 5. Library filter
 

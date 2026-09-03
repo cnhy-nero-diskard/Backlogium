@@ -15,6 +15,7 @@ import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.GameXpInput
 import com.example.backlogium.domain.LibraryXp
+import com.example.backlogium.domain.SetSharedGamePlaytimeUseCase
 import com.example.backlogium.gamification.AchievementInput
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RarityStanding
@@ -38,6 +39,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import javax.inject.Inject
 
 /** How the achievement list is ordered. Transient view state — deliberately not persisted. */
@@ -182,6 +184,7 @@ class GameDetailViewModel @Inject constructor(
     achievementRepository: AchievementRepository,
     private val gameRepository: GameRepository,
     private val sharedGames: FamilySharedGameRepository,
+    private val setSharedGamePlaytime: SetSharedGamePlaytimeUseCase,
     sessionRepository: SessionRepository,
     settings: SettingsRepository,
 ) : ViewModel() {
@@ -322,8 +325,22 @@ class GameDetailViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Set (or clear, with 0 hours) a family-shared game's manual playtime estimate. A no-op for
+     * an owned game or a negative input — [SetSharedGamePlaytimeUseCase] guards both
+     * (add-shared-game-playtime-and-filter). [content] already recomputes its summary from the
+     * same `GameRepository`/`GamificationUpdater` state this write updates, so no separate
+     * refresh event is needed here.
+     */
+    fun setManualPlaytime(hours: Double) {
+        val appId = appIdState.value ?: return
+        val minutes = (hours * MINUTES_PER_HOUR).roundToInt()
+        viewModelScope.launch { setSharedGamePlaytime(appId, minutes) }
+    }
+
     private companion object {
         const val ACTIVE_PLAYERS_POLL_INTERVAL_MS = 30_000L
+        const val MINUTES_PER_HOUR = 60
     }
 }
 

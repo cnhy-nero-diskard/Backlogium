@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -35,6 +36,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -66,6 +68,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -83,6 +86,7 @@ import com.example.backlogium.ui.theme.rarityHalo
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.CircleCheck
+import compose.icons.tablericons.Clock
 import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.ExternalLink
 import compose.icons.tablericons.Trash
@@ -208,6 +212,7 @@ private fun GameDetailList(
                 artworkFallbackUrls = artworkFallbackUrls,
                 summary = state.summary,
                 onRemoveSharedGame = viewModel::removeSharedGame,
+                onSetManualPlaytime = viewModel::setManualPlaytime,
             )
         }
         state.rarityStanding?.let { standing ->
@@ -320,6 +325,7 @@ private fun GameSummarySection(
     artworkFallbackUrls: List<String>,
     summary: GameSummaryUi,
     onRemoveSharedGame: () -> Unit = {},
+    onSetManualPlaytime: (Double) -> Unit = {},
 ) {
     val uriHandler = LocalUriHandler.current
     val linkLabel = name.takeIf { it.isNotBlank() }?.let { "Open $it on Steam" } ?: "Open game on Steam"
@@ -368,6 +374,7 @@ private fun GameSummarySection(
                 }
                 if (summary.isFamilyShared) {
                     ObservedCoverageNotice(summary)
+                    SetManualPlaytimeAction(summary.manualMinutes, onSetManualPlaytime)
                     RemoveSharedGameAction(name, onRemoveSharedGame)
                 }
                 TextButton(
@@ -509,6 +516,87 @@ private fun ObservedCoverageNotice(summary: GameSummaryUi) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 10.dp),
     )
+}
+
+/**
+ * Lets the player supplement a family-shared game's observed playtime with their own estimate,
+ * offered only for a family-shared game (add-shared-game-playtime-and-filter) — an owned game's
+ * tracked total is already Steam's own figure, with nothing to estimate. Freely re-editable: the
+ * dialog always opens pre-filled with the currently stored estimate, and re-confirming replaces
+ * it rather than adding to it.
+ */
+@Composable
+private fun SetManualPlaytimeAction(currentMinutes: Int, onSet: (Double) -> Unit) {
+    var editing by remember { mutableStateOf(false) }
+    var input by remember(editing) {
+        mutableStateOf(if (currentMinutes > 0) formatHours(currentMinutes) else "")
+    }
+
+    TextButton(
+        onClick = { editing = true },
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+    ) {
+        Icon(
+            imageVector = TablerIcons.Clock,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(if (currentMinutes > 0) "Edit hours played" else "Set hours played")
+    }
+
+    if (!editing) return
+    val hours = input.toDoubleOrNull()
+    AlertDialog(
+        onDismissRequest = { editing = false },
+        title = { Text("Hours played") },
+        text = {
+            Column {
+                Text(
+                    "Your own estimate, added on top of what Backlogium observed. " +
+                        "Leave blank or enter 0 to clear it.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    label = { Text("Hours") },
+                    singleLine = true,
+                    isError = input.isNotBlank() && hours == null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = input.isBlank() || hours != null,
+                onClick = {
+                    editing = false
+                    onSet(hours ?: 0.0)
+                },
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = { editing = false }) { Text("Cancel") }
+        },
+    )
+}
+
+/**
+ * `Locale.ROOT` deliberately, not the device default: this string is re-parsed by
+ * [String.toDoubleOrNull], which expects a `.` decimal separator regardless of locale, so
+ * formatting with a comma-decimal locale would make the pre-filled value fail its own validation.
+ */
+private fun formatHours(minutes: Int): String {
+    val hours = minutes / 60.0
+    return if (hours == hours.toLong().toDouble()) {
+        hours.toLong().toString()
+    } else {
+        String.format(java.util.Locale.ROOT, "%.1f", hours)
+    }
 }
 
 /**
