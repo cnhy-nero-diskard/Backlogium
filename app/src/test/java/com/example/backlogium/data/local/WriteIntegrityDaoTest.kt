@@ -19,11 +19,19 @@ import com.example.backlogium.data.local.entity.WishlistItem
 import com.example.backlogium.data.local.entity.WishlistPriceObservation
 import com.example.backlogium.data.local.entity.Collection as CollectionEntity
 import com.example.backlogium.data.repo.AccountRoomReset
+import com.example.backlogium.data.repo.SessionActionWriter
+import com.example.backlogium.domain.GameSource
+import com.example.backlogium.domain.PresenceSessionDeriver
 import com.example.backlogium.domain.SessionDiffer
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionTimeBasis
+import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.work.SteamSyncCoordinator
+import java.time.LocalDate
+import java.time.ZoneOffset
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
@@ -31,6 +39,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -580,6 +589,175 @@ class WriteIntegrityDaoTest {
         assertFalse(sessions.single().open)
         assertEquals(30, database.dailyProgressDao().getByDate(DATE)!!.minutesPlayed)
         assertEquals(130, database.gameDao().getById(440L)!!.lastPlaytime)
+    }
+
+    // --- auditfix-session-ledger-integrity #116: at most one open session per game ---
+
+    @Test
+    fun openConflictOnAnAlreadyOpenSessionExtendsRatherThanRejects() = runBlocking {
+        database.gameDao().upsert(sharedGame(appId = 730L))
+        database.sessionDao().insert(
+            Session(appId = 730L, startAt = 1_000L, endAt = 1_010L, minutes = 10, open = true),
+        )
+
+        // A losing tryOpenSession() call must fold into the session that won rather than being
+        // dropped, which is what the second observation actually meant (task 2.3).
+        writer().applySessionActions(
+            listOf(
+                SessionDiffer.SessionAction.Open(
+                    appId = 730L,
+                    startAt = 900L,
+                    endAt = 1_200L,
+                    minutes = 45,
+                ),
+            ),
+        )
+
+        val sessions = database.sessionDao().getAll()
+        assertEquals(1, sessions.size)
+        val merged = sessions.single()
+        assertTrue(merged.open)
+        assertEquals(1_000L, merged.startAt)
+        assertEquals(1_200L, merged.endAt)
+        assertEquals(55, merged.minutes)
+    }
+
+    @Test
+    fun twoOverlappingPresenceObservationsForSameGameProduceOneOpenSession() = runBlocking {
+        database.gameDao().upsert(sharedGame(appId = 730L))
+
+        // This is the regression test for #116: PresenceSessionRecorder's read-derive-write is
+        // three separable steps with no coordination, so two overlapping checkNow() calls can
+        // both read "no open session" before either commits. Neither this test nor the code it
+        // exercises takes SteamSyncCoordinator — the guarantee must hold without it (spec
+        // scenario "Correctness does not rest on a process lock").
+        coroutineScope {
+            launch { recordPresenceObservation(appId = 730L, at = 1_000L) }
+            launch { recordPresenceObservation(appId = 730L, at = 1_030L) }
+        }
+
+        val sessions = database.sessionDao().getAll()
+        assertEquals(1, sessions.size)
+        assertTrue(sessions.single().open)
+    }
+
+    @Test
+    fun presenceSessionGuardHoldsWhileSyncCoordinatorIsHeldElsewhere() = runBlocking {
+        database.gameDao().upsert(sharedGame(appId = 730L))
+        val coordinator = SteamSyncCoordinator()
+
+        // The coordinator is busy for the whole scenario, as a worker holding it across a
+        // library-scale run would leave it — proving the presence path's correctness does not
+        // rest on ever acquiring it, per design.md Decision 1.
+        coroutineScope {
+            launch { coordinator.withLock { delay(50) } }
+            launch { recordPresenceObservation(appId = 730L, at = 1_000L) }
+            launch { recordPresenceObservation(appId = 730L, at = 1_030L) }
+        }
+
+        val sessions = database.sessionDao().getAll()
+        assertEquals(1, sessions.size)
+        assertTrue(sessions.single().open)
+    }
+
+    @Test
+    fun concurrentPresenceObservationsCommittingInEitherOrderLeaveIdenticalState() = runBlocking {
+        database.gameDao().upsert(sharedGame(appId = 730L))
+
+        coroutineScope {
+            launch { recordPresenceObservation(appId = 730L, at = 1_000L) }
+            launch { recordPresenceObservation(appId = 730L, at = 1_030L) }
+        }
+
+        val sessions = database.sessionDao().getAll()
+        assertEquals(1, sessions.size)
+        val merged = sessions.single()
+        assertTrue(merged.open)
+        assertEquals(0, merged.minutes)
+        // endAt is maxOf() on both sides of the merge, so it lands on 1_030 regardless of which
+        // observation's tryOpenSession() wins the race; only startAt depends on the winner.
+        assertEquals(1_030L, merged.endAt)
+        assertTrue(merged.startAt == 1_000L || merged.startAt == 1_030L)
+    }
+
+    @Test
+    fun twoDifferentGamesEachHoldOpenSessionSimultaneously() = runBlocking {
+        database.gameDao().upsert(sharedGame(appId = 730L))
+        database.gameDao().upsert(sharedGame(appId = 550L))
+
+        coroutineScope {
+            launch { recordPresenceObservation(appId = 730L, at = 1_000L) }
+            launch { recordPresenceObservation(appId = 550L, at = 1_000L) }
+        }
+
+        val sessions = database.sessionDao().getAll()
+        assertEquals(2, sessions.size)
+        assertTrue(sessions.all { it.open })
+        assertEquals(setOf(730L, 550L), sessions.map { it.appId }.toSet())
+    }
+
+    @Test
+    fun naturalKeyLookupToleratesDuplicateAmongClosedSessions() = runBlocking {
+        database.gameDao().upsert(sharedGame(appId = 730L))
+
+        // The single-open-session guard only constrains open rows; closed sessions must stay as
+        // tolerant of a natural-key collision as the backup/restore merge engine requires
+        // (Session.kt's KDoc, task 1.3 / 2.8).
+        database.sessionDao().insert(
+            Session(appId = 730L, startAt = 1_000L, endAt = 1_100L, minutes = 10, open = false),
+        )
+        database.sessionDao().insert(
+            Session(appId = 730L, startAt = 1_000L, endAt = 1_100L, minutes = 10, open = false),
+        )
+
+        val found = database.sessionDao().findByNaturalKey(730L, 1_000L, 1_100L)
+        assertNotNull(found)
+        assertEquals(2, database.sessionDao().getAll().size)
+    }
+
+    private fun sharedGame(appId: Long) = Game(
+        appId = appId,
+        name = "Shared game $appId",
+        iconUrl = "",
+        playtimeForever = 0,
+        playtime2Weeks = 0,
+        lastPlaytime = 0,
+        source = GameSource.FAMILY_SHARED,
+    )
+
+    private fun writer() = SessionActionWriter(
+        sessionDao = database.sessionDao(),
+        dailyProgressDao = database.dailyProgressDao(),
+        time = FixedTimeProvider,
+    )
+
+    /**
+     * Mirrors PresenceSessionRecorder's read-derive-write boundary (`:69`, `:87`) for one
+     * observation of a single already-known shared game, without the admission/recompute
+     * machinery the single-open-session guarantee does not depend on.
+     */
+    private suspend fun recordPresenceObservation(appId: Long, at: Long) {
+        val open = database.sessionDao().getAllOpenSessions()
+            .firstOrNull { it.appId == appId }
+            ?.let {
+                PresenceSessionDeriver.OpenSession(
+                    appId = it.appId,
+                    startAt = it.startAt,
+                    minutes = it.minutes,
+                    lastObservedAt = it.endAt ?: it.startAt,
+                )
+            }
+        val result = PresenceSessionDeriver().derive(
+            observation = PresenceSessionDeriver.Observation(appId, at),
+            openSession = open,
+        )
+        writer().apply(result.actions, goalAppIds = emptySet())
+    }
+
+    private object FixedTimeProvider : TimeProvider {
+        override fun nowMillis(): Long = 1_000L
+        override fun zone() = ZoneOffset.UTC
+        override fun today(): LocalDate = LocalDate.of(2026, 8, 15)
     }
 
     private suspend fun commitPollSnapshot(playtime: Int, pollAt: Long) {

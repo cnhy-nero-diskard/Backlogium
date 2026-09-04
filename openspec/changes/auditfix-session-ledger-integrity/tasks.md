@@ -1,19 +1,19 @@
 ## 1. Prerequisites
 
-- [ ] 1.1 Confirm `auditfix-spec-truth` has landed and its v13-to-current chain test is green. **This change adds a schema migration and must not go in ahead of it** — the same gate the archived `auditfix-sync-write-integrity` set, for the same reason: this app's data cannot be re-derived. Verified by the chain test existing and passing on master
-- [ ] 1.2 Confirm `auditfix-background-work-contracts` has **not** landed yet. That change narrows `SteamSyncCoordinator`; this one must establish session-write safety first (design.md Decision 1, reason 2). Verified by `SteamSyncWorker.kt:207` and `ReconciliationWorker.kt:44` still holding the lock for their whole run
-- [ ] 1.3 Read `Session.kt`'s KDoc on the deliberately non-unique `(appId, startAt, endAt)` index and `WriteIntegrityDaoTest.kt:570`'s comment before touching the schema. Both encode constraints this change must not break. Verified by the plan in task 2.1 leaving the natural key non-unique
+- [x] 1.1 Confirm `auditfix-spec-truth` has landed and its v13-to-current chain test is green. **This change adds a schema migration and must not go in ahead of it** — the same gate the archived `auditfix-sync-write-integrity` set, for the same reason: this app's data cannot be re-derived. Verified by the chain test existing and passing on master
+- [x] 1.2 Confirm `auditfix-background-work-contracts` has **not** landed yet. That change narrows `SteamSyncCoordinator`; this one must establish session-write safety first (design.md Decision 1, reason 2). Verified by `SteamSyncWorker.kt:207` and `ReconciliationWorker.kt:44` still holding the lock for their whole run
+- [x] 1.3 Read `Session.kt`'s KDoc on the deliberately non-unique `(appId, startAt, endAt)` index and `WriteIntegrityDaoTest.kt:570`'s comment before touching the schema. Both encode constraints this change must not break. Verified by the plan in task 2.1 leaving the natural key non-unique
 
 ## 2. One open session per game (#116)
 
-- [ ] 2.1 Decide between a partial unique index on `appId WHERE open = 1` and a guarded `INSERT … WHERE NOT EXISTS` in `SessionDao`, based on the pinned Room version's partial-index support (design.md Decision 1). **The `(appId, startAt, endAt)` natural key stays non-unique either way.** Verified by the decision recorded and the natural key unchanged
-- [ ] 2.2 Implement the chosen guarantee in `SessionActionWriter` (`:37`, `:74`), whose KDoc already claims to be the one path session actions take into storage. Verified by the guarantee holding regardless of which caller reaches it
-- [ ] 2.3 Make an `Open` action for a game that already has an open session extend that session instead of inserting, since that is what the second observation meant. Verified by a test asserting one session with the combined minutes rather than a rejection that loses them
-- [ ] 2.4 Test: two overlapping `checkNow()` calls through the full read-derive-write boundary of `PresenceSessionRecorder` (`:69`, `:87`) produce exactly one open session. Extend `WriteIntegrityDaoTest` following the shape at `:570`. This is the regression test for #116 and the most important test in this change
-- [ ] 2.5 Test: the same property holds **with any process-scoped sync coordination disabled**, proving correctness does not rest on the lock — the spec scenario "Correctness does not rest on a process lock", and the same proof style the coordinator's KDoc asks for
-- [ ] 2.6 Test: two concurrent observations committing in either order leave identical stored state
-- [ ] 2.7 Test: two different games may each hold an open session simultaneously — the constraint is per game, not global
-- [ ] 2.8 Test: the backup/restore merge engine's natural-key lookup still tolerates a duplicate among closed sessions without failing an import. Verified by an import fixture containing such a collision succeeding
+- [x] 2.1 Decide between a partial unique index on `appId WHERE open = 1` and a guarded `INSERT … WHERE NOT EXISTS` in `SessionDao`, based on the pinned Room version's partial-index support (design.md Decision 1). **The `(appId, startAt, endAt)` natural key stays non-unique either way.** Verified by the decision recorded and the natural key unchanged
+- [x] 2.2 Implement the chosen guarantee in `SessionActionWriter` (`:37`, `:74`), whose KDoc already claims to be the one path session actions take into storage. Verified by the guarantee holding regardless of which caller reaches it
+- [x] 2.3 Make an `Open` action for a game that already has an open session extend that session instead of inserting, since that is what the second observation meant. Verified by a test asserting one session with the combined minutes rather than a rejection that loses them
+- [x] 2.4 Test: two overlapping `checkNow()` calls through the full read-derive-write boundary of `PresenceSessionRecorder` (`:69`, `:87`) produce exactly one open session. Extend `WriteIntegrityDaoTest` following the shape at `:570`. This is the regression test for #116 and the most important test in this change
+- [x] 2.5 Test: the same property holds **with any process-scoped sync coordination disabled**, proving correctness does not rest on the lock — the spec scenario "Correctness does not rest on a process lock", and the same proof style the coordinator's KDoc asks for
+- [x] 2.6 Test: two concurrent observations committing in either order leave identical stored state
+- [x] 2.7 Test: two different games may each hold an open session simultaneously — the constraint is per game, not global
+- [x] 2.8 Test: the backup/restore merge engine's natural-key lookup still tolerates a duplicate among closed sessions without failing an import. Verified by an import fixture containing such a collision succeeding
 
 ## 3. Non-inverted session intervals (#115)
 

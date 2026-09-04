@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.flowOf
 
 internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao {
     override suspend fun insert(session: Session): Long = 0L
+    override suspend fun tryOpenSession(appId: Long, startAt: Long, endAt: Long?, minutes: Int): Long = 0L
     override suspend fun update(session: Session) = Unit
     override suspend fun getOpenSession(appId: Long): Session? = null
     override suspend fun getAllOpenSessions(): List<Session> = emptyList()

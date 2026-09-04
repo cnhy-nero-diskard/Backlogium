@@ -1086,6 +1086,11 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
         return withId.id
     }
 
+    override suspend fun tryOpenSession(appId: Long, startAt: Long, endAt: Long?, minutes: Int): Long {
+        if (store.any { it.appId == appId && it.open }) return -1L
+        return insert(Session(appId = appId, startAt = startAt, endAt = endAt, minutes = minutes, open = true))
+    }
+
     override suspend fun update(session: Session) {
         val index = store.indexOfFirst { it.id == session.id }
         if (index >= 0) store[index] = session

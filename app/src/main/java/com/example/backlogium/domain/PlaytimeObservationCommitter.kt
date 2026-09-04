@@ -4,7 +4,7 @@ import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
-import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.repo.SessionActionWriter
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -29,6 +29,7 @@ class PlaytimeObservationCommitter @Inject constructor(
     private val profileDao: PlayerProfileDao,
     private val differ: SessionDiffer,
     private val time: TimeProvider,
+    private val sessionActionWriter: SessionActionWriter,
 ) {
     /**
      * One game's playtime as an observer saw it.
@@ -105,7 +106,10 @@ class PlaytimeObservationCommitter @Inject constructor(
             )
         }
 
-        applySessionActions(diff.actions)
+        // Routed through the shared writer, not a local copy, so the single-open-session guard
+        // (auditfix-session-ledger-integrity, #116) holds here exactly as it does for the
+        // presence path — "regardless of which caller reaches it."
+        sessionActionWriter.applySessionActions(diff.actions)
 
         observed.forEach { game ->
             val existing = existingGames[game.appId]
@@ -145,31 +149,5 @@ class PlaytimeObservationCommitter @Inject constructor(
         }
 
         return Commit(actions = diff.actions, playedDeltaByAppId = diff.playedDeltaByAppId)
-    }
-
-    private suspend fun applySessionActions(actions: List<SessionDiffer.SessionAction>) {
-        for (action in actions) {
-            when (action) {
-                is SessionDiffer.SessionAction.Open -> sessionDao.insert(
-                    Session(
-                        appId = action.appId,
-                        startAt = action.startAt,
-                        endAt = action.endAt,
-                        minutes = action.minutes,
-                        open = true,
-                    ),
-                )
-
-                is SessionDiffer.SessionAction.Extend ->
-                    sessionDao.getOpenSession(action.appId)?.let {
-                        sessionDao.update(it.copy(minutes = action.minutes, endAt = action.endAt))
-                    }
-
-                is SessionDiffer.SessionAction.Close ->
-                    sessionDao.getOpenSession(action.appId)?.let {
-                        sessionDao.update(it.copy(open = false, endAt = action.endAt))
-                    }
-            }
-        }
     }
 }

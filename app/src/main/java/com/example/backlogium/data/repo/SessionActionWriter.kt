@@ -3,7 +3,6 @@ package com.example.backlogium.data.repo
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.local.dao.SessionDao
-import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.SessionDiffer
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.attributeDailyProgress
@@ -30,19 +29,38 @@ class SessionActionWriter @Inject constructor(
     private val transaction: DatabaseTransactionScope = com.example.backlogium.data.backup.PassThroughTransactionScope,
 ) {
 
-    /** Apply the session rows only, leaving daily-progress crediting to the caller. */
+    /**
+     * Apply the session rows only, leaving daily-progress crediting to the caller.
+     *
+     * This is the one write boundary every session action passes through regardless of caller —
+     * [com.example.backlogium.domain.PlaytimeObservationCommitter] and [PresenceSessionRecorder]
+     * both route their actions here — which is what makes the [SessionDao.tryOpenSession] guard
+     * below hold "regardless of which caller reaches it" (auditfix-session-ledger-integrity, #116).
+     */
     suspend fun applySessionActions(actions: List<SessionDiffer.SessionAction>) {
         for (action in actions) {
             when (action) {
-                is SessionDiffer.SessionAction.Open -> sessionDao.insert(
-                    Session(
+                is SessionDiffer.SessionAction.Open -> {
+                    val opened = sessionDao.tryOpenSession(
                         appId = action.appId,
                         startAt = action.startAt,
                         endAt = action.endAt,
                         minutes = action.minutes,
-                        open = true,
-                    ),
-                )
+                    )
+                    // Lost the race: a concurrent caller already opened this game's session. That
+                    // observation is not wrong, only late — fold it into the session that won
+                    // rather than dropping it, which is what the second observation actually meant.
+                    if (opened == -1L) {
+                        sessionDao.getOpenSession(action.appId)?.let {
+                            sessionDao.update(
+                                it.copy(
+                                    minutes = it.minutes + action.addedMinutes,
+                                    endAt = maxOf(it.endAt ?: it.startAt, action.endAt),
+                                ),
+                            )
+                        }
+                    }
+                }
 
                 is SessionDiffer.SessionAction.Extend ->
                     sessionDao.getOpenSession(action.appId)?.let {
