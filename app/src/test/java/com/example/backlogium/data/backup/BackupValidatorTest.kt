@@ -1,5 +1,6 @@
 package com.example.backlogium.data.backup
 
+import com.example.backlogium.domain.SetSharedGamePlaytimeUseCase
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -209,6 +210,43 @@ class BackupValidatorTest {
         )
         val problems = file.assertRejected()
         assertEquals("collectionMember", problems.single().recordType)
+    }
+
+    @Test
+    fun negativeManualSharedMinutes_rejected() {
+        val file = validFile(
+            games = listOf(BackupGame(appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0, manualSharedMinutes = -600)),
+        )
+        val problems = file.assertRejected()
+        assertEquals("game", problems.single().recordType)
+        assertTrue(problems.single().detail.contains("manualSharedMinutes"))
+    }
+
+    @Test
+    fun oversizedManualSharedMinutes_rejected() {
+        val file = validFile(
+            games = listOf(
+                BackupGame(
+                    appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0,
+                    manualSharedMinutes = SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES + 1,
+                ),
+            ),
+        )
+        val problems = file.assertRejected()
+        assertEquals("game", problems.single().recordType)
+        assertTrue(problems.single().detail.contains("manualSharedMinutes"))
+    }
+
+    @Test
+    fun manualSharedMinutesBounds_accepted() {
+        listOf(null, 0, 90, SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES).forEach { manual ->
+            val file = validFile(
+                games = listOf(
+                    BackupGame(appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0, manualSharedMinutes = manual),
+                ),
+            )
+            assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)
+        }
     }
 
     @Test

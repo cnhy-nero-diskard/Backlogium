@@ -26,6 +26,7 @@ import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.RecomputeSource
+import com.example.backlogium.domain.SetSharedGamePlaytimeUseCase
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.defaultSort
 import com.example.backlogium.gamification.RuleConfig
@@ -170,7 +171,12 @@ class BackupMergeEngine @Inject constructor(
                     firstSeenAt = backupGame.firstSeenAt?.iso8601ToEpochMilli(),
                     lastPlayedAt = backupGame.lastPlayedAt?.iso8601ToEpochMilli(),
                     returnedToPlayAt = backupGame.returnedToPlayAt?.iso8601ToEpochMilli(),
-                    manualSharedMinutes = backupGame.manualSharedMinutes ?: 0,
+                    // Defense in depth behind BackupValidator's preflight range check: an
+                    // out-of-range value that reaches here is treated as no opinion (0 for a
+                    // brand-new row), never persisted, mirroring the use case's reject.
+                    manualSharedMinutes = backupGame.manualSharedMinutes
+                        ?.takeIf { it in 0..SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES }
+                        ?: 0,
                 ),
             )
         } else {
@@ -181,8 +187,12 @@ class BackupMergeEngine @Inject constructor(
             gameDao.setBackfillMinutes(backupGame.appId, backupGame.backfillMinutes)
             // Null means an older backup predates this field, same as source/recency above -- the
             // locally set estimate is left alone rather than zeroed by a backup that has no
-            // opinion on it.
-            backupGame.manualSharedMinutes?.let { gameDao.setManualSharedMinutes(backupGame.appId, it) }
+            // opinion on it. An out-of-range value is likewise left alone: the preflight
+            // validator rejects it, and this keeps the write path from persisting an estimate
+            // the use case itself would refuse.
+            backupGame.manualSharedMinutes
+                ?.takeIf { it in 0..SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES }
+                ?.let { gameDao.setManualSharedMinutes(backupGame.appId, it) }
             gameDao.setRecencyFromBackup(
                 appId = backupGame.appId,
                 firstSeenAt = backupGame.firstSeenAt?.iso8601ToEpochMilli(),
