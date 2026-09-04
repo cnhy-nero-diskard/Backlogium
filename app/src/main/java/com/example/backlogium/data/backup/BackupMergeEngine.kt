@@ -157,6 +157,7 @@ class BackupMergeEngine @Inject constructor(
         if (existing == null) {
             // Minimal skeleton row: the rest of the game's Steam-fetchable fields (icon,
             // playtime, ...) are re-populated by the next sync, not by this restore.
+            val resolvedSource = backupGame.source.toGameSource(GameSource.STEAM_OWNED)
             gameDao.upsert(
                 Game(
                     appId = backupGame.appId,
@@ -167,32 +168,56 @@ class BackupMergeEngine @Inject constructor(
                     lastPlaytime = 0,
                     isGoal = backupGame.isGoal,
                     backfillMinutes = backupGame.backfillMinutes,
-                    source = backupGame.source.toGameSource(GameSource.STEAM_OWNED),
+                    source = resolvedSource,
                     firstSeenAt = backupGame.firstSeenAt?.iso8601ToEpochMilli(),
                     lastPlayedAt = backupGame.lastPlayedAt?.iso8601ToEpochMilli(),
                     returnedToPlayAt = backupGame.returnedToPlayAt?.iso8601ToEpochMilli(),
                     // Defense in depth behind BackupValidator's preflight range check: an
                     // out-of-range value that reaches here is treated as no opinion (0 for a
-                    // brand-new row), never persisted, mirroring the use case's reject.
-                    manualSharedMinutes = backupGame.manualSharedMinutes
-                        ?.takeIf { it in 0..SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES }
-                        ?: 0,
+                    // brand-new row), never persisted, mirroring the use case's reject. An
+                    // owned row always carries 0: the manual estimate is only ever
+                    // meaningful for FAMILY_SHARED.
+                    manualSharedMinutes = if (resolvedSource == GameSource.STEAM_OWNED) {
+                        0
+                    } else {
+                        backupGame.manualSharedMinutes
+                            ?.takeIf { it in 0..SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES }
+                            ?: 0
+                    },
                 ),
             )
         } else {
-            backupGame.source?.let { source ->
-                gameDao.upsert(existing.copy(source = source.toGameSource(existing.source)))
+            val targetSource = backupGame.source?.toGameSource(existing.source) ?: existing.source
+            if (targetSource == GameSource.STEAM_OWNED) {
+                // Source-aware restore: the manual estimate is only ever meaningful for
+                // FAMILY_SHARED, so an owned result must carry 0. This cannot go through
+                // setManualSharedMinutes below -- its SQL is guarded to shared rows and
+                // would no-op after the source flip, leaving a stale estimate that
+                // GamificationUpdater would sum into XP. Fold the flip and the clear
+                // into one atomic upsert instead.
+                if (existing.source != GameSource.STEAM_OWNED || existing.manualSharedMinutes != 0) {
+                    gameDao.upsert(
+                        existing.copy(
+                            source = GameSource.STEAM_OWNED,
+                            manualSharedMinutes = 0,
+                        ),
+                    )
+                }
+            } else {
+                backupGame.source?.let { source ->
+                    gameDao.upsert(existing.copy(source = source.toGameSource(existing.source)))
+                }
+                // Null means an older backup predates this field, same as source/recency above -- the
+                // locally set estimate is left alone rather than zeroed by a backup that has no
+                // opinion on it. An out-of-range value is likewise left alone: the preflight
+                // validator rejects it, and this keeps the write path from persisting an estimate
+                // the use case itself would refuse.
+                backupGame.manualSharedMinutes
+                    ?.takeIf { it in 0..SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES }
+                    ?.let { gameDao.setManualSharedMinutes(backupGame.appId, it) }
             }
             gameDao.setGoalFlag(backupGame.appId, backupGame.isGoal)
             gameDao.setBackfillMinutes(backupGame.appId, backupGame.backfillMinutes)
-            // Null means an older backup predates this field, same as source/recency above -- the
-            // locally set estimate is left alone rather than zeroed by a backup that has no
-            // opinion on it. An out-of-range value is likewise left alone: the preflight
-            // validator rejects it, and this keeps the write path from persisting an estimate
-            // the use case itself would refuse.
-            backupGame.manualSharedMinutes
-                ?.takeIf { it in 0..SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES }
-                ?.let { gameDao.setManualSharedMinutes(backupGame.appId, it) }
             gameDao.setRecencyFromBackup(
                 appId = backupGame.appId,
                 firstSeenAt = backupGame.firstSeenAt?.iso8601ToEpochMilli(),

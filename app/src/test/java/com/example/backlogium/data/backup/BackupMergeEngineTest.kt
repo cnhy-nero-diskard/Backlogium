@@ -378,6 +378,75 @@ class BackupMergeEngineTest {
         }
     }
 
+    /**
+     * An owned row must never carry a manual estimate: a fresh restore of an owned backup with
+     * a nonzero `manualSharedMinutes` forces 0, so GamificationUpdater's unconditional
+     * `backfill + manual + tracked` sum cannot consume it as XP.
+     */
+    @Test
+    fun restore_ownedInsertForcesManualSharedMinutesToZero() = runTest {
+        listOf("STEAM_OWNED", null).forEach { source ->
+            val harness = newEngine(games = mutableMapOf(), nowMillis = 1_700_000_000_000L)
+            val file = baseFile(
+                games = listOf(
+                    BackupGame(
+                        appId = 441L,
+                        name = "Owned Game",
+                        isGoal = false,
+                        backfillMinutes = 0,
+                        source = source,
+                        manualSharedMinutes = 90,
+                    ),
+                ),
+            )
+
+            harness.engine.merge(file, RuleConfig())
+
+            val restored = harness.gameDao.getById(441L)!!
+            assertEquals(GameSource.STEAM_OWNED, restored.source)
+            assertEquals(0, restored.manualSharedMinutes)
+        }
+    }
+
+    /**
+     * Restoring an owned source over a shared row carrying an estimate must clear it atomically
+     * with the source flip: `setManualSharedMinutes` is SQL-guarded to shared rows, so a
+     * backup value of 0 would no-op after the flip and a nonzero one must not survive it.
+     */
+    @Test
+    fun restore_restoringOwnedSourceClearsStaleManualEstimate() = runTest {
+        listOf(0, 90).forEach { backupManual ->
+            val harness = newEngine(
+                games = mutableMapOf(
+                    441L to testGame(441L).copy(source = GameSource.FAMILY_SHARED, manualSharedMinutes = 45),
+                ),
+                nowMillis = 1_700_000_000_000L,
+            )
+            val file = baseFile(
+                games = listOf(
+                    BackupGame(
+                        appId = 441L,
+                        name = "Now Owned Game",
+                        isGoal = false,
+                        backfillMinutes = 0,
+                        source = "STEAM_OWNED",
+                        manualSharedMinutes = backupManual,
+                    ),
+                ),
+            )
+
+            harness.engine.merge(file, RuleConfig())
+
+            val restored = harness.gameDao.getById(441L)!!
+            assertEquals(GameSource.STEAM_OWNED, restored.source)
+            assertEquals(
+                "backup manual $backupManual must not leave a stale estimate on the owned row",
+                0,
+                restored.manualSharedMinutes,
+            )
+        }
+    }
+
     @Test
     fun restore_absentRecencyFieldsDoNotEraseLocallyObservedOnes() = runTest {
         val locallyObserved = 1_699_900_000_000L
