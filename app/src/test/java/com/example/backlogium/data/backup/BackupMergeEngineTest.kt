@@ -969,11 +969,14 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
         convertedAt: Long,
     ): Int {
         val existing = store[appId]?.takeIf { it.source == GameSource.FAMILY_SHARED } ?: return 0
+        val preservedBackfill = (existing.backfillMinutes.toLong() + existing.manualSharedMinutes.toLong())
+            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         store[appId] = existing.copy(
             source = GameSource.STEAM_OWNED,
             playtimeForever = playtimeForever,
             playtime2Weeks = playtime2Weeks,
             lastPlaytime = playtimeForever,
+            backfillMinutes = preservedBackfill,
             manualSharedMinutes = 0,
             lastSyncedAt = convertedAt,
         )

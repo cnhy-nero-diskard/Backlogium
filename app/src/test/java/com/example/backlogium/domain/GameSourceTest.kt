@@ -63,4 +63,18 @@ class GameSourceTest {
             GameSource.FAMILY_SHARED.displayedPlaytimeMinutes(0, 30, manualSharedMinutes = 0),
         )
     }
+
+    @Test
+    fun nearMaxEstimatePlusTrackedClampsInsteadOfOverflowing() {
+        // A legacy near-Int.MAX row plus any tracked minutes must clamp to Int.MAX_VALUE,
+        // never wrap to a negative display value.
+        assertEquals(
+            Int.MAX_VALUE,
+            GameSource.FAMILY_SHARED.displayedPlaytimeMinutes(
+                steamPlaytimeMinutes = 0,
+                trackedMinutes = 60,
+                manualSharedMinutes = Int.MAX_VALUE,
+            ),
+        )
+    }
 }

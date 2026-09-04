@@ -34,5 +34,7 @@ fun GameSource.displayedPlaytimeMinutes(
     manualSharedMinutes: Int = 0,
 ): Int = when (this) {
     GameSource.STEAM_OWNED -> steamPlaytimeMinutes
-    GameSource.FAMILY_SHARED -> trackedMinutes + manualSharedMinutes
+    // Wider-type sum, clamped: a legacy near-Int.MAX estimate plus tracked minutes must not wrap.
+    GameSource.FAMILY_SHARED -> (trackedMinutes.toLong() + manualSharedMinutes.toLong())
+        .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 }

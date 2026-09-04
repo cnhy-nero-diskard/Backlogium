@@ -140,14 +140,22 @@ interface GameDao {
      * again would synthesize one enormous phantom session over time already counted. This mirrors
      * first-sync baselining, and the game's existing sessions are deliberately untouched.
      *
-     * `manualSharedMinutes` is cleared atomically in the same statement: the estimate is
-     * documented as always 0 for an owned game, its editor is no longer offered after conversion,
-     * and leaving it behind would double-count borrowed hours (Steam's total already includes
-     * them) everywhere the offset is consumed (XP, detail, smart collections).
+     * The credited manual estimate is folded into `backfillMinutes` atomically in the same
+     * statement and `manualSharedMinutes` returns to 0: the estimate stays 0 for an owned game
+     * and its editor is no longer offered, but XP is computed from `backfill + manual + tracked`
+     * and never from `playtimeForever`, so dropping the estimate would erase credited playtime
+     * (and a profile that already ran the one-time Steam-history import will never re-import to
+     * restore it). A shared row's `backfillMinutes` is always 0, so the fold is a move, not an
+     * add of two live totals; the sum is clamped to `Int.MAX_VALUE` in 64-bit arithmetic so a
+     * legacy near-max estimate cannot overflow the column. Displayed/derived owned totals still
+     * read Steam's total (or `maxOf` it), which already includes the borrowed hours, so the
+     * preserved offset cannot double-count there.
      */
     @Query(
         "UPDATE games SET source = 'STEAM_OWNED', playtimeForever = :playtimeForever, " +
             "playtime2Weeks = :playtime2Weeks, lastPlaytime = :playtimeForever, " +
+            "backfillMinutes = CASE WHEN (backfillMinutes + manualSharedMinutes) > 2147483647 " +
+            "THEN 2147483647 ELSE (backfillMinutes + manualSharedMinutes) END, " +
             "manualSharedMinutes = 0, lastSyncedAt = :convertedAt " +
             "WHERE appId = :appId AND source = 'FAMILY_SHARED'",
     )

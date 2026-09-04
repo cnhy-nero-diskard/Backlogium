@@ -198,7 +198,8 @@ class BackupExportMapper @Inject constructor(
  * standing up this class's full DI graph.
  */
 internal fun Game.backupXpMinutes(trackedMinutes: Int): Int =
-    backfillMinutes + manualSharedMinutes + trackedMinutes
+    (backfillMinutes.toLong() + manualSharedMinutes.toLong() + trackedMinutes.toLong())
+        .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
 private fun List<Achievement>.toAchievementInputs(): List<AchievementInput> =
     mapIndexed { index, a -> AchievementInput(id = "${a.appId}#$index", unlocked = true, globalUnlockPercent = a.snapshotPercent) }

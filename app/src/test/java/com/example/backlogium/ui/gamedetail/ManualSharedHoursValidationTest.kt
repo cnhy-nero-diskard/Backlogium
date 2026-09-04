@@ -50,6 +50,17 @@ class ManualSharedHoursValidationTest {
     }
 
     @Test
+    fun estimatesAboveTheProductCapAreRejected() {
+        // 6,000,000 minutes = 100,000 hours: beyond any plausible single-game borrowed estimate,
+        // and the ceiling that keeps a valid estimate plus tracked minutes from overflowing Int.
+        assertEquals(6_000_000, manualHoursToMinutes(100_000.0))
+        assertNull(manualHoursToMinutes(100_001.0))
+        assertNull(parseManualHoursInput("100001"))
+        // The old Int.MAX_VALUE-wide ceiling is gone: near-max minutes are no longer valid input.
+        assertNull(manualHoursToMinutes(Int.MAX_VALUE / 60.0))
+    }
+
+    @Test
     fun nonNumericTextIsRejected() {
         assertNull(parseManualHoursInput("abc"))
     }

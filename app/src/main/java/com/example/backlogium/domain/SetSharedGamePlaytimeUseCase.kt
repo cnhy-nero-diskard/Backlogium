@@ -23,12 +23,13 @@ class SetSharedGamePlaytimeUseCase @Inject constructor(
 ) {
 
     /**
-     * @param minutes the new estimate; 0 clears it. Negative values are rejected.
+     * @param minutes the new estimate; 0 clears it. Negative values and values above
+     *   [MAX_MANUAL_SHARED_MINUTES] are rejected.
      * @return `true` if the estimate was written (and XP recomputed), `false` if the game is not
-     *   family-shared or [minutes] is negative — a no-op, not an error.
+     *   family-shared or [minutes] is out of range — a no-op, not an error.
      */
     suspend operator fun invoke(appId: Long, minutes: Int): Boolean {
-        if (minutes < 0) return false
+        if (minutes < 0 || minutes > MAX_MANUAL_SHARED_MINUTES) return false
         val game = gameDao.getById(appId) ?: return false
         if (game.source != GameSource.FAMILY_SHARED) return false
 
@@ -43,5 +44,16 @@ class SetSharedGamePlaytimeUseCase @Inject constructor(
             )
         }
         return true
+    }
+
+    companion object {
+        /**
+         * Largest storable manual estimate, in minutes (6,000,000 = 100,000 hours, ~11 years of
+         * continuous play). Far beyond any plausible single-game borrowed estimate, yet far below
+         * `Int.MAX_VALUE`, so a valid estimate plus any realistic tracked total cannot overflow
+         * the `Int` sums downstream — enforced here and at the hours-entry boundary
+         * (`manualHoursToMinutes`), belt and suspenders.
+         */
+        const val MAX_MANUAL_SHARED_MINUTES: Int = 6_000_000
     }
 }

@@ -67,7 +67,9 @@ class SmartCollectionFeed @Inject constructor(
                         playtimeMinutes = smartCollectionPlaytimeMinutes(
                             source = game.source,
                             steamPlaytimeMinutes = game.playtimeForever,
-                            importedPlaytimeMinutes = game.backfillMinutes + game.manualSharedMinutes,
+                            importedPlaytimeMinutes = (game.backfillMinutes.toLong() +
+                                game.manualSharedMinutes.toLong())
+                                .coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
                             sessionMinutes = sessions.trackedMinutesByGame[game.appId] ?: 0,
                         ),
                         mainStoryMinutes = game.mainStoryMinutes,

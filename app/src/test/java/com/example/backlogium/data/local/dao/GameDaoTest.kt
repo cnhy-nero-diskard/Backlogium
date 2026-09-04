@@ -15,11 +15,11 @@ import org.robolectric.RuntimeEnvironment
 
 /**
  * Covers [GameDao.setManualSharedMinutes]'s SQL-level source guard and
- * [GameDao.convertSharedToOwned]'s atomic estimate clearing
+ * [GameDao.convertSharedToOwned]'s atomic estimate preservation
  * (add-shared-game-playtime-and-filter) — the write must be a no-op for an owned game regardless
  * of what a caller passes, the same defense-in-depth `deleteSharedGame` already applies, and a
- * shared→owned conversion must not leave a stale estimate behind for XP/detail/collections to
- * double-count.
+ * shared→owned conversion must fold the credited estimate into `backfillMinutes` (so XP credit
+ * survives) rather than leave a stale `manualSharedMinutes` behind or drop it.
  */
 @RunWith(RobolectricTestRunner::class)
 class GameDaoTest {
@@ -61,7 +61,7 @@ class GameDaoTest {
         assertEquals(0, gameDao.getById(1)?.manualSharedMinutes)
     }
 
-    @Test fun convertSharedToOwned_clearsAManualSharedEstimate() = runBlocking {
+    @Test fun convertSharedToOwned_foldsAManualSharedEstimateIntoBackfill() = runBlocking {
         gameDao.upsert(game(appId = 1, source = GameSource.FAMILY_SHARED))
         gameDao.setManualSharedMinutes(1, 600)
 
@@ -78,10 +78,11 @@ class GameDaoTest {
         assertEquals(0, row?.manualSharedMinutes)
         assertEquals(900, row?.playtimeForever)
         assertEquals(900, row?.lastPlaytime)
-        // XP, detail, and smart collections all read backfill + manual + tracked from this row,
-        // so a cleared estimate keeps the converted game's derived totals free of borrowed-hours
-        // double counting (Steam's reported total already includes them).
-        assertEquals(0, (row?.backfillMinutes ?: -1) + (row?.manualSharedMinutes ?: -1))
+        // XP is computed from backfill + manual + tracked and never from playtimeForever, so the
+        // credited estimate must survive as backfill (a shared row's backfill is always 0, so this
+        // is a move). Owned display/collections still read Steam's total, which already includes
+        // the borrowed hours, so the preserved offset cannot double-count there.
+        assertEquals(600, row?.backfillMinutes)
     }
 
     private fun game(appId: Long, source: GameSource) = Game(

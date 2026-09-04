@@ -113,8 +113,12 @@ class GamificationUpdater @Inject constructor(
         val hltbByGame = hltbDataDao.getAllWithDataset().associateBy { it.appId }
         val games = (trackedByGame.keys + backfillByGame.keys + manualByGame.keys)
             .map { appId ->
-                appId to (backfillByGame[appId] ?: 0) + (manualByGame[appId] ?: 0) +
-                    (trackedByGame[appId] ?: 0)
+                // Wider-type sum, clamped: a legacy near-Int.MAX estimate plus tracked minutes
+                // must not wrap to a negative XP input.
+                val total = (backfillByGame[appId]?.toLong() ?: 0L) +
+                    (manualByGame[appId]?.toLong() ?: 0L) +
+                    (trackedByGame[appId]?.toLong() ?: 0L)
+                appId to total.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             }
             .filter { (_, minutes) -> minutes > 0 }
             .map { (appId, minutes) ->

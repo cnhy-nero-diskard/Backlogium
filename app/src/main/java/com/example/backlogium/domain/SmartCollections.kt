@@ -55,15 +55,21 @@ fun smartCollectionPlaytimeMinutes(
     steamPlaytimeMinutes: Int,
     importedPlaytimeMinutes: Int,
     sessionMinutes: Int,
-): Int = when (source) {
-    GameSource.STEAM_OWNED ->
-        maxOf(steamPlaytimeMinutes, importedPlaytimeMinutes + sessionMinutes)
-    // importedPlaytimeMinutes carries a family-shared game's manual estimate here (its
-    // backfillMinutes is always 0 -- only an owned game's history import can set that), additive
-    // with tracked session minutes the same way an owned game's history import is
-    // (add-shared-game-playtime-and-filter).
-    GameSource.FAMILY_SHARED -> sessionMinutes + importedPlaytimeMinutes
-}.coerceAtLeast(0)
+): Int {
+    // Wider-type sums, clamped: a legacy near-Int.MAX estimate plus tracked minutes must not wrap.
+    val combined = (importedPlaytimeMinutes.toLong() + sessionMinutes.toLong())
+        .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    val result = when (source) {
+        GameSource.STEAM_OWNED ->
+            maxOf(steamPlaytimeMinutes, combined)
+        // importedPlaytimeMinutes carries a family-shared game's manual estimate here (its
+        // backfillMinutes is always 0 -- only an owned game's history import can set that), additive
+        // with tracked session minutes the same way an owned game's history import is
+        // (add-shared-game-playtime-and-filter).
+        GameSource.FAMILY_SHARED -> combined
+    }
+    return result.coerceAtLeast(0)
+}
 
 /** The evidence that placed a game in Completed. */
 enum class CompletionBasis {

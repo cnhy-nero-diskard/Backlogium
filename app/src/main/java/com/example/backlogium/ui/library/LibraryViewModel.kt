@@ -653,7 +653,9 @@ private fun LibraryGame.toBacklogUi(
  */
 internal fun LibraryGame.displayedPlaytimeMinutes(xp: XpInputs): Int = when (source) {
     GameSource.STEAM_OWNED -> playtimeForever
-    GameSource.FAMILY_SHARED -> (xp.trackedByGame[appId] ?: 0) + manualSharedMinutes
+    // Wider-type sum, clamped: a legacy near-Int.MAX estimate plus tracked minutes must not wrap.
+    GameSource.FAMILY_SHARED -> ((xp.trackedByGame[appId]?.toLong() ?: 0L) + manualSharedMinutes.toLong())
+        .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 }
 
 /**

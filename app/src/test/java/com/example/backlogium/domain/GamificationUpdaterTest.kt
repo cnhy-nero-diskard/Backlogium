@@ -137,6 +137,39 @@ class GamificationUpdaterTest {
     }
 
     @Test
+    fun recompute_clampsANearMaxEstimatePlusTrackedInsteadOfOverflowing() = runTest {
+        // A legacy near-Int.MAX manual row plus tracked minutes must clamp the XP input to
+        // Int.MAX_VALUE in 64-bit arithmetic, never wrap to a negative total.
+        val sessionDao = FakeSessionDao(listOf(testSession(minutes = 60)))
+        val profileDao = FakePlayerProfileDao()
+        val updater = GamificationUpdater(
+            sessionDao,
+            FakeDailyProgressDao(emptyList()),
+            profileDao,
+            FakeHltbDataDao(),
+            FakeAchievementDao(emptyList()),
+            FakeGameDao(
+                listOf(
+                    testGame(
+                        appId = 1L,
+                        source = GameSource.FAMILY_SHARED,
+                        manualSharedMinutes = Int.MAX_VALUE,
+                    ),
+                ),
+            ),
+        )
+
+        updater.recompute(
+            today = LocalDate.parse("2026-07-17"),
+            source = RecomputeSource.SYNC,
+            config = RuleConfig(),
+        )
+
+        // Flat fallback (no HLTB row): XP = minutes * rate, so a clamped input yields clamped XP.
+        assertEquals(Int.MAX_VALUE, profileDao.get()!!.totalXp)
+    }
+
+    @Test
     fun recompute_combinesBackfillWithTrackedMinutesAndCapsViaTaper() = runTest {
         // A HLTB-matched game (completionist average 1000 min -> zero point Z = 2000) with a
         // large frozen backfill offset. Combined total = 5000 backfill + 100 tracked = 5100,

@@ -83,17 +83,80 @@ class SharedGameConverterTest {
     }
 
     @Test
-    fun conversion_clearsAManualSharedEstimate() = runTest {
+    fun conversion_foldsAManualSharedEstimateIntoBackfill() = runTest {
         val estimated = shared.copy(manualSharedMinutes = 600)
         val dao = FakeGameDao(listOf(estimated))
         SharedGameConverter(dao).convertNewlyOwned(listOf(dto(shared.appId, forever = 900)), now)
 
         val row = requireNonNull(dao.getById(shared.appId))
         assertEquals(GameSource.STEAM_OWNED, row.source)
-        // The estimate is always 0 for an owned game and its editor is no longer offered, so the
-        // conversion must clear it — otherwise XP/detail/collections would keep consuming the
-        // stale offset on top of Steam's total, which already includes those borrowed hours.
+        // The estimate stays 0 for an owned game and its editor is no longer offered, but the
+        // credited minutes must survive as backfill: XP is computed from backfill + manual +
+        // tracked and never from playtimeForever, so clearing without folding would erase credit
+        // no later import could restore on an already-imported profile. Owned display still reads
+        // Steam's total, which already includes the borrowed hours, so there is no double count.
         assertEquals(0, row.manualSharedMinutes)
+        assertEquals(600, row.backfillMinutes)
+    }
+
+    @Test
+    fun conversion_preservesXpCreditAcrossOwnershipChange() = runTest {
+        // 60 tracked + 600 manual credits 660 minutes before purchase; the next recompute after
+        // conversion must see the same 660 (now as backfill + tracked), not just the 60 tracked.
+        val estimated = shared.copy(manualSharedMinutes = 600)
+        val sessionDao = FakeSessionDao(listOf(testSession(minutes = 60, appId = shared.appId)))
+        val dao = FakeGameDao(listOf(estimated))
+        val profileDao = FakePlayerProfileDao()
+        val updater = GamificationUpdater(
+            sessionDao = sessionDao,
+            dailyProgressDao = FakeDailyProgressDao(emptyList()),
+            playerProfileDao = profileDao,
+            hltbDataDao = FakeHltbDataDao(),
+            achievementDao = FakeAchievementDao(emptyList()),
+            gameDao = dao,
+        )
+        val today = java.time.LocalDate.of(2026, 8, 24)
+        updater.recompute(today = today, source = RecomputeSource.SYNC)
+        val xpBefore = requireNonNull(profileDao.get()).totalXp
+
+        SharedGameConverter(dao).convertNewlyOwned(listOf(dto(shared.appId, forever = 900)), now)
+        updater.recompute(today = today, source = RecomputeSource.SYNC)
+        val xpAfter = requireNonNull(profileDao.get()).totalXp
+
+        assertEquals(xpBefore, xpAfter)
+        val row = requireNonNull(dao.getById(shared.appId))
+        assertEquals(0, row.manualSharedMinutes)
+        assertEquals(600, row.backfillMinutes)
+    }
+
+    @Test
+    fun conversion_preservesXpCreditWhenTheProfileAlreadyImportedHistory() = runTest {
+        // The sticky case: this row had backfillMinutes = 0 while shared and the profile flag is
+        // already set, so PlaytimeBackfillUseCase will no-op — the conversion itself must carry
+        // the credit; nothing later will.
+        val estimated = shared.copy(manualSharedMinutes = 600, backfillMinutes = 0)
+        val sessionDao = FakeSessionDao(listOf(testSession(minutes = 60, appId = shared.appId)))
+        val dao = FakeGameDao(listOf(estimated))
+        val profileDao = FakePlayerProfileDao(
+            com.example.backlogium.data.local.entity.PlayerProfile(playtimeBackfilled = true),
+        )
+        val updater = GamificationUpdater(
+            sessionDao = sessionDao,
+            dailyProgressDao = FakeDailyProgressDao(emptyList()),
+            playerProfileDao = profileDao,
+            hltbDataDao = FakeHltbDataDao(),
+            achievementDao = FakeAchievementDao(emptyList()),
+            gameDao = dao,
+        )
+        val today = java.time.LocalDate.of(2026, 8, 24)
+        updater.recompute(today = today, source = RecomputeSource.SYNC)
+        val xpBefore = requireNonNull(profileDao.get()).totalXp
+
+        SharedGameConverter(dao).convertNewlyOwned(listOf(dto(shared.appId, forever = 900)), now)
+        updater.recompute(today = today, source = RecomputeSource.SYNC)
+
+        assertEquals(xpBefore, requireNonNull(profileDao.get()).totalXp)
+        assertEquals(600, requireNonNull(dao.getById(shared.appId)).backfillMinutes)
     }
 
     @Test

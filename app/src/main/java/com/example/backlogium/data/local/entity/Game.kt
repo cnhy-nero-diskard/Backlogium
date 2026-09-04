@@ -21,6 +21,9 @@ import com.example.backlogium.domain.GameSource
  * `STEAM_OWNED` game; write paths guard this in SQL as well
  * (`GameDao.setManualSharedMinutes`) so an unrelated write can never populate it for an owned row
  * (fix-shared-game-achievement-visibility follow-up, add-shared-game-playtime-and-filter).
+ * On shared→owned conversion the credited value is folded into [backfillMinutes] (which is
+ * always 0 for a shared row) so XP credit survives the ownership change; see
+ * `GameDao.convertSharedToOwned`.
  *
  * [source] states how the app came to track the game. `STEAM_OWNED` is the only value Steam's
  * owned-games sync ever writes; `FAMILY_SHARED` rows are admitted from observed presence and have

@@ -37,6 +37,19 @@ class GameSummaryUiTest {
     }
 
     @Test
+    fun nearMaxEstimatePlusTrackedClampsTheHeadlineFigure() {
+        // A legacy near-Int.MAX estimate plus tracked minutes must clamp to Int.MAX_VALUE,
+        // never wrap to a negative headline figure.
+        val summary = content(
+            source = GameSource.FAMILY_SHARED,
+            trackedMinutes = 60,
+            manualSharedMinutes = Int.MAX_VALUE,
+        ).toSummary(rows = emptyList(), activePlayers = null)
+
+        assertEquals(Int.MAX_VALUE, summary.headlineMinutes)
+    }
+
+    @Test
     fun sharedGamesManualMinutesContributeToXp() {
         val withoutEstimate = content(
             source = GameSource.FAMILY_SHARED,

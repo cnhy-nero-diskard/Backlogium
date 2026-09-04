@@ -88,6 +88,30 @@ class SetSharedGamePlaytimeUseCaseTest {
         assertFalse(useCase(appId = 404L, minutes = 60))
     }
 
+    @Test
+    fun rejectsAnOversizedEstimateWithoutWriting() = runTest {
+        val gameDao = FakeGameDao(listOf(sharedGame(appId = 1L)))
+        val useCase = useCase(gameDao)
+
+        // A near-Int.MAX estimate plus any tracked minutes would overflow the Int sums
+        // downstream, so the write path caps at MAX_MANUAL_SHARED_MINUTES instead.
+        val applied = useCase(appId = 1L, minutes = SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES + 1)
+
+        assertFalse(applied)
+        assertEquals(0, gameDao.getById(1L)?.manualSharedMinutes)
+    }
+
+    @Test
+    fun acceptsAnEstimateAtTheCap() = runTest {
+        val gameDao = FakeGameDao(listOf(sharedGame(appId = 1L)))
+        val useCase = useCase(gameDao)
+
+        val applied = useCase(appId = 1L, minutes = SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES)
+
+        assertTrue(applied)
+        assertEquals(SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES, gameDao.getById(1L)?.manualSharedMinutes)
+    }
+
     private fun useCase(gameDao: FakeGameDao) = SetSharedGamePlaytimeUseCase(
         gameDao = gameDao,
         settings = SettingsDataStore(RuntimeEnvironment.getApplication()),

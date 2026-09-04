@@ -141,7 +141,15 @@ data class GameSummaryUi(
      * beside a history of real sessions. Tracked minutes are what the app actually knows, plus
      * [manualMinutes] — the player's own estimate on top (add-shared-game-playtime-and-filter).
      */
-    val headlineMinutes: Int get() = if (isFamilyShared) trackedMinutes + manualMinutes else playtimeMinutes
+    val headlineMinutes: Int
+        get() = if (isFamilyShared) {
+            // Wider-type sum, clamped: a legacy near-Int.MAX estimate plus tracked minutes
+            // must not wrap to a negative display value.
+            (trackedMinutes.toLong() + manualMinutes.toLong())
+                .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        } else {
+            playtimeMinutes
+        }
 
     val lastPlayed: LastPlayed
         get() = when {
@@ -369,13 +377,15 @@ internal suspend fun refreshPlayerCountOnce(
  * accepts `NaN`/`Infinity`, and `NaN.roundToInt()` throws while unbounded values can overflow
  * the minutes total downstream — so non-finite, negative, and out-of-range inputs are rejected
  * here and in the dialog, which disables Save for them (add-shared-game-playtime-and-filter).
+ * The ceiling is [SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES], not `Int.MAX_VALUE`:
+ * a near-max `Int` estimate plus any tracked minutes would overflow the `Int` sums downstream.
  *
  * @return the estimate in whole minutes, or null when [hours] must be rejected rather than written.
  */
 internal fun manualHoursToMinutes(hours: Double): Int? {
     if (!hours.isFinite() || hours < 0.0) return null
     val minutes = hours * GameDetailViewModel.MINUTES_PER_HOUR
-    if (minutes > Int.MAX_VALUE) return null
+    if (minutes > SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES) return null
     return minutes.roundToInt()
 }
 
@@ -445,7 +455,10 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
         xpContributed = LibraryXp.contribution(
             GameXpInput(
                 appId = game.appId,
-                minutesPlayed = game.backfillMinutes + game.manualSharedMinutes + trackedMinutes,
+                // Wider-type sum, clamped: a legacy near-Int.MAX estimate plus tracked minutes
+                // must not wrap to a negative XP input.
+                minutesPlayed = (game.backfillMinutes.toLong() + game.manualSharedMinutes.toLong() +
+                    trackedMinutes.toLong()).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
                 completionistMinutes = game.completionistMinutes,
                 unlockedRarityPercents = achievements.filter { it.unlocked }.map { it.rarityPercent },
             ),

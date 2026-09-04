@@ -76,6 +76,48 @@ alongside an owned game's tracked time.
 - **WHEN** the player clears a family-shared game's manual estimate
 - **THEN** its tracked sessions and their history are unchanged — only the manual offset is removed
 
+### Requirement: Credited manual time survives shared-to-owned conversion
+When a family-shared game with a manual estimate is reported as owned, the system SHALL fold the
+credited manual minutes into that game's owned-history offset (`backfillMinutes`) and reset the
+manual offset to zero in the same atomic conversion, so the game's XP/playtime credit does not
+fall merely because ownership changed. The converted game is an owned game afterwards: the manual
+editor is not offered for it, and its owned display/derived totals keep reading Steam's lifetime
+total (which already includes the borrowed hours) rather than adding the preserved offset on top.
+
+#### Scenario: Conversion preserves XP credit
+- **WHEN** a family-shared game with nonzero tracked minutes and a nonzero manual estimate is
+  converted to owned and XP is recomputed
+- **THEN** that game's XP input equals its pre-conversion `tracked + manual` credit (now held as
+  `backfill + tracked`), and total XP does not drop on account of the conversion
+
+#### Scenario: Preservation holds for an already-imported profile
+- **WHEN** the profile's one-time Steam-history import already ran (so no future import will
+  restore a dropped estimate) and a family-shared game with a manual estimate is converted
+- **THEN** the converted game's preserved offset is present without any further import, and a
+  later recompute still credits it
+
+#### Scenario: No double counting after conversion
+- **WHEN** the converted game's owned playtime is displayed or its derived-collection membership
+  is evaluated
+- **THEN** Steam's reported lifetime total is used (or the greater of it and the preserved
+  history-plus-tracked fallback), so the borrowed hours are not counted twice
+
+### Requirement: Manual estimate is bounded and combined without overflow
+The system SHALL reject a manual estimate above 6,000,000 minutes (100,000 hours) at both the
+hours-entry boundary and the write path, and SHALL combine `backfill + manual + tracked` (and
+`tracked + manual` display sums) in a wider type clamped to `Int.MAX_VALUE` rather than wrapping
+on overflow, so a valid estimate plus any tracked time cannot corrupt XP or display.
+
+#### Scenario: Oversized estimate is rejected
+- **WHEN** the player enters hours converting to more than 6,000,000 minutes, or the write path
+  is called with more than 6,000,000 minutes
+- **THEN** the value is rejected (no write, no recompute) rather than stored
+
+#### Scenario: Near-limit combination does not overflow
+- **WHEN** a stored estimate plus tracked minutes would exceed `Int.MAX_VALUE`
+- **THEN** the combined XP/display input is clamped to `Int.MAX_VALUE` rather than wrapping to a
+  negative or small value
+
 ### Requirement: Library can be filtered to family-shared games only
 The system SHALL let the player filter the Library to show only family-shared games, alongside
 existing filters (genre, HowLongToBeat coverage), applied to every section those filters already
