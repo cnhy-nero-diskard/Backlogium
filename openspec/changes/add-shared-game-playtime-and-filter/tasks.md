@@ -80,7 +80,7 @@
 
 ## 3. The write path
 
-- [ ] 3.1 Add `SetSharedGamePlaytimeUseCase` (`domain/`), constructor-shaped like
+- [x] 3.1 Add `SetSharedGamePlaytimeUseCase` (`domain/`), constructor-shaped like
       `PlaytimeBackfillUseCase` (`gameDao`, `settings`, `gamificationUpdater`, `time`,
       `derivedStateWrites`). `suspend operator fun invoke(appId: Long, minutes: Int): Boolean`
       — returns `false` without writing or recomputing if the game's stored source is not
