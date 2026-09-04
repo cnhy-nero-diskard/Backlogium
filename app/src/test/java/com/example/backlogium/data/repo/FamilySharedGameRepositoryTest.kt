@@ -1,7 +1,9 @@
 package com.example.backlogium.data.repo
 
+import androidx.room.Room
 import com.example.backlogium.data.backup.PassThroughTransactionScope
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
+import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.AchievementCounts
 import com.example.backlogium.data.local.dao.AchievementDao
@@ -19,6 +21,7 @@ import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameAchievementSync
+import com.example.backlogium.data.local.entity.Session
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import com.example.backlogium.data.remote.SteamApi
@@ -42,9 +45,16 @@ import com.example.backlogium.data.remote.dto.StoreItemsResponse
 import com.example.backlogium.data.remote.dto.StorePriceEnvelope
 import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
+import com.example.backlogium.domain.FakeDailyProgressDao
 import com.example.backlogium.domain.FakeGameDao
+import com.example.backlogium.domain.FakeHltbDataDao
+import com.example.backlogium.domain.FakePlayerProfileDao
+import com.example.backlogium.domain.FakeSessionDao
 import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.InMemoryProgressMarksStore
+import com.example.backlogium.domain.ProgressMarks
+import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -85,6 +95,180 @@ class FamilySharedGameRepositoryTest {
         assertFalse(excludedDao.isExcluded(appId))
         assertFalse(repository.reverseRemoval(appId))
     }
+
+    // --- auditfix-session-ledger-integrity #104: removal is not earned progress ---
+
+    @Test
+    fun `removal reseeds the derived-value baseline instead of producing progress events`() = runTest {
+        val appId = 42L
+        val database = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(),
+            BacklogiumDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        val marksStore = InMemoryProgressMarksStore()
+        val gamificationUpdater = GamificationUpdater(
+            sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(),
+            playerProfileDao = database.playerProfileDao(),
+            hltbDataDao = database.hltbDataDao(),
+            achievementDao = database.achievementDao(),
+            gameDao = database.gameDao(),
+            progressMarksStore = marksStore,
+        )
+        val repository = repositoryWithRealGamification(database, gamificationUpdater)
+
+        try {
+            database.gameDao().upsert(
+                Game(appId, "Shared Game", "", 0, 0, 0, source = GameSource.FAMILY_SHARED),
+            )
+            database.sessionDao().insert(
+                Session(appId = appId, startAt = 1_000L, endAt = 2_000L, minutes = 500, open = false),
+            )
+            // The initial state a device would already be in: play was tracked and earned XP,
+            // and that earned rise was already celebrated (marks seed on the first recompute
+            // regardless of source, matching ProgressEventDetector.seed()).
+            gamificationUpdater.recompute(today = FixedTimeProvider.today(), source = RecomputeSource.SYNC)
+            val levelBeforeRemoval = database.playerProfileDao().get()!!.level
+            val marksBeforeRemoval = marksStore.read().lastCelebratedLevel
+            assertEquals(levelBeforeRemoval, marksBeforeRemoval)
+            assertTrue("the scenario needs real XP to remove", levelBeforeRemoval > 1)
+
+            assertTrue(repository.remove(appId))
+
+            val profileAfterRemoval = database.playerProfileDao().get()!!
+            assertEquals(0L, profileAfterRemoval.totalXp) // the removed game was the only XP source
+            assertTrue("removal must actually lower the level", profileAfterRemoval.level < levelBeforeRemoval)
+            // Reseeded, not left stuck at the old higher mark the way an earned decrease would
+            // leave it (ProgressEventDetector's earned branch only bumps the mark on a *rise*) —
+            // this is the proof no progress event fired for a change the player did not earn.
+            assertEquals(profileAfterRemoval.level, marksStore.read().lastCelebratedLevel)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun `reversing a removal is equally non-earned`() = runTest {
+        val appId = 43L
+        val database = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(),
+            BacklogiumDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        val marksStore = InMemoryProgressMarksStore(
+            ProgressMarks(lastCelebratedLevel = 1, initialized = true),
+        )
+        val gamificationUpdater = GamificationUpdater(
+            sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(),
+            playerProfileDao = database.playerProfileDao(),
+            hltbDataDao = database.hltbDataDao(),
+            achievementDao = database.achievementDao(),
+            gameDao = database.gameDao(),
+            progressMarksStore = marksStore,
+        )
+        val excludedDao = FakeExcludedSharedGameDao(
+            ExcludedSharedGame(appId = appId, name = "Restored Shared Game", excludedAt = 1_000L),
+        )
+        val repository = repositoryWithRealGamification(database, gamificationUpdater, excludedDao)
+
+        try {
+            // Nothing about restoring an empty row should move totalXp/level at all (the game's
+            // history does not come back), but this still proves the recompute — if it moves
+            // anything — declares non-earned provenance rather than SYNC.
+            assertTrue(repository.reverseRemoval(appId))
+
+            assertEquals(1, marksStore.read().lastCelebratedLevel)
+            assertEquals(1, database.playerProfileDao().get()!!.level)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun `an ordinary sync after a removal is earned normally against the reseeded baseline`() = runTest {
+        val appId = 44L
+        val ongoingAppId = 45L
+        val database = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(),
+            BacklogiumDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        val marksStore = InMemoryProgressMarksStore()
+        val gamificationUpdater = GamificationUpdater(
+            sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(),
+            playerProfileDao = database.playerProfileDao(),
+            hltbDataDao = database.hltbDataDao(),
+            achievementDao = database.achievementDao(),
+            gameDao = database.gameDao(),
+            progressMarksStore = marksStore,
+        )
+        val repository = repositoryWithRealGamification(database, gamificationUpdater)
+
+        try {
+            database.gameDao().upsert(
+                Game(appId, "Shared Game", "", 0, 0, 0, source = GameSource.FAMILY_SHARED),
+            )
+            database.gameDao().upsert(
+                Game(ongoingAppId, "Owned Game", "", 0, 0, 0, source = GameSource.STEAM_OWNED),
+            )
+            database.sessionDao().insert(
+                Session(appId = appId, startAt = 1_000L, endAt = 2_000L, minutes = 500, open = false),
+            )
+            gamificationUpdater.recompute(today = FixedTimeProvider.today(), source = RecomputeSource.SYNC)
+            repository.remove(appId)
+            val levelAfterRemoval = database.playerProfileDao().get()!!.level
+            assertEquals(levelAfterRemoval, marksStore.read().lastCelebratedLevel) // reseeded
+
+            // A later ordinary sync earns real new progress on top of the reseeded baseline.
+            database.sessionDao().insert(
+                Session(appId = ongoingAppId, startAt = 3_000L, endAt = 4_000L, minutes = 5_000, open = false),
+            )
+            gamificationUpdater.recompute(today = FixedTimeProvider.today(), source = RecomputeSource.SYNC)
+
+            val levelAfterSync = database.playerProfileDao().get()!!.level
+            assertTrue("this sync must be a real earned rise", levelAfterSync > levelAfterRemoval)
+            // Left unacknowledged for the celebration UI — the proof this recompute went through
+            // the earned path, measured against the baseline the removal reseeded.
+            assertEquals(levelAfterRemoval, marksStore.read().lastCelebratedLevel)
+        } finally {
+            database.close()
+        }
+    }
+
+    private fun repositoryWithRealGamification(
+        database: BacklogiumDatabase,
+        gamificationUpdater: GamificationUpdater,
+        excludedDao: ExcludedSharedGameDao = FakeExcludedSharedGameDao(),
+    ) = FamilySharedGameRepository(
+        gameDao = database.gameDao(),
+        excludedDao = excludedDao,
+        profileDao = database.playerProfileDao(),
+        settings = SettingsDataStore(RuntimeEnvironment.getApplication()),
+        store = SteamStoreAppDataSource(noOpProxy(SteamStoreApi::class.java)),
+        genres = GameGenreRepository(
+            cacheDao = noOpProxy(GameGenreCacheDao::class.java),
+            store = SteamStoreGenreDataSource(noOpProxy(SteamStoreApi::class.java)),
+            time = FixedTimeProvider,
+        ),
+        policy = com.example.backlogium.domain.SharedGameAdmissionPolicy(),
+        notifier = object : SharedGameNotifier {
+            override fun notifyAdmitted(appId: Long, name: String): Boolean = false
+        },
+        steamApi = noOpProxy(SteamApi::class.java),
+        time = FixedTimeProvider,
+        sessionDao = database.sessionDao(),
+        dailyProgressDao = database.dailyProgressDao(),
+        transaction = PassThroughTransactionScope,
+        gamificationUpdater = gamificationUpdater,
+        derivedStateWrites = DerivedStateWriteCoordinator(),
+        achievementRepository = AchievementRepository(
+            steamApi = noOpProxy(SteamApi::class.java),
+            achievementDao = database.achievementDao(),
+            gameAchievementSyncDao = noOpProxy(GameAchievementSyncDao::class.java),
+            gameDao = database.gameDao(),
+            time = FixedTimeProvider,
+        ),
+    )
 
     @Test
     fun `importManually rejects invalid input without any Steam calls`() = runTest {
@@ -339,10 +523,17 @@ class FamilySharedGameRepositoryTest {
         storeApi: SteamStoreApi = noOpProxy(SteamStoreApi::class.java),
         achievementDao: FakeAchievementDao = FakeAchievementDao(),
         syncDao: FakeGameAchievementSyncDao = FakeGameAchievementSyncDao(),
+        // Real (if empty) fakes, not no-op proxies: remove() and reverseRemoval() both recompute
+        // (auditfix-session-ledger-integrity, #104), so every DAO on that path must survive being
+        // actually called, not just constructed. Shared with gamificationUpdater below so a
+        // recompute sees the same game/session/profile state the repository itself just wrote.
+        sessionDao: SessionDao = FakeSessionDao(emptyList()),
+        dailyProgressDao: DailyProgressDao = FakeDailyProgressDao(emptyList()),
+        profileDao: PlayerProfileDao = FakePlayerProfileDao(),
     ) = FamilySharedGameRepository(
         gameDao = gameDao,
         excludedDao = excludedDao,
-        profileDao = noOpProxy(PlayerProfileDao::class.java),
+        profileDao = profileDao,
         settings = settings,
         store = SteamStoreAppDataSource(storeApi),
         genres = GameGenreRepository(
@@ -356,16 +547,16 @@ class FamilySharedGameRepositoryTest {
         },
         steamApi = steamApi,
         time = FixedTimeProvider,
-        sessionDao = noOpProxy(SessionDao::class.java),
-        dailyProgressDao = noOpProxy(DailyProgressDao::class.java),
+        sessionDao = sessionDao,
+        dailyProgressDao = dailyProgressDao,
         transaction = PassThroughTransactionScope,
         gamificationUpdater = GamificationUpdater(
-            sessionDao = noOpProxy(SessionDao::class.java),
-            dailyProgressDao = noOpProxy(DailyProgressDao::class.java),
-            playerProfileDao = noOpProxy(PlayerProfileDao::class.java),
-            hltbDataDao = noOpProxy(HltbDataDao::class.java),
-            achievementDao = noOpProxy(AchievementDao::class.java),
-            gameDao = noOpProxy(GameDao::class.java),
+            sessionDao = sessionDao,
+            dailyProgressDao = dailyProgressDao,
+            playerProfileDao = profileDao,
+            hltbDataDao = FakeHltbDataDao(),
+            achievementDao = achievementDao,
+            gameDao = gameDao,
         ),
         derivedStateWrites = DerivedStateWriteCoordinator(),
         achievementRepository = AchievementRepository(

@@ -96,7 +96,7 @@ class BackupMergeEngineTest {
         achievements: List<BackupAchievement> = emptyList(),
         games: List<BackupGame> = emptyList(),
         longestStreak: Int = 0,
-        totalXp: Int = 999_999, // deliberately implausible, to prove it's never trusted
+        totalXp: Long = 999_999L, // deliberately implausible, to prove it's never trusted
         currentStreak: Int = 999,
         playtimeBackfilled: Boolean = false,
         collections: List<BackupCollection> = emptyList(),
@@ -1086,6 +1086,11 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
         return withId.id
     }
 
+    override suspend fun tryOpenSession(appId: Long, startAt: Long, endAt: Long?, minutes: Int): Long {
+        if (store.any { it.appId == appId && it.open }) return -1L
+        return insert(Session(appId = appId, startAt = startAt, endAt = endAt, minutes = minutes, open = true))
+    }
+
     override suspend fun update(session: Session) {
         val index = store.indexOfFirst { it.id == session.id }
         if (index >= 0) store[index] = session
@@ -1281,8 +1286,8 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
         profile = (profile ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
     }
 
-    override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {
-        profile = (profile ?: PlayerProfile()).copy(totalXp = totalXp, level = level, currentStreak = currentStreak, longestStreak = maxOf(profile?.longestStreak ?: 0, longestStreak), gamificationConfigVersion = gamificationConfigVersion, pendingImportRecompute = false)
+    override suspend fun updateGamification(totalXp: Long, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {
+        profile = (profile ?: PlayerProfile()).copy(totalXp = totalXp, level = level, currentStreak = currentStreak, longestStreak = maxOf(profile?.longestStreak ?: 0, longestStreak), gamificationConfigVersion = gamificationConfigVersion, pendingImportRecompute = false, pendingXpIntegrityCorrection = false)
     }
 
     override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) {

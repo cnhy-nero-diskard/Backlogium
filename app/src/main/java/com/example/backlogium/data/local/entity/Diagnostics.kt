@@ -21,6 +21,8 @@ data class SyncRun(
     val warmCount: Int = 0,
     val coldCount: Int = 0,
     val neverCount: Int = 0,
+    /** Session boundaries clamped this run for a backward clock movement (auditfix-session-ledger-integrity, #115). */
+    val clockRollbackCount: Int = 0,
 )
 
 @Entity(

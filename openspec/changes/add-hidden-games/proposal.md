@@ -80,7 +80,10 @@ it. Hiding is the same shape as changing an XP rate: preview the concrete effect
 - **A new `RecomputeSource` value.** `add-progress-events` requires every write of derived values to
   declare provenance; hiding is not earned, so it emits no events and reseeds the baseline —
   including downward. Without that, hiding a large game would leave a stale high-water mark and
-  suppress the next genuine level-up.
+  suppress the next genuine level-up. `auditfix-session-ledger-integrity` (#104) added
+  `RecomputeSource.GAME_REMOVAL` for the same reason on Family Shared removal, named for the event
+  rather than a generic non-earned catch-all — this change follows that pattern with its own
+  distinctly-named source for hide/unhide rather than widening `GAME_REMOVAL` to cover both.
 - **Backup and restore carry the hidden set**, or a restore would silently unhide everything.
 - **Nothing is deleted, so nothing needs a migration path back.** The reversibility guarantee is
   what makes a retroactive effect safe to offer.

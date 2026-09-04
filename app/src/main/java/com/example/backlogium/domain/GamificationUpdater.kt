@@ -244,6 +244,16 @@ class GamificationUpdater @Inject constructor(
         resolvePendingTransitionWithinProtocol(progressMarksStore, playerProfileDao, dailyProgressDao)
 
         val previousProfile = playerProfileDao.get()
+        // A device migrated with a totalXp the #114 overflow bug may have wrapped to 0
+        // (PlayerProfile.pendingXpIntegrityCorrection) gets its first post-fix recompute treated
+        // as a correction regardless of the caller's own source — the caller has no way to know
+        // this device is affected, and the caller-declared source must not smuggle a wrapped
+        // total's correction through as earned progress.
+        val effectiveSource = if (previousProfile?.pendingXpIntegrityCorrection == true) {
+            RecomputeSource.XP_INTEGRITY_CORRECTION
+        } else {
+            source
+        }
         val previousTodayQuestMet = dailyProgressDao.getByDate(today.toString())?.questMet == true
         val previousState = previousProfile?.let {
             ProgressState(
@@ -257,7 +267,7 @@ class GamificationUpdater @Inject constructor(
             progressMarksStore.update { marks ->
                 marks.copy(
                     pendingTransition = PendingTransition(
-                        source = source,
+                        source = effectiveSource,
                         previousLevel = previousState.level,
                         previousStreak = previousState.currentStreak,
                         previousTodayQuestMet = previousState.todayQuestMet,
@@ -268,7 +278,7 @@ class GamificationUpdater @Inject constructor(
         }
 
         try {
-            writeAndFinalize(result, source, previousState, previousProfile, today, configVersion)
+            writeAndFinalize(result, effectiveSource, previousState, previousProfile, today, configVersion)
         } catch (t: Throwable) {
             // A pending transition suppresses event derivation by design, so returning from this
             // call with our own record still in place would freeze delivery for the rest of the

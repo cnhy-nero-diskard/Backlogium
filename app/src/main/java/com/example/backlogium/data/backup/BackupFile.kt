@@ -157,7 +157,7 @@ data class BackupLibrarySortPrefs(
  */
 @Serializable
 data class BackupPlayerProfile(
-    val totalXp: Int,
+    val totalXp: Long,
     val level: Int,
     val currentStreak: Int,
     val longestStreak: Int,
@@ -179,10 +179,10 @@ data class BackupComputed(
 )
 
 @Serializable
-data class BackupGameXp(val appId: Long, val name: String, val xp: Int)
+data class BackupGameXp(val appId: Long, val name: String, val xp: Long)
 
 @Serializable
-data class BackupDayXp(val date: String, val cumulativeXp: Int)
+data class BackupDayXp(val date: String, val cumulativeXp: Long)
 
 /**
  * One custom collection (add-custom-collections), carried in the backup so a restore keeps the

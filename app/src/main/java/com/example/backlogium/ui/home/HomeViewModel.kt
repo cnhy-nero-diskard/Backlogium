@@ -64,9 +64,9 @@ data class HomeUiState(
      */
     val firstRunSetupActive: Boolean = false,
     val level: Int = 1,
-    val xpIntoLevel: Int = 0,
-    val xpForNext: Int = 0,
-    val totalXp: Int = 0,
+    val xpIntoLevel: Long = 0L,
+    val xpForNext: Long = 0L,
+    val totalXp: Long = 0L,
     val questMet: Boolean = false,
     val todayMinutes: Int = 0,
     val questThreshold: Int = 30,
@@ -276,7 +276,7 @@ class HomeViewModel @Inject constructor(
     ) { data, today ->
         val (profile, days, config, credState, isSyncing) = data
         val dayFields = homeDayFields(days, today)
-        val xpState = Gamification.levelState(profile?.totalXp ?: 0, config)
+        val xpState = Gamification.levelState(profile?.totalXp ?: 0L, config)
         val configured = credState as? CredentialsState.Configured
         HomeUiState(
             loading = false,

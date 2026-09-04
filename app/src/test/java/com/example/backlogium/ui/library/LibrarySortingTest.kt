@@ -221,7 +221,7 @@ class LibrarySortingTest {
         appId: Long = name.hashCode().toLong(),
         playtimeForever: Int = 0,
         playtime2Weeks: Int = 0,
-        xpContributed: Int = 0,
+        xpContributed: Long = 0L,
     ) = TestRow(appId, name, playtimeForever, playtime2Weeks, xpContributed)
 
     private data class TestRow(
@@ -229,7 +229,7 @@ class LibrarySortingTest {
         override val name: String,
         override val playtimeForever: Int,
         override val playtime2Weeks: Int,
-        override val xpContributed: Int,
+        override val xpContributed: Long,
         override val genres: List<GameGenre> = emptyList(),
     ) : LibraryRow
 }

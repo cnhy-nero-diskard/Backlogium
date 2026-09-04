@@ -41,12 +41,12 @@ data class GameXpInput(
 object LibraryXp {
 
     /** XP a single game has contributed: its tapered playtime XP plus its achievements' XP. */
-    fun contribution(input: GameXpInput, cfg: RuleConfig): Int =
+    fun contribution(input: GameXpInput, cfg: RuleConfig): Long =
         Gamification.gameXp(input.minutesPlayed, input.completionistMinutes, cfg) +
             Gamification.achievementXp(input.achievementInputs(), cfg)
 
     /** [contribution] across many games, keyed by appId. */
-    fun contributions(inputs: List<GameXpInput>, cfg: RuleConfig): Map<Long, Int> =
+    fun contributions(inputs: List<GameXpInput>, cfg: RuleConfig): Map<Long, Long> =
         inputs.associate { it.appId to contribution(it, cfg) }
 
     /**

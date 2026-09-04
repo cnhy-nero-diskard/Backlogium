@@ -16,6 +16,31 @@ interface SessionDao {
     @Update
     suspend fun update(session: Session)
 
+    /**
+     * Opens a session for [appId] only if it has no open session already, in one statement.
+     *
+     * This is the enforcement point for "at most one open session per game" (auditfix-session-
+     * ledger-integrity, #116): the `WHERE NOT EXISTS` and the row it guards are evaluated by
+     * SQLite's own single-writer serialization, so two callers racing to open a session for the
+     * same game — neither holding a shared lock, as the presence path does not — cannot both
+     * succeed. The loser gets 0 rows affected and must fold its observation into the session that
+     * won, via [getOpenSession], rather than losing it.
+     *
+     * Deliberately a guarded `INSERT` rather than a partial unique index: Room's `@Index` has no
+     * `WHERE` clause, so a partial index would need a hand-written migration outside Room's
+     * schema tracking, risking a validation mismatch on every device. This needs no migration and
+     * leaves the `(appId, startAt, endAt)` natural key untouched.
+     *
+     * @return the new row's id if this call opened the session, or -1 if a concurrent caller
+     *   already holds one open and nothing was inserted.
+     */
+    @Query(
+        "INSERT INTO sessions (appId, startAt, endAt, minutes, open) " +
+            "SELECT :appId, :startAt, :endAt, :minutes, 1 " +
+            "WHERE NOT EXISTS (SELECT 1 FROM sessions WHERE appId = :appId AND open = 1)",
+    )
+    suspend fun tryOpenSession(appId: Long, startAt: Long, endAt: Long?, minutes: Int): Long
+
     @Query("SELECT * FROM sessions WHERE appId = :appId AND open = 1 LIMIT 1")
     suspend fun getOpenSession(appId: Long): Session?
 

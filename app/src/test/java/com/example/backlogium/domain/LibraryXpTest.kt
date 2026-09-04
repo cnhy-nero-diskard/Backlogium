@@ -69,7 +69,7 @@ class LibraryXpTest {
         // nothing: the badge reports contribution, not lifetime playtime.
         val untracked = GameXpInput(appId = 99L, minutesPlayed = 0, completionistMinutes = 1_800)
 
-        assertEquals(0, LibraryXp.contribution(untracked, RuleConfig()))
+        assertEquals(0L, LibraryXp.contribution(untracked, RuleConfig()))
     }
 
     @Test
@@ -82,7 +82,7 @@ class LibraryXpTest {
             unlockedRarityPercents = listOf(null, null),
         )
 
-        assertEquals(0, LibraryXp.contribution(input, RuleConfig()))
+        assertEquals(0L, LibraryXp.contribution(input, RuleConfig()))
     }
 
     /** A mixed library: tapered, un-tapered, achievement-only, and playtime-only games. */
@@ -112,7 +112,7 @@ class LibraryXpTest {
         ),
     )
 
-    private fun engineTotalXp(cfg: RuleConfig): Int = Gamification.xp(
+    private fun engineTotalXp(cfg: RuleConfig): Long = Gamification.xp(
         games = library.map { it.playtimeInput() },
         achievements = library.flatMap { it.achievementInputs() },
         cfg = cfg,

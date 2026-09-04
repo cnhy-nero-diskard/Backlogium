@@ -98,7 +98,7 @@ data class GameSummaryUi(
     val achievementsUnlocked: Int = 0,
     val achievementsTotal: Int = 0,
     /** XP this game contributed to the player's total, from `LibraryXp` — same value the Library shows. */
-    val xpContributed: Int = 0,
+    val xpContributed: Long = 0L,
     /**
      * The game's current Steam concurrent-player count, polled every 30 seconds while this
      * screen is open. Null until the first fetch resolves, and null again after any failed
@@ -496,8 +496,11 @@ internal fun GameAchievement.toUi(config: RuleConfig): AchievementUi {
         iconUrl = iconUrl,
         unlocked = unlocked,
         tier = if (tierable) Gamification.tierFor(percent!!) else null,
+        // A single achievement's XP is bounded by RuleField's per-tier ceiling (at most
+        // 1,000,000), so this narrowing is always exact — unlike a player's accumulated total,
+        // one award can never overflow Int.
         xp = if (tierable) {
-            Gamification.achievementXp(listOf(AchievementInput(apiName, true, percent)), config)
+            Gamification.achievementXp(listOf(AchievementInput(apiName, true, percent)), config).toInt()
         } else {
             0
         },

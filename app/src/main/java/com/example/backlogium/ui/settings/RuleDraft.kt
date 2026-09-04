@@ -15,8 +15,20 @@ import com.example.backlogium.gamification.RuleConfig
 enum class RuleField(
     val label: String,
     val minimum: Int,
-    /** Shown inline when the entered value is below [minimum] or not a number at all. */
+    /** Shown inline when the entered value is below [minimum] or above [maximum]. */
     val rejection: String,
+    /**
+     * The largest value the engine can safely use, inclusive. [Int.MAX_VALUE] (no additional
+     * ceiling) for a field that does not feed XP/level arithmetic, since no value of its own can
+     * overflow it — see [errorFor].
+     *
+     * The XP-arithmetic fields below are capped with headroom under the widened `Long`
+     * accumulation (auditfix-session-ledger-integrity, #114): assuming a maximal library of
+     * 50,000 tracked games at up to 10,000,000 minutes each (~19 years of continuous play,
+     * already far beyond any real library or lifetime of play), the worst-case total XP at these
+     * ceilings stays roughly two orders of magnitude under `Long.MAX_VALUE`.
+     */
+    val maximum: Int = Int.MAX_VALUE,
     val advanced: Boolean,
 ) {
     QUEST_GOAL_MINUTES(
@@ -34,23 +46,52 @@ enum class RuleField(
     XP_PER_MINUTE(
         label = "XP per minute",
         minimum = 1,
-        rejection = "Enter at least 1 — a non-positive rate would earn no XP for any playtime.",
+        rejection = "Enter a value from 1 to $XP_PER_MINUTE_MAXIMUM — a rate this large would " +
+            "produce numbers the engine can't use safely.",
+        maximum = XP_PER_MINUTE_MAXIMUM,
         advanced = true,
     ),
     LEVEL_BASE(
         label = "Level curve base",
         minimum = 1,
-        rejection = "Enter at least 1 — the level curve is undefined at zero.",
+        rejection = "Enter a value from 1 to $LEVEL_BASE_MAXIMUM — the level curve is " +
+            "undefined at zero and unusable this large.",
+        maximum = LEVEL_BASE_MAXIMUM,
         advanced = true,
     ),
-    COMMON_ACHIEVEMENT_XP("Common achievement XP", 0, ACHIEVEMENT_XP_REJECTION, advanced = true),
-    UNCOMMON_ACHIEVEMENT_XP("Uncommon achievement XP", 0, ACHIEVEMENT_XP_REJECTION, advanced = true),
-    RARE_ACHIEVEMENT_XP("Rare achievement XP", 0, ACHIEVEMENT_XP_REJECTION, advanced = true),
-    EPIC_ACHIEVEMENT_XP("Epic achievement XP", 0, ACHIEVEMENT_XP_REJECTION, advanced = true),
+    COMMON_ACHIEVEMENT_XP(
+        "Common achievement XP",
+        0,
+        ACHIEVEMENT_XP_REJECTION,
+        maximum = ACHIEVEMENT_XP_MAXIMUM,
+        advanced = true,
+    ),
+    UNCOMMON_ACHIEVEMENT_XP(
+        "Uncommon achievement XP",
+        0,
+        ACHIEVEMENT_XP_REJECTION,
+        maximum = ACHIEVEMENT_XP_MAXIMUM,
+        advanced = true,
+    ),
+    RARE_ACHIEVEMENT_XP(
+        "Rare achievement XP",
+        0,
+        ACHIEVEMENT_XP_REJECTION,
+        maximum = ACHIEVEMENT_XP_MAXIMUM,
+        advanced = true,
+    ),
+    EPIC_ACHIEVEMENT_XP(
+        "Epic achievement XP",
+        0,
+        ACHIEVEMENT_XP_REJECTION,
+        maximum = ACHIEVEMENT_XP_MAXIMUM,
+        advanced = true,
+    ),
     LEGENDARY_ACHIEVEMENT_XP(
         "Legendary achievement XP",
         0,
         ACHIEVEMENT_XP_REJECTION,
+        maximum = ACHIEVEMENT_XP_MAXIMUM,
         advanced = true,
     ),
     ;
@@ -60,7 +101,10 @@ enum class RuleField(
         get() = this == QUEST_GOAL_MINUTES || this == STREAK_GRACE_DAYS
 }
 
-private const val ACHIEVEMENT_XP_REJECTION = "Enter 0 or more XP."
+private const val XP_PER_MINUTE_MAXIMUM = 100_000
+private const val LEVEL_BASE_MAXIMUM = 1_000_000
+private const val ACHIEVEMENT_XP_MAXIMUM = 1_000_000
+private const val ACHIEVEMENT_XP_REJECTION = "Enter a value from 0 to $ACHIEVEMENT_XP_MAXIMUM."
 
 /**
  * An in-progress edit of the rule configuration.
@@ -78,7 +122,11 @@ data class RuleDraft(
     fun errorFor(field: RuleField): String? {
         val entered = values[field].orEmpty()
         val parsed = entered.trim().toIntOrNull()
-        return if (parsed == null || parsed < field.minimum) field.rejection else null
+        return if (parsed == null || parsed < field.minimum || parsed > field.maximum) {
+            field.rejection
+        } else {
+            null
+        }
     }
 
     val invalidFields: List<RuleField> get() = RuleField.entries.filter { errorFor(it) != null }

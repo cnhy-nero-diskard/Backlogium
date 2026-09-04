@@ -66,7 +66,17 @@ class SessionDiffer @Inject constructor() {
         val newLastPlaytime: Map<Long, Int>,
         /** appId -> minutes gained this poll (positive deltas only), for day attribution. */
         val playedDeltaByAppId: Map<Long, Int>,
+        /** Boundaries clamped this poll because the clock moved backwards (auditfix-session-ledger-integrity, #115). */
+        val clockRollbacks: List<ClockRollback> = emptyList(),
     )
+
+    /**
+     * A session boundary that was clamped rather than stored inverted, because the device clock
+     * moved backwards between polls. [attemptedEndAt] is what the raw poll timestamp would have
+     * produced; [clampedEndAt] is what was actually stored. Reported so the caller can record it
+     * through app-diagnostics — a real clock event, not something to discard silently.
+     */
+    data class ClockRollback(val appId: Long, val attemptedEndAt: Long, val clampedEndAt: Long)
 
     /**
      * First-sync baseline: record current totals, create no sessions. Only deltas observed
@@ -93,6 +103,7 @@ class SessionDiffer @Inject constructor() {
         val actions = mutableListOf<SessionAction>()
         val newLastPlaytime = mutableMapOf<Long, Int>()
         val deltas = mutableMapOf<Long, Int>()
+        val rollbacks = mutableListOf<ClockRollback>()
 
         for (poll in polls) {
             val prior = priorStates[poll.appId]
@@ -105,18 +116,31 @@ class SessionDiffer @Inject constructor() {
             val delta = poll.playtimeForever - prior.lastPlaytime
             if (delta > 0) {
                 if (prior.openSession == null) {
+                    // A session cannot start after it ends. A backward clock movement between
+                    // `previousPollAt` and `now` would otherwise invert this boundary — clamp
+                    // rather than store the impossible interval (design.md Decision 2).
+                    val endAt = now.coerceAtLeast(previousPollAt)
+                    if (endAt != now) {
+                        rollbacks += ClockRollback(poll.appId, attemptedEndAt = now, clampedEndAt = endAt)
+                    }
                     actions += SessionAction.Open(
                         appId = poll.appId,
                         startAt = previousPollAt,
-                        endAt = now,
+                        endAt = endAt,
                         minutes = delta,
                     )
                 } else {
+                    // Same guard for an extension: the session's `startAt` is fixed at open, so a
+                    // clock rollback since then must not pull `endAt` behind it.
+                    val endAt = now.coerceAtLeast(prior.openSession.startAt)
+                    if (endAt != now) {
+                        rollbacks += ClockRollback(poll.appId, attemptedEndAt = now, clampedEndAt = endAt)
+                    }
                     actions += SessionAction.Extend(
                         appId = poll.appId,
                         startAt = prior.openSession.startAt,
                         minutes = prior.openSession.minutes + delta,
-                        endAt = now,
+                        endAt = endAt,
                         addedMinutes = delta,
                     )
                 }
@@ -142,6 +166,6 @@ class SessionDiffer @Inject constructor() {
             newLastPlaytime.putIfAbsent(appId, state.lastPlaytime)
         }
 
-        return DiffResult(actions, newLastPlaytime, deltas)
+        return DiffResult(actions, newLastPlaytime, deltas, rollbacks)
     }
 }

@@ -15,7 +15,7 @@ interface LibraryRow {
     val genres: List<GameGenre>
     val playtimeForever: Int
     val playtime2Weeks: Int
-    val xpContributed: Int
+    val xpContributed: Long
 }
 
 /**

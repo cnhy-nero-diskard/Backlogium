@@ -62,7 +62,7 @@ class GamificationTest {
     @Test
     fun gameXp_isMonotonicNonDecreasing() {
         val t = 100
-        var previous = -1
+        var previous = -1L
         for (m in 0..300 step 10) {
             val value = Gamification.gameXp(m, t, cfg)
             assertTrue("cumulative XP must not decrease at m=$m ($value < $previous)", value >= previous)
@@ -129,6 +129,48 @@ class GamificationTest {
         assertEquals(3, state.level)
         assertEquals(40, state.xpIntoLevel)
         assertEquals(300, state.xpForNext)
+    }
+
+    // --- 4.4 Overflow safety (auditfix-session-ledger-integrity, #114) -------
+
+    @Test
+    fun xp_atLargestAcceptedRateProducesTheMathematicallyCorrectValue_notWrapped() {
+        // 100,000 is RuleField.XP_PER_MINUTE_MAXIMUM — the largest rate the app now accepts.
+        // In the old Int accumulation, 100_000 minutes * 100_000 XP/min would have wrapped;
+        // in Long it is the exact product.
+        val extreme = cfg.copy(xpPerMinute = 100_000)
+        val state = Gamification.xp(listOf(flatGame(100_000)), cfg = extreme)
+
+        assertEquals(10_000_000_000L, state.totalXp) // exact, not wrapped, not zero
+        // The specific wrong result the audit reported: a wrapped negative total clamped to a
+        // plausible-looking level of 1.
+        assertTrue("a substantial total must not report level 1", state.level > 1)
+    }
+
+    @Test
+    fun xp_levelDerivedFromLargeTotalReflectsThePreClampValue() {
+        // levelState's coerceAtLeast(0) must never be the thing separating a correct total from
+        // a wrapped one — verified by asserting on the actual computed total, not merely that
+        // the clamped output looks plausible.
+        val state = Gamification.levelState(10_000_000_000L, cfg)
+
+        assertEquals(10_000_000_000L, state.totalXp) // clamp did not alter an already-valid value
+        assertTrue(state.level > 1)
+    }
+
+    @Test
+    fun xp_largeLibrarySumsPastASingleGamesIntRangeWithoutOverflow() {
+        // Each game's own XP fits comfortably in Int; only the library-wide sum exceeds it —
+        // the specific case a per-game-only fix (a ceiling alone) would not have caught.
+        val perGameMinutes = 100_000
+        val gameCount = 25_000
+        val games = (1..gameCount).map { flatGame(perGameMinutes) }
+
+        val state = Gamification.xp(games, cfg = cfg.copy(xpPerMinute = 1))
+
+        val expected = perGameMinutes.toLong() * gameCount
+        assertTrue("this test's own premise: the sum must exceed Int range", expected > Int.MAX_VALUE)
+        assertEquals(expected, state.totalXp)
     }
 
     // --- 4.3 Goal progress ---------------------------------------------------

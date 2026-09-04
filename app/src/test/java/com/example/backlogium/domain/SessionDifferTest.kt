@@ -1,5 +1,6 @@
 package com.example.backlogium.domain
 
+import com.example.backlogium.domain.SessionDiffer.ClockRollback
 import com.example.backlogium.domain.SessionDiffer.GameDiffState
 import com.example.backlogium.domain.SessionDiffer.OpenSession
 import com.example.backlogium.domain.SessionDiffer.PollGame
@@ -181,6 +182,155 @@ class SessionDifferTest {
         assertTrue(result.actions.isEmpty())
         assertEquals(4242, result.newLastPlaytime[9L])
         assertNull(result.playedDeltaByAppId[9L])
+    }
+
+    // --- auditfix-session-ledger-integrity #115: a synthesized interval is never inverted ---
+
+    @Test
+    fun clockRollbackWhileExtending_clampsEndAtRatherThanInverting() {
+        // SessionDifferTest previously only exercised increasing timestamps; `now` here is
+        // earlier than the open session's own `startAt`.
+        val prior = mapOf(
+            1L to GameDiffState(
+                lastPlaytime = 130,
+                openSession = OpenSession(startAt = 1000L, minutes = 30, lastIncreaseAt = 2000L),
+            ),
+        )
+
+        val result = differ.diff(
+            polls = listOf(PollGame(1L, 150)),
+            priorStates = prior,
+            now = 500L,
+            previousPollAt = 2000L,
+        )
+
+        val extend = result.actions.single() as SessionAction.Extend
+        assertEquals(1000L, extend.startAt)
+        assertEquals(1000L, extend.endAt) // clamped to startAt, never inverted
+        assertTrue(extend.endAt >= extend.startAt)
+        // Tracked minutes are unaffected by the clamp — they come from Steam, not the clock.
+        assertEquals(50, extend.minutes)
+        assertEquals(20, extend.addedMinutes)
+        assertEquals(20, result.playedDeltaByAppId[1L])
+        assertEquals(
+            listOf(ClockRollback(appId = 1L, attemptedEndAt = 500L, clampedEndAt = 1000L)),
+            result.clockRollbacks,
+        )
+    }
+
+    @Test
+    fun clockRollbackWhileOpening_clampsEndAtRatherThanInverting() {
+        // The audit named Extend; Open in the same loop derives both ends from clock readings
+        // and inverts under the same rollback (design.md Decision 2).
+        val prior = mapOf(1L to GameDiffState(lastPlaytime = 100))
+
+        val result = differ.diff(
+            polls = listOf(PollGame(1L, 130)),
+            priorStates = prior,
+            now = 500L,
+            previousPollAt = 2000L, // clock moved backwards since the previous poll
+        )
+
+        val open = result.actions.single() as SessionAction.Open
+        assertEquals(2000L, open.startAt)
+        assertEquals(2000L, open.endAt) // clamped, never inverted
+        assertTrue(open.endAt >= open.startAt)
+        assertEquals(30, open.minutes)
+        assertEquals(30, result.playedDeltaByAppId[1L])
+        assertEquals(
+            listOf(ClockRollback(appId = 1L, attemptedEndAt = 500L, clampedEndAt = 2000L)),
+            result.clockRollbacks,
+        )
+    }
+
+    @Test
+    fun closeAfterClampedBoundary_staysNonInverted() {
+        // A boundary clamped on one poll must not resurface as an inverted interval when a
+        // later no-delta poll closes the session — the audit's specific observation that a bad
+        // boundary survives the close.
+        val opened = differ.diff(
+            polls = listOf(PollGame(1L, 130)),
+            priorStates = mapOf(1L to GameDiffState(lastPlaytime = 100)),
+            now = 500L,
+            previousPollAt = 2000L,
+        ).actions.single() as SessionAction.Open
+
+        val prior = mapOf(
+            1L to GameDiffState(
+                lastPlaytime = 130,
+                openSession = OpenSession(
+                    startAt = opened.startAt,
+                    minutes = opened.minutes,
+                    lastIncreaseAt = opened.endAt,
+                ),
+            ),
+        )
+        val result = differ.diff(
+            polls = listOf(PollGame(1L, 130)), // no further increase
+            priorStates = prior,
+            now = 2600L,
+            previousPollAt = 2500L,
+        )
+
+        val close = result.actions.single() as SessionAction.Close
+        assertEquals(opened.startAt, close.startAt)
+        assertEquals(opened.endAt, close.endAt)
+        assertTrue(close.endAt >= close.startAt)
+    }
+
+    @Test
+    fun forwardClockJump_extendsNormally_withNoRollbackRecorded() {
+        // The guard must not make ordinary operation conservative: a forward jump is not a
+        // rollback and produces none.
+        val prior = mapOf(
+            1L to GameDiffState(
+                lastPlaytime = 130,
+                openSession = OpenSession(startAt = 1000L, minutes = 30, lastIncreaseAt = 2000L),
+            ),
+        )
+
+        val result = differ.diff(
+            polls = listOf(PollGame(1L, 150)),
+            priorStates = prior,
+            now = 3_600_000L, // an hour forward, still a valid ordinary jump
+            previousPollAt = 2000L,
+        )
+
+        val extend = result.actions.single() as SessionAction.Extend
+        assertEquals(3_600_000L, extend.endAt)
+        assertTrue(result.clockRollbacks.isEmpty())
+    }
+
+    @Test
+    fun rollbackGuardStaysConsistentWithPresenceSessionDeriversHandling() {
+        // Cross-check against
+        // PresenceSessionDeriverTest.clockMovingBackwards_closesRatherThanExtendingToAnEarlierEnd:
+        // that path closes rather than clamps, a different mechanism for a different shape of
+        // input (silence-tolerant observations vs. a fixed session start). Both must guarantee
+        // the same outcome — no stored interval with endAt < startAt — which is what this
+        // asserts here, not that the two mechanisms are identical (design.md Non-Goals).
+        val prior = mapOf(
+            1L to GameDiffState(
+                lastPlaytime = 130,
+                openSession = OpenSession(startAt = 1000L, minutes = 30, lastIncreaseAt = 2000L),
+            ),
+        )
+
+        val result = differ.diff(
+            polls = listOf(PollGame(1L, 150)),
+            priorStates = prior,
+            now = 1L,
+            previousPollAt = 2000L,
+        )
+
+        result.actions.forEach { action ->
+            val endAt = when (action) {
+                is SessionAction.Open -> action.endAt
+                is SessionAction.Extend -> action.endAt
+                is SessionAction.Close -> action.endAt
+            }
+            assertTrue("no stored interval may have endAt < startAt", endAt >= action.startAt)
+        }
     }
 
     @Test
