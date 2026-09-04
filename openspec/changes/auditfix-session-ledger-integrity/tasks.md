@@ -28,14 +28,14 @@
 
 ## 4. Removal provenance (#104)
 
-- [ ] 4.1 Add a `RecomputeSource` for administrative removal, named for the event rather than as a generic non-earned catch-all (design.md Decision 4). Verified by the enum naming what happened, consistent with `SYNC`/`RULE_CHANGE`/`BACKFILL`/`RESTORE`
-- [ ] 4.2 Switch `FamilySharedGameRepository.kt:258-267` from `RecomputeSource.SYNC` to it. Verified by a test asserting a removal that changes level or streak produces no progress event
-- [ ] 4.3 Verify `ProgressEventDetector.kt:40+` keys on earned provenance rather than enumerating non-earned sources, so the new source is non-event-producing by construction. **Check this rather than assuming it** — if it enumerates, it needs updating too
-- [ ] 4.4 Test: a removal recompute reseeds the delivery baseline to the values it wrote, including when they are lower than the baseline replaced
-- [ ] 4.5 Test: a removal that lowers derived values below a previously acknowledged threshold moves no acknowledgement baseline backwards
-- [ ] 4.6 Test: reversing a removal is equally non-earned and produces no events, per the spec scenario
-- [ ] 4.7 Test: an ordinary sync after a removal still declares earned provenance and produces events against the reseeded baseline
-- [ ] 4.8 Leave a note for `add-hidden-games` (0/55 tasks) that hide/unhide should add its own source alongside this one rather than widening it. Verified by the note being reachable from that change's proposal
+- [x] 4.1 Add a `RecomputeSource` for administrative removal, named for the event rather than as a generic non-earned catch-all (design.md Decision 4). Verified by the enum naming what happened, consistent with `SYNC`/`RULE_CHANGE`/`BACKFILL`/`RESTORE`
+- [x] 4.2 Switch `FamilySharedGameRepository.kt:258-267` from `RecomputeSource.SYNC` to it. Verified by a test asserting a removal that changes level or streak produces no progress event
+- [x] 4.3 Verify `ProgressEventDetector.kt:40+` keys on earned provenance rather than enumerating non-earned sources, so the new source is non-event-producing by construction. **Check this rather than assuming it** — if it enumerates, it needs updating too
+- [x] 4.4 Test: a removal recompute reseeds the delivery baseline to the values it wrote, including when they are lower than the baseline replaced
+- [x] 4.5 Test: a removal that lowers derived values below a previously acknowledged threshold moves no acknowledgement baseline backwards
+- [x] 4.6 Test: reversing a removal is equally non-earned and produces no events, per the spec scenario
+- [x] 4.7 Test: an ordinary sync after a removal still declares earned provenance and produces events against the reseeded baseline
+- [x] 4.8 Leave a note for `add-hidden-games` (0/55 tasks) that hide/unhide should add its own source alongside this one rather than widening it. Verified by the note being reachable from that change's proposal
 
 ## 5. XP overflow (#114)
 
