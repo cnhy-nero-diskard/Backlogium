@@ -28,9 +28,9 @@
 
 ## 5. Maintainer decisions (explicit answer required, no default)
 
-- [ ] 5.1 Decide what to do about Cloud Logging entries **already written**, which this change does not touch: review current retention and any configured sinks or exports, then either delete the historical sensitive entries where operationally possible or record the decision to keep them. Verified by the retention/sink review being written down with the choice made
-- [ ] 5.2 Answer the git-history attribution finding by picking one of design.md Decision 3's three options — intended-and-accepted, forward-only, or remediate — and record the answer in `tools/hltb-dataset/README.md`. **Do not delete dataset rows or rewrite history unless option 3 is explicitly chosen.** Verified by the README stating the provenance norm for future contributions
-- [ ] 5.3 If option 1 or 2 is chosen, close #118's second finding as accepted with the reasoning recorded, rather than leaving it open indefinitely as an implied to-do
+- [x] 5.1 Decide what to do about Cloud Logging entries **already written**, which this change does not touch: review current retention and any configured sinks or exports, then either delete the historical sensitive entries where operationally possible or record the decision to keep them. Verified by the retention/sink review being written down with the choice made
+- [x] 5.2 Answer the git-history attribution finding by picking one of design.md Decision 3's three options — intended-and-accepted, forward-only, or remediate — and record the answer in `tools/hltb-dataset/README.md`. **Do not delete dataset rows or rewrite history unless option 3 is explicitly chosen.** Verified by the README stating the provenance norm for future contributions
+- [x] 5.3 If option 1 or 2 is chosen, close #118's second finding as accepted with the reasoning recorded, rather than leaving it open indefinitely as an implied to-do
 
 ## 6. Close out
 
