@@ -115,10 +115,10 @@
       default) since the pre-filled string is re-parsed by `toDoubleOrNull()`, which is
       locale-invariant — a comma-decimal locale would otherwise make the pre-filled value fail its
       own validation on open.
-- [ ] 4.3 Manually verify on-device/emulator: set an hours estimate on a family-shared game, confirm
+- [x] 4.3 Manually verify on-device/emulator: set an hours estimate on a family-shared game, confirm
       the detail screen's headline playtime and XP figure update immediately; confirm the action is
       absent on an owned game's detail screen.
-      Not done in this session: no device/emulator was attached. Left for the user to verify.
+      Done: confirmed on-device by the user.
 
 ## 5. Library filter
 

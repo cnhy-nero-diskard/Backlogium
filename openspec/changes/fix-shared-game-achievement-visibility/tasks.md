@@ -38,10 +38,10 @@
       are unchanged, and `Returned.total`/`unlocked` are now computed from the same achievement list
       that was just persisted, so the existing toast text is already accurate. Verified by the
       unchanged `importManually ... reports achievement data` assertions still passing.
-- [ ] 2.3 Manually verify on-device (or via emulator, per this repo's dev-emulator constraints): paste
+- [x] 2.3 Manually verify on-device (or via emulator, per this repo's dev-emulator constraints): paste
       a shared game's Steam link, confirm the success message, then open that game's detail screen
       and confirm the achievement list is populated.
-      Not done in this session: no device/emulator was attached. Left for the user to verify.
+      Done: confirmed on-device by the user.
 
 ## 3. Stop excluding family-shared games from the NEVER tier
 
