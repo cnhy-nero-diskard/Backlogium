@@ -1,5 +1,6 @@
 package com.example.backlogium.data.backup
 
+import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.SetSharedGamePlaytimeUseCase
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -65,6 +66,19 @@ object BackupValidator {
                             "0..${SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES}",
                     )
                 }
+            }
+            // Owned rows always carry 0: the manual estimate is meaningful only for
+            // FAMILY_SHARED, so an app-produced backup never pairs STEAM_OWNED with a nonzero
+            // value. Null (a legacy backup predating the field) and unrecognized source names
+            // (forward-compatible tolerance, mirroring the merge's enum fallback) carry no
+            // consistency claim and stay valid here.
+            if (game.source == GameSource.STEAM_OWNED.name && (game.manualSharedMinutes ?: 0) != 0) {
+                problems += BackupValidationProblem(
+                    "game", index,
+                    "manualSharedMinutes ${game.manualSharedMinutes} inconsistent with source " +
+                        "${game.source}: nonzero manual playtime is valid only for " +
+                        GameSource.FAMILY_SHARED.name,
+                )
             }
             // Range, not just parseability, for the same class of reason the achievement unlock
             // times get it: these three are compared against recency windows, and an

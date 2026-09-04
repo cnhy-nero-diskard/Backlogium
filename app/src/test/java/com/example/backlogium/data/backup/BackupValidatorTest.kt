@@ -238,6 +238,51 @@ class BackupValidatorTest {
     }
 
     @Test
+    fun ownedSourceWithNonzeroManualSharedMinutes_rejected() {
+        val file = validFile(
+            games = listOf(
+                BackupGame(
+                    appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0,
+                    source = "STEAM_OWNED", manualSharedMinutes = 90,
+                ),
+            ),
+        )
+        val problems = file.assertRejected()
+        assertEquals("game", problems.single().recordType)
+        assertTrue(problems.single().detail.contains("manualSharedMinutes"))
+    }
+
+    @Test
+    fun ownedSourceWithZeroOrAbsentManualSharedMinutes_accepted() {
+        listOf(null, 0).forEach { manual ->
+            val file = validFile(
+                games = listOf(
+                    BackupGame(
+                        appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0,
+                        source = "STEAM_OWNED", manualSharedMinutes = manual,
+                    ),
+                ),
+            )
+            assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)
+        }
+    }
+
+    @Test
+    fun legacyNullSourceWithNonzeroManualSharedMinutes_accepted() {
+        // A null source predates the field and carries no consistency claim; the merge
+        // normalizes whatever it resolves to owned down to 0.
+        val file = validFile(
+            games = listOf(
+                BackupGame(
+                    appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0,
+                    source = null, manualSharedMinutes = 90,
+                ),
+            ),
+        )
+        assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)
+    }
+
+    @Test
     fun manualSharedMinutesBounds_accepted() {
         listOf(null, 0, 90, SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES).forEach { manual ->
             val file = validFile(

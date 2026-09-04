@@ -26,7 +26,6 @@ import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.RecomputeSource
-import com.example.backlogium.domain.SetSharedGamePlaytimeUseCase
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.defaultSort
 import com.example.backlogium.gamification.RuleConfig
@@ -172,17 +171,13 @@ class BackupMergeEngine @Inject constructor(
                     firstSeenAt = backupGame.firstSeenAt?.iso8601ToEpochMilli(),
                     lastPlayedAt = backupGame.lastPlayedAt?.iso8601ToEpochMilli(),
                     returnedToPlayAt = backupGame.returnedToPlayAt?.iso8601ToEpochMilli(),
-                    // Defense in depth behind BackupValidator's preflight range check: an
-                    // out-of-range value that reaches here is treated as no opinion (0 for a
-                    // brand-new row), never persisted, mirroring the use case's reject. An
-                    // owned row always carries 0: the manual estimate is only ever
-                    // meaningful for FAMILY_SHARED.
+                    // Preflight owns the range check, so this path assumes validity and
+                    // re-derives nothing. An owned result still forces 0: the manual estimate
+                    // is only ever meaningful for FAMILY_SHARED.
                     manualSharedMinutes = if (resolvedSource == GameSource.STEAM_OWNED) {
                         0
                     } else {
-                        backupGame.manualSharedMinutes
-                            ?.takeIf { it in 0..SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES }
-                            ?: 0
+                        backupGame.manualSharedMinutes ?: 0
                     },
                 ),
             )
@@ -209,11 +204,9 @@ class BackupMergeEngine @Inject constructor(
                 }
                 // Null means an older backup predates this field, same as source/recency above -- the
                 // locally set estimate is left alone rather than zeroed by a backup that has no
-                // opinion on it. An out-of-range value is likewise left alone: the preflight
-                // validator rejects it, and this keeps the write path from persisting an estimate
-                // the use case itself would refuse.
+                // opinion on it. The range check lives in preflight alone, so a carried value
+                // is applied as-is here.
                 backupGame.manualSharedMinutes
-                    ?.takeIf { it in 0..SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES }
                     ?.let { gameDao.setManualSharedMinutes(backupGame.appId, it) }
             }
             gameDao.setGoalFlag(backupGame.appId, backupGame.isGoal)

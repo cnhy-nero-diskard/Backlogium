@@ -9,7 +9,6 @@ import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.domain.GameSource
-import com.example.backlogium.domain.SetSharedGamePlaytimeUseCase
 import com.example.backlogium.data.local.dao.GameSessionCounts
 import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.LibraryRecency
@@ -319,63 +318,6 @@ class BackupMergeEngineTest {
             45,
             harness.gameDao.getById(441L)?.manualSharedMinutes,
         )
-    }
-
-    /**
-     * Defense in depth behind the preflight range check: an out-of-range estimate that reaches
-     * the merge (which unit tests can invoke directly, bypassing validation) must never persist,
-     * mirroring the use case's reject. Fresh rows fall back to 0; existing rows keep the local
-     * value. Covers both negative and oversized values on both paths.
-     */
-    @Test
-    fun restore_outOfRangeManualSharedMinutesIgnoredOnInsert() = runTest {
-        listOf(-600, SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES + 1).forEach { manual ->
-            val harness = newEngine(games = mutableMapOf(), nowMillis = 1_700_000_000_000L)
-            val file = baseFile(
-                games = listOf(
-                    BackupGame(
-                        appId = 441L,
-                        name = "Borrowed Game",
-                        isGoal = false,
-                        backfillMinutes = 0,
-                        source = "FAMILY_SHARED",
-                        manualSharedMinutes = manual,
-                    ),
-                ),
-            )
-
-            harness.engine.merge(file, RuleConfig())
-
-            assertEquals(0, harness.gameDao.getById(441L)?.manualSharedMinutes)
-        }
-    }
-
-    @Test
-    fun restore_outOfRangeManualSharedMinutesPreservesLocalOnUpdate() = runTest {
-        listOf(-600, SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES + 1).forEach { manual ->
-            val harness = newEngine(
-                games = mutableMapOf(
-                    441L to testGame(441L).copy(source = GameSource.FAMILY_SHARED, manualSharedMinutes = 45),
-                ),
-                nowMillis = 1_700_000_000_000L,
-            )
-            val file = baseFile(
-                games = listOf(
-                    BackupGame(
-                        appId = 441L,
-                        name = "Borrowed Game",
-                        isGoal = false,
-                        backfillMinutes = 0,
-                        source = "FAMILY_SHARED",
-                        manualSharedMinutes = manual,
-                    ),
-                ),
-            )
-
-            harness.engine.merge(file, RuleConfig())
-
-            assertEquals(45, harness.gameDao.getById(441L)?.manualSharedMinutes)
-        }
     }
 
     /**
