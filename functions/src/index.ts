@@ -1,9 +1,9 @@
 import { initializeApp } from "firebase-admin/app";
 import { defineSecret, defineString } from "firebase-functions/params";
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import * as logger from "firebase-functions/logger";
 import { fetchPresence } from "./steam";
 import { recordObservation } from "./presence";
+import * as safeLog from "./safeLog";
 
 initializeApp();
 
@@ -39,35 +39,40 @@ export const pollPresence = onSchedule(
     // and would only record a near-duplicate observation timestamp.
     retryCount: 0,
   },
-  async () => {
-    const steamId = STEAM_ID.value();
-
-    if (!steamId) {
-      logger.error("STEAM_ID is not configured; nothing to poll");
-      return;
-    }
-
-    const observation = await fetchPresence(STEAM_API_KEY.value(), steamId);
-
-    if (observation === null) {
-      // No information. fetchPresence has already logged why. Stored state
-      // is deliberately left untouched rather than recorded as offline.
-      return;
-    }
-
-    const outcome = await recordObservation(steamId, observation);
-
-    // Liveness heartbeat. Emitted only after a successful Steam fetch AND a
-    // successful Firestore interaction, so its absence means the pipeline is
-    // broken somewhere — not merely that the user has not played recently.
-    //
-    // This remains the preferred monitoring hook even though successful polls
-    // now advance `lastObservedAt`: a log-based absence alert is cheaper and
-    // more direct to monitor than polling and interpreting a Firestore document.
-    // Invocation count stays at a perfect 1,440/day if the Steam key is
-    // revoked, since the function still runs and still returns 200.
-    //
-    // A metric-absence alert on this line is the monitoring hook.
-    logger.info("poll ok", { outcome, gameid: observation.gameid });
-  },
+  () => poll(STEAM_API_KEY.value(), STEAM_ID.value()),
 );
+
+/**
+ * The scheduled handler's body, factored out so it can be exercised directly
+ * with fake credentials instead of through the Cloud Scheduler trigger.
+ */
+export async function poll(apiKey: string, steamId: string): Promise<void> {
+  if (!steamId) {
+    safeLog.error("STEAM_ID is not configured; nothing to poll");
+    return;
+  }
+
+  const observation = await fetchPresence(apiKey, steamId);
+
+  if (observation === null) {
+    // No information. fetchPresence has already logged why. Stored state
+    // is deliberately left untouched rather than recorded as offline.
+    return;
+  }
+
+  const outcome = await recordObservation(steamId, observation);
+
+  // Liveness heartbeat. Emitted only after a successful Steam fetch AND a
+  // successful Firestore interaction, so its absence means the pipeline is
+  // broken somewhere — not merely that the user has not played recently.
+  //
+  // This remains the preferred monitoring hook even though successful polls
+  // now advance `lastObservedAt`: a log-based absence alert is cheaper and
+  // more direct to monitor than polling and interpreting a Firestore document.
+  // Invocation count stays at a perfect 1,440/day if the Steam key is
+  // revoked, since the function still runs and still returns 200.
+  //
+  // A metric-absence alert on this line is the monitoring hook. It carries no
+  // app ID: what was played is Firestore's to hold, not Cloud Logging's.
+  safeLog.info("poll ok", { outcome });
+}

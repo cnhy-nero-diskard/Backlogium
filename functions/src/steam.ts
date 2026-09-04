@@ -1,4 +1,4 @@
-import * as logger from "firebase-functions/logger";
+import * as safeLog from "./safeLog";
 
 /**
  * Schema version stamped onto every document this poller writes.
@@ -68,14 +68,14 @@ export async function fetchPresence(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
-    logger.error("Steam request failed; leaving stored state untouched", {
+    safeLog.error("Steam request failed; leaving stored state untouched", {
       reason: String(error),
     });
     return null;
   }
 
   if (!response.ok) {
-    logger.error("Steam returned an error status; leaving stored state untouched", {
+    safeLog.error("Steam returned an error status; leaving stored state untouched", {
       status: response.status,
     });
     return null;
@@ -85,7 +85,7 @@ export async function fetchPresence(
   try {
     body = await response.json();
   } catch (error) {
-    logger.error("Steam response was not JSON; leaving stored state untouched", {
+    safeLog.error("Steam response was not JSON; leaving stored state untouched", {
       reason: String(error),
     });
     return null;
@@ -95,7 +95,7 @@ export async function fetchPresence(
     ?.players;
 
   if (!Array.isArray(players)) {
-    logger.error("Steam response had no players array; leaving stored state untouched");
+    safeLog.error("Steam response had no players array; leaving stored state untouched");
     return null;
   }
 
@@ -105,16 +105,17 @@ export async function fetchPresence(
 
   if (!player) {
     // An empty players array is what Steam returns for an unknown ID, and
-    // also for a profile the API key cannot see at all.
-    logger.error(
+    // also for a profile the API key cannot see at all. The message already
+    // names the setting to check; echoing the ID adds nothing diagnostic and
+    // pairs an identity with an error state.
+    safeLog.error(
       "Steam returned no player for the configured Steam ID — verify the ID is correct and the profile is reachable",
-      { steamId },
     );
     return null;
   }
 
   if (typeof player.personastate !== "number") {
-    logger.error("Steam player summary had no persona state; leaving stored state untouched");
+    safeLog.error("Steam player summary had no persona state; leaving stored state untouched");
     return null;
   }
 
@@ -130,7 +131,7 @@ export async function fetchPresence(
     player.communityvisibilitystate !== VISIBILITY_PUBLIC &&
     gameid === null
   ) {
-    logger.warn(
+    safeLog.warn(
       "Profile is not public — game attribution is unavailable, so presence cannot be tied to a game. Set Steam profile and Game details to Public.",
       { communityvisibilitystate: player.communityvisibilitystate },
     );

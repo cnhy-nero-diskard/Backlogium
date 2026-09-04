@@ -1,5 +1,5 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
-import * as logger from "firebase-functions/logger";
+import * as safeLog from "./safeLog";
 import { Observation, SCHEMA_VERSION } from "./steam";
 
 /**
@@ -162,11 +162,10 @@ export async function recordObservation(
   });
 
   if (result.outcome === "written") {
-    logger.info("Recorded presence transition", {
-      steamId,
-      personastate: observation.personastate,
-      gameid: observation.gameid,
-      gameName: observation.gameName,
+    // What was played is already in Firestore, the boundary that is actually
+    // access-controlled. The log does not need a shadow copy of it.
+    safeLog.info("Recorded presence transition", {
+      outcome: result.outcome,
       first: result.first,
     });
   }
