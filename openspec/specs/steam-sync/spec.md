@@ -421,7 +421,9 @@ result from an account change.
 ### Requirement: Play-triggered targeted playtime fetch
 When an observed play session ends, the system SHALL fetch the stopped game's playtime from Steam
 without waiting for the next periodic poll. The fetch SHALL be scoped to that one game, so its cost
-is independent of library size, and SHALL request no data other than playtime.
+is independent of library size, and SHALL request no data other than playtime. Scoping is a
+constraint on attribution and on request cost, not a claim about response shape: the request MAY
+retrieve a bounded recent-game window and select the stopped game's observation from it.
 
 #### Scenario: Session ends
 - **WHEN** presence observation reports that a game which was running is no longer running
@@ -429,8 +431,8 @@ is independent of library size, and SHALL request no data other than playtime.
 
 #### Scenario: Fetch is scoped to one game
 - **WHEN** a targeted playtime fetch runs
-- **THEN** it retrieves playtime for the stopped game only, and its request count does not grow with
-  the size of the library
+- **THEN** it requests a bounded recent-game window, selects only the stopped game's
+  observation, and its request count does not grow with the size of the library
 
 #### Scenario: Periodic cadence unchanged
 - **WHEN** a targeted playtime fetch is scheduled, running, or exhausted
@@ -445,8 +447,10 @@ is independent of library size, and SHALL request no data other than playtime.
 - **THEN** no targeted playtime fetch is scheduled
 
 #### Scenario: Response for an unexpected game
-- **WHEN** a targeted playtime fetch returns playtime for a game other than the one that stopped
-- **THEN** the observation is discarded and no playtime is attributed
+- **WHEN** a targeted playtime fetch's response carries playtime for games other than the one
+  that stopped, which a bounded recent-game window is expected to do
+- **THEN** those observations are discarded and no playtime is attributed for them, so only
+  the stopped game can be committed by this mechanism
 
 ### Requirement: Targeted fetch retries on a bounded schedule
 Because Steam does not publish a game's updated playtime at the instant that game exits, the system

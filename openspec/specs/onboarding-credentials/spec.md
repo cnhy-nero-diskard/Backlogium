@@ -4,8 +4,8 @@
 
 Defines the in-app onboarding flow that captures, validates, encrypts, and persists the Steam Web
 API key and SteamID64 without requiring edits to `local.properties` or an app rebuild, along with
-the encrypted credential store, dual SteamID entry paths, repeatable editing from Home, and the
-one-time first-run seed from `BuildConfig`.
+the encrypted credential store, dual SteamID entry paths, repeatable editing from Settings, and
+the one-time first-run seed from `BuildConfig`.
 
 ## Requirements
 
@@ -141,19 +141,24 @@ The API key SHALL be masked wherever it is displayed and SHALL never be logged.
 - **WHEN** stored credentials cannot be decrypted (e.g., the Keystore key was invalidated)
 - **THEN** the app treats credentials as absent and re-presents onboarding instead of crashing
 
-### Requirement: Repeatable credential editing from Home
-The system SHALL, once credentials are configured, present a credentials surface on the Home
-screen that shows the active SteamID and a masked API key and lets the user reopen the onboarding
-flow to change credentials at any time.
+### Requirement: Repeatable credential editing from Settings
+The system SHALL, once credentials are configured, present a credentials surface in the
+Settings destination that shows the active SteamID and a masked API key and lets the user
+reopen the onboarding flow to change credentials at any time.
 
 #### Scenario: Reopening onboarding after configuration
-- **WHEN** the user activates the "Edit" action on the Home credentials card
+- **WHEN** the user activates the "Edit" action on the Settings Steam account section
 - **THEN** the onboarding flow reopens pre-reflecting the current state so credentials can be
   changed and re-saved
 
 #### Scenario: Active credentials shown
-- **WHEN** the Home credentials card is shown while configured
+- **WHEN** the Settings Steam account section is shown while configured
 - **THEN** it displays the active SteamID and a masked form of the API key
+
+#### Scenario: Home carries no account administration
+- **WHEN** the Home screen is shown while configured
+- **THEN** it presents no credentials card and no account edit affordance, because Home is
+  progress-only
 
 ### Requirement: First-run credential seed
 The system SHALL, on first access when the encrypted store is empty and `BuildConfig` carries
