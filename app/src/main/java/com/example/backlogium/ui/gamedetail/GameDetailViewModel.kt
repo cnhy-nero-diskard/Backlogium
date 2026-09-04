@@ -327,18 +327,20 @@ class GameDetailViewModel @Inject constructor(
 
     /**
      * Set (or clear, with 0 hours) a family-shared game's manual playtime estimate. A no-op for
-     * an owned game or a negative input — [SetSharedGamePlaytimeUseCase] guards both
+     * an owned game, a negative input, or a non-finite/out-of-range one (`NaN`/`Infinity` would
+     * otherwise throw in `roundToInt()` or overflow the minutes total) — [SetSharedGamePlaytimeUseCase]
+     * guards the owned/negative cases and [manualHoursToMinutes] the rest
      * (add-shared-game-playtime-and-filter). [content] already recomputes its summary from the
      * same `GameRepository`/`GamificationUpdater` state this write updates, so no separate
      * refresh event is needed here.
      */
     fun setManualPlaytime(hours: Double) {
         val appId = appIdState.value ?: return
-        val minutes = (hours * MINUTES_PER_HOUR).roundToInt()
+        val minutes = manualHoursToMinutes(hours) ?: return
         viewModelScope.launch { setSharedGamePlaytime(appId, minutes) }
     }
 
-    private companion object {
+    internal companion object {
         const val ACTIVE_PLAYERS_POLL_INTERVAL_MS = 30_000L
         const val MINUTES_PER_HOUR = 60
     }
@@ -360,6 +362,34 @@ internal suspend fun refreshPlayerCountOnce(
     } finally {
         refreshing.value = false
     }
+}
+
+/**
+ * Validate a manual-hours estimate before it reaches `roundToInt()`. `String.toDoubleOrNull()`
+ * accepts `NaN`/`Infinity`, and `NaN.roundToInt()` throws while unbounded values can overflow
+ * the minutes total downstream — so non-finite, negative, and out-of-range inputs are rejected
+ * here and in the dialog, which disables Save for them (add-shared-game-playtime-and-filter).
+ *
+ * @return the estimate in whole minutes, or null when [hours] must be rejected rather than written.
+ */
+internal fun manualHoursToMinutes(hours: Double): Int? {
+    if (!hours.isFinite() || hours < 0.0) return null
+    val minutes = hours * GameDetailViewModel.MINUTES_PER_HOUR
+    if (minutes > Int.MAX_VALUE) return null
+    return minutes.roundToInt()
+}
+
+/**
+ * Parse the dialog's raw text into the minutes [manualHoursToMinutes] accepts. Blank clears the
+ * estimate (0); anything that parses to a rejected value — text, a pasted `NaN`/`Infinity`, a
+ * negative, or an out-of-range total — yields null so the dialog can disable Save.
+ *
+ * @return 0 for blank input, whole minutes for a valid estimate, null when Save must stay disabled.
+ */
+internal fun parseManualHoursInput(input: String): Int? {
+    if (input.isBlank()) return 0
+    val hours = input.toDoubleOrNull() ?: return null
+    return manualHoursToMinutes(hours)
 }
 
 /** The flows the screen derives from, gathered before any per-row work. */

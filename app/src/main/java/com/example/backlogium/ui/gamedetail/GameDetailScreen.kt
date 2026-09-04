@@ -547,7 +547,9 @@ private fun SetManualPlaytimeAction(currentMinutes: Int, onSet: (Double) -> Unit
     }
 
     if (!editing) return
-    val hours = input.toDoubleOrNull()
+    // Validated with the same helper the ViewModel writes through, so pasted special values
+    // (`NaN`/`Infinity`) and out-of-range totals disable Save instead of reaching `roundToInt()`.
+    val minutes = parseManualHoursInput(input)
     AlertDialog(
         onDismissRequest = { editing = false },
         title = { Text("Hours played") },
@@ -564,7 +566,7 @@ private fun SetManualPlaytimeAction(currentMinutes: Int, onSet: (Double) -> Unit
                     onValueChange = { input = it },
                     label = { Text("Hours") },
                     singleLine = true,
-                    isError = input.isNotBlank() && hours == null,
+                    isError = input.isNotBlank() && minutes == null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -572,10 +574,10 @@ private fun SetManualPlaytimeAction(currentMinutes: Int, onSet: (Double) -> Unit
         },
         confirmButton = {
             TextButton(
-                enabled = input.isBlank() || hours != null,
+                enabled = minutes != null,
                 onClick = {
                     editing = false
-                    onSet(hours ?: 0.0)
+                    onSet(input.toDoubleOrNull() ?: 0.0)
                 },
             ) { Text("Save") }
         },

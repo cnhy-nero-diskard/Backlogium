@@ -83,6 +83,20 @@ class SharedGameConverterTest {
     }
 
     @Test
+    fun conversion_clearsAManualSharedEstimate() = runTest {
+        val estimated = shared.copy(manualSharedMinutes = 600)
+        val dao = FakeGameDao(listOf(estimated))
+        SharedGameConverter(dao).convertNewlyOwned(listOf(dto(shared.appId, forever = 900)), now)
+
+        val row = requireNonNull(dao.getById(shared.appId))
+        assertEquals(GameSource.STEAM_OWNED, row.source)
+        // The estimate is always 0 for an owned game and its editor is no longer offered, so the
+        // conversion must clear it — otherwise XP/detail/collections would keep consuming the
+        // stale offset on top of Steam's total, which already includes those borrowed hours.
+        assertEquals(0, row.manualSharedMinutes)
+    }
+
+    @Test
     fun anUnrelatedOwnedGame_isNotTouched() = runTest {
         val dao = FakeGameDao(listOf(shared))
 

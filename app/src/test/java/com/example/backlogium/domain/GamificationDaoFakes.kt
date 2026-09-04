@@ -212,6 +212,7 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
             playtimeForever = playtimeForever,
             playtime2Weeks = playtime2Weeks,
             lastPlaytime = playtimeForever,
+            manualSharedMinutes = 0,
             lastSyncedAt = convertedAt,
         )
         return 1

@@ -139,11 +139,17 @@ interface GameDao {
      * delta — the hours played while borrowing are already recorded as sessions, and diffing them
      * again would synthesize one enormous phantom session over time already counted. This mirrors
      * first-sync baselining, and the game's existing sessions are deliberately untouched.
+     *
+     * `manualSharedMinutes` is cleared atomically in the same statement: the estimate is
+     * documented as always 0 for an owned game, its editor is no longer offered after conversion,
+     * and leaving it behind would double-count borrowed hours (Steam's total already includes
+     * them) everywhere the offset is consumed (XP, detail, smart collections).
      */
     @Query(
         "UPDATE games SET source = 'STEAM_OWNED', playtimeForever = :playtimeForever, " +
             "playtime2Weeks = :playtime2Weeks, lastPlaytime = :playtimeForever, " +
-            "lastSyncedAt = :convertedAt WHERE appId = :appId AND source = 'FAMILY_SHARED'",
+            "manualSharedMinutes = 0, lastSyncedAt = :convertedAt " +
+            "WHERE appId = :appId AND source = 'FAMILY_SHARED'",
     )
     suspend fun convertSharedToOwned(
         appId: Long,

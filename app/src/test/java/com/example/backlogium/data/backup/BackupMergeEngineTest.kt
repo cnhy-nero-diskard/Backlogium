@@ -974,6 +974,7 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
             playtimeForever = playtimeForever,
             playtime2Weeks = playtime2Weeks,
             lastPlaytime = playtimeForever,
+            manualSharedMinutes = 0,
             lastSyncedAt = convertedAt,
         )
         return 1
