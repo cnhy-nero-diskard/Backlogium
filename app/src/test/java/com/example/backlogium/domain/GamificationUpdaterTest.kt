@@ -166,7 +166,7 @@ class GamificationUpdaterTest {
         )
 
         // Flat fallback (no HLTB row): XP = minutes * rate, so a clamped input yields clamped XP.
-        assertEquals(Int.MAX_VALUE, profileDao.get()!!.totalXp)
+        assertEquals(Int.MAX_VALUE.toLong(), profileDao.get()!!.totalXp)
     }
 
     @Test

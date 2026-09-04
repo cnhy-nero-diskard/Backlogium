@@ -12,7 +12,14 @@ data class PlayerProfile(
     @PrimaryKey val id: Int = SINGLETON_ID,
     val steamId: String = "",
     val steamLevel: Int = 0,
-    val totalXp: Int = 0,
+    /**
+     * Widened from `Int` to `Long` (auditfix-session-ledger-integrity, #114): the accumulation
+     * that produces this value could wrap in 32 bits for an accepted but extreme configuration
+     * or a large-enough library. A pure widening — no existing value is reinterpreted, so a
+     * device whose stored total is `0` because of that bug stays `0` until the next recompute
+     * (which [pendingXpIntegrityCorrection] marks as needing a baseline reseed, not events).
+     */
+    val totalXp: Long = 0L,
     val level: Int = 1,
     val currentStreak: Int = 0,
     val longestStreak: Int = 0,
@@ -42,6 +49,16 @@ data class PlayerProfile(
     val pendingImportRecompute: Boolean = false,
     /** The last successful wishlist membership read; null until Steam has answered successfully. */
     val lastSuccessfulWishlistReadAt: Long? = null,
+    /**
+     * True for a profile whose stored `totalXp` was `0` at the moment the #114 overflow fix
+     * migrated in — set unconditionally for every such row, since that shape is indistinguishable
+     * at the SQL level from an actual overflow victim. Consumed and cleared by the next completed
+     * recompute (mirroring [pendingImportRecompute]'s lifecycle): that recompute declares
+     * [com.example.backlogium.domain.RecomputeSource.XP_INTEGRITY_CORRECTION] instead of its
+     * caller's source, so a large upward correction reseeds the delivery baseline rather than
+     * firing a cascade of level-up events for progress earned long ago (design.md Decision 3).
+     */
+    val pendingXpIntegrityCorrection: Boolean = false,
 ) {
     companion object {
         const val SINGLETON_ID = 0

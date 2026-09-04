@@ -3,7 +3,7 @@ package com.example.backlogium.gamification
 import java.time.LocalDate
 import kotlin.math.floor
 import kotlin.math.pow
-import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 import kotlin.math.sqrt
 
 /**
@@ -53,7 +53,7 @@ data class RuleConfig(
     val legendaryAchievementXp: Int = 250,
 )
 
-data class XpState(val totalXp: Int, val level: Int, val xpIntoLevel: Int, val xpForNext: Int)
+data class XpState(val totalXp: Long, val level: Int, val xpIntoLevel: Long, val xpForNext: Long)
 
 /**
  * One game's playtime input to [Gamification.xp]. [completionistAverageMinutes] is the
@@ -127,10 +127,10 @@ object Gamification {
      * is un-tierable (Steam has no global stat) and contributes zero even when unlocked —
      * distinct from a `0.0` percent, which is a real ultra-rare value tiering as legendary.
      */
-    fun achievementXp(achievements: List<AchievementInput>, cfg: RuleConfig = RuleConfig()): Int =
+    fun achievementXp(achievements: List<AchievementInput>, cfg: RuleConfig = RuleConfig()): Long =
         achievements.sumOf { a ->
             val percent = a.globalUnlockPercent
-            if (!a.unlocked || percent == null) 0 else xpForTier(tierFor(percent), cfg)
+            if (!a.unlocked || percent == null) 0L else xpForTier(tierFor(percent), cfg)
         }
 
     /**
@@ -153,24 +153,25 @@ object Gamification {
         minutesPlayed: Int,
         completionistAverageMinutes: Int?,
         cfg: RuleConfig = RuleConfig(),
-    ): Int {
+    ): Long {
         val m = minutesPlayed.coerceAtLeast(0)
-        // No completionist length to taper against: flat, uncapped rate.
+        // No completionist length to taper against: flat, uncapped rate. Widened to Long before
+        // multiplying — this is the product the audit found wrapping in Int (#114).
         if (completionistAverageMinutes == null || completionistAverageMinutes <= 0) {
-            return m * cfg.xpPerMinute
+            return m.toLong() * cfg.xpPerMinute
         }
         val z = cfg.hltbZeroMultiple * completionistAverageMinutes // zero point, in minutes
-        if (z <= 0.0) return m * cfg.xpPerMinute // degenerate config guard
+        if (z <= 0.0) return m.toLong() * cfg.xpPerMinute // degenerate config guard
         val k = cfg.hltbDecayExponent
         val cappedM = m.toDouble().coerceAtMost(z) // no XP accrues past the zero point
         val cumulative =
             cfg.xpPerMinute * (z / (k + 1)) * (1.0 - (1.0 - cappedM / z).pow(k + 1))
-        return cumulative.roundToInt()
+        return cumulative.roundToLong()
     }
 
     /** Derive level and in-level progress directly from a total XP value. */
-    fun levelState(totalXp: Int, cfg: RuleConfig = RuleConfig()): XpState {
-        val xp = totalXp.coerceAtLeast(0)
+    fun levelState(totalXp: Long, cfg: RuleConfig = RuleConfig()): XpState {
+        val xp = totalXp.coerceAtLeast(0L)
         val level = levelFor(xp, cfg)
         val xpIntoLevel = xp - xpAt(level, cfg)
         val xpForNext = xpAt(level + 1, cfg) - xpAt(level, cfg)
@@ -214,23 +215,24 @@ object Gamification {
     }
 
     // XP award for a rarity tier, from the tunable RuleConfig per-tier constants.
-    private fun xpForTier(tier: RarityTier, cfg: RuleConfig): Int = when (tier) {
+    private fun xpForTier(tier: RarityTier, cfg: RuleConfig): Long = when (tier) {
         RarityTier.COMMON -> cfg.commonAchievementXp
         RarityTier.UNCOMMON -> cfg.uncommonAchievementXp
         RarityTier.RARE -> cfg.rareAchievementXp
         RarityTier.EPIC -> cfg.epicAchievementXp
         RarityTier.LEGENDARY -> cfg.legendaryAchievementXp
-    }
+    }.toLong()
 
-    // xpAt(L) = levelBase * (L - 1) * L : cumulative XP required to reach level L.
-    private fun xpAt(level: Int, cfg: RuleConfig): Int {
+    // xpAt(L) = levelBase * (L - 1) * L : cumulative XP required to reach level L. Long
+    // throughout — levelBase and L are each individually small, but their product is not.
+    private fun xpAt(level: Int, cfg: RuleConfig): Long {
         val l = level.coerceAtLeast(1)
-        return cfg.levelBase * (l - 1) * l
+        return cfg.levelBase.toLong() * (l - 1) * l
     }
 
     // level(xp) = floor((1 + sqrt(1 + (4/levelBase) * xp)) / 2), the closed-form inverse of xpAt.
-    private fun levelFor(totalXp: Int, cfg: RuleConfig): Int {
-        if (totalXp <= 0) return 1
+    private fun levelFor(totalXp: Long, cfg: RuleConfig): Int {
+        if (totalXp <= 0L) return 1
         val level = floor((1.0 + sqrt(1.0 + (4.0 / cfg.levelBase) * totalXp)) / 2.0).toInt()
         return level.coerceAtLeast(1)
     }

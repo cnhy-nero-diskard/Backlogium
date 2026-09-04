@@ -84,7 +84,7 @@ internal class GatedPlayerProfileDao(
     override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?, storeRegion: String?) =
         delegate.updateHeaderIdentity(personaName, avatarUrl, storeRegion)
 
-    override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) =
+    override suspend fun updateGamification(totalXp: Long, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) =
         delegate.updateGamification(totalXp, level, currentStreak, longestStreak, gamificationConfigVersion).also {
             onAfterUpsert()
         }

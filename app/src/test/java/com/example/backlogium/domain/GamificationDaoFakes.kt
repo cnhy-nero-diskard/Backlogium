@@ -347,8 +347,8 @@ internal class FakePlayerProfileDao(initial: PlayerProfile? = null) : PlayerProf
         state.value = (state.value ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
     }
 
-    override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {
-        state.value = (state.value ?: PlayerProfile()).copy(totalXp = totalXp, level = level, currentStreak = currentStreak, longestStreak = maxOf(state.value?.longestStreak ?: 0, longestStreak), gamificationConfigVersion = gamificationConfigVersion, pendingImportRecompute = false)
+    override suspend fun updateGamification(totalXp: Long, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {
+        state.value = (state.value ?: PlayerProfile()).copy(totalXp = totalXp, level = level, currentStreak = currentStreak, longestStreak = maxOf(state.value?.longestStreak ?: 0, longestStreak), gamificationConfigVersion = gamificationConfigVersion, pendingImportRecompute = false, pendingXpIntegrityCorrection = false)
     }
 
     override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) {

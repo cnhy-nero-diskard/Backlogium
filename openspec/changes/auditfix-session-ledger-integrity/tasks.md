@@ -39,14 +39,14 @@
 
 ## 5. XP overflow (#114)
 
-- [ ] 5.1 Add a `maximum` to `RuleField` with an inline rejection matching the existing below-minimum treatment, and extend `RuleDraft.errorFor` (`:80-81`) which currently checks only the floor. Verified by a test that `xpPerMinute = 2147483647` is refused and `toConfig()` returns null
-- [ ] 5.2 Choose the ceiling with headroom so no accepted configuration can approach the widened bound across a maximal library — not at the arithmetic limit (design.md Decision 3). Verified by the chosen value documented with the library size it assumes
-- [ ] 5.3 Widen XP accumulation in `Gamification` (`:105`, `:160`, `:173`) so `gameXp`'s product, `games.sumOf`, and `achievementXp` cannot wrap, and derive levels from the widened total. Verified by a test at the accepted ceiling producing the mathematically correct value
-- [ ] 5.4 Migrate `PlayerProfile.totalXp` (and `XpState.totalXp`) to the wider type. **A pure widening — do not attempt to reconstruct a real value for a device storing `0` because of this bug**; the next recompute produces it (design.md Decision 3). Verified by a populated-profile migration test asserting the stored total survives
-- [ ] 5.5 Make the corrective recompute that replaces a wrapped `totalXp = 0` with the real total **reseed the delivery baseline rather than emit events**. A large upward correction must not fire a cascade of level-up celebrations for progress earned long ago — committing that while fixing #104 would be the same defect. Verified by a test that a device with a wrapped stored total recomputes to the correct value and produces no progress events
-- [ ] 5.6 Test: the level derived from a large valid total is not 1 — the specific wrong result the audit reported
-- [ ] 5.7 Test: `levelState`'s clamp no longer masks a wrapped value, because no wrapped value reaches it. Verified by asserting on the pre-clamp total, not just the clamped output
-- [ ] 5.8 Test: a large library sums past the range of a single game's XP without overflow, and many unlocked achievements at the maximum per-tier award do the same — the two cases needing no absurd setting at all
+- [x] 5.1 Add a `maximum` to `RuleField` with an inline rejection matching the existing below-minimum treatment, and extend `RuleDraft.errorFor` (`:80-81`) which currently checks only the floor. Verified by a test that `xpPerMinute = 2147483647` is refused and `toConfig()` returns null
+- [x] 5.2 Choose the ceiling with headroom so no accepted configuration can approach the widened bound across a maximal library — not at the arithmetic limit (design.md Decision 3). Verified by the chosen value documented with the library size it assumes
+- [x] 5.3 Widen XP accumulation in `Gamification` (`:105`, `:160`, `:173`) so `gameXp`'s product, `games.sumOf`, and `achievementXp` cannot wrap, and derive levels from the widened total. Verified by a test at the accepted ceiling producing the mathematically correct value
+- [x] 5.4 Migrate `PlayerProfile.totalXp` (and `XpState.totalXp`) to the wider type. **A pure widening — do not attempt to reconstruct a real value for a device storing `0` because of this bug**; the next recompute produces it (design.md Decision 3). Verified by a populated-profile migration test asserting the stored total survives
+- [x] 5.5 Make the corrective recompute that replaces a wrapped `totalXp = 0` with the real total **reseed the delivery baseline rather than emit events**. A large upward correction must not fire a cascade of level-up celebrations for progress earned long ago — committing that while fixing #104 would be the same defect. Verified by a test that a device with a wrapped stored total recomputes to the correct value and produces no progress events
+- [x] 5.6 Test: the level derived from a large valid total is not 1 — the specific wrong result the audit reported
+- [x] 5.7 Test: `levelState`'s clamp no longer masks a wrapped value, because no wrapped value reaches it. Verified by asserting on the pre-clamp total, not just the clamped output
+- [x] 5.8 Test: a large library sums past the range of a single game's XP without overflow, and many unlocked achievements at the maximum per-tier award do the same — the two cases needing no absurd setting at all
 
 ## 6. Close out
 

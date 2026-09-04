@@ -1,6 +1,7 @@
 package com.example.backlogium.gamification
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -102,6 +103,24 @@ class AchievementXpTest {
         assertEquals(Gamification.xp(games).totalXp, 300)
         assertEquals(Gamification.xp(games, emptyList()).totalXp, 300)
         assertEquals(3, Gamification.xp(games).level)
+    }
+
+    // --- 3.5 Overflow safety (auditfix-session-ledger-integrity, #114) ------
+
+    @Test
+    fun achievementXp_manyUnlockedAtMaximumPerTierAwardSumsWithoutOverflow() {
+        // 1,000,000 is RuleField's per-tier achievement-XP ceiling. No single achievement's
+        // award can overflow Int, but a large-enough unlocked count still needs no absurd
+        // setting at all to push the sum past it.
+        val maxTier = cfg.copy(legendaryAchievementXp = 1_000_000)
+        val count = 3_000
+        val achievements = (1..count).map { unlocked(0.0) } // 0.0% -> LEGENDARY
+
+        val total = Gamification.achievementXp(achievements, maxTier)
+
+        val expected = 1_000_000L * count
+        assertTrue("this test's own premise: the sum must exceed Int range", expected > Int.MAX_VALUE)
+        assertEquals(expected, total)
     }
 
     // --- 3.4 RuleConfig overrides -------------------------------------------

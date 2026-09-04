@@ -15,7 +15,7 @@ import javax.inject.Singleton
 data class PlayerStats(
     val steamId: String,
     val steamLevel: Int,
-    val totalXp: Int,
+    val totalXp: Long,
     val level: Int,
     val currentStreak: Int,
     val longestStreak: Int,

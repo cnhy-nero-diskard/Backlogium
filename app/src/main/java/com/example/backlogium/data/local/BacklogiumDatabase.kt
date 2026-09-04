@@ -70,7 +70,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         WishlistItem::class,
         WishlistPriceObservation::class,
     ],
-    version = 28,
+    version = 29,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -691,6 +691,37 @@ abstract class BacklogiumDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     "ALTER TABLE `sync_runs` ADD COLUMN `clockRollbackCount` INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        /**
+         * v28 -> v29: `player_profile.totalXp` widens from Int to Long in Kotlin
+         * (auditfix-session-ledger-integrity, #114) so XP accumulation cannot silently wrap. No
+         * `ALTER` for that column itself: SQLite's INTEGER affinity already stores up to 64 bits
+         * regardless of the Kotlin-declared width, so every existing 32-bit-range value is
+         * already a valid 64-bit one, and Room's exported schema is unchanged (`totalXp` and an
+         * already-`Long` column like `lastSyncAt` both export as plain `INTEGER`).
+         *
+         * What this migration does add is `pendingXpIntegrityCorrection`, set for every row whose
+         * `totalXp` is `0` right now — indistinguishable at the SQL level from an actual overflow
+         * victim, so every such row is treated as one. The next completed recompute consumes and
+         * clears it (`PlayerProfileDao.updateGamification`), declaring
+         * [com.example.backlogium.domain.RecomputeSource.XP_INTEGRITY_CORRECTION] so a large
+         * upward correction reseeds the delivery baseline instead of firing a cascade of level-up
+         * events for progress earned long ago (design.md Decision 3). A device already at `0`
+         * because it is simply new pays no cost: its first-ever recompute already seeds rather
+         * than emits, flag or not.
+         */
+        val MIGRATION_28_29 = object : Migration(28, 29) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `player_profile` ADD COLUMN " +
+                        "`pendingXpIntegrityCorrection` INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL(
+                    "UPDATE `player_profile` SET `pendingXpIntegrityCorrection` = 1 " +
+                        "WHERE `totalXp` = 0",
                 )
             }
         }
