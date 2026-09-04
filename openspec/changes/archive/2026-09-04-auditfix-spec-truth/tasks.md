@@ -14,7 +14,7 @@
 - [x] 3.1 Apply the "Play-triggered targeted playtime fetch" delta restoring the bounded-window wording (#113). Verified against `2026-08-27-add-post-play-sync/design.md` Decision 1, which the restored clause must match
 - [x] 3.1a Reword the existing "Response for an unexpected game" scenario so extra games in the response read as the expected consequence of a bounded window rather than as an anomaly — the discard-and-do-not-attribute obligation is unchanged. Verified by the scenario describing normal operation while still forbidding attribution of anything but the stopped game
 - [x] 3.2 Apply the "A shared game can be removed and stays removed" delta making reversal immediate (#103). Verified by checking it against `app-settings/spec.md:449-452`, which it must now agree with rather than contradict
-- [ ] 3.3 Apply the `onboarding-credentials` REMOVED + ADDED pair moving repeatable credential editing to Settings (#102). Verified by `grep -n "Home"` over the resulting capability spec returning only the new scenario that requires Home to carry *no* account administration
+- [x] 3.3 Apply the `onboarding-credentials` REMOVED + ADDED pair moving repeatable credential editing to Settings (#102). Verified by `grep -n "Home"` over the resulting capability spec returning only the new scenario that requires Home to carry *no* account administration
 - [x] 3.4 Confirm the REMOVED block carries both a Reason and a Migration line — `openspec validate` rejects a REMOVED requirement without them
 
 ## 4. schema-migration text
@@ -34,6 +34,6 @@
 
 - [x] 6.1 `openspec validate --strict auditfix-spec-truth` passes
 - [x] 6.2 `./gradlew :app:connectedDebugAndroidTest --tests '*MigrationTest*'` passes, or task 5.4's issue is filed
-- [ ] 6.3 Sync the deltas into `openspec/specs/` via the archive workflow, not by hand
-- [ ] 6.4 **After the sync**, edit two Purposes by hand, since a delta spec cannot change a Purpose (design.md Decision 4): `openspec/specs/backup-restore/spec.md`'s `## Purpose`, to describe rule configuration as export-only metadata rather than restored data; and `openspec/specs/onboarding-credentials/spec.md`'s `## Purpose`, to say "repeatable editing from Settings" rather than "repeatable editing from Home". Verified by the backup Purpose no longer implying rules are restored, and by `grep -n "Home"` over the synced onboarding-credentials spec returning only the scenario that requires Home to carry no account administration (which also discharges task 3.3's verification)
-- [ ] 6.5 Close #100, #101, #102, #103, #105, #106, #113, #121 with a reference to the synced spec text. Leave #98 (the audit umbrella) open until the remaining six audit-fix changes land
+- [x] 6.3 Sync the deltas into `openspec/specs/` via the archive workflow, not by hand
+- [x] 6.4 **After the sync**, edit two Purposes by hand, since a delta spec cannot change a Purpose (design.md Decision 4): `openspec/specs/backup-restore/spec.md`'s `## Purpose`, to describe rule configuration as export-only metadata rather than restored data; and `openspec/specs/onboarding-credentials/spec.md`'s `## Purpose`, to say "repeatable editing from Settings" rather than "repeatable editing from Home". Verified by the backup Purpose no longer implying rules are restored, and by `grep -n "Home"` over the synced onboarding-credentials spec returning only the scenario that requires Home to carry no account administration (which also discharges task 3.3's verification)
+- [x] 6.5 Close #100, #101, #102, #103, #105, #106, #113, #121 with a reference to the synced spec text. Leave #98 (the audit umbrella) open until the remaining six audit-fix changes land
