@@ -3,16 +3,24 @@ package com.example.backlogium.data.repo
 import com.example.backlogium.data.backup.PassThroughTransactionScope
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.SettingsDataStore
+import com.example.backlogium.data.local.dao.AchievementCounts
 import com.example.backlogium.data.local.dao.AchievementDao
+import com.example.backlogium.data.local.dao.AchievementRarity
+import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
+import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.GameAchievementSync
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.CurrentPlayersResponse
@@ -209,6 +217,56 @@ class FamilySharedGameRepositoryTest {
         assertEquals(GameSource.FAMILY_SHARED, gameDao.getById(appId)?.source)
     }
 
+    /**
+     * The bug fix-shared-game-achievement-visibility exists for: the import message previously
+     * reported achievement data that was never actually written anywhere, so the game's detail
+     * screen showed nothing. The probed data must now be persisted, not just summarized.
+     */
+    @Test
+    fun `importManually persists the probed achievement data, not just a summary`() = runTest {
+        val appId = 300L
+        val steamApi = FakeSteamApi(
+            ownedGames = { OwnedGamesResponse() },
+            playerAchievements = {
+                PlayerAchievementsResponse(
+                    PlayerAchievementsResult(
+                        success = true,
+                        achievements = listOf(
+                            PlayerAchievementDto(apiName = "ACH_1", achieved = 1),
+                            PlayerAchievementDto(apiName = "ACH_2", achieved = 0),
+                        ),
+                    ),
+                )
+            },
+        )
+        val storeApi = FakeSteamStoreApi(
+            respond = { id ->
+                Response.success(mapOf(id.toString() to StoreAppDetails(true, StoreAppData(type = "game", name = "Borrowed Game"))))
+            },
+        )
+        val gameDao = FakeGameDao(emptyList())
+        val achievementDao = FakeAchievementDao()
+        val syncDao = FakeGameAchievementSyncDao()
+
+        repository(
+            gameDao = gameDao,
+            steamApi = steamApi,
+            storeApi = storeApi,
+            achievementDao = achievementDao,
+            syncDao = syncDao,
+        ).importManually("300", "key", "76561198000000000")
+
+        assertEquals(
+            "the detail screen's query depends on real rows existing, not just the toast summary",
+            2,
+            achievementDao.getForGame(appId).size,
+        )
+        assertNotNull(
+            "a sync row must exist so this game is not re-treated as missing data forever",
+            syncDao.get(appId),
+        )
+    }
+
     @Test
     fun `importManually imports a new shared game and reports no achievement data`() = runTest {
         val appId = 301L
@@ -279,6 +337,8 @@ class FamilySharedGameRepositoryTest {
         settings: SettingsDataStore = SettingsDataStore(RuntimeEnvironment.getApplication()),
         steamApi: SteamApi = noOpProxy(SteamApi::class.java),
         storeApi: SteamStoreApi = noOpProxy(SteamStoreApi::class.java),
+        achievementDao: FakeAchievementDao = FakeAchievementDao(),
+        syncDao: FakeGameAchievementSyncDao = FakeGameAchievementSyncDao(),
     ) = FamilySharedGameRepository(
         gameDao = gameDao,
         excludedDao = excludedDao,
@@ -308,6 +368,13 @@ class FamilySharedGameRepositoryTest {
             gameDao = noOpProxy(GameDao::class.java),
         ),
         derivedStateWrites = DerivedStateWriteCoordinator(),
+        achievementRepository = AchievementRepository(
+            steamApi = steamApi,
+            achievementDao = achievementDao,
+            gameAchievementSyncDao = syncDao,
+            gameDao = gameDao,
+            time = FixedTimeProvider,
+        ),
     )
 
     /** A minimal [SteamApi] double: only the two endpoints manual import reaches are wired. */
@@ -398,6 +465,52 @@ class FamilySharedGameRepositoryTest {
         type.classLoader,
         arrayOf(type),
     ) { _, _, _ -> null } as T
+
+    /** In-memory [AchievementDao] so [AchievementRepository.refreshOne] can actually persist. */
+    private class FakeAchievementDao : AchievementDao {
+        private val store = mutableListOf<Achievement>()
+
+        override suspend fun upsertAll(achievements: List<Achievement>) {
+            achievements.forEach { incoming ->
+                val index = store.indexOfFirst { it.appId == incoming.appId && it.apiName == incoming.apiName }
+                if (index >= 0) store[index] = incoming else store += incoming
+            }
+        }
+
+        override fun observeForGame(appId: Long): Flow<List<Achievement>> = flowOf(emptyList())
+        override suspend fun getForGame(appId: Long): List<Achievement> = store.filter { it.appId == appId }
+        override suspend fun deleteAll() = store.clear()
+        override suspend fun getOne(appId: Long, apiName: String): Achievement? =
+            store.firstOrNull { it.appId == appId && it.apiName == apiName }
+
+        override fun observeCounts(): Flow<List<AchievementCounts>> = flowOf(emptyList())
+        override suspend fun getAllUnlocked(): List<Achievement> = store.filter { it.unlocked }
+        override fun observeUnlockedRarity(): Flow<List<AchievementRarity>> = flowOf(emptyList())
+        override fun observeUnlockedSince(cutoff: Long): Flow<List<AchievementUnlock>> = flowOf(emptyList())
+    }
+
+    /** In-memory [GameAchievementSyncDao] so [AchievementRepository.refreshOne] can actually persist. */
+    private class FakeGameAchievementSyncDao : GameAchievementSyncDao {
+        private val store = mutableMapOf<Long, GameAchievementSync>()
+
+        override suspend fun get(appId: Long): GameAchievementSync? = store[appId]
+        override suspend fun getAll(appIds: Set<Long>): List<GameAchievementSync> =
+            store.values.filter { it.appId in appIds }
+
+        override fun observeAll(): Flow<List<GameAchievementSync>> = flowOf(store.values.toList())
+        override suspend fun upsert(row: GameAchievementSync) {
+            store[row.appId] = row
+        }
+
+        override suspend fun upsertAll(rows: List<GameAchievementSync>) {
+            rows.forEach { store[it.appId] = it }
+        }
+
+        override suspend fun deleteAll() = store.clear()
+        override suspend fun delete(appId: Long) {
+            store.remove(appId)
+        }
+    }
 
     private object FixedTimeProvider : TimeProvider {
         override fun nowMillis(): Long = 2_000L

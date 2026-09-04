@@ -60,10 +60,16 @@ class SmartCollectionFeed @Inject constructor(
                     SmartCollectionGame(
                         appId = game.appId,
                         name = game.name,
+                        // Exactly one of the two is ever nonzero: backfillMinutes only an owned
+                        // game's history import can set, manualSharedMinutes only a family-shared
+                        // game's own estimate. Summing both is equivalent to a per-source read and
+                        // avoids a source branch here (add-shared-game-playtime-and-filter).
                         playtimeMinutes = smartCollectionPlaytimeMinutes(
                             source = game.source,
                             steamPlaytimeMinutes = game.playtimeForever,
-                            importedPlaytimeMinutes = game.backfillMinutes,
+                            importedPlaytimeMinutes = (game.backfillMinutes.toLong() +
+                                game.manualSharedMinutes.toLong())
+                                .coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
                             sessionMinutes = sessions.trackedMinutesByGame[game.appId] ?: 0,
                         ),
                         mainStoryMinutes = game.mainStoryMinutes,

@@ -87,6 +87,11 @@ data class LibraryGame(
      */
     val lastPlayedAt: Long? = null,
     val source: GameSource = GameSource.STEAM_OWNED,
+    /**
+     * A family-shared game's own freely-editable hours-played estimate, in minutes; 0 for an
+     * owned game (add-shared-game-playtime-and-filter).
+     */
+    val manualSharedMinutes: Int = 0,
 )
 
 /** Read/write access to the game library, exposing domain models as observable [Flow]s. */
@@ -217,6 +222,7 @@ private fun Game.toDomain(
     recencyState = recencyState,
     lastPlayedAt = lastPlayedAt,
     source = source,
+    manualSharedMinutes = manualSharedMinutes,
 )
 
 /** Storage → domain status mapping; a missing row is an explicit lack of dataset coverage. */

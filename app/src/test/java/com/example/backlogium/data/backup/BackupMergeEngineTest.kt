@@ -246,6 +246,149 @@ class BackupMergeEngineTest {
         assertEquals(30, merged.backfillMinutes)
     }
 
+    /**
+     * add-shared-game-playtime-and-filter: a family-shared game's manual playtime estimate must
+     * survive a backup round-trip, both for a fresh insert and for an update against an existing
+     * row, and an older backup with no `manualSharedMinutes` field must default to 0 without
+     * failing.
+     */
+    @Test
+    fun restore_manualSharedMinutesSurvivesInsert() = runTest {
+        val harness = newEngine(games = mutableMapOf(), nowMillis = 1_700_000_000_000L)
+        val file = baseFile(
+            games = listOf(
+                BackupGame(
+                    appId = 441L,
+                    name = "Borrowed Game",
+                    isGoal = false,
+                    backfillMinutes = 0,
+                    source = "FAMILY_SHARED",
+                    manualSharedMinutes = 90,
+                ),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        assertEquals(90, harness.gameDao.getById(441L)?.manualSharedMinutes)
+    }
+
+    @Test
+    fun restore_manualSharedMinutesSurvivesUpdate() = runTest {
+        val harness = newEngine(
+            games = mutableMapOf(441L to testGame(441L).copy(source = GameSource.FAMILY_SHARED)),
+            nowMillis = 1_700_000_000_000L,
+        )
+        val file = baseFile(
+            games = listOf(
+                BackupGame(
+                    appId = 441L,
+                    name = "Borrowed Game",
+                    isGoal = false,
+                    backfillMinutes = 0,
+                    source = "FAMILY_SHARED",
+                    manualSharedMinutes = 90,
+                ),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        assertEquals(90, harness.gameDao.getById(441L)?.manualSharedMinutes)
+    }
+
+    @Test
+    fun restore_backupPredatingManualSharedMinutesPreservesTheLocalEstimate() = runTest {
+        val harness = newEngine(
+            games = mutableMapOf(
+                441L to testGame(441L).copy(source = GameSource.FAMILY_SHARED, manualSharedMinutes = 45),
+            ),
+            nowMillis = 1_700_000_000_000L,
+        )
+        val file = baseFile(
+            games = listOf(
+                BackupGame(appId = 441L, name = "Borrowed Game", isGoal = false, backfillMinutes = 0),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        assertEquals(
+            "an absent field means the backup has no opinion, same as source/recency -- not a zero",
+            45,
+            harness.gameDao.getById(441L)?.manualSharedMinutes,
+        )
+    }
+
+    /**
+     * An owned row must never carry a manual estimate: a fresh restore of an owned backup with
+     * a nonzero `manualSharedMinutes` forces 0, so GamificationUpdater's unconditional
+     * `backfill + manual + tracked` sum cannot consume it as XP.
+     */
+    @Test
+    fun restore_ownedInsertForcesManualSharedMinutesToZero() = runTest {
+        listOf("STEAM_OWNED", null).forEach { source ->
+            val harness = newEngine(games = mutableMapOf(), nowMillis = 1_700_000_000_000L)
+            val file = baseFile(
+                games = listOf(
+                    BackupGame(
+                        appId = 441L,
+                        name = "Owned Game",
+                        isGoal = false,
+                        backfillMinutes = 0,
+                        source = source,
+                        manualSharedMinutes = 90,
+                    ),
+                ),
+            )
+
+            harness.engine.merge(file, RuleConfig())
+
+            val restored = harness.gameDao.getById(441L)!!
+            assertEquals(GameSource.STEAM_OWNED, restored.source)
+            assertEquals(0, restored.manualSharedMinutes)
+        }
+    }
+
+    /**
+     * Restoring an owned source over a shared row carrying an estimate must clear it atomically
+     * with the source flip: `setManualSharedMinutes` is SQL-guarded to shared rows, so a
+     * backup value of 0 would no-op after the flip and a nonzero one must not survive it.
+     */
+    @Test
+    fun restore_restoringOwnedSourceClearsStaleManualEstimate() = runTest {
+        listOf(0, 90).forEach { backupManual ->
+            val harness = newEngine(
+                games = mutableMapOf(
+                    441L to testGame(441L).copy(source = GameSource.FAMILY_SHARED, manualSharedMinutes = 45),
+                ),
+                nowMillis = 1_700_000_000_000L,
+            )
+            val file = baseFile(
+                games = listOf(
+                    BackupGame(
+                        appId = 441L,
+                        name = "Now Owned Game",
+                        isGoal = false,
+                        backfillMinutes = 0,
+                        source = "STEAM_OWNED",
+                        manualSharedMinutes = backupManual,
+                    ),
+                ),
+            )
+
+            harness.engine.merge(file, RuleConfig())
+
+            val restored = harness.gameDao.getById(441L)!!
+            assertEquals(GameSource.STEAM_OWNED, restored.source)
+            assertEquals(
+                "backup manual $backupManual must not leave a stale estimate on the owned row",
+                0,
+                restored.manualSharedMinutes,
+            )
+        }
+    }
+
     @Test
     fun restore_absentRecencyFieldsDoNotEraseLocallyObservedOnes() = runTest {
         val locallyObserved = 1_699_900_000_000L
@@ -895,11 +1038,15 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
         convertedAt: Long,
     ): Int {
         val existing = store[appId]?.takeIf { it.source == GameSource.FAMILY_SHARED } ?: return 0
+        val preservedBackfill = (existing.backfillMinutes.toLong() + existing.manualSharedMinutes.toLong())
+            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         store[appId] = existing.copy(
             source = GameSource.STEAM_OWNED,
             playtimeForever = playtimeForever,
             playtime2Weeks = playtime2Weeks,
             lastPlaytime = playtimeForever,
+            backfillMinutes = preservedBackfill,
+            manualSharedMinutes = 0,
             lastSyncedAt = convertedAt,
         )
         return 1
@@ -912,6 +1059,12 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
         } else {
             0
         }
+
+    override suspend fun setManualSharedMinutes(appId: Long, minutes: Int) {
+        store[appId]?.takeIf { it.source == GameSource.FAMILY_SHARED }?.let {
+            store[appId] = it.copy(manualSharedMinutes = minutes)
+        }
+    }
 }
 
 private class FakeExcludedSharedGameDao : ExcludedSharedGameDao {

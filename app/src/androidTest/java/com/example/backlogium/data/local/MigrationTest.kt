@@ -844,6 +844,60 @@ class MigrationTest {
         }
     }
 
+    /**
+     * v26 -> v27: a family-shared game's manual playtime estimate
+     * (add-shared-game-playtime-and-filter). Additive and independent of `backfillMinutes` — the
+     * migration must not touch that column, and every existing row (owned or shared) must default
+     * the new column to 0.
+     */
+    @Test
+    fun v26ToV27_addsManualSharedMinutesAndPreservesExistingBackfill() {
+        val databaseName = "migration-v26-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 26)
+        try {
+            database.execSQL(
+                "INSERT INTO games " +
+                    "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+                    "isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+                    "firstSeenAt, lastPlayedAt, returnedToPlayAt) VALUES " +
+                    "(440, 'Owned Game', 'icon-hash', 12345, 67, 12340, 1, NULL, " +
+                    "1700000000000, 42, 'STEAM_OWNED', NULL, NULL, NULL), " +
+                    "(441, 'Borrowed Game', 'icon-441', 0, 0, 0, 0, NULL, " +
+                    "1700000000001, 0, 'FAMILY_SHARED', 1700000000001, 1700000000001, NULL)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                27,
+                true,
+                BacklogiumDatabase.MIGRATION_26_27,
+            )
+            try {
+                migrated.query(
+                    "SELECT appId, backfillMinutes, manualSharedMinutes FROM games ORDER BY appId",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(440L, cursor.getLong(0))
+                    assertEquals(42, cursor.getInt(1))
+                    assertEquals(0, cursor.getInt(2))
+                    assertTrue(cursor.moveToNext())
+                    assertEquals(441L, cursor.getLong(0))
+                    assertEquals(0, cursor.getInt(1))
+                    assertEquals(0, cursor.getInt(2))
+                    assertFalse(cursor.moveToNext())
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private data class ColumnInfo(val name: String, val type: String, val notNull: Boolean, val pk: Int)
 
     private fun assertTableInfo(database: SupportSQLiteDatabase, table: String, expected: List<ColumnInfo>) {

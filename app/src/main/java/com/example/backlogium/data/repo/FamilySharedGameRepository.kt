@@ -86,6 +86,7 @@ class FamilySharedGameRepository @Inject constructor(
     private val transaction: DatabaseTransactionScope,
     private val gamificationUpdater: GamificationUpdater,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
+    private val achievementRepository: AchievementRepository,
 ) {
 
     /** Removed games, newest first. Empty when nothing has been removed, so Settings can hide. */
@@ -332,19 +333,19 @@ class FamilySharedGameRepository @Inject constructor(
         probePlayerData(apiKey, steamId, appId),
     )
 
-    private suspend fun probePlayerData(apiKey: String, steamId: String, appId: Long): PlayerDataProbe {
-        return try {
-            val stats = steamApi.getPlayerAchievements(apiKey, steamId, appId).playerstats
-            if (!stats.success) PlayerDataProbe.NoData else PlayerDataProbe.Returned(
-                total = stats.achievements.size,
-                unlocked = stats.achievements.count { it.achieved != 0 },
-            )
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            PlayerDataProbe.Unavailable
+    /**
+     * Fetches this game's achievements and persists them through [AchievementRepository]'s normal
+     * merge path — not a throwaway probe. Manual import previously fetched achievement data only
+     * to summarize it in a toast and discarded the result, leaving the detail screen with nothing
+     * to show even though the player was told achievements were found
+     * (fix-shared-game-achievement-visibility).
+     */
+    private suspend fun probePlayerData(apiKey: String, steamId: String, appId: Long): PlayerDataProbe =
+        when (val refresh = achievementRepository.refreshOne(apiKey, steamId, appId)) {
+            is SingleGameRefresh.Persisted -> PlayerDataProbe.Returned(refresh.total, refresh.unlocked)
+            SingleGameRefresh.NoUsableData -> PlayerDataProbe.NoData
+            SingleGameRefresh.Unavailable -> PlayerDataProbe.Unavailable
         }
-    }
 
     private suspend fun clearCandidateIfCurrent(appId: Long) {
         if (settings.sharedGameCandidateFlow.first()?.appId == appId) {

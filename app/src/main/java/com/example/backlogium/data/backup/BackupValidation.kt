@@ -1,5 +1,7 @@
 package com.example.backlogium.data.backup
 
+import com.example.backlogium.domain.GameSource
+import com.example.backlogium.domain.SetSharedGamePlaytimeUseCase
 import java.time.LocalDate
 import java.time.ZoneOffset
 
@@ -52,6 +54,33 @@ object BackupValidator {
         file.games.forEachIndexed { index, game ->
             if (game.appId <= 0L) {
                 problems += BackupValidationProblem("game", index, "malformed appId ${game.appId}")
+            }
+            // Null means an older backup predates the field and stays valid; a carried value
+            // must match the write-path bound enforced by SetSharedGamePlaytimeUseCase, or a
+            // malformed-but-parseable backup could persist an estimate the UI/use case rejects.
+            game.manualSharedMinutes?.let { manual ->
+                if (manual < 0 || manual > SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES) {
+                    problems += BackupValidationProblem(
+                        "game", index,
+                        "manualSharedMinutes $manual out of range " +
+                            "0..${SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES}",
+                    )
+                }
+            }
+            // A nonzero manual estimate is meaningful only for FAMILY_SHARED, so an
+            // app-produced backup never pairs any other source with it. Null (a legacy backup
+            // predating the field) is valid only with a null/0 value: source predates
+            // manualSharedMinutes in this repository, so a backup old enough to lack source is
+            // necessarily also old enough to lack manualSharedMinutes. Unrecognized source names
+            // carry no forward-compat claim on this field either, so an inconsistent pair is
+            // rejected rather than silently normalized by the merge.
+            if ((game.manualSharedMinutes ?: 0) != 0 && game.source != GameSource.FAMILY_SHARED.name) {
+                problems += BackupValidationProblem(
+                    "game", index,
+                    "manualSharedMinutes ${game.manualSharedMinutes} inconsistent with source " +
+                        "${game.source}: nonzero manual playtime is valid only for " +
+                        GameSource.FAMILY_SHARED.name,
+                )
             }
             // Range, not just parseability, for the same class of reason the achievement unlock
             // times get it: these three are compared against recency windows, and an

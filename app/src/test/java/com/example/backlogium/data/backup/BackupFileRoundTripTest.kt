@@ -31,6 +31,7 @@ class BackupFileRoundTripTest {
                     lastPlayedAt = "2026-06-28T21:15:00Z",
                     returnedToPlayAt = "2026-06-28T21:15:00Z",
                     source = "FAMILY_SHARED",
+                    manualSharedMinutes = 45,
                 ),
             ),
             achievements = listOf(
@@ -87,6 +88,7 @@ class BackupFileRoundTripTest {
         assertEquals(null, decoded.firstSeenAt)
         assertEquals(null, decoded.lastPlayedAt)
         assertEquals(null, decoded.returnedToPlayAt)
+        assertEquals(null, decoded.manualSharedMinutes)
     }
 
     /**

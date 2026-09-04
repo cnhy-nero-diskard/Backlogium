@@ -1,5 +1,9 @@
 package com.example.backlogium.ui.components
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,7 +47,16 @@ fun GameHeaderBackdrop(
                 )
             },
         loading = {},
-        failure = {},
+        // Themed rather than blank: every candidate exhausted still leaves a deliberate muted
+        // panel behind the row's text instead of a jarring gap (add-shared-game-playtime-and-filter
+        // follow-up — this is where family-shared games were reported to show no art at all).
+        failure = {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            )
+        },
     )
 }
 
@@ -85,5 +98,13 @@ internal fun SteamArtworkWithFallback(
     )
 }
 
-private const val HEADER_ART_ALPHA = 0.22f
+/**
+ * Confirmed on-device (add-shared-game-playtime-and-filter follow-up): the art was never failing
+ * to load — `adb screencap` showed it rendering at the old 0.22 value — it was below what a human
+ * eye can distinguish on an actual phone screen for dark-toned box art (God of War, Black Myth:
+ * Wukong) against an already-dark card, especially on OLED where near-black tones compress
+ * together. Owned games with brighter art happened to stay legible at the old value, masking the
+ * issue for them. Raised until visible at normal viewing brightness on a real device.
+ */
+private const val HEADER_ART_ALPHA = 0.45f
 private const val HEADER_ART_FADE_END = 0.95f

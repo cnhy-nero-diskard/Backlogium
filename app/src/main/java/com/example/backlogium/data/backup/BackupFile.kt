@@ -81,6 +81,11 @@ data class BackupGame(
     val returnedToPlayAt: String? = null,
     /** Null means an older backup did not carry source; new exports always write it. */
     val source: String? = null,
+    /**
+     * A family-shared game's manual playtime estimate; null means an older backup did not carry
+     * it (add-shared-game-playtime-and-filter). New exports always write it.
+     */
+    val manualSharedMinutes: Int? = null,
 )
 
 /** One unlocked achievement's frozen rarity snapshot, with its identity for legibility. */

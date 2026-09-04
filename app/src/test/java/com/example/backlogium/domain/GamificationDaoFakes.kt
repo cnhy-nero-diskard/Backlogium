@@ -207,11 +207,17 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
 
     override suspend fun convertSharedToOwned(appId: Long, playtimeForever: Int, playtime2Weeks: Int, convertedAt: Long): Int {
         val existing = store[appId]?.takeIf { it.source == GameSource.FAMILY_SHARED } ?: return 0
+        // Mirror GameDao.convertSharedToOwned: fold the credited manual estimate into backfill
+        // (always 0 while shared) so XP credit survives, clamped to Int.MAX_VALUE in 64-bit.
+        val preservedBackfill = (existing.backfillMinutes.toLong() + existing.manualSharedMinutes.toLong())
+            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         store[appId] = existing.copy(
             source = GameSource.STEAM_OWNED,
             playtimeForever = playtimeForever,
             playtime2Weeks = playtime2Weeks,
             lastPlaytime = playtimeForever,
+            backfillMinutes = preservedBackfill,
+            manualSharedMinutes = 0,
             lastSyncedAt = convertedAt,
         )
         return 1
@@ -224,6 +230,12 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
         } else {
             0
         }
+
+    override suspend fun setManualSharedMinutes(appId: Long, minutes: Int) {
+        store[appId]?.takeIf { it.source == GameSource.FAMILY_SHARED }?.let {
+            store[appId] = it.copy(manualSharedMinutes = minutes)
+        }
+    }
 }
 
 internal class FakeDailyProgressDao(
@@ -384,7 +396,12 @@ internal fun testSession(minutes: Int, appId: Long = 1L) = Session(
     open = false,
 )
 
-internal fun testGame(appId: Long, backfillMinutes: Int) = Game(
+internal fun testGame(
+    appId: Long,
+    backfillMinutes: Int = 0,
+    source: GameSource = GameSource.STEAM_OWNED,
+    manualSharedMinutes: Int = 0,
+) = Game(
     appId = appId,
     name = "Game $appId",
     iconUrl = "",
@@ -392,4 +409,6 @@ internal fun testGame(appId: Long, backfillMinutes: Int) = Game(
     playtime2Weeks = 0,
     lastPlaytime = 0,
     backfillMinutes = backfillMinutes,
+    source = source,
+    manualSharedMinutes = manualSharedMinutes,
 )

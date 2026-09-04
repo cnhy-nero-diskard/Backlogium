@@ -15,6 +15,7 @@ import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.GameXpInput
 import com.example.backlogium.domain.LibraryXp
+import com.example.backlogium.domain.SetSharedGamePlaytimeUseCase
 import com.example.backlogium.gamification.AchievementInput
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RarityStanding
@@ -38,6 +39,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import javax.inject.Inject
 
 /** How the achievement list is ordered. Transient view state — deliberately not persisted. */
@@ -84,6 +86,11 @@ data class GameSummaryUi(
     val importedMinutes: Int = 0,
     /** Minutes from sessions this app tracked itself. */
     val trackedMinutes: Int = 0,
+    /**
+     * A family-shared game's own hours-played estimate, in minutes; 0 for an owned game or when
+     * unset (add-shared-game-playtime-and-filter).
+     */
+    val manualMinutes: Int = 0,
     val mainStoryMinutes: Int? = null,
     val mainExtraMinutes: Int? = null,
     val completionistMinutes: Int? = null,
@@ -131,9 +138,18 @@ data class GameSummaryUi(
     /**
      * The playtime figure to lead with. Steam reports no lifetime total for a family-shared game,
      * so [playtimeMinutes] is structurally 0 for one and leading with it would read as "0m played"
-     * beside a history of real sessions. Tracked minutes are what the app actually knows.
+     * beside a history of real sessions. Tracked minutes are what the app actually knows, plus
+     * [manualMinutes] — the player's own estimate on top (add-shared-game-playtime-and-filter).
      */
-    val headlineMinutes: Int get() = if (isFamilyShared) trackedMinutes else playtimeMinutes
+    val headlineMinutes: Int
+        get() = if (isFamilyShared) {
+            // Wider-type sum, clamped: a legacy near-Int.MAX estimate plus tracked minutes
+            // must not wrap to a negative display value.
+            (trackedMinutes.toLong() + manualMinutes.toLong())
+                .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        } else {
+            playtimeMinutes
+        }
 
     val lastPlayed: LastPlayed
         get() = when {
@@ -176,6 +192,7 @@ class GameDetailViewModel @Inject constructor(
     achievementRepository: AchievementRepository,
     private val gameRepository: GameRepository,
     private val sharedGames: FamilySharedGameRepository,
+    private val setSharedGamePlaytime: SetSharedGamePlaytimeUseCase,
     sessionRepository: SessionRepository,
     settings: SettingsRepository,
 ) : ViewModel() {
@@ -316,8 +333,24 @@ class GameDetailViewModel @Inject constructor(
         }
     }
 
-    private companion object {
+    /**
+     * Set (or clear, with 0 hours) a family-shared game's manual playtime estimate. A no-op for
+     * an owned game, a negative input, or a non-finite/out-of-range one (`NaN`/`Infinity` would
+     * otherwise throw in `roundToInt()` or overflow the minutes total) — [SetSharedGamePlaytimeUseCase]
+     * guards the owned/negative cases and [manualHoursToMinutes] the rest
+     * (add-shared-game-playtime-and-filter). [content] already recomputes its summary from the
+     * same `GameRepository`/`GamificationUpdater` state this write updates, so no separate
+     * refresh event is needed here.
+     */
+    fun setManualPlaytime(hours: Double) {
+        val appId = appIdState.value ?: return
+        val minutes = manualHoursToMinutes(hours) ?: return
+        viewModelScope.launch { setSharedGamePlaytime(appId, minutes) }
+    }
+
+    internal companion object {
         const val ACTIVE_PLAYERS_POLL_INTERVAL_MS = 30_000L
+        const val MINUTES_PER_HOUR = 60
     }
 }
 
@@ -337,6 +370,36 @@ internal suspend fun refreshPlayerCountOnce(
     } finally {
         refreshing.value = false
     }
+}
+
+/**
+ * Validate a manual-hours estimate before it reaches `roundToInt()`. `String.toDoubleOrNull()`
+ * accepts `NaN`/`Infinity`, and `NaN.roundToInt()` throws while unbounded values can overflow
+ * the minutes total downstream — so non-finite, negative, and out-of-range inputs are rejected
+ * here and in the dialog, which disables Save for them (add-shared-game-playtime-and-filter).
+ * The ceiling is [SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES], not `Int.MAX_VALUE`:
+ * a near-max `Int` estimate plus any tracked minutes would overflow the `Int` sums downstream.
+ *
+ * @return the estimate in whole minutes, or null when [hours] must be rejected rather than written.
+ */
+internal fun manualHoursToMinutes(hours: Double): Int? {
+    if (!hours.isFinite() || hours < 0.0) return null
+    val minutes = hours * GameDetailViewModel.MINUTES_PER_HOUR
+    if (minutes > SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES) return null
+    return minutes.roundToInt()
+}
+
+/**
+ * Parse the dialog's raw text into the minutes [manualHoursToMinutes] accepts. Blank clears the
+ * estimate (0); anything that parses to a rejected value — text, a pasted `NaN`/`Infinity`, a
+ * negative, or an out-of-range total — yields null so the dialog can disable Save.
+ *
+ * @return 0 for blank input, whole minutes for a valid estimate, null when Save must stay disabled.
+ */
+internal fun parseManualHoursInput(input: String): Int? {
+    if (input.isBlank()) return 0
+    val hours = input.toDoubleOrNull() ?: return null
+    return manualHoursToMinutes(hours)
 }
 
 /** The flows the screen derives from, gathered before any per-row work. */
@@ -380,6 +443,7 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
         playtimeMinutes = game.playtimeForever,
         importedMinutes = game.backfillMinutes,
         trackedMinutes = trackedMinutes,
+        manualMinutes = game.manualSharedMinutes,
         mainStoryMinutes = game.mainStoryMinutes,
         mainExtraMinutes = game.mainExtraMinutes,
         completionistMinutes = game.completionistMinutes,
@@ -391,7 +455,10 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
         xpContributed = LibraryXp.contribution(
             GameXpInput(
                 appId = game.appId,
-                minutesPlayed = game.backfillMinutes + trackedMinutes,
+                // Wider-type sum, clamped: a legacy near-Int.MAX estimate plus tracked minutes
+                // must not wrap to a negative XP input.
+                minutesPlayed = (game.backfillMinutes.toLong() + game.manualSharedMinutes.toLong() +
+                    trackedMinutes.toLong()).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
                 completionistMinutes = game.completionistMinutes,
                 unlockedRarityPercents = achievements.filter { it.unlocked }.map { it.rarityPercent },
             ),

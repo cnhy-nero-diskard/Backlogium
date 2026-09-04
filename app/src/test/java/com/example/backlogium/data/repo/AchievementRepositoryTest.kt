@@ -28,6 +28,10 @@ import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
 import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
+import com.example.backlogium.domain.AchievementDataState
+import com.example.backlogium.domain.SmartCollectionAchievementSignals
+import com.example.backlogium.domain.SmartCollectionGame
+import com.example.backlogium.domain.SmartCollections
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -418,6 +422,110 @@ class AchievementRepositoryTest {
         assertEquals(20L, stored.fetchedAt)
     }
 
+    /**
+     * fix-shared-game-achievement-visibility: [AchievementRepository.refreshOne] exists precisely
+     * because tier selection would otherwise exclude a family-shared game with zero locally
+     * tracked playtime forever. It must persist through the normal merge path regardless.
+     */
+    @Test
+    fun `refreshOne persists achievement data independent of tier`() = runTest {
+        val api = FakeSteamApi()
+        val achievementDao = FakeAchievementDao()
+        val syncDao = FakeGameAchievementSyncDao()
+        val repo = repository(api, achievementDao = achievementDao, syncDao = syncDao)
+
+        val result = repo.refreshOne(KEY, STEAM_ID, appId = 42L)
+
+        assertTrue(result is SingleGameRefresh.Persisted)
+        assertEquals(1, (result as SingleGameRefresh.Persisted).total)
+        assertEquals(1, result.unlocked)
+        assertEquals(listOf(42L), api.playerAchievementCalls)
+        assertEquals(1, achievementDao.getForGame(42L).size)
+        assertEquals(NOW, syncDao.get(42L)?.playerStateFetchedAt)
+    }
+
+    @Test
+    fun `refreshOne persists nothing when Steam returns no usable player data`() = runTest {
+        val api = FakeSteamApi(noStatsFor = setOf(42L))
+        val achievementDao = FakeAchievementDao()
+        val syncDao = FakeGameAchievementSyncDao()
+        val repo = repository(api, achievementDao = achievementDao, syncDao = syncDao)
+
+        val result = repo.refreshOne(KEY, STEAM_ID, appId = 42L)
+
+        assertEquals(SingleGameRefresh.NoUsableData, result)
+        assertEquals(emptyList<Achievement>(), achievementDao.getForGame(42L))
+        assertNull("no sync metadata is written for an unusable response", syncDao.get(42L))
+    }
+
+    @Test
+    fun `refreshOne persists nothing on a transport error`() = runTest {
+        val api = FakeSteamApi(failPlayerAchievementsFor = setOf(42L))
+        val achievementDao = FakeAchievementDao()
+        val syncDao = FakeGameAchievementSyncDao()
+        val repo = repository(api, achievementDao = achievementDao, syncDao = syncDao)
+
+        val result = repo.refreshOne(KEY, STEAM_ID, appId = 42L)
+
+        assertEquals(
+            "a transport failure is distinct from a usable-but-empty answer, for messaging",
+            SingleGameRefresh.Unavailable,
+            result,
+        )
+        assertEquals(emptyList<Achievement>(), achievementDao.getForGame(42L))
+        assertNull(syncDao.get(42L))
+    }
+
+    /**
+     * fix-shared-game-achievement-visibility, task 4.1: confirms `SmartCollections`'s Completed
+     * rule needs no code change — it is data-blind to source already. Once `refreshOne` persists a
+     * family-shared game's fully-unlocked achievements (the fix from tasks 1-3), the same
+     * `hasAchievements`/counts shape a normal sync would have produced is present, and the
+     * existing "All achievements unlocked" rule completes it exactly as it would an owned game.
+     */
+    @Test
+    fun `a family-shared game's persisted achievements complete it in SmartCollections`() = runTest {
+        val api = FakeSteamApi() // ACH_1, achieved = 1 -- fully unlocked
+        val achievementDao = FakeAchievementDao()
+        val syncDao = FakeGameAchievementSyncDao()
+        val repo = repository(api, achievementDao = achievementDao, syncDao = syncDao)
+
+        repo.refreshOne(KEY, STEAM_ID, appId = 42L)
+
+        // Same shape AchievementRepository.smartCollectionSignals derives from a sync row +
+        // counts; reconstructed here rather than through the reactive Flow so this test stays
+        // independent of FakeAchievementDao's static observeCounts() stub.
+        val persisted = achievementDao.getForGame(42L)
+        val syncRow = syncDao.get(42L)
+        assertTrue("refreshOne must have written a sync row", syncRow?.hasAchievements == true)
+        val signals = mapOf(
+            42L to SmartCollectionAchievementSignals(
+                unlocked = persisted.count { it.unlocked },
+                total = persisted.size,
+                state = AchievementDataState.HAS_ACHIEVEMENTS,
+            ),
+        )
+
+        val derived = SmartCollections.derive(
+            games = listOf(
+                SmartCollectionGame(
+                    appId = 42L,
+                    name = "Shared Game",
+                    playtimeMinutes = 0,
+                    mainStoryMinutes = null,
+                    lastPlayedAt = null,
+                ),
+            ),
+            achievementsByGame = signals,
+            today = LocalDate.of(2026, 1, 1),
+        )
+
+        assertTrue(
+            "a fully-unlocked family-shared game must reach Completed once its achievements are persisted",
+            derived.completed.any { it.game.appId == 42L },
+        )
+    }
+
     // --- helpers -----------------------------------------------------------------------------
 
     private fun repository(
@@ -661,6 +769,7 @@ class AchievementRepositoryTest {
         override suspend fun sharedGames(): List<Game> = games.filter { it.source == GameSource.FAMILY_SHARED }
         override suspend fun convertSharedToOwned(appId: Long, playtimeForever: Int, playtime2Weeks: Int, convertedAt: Long) = error("not used")
         override suspend fun deleteSharedGame(appId: Long) = error("not used")
+        override suspend fun setManualSharedMinutes(appId: Long, minutes: Int) = error("not used")
     }
 
     private class FixedTimeProvider(private val now: Long) : TimeProvider {

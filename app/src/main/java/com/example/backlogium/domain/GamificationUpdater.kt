@@ -56,10 +56,12 @@ data class GamificationResult(
  *
  * Two distinct playtime inputs (kept separate, per design):
  * - **XP** is fed per-game tracked `Session.minutes` (only playtime the app tracked) plus any
- *   frozen `Game.backfillMinutes` from an opt-in Steam-history import, joined with each game's
- *   HowLongToBeat completionist length so the engine can taper XP per game. Because `gameXp`
- *   tapers over *cumulative* minutes, feeding `backfill + tracked` as one total yields the
- *   correctly bounded XP with no engine change.
+ *   frozen `Game.backfillMinutes` from an opt-in Steam-history import, plus any family-shared
+ *   game's own `Game.manualSharedMinutes` estimate (add-shared-game-playtime-and-filter) — the
+ *   two are mutually exclusive per game (a game's source gates which one can ever be nonzero) —
+ *   joined with each game's HowLongToBeat completionist length so the engine can taper XP per
+ *   game. Because `gameXp` tapers over *cumulative* minutes, feeding `backfill + manual +
+ *   tracked` as one total yields the correctly bounded XP with no engine change.
  * - **Goal progress** is fed each game's total `playtimeForever` and is derived in the UI
  *   layer via [com.example.backlogium.gamification.Gamification.goalProgress].
  */
@@ -100,14 +102,24 @@ class GamificationUpdater @Inject constructor(
      */
     suspend fun compute(today: LocalDate, config: RuleConfig = RuleConfig()): GamificationResult {
         // XP/level from each game's cumulative minutes = frozen backfill offset (0 unless the
-        // player opted in to importing Steam history) + tracked session minutes, tapered
-        // against that game's HLTB completionist average. Games with no HLTB row resolve to
-        // null -> flat fallback. The union covers backfilled games with no tracked sessions.
+        // player opted in to importing Steam history) + a family-shared game's manual estimate
+        // (0 for an owned game) + tracked session minutes, tapered against that game's HLTB
+        // completionist average. Games with no HLTB row resolve to null -> flat fallback. The
+        // union covers backfilled/manually-estimated games with no tracked sessions.
         val trackedByGame = sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes }
-        val backfillByGame = gameDao.getAll().associate { it.appId to it.backfillMinutes }
+        val allGames = gameDao.getAll()
+        val backfillByGame = allGames.associate { it.appId to it.backfillMinutes }
+        val manualByGame = allGames.associate { it.appId to it.manualSharedMinutes }
         val hltbByGame = hltbDataDao.getAllWithDataset().associateBy { it.appId }
-        val games = (trackedByGame.keys + backfillByGame.keys)
-            .map { appId -> appId to (backfillByGame[appId] ?: 0) + (trackedByGame[appId] ?: 0) }
+        val games = (trackedByGame.keys + backfillByGame.keys + manualByGame.keys)
+            .map { appId ->
+                // Wider-type sum, clamped: a legacy near-Int.MAX estimate plus tracked minutes
+                // must not wrap to a negative XP input.
+                val total = (backfillByGame[appId]?.toLong() ?: 0L) +
+                    (manualByGame[appId]?.toLong() ?: 0L) +
+                    (trackedByGame[appId]?.toLong() ?: 0L)
+                appId to total.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            }
             .filter { (_, minutes) -> minutes > 0 }
             .map { (appId, minutes) ->
                 GamePlaytimeInput(

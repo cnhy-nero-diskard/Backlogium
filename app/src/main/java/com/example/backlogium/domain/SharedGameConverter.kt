@@ -15,6 +15,12 @@ import javax.inject.Inject
  * reported total as the diffing baseline and emits no sessions — exactly what first-sync baselining
  * already does for a new install — and the game's existing sessions are retained untouched.
  *
+ * XP credit is preserved across the transition: the shared row's manual estimate is folded into
+ * `backfillMinutes` (always 0 while shared) by `GameDao.convertSharedToOwned`, because XP is
+ * computed from `backfill + manual + tracked` and never from `playtimeForever` — clearing the
+ * estimate would drop credited minutes with no later backfill import to restore them on an
+ * already-imported profile.
+ *
  * Called inside the sync's raw-commit transaction, before the diff reads its baselines, so the very
  * poll that first reports the game as owned already sees the fresh baseline.
  */

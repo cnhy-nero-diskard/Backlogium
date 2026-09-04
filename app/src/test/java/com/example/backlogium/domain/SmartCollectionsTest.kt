@@ -216,6 +216,35 @@ class SmartCollectionsTest {
         )
     }
 
+    /**
+     * add-shared-game-playtime-and-filter: `importedPlaytimeMinutes` carries a family-shared
+     * game's manual estimate (its `backfillMinutes` is always 0), additive with tracked session
+     * minutes rather than ignored, unlike before this change.
+     */
+    @Test
+    fun sharedGamesManualEstimateIsAdditiveWithSessionMinutes() {
+        assertEquals(
+            "a manual estimate adds on top of tracked minutes",
+            75,
+            smartCollectionPlaytimeMinutes(
+                source = GameSource.FAMILY_SHARED,
+                steamPlaytimeMinutes = 0,
+                importedPlaytimeMinutes = 60,
+                sessionMinutes = 15,
+            ),
+        )
+        assertEquals(
+            "no manual estimate behaves exactly as before",
+            15,
+            smartCollectionPlaytimeMinutes(
+                source = GameSource.FAMILY_SHARED,
+                steamPlaytimeMinutes = 0,
+                importedPlaytimeMinutes = 0,
+                sessionMinutes = 15,
+            ),
+        )
+    }
+
     @Test
     fun anyTrackedSessionCountsAsPlay() {
         val derivedPlaytime = smartCollectionPlaytimeMinutes(

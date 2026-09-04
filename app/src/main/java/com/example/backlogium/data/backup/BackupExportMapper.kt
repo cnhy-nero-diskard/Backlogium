@@ -143,7 +143,7 @@ class BackupExportMapper @Inject constructor(
         val achievementsByGame = unlockedAchievements.groupBy { it.appId }
 
         val xpPerGame = games.mapNotNull { game ->
-            val minutes = game.backfillMinutes + (trackedByGame[game.appId] ?: 0)
+            val minutes = game.backupXpMinutes(trackedByGame[game.appId] ?: 0)
             val achievementXp = Gamification.achievementXp(
                 achievementsByGame[game.appId].orEmpty().toAchievementInputs(),
                 config,
@@ -169,7 +169,7 @@ class BackupExportMapper @Inject constructor(
                 val trackedSoFar = sessions
                     .filter { it.appId == game.appId && it.startAt < cutoffMillis }
                     .sumOf { it.minutes }
-                val minutes = game.backfillMinutes + trackedSoFar
+                val minutes = game.backupXpMinutes(trackedSoFar)
                 if (minutes <= 0) null else GamePlaytimeInput(
                     gameId = game.appId.toString(),
                     minutesPlayed = minutes,
@@ -188,6 +188,18 @@ class BackupExportMapper @Inject constructor(
         return BackupComputed(xpPerGame = xpPerGame, xpTimeline = xpTimeline)
     }
 }
+
+/**
+ * The playtime XP input for one game's export snapshot: frozen backfill offset (owned games) plus
+ * manual shared-game estimate (mutually exclusive per game, gated by source) plus tracked minutes
+ * as of [trackedMinutes] — the same cumulative figure [GamificationUpdater] feeds the engine, so a
+ * restored backup's snapshotted XP matches what a live recompute would produce
+ * (add-shared-game-playtime-and-filter). `internal` so it is directly unit-testable without
+ * standing up this class's full DI graph.
+ */
+internal fun Game.backupXpMinutes(trackedMinutes: Int): Int =
+    (backfillMinutes.toLong() + manualSharedMinutes.toLong() + trackedMinutes.toLong())
+        .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
 private fun List<Achievement>.toAchievementInputs(): List<AchievementInput> =
     mapIndexed { index, a -> AchievementInput(id = "${a.appId}#$index", unlocked = true, globalUnlockPercent = a.snapshotPercent) }
@@ -216,6 +228,7 @@ private fun Game.toBackup() = BackupGame(
     lastPlayedAt = lastPlayedAt?.toIso8601(),
     returnedToPlayAt = returnedToPlayAt?.toIso8601(),
     source = source.name,
+    manualSharedMinutes = manualSharedMinutes,
 )
 private fun ExcludedSharedGame.toBackup() = BackupExcludedSharedGame(
     appId = appId,

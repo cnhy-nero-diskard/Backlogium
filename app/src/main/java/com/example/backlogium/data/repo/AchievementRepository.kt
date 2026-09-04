@@ -76,6 +76,18 @@ data class AchievementLibraryFetch(
     val refreshes: List<AchievementRefresh>,
 )
 
+/** Outcome of [AchievementRepository.refreshOne] — a tier-independent, single-game fetch. */
+sealed interface SingleGameRefresh {
+    /** Steam returned player achievement data (possibly empty) and it was persisted. */
+    data class Persisted(val total: Int, val unlocked: Int) : SingleGameRefresh
+
+    /** Steam answered but reported no usable player data (private profile, no stats). */
+    data object NoUsableData : SingleGameRefresh
+
+    /** The request itself failed (transport error). Distinct from [NoUsableData] for messaging. */
+    data object Unavailable : SingleGameRefresh
+}
+
 /**
  * Owns fetching, merging, and caching Steam achievement data. Covers every game in the
  * library — not just games the player is actively engaged with — but selects what to refresh
@@ -256,6 +268,44 @@ class AchievementRepository @Inject constructor(
         }
     }
 
+    /**
+     * Fetch and persist one game's achievements outside of tier selection, ignoring playtime
+     * entirely. Used where tier eligibility does not apply — e.g. a family-shared game's
+     * `GetPlayerAchievements` answer does not depend on Backlogium having observed a session for
+     * it, unlike [syncLibraryGames]'s hot/warm/cold/never classification (fix-shared-game-achievement-visibility).
+     *
+     * Persists through the same [applyRefresh] merge path a normal sync uses, so the caller never
+     * needs to touch [AchievementMerge] or the DAOs directly.
+     */
+    suspend fun refreshOne(
+        apiKey: String,
+        steamId: String,
+        appId: Long,
+        scope: SyncRunRecorder.RunScope? = null,
+    ): SingleGameRefresh {
+        val metadata = gameAchievementSyncDao.get(appId)
+        val refresh = try {
+            fetchGame(
+                apiKey = apiKey,
+                steamId = steamId,
+                appId = appId,
+                schemaFetchedAt = metadata?.schemaFetchedAt,
+                scope = scope,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return SingleGameRefresh.Unavailable
+        } ?: return SingleGameRefresh.NoUsableData
+
+        mergeMutex.withLock { applyRefresh(refresh) }
+        val achievements = refresh.achievements.orEmpty()
+        return SingleGameRefresh.Persisted(
+            total = achievements.size,
+            unlocked = achievements.count { it.achieved != 0 },
+        )
+    }
+
     data class ReconciliationResult(
         val refreshed: Int,
         val total: Int,
@@ -322,6 +372,7 @@ class AchievementRepository @Inject constructor(
                 appId = it.appId,
                 playtimeForever = it.playtimeForever.toLong(),
                 playtime2Weeks = it.playtime2Weeks.toLong(),
+                source = it.source,
             )
         }
         // Reuses tiering's own cold-tier rule so this pass's population can never drift from what

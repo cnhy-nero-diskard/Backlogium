@@ -198,23 +198,27 @@ fun LibraryScreen(
     var pickerTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
     var selectedGenreIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var showNotCoveredOnly by rememberSaveable { mutableStateOf(false) }
+    var showFamilySharedOnly by rememberSaveable { mutableStateOf(false) }
     var showGenreSheet by rememberSaveable { mutableStateOf(false) }
     val selectedGenreSet = selectedGenreIds.toSet()
     val genreCatalog = remember(state.availableGenres) {
         genreFilterCatalog(state.availableGenres)
     }
-    val visibleGoalGames = remember(state.goalGames, selectedGenreIds, showNotCoveredOnly) {
+    val visibleGoalGames = remember(state.goalGames, selectedGenreIds, showNotCoveredOnly, showFamilySharedOnly) {
         state.goalGames
             .filterByGenres(selectedGenreSet)
             .filterByHltbCoverage(showNotCoveredOnly) { it.hltbStatus }
+            .filterByFamilySharedOnly(showFamilySharedOnly) { it.isFamilyShared }
     }
-    val visibleBacklog = remember(state.backlog, selectedGenreIds, showNotCoveredOnly) {
+    val visibleBacklog = remember(state.backlog, selectedGenreIds, showNotCoveredOnly, showFamilySharedOnly) {
         state.backlog
             .filterByGenres(selectedGenreSet)
             .filterByHltbCoverage(showNotCoveredOnly) { it.hltbStatus }
+            .filterByFamilySharedOnly(showFamilySharedOnly) { it.isFamilyShared }
     }
     val noVisibleMatches =
-        (state.query.isNotBlank() || selectedGenreSet.isNotEmpty() || showNotCoveredOnly) &&
+        (state.query.isNotBlank() || selectedGenreSet.isNotEmpty() || showNotCoveredOnly ||
+            showFamilySharedOnly) &&
             visibleGoalGames.isEmpty() &&
             visibleBacklog.isEmpty()
 
@@ -256,6 +260,7 @@ fun LibraryScreen(
             viewModel.clearSelection()
             selectedGenreIds = emptyList()
             showNotCoveredOnly = false
+            showFamilySharedOnly = false
             showGenreSheet = false
         }
     }
@@ -358,6 +363,11 @@ fun LibraryScreen(
                             onClick = { showNotCoveredOnly = !showNotCoveredOnly },
                             label = { Text("Not covered") },
                         )
+                        FilterChip(
+                            selected = showFamilySharedOnly,
+                            onClick = { showFamilySharedOnly = !showFamilySharedOnly },
+                            label = { Text("Family Shared") },
+                        )
                     }
                 }
             }
@@ -387,7 +397,9 @@ fun LibraryScreen(
             // Above the owned lists, and only while nothing is being searched or filtered:
             // those controls act on the owned library, and an unfiltered wishlist sitting under a
             // query would read as a result of it.
-            if (state.query.isBlank() && selectedGenreSet.isEmpty() && !showNotCoveredOnly) {
+            if (state.query.isBlank() && selectedGenreSet.isEmpty() && !showNotCoveredOnly &&
+                !showFamilySharedOnly
+            ) {
                 wishlistSection(
                     state = wishlistState,
                     density = state.density,
@@ -820,6 +832,16 @@ internal fun <T> List<T>.filterByHltbCoverage(
 } else {
     this
 }
+
+/**
+ * Isolates family-shared games (add-shared-game-playtime-and-filter). Same shape as
+ * [filterByHltbCoverage] — a selector rather than a `LibraryRow`-bound field, since
+ * `isFamilyShared` lives on the concrete row types, not the shared sorting interface.
+ */
+internal fun <T> List<T>.filterByFamilySharedOnly(
+    familySharedOnly: Boolean,
+    isFamilyShared: (T) -> Boolean,
+): List<T> = if (familySharedOnly) filter { isFamilyShared(it) } else this
 
 /**
  * Always-accessible entry point into the HLTB match center. The attention badge counts only

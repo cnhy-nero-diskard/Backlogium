@@ -314,21 +314,25 @@ class SteamSyncWorker @AssistedInject constructor(
         // Achievement progress on a borrowed game is recorded against the player's own account, so
         // a family-shared game belongs in this scope exactly like an owned one — GetPlayerAchievements
         // keys on app id, not on ownership. Its tiering input is the playtime the app actually knows
-        // (tracked session minutes), since Steam reports none: that puts a newly admitted game in
-        // the cold tier with no stored metadata, which the missing-data override picks up promptly,
-        // and leaves it on ordinary cold rotation afterwards.
+        // (tracked session minutes), since Steam reports none — but that local figure can be zero
+        // for a game played or even completed before the app ever observed it, so it is tagged
+        // FAMILY_SHARED rather than trusted the way an owned game's Steam-reported total is:
+        // AchievementFreshness never excludes a shared game from missing-data eligibility on the
+        // strength of zero tracked minutes alone (fix-shared-game-achievement-visibility).
         val trackedByAppId = sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes }
         val achievementScope = games.map {
             com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
                 appId = it.appid,
                 playtimeForever = it.playtimeForever.toLong(),
                 playtime2Weeks = it.playtime2Weeks.toLong(),
+                source = com.example.backlogium.domain.GameSource.STEAM_OWNED,
             )
         } + gameDao.sharedGames().map { shared ->
             com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
                 appId = shared.appId,
                 playtimeForever = (trackedByAppId[shared.appId] ?: 0).toLong(),
                 playtime2Weeks = 0L,
+                source = com.example.backlogium.domain.GameSource.FAMILY_SHARED,
             )
         }
         val achievementFetch = achievementRepository.fetchLibraryGames(

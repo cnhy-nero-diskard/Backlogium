@@ -1,5 +1,7 @@
 package com.example.backlogium.data.achievement
 
+import com.example.backlogium.domain.GameSource
+
 /**
  * Pure tier selection for the achievement sync, unit-testable without Room, network, or
  * WorkManager.
@@ -13,6 +15,15 @@ package com.example.backlogium.data.achievement
  * Inline sync refreshes hot + warm games, plus a bounded number of cold/never games that have no
  * stored achievement data at all. COLD games are otherwise deferred to the reconciliation pass.
  * NEVER games are never fetched.
+ *
+ * That NEVER rule assumes `playtimeForever` is Steam's own figure, which is true for an owned
+ * game but not for a [GameSource.FAMILY_SHARED] one: its `playtimeForever` input is locally
+ * tracked session minutes (Steam reports no owned-library playtime for a game the player doesn't
+ * own), which only reflects what Backlogium itself observed and can be zero for a game that was
+ * played, or even completed, before it was ever admitted or while presence monitoring was off. A
+ * family-shared game therefore never lands in NEVER: it is always at least cold, so zero tracked
+ * minutes never excludes it from missing-data eligibility or the reconciliation pass
+ * (fix-shared-game-achievement-visibility).
  */
 object AchievementFreshness {
 
@@ -23,6 +34,7 @@ object AchievementFreshness {
         val appId: Long,
         val playtimeForever: Long,
         val playtime2Weeks: Long,
+        val source: GameSource = GameSource.STEAM_OWNED,
     )
 
     data class SyncMetadata(
@@ -72,7 +84,7 @@ object AchievementFreshness {
                 game.playtime2Weeks > 0 -> {
                     warm.add(game.appId)
                 }
-                game.playtimeForever > 0 -> {
+                game.playtimeForever > 0 || game.source == GameSource.FAMILY_SHARED -> {
                     cold.add(game.appId)
                     if (metadataByAppId[game.appId] == null) {
                         missingDataEligible.add(MissingDataCandidate(game.appId, null))

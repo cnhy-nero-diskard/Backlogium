@@ -12,6 +12,18 @@ import com.example.backlogium.domain.GameSource
  * [backfillMinutes] is the frozen historical playtime captured when the player opts in to
  * importing Steam history (0 = not imported). Recompute adds it to tracked session minutes so
  * pre-install hours count toward XP once, without re-importing Steam's growing lifetime total.
+ * This is a whole-library, owned-game mechanism; it is independent of [manualSharedMinutes].
+ *
+ * [manualSharedMinutes] is the player's own hours-played estimate for a `FAMILY_SHARED` game,
+ * additive with its tracked session minutes everywhere playtime is consumed (XP, derived
+ * collections, completion progress, display). Freely re-editable, unlike [backfillMinutes] —
+ * setting it again replaces the stored value rather than accumulating. Always 0 for a
+ * `STEAM_OWNED` game; write paths guard this in SQL as well
+ * (`GameDao.setManualSharedMinutes`) so an unrelated write can never populate it for an owned row
+ * (fix-shared-game-achievement-visibility follow-up, add-shared-game-playtime-and-filter).
+ * On shared→owned conversion the credited value is folded into [backfillMinutes] (which is
+ * always 0 for a shared row) so XP credit survives the ownership change; see
+ * `GameDao.convertSharedToOwned`.
  *
  * [source] states how the app came to track the game. `STEAM_OWNED` is the only value Steam's
  * owned-games sync ever writes; `FAMILY_SHARED` rows are admitted from observed presence and have
@@ -34,4 +46,5 @@ data class Game(
     val firstSeenAt: Long? = null,
     val lastPlayedAt: Long? = null,
     val returnedToPlayAt: Long? = null,
+    val manualSharedMinutes: Int = 0,
 )
