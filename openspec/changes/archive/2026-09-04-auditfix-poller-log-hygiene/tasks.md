@@ -34,6 +34,6 @@
 
 ## 6. Close out
 
-- [ ] 6.1 `openspec validate --strict auditfix-poller-log-hygiene` passes
-- [ ] 6.2 Sync the delta into `openspec/specs/` via the archive workflow, not by hand
+- [x] 6.1 `openspec validate --strict auditfix-poller-log-hygiene` passes
+- [x] 6.2 Sync the delta into `openspec/specs/` via the archive workflow, not by hand
 - [ ] 6.3 Close #118 with the code fix, the deploy confirmation from task 4.5, and the two decisions from section 5 recorded
