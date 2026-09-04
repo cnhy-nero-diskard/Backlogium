@@ -99,11 +99,12 @@ The audit offered both directions. Export-only chosen because:
   is a bigger promise than this capability wants to make.
 
 **Consequence to handle by hand**: `backup-restore`'s `## Purpose` lists "rules" among the
-data the capability backs up and restores. A delta spec cannot modify a Purpose — the
-OpenSpec `specs` instruction is explicit that the delta's Purpose is ignored for an existing
-capability and the main spec must be edited directly. Task 6.4 does that edit at archive
-time. It is the one place this change touches `openspec/specs/` outside the sync, and it is
-called out rather than done silently.
+data the capability backs up and restores, and `onboarding-credentials`' `## Purpose` still
+says "repeatable editing from Home" once the Home requirement is retired. A delta spec
+cannot modify a Purpose — the OpenSpec `specs` instruction is explicit that the delta's
+Purpose is ignored for an existing capability and the main spec must be edited directly.
+Task 6.4 does those edits at archive time. They are the only places this change touches
+`openspec/specs/` outside the sync, and they are called out rather than done silently.
 
 ## Risks / Trade-offs
 
