@@ -19,9 +19,9 @@
 
 ## 4. Verification and deploy
 
-- [ ] 4.1 `npm --prefix functions run build` passes (typecheck + compile)
-- [ ] 4.2 `npm --prefix functions test` passes, including the new redaction tests
-- [ ] 4.3 Add the boundary check to `functions/README.md` as a runnable grep that must produce no output — the pattern `CLAUDE.md` already uses for the haptics authority. Verified by running it on the changed tree and getting silence
+- [x] 4.1 `npm --prefix functions run build` passes (typecheck + compile)
+- [x] 4.2 `npm --prefix functions test` passes, including the new redaction tests
+- [x] 4.3 Add the boundary check to `functions/README.md` as a runnable grep that must produce no output — the pattern `CLAUDE.md` already uses for the haptics authority. Verified by running it on the changed tree and getting silence
 - [ ] 4.4 `firebase deploy --only functions`. **Region `asia-southeast1`, schedule, secret binding, and retention must be unchanged** — if the deploy proposes altering any of them, stop and investigate. Verified by the deploy summary showing only the function's code revision changing
 - [ ] 4.5 Read Cloud Logging after the first post-deploy poll and confirm the heartbeat carries `outcome` and no `gameid`. Verified by inspecting an actual emitted entry, not by reading the source
 - [ ] 4.6 Confirm no TTL policy was introduced — `cloud-presence-poller/spec.md:226` and `CLAUDE.md` forbid one. Verified by the Firestore configuration showing no TTL on the presence subcollection

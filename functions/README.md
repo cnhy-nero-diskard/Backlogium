@@ -85,6 +85,23 @@ Log lines worth recognising:
 An unchanged poll logs the `poll ok` heartbeat, refreshes current-state metadata, and
 does not append a presence transition.
 
+### What logs do and do not contain
+
+Log output has no access control — Firestore denies client reads and the poller
+writes through the Admin SDK, but Cloud Logging is readable by anyone with
+log-viewer access, any configured sink, and any tool downstream of a sink.
+Operational logs therefore never carry the configured Steam ID, a played
+game's app ID, or its name. Every log call passes through `src/safeLog.ts`,
+the single component that owns this rule, so a call site cannot reintroduce
+the leak by being written somewhere new.
+
+Verify the boundary with the same grep-must-be-silent pattern `CLAUDE.md` uses
+for the haptics authority:
+
+```bash
+grep -rn "firebase-functions/logger" functions/src/ --exclude=safeLog.ts --exclude="*.test.ts"
+```
+
 ## Rotating the Steam API key
 
 ```bash
