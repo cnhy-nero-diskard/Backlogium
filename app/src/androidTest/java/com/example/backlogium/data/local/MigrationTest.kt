@@ -1,6 +1,7 @@
 package com.example.backlogium.data.local
 
 import android.content.Context
+import androidx.room.migration.Migration
 import androidx.room.testing.MigrationTestHelper
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
@@ -19,6 +20,11 @@ import org.junit.runner.RunWith
  * increases, add the corresponding preceding-version fixture and data-survival assertions
  * before merging the migration. Schema validation by itself cannot catch a migration that
  * creates the right columns while dropping the user's rows.
+ *
+ * The deep-history chain test runs the populated v13 fixture through every registered
+ * migration to the version the database currently declares, so the composed path a real
+ * long-lived install takes is exercised on every change. The per-hop tests remain the
+ * precise regression checks for individual hops; the chain does not replace them.
  */
 @RunWith(AndroidJUnit4::class)
 class MigrationTest {
@@ -34,8 +40,59 @@ class MigrationTest {
     private val context: Context
         get() = InstrumentationRegistry.getInstrumentation().targetContext
 
+    /**
+     * The schema version the app currently ships. `@Database` has class-file retention and cannot
+     * be read at runtime, so the version is derived the same way [MigrationTestHelper] finds
+     * schemas: the newest exported schema file in the androidTest assets. Room exports one per
+     * declared database version, so incrementing `BacklogiumDatabase.version` moves this target
+     * automatically — never hard-code it.
+     */
+    private val currentDatabaseVersion: Int = run {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val folder = BacklogiumDatabase::class.java.canonicalName!!
+        // Same lookup order as MigrationTestHelper's schema loading: the test APK's assets first
+        // (where the Gradle build wires the exported schemas), then the target APK's.
+        var names = instrumentation.context.assets.list(folder).orEmpty()
+        if (names.isEmpty()) {
+            names = instrumentation.targetContext.assets.list(folder).orEmpty()
+        }
+        names.mapNotNull { name -> name.removeSuffix(".json").toIntOrNull() }
+            .maxOrNull()
+            ?: error("No exported schema files found for $folder in the androidTest assets")
+    }
+
+    /**
+     * Every registered migration from the v13 fixture forward, in order — the same list as
+     * `DatabaseModule.addMigrations`, minus the hops that predate the fixture. A migration added
+     * there must be added here; the chain assertion below makes the omission fail loudly rather
+     * than silently validating a stale target.
+     */
+    private val allMigrationsFromV13 = arrayOf<Migration>(
+        BacklogiumDatabase.MIGRATION_13_14,
+        BacklogiumDatabase.MIGRATION_14_15,
+        BacklogiumDatabase.MIGRATION_15_16,
+        BacklogiumDatabase.MIGRATION_16_17,
+        BacklogiumDatabase.MIGRATION_17_18,
+        BacklogiumDatabase.MIGRATION_18_19,
+        BacklogiumDatabase.MIGRATION_19_20,
+        BacklogiumDatabase.MIGRATION_20_21,
+        BacklogiumDatabase.MIGRATION_21_22,
+        BacklogiumDatabase.MIGRATION_22_23,
+        BacklogiumDatabase.MIGRATION_23_24,
+        BacklogiumDatabase.MIGRATION_24_25,
+        BacklogiumDatabase.MIGRATION_25_26,
+        BacklogiumDatabase.MIGRATION_26_27,
+    )
+
     @Test
-    fun deepHistory_v13ToV14_preservesRepresentativeDataAndTranslatesSentinel() {
+    fun deepHistory_v13ToCurrent_preservesRepresentativeDataAndTranslatesSentinel() {
+        assertEquals(
+            "The deep-history chain must end at the current database version; add the new " +
+                "migration to allMigrationsFromV13.",
+            currentDatabaseVersion,
+            allMigrationsFromV13.last().endVersion,
+        )
+
         val databaseName = "migration-v13-${System.nanoTime()}"
         val rawHelper = openRawV13Database(databaseName)
 
@@ -48,9 +105,9 @@ class MigrationTest {
         try {
             val migrated = migrationTestHelper.runMigrationsAndValidate(
                 databaseName,
-                14,
+                currentDatabaseVersion,
                 true,
-                BacklogiumDatabase.MIGRATION_13_14,
+                *allMigrationsFromV13,
             )
             try {
                 migrated.assertRepresentativeData()
