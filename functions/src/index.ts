@@ -51,6 +51,9 @@ export async function poll(apiKey: string, steamId: string): Promise<void> {
     safeLog.error("STEAM_ID is not configured; nothing to poll");
     return;
   }
+  // From here on every log line is scrubbed of this value, wherever a
+  // later call site places it — field value, nested object, or message.
+  safeLog.registerSensitive(steamId);
 
   const observation = await fetchPresence(apiKey, steamId);
 

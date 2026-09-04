@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("firebase-functions/logger", () => ({
   info: vi.fn(),
@@ -11,8 +11,13 @@ import * as safeLog from "./safeLog";
 import type { SafeLogPayload } from "./safeLog";
 
 describe("safeLog", () => {
+  beforeEach(() => {
+    safeLog.clearSensitiveValues();
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
+    safeLog.clearSensitiveValues();
   });
 
   it.each([
@@ -66,5 +71,70 @@ describe("safeLog", () => {
     expect(vi.mocked(logger.error).mock.calls[0][1]).not.toHaveProperty(
       "gameName",
     );
+  });
+
+  it("scrubs a registered Steam ID smuggled in under another field name", () => {
+    const steamId = "76561198000000099";
+    safeLog.registerSensitive(steamId);
+    safeLog.info("message", { reason: steamId });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    expect(payload).toEqual({ reason: "[redacted]" });
+  });
+
+  it("scrubs registered values nested inside objects and arrays", () => {
+    const steamId = "76561198000000098";
+    const gameName = "Nested Test Game";
+    safeLog.registerSensitive(steamId, gameName);
+    safeLog.info("message", {
+      context: { steamId },
+      tags: [steamId, "unrelated"],
+      nested: { deep: { detail: `playing ${gameName}` } },
+    });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    expect(JSON.stringify(payload)).not.toContain(gameName);
+  });
+
+  it("drops identity field names at any depth without registration", () => {
+    safeLog.info("message", {
+      context: { gameid: "440", outcome: "written" },
+    } as unknown as SafeLogPayload);
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain("440");
+    expect(payload).toEqual({ context: { outcome: "written" } });
+  });
+
+  it("scrubs registered values interpolated into the message text", () => {
+    const steamId = "76561198000000097";
+    const gameName = "Interpolated Test Game";
+    safeLog.registerSensitive(steamId, gameName);
+    safeLog.warn(`failed for ${steamId} while playing ${gameName}`);
+
+    const [message] = vi.mocked(logger.warn).mock.calls[0];
+    expect(message).not.toContain(steamId);
+    expect(message).not.toContain(gameName);
+    expect(message).toBe("failed for [redacted] while playing [redacted]");
+  });
+
+  it("leaves non-string payload values intact while scrubbing strings", () => {
+    const steamId = "76561198000000096";
+    safeLog.registerSensitive(steamId);
+    const observedAt = new Date("2026-08-14T00:00:00.000Z");
+    safeLog.info("message", {
+      status: 503,
+      retryable: true,
+      observedAt,
+      reason: `saw ${steamId}`,
+    });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    expect(payload?.["status"]).toBe(503);
+    expect(payload?.["retryable"]).toBe(true);
+    expect(payload?.["observedAt"]).toBe(observedAt);
   });
 });

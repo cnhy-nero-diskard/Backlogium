@@ -53,6 +53,10 @@ export async function fetchPresence(
   apiKey: string,
   steamId: string,
 ): Promise<Observation | null> {
+  // Scrub the configured identity from every log line below, wherever a
+  // later call site places it — field value, nested object, or message.
+  safeLog.registerSensitive(steamId);
+
   // Stamped before the request so the timestamp reflects when Steam was
   // asked, not when it happened to answer.
   const observedAt = new Date();
@@ -121,6 +125,8 @@ export async function fetchPresence(
 
   const gameid = asString(player.gameid);
   const gameName = asString(player.gameextrainfo);
+  // Titles are sensitive values too: scrub them from every log line below.
+  safeLog.registerSensitive(gameid, gameName);
 
   // Task 4.5 — distinguish "not playing" from "cannot see what you are
   // playing". The endpoint gives no positive signal for the latter, but

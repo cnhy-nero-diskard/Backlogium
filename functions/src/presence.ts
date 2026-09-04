@@ -97,6 +97,10 @@ export async function recordObservation(
   steamId: string,
   observation: Observation,
 ): Promise<WriteOutcome> {
+  // Scrub the account and the observed title from every log line below,
+  // wherever a later call site places them.
+  safeLog.registerSensitive(steamId, observation.gameid, observation.gameName);
+
   const db = getFirestore();
   const playerRef = db.collection(PLAYERS).doc(steamId);
   const observedAt = Timestamp.fromDate(observation.t);
