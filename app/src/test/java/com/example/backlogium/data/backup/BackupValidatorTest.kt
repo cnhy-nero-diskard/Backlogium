@@ -215,7 +215,12 @@ class BackupValidatorTest {
     @Test
     fun negativeManualSharedMinutes_rejected() {
         val file = validFile(
-            games = listOf(BackupGame(appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0, manualSharedMinutes = -600)),
+            games = listOf(
+                BackupGame(
+                    appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0,
+                    source = "FAMILY_SHARED", manualSharedMinutes = -600,
+                ),
+            ),
         )
         val problems = file.assertRejected()
         assertEquals("game", problems.single().recordType)
@@ -228,6 +233,7 @@ class BackupValidatorTest {
             games = listOf(
                 BackupGame(
                     appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0,
+                    source = "FAMILY_SHARED",
                     manualSharedMinutes = SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES + 1,
                 ),
             ),
@@ -268,14 +274,63 @@ class BackupValidatorTest {
     }
 
     @Test
-    fun legacyNullSourceWithNonzeroManualSharedMinutes_accepted() {
-        // A null source predates the field and carries no consistency claim; the merge
-        // normalizes whatever it resolves to owned down to 0.
+    fun legacyNullSourceWithNonzeroManualSharedMinutes_rejected() {
+        // Source predates manualSharedMinutes: a backup old enough to lack source is
+        // necessarily also old enough to lack manualSharedMinutes (null), so this pair cannot
+        // be a legitimate older app-produced backup. The merge would silently normalize it to
+        // owned/0, so preflight must reject it instead.
         val file = validFile(
             games = listOf(
                 BackupGame(
                     appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0,
                     source = null, manualSharedMinutes = 90,
+                ),
+            ),
+        )
+        val problems = file.assertRejected()
+        assertEquals("game", problems.single().recordType)
+        assertTrue(problems.single().detail.contains("manualSharedMinutes"))
+    }
+
+    @Test
+    fun legacyNullSourceWithZeroOrAbsentManualSharedMinutes_accepted() {
+        listOf(null, 0).forEach { manual ->
+            val file = validFile(
+                games = listOf(
+                    BackupGame(
+                        appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0,
+                        source = null, manualSharedMinutes = manual,
+                    ),
+                ),
+            )
+            assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)
+        }
+    }
+
+    @Test
+    fun unrecognizedSourceWithNonzeroManualSharedMinutes_rejected() {
+        // No forward-compat contract gives a future source ownership of this field, so the
+        // inconsistent pair is rejected rather than silently normalized by the merge fallback.
+        val file = validFile(
+            games = listOf(
+                BackupGame(
+                    appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0,
+                    source = "SOME_FUTURE_SOURCE", manualSharedMinutes = 90,
+                ),
+            ),
+        )
+        val problems = file.assertRejected()
+        assertEquals("game", problems.single().recordType)
+        assertTrue(problems.single().detail.contains("manualSharedMinutes"))
+    }
+
+    @Test
+    fun familySharedSourceWithNonzeroManualSharedMinutes_accepted() {
+        val file = validFile(
+            games = listOf(
+                BackupGame(
+                    appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0,
+                    source = "FAMILY_SHARED", manualSharedMinutes = 90,
                 ),
             ),
         )
@@ -287,7 +342,10 @@ class BackupValidatorTest {
         listOf(null, 0, 90, SetSharedGamePlaytimeUseCase.MAX_MANUAL_SHARED_MINUTES).forEach { manual ->
             val file = validFile(
                 games = listOf(
-                    BackupGame(appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0, manualSharedMinutes = manual),
+                    BackupGame(
+                        appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0,
+                        source = "FAMILY_SHARED", manualSharedMinutes = manual,
+                    ),
                 ),
             )
             assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)

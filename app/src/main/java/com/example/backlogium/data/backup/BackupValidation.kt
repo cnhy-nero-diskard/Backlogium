@@ -67,12 +67,14 @@ object BackupValidator {
                     )
                 }
             }
-            // Owned rows always carry 0: the manual estimate is meaningful only for
-            // FAMILY_SHARED, so an app-produced backup never pairs STEAM_OWNED with a nonzero
-            // value. Null (a legacy backup predating the field) and unrecognized source names
-            // (forward-compatible tolerance, mirroring the merge's enum fallback) carry no
-            // consistency claim and stay valid here.
-            if (game.source == GameSource.STEAM_OWNED.name && (game.manualSharedMinutes ?: 0) != 0) {
+            // A nonzero manual estimate is meaningful only for FAMILY_SHARED, so an
+            // app-produced backup never pairs any other source with it. Null (a legacy backup
+            // predating the field) is valid only with a null/0 value: source predates
+            // manualSharedMinutes in this repository, so a backup old enough to lack source is
+            // necessarily also old enough to lack manualSharedMinutes. Unrecognized source names
+            // carry no forward-compat claim on this field either, so an inconsistent pair is
+            // rejected rather than silently normalized by the merge.
+            if ((game.manualSharedMinutes ?: 0) != 0 && game.source != GameSource.FAMILY_SHARED.name) {
                 problems += BackupValidationProblem(
                     "game", index,
                     "manualSharedMinutes ${game.manualSharedMinutes} inconsistent with source " +
