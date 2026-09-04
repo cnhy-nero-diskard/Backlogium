@@ -82,6 +82,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_24_25,
         BacklogiumDatabase.MIGRATION_25_26,
         BacklogiumDatabase.MIGRATION_26_27,
+        BacklogiumDatabase.MIGRATION_27_28,
     )
 
     @Test
@@ -945,6 +946,55 @@ class MigrationTest {
                     assertEquals(441L, cursor.getLong(0))
                     assertEquals(0, cursor.getInt(1))
                     assertEquals(0, cursor.getInt(2))
+                    assertFalse(cursor.moveToNext())
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    /**
+     * v27 -> v28: a per-run count of session boundaries clamped for a backward clock movement
+     * (auditfix-session-ledger-integrity, #115). Additive, defaulting to 0 for every existing run.
+     */
+    @Test
+    fun v27ToV28_addsClockRollbackCountAndPreservesExistingRun() {
+        val databaseName = "migration-v27-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 27)
+        try {
+            database.execSQL(
+                "INSERT INTO sync_runs " +
+                    "(id, startedAt, durationMs, trigger, requestCount, requestMillis, " +
+                    "gamesExamined, gamesUpdated, outcome, errorMessage, hotCount, warmCount, " +
+                    "coldCount, neverCount) VALUES " +
+                    "(41, 1700000000000, 1000, 'SCHEDULED', 10, 100, 5, 2, 'success', NULL, " +
+                    "1, 2, 3, 4)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                28,
+                true,
+                BacklogiumDatabase.MIGRATION_27_28,
+            )
+            try {
+                migrated.query(
+                    "SELECT hotCount, warmCount, coldCount, neverCount, clockRollbackCount " +
+                        "FROM sync_runs WHERE id = 41",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1, cursor.getInt(0))
+                    assertEquals(2, cursor.getInt(1))
+                    assertEquals(3, cursor.getInt(2))
+                    assertEquals(4, cursor.getInt(3))
+                    assertEquals(0, cursor.getInt(4))
                     assertFalse(cursor.moveToNext())
                 }
             } finally {

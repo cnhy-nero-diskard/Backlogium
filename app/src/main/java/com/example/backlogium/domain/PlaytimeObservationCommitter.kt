@@ -51,6 +51,8 @@ class PlaytimeObservationCommitter @Inject constructor(
     data class Commit(
         val actions: List<SessionDiffer.SessionAction>,
         val playedDeltaByAppId: Map<Long, Int>,
+        /** Boundaries clamped this commit for a backward clock movement (#115) — the caller's to record. */
+        val clockRollbacks: List<SessionDiffer.ClockRollback> = emptyList(),
     ) {
         val recordedPlay: Boolean get() = playedDeltaByAppId.values.any { it > 0 }
     }
@@ -148,6 +150,10 @@ class PlaytimeObservationCommitter @Inject constructor(
             dailyProgressDao.addMinutes(date, credit.minutesPlayed, credit.goalMinutesPlayed)
         }
 
-        return Commit(actions = diff.actions, playedDeltaByAppId = diff.playedDeltaByAppId)
+        return Commit(
+            actions = diff.actions,
+            playedDeltaByAppId = diff.playedDeltaByAppId,
+            clockRollbacks = diff.clockRollbacks,
+        )
     }
 }

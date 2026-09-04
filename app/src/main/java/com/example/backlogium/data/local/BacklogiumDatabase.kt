@@ -70,7 +70,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         WishlistItem::class,
         WishlistPriceObservation::class,
     ],
-    version = 27,
+    version = 28,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -677,6 +677,20 @@ abstract class BacklogiumDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     "ALTER TABLE `games` ADD COLUMN `manualSharedMinutes` INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        /**
+         * v27 -> v28: a per-run count of session boundaries clamped for a backward clock movement
+         * (auditfix-session-ledger-integrity, #115) — the existing tier-count pattern
+         * (`hotCount`/`warmCount`/...), scoped to this new cause, so a clamp is recorded through
+         * app-diagnostics rather than discarded silently.
+         */
+        val MIGRATION_27_28 = object : Migration(27, 28) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `sync_runs` ADD COLUMN `clockRollbackCount` INTEGER NOT NULL DEFAULT 0",
                 )
             }
         }

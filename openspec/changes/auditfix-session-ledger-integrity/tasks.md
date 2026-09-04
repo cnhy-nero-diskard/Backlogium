@@ -17,14 +17,14 @@
 
 ## 3. Non-inverted session intervals (#115)
 
-- [ ] 3.1 Add the out-of-order guard to `SessionDiffer`'s `Extend` emission (`:115-119`), clamping the boundary so the interval cannot invert (design.md Decision 2). Verified by the rollback test in 3.4
-- [ ] 3.2 Add the same guard to the `Open` emission in the same loop — `startAt = previousPollAt, endAt = now` inverts under the same rollback, which the audit did not name. Verified by a test opening a session across a backwards clock movement
-- [ ] 3.3 Record the clamp through `app-diagnostics` rather than swallowing it, so a real clock event is diagnosable afterwards (design.md Decision 2). Verified by a clamped action appearing in the diagnostics surface
-- [ ] 3.4 Test: an open session at `startAt = 1000, endAt = 2000` receiving a playtime increase at `now = 500` stores no interval with `endAt < startAt`. `SessionDifferTest` currently has only increasing timestamps
-- [ ] 3.5 Test: a later no-delta poll closing a session whose boundary was clamped still yields a non-inverted interval — the audit's specific observation that the bad boundary survives the close
-- [ ] 3.6 Test: the Steam-reported playtime delta is still credited when an action is clamped, since minutes do not depend on the device clock
-- [ ] 3.7 Test: a forward clock jump still extends sessions normally, so the guard has not made ordinary operation conservative
-- [ ] 3.8 Cross-check the guard against `PresenceSessionDeriver`'s existing handling (`:117`) and keep the two paths' behaviour consistent rather than merely both non-crashing
+- [x] 3.1 Add the out-of-order guard to `SessionDiffer`'s `Extend` emission (`:115-119`), clamping the boundary so the interval cannot invert (design.md Decision 2). Verified by the rollback test in 3.4
+- [x] 3.2 Add the same guard to the `Open` emission in the same loop — `startAt = previousPollAt, endAt = now` inverts under the same rollback, which the audit did not name. Verified by a test opening a session across a backwards clock movement
+- [x] 3.3 Record the clamp through `app-diagnostics` rather than swallowing it, so a real clock event is diagnosable afterwards (design.md Decision 2). Verified by a clamped action appearing in the diagnostics surface
+- [x] 3.4 Test: an open session at `startAt = 1000, endAt = 2000` receiving a playtime increase at `now = 500` stores no interval with `endAt < startAt`. `SessionDifferTest` currently has only increasing timestamps
+- [x] 3.5 Test: a later no-delta poll closing a session whose boundary was clamped still yields a non-inverted interval — the audit's specific observation that the bad boundary survives the close
+- [x] 3.6 Test: the Steam-reported playtime delta is still credited when an action is clamped, since minutes do not depend on the device clock
+- [x] 3.7 Test: a forward clock jump still extends sessions normally, so the guard has not made ordinary operation conservative
+- [x] 3.8 Cross-check the guard against `PresenceSessionDeriver`'s existing handling (`:117`) and keep the two paths' behaviour consistent rather than merely both non-crashing
 
 ## 4. Removal provenance (#104)
 
