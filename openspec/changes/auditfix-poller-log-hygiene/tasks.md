@@ -1,21 +1,21 @@
 ## 1. Prerequisites
 
-- [ ] 1.1 Re-enumerate every `logger.*` and `console.*` call in `functions/src/` and record which fields each one emits, so the redaction authority is built against the full surface rather than the three sites the audit named. Verified by the list covering all call sites `grep -rn "logger\.\|console\." functions/src/` reports
-- [ ] 1.2 Confirm the audit's clean verdict on the other call sites still holds — `steam.ts:71,78,88` (exception text, HTTP status) and `steam.ts:133` (`communityvisibilitystate`) must carry no identity. Verified by reading each payload
+- [x] 1.1 Re-enumerate every `logger.*` and `console.*` call in `functions/src/` and record which fields each one emits, so the redaction authority is built against the full surface rather than the three sites the audit named. Verified by the list covering all call sites `grep -rn "logger\.\|console\." functions/src/` reports
+- [x] 1.2 Confirm the audit's clean verdict on the other call sites still holds — `steam.ts:71,78,88` (exception text, HTTP status) and `steam.ts:133` (`communityvisibilitystate`) must carry no identity. Verified by reading each payload
 
 ## 2. Redaction authority
 
-- [ ] 2.1 Add a single component in `functions/src/` that log payloads pass through and that owns the rule from the spec's "Operational logs carry no account or title identity" (design.md Decision 1). Verified by unit tests asserting a Steam ID, an app ID, and a game name are each refused or stripped
-- [ ] 2.2 Give it a shape that makes the safe thing the easy thing — a caller should not be able to emit an identity field by forgetting to redact it. Verified by a test that a payload carrying an identity field does not reach the log unmodified
-- [ ] 2.3 Document in the component itself why the rule exists (Firestore is access-controlled, logs are not) so the next reader does not treat it as ceremony. Verified by the comment naming the boundary difference
+- [x] 2.1 Add a single component in `functions/src/` that log payloads pass through and that owns the rule from the spec's "Operational logs carry no account or title identity" (design.md Decision 1). Verified by unit tests asserting a Steam ID, an app ID, and a game name are each refused or stripped
+- [x] 2.2 Give it a shape that makes the safe thing the easy thing — a caller should not be able to emit an identity field by forgetting to redact it. Verified by a test that a payload carrying an identity field does not reach the log unmodified
+- [x] 2.3 Document in the component itself why the rule exists (Firestore is access-controlled, logs are not) so the next reader does not treat it as ceremony. Verified by the comment naming the boundary difference
 
 ## 3. Call sites
 
-- [ ] 3.1 `index.ts:71` — drop `gameid` from the heartbeat, keep `outcome` (design.md Decision 4). Verified by a test asserting the heartbeat is still emitted on a successful poll and contains no app ID
-- [ ] 3.2 Confirm the heartbeat still satisfies its spec obligations after the edit: emitted on every successful poll including when nothing was written, suppressed on a failed fetch. Verified by the existing heartbeat tests still passing
-- [ ] 3.3 `presence.ts:165-170` — drop `steamId`, `gameid`, and `gameName`; keep `first` and the outcome. Verified by a test asserting a recorded transition emits an entry with none of the three
-- [ ] 3.4 `steam.ts:109-112` — drop `steamId` from the unknown-player error while keeping the message that names the setting to check. Verified by a test asserting the entry still identifies the condition and omits the ID
-- [ ] 3.5 Route the remaining clean call sites through the authority too, so the rule is uniform and a later edit to one of them cannot bypass it. Verified by no direct `logger.*` call remaining outside the authority
+- [x] 3.1 `index.ts:71` — drop `gameid` from the heartbeat, keep `outcome` (design.md Decision 4). Verified by a test asserting the heartbeat is still emitted on a successful poll and contains no app ID
+- [x] 3.2 Confirm the heartbeat still satisfies its spec obligations after the edit: emitted on every successful poll including when nothing was written, suppressed on a failed fetch. Verified by the existing heartbeat tests still passing
+- [x] 3.3 `presence.ts:165-170` — drop `steamId`, `gameid`, and `gameName`; keep `first` and the outcome. Verified by a test asserting a recorded transition emits an entry with none of the three
+- [x] 3.4 `steam.ts:109-112` — drop `steamId` from the unknown-player error while keeping the message that names the setting to check. Verified by a test asserting the entry still identifies the condition and omits the ID
+- [x] 3.5 Route the remaining clean call sites through the authority too, so the rule is uniform and a later edit to one of them cannot bypass it. Verified by no direct `logger.*` call remaining outside the authority
 
 ## 4. Verification and deploy
 
