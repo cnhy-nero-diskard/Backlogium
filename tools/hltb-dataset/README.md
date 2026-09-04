@@ -40,6 +40,19 @@ It does not contain a Steam account id, username, game names, playtime, sessions
 streaks, or unresolved/review-flagged matches. Inspect the JSON before contributing if you want to
 confirm the exact rows you are publishing.
 
+## Provenance of the seed data
+
+The canonical dataset's initial 273 mappings were seeded from the maintainer's own Steam library
+across two commits (`a843ed4`, `ea37d49`) whose messages say so explicitly, which makes the
+library-ownership disclosure described above recoverable from public git history for those rows
+specifically, not just from a fresh export. **This was intended and is accepted** — those commits
+are not a mistake to remediate, and no dataset or history change follows from this note.
+
+The norm for future contributions stays what "What the export reveals" already states: contributing
+publishes the ownership disclosure for the rows you add. Say so in the pull request if you'd rather
+not have your own contribution attributed to you by name in the commit message — the dataset itself
+never needs your identity, only the commit history of *this* seed does.
+
 ## Resolve a correspondence conflict
 
 The tool never guesses when the canonical dataset and a contribution map one Steam app id to two
