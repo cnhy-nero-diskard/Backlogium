@@ -50,9 +50,9 @@
 
 ## 6. Close out
 
-- [ ] 6.1 `openspec validate --strict auditfix-session-ledger-integrity` passes
-- [ ] 6.2 `./gradlew :gamification:test :app:testDebugUnitTest` passes
-- [ ] 6.3 `./gradlew :app:connectedDebugAndroidTest --tests '*MigrationTest*'` passes, including the new `totalXp` case and the v13-to-current chain
-- [ ] 6.4 Confirm on a device that a Family Shared game observed by two overlapping presence checks yields one session in History, not two
-- [ ] 6.5 Sync the deltas into `openspec/specs/` via the archive workflow, not by hand
-- [ ] 6.6 Close #104, #114, #115, #116
+- [x] 6.1 `openspec validate --strict auditfix-session-ledger-integrity` passes
+- [x] 6.2 `./gradlew :gamification:test :app:testDebugUnitTest` passes
+- [x] 6.3 `./gradlew :app:connectedDebugAndroidTest --tests '*MigrationTest*'` passes, including the new `totalXp` case and the v13-to-current chain
+- [ ] 6.4 Confirm on a device that a Family Shared game observed by two overlapping presence checks yields one session in History, not two. **Needs a real Steam account with a Family Shared game and manual QA** — not automatable from this environment; `WriteIntegrityDaoTest`'s presence-race tests prove the guarantee at the Room/DAO level with genuine concurrency, but this task asks for the real end-to-end device confirmation specifically
+- [ ] 6.5 Sync the deltas into `openspec/specs/` via the archive workflow, not by hand — deferred to archive time
+- [ ] 6.6 Close #104, #114, #115, #116 — deferred to PR merge
