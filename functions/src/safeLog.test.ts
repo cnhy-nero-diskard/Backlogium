@@ -120,6 +120,36 @@ describe("safeLog", () => {
     expect(message).toBe("failed for [redacted] while playing [redacted]");
   });
 
+  it("scrubs non-plain class instances nested in the payload", () => {
+    const steamId = "76561198000000095";
+    safeLog.registerSensitive(steamId);
+    class Context {
+      constructor(readonly detail: string) {}
+    }
+    safeLog.info("message", {
+      context: new Context(steamId),
+    } as unknown as SafeLogPayload);
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    expect(payload).toEqual({ context: { detail: "[redacted]" } });
+  });
+
+  it("scrubs custom toJSON results the underlying logger serializes", () => {
+    const gameName = "Custom JSON Test Game";
+    safeLog.registerSensitive(gameName);
+    const holder = {
+      toJSON: () => gameName,
+    };
+    safeLog.info("message", {
+      context: holder,
+    } as unknown as SafeLogPayload);
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(gameName);
+    expect(payload).toEqual({ context: "[redacted]" });
+  });
+
   it("leaves non-string payload values intact while scrubbing strings", () => {
     const steamId = "76561198000000096";
     safeLog.registerSensitive(steamId);

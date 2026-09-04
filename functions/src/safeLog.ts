@@ -15,7 +15,11 @@ import * as logger from "firebase-functions/logger";
  * message text (`` `failed for ${steamId}` ``). This module therefore
  * scrubs the sensitive *values* themselves — every string in the message
  * and at any depth of the payload — in addition to dropping identity-named
- * fields. Call sites register the concrete values they handle via
+ * fields. Non-plain objects are normalized to plain objects of their own
+ * enumerable properties, honouring toJSON() exactly as the underlying
+ * logger serializes them, so a class instance cannot smuggle a value past
+ * the scrub; Dates stay by reference as intentional safe values. Call
+ * sites register the concrete values they handle via
  * {@link registerSensitive} so later call sites inherit the rule without
  * restating it.
  */
@@ -73,22 +77,67 @@ function scrubText(text: string): string {
   return safe;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== "object") return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
-function scrubValue(value: unknown): unknown {
+function scrubValue(value: unknown, seen = new Set<object>()): unknown {
   if (typeof value === "string") return scrubText(value);
-  if (Array.isArray(value)) return value.map(scrubValue);
-  if (isPlainObject(value)) {
-    const safe: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) {
-      if (IDENTITY_FIELDS.has(key)) continue;
-      safe[key] = scrubValue(entry);
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return "[Circular]";
+    seen.add(value);
+    try {
+      return value.map((entry) => scrubValue(entry, seen));
+    } finally {
+      seen.delete(value);
     }
-    return safe;
+  }
+  // Dates are intentional safe values (e.g. observedAt) and stay by
+  // reference. This precedes the toJSON handling below because Date defines
+  // toJSON — calling it here would stringify the Date before logging.
+  if (value instanceof Date) return value;
+  if (value !== null && typeof value === "object") {
+    if (seen.has(value)) return "[Circular]";
+    seen.add(value);
+    try {
+      // Mirror the pinned firebase-functions logger, which calls an object's
+      // toJSON() before walking its properties: scrub what the logger will
+      // actually serialize, not the wrapper holding it.
+      let toJSON: unknown;
+      try {
+        toJSON = (value as { toJSON?: unknown }).toJSON;
+      } catch {
+        return "[Error - cannot serialize]";
+      }
+      if (typeof toJSON === "function") {
+        let serialized: unknown;
+        try {
+          serialized = (toJSON as () => unknown).call(value);
+        } catch {
+          return "[Error - cannot serialize]";
+        }
+        if (serialized === value) return "[Circular]";
+        return scrubValue(serialized, seen);
+      }
+      // Any other object shape — plain or class instance — is normalized to
+      // a plain object of its own enumerable properties, which is exactly
+      // what the logger's removeCircular() serializes from it.
+      const safe: Record<string, unknown> = {};
+      for (const key of Object.keys(value)) {
+        if (IDENTITY_FIELDS.has(key)) continue;
+        let entry: unknown;
+        try {
+          entry = (value as Record<string, unknown>)[key];
+        } catch {
+          safe[key] = "[Error - cannot serialize]";
+          continue;
+        }
+        try {
+          safe[key] = scrubValue(entry, seen);
+        } catch {
+          safe[key] = "[Error - cannot serialize]";
+        }
+      }
+      return safe;
+    } finally {
+      seen.delete(value);
+    }
   }
   return value;
 }
