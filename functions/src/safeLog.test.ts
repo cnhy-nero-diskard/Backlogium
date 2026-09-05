@@ -1,0 +1,361 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("firebase-functions/logger", () => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
+import * as logger from "firebase-functions/logger";
+import * as safeLog from "./safeLog";
+import type { SafeLogPayload } from "./safeLog";
+
+describe("safeLog", () => {
+  beforeEach(() => {
+    safeLog.clearSensitiveValues();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    safeLog.clearSensitiveValues();
+  });
+
+  it.each([
+    ["steamId", { steamId: "76561198000000000" }],
+    ["gameid", { gameid: "440" }],
+    ["gameName", { gameName: "Team Fortress 2" }],
+  ])("strips %s from an info payload", (field, identityPayload) => {
+    // Bypass the compile-time guard to prove the runtime backstop holds too.
+    safeLog.info("message", identityPayload as unknown as SafeLogPayload);
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(payload).not.toHaveProperty(field);
+  });
+
+  it("keeps non-identity fields alongside a stripped identity field", () => {
+    safeLog.info("poll ok", {
+      outcome: "written",
+      steamId: "76561198000000000",
+    } as unknown as SafeLogPayload);
+
+    expect(logger.info).toHaveBeenCalledWith("poll ok", { outcome: "written" });
+  });
+
+  it("emits without a payload argument when nothing is passed", () => {
+    safeLog.error("STEAM_ID is not configured; nothing to poll");
+
+    expect(logger.error).toHaveBeenCalledWith(
+      "STEAM_ID is not configured; nothing to poll",
+    );
+  });
+
+  it("passes clean payloads through unmodified", () => {
+    safeLog.warn("Profile is not public", { communityvisibilitystate: 1 });
+
+    expect(logger.warn).toHaveBeenCalledWith("Profile is not public", {
+      communityvisibilitystate: 1,
+    });
+  });
+
+  it("rejects an identity field at compile time without a cast", () => {
+    // @ts-expect-error steamId is disallowed by SafeLogPayload — the type
+    // system refuses this call before the redaction ever runs.
+    safeLog.info("message", { steamId: "abc" });
+  });
+
+  it("strips identity fields regardless of log level", () => {
+    safeLog.warn("message", { gameid: "440" } as unknown as SafeLogPayload);
+    safeLog.error("message", { gameName: "Hades" } as unknown as SafeLogPayload);
+
+    expect(vi.mocked(logger.warn).mock.calls[0][1]).not.toHaveProperty("gameid");
+    expect(vi.mocked(logger.error).mock.calls[0][1]).not.toHaveProperty(
+      "gameName",
+    );
+  });
+
+  it("scrubs a registered Steam ID smuggled in under another field name", () => {
+    const steamId = "76561198000000099";
+    safeLog.registerSensitive(steamId);
+    safeLog.info("message", { reason: steamId });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    expect(payload).toEqual({ reason: "[redacted]" });
+  });
+
+  it("scrubs registered values nested inside objects and arrays", () => {
+    const steamId = "76561198000000098";
+    const gameName = "Nested Test Game";
+    safeLog.registerSensitive(steamId, gameName);
+    safeLog.info("message", {
+      context: { steamId },
+      tags: [steamId, "unrelated"],
+      nested: { deep: { detail: `playing ${gameName}` } },
+    });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    expect(JSON.stringify(payload)).not.toContain(gameName);
+  });
+
+  it("drops identity field names at any depth without registration", () => {
+    safeLog.info("message", {
+      context: { gameid: "440", outcome: "written" },
+    } as unknown as SafeLogPayload);
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain("440");
+    expect(payload).toEqual({ context: { outcome: "written" } });
+  });
+
+  it("scrubs registered values interpolated into the message text", () => {
+    const steamId = "76561198000000097";
+    const gameName = "Interpolated Test Game";
+    safeLog.registerSensitive(steamId, gameName);
+    safeLog.warn(`failed for ${steamId} while playing ${gameName}`);
+
+    const [message] = vi.mocked(logger.warn).mock.calls[0];
+    expect(message).not.toContain(steamId);
+    expect(message).not.toContain(gameName);
+    expect(message).toBe("failed for [redacted] while playing [redacted]");
+  });
+
+  it("scrubs non-plain class instances nested in the payload", () => {
+    const steamId = "76561198000000095";
+    safeLog.registerSensitive(steamId);
+    class Context {
+      constructor(readonly detail: string) {}
+    }
+    safeLog.info("message", {
+      context: new Context(steamId),
+    } as unknown as SafeLogPayload);
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    expect(payload).toEqual({ context: { detail: "[redacted]" } });
+  });
+
+  it("scrubs custom toJSON results the underlying logger serializes", () => {
+    const gameName = "Custom JSON Test Game";
+    safeLog.registerSensitive(gameName);
+    const holder = {
+      toJSON: () => gameName,
+    };
+    safeLog.info("message", {
+      context: holder,
+    } as unknown as SafeLogPayload);
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(gameName);
+    expect(payload).toEqual({ context: "[redacted]" });
+  });
+
+  it("redacts a short numeric app ID standing on its own", () => {
+    safeLog.registerSensitive("70");
+    safeLog.info("message", { reason: "stopped playing 70 at the door" });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(payload?.["reason"]).toBe("stopped playing [redacted] at the door");
+  });
+
+  it("leaves unrelated digits alone when a short app ID is registered", () => {
+    // 10 is Counter-Strike's real app ID. Substituting it unbounded would
+    // rewrite any later diagnostic that merely contains those two digits.
+    safeLog.registerSensitive("10");
+    safeLog.error("Steam request failed", {
+      reason: "connect ETIMEDOUT 104.16.0.1:443 after 4100ms",
+    });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    expect(payload?.["reason"]).toBe(
+      "connect ETIMEDOUT 104.16.0.1:443 after 4100ms",
+    );
+  });
+
+  it("still redacts a full Steam ID, which is numeric but bounded", () => {
+    const steamId = "76561198000000098";
+    safeLog.registerSensitive(steamId);
+    safeLog.warn(`no player for ${steamId}.`);
+
+    const [message] = vi.mocked(logger.warn).mock.calls[0];
+    expect(message).toBe("no player for [redacted].");
+  });
+
+  it("redacts a non-numeric title wherever it is embedded", () => {
+    safeLog.registerSensitive("Portal");
+    safeLog.info("message", { reason: "xxPortalyy" });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(payload?.["reason"]).toBe("xx[redacted]yy");
+  });
+
+  it("keeps an Error payload readable instead of serializing it as {}", () => {
+    // message and stack are non-enumerable, so a generic own-keys walk
+    // would drop the fault entirely.
+    const error = new Error("connection reset");
+
+    safeLog.error("Steam request failed", { cause: error });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    const cause = payload?.["cause"] as Record<string, unknown>;
+    expect(cause["name"]).toBe("Error");
+    expect(cause["message"]).toBe("connection reset");
+    expect(typeof cause["stack"]).toBe("string");
+  });
+
+  it("scrubs registered values out of an Error payload", () => {
+    const steamId = "76561198000000099";
+    safeLog.registerSensitive(steamId);
+    const error = new Error(`lookup failed for ${steamId}`) as Error & {
+      code?: string;
+    };
+    error.code = `E_${steamId}`;
+
+    safeLog.error("Steam request failed", { cause: error });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    const cause = payload?.["cause"] as Record<string, unknown>;
+    expect(cause["message"]).toBe("lookup failed for [redacted]");
+    expect(cause["code"]).toBe("E_[redacted]");
+  });
+
+  it("scrubs a registered value used as a property name", () => {
+    const steamId = "76561198000000100";
+    safeLog.registerSensitive(steamId);
+    safeLog.info("message", { [steamId]: true } as unknown as SafeLogPayload);
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    expect(payload).toEqual({ "[redacted]": true });
+  });
+
+  it("scrubs a registered value used as a nested property name", () => {
+    const gameName = "Nested Key Test Game";
+    safeLog.registerSensitive(gameName);
+    safeLog.info("message", {
+      context: { [gameName]: "played" },
+    } as unknown as SafeLogPayload);
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(gameName);
+    expect(payload).toEqual({ context: { "[redacted]": "played" } });
+  });
+
+  it("redacts an app ID that reaches the payload as a number", () => {
+    safeLog.registerSensitive("440");
+    safeLog.info("message", { app: Number("440") });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(payload).toEqual({ app: "[redacted]" });
+  });
+
+  it("redacts a numeric app ID inside an array", () => {
+    safeLog.registerSensitive("440");
+    safeLog.info("message", { recent: [440, 441] });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(payload).toEqual({ recent: ["[redacted]", 441] });
+  });
+
+  it("keeps an HTTP status that collides with a registered app ID", () => {
+    // 500 is Left 4 Dead's real app ID. A poll that observed it must not
+    // cost the next HTTP 500 its status code.
+    safeLog.registerSensitive("500");
+    safeLog.error("Steam returned an error status", { status: 500 });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    expect(payload).toEqual({ status: 500 });
+  });
+
+  it("keeps a Steam enum that collides with a registered app ID", () => {
+    safeLog.registerSensitive("1");
+    safeLog.warn("Profile is not public", { communityvisibilitystate: 1 });
+
+    const [, payload] = vi.mocked(logger.warn).mock.calls[0];
+    expect(payload).toEqual({ communityvisibilitystate: 1 });
+  });
+
+  it("does not redact a number that merely contains a registered app ID", () => {
+    safeLog.registerSensitive("440");
+    safeLog.info("message", { elapsedMs: 4400 });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(payload).toEqual({ elapsedMs: 4400 });
+  });
+
+  it("scrubs a registered value used as a dynamic key on an Error", () => {
+    const steamId = "76561198000000101";
+    safeLog.registerSensitive(steamId);
+    const error = new Error("lookup failed") as Error &
+      Record<string, unknown>;
+    error[steamId] = true;
+
+    safeLog.error("Steam request failed", { cause: error });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    const cause = payload?.["cause"] as Record<string, unknown>;
+    expect(cause["message"]).toBe("lookup failed");
+    expect(cause["[redacted]"]).toBe(true);
+  });
+
+  it("keeps a fault number on an Error that collides with an app ID", () => {
+    safeLog.registerSensitive("500");
+    const error = new Error("bad gateway") as Error & Record<string, unknown>;
+    error["status"] = 500;
+
+    safeLog.error("Steam request failed", { cause: error });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    const cause = payload?.["cause"] as Record<string, unknown>;
+    expect(cause["status"]).toBe(500);
+  });
+
+  it("scrubs an Error's own toJSON() the way the logger serializes it", () => {
+    const steamId = "76561198000000102";
+    safeLog.registerSensitive(steamId);
+    const error = new Error("lookup failed") as Error & {
+      toJSON?: () => unknown;
+    };
+    error.toJSON = () => steamId;
+
+    safeLog.error("Steam request failed", { cause: error });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    expect(payload).toEqual({ cause: "[redacted]" });
+  });
+
+  it("never hands the logger a callable it would invoke later", () => {
+    const gameName = "Callable Test Game";
+    safeLog.registerSensitive(gameName);
+    const error = new Error("boom") as Error & Record<string, unknown>;
+    error["render"] = () => gameName;
+
+    safeLog.error("Steam request failed", { cause: error });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    const cause = payload?.["cause"] as Record<string, unknown>;
+    expect(typeof cause["render"]).not.toBe("function");
+    expect(cause["render"]).toBe("[function]");
+  });
+
+  it("leaves non-string payload values intact while scrubbing strings", () => {
+    const steamId = "76561198000000096";
+    safeLog.registerSensitive(steamId);
+    const observedAt = new Date("2026-08-14T00:00:00.000Z");
+    safeLog.info("message", {
+      status: 503,
+      retryable: true,
+      observedAt,
+      reason: `saw ${steamId}`,
+    });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    expect(payload?.["status"]).toBe(503);
+    expect(payload?.["retryable"]).toBe(true);
+    expect(payload?.["observedAt"]).toBe(observedAt);
+  });
+});

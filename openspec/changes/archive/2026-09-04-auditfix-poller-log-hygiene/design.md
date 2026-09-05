@@ -140,3 +140,16 @@ depends on this change, so rollback carries no data risk — it only restores th
 None blocking. Tasks 5.1 and 5.2 carry the two maintainer decisions; neither changes the
 specs, the approach, or the task breakdown here, which is why they are tasks rather than
 blockers.
+
+### Resolutions (2026-09-04)
+
+**Task 5.1 — historical Cloud Logging entries.** `firebase.json` declares no log sink or
+export for this project, so no configured export carries pre-fix entries beyond Cloud
+Logging's own default retention. Decision: keep the existing entries under default
+retention rather than attempt selective deletion; the disclosure window closes naturally
+as they age out, and this change stops any new entry from joining them.
+
+**Task 5.2 — git-history attribution finding.** Option 1, intended and accepted. Recorded
+in `tools/hltb-dataset/README.md` under "Provenance of the seed data." No dataset edit and
+no history rewrite follow from this — see Decision 3 above for why deleting rows without
+being asked would have been the wrong call anyway.
