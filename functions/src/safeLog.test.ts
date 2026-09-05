@@ -189,6 +189,37 @@ describe("safeLog", () => {
     expect(payload?.["reason"]).toBe("xx[redacted]yy");
   });
 
+  it("keeps an Error payload readable instead of serializing it as {}", () => {
+    // message and stack are non-enumerable, so a generic own-keys walk
+    // would drop the fault entirely.
+    const error = new Error("connection reset");
+
+    safeLog.error("Steam request failed", { cause: error });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    const cause = payload?.["cause"] as Record<string, unknown>;
+    expect(cause["name"]).toBe("Error");
+    expect(cause["message"]).toBe("connection reset");
+    expect(typeof cause["stack"]).toBe("string");
+  });
+
+  it("scrubs registered values out of an Error payload", () => {
+    const steamId = "76561198000000099";
+    safeLog.registerSensitive(steamId);
+    const error = new Error(`lookup failed for ${steamId}`) as Error & {
+      code?: string;
+    };
+    error.code = `E_${steamId}`;
+
+    safeLog.error("Steam request failed", { cause: error });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    const cause = payload?.["cause"] as Record<string, unknown>;
+    expect(cause["message"]).toBe("lookup failed for [redacted]");
+    expect(cause["code"]).toBe("E_[redacted]");
+  });
+
   it("leaves non-string payload values intact while scrubbing strings", () => {
     const steamId = "76561198000000096";
     safeLog.registerSensitive(steamId);

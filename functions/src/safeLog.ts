@@ -17,13 +17,14 @@ import * as logger from "firebase-functions/logger";
  * and at any depth of the payload — in addition to dropping identity-named
  * fields. A value that is a bare number is matched on digit boundaries, so
  * a two-digit app ID redacts the number without shredding every unrelated
- * string that happens to contain those digits. Non-plain objects are normalized to plain objects of their own
- * enumerable properties, honouring toJSON() exactly as the underlying
- * logger serializes them, so a class instance cannot smuggle a value past
- * the scrub; Dates stay by reference as intentional safe values. Call
- * sites register the concrete values they handle via
- * {@link registerSensitive} so later call sites inherit the rule without
- * restating it.
+ * string that happens to contain those digits. Non-plain objects are
+ * normalized to plain objects of their own enumerable properties, honouring
+ * toJSON() exactly as the underlying logger serializes them, so a class
+ * instance cannot smuggle a value past the scrub; Dates stay by reference as
+ * intentional safe values, and Errors keep their non-enumerable name,
+ * message and stack so a fault stays readable. Call sites register the
+ * concrete values they handle via {@link registerSensitive} so later call
+ * sites inherit the rule without restating it.
  */
 const IDENTITY_FIELDS = new Set(["steamId", "gameid", "gameName"]);
 
@@ -144,6 +145,38 @@ function scrubValue(value: unknown, seen = new Set<object>()): unknown {
   // reference. This precedes the toJSON handling below because Date defines
   // toJSON — calling it here would stringify the Date before logging.
   if (value instanceof Date) return value;
+  // `name`, `message` and `stack` are non-enumerable and Error defines no
+  // toJSON, so the generic object walk below would serialize a thrown error
+  // as `{}` — dropping the fault entirely, against the spec's requirement
+  // that faults stay diagnosable. Name them explicitly, along with the
+  // equally non-enumerable `cause`, then let the own-keys walk pick up
+  // extras such as a Node system error's `code`.
+  if (value instanceof Error) {
+    if (seen.has(value)) return "[Circular]";
+    seen.add(value);
+    try {
+      const serialized: Record<string, unknown> = {
+        name: scrubText(value.name),
+        message: scrubText(value.message),
+      };
+      if (typeof value.stack === "string") {
+        serialized["stack"] = scrubText(value.stack);
+      }
+      if (value.cause !== undefined) {
+        serialized["cause"] = scrubValue(value.cause, seen);
+      }
+      for (const key of Object.keys(value)) {
+        if (IDENTITY_FIELDS.has(key)) continue;
+        serialized[key] = scrubValue(
+          (value as unknown as Record<string, unknown>)[key],
+          seen,
+        );
+      }
+      return serialized;
+    } finally {
+      seen.delete(value);
+    }
+  }
   if (value !== null && typeof value === "object") {
     if (seen.has(value)) return "[Circular]";
     seen.add(value);
