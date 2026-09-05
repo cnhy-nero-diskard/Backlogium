@@ -15,7 +15,9 @@ import * as logger from "firebase-functions/logger";
  * message text (`` `failed for ${steamId}` ``). This module therefore
  * scrubs the sensitive *values* themselves — every string in the message
  * and at any depth of the payload — in addition to dropping identity-named
- * fields. Non-plain objects are normalized to plain objects of their own
+ * fields. A value that is a bare number is matched on digit boundaries, so
+ * a two-digit app ID redacts the number without shredding every unrelated
+ * string that happens to contain those digits. Non-plain objects are normalized to plain objects of their own
  * enumerable properties, honouring toJSON() exactly as the underlying
  * logger serializes them, so a class instance cannot smuggle a value past
  * the scrub; Dates stay by reference as intentional safe values. Call
@@ -33,6 +35,9 @@ export type SafeLogPayload = Record<string, unknown> & {
 };
 
 const REDACTED = "[redacted]";
+
+/** A registered value that is a bare number, and so needs digit boundaries. */
+const NUMERIC = /^\d+$/;
 
 /**
  * Concrete identity values seen so far. Additive and process-wide: the
@@ -54,6 +59,7 @@ export function registerSensitive(
   for (const value of values) {
     if (typeof value === "string" && value.length > 0) {
       sensitiveValues.add(value);
+      orderedCache = null;
     }
   }
 }
@@ -61,18 +67,64 @@ export function registerSensitive(
 /** Test hook: production code registers only, and never clears. */
 export function clearSensitiveValues(): void {
   sensitiveValues.clear();
+  orderedCache = null;
 }
 
+/**
+ * Registered values longest-first, so a title that contains a shorter
+ * registered value is redacted whole rather than in pieces. Cached because
+ * every string in every payload is scrubbed against this list, and the set
+ * only changes when a call site registers something new.
+ */
+let orderedCache: string[] | null = null;
+
 function orderedSensitive(): string[] {
-  return [...sensitiveValues].sort((a, b) => b.length - a.length);
+  orderedCache ??= [...sensitiveValues].sort((a, b) => b.length - a.length);
+  return orderedCache;
+}
+
+function isDigit(character: string | undefined): boolean {
+  return character !== undefined && character >= "0" && character <= "9";
+}
+
+/**
+ * Replace every occurrence of one registered value with the redaction marker.
+ *
+ * A wholly numeric value matches only where it is not flanked by another
+ * digit. Steam app IDs are as short as two digits — 10, 20, 70 and 220 are
+ * real ones — and a registered value is substituted into every later log
+ * string for the life of the instance, so an unbounded match would rewrite
+ * `connect ETIMEDOUT 104.16.0.1` into `connect ETIMEDOUT [redacted]4.16.0.1`
+ * and cost the diagnosability the spec requires in the same breath as the
+ * privacy it requires. Bounding leaves the disclosure closed where it is a
+ * disclosure: the ID is still redacted wherever it appears *as* that number
+ * (`440`, `appid=440`), and `4400` is a different number, not a leak of 440.
+ *
+ * Non-numeric values — game titles — still match anywhere, because a title
+ * embedded in surrounding text is the title regardless of what abuts it.
+ */
+function replaceSensitive(text: string, sensitive: string): string {
+  const bounded = NUMERIC.test(sensitive);
+  let safe = "";
+  let cursor = 0;
+  let at = text.indexOf(sensitive);
+
+  while (at !== -1) {
+    const after = at + sensitive.length;
+    const flanked =
+      bounded && (isDigit(text[at - 1]) || isDigit(text[after]));
+    safe += text.slice(cursor, at) + (flanked ? sensitive : REDACTED);
+    cursor = after;
+    at = text.indexOf(sensitive, cursor);
+  }
+
+  return cursor === 0 ? text : safe + text.slice(cursor);
 }
 
 function scrubText(text: string): string {
   let safe = text;
   for (const sensitive of orderedSensitive()) {
-    if (safe.includes(sensitive)) {
-      safe = safe.split(sensitive).join(REDACTED);
-    }
+    safe = replaceSensitive(safe, sensitive);
   }
   return safe;
 }

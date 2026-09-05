@@ -150,6 +150,45 @@ describe("safeLog", () => {
     expect(payload).toEqual({ context: "[redacted]" });
   });
 
+  it("redacts a short numeric app ID standing on its own", () => {
+    safeLog.registerSensitive("70");
+    safeLog.info("message", { reason: "stopped playing 70 at the door" });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(payload?.["reason"]).toBe("stopped playing [redacted] at the door");
+  });
+
+  it("leaves unrelated digits alone when a short app ID is registered", () => {
+    // 10 is Counter-Strike's real app ID. Substituting it unbounded would
+    // rewrite any later diagnostic that merely contains those two digits.
+    safeLog.registerSensitive("10");
+    safeLog.error("Steam request failed", {
+      reason: "connect ETIMEDOUT 104.16.0.1:443 after 4100ms",
+    });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    expect(payload?.["reason"]).toBe(
+      "connect ETIMEDOUT 104.16.0.1:443 after 4100ms",
+    );
+  });
+
+  it("still redacts a full Steam ID, which is numeric but bounded", () => {
+    const steamId = "76561198000000098";
+    safeLog.registerSensitive(steamId);
+    safeLog.warn(`no player for ${steamId}.`);
+
+    const [message] = vi.mocked(logger.warn).mock.calls[0];
+    expect(message).toBe("no player for [redacted].");
+  });
+
+  it("redacts a non-numeric title wherever it is embedded", () => {
+    safeLog.registerSensitive("Portal");
+    safeLog.info("message", { reason: "xxPortalyy" });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(payload?.["reason"]).toBe("xx[redacted]yy");
+  });
+
   it("leaves non-string payload values intact while scrubbing strings", () => {
     const steamId = "76561198000000096";
     safeLog.registerSensitive(steamId);
