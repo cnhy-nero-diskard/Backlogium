@@ -284,6 +284,34 @@ describe("safeLog", () => {
     expect(payload).toEqual({ elapsedMs: 4400 });
   });
 
+  it("scrubs a registered value used as a dynamic key on an Error", () => {
+    const steamId = "76561198000000101";
+    safeLog.registerSensitive(steamId);
+    const error = new Error("lookup failed") as Error &
+      Record<string, unknown>;
+    error[steamId] = true;
+
+    safeLog.error("Steam request failed", { cause: error });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    const cause = payload?.["cause"] as Record<string, unknown>;
+    expect(cause["message"]).toBe("lookup failed");
+    expect(cause["[redacted]"]).toBe(true);
+  });
+
+  it("keeps a fault number on an Error that collides with an app ID", () => {
+    safeLog.registerSensitive("500");
+    const error = new Error("bad gateway") as Error & Record<string, unknown>;
+    error["status"] = 500;
+
+    safeLog.error("Steam request failed", { cause: error });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    const cause = payload?.["cause"] as Record<string, unknown>;
+    expect(cause["status"]).toBe(500);
+  });
+
   it("leaves non-string payload values intact while scrubbing strings", () => {
     const steamId = "76561198000000096";
     safeLog.registerSensitive(steamId);

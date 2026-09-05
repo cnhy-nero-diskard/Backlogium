@@ -201,11 +201,16 @@ function scrubValue(
       if (value.cause !== undefined) {
         serialized["cause"] = scrubValue(value.cause, seen);
       }
+      // Same safe-key handling as the generic walk below: an error carrying
+      // a dynamic property (`error[steamId] = true`) would otherwise be
+      // normalized into a plain object whose field name is the raw identity.
+      // The three names above are literals and need no scrubbing.
       for (const key of Object.keys(value)) {
         if (IDENTITY_FIELDS.has(key)) continue;
-        serialized[key] = scrubValue(
+        serialized[scrubText(key)] = scrubValue(
           (value as unknown as Record<string, unknown>)[key],
           seen,
+          key,
         );
       }
       return serialized;
