@@ -22,7 +22,10 @@ import * as logger from "firebase-functions/logger";
  * toJSON() exactly as the underlying logger serializes them, so a class
  * instance cannot smuggle a value past the scrub; Dates stay by reference as
  * intentional safe values, and Errors keep their non-enumerable name,
- * message and stack so a fault stays readable. Call sites register the
+ * message and stack so a fault stays readable. Property names are scrubbed
+ * like values, and a number equal to a registered value is redacted too,
+ * since neither a JSON field name nor a numeric app ID is any less readable
+ * in Cloud Logging than the string form. Call sites register the
  * concrete values they handle via {@link registerSensitive} so later call
  * sites inherit the rule without restating it.
  */
@@ -39,6 +42,23 @@ const REDACTED = "[redacted]";
 
 /** A registered value that is a bare number, and so needs digit boundaries. */
 const NUMERIC = /^\d+$/;
+
+/**
+ * Fields whose numeric value is a protocol or Steam enum, never an identity.
+ *
+ * The numeric rule matches on value, and Steam app IDs collide with HTTP
+ * status codes — 400, 500 and 502 are all real app IDs. Without this
+ * exemption, a poll that observed Portal (400) would redact the `status` of
+ * a later HTTP 400 and lose exactly the fault the spec requires to stay
+ * diagnosable. Deliberately narrow: the protection stays value-based, and
+ * this is only the small, named set of places where a number cannot be an
+ * identity in the first place.
+ */
+const FAULT_FIELDS = new Set([
+  "status",
+  "personastate",
+  "communityvisibilitystate",
+]);
 
 /**
  * Concrete identity values seen so far. Additive and process-wide: the
@@ -140,6 +160,14 @@ function scrubValue(
   field?: string,
 ): unknown {
   if (typeof value === "string") return scrubText(value);
+  // A number that is exactly a registered value is that value wearing a
+  // different type: `{ app: Number(gameid) }` discloses the app ID just as
+  // `{ app: gameid }` does. Exact match rather than the digit-boundary rule
+  // strings use — 4400 is a different number, not a leak of 440.
+  if (typeof value === "number" || typeof value === "bigint") {
+    if (field !== undefined && FAULT_FIELDS.has(field)) return value;
+    return sensitiveValues.has(value.toString()) ? REDACTED : value;
+  }
   if (Array.isArray(value)) {
     if (seen.has(value)) return "[Circular]";
     seen.add(value);

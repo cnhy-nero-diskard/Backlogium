@@ -242,6 +242,48 @@ describe("safeLog", () => {
     expect(payload).toEqual({ context: { "[redacted]": "played" } });
   });
 
+  it("redacts an app ID that reaches the payload as a number", () => {
+    safeLog.registerSensitive("440");
+    safeLog.info("message", { app: Number("440") });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(payload).toEqual({ app: "[redacted]" });
+  });
+
+  it("redacts a numeric app ID inside an array", () => {
+    safeLog.registerSensitive("440");
+    safeLog.info("message", { recent: [440, 441] });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(payload).toEqual({ recent: ["[redacted]", 441] });
+  });
+
+  it("keeps an HTTP status that collides with a registered app ID", () => {
+    // 500 is Left 4 Dead's real app ID. A poll that observed it must not
+    // cost the next HTTP 500 its status code.
+    safeLog.registerSensitive("500");
+    safeLog.error("Steam returned an error status", { status: 500 });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    expect(payload).toEqual({ status: 500 });
+  });
+
+  it("keeps a Steam enum that collides with a registered app ID", () => {
+    safeLog.registerSensitive("1");
+    safeLog.warn("Profile is not public", { communityvisibilitystate: 1 });
+
+    const [, payload] = vi.mocked(logger.warn).mock.calls[0];
+    expect(payload).toEqual({ communityvisibilitystate: 1 });
+  });
+
+  it("does not redact a number that merely contains a registered app ID", () => {
+    safeLog.registerSensitive("440");
+    safeLog.info("message", { elapsedMs: 4400 });
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(payload).toEqual({ elapsedMs: 4400 });
+  });
+
   it("leaves non-string payload values intact while scrubbing strings", () => {
     const steamId = "76561198000000096";
     safeLog.registerSensitive(steamId);
