@@ -96,10 +96,12 @@ the single component that owns this rule, so a call site cannot reintroduce
 the leak by being written somewhere new.
 
 Verify the boundary with the same grep-must-be-silent pattern `CLAUDE.md` uses
-for the haptics authority:
+for the haptics authority. It matches `console.*` as well as the logger import:
+`console.log` in a Cloud Function is not a no-op that vanishes in production,
+it is a second, unredacted path into the very same Cloud Logging stream.
 
 ```bash
-grep -rn "firebase-functions/logger" functions/src/ --exclude=safeLog.ts --exclude="*.test.ts"
+grep -rnE "firebase-functions/logger|console\." functions/src/ --exclude=safeLog.ts --exclude="*.test.ts"
 ```
 
 ## Rotating the Steam API key
