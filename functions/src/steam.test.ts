@@ -7,12 +7,14 @@ vi.mock("firebase-functions/logger", () => ({
 }));
 
 import * as logger from "firebase-functions/logger";
+import { clearSensitiveValues } from "./safeLog";
 import { fetchPresence } from "./steam";
 
 describe("fetchPresence logging", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    clearSensitiveValues();
   });
 
   it("logs the unknown-player condition without the configured Steam ID", async () => {
@@ -31,6 +33,24 @@ describe("fetchPresence logging", () => {
     );
     const [, payload] = vi.mocked(logger.error).mock.calls[0];
     expect(payload).toBeUndefined();
+  });
+
+  it("keeps the API key out of a transport failure that echoes the URL", async () => {
+    // The request URL carries the key. Node's fetch does not put the URL in
+    // its error text today; a runtime or a refactor that did would otherwise
+    // publish the secret to Cloud Logging on every failed poll.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(
+        new Error("request to ...?key=secret-key&steamids=1 failed"),
+      ),
+    );
+
+    await fetchPresence("secret-key", "76561198000000000");
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain("secret-key");
+    expect(payload?.["reason"]).toContain("[redacted]");
   });
 
   it("still identifies a transport failure with its reason", async () => {

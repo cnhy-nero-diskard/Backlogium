@@ -55,7 +55,12 @@ export async function fetchPresence(
 ): Promise<Observation | null> {
   // Scrub the configured identity from every log line below, wherever a
   // later call site places it — field value, nested object, or message.
-  safeLog.registerSensitive(steamId);
+  // The API key is registered for the same reason: the request URL carries
+  // it, and the transport-failure path below logs `String(error)`. Node's
+  // fetch does not put the URL in its error text today, so this is a
+  // backstop rather than a live leak — but "do not log the URL" is call-site
+  // discipline, which is exactly what this module exists to stop relying on.
+  safeLog.registerSensitive(steamId, apiKey);
 
   // Stamped before the request so the timestamp reflects when Steam was
   // asked, not when it happened to answer.
