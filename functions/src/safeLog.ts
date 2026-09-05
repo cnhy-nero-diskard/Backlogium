@@ -168,6 +168,11 @@ function scrubValue(
     if (field !== undefined && FAULT_FIELDS.has(field)) return value;
     return sensitiveValues.has(value.toString()) ? REDACTED : value;
   }
+  // A function is never data worth logging, and one copied into the output
+  // is actively dangerous: the logger calls a `toJSON` it finds on whatever
+  // object it is handed, so a callable riding along on a normalized payload
+  // would run after this module has finished scrubbing.
+  if (typeof value === "function") return "[function]";
   if (Array.isArray(value)) {
     if (seen.has(value)) return "[Circular]";
     seen.add(value);
@@ -181,43 +186,6 @@ function scrubValue(
   // reference. This precedes the toJSON handling below because Date defines
   // toJSON — calling it here would stringify the Date before logging.
   if (value instanceof Date) return value;
-  // `name`, `message` and `stack` are non-enumerable and Error defines no
-  // toJSON, so the generic object walk below would serialize a thrown error
-  // as `{}` — dropping the fault entirely, against the spec's requirement
-  // that faults stay diagnosable. Name them explicitly, along with the
-  // equally non-enumerable `cause`, then let the own-keys walk pick up
-  // extras such as a Node system error's `code`.
-  if (value instanceof Error) {
-    if (seen.has(value)) return "[Circular]";
-    seen.add(value);
-    try {
-      const serialized: Record<string, unknown> = {
-        name: scrubText(value.name),
-        message: scrubText(value.message),
-      };
-      if (typeof value.stack === "string") {
-        serialized["stack"] = scrubText(value.stack);
-      }
-      if (value.cause !== undefined) {
-        serialized["cause"] = scrubValue(value.cause, seen);
-      }
-      // Same safe-key handling as the generic walk below: an error carrying
-      // a dynamic property (`error[steamId] = true`) would otherwise be
-      // normalized into a plain object whose field name is the raw identity.
-      // The three names above are literals and need no scrubbing.
-      for (const key of Object.keys(value)) {
-        if (IDENTITY_FIELDS.has(key)) continue;
-        serialized[scrubText(key)] = scrubValue(
-          (value as unknown as Record<string, unknown>)[key],
-          seen,
-          key,
-        );
-      }
-      return serialized;
-    } finally {
-      seen.delete(value);
-    }
-  }
   if (value !== null && typeof value === "object") {
     if (seen.has(value)) return "[Circular]";
     seen.add(value);
@@ -225,6 +193,12 @@ function scrubValue(
       // Mirror the pinned firebase-functions logger, which calls an object's
       // toJSON() before walking its properties: scrub what the logger will
       // actually serialize, not the wrapper holding it.
+      //
+      // This precedes the Error branch because the logger makes no exception
+      // for Error either. Normalizing an error's fields ahead of its own
+      // toJSON() would scrub what the logger never reads and emit what it
+      // does — and would copy the callable itself onto the result, where the
+      // logger then invokes it, after this module is done.
       let toJSON: unknown;
       try {
         toJSON = (value as { toJSON?: unknown }).toJSON;
@@ -241,6 +215,39 @@ function scrubValue(
         if (serialized === value) return "[Circular]";
         return scrubValue(serialized, seen);
       }
+
+      // `name`, `message` and `stack` are non-enumerable and Error defines no
+      // toJSON of its own, so the generic walk below would serialize a thrown
+      // error as `{}` — dropping the fault entirely, against the spec's
+      // requirement that faults stay diagnosable. Name them explicitly, along
+      // with the equally non-enumerable `cause`, then let the own-keys walk
+      // pick up extras such as a Node system error's `code`.
+      if (value instanceof Error) {
+        const serialized: Record<string, unknown> = {
+          name: scrubText(value.name),
+          message: scrubText(value.message),
+        };
+        if (typeof value.stack === "string") {
+          serialized["stack"] = scrubText(value.stack);
+        }
+        if (value.cause !== undefined) {
+          serialized["cause"] = scrubValue(value.cause, seen);
+        }
+        // Same safe-key handling as the generic walk below: an error carrying
+        // a dynamic property (`error[steamId] = true`) would otherwise be
+        // normalized into a plain object whose field name is the raw
+        // identity. The three names above are literals and need no scrubbing.
+        for (const key of Object.keys(value)) {
+          if (IDENTITY_FIELDS.has(key)) continue;
+          serialized[scrubText(key)] = scrubValue(
+            (value as unknown as Record<string, unknown>)[key],
+            seen,
+            key,
+          );
+        }
+        return serialized;
+      }
+
       // Any other object shape — plain or class instance — is normalized to
       // a plain object of its own enumerable properties, which is exactly
       // what the logger's removeCircular() serializes from it.

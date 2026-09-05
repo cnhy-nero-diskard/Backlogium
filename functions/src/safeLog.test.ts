@@ -312,6 +312,35 @@ describe("safeLog", () => {
     expect(cause["status"]).toBe(500);
   });
 
+  it("scrubs an Error's own toJSON() the way the logger serializes it", () => {
+    const steamId = "76561198000000102";
+    safeLog.registerSensitive(steamId);
+    const error = new Error("lookup failed") as Error & {
+      toJSON?: () => unknown;
+    };
+    error.toJSON = () => steamId;
+
+    safeLog.error("Steam request failed", { cause: error });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    expect(payload).toEqual({ cause: "[redacted]" });
+  });
+
+  it("never hands the logger a callable it would invoke later", () => {
+    const gameName = "Callable Test Game";
+    safeLog.registerSensitive(gameName);
+    const error = new Error("boom") as Error & Record<string, unknown>;
+    error["render"] = () => gameName;
+
+    safeLog.error("Steam request failed", { cause: error });
+
+    const [, payload] = vi.mocked(logger.error).mock.calls[0];
+    const cause = payload?.["cause"] as Record<string, unknown>;
+    expect(typeof cause["render"]).not.toBe("function");
+    expect(cause["render"]).toBe("[function]");
+  });
+
   it("leaves non-string payload values intact while scrubbing strings", () => {
     const steamId = "76561198000000096";
     safeLog.registerSensitive(steamId);
