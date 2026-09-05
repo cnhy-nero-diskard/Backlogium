@@ -220,6 +220,28 @@ describe("safeLog", () => {
     expect(cause["code"]).toBe("E_[redacted]");
   });
 
+  it("scrubs a registered value used as a property name", () => {
+    const steamId = "76561198000000100";
+    safeLog.registerSensitive(steamId);
+    safeLog.info("message", { [steamId]: true } as unknown as SafeLogPayload);
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    expect(payload).toEqual({ "[redacted]": true });
+  });
+
+  it("scrubs a registered value used as a nested property name", () => {
+    const gameName = "Nested Key Test Game";
+    safeLog.registerSensitive(gameName);
+    safeLog.info("message", {
+      context: { [gameName]: "played" },
+    } as unknown as SafeLogPayload);
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(gameName);
+    expect(payload).toEqual({ context: { "[redacted]": "played" } });
+  });
+
   it("leaves non-string payload values intact while scrubbing strings", () => {
     const steamId = "76561198000000096";
     safeLog.registerSensitive(steamId);

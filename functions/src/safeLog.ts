@@ -130,7 +130,15 @@ function scrubText(text: string): string {
   return safe;
 }
 
-function scrubValue(value: unknown, seen = new Set<object>()): unknown {
+/**
+ * `field` is the property name this value was reached under, or undefined at
+ * the payload root and inside arrays. Only the numeric rule consults it.
+ */
+function scrubValue(
+  value: unknown,
+  seen = new Set<object>(),
+  field?: string,
+): unknown {
   if (typeof value === "string") return scrubText(value);
   if (Array.isArray(value)) {
     if (seen.has(value)) return "[Circular]";
@@ -203,20 +211,25 @@ function scrubValue(value: unknown, seen = new Set<object>()): unknown {
       // Any other object shape — plain or class instance — is normalized to
       // a plain object of its own enumerable properties, which is exactly
       // what the logger's removeCircular() serializes from it.
+      //
+      // Property names are scrubbed as well as values. A JSON field name is
+      // as readable in Cloud Logging as a field value, so `{ [steamId]: true }`
+      // discloses exactly what `{ id: steamId }` does.
       const safe: Record<string, unknown> = {};
       for (const key of Object.keys(value)) {
         if (IDENTITY_FIELDS.has(key)) continue;
+        const safeKey = scrubText(key);
         let entry: unknown;
         try {
           entry = (value as Record<string, unknown>)[key];
         } catch {
-          safe[key] = "[Error - cannot serialize]";
+          safe[safeKey] = "[Error - cannot serialize]";
           continue;
         }
         try {
-          safe[key] = scrubValue(entry, seen);
+          safe[safeKey] = scrubValue(entry, seen, key);
         } catch {
-          safe[key] = "[Error - cannot serialize]";
+          safe[safeKey] = "[Error - cannot serialize]";
         }
       }
       return safe;
