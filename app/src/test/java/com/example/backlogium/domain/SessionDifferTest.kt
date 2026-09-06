@@ -189,7 +189,7 @@ class SessionDifferTest {
     @Test
     fun clockRollbackWhileExtending_clampsEndAtRatherThanInverting() {
         // SessionDifferTest previously only exercised increasing timestamps; `now` here is
-        // earlier than the open session's own `startAt`.
+        // earlier than the open session's already-stored end.
         val prior = mapOf(
             1L to GameDiffState(
                 lastPlaytime = 130,
@@ -206,14 +206,43 @@ class SessionDifferTest {
 
         val extend = result.actions.single() as SessionAction.Extend
         assertEquals(1000L, extend.startAt)
-        assertEquals(1000L, extend.endAt) // clamped to startAt, never inverted
+        assertEquals(2000L, extend.endAt) // clamped to the existing boundary, never inverted
         assertTrue(extend.endAt >= extend.startAt)
         // Tracked minutes are unaffected by the clamp — they come from Steam, not the clock.
         assertEquals(50, extend.minutes)
         assertEquals(20, extend.addedMinutes)
         assertEquals(20, result.playedDeltaByAppId[1L])
         assertEquals(
-            listOf(ClockRollback(appId = 1L, attemptedEndAt = 500L, clampedEndAt = 1000L)),
+            listOf(ClockRollback(appId = 1L, attemptedEndAt = 500L, clampedEndAt = 2000L)),
+            result.clockRollbacks,
+        )
+    }
+
+    @Test
+    fun clockRollbackAfterStartAt_clampsToStoredEndAndRecordsRollback() {
+        // A rollback that remains after `startAt` must still clamp: `now = 1500` passes a
+        // `coerceAtLeast(startAt)` guard unchanged, yet it would rewind the stored end.
+        val prior = mapOf(
+            1L to GameDiffState(
+                lastPlaytime = 130,
+                openSession = OpenSession(startAt = 1000L, minutes = 30, lastIncreaseAt = 2000L),
+            ),
+        )
+
+        val result = differ.diff(
+            polls = listOf(PollGame(1L, 150)),
+            priorStates = prior,
+            now = 1500L,
+            previousPollAt = 2000L,
+        )
+
+        val extend = result.actions.single() as SessionAction.Extend
+        assertEquals(1000L, extend.startAt)
+        assertEquals(2000L, extend.endAt) // stored end preserved, not rewound to 1500
+        assertEquals(50, extend.minutes)
+        assertEquals(20, extend.addedMinutes)
+        assertEquals(
+            listOf(ClockRollback(appId = 1L, attemptedEndAt = 1500L, clampedEndAt = 2000L)),
             result.clockRollbacks,
         )
     }

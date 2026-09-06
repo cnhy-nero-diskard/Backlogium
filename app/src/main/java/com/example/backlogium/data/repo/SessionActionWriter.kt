@@ -54,6 +54,14 @@ class SessionActionWriter @Inject constructor(
                         sessionDao.getOpenSession(action.appId)?.let {
                             sessionDao.update(
                                 it.copy(
+                                    // Deterministic in either commit order: the merged row keeps
+                                    // the earlier observed start and the latest observed end, so
+                                    // two concurrent Opens leave identical stored state
+                                    // regardless of which insert won (auditfix-session-ledger-
+                                    // integrity, #116). Future presence extensions measure from
+                                    // this start, so a winner-dependent start would also diverge
+                                    // later minute calculation.
+                                    startAt = minOf(it.startAt, action.startAt),
                                     minutes = it.minutes + action.addedMinutes,
                                     endAt = maxOf(it.endAt ?: it.startAt, action.endAt),
                                 ),

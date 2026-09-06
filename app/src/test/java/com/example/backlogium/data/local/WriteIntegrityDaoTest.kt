@@ -617,7 +617,9 @@ class WriteIntegrityDaoTest {
         assertEquals(1, sessions.size)
         val merged = sessions.single()
         assertTrue(merged.open)
-        assertEquals(1_000L, merged.startAt)
+        // Deterministic merge: the earlier observed start wins regardless of commit order,
+        // so future presence extensions measuring from this start stay identical too.
+        assertEquals(900L, merged.startAt)
         assertEquals(1_200L, merged.endAt)
         assertEquals(55, merged.minutes)
     }
@@ -664,20 +666,41 @@ class WriteIntegrityDaoTest {
     fun concurrentPresenceObservationsCommittingInEitherOrderLeaveIdenticalState() = runBlocking {
         database.gameDao().upsert(sharedGame(appId = 730L))
 
-        coroutineScope {
-            launch { recordPresenceObservation(appId = 730L, at = 1_000L) }
-            launch { recordPresenceObservation(appId = 730L, at = 1_030L) }
-        }
+        // Both observations are derived from "no open session", as two overlapping checkNow()
+        // calls would each see before either commits. Committing those two Opens in either
+        // order must leave the exact same row (delta spec, task 2.6): start is minOf(), end is
+        // maxOf(), and minutes addition commutes.
+        val deriver = PresenceSessionDeriver()
+        val firstObserved = deriver.derive(
+            PresenceSessionDeriver.Observation(730L, 1_000L),
+            null,
+        ).actions.single()
+        val secondObserved = deriver.derive(
+            PresenceSessionDeriver.Observation(730L, 1_030L),
+            null,
+        ).actions.single()
 
-        val sessions = database.sessionDao().getAll()
-        assertEquals(1, sessions.size)
-        val merged = sessions.single()
-        assertTrue(merged.open)
-        assertEquals(0, merged.minutes)
-        // endAt is maxOf() on both sides of the merge, so it lands on 1_030 regardless of which
-        // observation's tryOpenSession() wins the race; only startAt depends on the winner.
-        assertEquals(1_030L, merged.endAt)
-        assertTrue(merged.startAt == 1_000L || merged.startAt == 1_030L)
+        writer().applySessionActions(listOf(firstObserved, secondObserved))
+        assertEquals(1, database.sessionDao().getAll().size)
+        val forward = database.sessionDao().getAll().single()
+        database.sessionDao().deleteAll()
+
+        writer().applySessionActions(listOf(secondObserved, firstObserved))
+        assertEquals(1, database.sessionDao().getAll().size)
+        val reverse = database.sessionDao().getAll().single()
+
+        for (merged in listOf(forward, reverse)) {
+            assertTrue(merged.open)
+            assertEquals(730L, merged.appId)
+            assertEquals(1_000L, merged.startAt)
+            assertEquals(1_030L, merged.endAt)
+            assertEquals(0, merged.minutes)
+        }
+        assertEquals(forward.appId, reverse.appId)
+        assertEquals(forward.startAt, reverse.startAt)
+        assertEquals(forward.endAt, reverse.endAt)
+        assertEquals(forward.minutes, reverse.minutes)
+        assertEquals(forward.open, reverse.open)
     }
 
     @Test

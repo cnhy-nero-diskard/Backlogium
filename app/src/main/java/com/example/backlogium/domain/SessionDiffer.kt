@@ -130,9 +130,11 @@ class SessionDiffer @Inject constructor() {
                         minutes = delta,
                     )
                 } else {
-                    // Same guard for an extension: the session's `startAt` is fixed at open, so a
-                    // clock rollback since then must not pull `endAt` behind it.
-                    val endAt = now.coerceAtLeast(prior.openSession.startAt)
+                    // Same guard for an extension: the session already has a stored end
+                    // (`lastIncreaseAt`), so a clock rollback must not pull `endAt` behind
+                    // that existing boundary — clamping to `startAt` would discard the
+                    // valid stored end (design.md Decision 2).
+                    val endAt = now.coerceAtLeast(prior.openSession.lastIncreaseAt)
                     if (endAt != now) {
                         rollbacks += ClockRollback(poll.appId, attemptedEndAt = now, clampedEndAt = endAt)
                     }
