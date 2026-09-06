@@ -15,6 +15,7 @@ vi.mock("firebase-functions/logger", () => ({
   warn: vi.fn(),
 }));
 
+import * as logger from "firebase-functions/logger";
 import { fetchPresence, type Observation } from "./steam";
 import { isMaterialChange, recordObservation } from "./presence";
 
@@ -112,6 +113,18 @@ describe("presence poller", () => {
         write.path.startsWith("players/test-steam-id/presence/"),
       ),
     ).toHaveLength(0);
+  });
+
+  it("a recorded transition logs no steamId, gameid, or gameName", async () => {
+    const next = observation("570", "2026-08-14T01:02:03.000Z");
+    firestore.seed("players/test-steam-id", { gameid: "440", personastate: 1 });
+
+    await recordObservation("test-steam-id", next);
+
+    expect(logger.info).toHaveBeenCalledWith("Recorded presence transition", {
+      outcome: "written",
+      first: false,
+    });
   });
 
   it("game-to-game transition writes both documents and resets since", async () => {

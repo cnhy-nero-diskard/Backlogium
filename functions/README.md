@@ -85,6 +85,34 @@ Log lines worth recognising:
 An unchanged poll logs the `poll ok` heartbeat, refreshes current-state metadata, and
 does not append a presence transition.
 
+### What logs do and do not contain
+
+Log output has no access control — Firestore denies client reads and the poller
+writes through the Admin SDK, but Cloud Logging is readable by anyone with
+log-viewer access, any configured sink, and any tool downstream of a sink.
+Operational logs therefore never carry the configured Steam ID, a played
+game's app ID, or its name. Every log call passes through `src/safeLog.ts`,
+the single component that owns this rule, so a call site cannot reintroduce
+the leak by being written somewhere new. It redacts those values wherever
+they appear — a field value, a nested object, a JSON field *name*, the message
+text, or a number equal to an app ID.
+
+One deliberate carve-out: `status`, `personastate` and `communityvisibilitystate`
+keep their numeric values even when the number matches an observed app ID.
+Steam app IDs collide with HTTP status codes (400, 500 and 502 are all real app
+IDs), and a redacted `status` would cost the fault the log exists to report.
+Add a field to that list in `safeLog.ts` only when its value cannot be an
+identity.
+
+Verify the boundary with the same grep-must-be-silent pattern `CLAUDE.md` uses
+for the haptics authority. It matches `console.*` as well as the logger import:
+`console.log` in a Cloud Function is not a no-op that vanishes in production,
+it is a second, unredacted path into the very same Cloud Logging stream.
+
+```bash
+grep -rnE "firebase-functions/logger|console\." functions/src/ --exclude=safeLog.ts --exclude="*.test.ts"
+```
+
 ## Rotating the Steam API key
 
 ```bash
