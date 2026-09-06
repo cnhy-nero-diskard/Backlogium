@@ -276,7 +276,10 @@ class HomeViewModel @Inject constructor(
     ) { data, today ->
         val (profile, days, config, credState, isSyncing) = data
         val dayFields = homeDayFields(days, today)
-        val xpState = Gamification.levelState(profile?.totalXp ?: 0L, config)
+        // Same ceiling GamificationUpdater recomputes under: a legacy above-ceiling levelBase
+        // bypasses Settings validation, so the raw persisted config cannot reach the engine here
+        // (auditfix-session-ledger-integrity, #114).
+        val xpState = Gamification.levelState(profile?.totalXp ?: 0L, config.coercedToSafeCeilings())
         val configured = credState as? CredentialsState.Configured
         HomeUiState(
             loading = false,

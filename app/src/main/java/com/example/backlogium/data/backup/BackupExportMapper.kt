@@ -138,6 +138,10 @@ class BackupExportMapper @Inject constructor(
         hltb: List<com.example.backlogium.data.local.entity.HltbData>,
         config: RuleConfig,
     ): BackupComputed {
+        // Same ceiling GamificationUpdater recomputes under: a legacy above-ceiling value
+        // bypasses Settings validation, so the raw persisted config cannot reach the engine here
+        // (auditfix-session-ledger-integrity, #114). The exported ruleConfig above stays raw.
+        val safeConfig = config.coercedToSafeCeilings()
         val hltbByAppId = hltb.associateBy { it.appId }
         val trackedByGame = sessions.groupBy { it.appId }.mapValues { (_, s) -> s.sumOf { it.minutes } }
         val achievementsByGame = unlockedAchievements.groupBy { it.appId }
@@ -146,12 +150,12 @@ class BackupExportMapper @Inject constructor(
             val minutes = game.backupXpMinutes(trackedByGame[game.appId] ?: 0)
             val achievementXp = Gamification.achievementXp(
                 achievementsByGame[game.appId].orEmpty().toAchievementInputs(),
-                config,
+                safeConfig,
             )
             val gameXp = Gamification.gameXp(
                 minutes,
                 hltbByAppId[game.appId]?.completionistMinutes,
-                config,
+                safeConfig,
             )
             val total = gameXp + achievementXp
             if (minutes <= 0 && achievementXp <= 0) null else BackupGameXp(game.appId, game.name, total)
@@ -181,7 +185,7 @@ class BackupExportMapper @Inject constructor(
                 .mapIndexed { index, a ->
                     AchievementInput(id = "${a.appId}#$index", unlocked = true, globalUnlockPercent = a.snapshotPercent)
                 }
-            val xpState = Gamification.xp(cumulativeGames, cumulativeAchievements, config)
+            val xpState = Gamification.xp(cumulativeGames, cumulativeAchievements, safeConfig)
             BackupDayXp(date = day.date, cumulativeXp = xpState.totalXp)
         }
 

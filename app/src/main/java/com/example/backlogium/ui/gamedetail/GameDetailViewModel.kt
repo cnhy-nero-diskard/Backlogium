@@ -490,6 +490,10 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
 internal fun GameAchievement.toUi(config: RuleConfig): AchievementUi {
     val percent = rarityPercent
     val tierable = unlocked && percent != null
+    // Same ceiling GamificationUpdater recomputes under: a legacy above-ceiling per-tier award
+    // bypasses Settings validation, so the raw persisted config cannot reach the engine here
+    // (auditfix-session-ledger-integrity, #114).
+    val safeConfig = config.coercedToSafeCeilings()
     return AchievementUi(
         apiName = apiName,
         displayName = displayName,
@@ -500,7 +504,7 @@ internal fun GameAchievement.toUi(config: RuleConfig): AchievementUi {
         // 1,000,000), so this narrowing is always exact — unlike a player's accumulated total,
         // one award can never overflow Int.
         xp = if (tierable) {
-            Gamification.achievementXp(listOf(AchievementInput(apiName, true, percent)), config).toInt()
+            Gamification.achievementXp(listOf(AchievementInput(apiName, true, percent)), safeConfig).toInt()
         } else {
             0
         },
