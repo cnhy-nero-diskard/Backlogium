@@ -20,8 +20,9 @@ import * as logger from "firebase-functions/logger";
  * string that happens to contain those digits. Non-plain objects are
  * normalized to plain objects of their own enumerable properties, honouring
  * toJSON() exactly as the underlying logger serializes them, so a class
- * instance cannot smuggle a value past the scrub; Dates stay by reference as
- * intentional safe values, and Errors keep their non-enumerable name,
+ * instance cannot smuggle a value past the scrub; ordinary Dates stay by reference as
+ * intentional safe values (a Date with a custom toJSON falls through to that handling),
+ * and Errors keep their non-enumerable name,
  * message and stack so a fault stays readable. Property names are scrubbed
  * like values, and a number equal to a registered value is redacted too,
  * since neither a JSON field name nor a numeric app ID is any less readable
@@ -182,10 +183,22 @@ function scrubValue(
       seen.delete(value);
     }
   }
-  // Dates are intentional safe values (e.g. observedAt) and stay by
+  // Ordinary Dates are intentional safe values (e.g. observedAt) and stay by
   // reference. This precedes the toJSON handling below because Date defines
-  // toJSON — calling it here would stringify the Date before logging.
-  if (value instanceof Date) return value;
+  // toJSON — calling it here would stringify the Date before logging. Only
+  // Dates whose serializer is still Date.prototype.toJSON qualify: the
+  // underlying logger calls toJSON() on whatever it receives, so a Date with
+  // an own or subclass override falls through to the handling below, which
+  // scrubs what the logger will actually serialize.
+  if (value instanceof Date) {
+    let serializer: unknown;
+    try {
+      serializer = (value as { toJSON?: unknown }).toJSON;
+    } catch {
+      serializer = undefined;
+    }
+    if (serializer === Date.prototype.toJSON) return value;
+  }
   if (value !== null && typeof value === "object") {
     if (seen.has(value)) return "[Circular]";
     seen.add(value);

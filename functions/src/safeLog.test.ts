@@ -358,4 +358,16 @@ describe("safeLog", () => {
     expect(payload?.["retryable"]).toBe(true);
     expect(payload?.["observedAt"]).toBe(observedAt);
   });
+
+  it("scrubs a Date with a custom toJSON() returning a registered value", () => {
+    const steamId = "76561198000000103";
+    safeLog.registerSensitive(steamId);
+    const observedAt = new Date("2026-08-14T00:00:00.000Z");
+    observedAt.toJSON = () => steamId;
+    safeLog.info("message", { observedAt } as unknown as SafeLogPayload);
+
+    const [, payload] = vi.mocked(logger.info).mock.calls[0];
+    expect(JSON.stringify(payload)).not.toContain(steamId);
+    expect(payload).toEqual({ observedAt: "[redacted]" });
+  });
 });
