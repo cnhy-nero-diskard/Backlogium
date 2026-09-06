@@ -37,16 +37,24 @@ data class GameXpInput(
  * `cfg` is required, never defaulted: [RuleConfig] is user-tunable and persisted, and both engine
  * entry points default it, so an omitted config would compile and render plausible numbers that
  * disagree with the player's total for anyone who edited their rules.
+ *
+ * A value stored before RuleField gained its ceilings bypasses Settings validation on every
+ * background recompute, so the raw persisted config is coerced here — the same ceiling
+ * [GamificationUpdater] recomputes under — keeping the per-game badges summed to the stored
+ * `totalXp` instead of diverging on a legacy `xpPerMinute = Int.MAX_VALUE`
+ * (auditfix-session-ledger-integrity, #114).
  */
 object LibraryXp {
 
     /** XP a single game has contributed: its tapered playtime XP plus its achievements' XP. */
-    fun contribution(input: GameXpInput, cfg: RuleConfig): Int =
-        Gamification.gameXp(input.minutesPlayed, input.completionistMinutes, cfg) +
-            Gamification.achievementXp(input.achievementInputs(), cfg)
+    fun contribution(input: GameXpInput, cfg: RuleConfig): Long {
+        val safeConfig = cfg.coercedToSafeCeilings()
+        return Gamification.gameXp(input.minutesPlayed, input.completionistMinutes, safeConfig) +
+            Gamification.achievementXp(input.achievementInputs(), safeConfig)
+    }
 
     /** [contribution] across many games, keyed by appId. */
-    fun contributions(inputs: List<GameXpInput>, cfg: RuleConfig): Map<Long, Int> =
+    fun contributions(inputs: List<GameXpInput>, cfg: RuleConfig): Map<Long, Long> =
         inputs.associate { it.appId to contribution(it, cfg) }
 
     /**

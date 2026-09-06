@@ -520,7 +520,7 @@ class LiveStatusRepositoryTest {
         override suspend fun updateHeaderIdentity(personaName: String?, avatarUrl: String?, storeRegion: String?) {
             stored = (stored ?: PlayerProfile()).copy(personaName = personaName, avatarUrl = avatarUrl, storeRegion = storeRegion)
         }
-        override suspend fun updateGamification(totalXp: Int, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) = error("not used")
+        override suspend fun updateGamification(totalXp: Long, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) = error("not used")
         override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) = error("not used")
         override suspend fun updateLastSyncError(message: String) = error("not used")
         override suspend fun markPendingImportRecompute() = error("not used")

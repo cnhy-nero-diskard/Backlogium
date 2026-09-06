@@ -48,6 +48,22 @@ class SyncRunRecorderTest {
     }
 
     @Test
+    fun clockRollbacksRecordedThisRunAppearOnThePersistedRun() = runBlocking {
+        val dao = RecordingDiagnosticsDao()
+        val recorder = SyncRunRecorder(dao, FixedTimeProvider)
+        val scope = recorder.begin("test")
+
+        // A clamp is recorded rather than discarded silently (auditfix-session-ledger-integrity,
+        // #115) — this is the diagnostics surface task 3.3 requires it appear on.
+        scope.recordClockRollback()
+        scope.recordClockRollback()
+
+        recorder.finish(scope, SyncOutcome.SUCCESS, null, gamesExamined = 1, gamesUpdated = 1)
+
+        assertEquals(2, dao.runs.single().clockRollbackCount)
+    }
+
+    @Test
     fun rollupFailureDoesNotPreventRunPersistence() = runBlocking {
         val dao = RecordingDiagnosticsDao(failRollup = true)
         val recorder = SyncRunRecorder(dao, FixedTimeProvider)

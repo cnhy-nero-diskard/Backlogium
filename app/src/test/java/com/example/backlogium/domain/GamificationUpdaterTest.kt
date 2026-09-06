@@ -3,7 +3,9 @@ package com.example.backlogium.domain
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.data.repo.GameAchievement
 import com.example.backlogium.gamification.RuleConfig
+import com.example.backlogium.ui.gamedetail.toUi
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
@@ -166,7 +168,110 @@ class GamificationUpdaterTest {
         )
 
         // Flat fallback (no HLTB row): XP = minutes * rate, so a clamped input yields clamped XP.
-        assertEquals(Int.MAX_VALUE, profileDao.get()!!.totalXp)
+        assertEquals(Int.MAX_VALUE.toLong(), profileDao.get()!!.totalXp)
+    }
+
+    @Test
+    fun recompute_withLegacyAboveCeilingXpPerMinute_usesCeilingWithoutOpeningSettings() = runTest {
+        // A value stored before RuleField gained its ceilings (auditfix-session-ledger-integrity,
+        // #114): SettingsDataStore returns it verbatim and the sync worker passes it straight into
+        // compute without opening Settings. The recompute boundary must coerce it, so the next
+        // recompute produces a correct total rather than preserving a wrapped one — and, with
+        // enough accumulated inputs, overflowing even the widened Long sumOf.
+        val stale = RuleConfig(xpPerMinute = Int.MAX_VALUE)
+        val sessionDao = FakeSessionDao(listOf(testSession(minutes = 60)))
+        val profileDao = FakePlayerProfileDao()
+        val updater = GamificationUpdater(
+            sessionDao,
+            FakeDailyProgressDao(emptyList()),
+            profileDao,
+            FakeHltbDataDao(),
+            FakeAchievementDao(emptyList()),
+            FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 0))),
+        )
+
+        // No RuleDraft involved: this is the background path, straight from persisted settings.
+        updater.recompute(
+            today = LocalDate.parse("2026-07-17"),
+            source = RecomputeSource.SYNC,
+            config = stale,
+            configVersion = 7L,
+        )
+
+        // Flat fallback (no HLTB row): XP = minutes * rate, so the ceiling-based total is exact.
+        // The raw stored rate would have produced 60 * Int.MAX_VALUE; the safe value is the ceiling.
+        assertEquals(60L * RuleConfig.XP_PER_MINUTE_MAX, profileDao.get()!!.totalXp)
+        assertTrue(profileDao.get()!!.level > 1)
+        assertEquals(7L, profileDao.get()!!.gamificationConfigVersion)
+    }
+
+    @Test
+    fun recompute_withLegacyAboveCeilingConfig_libraryAndDetailAgreeWithStoredTotal() = runTest {
+        // Same background path as above, but covering every production XP consumer: a legacy
+        // config above the ceilings must produce one effective config everywhere, not only in
+        // the profile recompute. No RuleDraft involved — straight from persisted settings.
+        val stale = RuleConfig(
+            xpPerMinute = Int.MAX_VALUE,
+            legendaryAchievementXp = Int.MAX_VALUE,
+        )
+        val sessionDao = FakeSessionDao(listOf(testSession(minutes = 60)))
+        val profileDao = FakePlayerProfileDao()
+        val updater = GamificationUpdater(
+            sessionDao,
+            FakeDailyProgressDao(emptyList()),
+            profileDao,
+            FakeHltbDataDao(),
+            FakeAchievementDao(
+                listOf(
+                    Achievement(
+                        appId = 1L,
+                        apiName = "ACH_RARE",
+                        unlocked = true,
+                        snapshotPercent = 0.5,
+                        fetchedAt = 0L,
+                    ),
+                ),
+            ),
+            FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 0))),
+        )
+
+        updater.recompute(
+            today = LocalDate.parse("2026-07-17"),
+            source = RecomputeSource.SYNC,
+            config = stale,
+            configVersion = 7L,
+        )
+
+        // Flat fallback (no HLTB row): 60 min at the playtime ceiling plus one legendary
+        // achievement (0.5% -> LEGENDARY) at the per-tier ceiling.
+        val expected = 60L * RuleConfig.XP_PER_MINUTE_MAX + RuleConfig.ACHIEVEMENT_XP_MAX
+        assertEquals(expected, profileDao.get()!!.totalXp)
+
+        // The Library badge derives from the same raw persisted config and must land on the
+        // same ceiling — otherwise its per-game values stop summing to the stored total.
+        val badge = LibraryXp.contribution(
+            GameXpInput(
+                appId = 1L,
+                minutesPlayed = 60,
+                completionistMinutes = null,
+                unlockedRarityPercents = listOf(0.5),
+            ),
+            stale,
+        )
+        assertEquals(expected, badge)
+        assertEquals(profileDao.get()!!.totalXp, badge)
+
+        // The Game Detail achievement row resolves the same raw config through the same ceiling.
+        val row = GameAchievement(
+            apiName = "ACH_RARE",
+            displayName = "Rare",
+            iconUrl = null,
+            unlocked = true,
+            rarityPercent = 0.5,
+            globalPercent = 0.5,
+            unlockedAt = 1_000L,
+        ).toUi(stale)
+        assertEquals(RuleConfig.ACHIEVEMENT_XP_MAX, row.xp)
     }
 
     @Test

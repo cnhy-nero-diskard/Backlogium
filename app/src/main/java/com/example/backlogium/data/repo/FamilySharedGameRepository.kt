@@ -236,7 +236,7 @@ class FamilySharedGameRepository @Inject constructor(
         }
         if (!removed) return false
         clearCandidateIfCurrent(appId)
-        recomputeAfterRemoval()
+        recomputeAdministratively()
         return true
     }
     private suspend fun reconcileDailyProgress(game: Game, sessions: List<Session>) {
@@ -258,12 +258,19 @@ class FamilySharedGameRepository @Inject constructor(
         }
     }
 
-    private suspend fun recomputeAfterRemoval() {
+    /**
+     * Removal is a bookkeeping action, not play: the resulting level, streak, or quest change is
+     * real but not earned, so it declares [RecomputeSource.GAME_REMOVAL] rather than [RecomputeSource.SYNC]
+     * and reseeds the delivery baseline instead of producing progress events
+     * (auditfix-session-ledger-integrity, #104; progress-events spec's non-earned-provenance
+     * requirement).
+     */
+    private suspend fun recomputeAdministratively() {
         derivedStateWrites.withLock {
             val rules = settings.ruleConfigWithVersionFlow.first()
             gamificationUpdater.recompute(
                 today = time.today(),
-                source = RecomputeSource.SYNC,
+                source = RecomputeSource.GAME_REMOVAL,
                 config = rules.config,
                 configVersion = rules.version,
             )
@@ -288,7 +295,13 @@ class FamilySharedGameRepository @Inject constructor(
             excludedDao.delete(appId)
             true
         }
-        if (restored) clearCandidateIfCurrent(appId)
+        if (restored) {
+            clearCandidateIfCurrent(appId)
+            // Equally non-earned as the removal it undoes: the player did not earn the restored
+            // progress by playing (progress-events spec's "Reversing a removal is equally
+            // non-earned" scenario).
+            recomputeAdministratively()
+        }
         return restored
     }
 

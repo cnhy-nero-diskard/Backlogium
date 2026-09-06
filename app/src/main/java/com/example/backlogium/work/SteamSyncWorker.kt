@@ -358,6 +358,7 @@ class SteamSyncWorker @AssistedInject constructor(
                     summary = summary,
                     now = now,
                     achievementFetch = achievementFetch,
+                    scope = scope,
                 )
             }
         }
@@ -413,6 +414,7 @@ class SteamSyncWorker @AssistedInject constructor(
         summary: com.example.backlogium.data.remote.dto.PlayerSummaryDto?,
         now: Long,
         achievementFetch: AchievementLibraryFetch,
+        scope: SyncRunRecorder.RunScope,
     ): Set<Long> {
         val profileBefore = profileDao.get()
         // A shared game the player has since bought converts before the diff reads its baseline,
@@ -455,6 +457,7 @@ class SteamSyncWorker @AssistedInject constructor(
             observedPlayAt = now,
             syncedAt = now,
         )
+        committed.clockRollbacks.forEach { scope.recordClockRollback() }
 
         val arrivedAppIds = mutableSetOf<Long>()
         games.forEach { dto ->

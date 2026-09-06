@@ -37,6 +37,7 @@ import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.PlaySessionEnd
 import com.example.backlogium.data.repo.PlaySessionEndPublisher
 import com.example.backlogium.data.repo.RecentPlaytimeRepository
+import com.example.backlogium.data.repo.SessionActionWriter
 import com.example.backlogium.data.repo.SessionEndOutbox
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.GamificationUpdater
@@ -459,6 +460,11 @@ class PostPlaySyncWorkerTest {
         profileDao = db.playerProfileDao(),
         differ = SessionDiffer(),
         time = time,
+        sessionActionWriter = SessionActionWriter(
+            sessionDao = db.sessionDao(),
+            dailyProgressDao = db.dailyProgressDao(),
+            time = time,
+        ),
     )
 
     /** A library with one game already baselined, and a poll history to diff against. */

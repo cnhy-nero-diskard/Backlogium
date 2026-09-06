@@ -131,6 +131,7 @@ class SyncRunRecorder @Inject constructor(
                 warmCount = scope.tiers.warm,
                 coldCount = scope.tiers.cold,
                 neverCount = scope.tiers.never,
+                clockRollbackCount = scope.clockRollbackCount,
             ),
             scope.metrics.map { (key, value) ->
                 RequestBreakdown(0, 0, key.endpoint, key.status, value.count, value.durationMs)
@@ -164,6 +165,8 @@ class SyncRunRecorder @Inject constructor(
         internal data class TierCounts(var hot: Int = 0, var warm: Int = 0, var cold: Int = 0, var never: Int = 0)
         internal val metrics = linkedMapOf<Key, RequestMetrics>()
         internal val tiers = TierCounts()
+        internal var clockRollbackCount: Int = 0
+            private set
 
         internal fun recordRequest(endpoint: String, status: Int?, durationMs: Long) {
             val key = Key(endpoint, status)
@@ -176,6 +179,15 @@ class SyncRunRecorder @Inject constructor(
             tiers.warm = warm
             tiers.cold = cold
             tiers.never = never
+        }
+
+        /**
+         * A session boundary was clamped this run for a backward clock movement, rather than
+         * stored inverted (auditfix-session-ledger-integrity, #115) — recorded here rather than
+         * discarded silently, so a real clock event is diagnosable afterwards.
+         */
+        fun recordClockRollback() {
+            clockRollbackCount++
         }
     }
 

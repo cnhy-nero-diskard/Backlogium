@@ -82,6 +82,8 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_24_25,
         BacklogiumDatabase.MIGRATION_25_26,
         BacklogiumDatabase.MIGRATION_26_27,
+        BacklogiumDatabase.MIGRATION_27_28,
+        BacklogiumDatabase.MIGRATION_28_29,
     )
 
     @Test
@@ -946,6 +948,150 @@ class MigrationTest {
                     assertEquals(0, cursor.getInt(1))
                     assertEquals(0, cursor.getInt(2))
                     assertFalse(cursor.moveToNext())
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    /**
+     * v27 -> v28: a per-run count of session boundaries clamped for a backward clock movement
+     * (auditfix-session-ledger-integrity, #115). Additive, defaulting to 0 for every existing run.
+     */
+    @Test
+    fun v27ToV28_addsClockRollbackCountAndPreservesExistingRun() {
+        val databaseName = "migration-v27-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 27)
+        try {
+            database.execSQL(
+                "INSERT INTO sync_runs " +
+                    "(id, startedAt, durationMs, trigger, requestCount, requestMillis, " +
+                    "gamesExamined, gamesUpdated, outcome, errorMessage, hotCount, warmCount, " +
+                    "coldCount, neverCount) VALUES " +
+                    "(41, 1700000000000, 1000, 'SCHEDULED', 10, 100, 5, 2, 'success', NULL, " +
+                    "1, 2, 3, 4)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                28,
+                true,
+                BacklogiumDatabase.MIGRATION_27_28,
+            )
+            try {
+                migrated.query(
+                    "SELECT hotCount, warmCount, coldCount, neverCount, clockRollbackCount " +
+                        "FROM sync_runs WHERE id = 41",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1, cursor.getInt(0))
+                    assertEquals(2, cursor.getInt(1))
+                    assertEquals(3, cursor.getInt(2))
+                    assertEquals(4, cursor.getInt(3))
+                    assertEquals(0, cursor.getInt(4))
+                    assertFalse(cursor.moveToNext())
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    /**
+     * v28 -> v29: `player_profile.totalXp` widens from Int to Long in Kotlin
+     * (auditfix-session-ledger-integrity, #114). No column type change — SQLite's INTEGER
+     * affinity already covers 64 bits — so a populated, non-zero total simply survives.
+     */
+    @Test
+    fun v28ToV29_widensTotalXpAndPreservesAPopulatedProfile() {
+        val databaseName = "migration-v28-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 28)
+        try {
+            database.execSQL(
+                "INSERT INTO player_profile " +
+                    "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                    "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
+                    "personaName, avatarUrl, storeRegion, pendingImportRecompute, " +
+                    "lastSuccessfulWishlistReadAt) VALUES " +
+                    "(0, '76561197960287930', 42, 123456, 7, 3, 19, 5, 1700000000000, NULL, 1, " +
+                    "'Nero', 'https://cdn/full.jpg', 'PH', 0, NULL)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                29,
+                true,
+                BacklogiumDatabase.MIGRATION_28_29,
+            )
+            try {
+                migrated.query(
+                    "SELECT totalXp, level, pendingXpIntegrityCorrection FROM player_profile WHERE id = 0",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(123456L, cursor.getLong(0))
+                    assertEquals(7, cursor.getInt(1))
+                    // Not flagged: this profile's total was never 0, so it cannot be an overflow
+                    // victim — no cost imposed on an unaffected device.
+                    assertEquals(0, cursor.getInt(2))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    /**
+     * v28 -> v29: a profile whose `totalXp` is exactly `0` at migration time is flagged for the
+     * next recompute to treat as a correction (design.md Decision 3) — indistinguishable at the
+     * SQL level from an overflow victim, so every such row is treated as one.
+     */
+    @Test
+    fun v28ToV29_flagsAZeroTotalXpProfileForCorrection() {
+        val databaseName = "migration-v28-zero-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 28)
+        try {
+            database.execSQL(
+                "INSERT INTO player_profile " +
+                    "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                    "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
+                    "personaName, avatarUrl, storeRegion, pendingImportRecompute, " +
+                    "lastSuccessfulWishlistReadAt) VALUES " +
+                    "(0, '76561197960287930', 42, 0, 1, 0, 0, 5, 1700000000000, NULL, 0, " +
+                    "NULL, NULL, NULL, 0, NULL)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                29,
+                true,
+                BacklogiumDatabase.MIGRATION_28_29,
+            )
+            try {
+                migrated.query(
+                    "SELECT totalXp, pendingXpIntegrityCorrection FROM player_profile WHERE id = 0",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0L, cursor.getLong(0))
+                    assertEquals(1, cursor.getInt(1))
                 }
             } finally {
                 migrated.close()

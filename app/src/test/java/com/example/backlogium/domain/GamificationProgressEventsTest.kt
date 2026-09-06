@@ -106,6 +106,68 @@ class GamificationProgressEventsTest {
         assertEquals(null, marksStore.read().pendingTransition)
     }
 
+    // --- auditfix-session-ledger-integrity #114: a wrapped-total correction reseeds, never emits ---
+
+    @Test
+    fun pendingXpIntegrityCorrectionReseedsDespiteCallerDeclaringSync() = runTest {
+        // The caller has no way to know this device was ever affected by the overflow bug — it
+        // declares an ordinary SYNC, exactly like every other periodic poll. The profile's own
+        // pendingXpIntegrityCorrection flag must override that, or a large upward correction from
+        // a stored totalXp = 0 would fire a cascade of level-up celebrations for progress earned
+        // long ago — the exact failure #104 is about, committed here instead while fixing #114.
+        val marksStore = InMemoryProgressMarksStore(
+            ProgressMarks(lastCelebratedLevel = 1, initialized = true),
+        )
+        val profileDao = FakePlayerProfileDao(
+            PlayerProfile(level = 1, totalXp = 0L, pendingXpIntegrityCorrection = true),
+        )
+        val updater = updater(profileDao = profileDao, marksStore = marksStore)
+
+        updater.persist(result(level = 47), RecomputeSource.SYNC)
+
+        assertEquals(47, profileDao.get()!!.level)
+        // Reseeded, not left at 1 to be "caught up to" by a fabricated cascade of LevelUp events.
+        assertEquals(47, marksStore.read().lastCelebratedLevel)
+    }
+
+    @Test
+    fun pendingXpIntegrityCorrectionIsClearedByTheCorrectiveRecompute() = runTest {
+        val profileDao = FakePlayerProfileDao(
+            PlayerProfile(level = 1, totalXp = 0L, pendingXpIntegrityCorrection = true),
+        )
+        val updater = updater(
+            profileDao = profileDao,
+            marksStore = InMemoryProgressMarksStore(ProgressMarks(initialized = true)),
+        )
+
+        updater.persist(result(level = 47), RecomputeSource.SYNC)
+
+        assertEquals(false, profileDao.get()!!.pendingXpIntegrityCorrection)
+    }
+
+    @Test
+    fun anOrdinaryFirstPlayAfterACorrectionIsEarnedNormally() = runTest {
+        // Once the flag is cleared, the very next recompute is ordinary SYNC again — a real
+        // level-up earned by play is not permanently suppressed by having once been corrected.
+        // Earned rises are left unacknowledged for the celebration UI, exactly like
+        // syncLeavesRaisedLevelUnacknowledgedWhilePersistingProfile — that non-bump, rather than
+        // an immediate reseed to 48, is the proof this recompute went through the earned path.
+        val marksStore = InMemoryProgressMarksStore(
+            ProgressMarks(lastCelebratedLevel = 1, initialized = true),
+        )
+        val profileDao = FakePlayerProfileDao(
+            PlayerProfile(level = 1, totalXp = 0L, pendingXpIntegrityCorrection = true),
+        )
+        val updater = updater(profileDao = profileDao, marksStore = marksStore)
+        updater.persist(result(level = 47), RecomputeSource.SYNC) // the correction itself
+        assertEquals(47, marksStore.read().lastCelebratedLevel) // reseeded, not left at 1
+
+        updater.persist(result(level = 48), RecomputeSource.SYNC) // genuinely earned next
+
+        assertEquals(48, profileDao.get()!!.level)
+        assertEquals(47, marksStore.read().lastCelebratedLevel)
+    }
+
     @Test
     fun firstPersistSeedsEvenForSync() = runTest {
         val marksStore = InMemoryProgressMarksStore()

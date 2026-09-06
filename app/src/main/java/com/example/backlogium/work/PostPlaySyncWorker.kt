@@ -149,6 +149,7 @@ class PostPlaySyncWorker @AssistedInject constructor(
                     sessionEndAt = sessionEndAt,
                     steamId = steamId,
                     observed = observation,
+                    scope = scope,
                 )
                 outcome = if (recorded == null) {
                     // Refused: a newer session end took this game over while the fetch was in
@@ -239,6 +240,7 @@ class PostPlaySyncWorker @AssistedInject constructor(
         sessionEndAt: Long,
         steamId: String,
         observed: PlaytimeObservation,
+        scope: SyncRunRecorder.RunScope,
     ): Boolean? {
         val recordedPlay = syncCoordinator.withLock {
             if (!isAccountActive(steamId)) {
@@ -247,7 +249,7 @@ class PostPlaySyncWorker @AssistedInject constructor(
                 generations.ifActive(appId, generation) {
                     withContext(NonCancellable) {
                         database.withTransaction {
-                            committer.commit(
+                            val commit = committer.commit(
                                 observed = listOf(
                                     PlaytimeObservationCommitter.ObservedGame(
                                         appId = observed.appId,
@@ -265,7 +267,9 @@ class PostPlaySyncWorker @AssistedInject constructor(
                                 // depending on which attempt happened to see the increase.
                                 observedPlayAt = sessionEndAt,
                                 syncedAt = time.nowMillis(),
-                            ).recordedPlay
+                            )
+                            commit.clockRollbacks.forEach { scope.recordClockRollback() }
+                            commit.recordedPlay
                         }
                     }
                 }

@@ -18,8 +18,8 @@ interface PlayerProfileDao {
             "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
             "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
             "personaName, avatarUrl, storeRegion, pendingImportRecompute, " +
-            "lastSuccessfulWishlistReadAt) VALUES " +
-            "(0, '', 0, 0, 1, 0, 0, 0, 0, NULL, 0, NULL, NULL, NULL, 0, NULL)",
+            "lastSuccessfulWishlistReadAt, pendingXpIntegrityCorrection) VALUES " +
+            "(0, '', 0, 0, 1, 0, 0, 0, 0, NULL, 0, NULL, NULL, NULL, 0, NULL, 0)",
     )
     suspend fun insertIfMissing()
 
@@ -94,11 +94,12 @@ interface PlayerProfileDao {
     @Query(
         "UPDATE player_profile SET totalXp = :totalXp, level = :level, " +
             "currentStreak = :currentStreak, longestStreak = MAX(longestStreak, :longestStreak), " +
-            "gamificationConfigVersion = :gamificationConfigVersion, pendingImportRecompute = 0 " +
+            "gamificationConfigVersion = :gamificationConfigVersion, pendingImportRecompute = 0, " +
+            "pendingXpIntegrityCorrection = 0 " +
             "WHERE id = 0",
     )
     suspend fun updateGamification(
-        totalXp: Int,
+        totalXp: Long,
         level: Int,
         currentStreak: Int,
         longestStreak: Int,
@@ -140,7 +141,7 @@ interface PlayerProfileDao {
             "currentStreak = 0, longestStreak = 0, lastSyncAt = 0, lastSyncError = NULL, " +
             "playtimeBackfilled = 0, personaName = NULL, avatarUrl = NULL, " +
             "storeRegion = NULL, pendingImportRecompute = 0, " +
-            "lastSuccessfulWishlistReadAt = NULL WHERE id = 0",
+            "lastSuccessfulWishlistReadAt = NULL, pendingXpIntegrityCorrection = 0 WHERE id = 0",
     )
     suspend fun resetForAccountChange(steamId: String)
 }

@@ -72,7 +72,7 @@ data class GoalGameUi(
     /** Steam's rolling two-week playtime — the "recently played" sort key, not displayed. */
     override val playtime2Weeks: Int = 0,
     /** XP this game has contributed to the player's total. Zero is a real value, not "unknown". */
-    override val xpContributed: Int = 0,
+    override val xpContributed: Long = 0L,
     /** HowLongToBeat Completionist length, if resolved. Null → no completion-based progress. */
     val completionistMinutes: Int? = null,
     /** Persisted match status, or NOT_COVERED when no lookup/dataset row has been stored. */
@@ -102,7 +102,7 @@ data class BacklogGameUi(
     val heroCapsuleUrl: String = "",
     override val playtimeForever: Int,
     override val playtime2Weeks: Int = 0,
-    override val xpContributed: Int = 0,
+    override val xpContributed: Long = 0L,
     /**
      * HowLongToBeat Completionist length, if resolved. Present here too: the batch refresh fetches
      * a length for every owned game, so withholding completion progress from untagged rows was a
@@ -664,7 +664,7 @@ internal fun LibraryGame.displayedPlaytimeMinutes(xp: XpInputs): Int = when (sou
  * player imported history), tapered against its completionist length, plus its unlocked
  * achievements' rarity XP.
  */
-private fun LibraryGame.xpContribution(xp: XpInputs): Int = LibraryXp.contribution(
+private fun LibraryGame.xpContribution(xp: XpInputs): Long = LibraryXp.contribution(
     GameXpInput(
         appId = appId,
         minutesPlayed = backfillMinutes + (xp.trackedByGame[appId] ?: 0),

@@ -52,6 +52,76 @@ class RuleDraftTest {
         assertNull(draft.toConfig())
     }
 
+    // --- auditfix-session-ledger-integrity #114: rule configuration is bounded above too ---
+
+    @Test
+    fun extremeXpPerMinuteIsRejected_theSpecificValueTheAuditReported() {
+        val draft = RuleDraft.from(RuleConfig())
+            .with(RuleField.XP_PER_MINUTE, "${Int.MAX_VALUE}")
+
+        assertEquals(RuleField.XP_PER_MINUTE.rejection, draft.errorFor(RuleField.XP_PER_MINUTE))
+        assertNull(draft.toConfig())
+    }
+
+    @Test
+    fun valueAboveTheCeilingIsRejectedForEveryXpArithmeticField() {
+        listOf(
+            RuleField.XP_PER_MINUTE,
+            RuleField.LEVEL_BASE,
+            RuleField.COMMON_ACHIEVEMENT_XP,
+            RuleField.UNCOMMON_ACHIEVEMENT_XP,
+            RuleField.RARE_ACHIEVEMENT_XP,
+            RuleField.EPIC_ACHIEVEMENT_XP,
+            RuleField.LEGENDARY_ACHIEVEMENT_XP,
+        ).forEach { field ->
+            val atCeiling = RuleDraft.from(RuleConfig()).with(field, "${field.maximum}")
+            assertNull("$field should accept its own ceiling", atCeiling.errorFor(field))
+
+            val aboveCeiling = RuleDraft.from(RuleConfig()).with(field, "${field.maximum + 1}")
+            assertEquals(
+                "$field should reject one past its ceiling",
+                field.rejection,
+                aboveCeiling.errorFor(field),
+            )
+        }
+    }
+
+    @Test
+    fun theCeilingDoesNotInterfereWithOrdinaryTuning() {
+        // "high enough not to interfere with any plausible tuning choice" — a generous but
+        // ordinary rate is accepted.
+        val draft = RuleDraft.from(RuleConfig()).with(RuleField.XP_PER_MINUTE, "50")
+
+        assertNull(draft.errorFor(RuleField.XP_PER_MINUTE))
+        assertNotNull(draft.toConfig())
+    }
+
+    @Test
+    fun aConfigStoredBeforeTheCeilingExistedLoadsWithoutCrashing() {
+        // A value above the new ceiling, already stored from before this change shipped, must not
+        // make the screen unusable: the draft loads, and only the offending field is flagged —
+        // exactly like any other invalid entry, editable rather than fatal.
+        val stale = RuleConfig(xpPerMinute = Int.MAX_VALUE)
+        val draft = RuleDraft.from(stale)
+
+        assertEquals("${Int.MAX_VALUE}", draft.values.getValue(RuleField.XP_PER_MINUTE))
+        assertEquals(RuleField.XP_PER_MINUTE.rejection, draft.errorFor(RuleField.XP_PER_MINUTE))
+        assertNull(draft.toConfig())
+
+        // The screen remains usable: correcting just the flagged field makes the draft saveable.
+        val corrected = draft.with(RuleField.XP_PER_MINUTE, "50")
+        assertNull(corrected.errorFor(RuleField.XP_PER_MINUTE))
+        assertNotNull(corrected.toConfig())
+    }
+
+    @Test
+    fun fieldsWithoutXpArithmeticStayUnbounded() {
+        // QUEST_GOAL_MINUTES and STREAK_GRACE_DAYS feed no multiplication the engine could
+        // overflow, so they carry no additional ceiling beyond Int.MAX_VALUE.
+        assertEquals(Int.MAX_VALUE, RuleField.QUEST_GOAL_MINUTES.maximum)
+        assertEquals(Int.MAX_VALUE, RuleField.STREAK_GRACE_DAYS.maximum)
+    }
+
     @Test
     fun blankAndNonNumericEntriesAreRejected() {
         RuleField.entries.forEach { field ->

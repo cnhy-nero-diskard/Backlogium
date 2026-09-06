@@ -134,7 +134,7 @@ private data class LibraryDisplayGame(
     val fetchOp: HltbFetchOp?,
     val achievementUnlocked: Int?,
     val achievementTotal: Int?,
-    val xpContributed: Int,
+    val xpContributed: Long,
     val isCurrentlyPlaying: Boolean,
     /**
      * Played through Family Sharing rather than owned. Marked in words on the row rather than by
@@ -1860,7 +1860,7 @@ private fun selectionBorder(selected: Boolean): BorderStroke? =
 private fun GameBadges(
     unlocked: Int?,
     total: Int?,
-    xpContributed: Int,
+    xpContributed: Long,
     showAchievementCount: Boolean = true,
     showXpContribution: Boolean = true,
 ) {
@@ -1901,7 +1901,7 @@ private fun GameBadges(
  * "N XP contributed" wording lives in the accessibility label, where length costs nothing.
  */
 @Composable
-private fun XpContributionLabel(xpContributed: Int) {
+private fun XpContributionLabel(xpContributed: Long) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.semantics(mergeDescendants = true) {
