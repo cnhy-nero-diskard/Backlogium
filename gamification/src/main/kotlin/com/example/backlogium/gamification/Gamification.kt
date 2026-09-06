@@ -51,7 +51,35 @@ data class RuleConfig(
     val rareAchievementXp: Int = 40,
     val epicAchievementXp: Int = 100,
     val legendaryAchievementXp: Int = 250,
-)
+) {
+    companion object {
+        /**
+         * Largest values the engine can safely use, inclusive. Chosen with headroom under the
+         * widened `Long` accumulation (auditfix-session-ledger-integrity, #114): a maximal
+         * library of 50,000 tracked games at up to 10,000,000 minutes each stays roughly two
+         * orders of magnitude under `Long.MAX_VALUE` at these ceilings.
+         */
+        const val XP_PER_MINUTE_MAX = 100_000
+        const val LEVEL_BASE_MAX = 1_000_000
+        const val ACHIEVEMENT_XP_MAX = 1_000_000
+    }
+
+    /**
+     * The configuration the engine can safely evaluate, for a value stored before the ceilings
+     * above existed. Above-ceiling XP-arithmetic fields are brought down to their ceiling;
+     * everything else passes through untouched. Idempotent: an already-usable configuration
+     * returns equal to itself.
+     */
+    fun coercedToSafeCeilings(): RuleConfig = copy(
+        xpPerMinute = xpPerMinute.coerceAtMost(XP_PER_MINUTE_MAX),
+        levelBase = levelBase.coerceAtMost(LEVEL_BASE_MAX),
+        commonAchievementXp = commonAchievementXp.coerceAtMost(ACHIEVEMENT_XP_MAX),
+        uncommonAchievementXp = uncommonAchievementXp.coerceAtMost(ACHIEVEMENT_XP_MAX),
+        rareAchievementXp = rareAchievementXp.coerceAtMost(ACHIEVEMENT_XP_MAX),
+        epicAchievementXp = epicAchievementXp.coerceAtMost(ACHIEVEMENT_XP_MAX),
+        legendaryAchievementXp = legendaryAchievementXp.coerceAtMost(ACHIEVEMENT_XP_MAX),
+    )
+}
 
 data class XpState(val totalXp: Long, val level: Int, val xpIntoLevel: Long, val xpForNext: Long)
 

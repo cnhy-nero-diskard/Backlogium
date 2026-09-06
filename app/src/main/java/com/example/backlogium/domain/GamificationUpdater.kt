@@ -101,6 +101,15 @@ class GamificationUpdater @Inject constructor(
      * [config] simply discard it. Progress-event marks are intentionally untouched here.
      */
     suspend fun compute(today: LocalDate, config: RuleConfig = RuleConfig()): GamificationResult {
+        // A rule value stored before RuleField gained its ceilings bypasses Settings validation on
+        // every background recompute — opening Settings is not required for a sync — so the raw
+        // persisted config cannot reach the engine here. Coercing to the ceilings keeps even a
+        // legacy xpPerMinute = Int.MAX_VALUE inside the Long headroom the ceilings were chosen
+        // for, and makes the next recompute produce a correct total (auditfix-session-ledger-integrity,
+        // #114) rather than preserving a wrapped one. The stored value itself is left for the
+        // player to correct in Settings, where it stays flagged as invalid, instead of being
+        // silently overwritten by a background write.
+        val safeConfig = config.coercedToSafeCeilings()
         // XP/level from each game's cumulative minutes = frozen backfill offset (0 unless the
         // player opted in to importing Steam history) + a family-shared game's manual estimate
         // (0 for an owned game) + tracked session minutes, tapered against that game's HLTB
@@ -138,7 +147,7 @@ class GamificationUpdater @Inject constructor(
                 globalUnlockPercent = row.snapshotPercent,
             )
         }
-        val xpState = Gamification.xp(games, achievements, cfg = config)
+        val xpState = Gamification.xp(games, achievements, cfg = safeConfig)
 
         // Recompute each stored day's quest status; collect (don't write) the rows that changed.
         val days = dailyProgressDao.getAllOrdered()
@@ -164,7 +173,7 @@ class GamificationUpdater @Inject constructor(
                             anyMinutes = day.minutesPlayed,
                             goalMinutes = day.goalMinutesPlayed,
                         ),
-                        config,
+                        safeConfig,
                     )
                     if (result.met != day.questMet) {
                         changedDays += QuestStatusUpdate(day.date, result.met)
@@ -179,7 +188,7 @@ class GamificationUpdater @Inject constructor(
         // stored history, and still carries the intact past streak forward.
         val pastDays = questResults.filter { it.date < today }
         val todayResult = questResults.firstOrNull { it.date == today }
-        val pastStreak = Gamification.streak(pastDays, config)
+        val pastStreak = Gamification.streak(pastDays, safeConfig)
         val currentStreak = if (todayResult?.met == true) pastStreak.current + 1 else pastStreak.current
         val computedLongest = maxOf(pastStreak.longest, currentStreak)
 

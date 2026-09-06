@@ -46,52 +46,52 @@ enum class RuleField(
     XP_PER_MINUTE(
         label = "XP per minute",
         minimum = 1,
-        rejection = "Enter a value from 1 to $XP_PER_MINUTE_MAXIMUM — a rate this large would " +
+        rejection = "Enter a value from 1 to ${RuleConfig.XP_PER_MINUTE_MAX} — a rate this large would " +
             "produce numbers the engine can't use safely.",
-        maximum = XP_PER_MINUTE_MAXIMUM,
+        maximum = RuleConfig.XP_PER_MINUTE_MAX,
         advanced = true,
     ),
     LEVEL_BASE(
         label = "Level curve base",
         minimum = 1,
-        rejection = "Enter a value from 1 to $LEVEL_BASE_MAXIMUM — the level curve is " +
+        rejection = "Enter a value from 1 to ${RuleConfig.LEVEL_BASE_MAX} — the level curve is " +
             "undefined at zero and unusable this large.",
-        maximum = LEVEL_BASE_MAXIMUM,
+        maximum = RuleConfig.LEVEL_BASE_MAX,
         advanced = true,
     ),
     COMMON_ACHIEVEMENT_XP(
         "Common achievement XP",
         0,
         ACHIEVEMENT_XP_REJECTION,
-        maximum = ACHIEVEMENT_XP_MAXIMUM,
+        maximum = RuleConfig.ACHIEVEMENT_XP_MAX,
         advanced = true,
     ),
     UNCOMMON_ACHIEVEMENT_XP(
         "Uncommon achievement XP",
         0,
         ACHIEVEMENT_XP_REJECTION,
-        maximum = ACHIEVEMENT_XP_MAXIMUM,
+        maximum = RuleConfig.ACHIEVEMENT_XP_MAX,
         advanced = true,
     ),
     RARE_ACHIEVEMENT_XP(
         "Rare achievement XP",
         0,
         ACHIEVEMENT_XP_REJECTION,
-        maximum = ACHIEVEMENT_XP_MAXIMUM,
+        maximum = RuleConfig.ACHIEVEMENT_XP_MAX,
         advanced = true,
     ),
     EPIC_ACHIEVEMENT_XP(
         "Epic achievement XP",
         0,
         ACHIEVEMENT_XP_REJECTION,
-        maximum = ACHIEVEMENT_XP_MAXIMUM,
+        maximum = RuleConfig.ACHIEVEMENT_XP_MAX,
         advanced = true,
     ),
     LEGENDARY_ACHIEVEMENT_XP(
         "Legendary achievement XP",
         0,
         ACHIEVEMENT_XP_REJECTION,
-        maximum = ACHIEVEMENT_XP_MAXIMUM,
+        maximum = RuleConfig.ACHIEVEMENT_XP_MAX,
         advanced = true,
     ),
     ;
@@ -101,10 +101,8 @@ enum class RuleField(
         get() = this == QUEST_GOAL_MINUTES || this == STREAK_GRACE_DAYS
 }
 
-private const val XP_PER_MINUTE_MAXIMUM = 100_000
-private const val LEVEL_BASE_MAXIMUM = 1_000_000
-private const val ACHIEVEMENT_XP_MAXIMUM = 1_000_000
-private const val ACHIEVEMENT_XP_REJECTION = "Enter a value from 0 to $ACHIEVEMENT_XP_MAXIMUM."
+private const val ACHIEVEMENT_XP_REJECTION =
+    "Enter a value from 0 to ${RuleConfig.ACHIEVEMENT_XP_MAX}."
 
 /**
  * An in-progress edit of the rule configuration.

@@ -109,16 +109,16 @@ class AchievementXpTest {
 
     @Test
     fun achievementXp_manyUnlockedAtMaximumPerTierAwardSumsWithoutOverflow() {
-        // 1,000,000 is RuleField's per-tier achievement-XP ceiling. No single achievement's
+        // RuleConfig.ACHIEVEMENT_XP_MAX is the per-tier ceiling. No single achievement's
         // award can overflow Int, but a large-enough unlocked count still needs no absurd
         // setting at all to push the sum past it.
-        val maxTier = cfg.copy(legendaryAchievementXp = 1_000_000)
+        val maxTier = cfg.copy(legendaryAchievementXp = RuleConfig.ACHIEVEMENT_XP_MAX)
         val count = 3_000
         val achievements = (1..count).map { unlocked(0.0) } // 0.0% -> LEGENDARY
 
         val total = Gamification.achievementXp(achievements, maxTier)
 
-        val expected = 1_000_000L * count
+        val expected = RuleConfig.ACHIEVEMENT_XP_MAX.toLong() * count
         assertTrue("this test's own premise: the sum must exceed Int range", expected > Int.MAX_VALUE)
         assertEquals(expected, total)
     }

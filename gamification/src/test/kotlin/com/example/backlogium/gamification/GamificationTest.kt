@@ -135,10 +135,10 @@ class GamificationTest {
 
     @Test
     fun xp_atLargestAcceptedRateProducesTheMathematicallyCorrectValue_notWrapped() {
-        // 100,000 is RuleField.XP_PER_MINUTE_MAXIMUM — the largest rate the app now accepts.
+        // RuleConfig.XP_PER_MINUTE_MAX is the largest rate the app now accepts.
         // In the old Int accumulation, 100_000 minutes * 100_000 XP/min would have wrapped;
         // in Long it is the exact product.
-        val extreme = cfg.copy(xpPerMinute = 100_000)
+        val extreme = cfg.copy(xpPerMinute = RuleConfig.XP_PER_MINUTE_MAX)
         val state = Gamification.xp(listOf(flatGame(100_000)), cfg = extreme)
 
         assertEquals(10_000_000_000L, state.totalXp) // exact, not wrapped, not zero
@@ -171,6 +171,47 @@ class GamificationTest {
         val expected = perGameMinutes.toLong() * gameCount
         assertTrue("this test's own premise: the sum must exceed Int range", expected > Int.MAX_VALUE)
         assertEquals(expected, state.totalXp)
+    }
+
+    @Test
+    fun ruleConfig_coercedToSafeCeilings_bringsLegacyExtremeDownToTheCeilings() {
+        // A configuration stored before RuleField gained its ceilings (auditfix-session-ledger-integrity,
+        // #114): every XP-arithmetic field above its ceiling coerces down to it, while quest and
+        // streak rules — which feed no XP multiplication — pass through untouched.
+        val stale = RuleConfig(
+            xpPerMinute = Int.MAX_VALUE,
+            levelBase = Int.MAX_VALUE,
+            questThresholdMin = 45,
+            streakGraceDays = 2,
+            commonAchievementXp = Int.MAX_VALUE,
+            uncommonAchievementXp = Int.MAX_VALUE,
+            rareAchievementXp = Int.MAX_VALUE,
+            epicAchievementXp = Int.MAX_VALUE,
+            legendaryAchievementXp = Int.MAX_VALUE,
+        )
+
+        val coerced = stale.coercedToSafeCeilings()
+
+        assertEquals(RuleConfig.XP_PER_MINUTE_MAX, coerced.xpPerMinute)
+        assertEquals(RuleConfig.LEVEL_BASE_MAX, coerced.levelBase)
+        assertEquals(RuleConfig.ACHIEVEMENT_XP_MAX, coerced.commonAchievementXp)
+        assertEquals(RuleConfig.ACHIEVEMENT_XP_MAX, coerced.uncommonAchievementXp)
+        assertEquals(RuleConfig.ACHIEVEMENT_XP_MAX, coerced.rareAchievementXp)
+        assertEquals(RuleConfig.ACHIEVEMENT_XP_MAX, coerced.epicAchievementXp)
+        assertEquals(RuleConfig.ACHIEVEMENT_XP_MAX, coerced.legendaryAchievementXp)
+        assertEquals(45, coerced.questThresholdMin)
+        assertEquals(2, coerced.streakGraceDays)
+    }
+
+    @Test
+    fun ruleConfig_coercedToSafeCeilings_leavesUsableValuesUntouched() {
+        assertEquals(cfg, cfg.coercedToSafeCeilings())
+        val atCeiling = cfg.copy(
+            xpPerMinute = RuleConfig.XP_PER_MINUTE_MAX,
+            levelBase = RuleConfig.LEVEL_BASE_MAX,
+            legendaryAchievementXp = RuleConfig.ACHIEVEMENT_XP_MAX,
+        )
+        assertEquals(atCeiling, atCeiling.coercedToSafeCeilings())
     }
 
     // --- 4.3 Goal progress ---------------------------------------------------

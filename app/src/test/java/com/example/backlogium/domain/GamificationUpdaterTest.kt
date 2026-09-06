@@ -170,6 +170,40 @@ class GamificationUpdaterTest {
     }
 
     @Test
+    fun recompute_withLegacyAboveCeilingXpPerMinute_usesCeilingWithoutOpeningSettings() = runTest {
+        // A value stored before RuleField gained its ceilings (auditfix-session-ledger-integrity,
+        // #114): SettingsDataStore returns it verbatim and the sync worker passes it straight into
+        // compute without opening Settings. The recompute boundary must coerce it, so the next
+        // recompute produces a correct total rather than preserving a wrapped one — and, with
+        // enough accumulated inputs, overflowing even the widened Long sumOf.
+        val stale = RuleConfig(xpPerMinute = Int.MAX_VALUE)
+        val sessionDao = FakeSessionDao(listOf(testSession(minutes = 60)))
+        val profileDao = FakePlayerProfileDao()
+        val updater = GamificationUpdater(
+            sessionDao,
+            FakeDailyProgressDao(emptyList()),
+            profileDao,
+            FakeHltbDataDao(),
+            FakeAchievementDao(emptyList()),
+            FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 0))),
+        )
+
+        // No RuleDraft involved: this is the background path, straight from persisted settings.
+        updater.recompute(
+            today = LocalDate.parse("2026-07-17"),
+            source = RecomputeSource.SYNC,
+            config = stale,
+            configVersion = 7L,
+        )
+
+        // Flat fallback (no HLTB row): XP = minutes * rate, so the ceiling-based total is exact.
+        // The raw stored rate would have produced 60 * Int.MAX_VALUE; the safe value is the ceiling.
+        assertEquals(60L * RuleConfig.XP_PER_MINUTE_MAX, profileDao.get()!!.totalXp)
+        assertTrue(profileDao.get()!!.level > 1)
+        assertEquals(7L, profileDao.get()!!.gamificationConfigVersion)
+    }
+
+    @Test
     fun recompute_combinesBackfillWithTrackedMinutesAndCapsViaTaper() = runTest {
         // A HLTB-matched game (completionist average 1000 min -> zero point Z = 2000) with a
         // large frozen backfill offset. Combined total = 5000 backfill + 100 tracked = 5100,
