@@ -38,6 +38,6 @@
 - [x] 5.2 Confirm `refreshSelection`/`selectionLookupJob` in the same `LibraryViewModel` still needs no change: it cancels correctly and writes each result to Room as it arrives, so a cancelled run leaves consistent data. Verified by re-reading it against the new rule
 - [x] 5.3 `openspec validate --strict auditfix-ui-async-identity` passes
 - [x] 5.4 `./gradlew :app:testDebugUnitTest` passes
-- [ ] 5.5 On a device: enter a vanity name, start resolution, edit the field mid-flight, and confirm the screen does not offer Finish for the abandoned input
+- [x] 5.5 On a device: enter a vanity name, start resolution, edit the field mid-flight, and confirm the screen does not offer Finish for the abandoned input
 - [ ] 5.6 Sync the deltas into `openspec/specs/` via the archive workflow, not by hand
 - [ ] 5.7 Close #122, #126, #127
