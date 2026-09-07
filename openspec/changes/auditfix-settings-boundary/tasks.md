@@ -6,9 +6,9 @@
 
 ## 2. Empty-state copy (#112 — smallest, do first)
 
-- [ ] 2.1 Update `LibraryScreen.kt:271`, `HistoryScreen.kt:61`, and `AnalyticsScreen.kt:71` to direct the player to Settings rather than "the Home screen". Verified by `grep -rn "from the Home screen" app/src/main/java --include=*.kt` returning nothing
-- [ ] 2.2 Confirm the new copy names the surface that actually hosts account configuration, per `app-settings/spec.md:9-35`, rather than a generic instruction. Verified by reading each string against that spec
-- [ ] 2.3 Check no other user-facing string sends the player to a removed Home control. Verified by a grep for "Home" across UI strings, triaged
+- [x] 2.1 Update `LibraryScreen.kt:271`, `HistoryScreen.kt:61`, and `AnalyticsScreen.kt:71` to direct the player to Settings rather than "the Home screen". Verified by `grep -rn "from the Home screen" app/src/main/java --include=*.kt` returning nothing
+- [x] 2.2 Confirm the new copy names the surface that actually hosts account configuration, per `app-settings/spec.md:9-35`, rather than a generic instruction. Verified by reading each string against that spec
+- [x] 2.3 Check no other user-facing string sends the player to a removed Home control. Verified by a grep for "Home" across UI strings, triaged
 
 ## 3. Settings sync-failure haptic (#109)
 
