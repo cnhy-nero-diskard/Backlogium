@@ -1,7 +1,7 @@
 ## 1. Prerequisites
 
-- [ ] 1.1 Read `LibraryViewModel.previewPickerManualLink()` (`:490-517`) and its comment before writing any of the three fixes. It is the correct instance of this idiom already in the codebase and the pattern the three sites adopt (design.md Decision 1). Verified by the identity comparison in each new site being recognisably the same shape
-- [ ] 1.2 Confirm `auditfix-spec-truth` has landed, so this change's `onboarding-credentials` addition is not a second edit to a capability that change is already rewriting (#102)
+- [x] 1.1 Read `LibraryViewModel.previewPickerManualLink()` (`:490-517`) and its comment before writing any of the three fixes. It is the correct instance of this idiom already in the codebase and the pattern the three sites adopt (design.md Decision 1). Verified by the identity comparison in each new site being recognisably the same shape
+- [x] 1.2 Confirm `auditfix-spec-truth` has landed, so this change's `onboarding-credentials` addition is not a second edit to a capability that change is already rewriting (#102)
 
 ## 2. Onboarding credential identity (#122, severity/high — do first)
 
