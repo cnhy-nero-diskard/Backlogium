@@ -3,21 +3,23 @@ package com.example.backlogium.ui.onboarding
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.backlogium.data.backup.BackupRepository
-import com.example.backlogium.data.repo.AccountChangeCoordinator
-import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.backup.BackupExportGateway
+import com.example.backlogium.data.repo.AccountChangeGateway
 import com.example.backlogium.data.repo.CredentialsSaveResult
 import com.example.backlogium.data.repo.CredentialsState
+import com.example.backlogium.data.repo.OnboardingCredentialsGateway
 import com.example.backlogium.data.repo.SteamIdResolution
-import com.example.backlogium.work.setup.SetupCoordinator
+import com.example.backlogium.work.setup.FirstRunSetupGateway
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 
 /**
@@ -113,17 +115,27 @@ data class IdentityChangeUiState(
 )
 
 /**
- * Bridges the onboarding flow to [CredentialsRepository]. Holds the typed API key in memory only
- * (never logged; masked wherever displayed) and drives SteamID resolution + final save. On open it
- * pre-reflects an existing configuration (prefilled SteamID, "key already set") so the same flow
- * serves both first-run and edit.
+ * Whether [requestGeneration] is still the live credential request. A monotonic generation — not
+ * the displayed values — is what identifies a request: an abandoned resolution for A must stay
+ * discarded after the screen returns to A for its replacement, where a value comparison would
+ * match again (the ABA hole). Every edit and every new request advances [OnboardingViewModel]'s
+ * generation, so a superseded request can never regain ownership.
+ */
+internal fun isCurrentCredentialRequest(currentGeneration: Long, requestGeneration: Long): Boolean =
+    currentGeneration == requestGeneration
+
+/**
+ * Bridges the onboarding flow to [OnboardingCredentialsGateway]. Holds the typed API key in memory
+ * only (never logged; masked wherever displayed) and drives SteamID resolution + final save. On
+ * open it pre-reflects an existing configuration (prefilled SteamID, "key already set") so the
+ * same flow serves both first-run and edit.
  */
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
-    private val credentials: CredentialsRepository,
-    private val backupRepository: BackupRepository,
-    private val accountChange: AccountChangeCoordinator,
-    private val setup: SetupCoordinator,
+    private val credentials: OnboardingCredentialsGateway,
+    private val backupRepository: BackupExportGateway,
+    private val accountChange: AccountChangeGateway,
+    private val setup: FirstRunSetupGateway,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
@@ -141,6 +153,17 @@ class OnboardingViewModel @Inject constructor(
      * presented again unprompted, and Settings has its own entry for it.
      */
     private var presentsSetup = false
+
+    private var resolutionJob: Job? = null
+    private var verificationJob: Job? = null
+
+    /**
+     * Monotonic identity for credential requests. Advanced on every edit and every new request;
+     * each request captures the value and may publish or persist only while it is still current.
+     * Cancellation stops superseded work promptly, but this guard — never the cancellation — is
+     * what the correctness rests on.
+     */
+    private var credentialGeneration = 0L
 
     init {
         viewModelScope.launch {
@@ -164,48 +187,88 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
-    fun onApiKeyChange(value: String) =
+    fun onApiKeyChange(value: String) {
+        // The key feeds vanity resolution as well as verification, so editing it invalidates both.
+        credentialGeneration++
+        cancelCredentialRequests()
         _uiState.update { it.copy(apiKey = value, verify = VerifyState.Idle) }
+    }
 
     fun advanceToSteamId() {
         if (!_uiState.value.canAdvanceFromApiKey) return
         _uiState.update { it.copy(step = OnboardingStep.STEAM_ID) }
     }
 
-    fun backToApiKey() =
-        _uiState.update { it.copy(step = OnboardingStep.API_KEY, verify = VerifyState.Idle) }
+    fun backToApiKey() {
+        credentialGeneration++
+        cancelCredentialRequests()
+        _uiState.update {
+            it.copy(
+                step = OnboardingStep.API_KEY,
+                resolve = ResolveState.Idle,
+                verify = VerifyState.Idle,
+            )
+        }
+    }
 
-    fun setEntryMode(mode: SteamIdEntryMode) =
+    fun setEntryMode(mode: SteamIdEntryMode) {
+        credentialGeneration++
+        cancelCredentialRequests()
         _uiState.update {
             it.copy(entryMode = mode, resolve = ResolveState.Idle, verify = VerifyState.Idle)
         }
+    }
 
-    fun onSteamIdInputChange(value: String) =
+    fun onSteamIdInputChange(value: String) {
         // Any edit invalidates a prior resolution so the user must re-resolve before saving, and
         // any prior verification with it.
+        credentialGeneration++
+        cancelCredentialRequests()
         _uiState.update {
             it.copy(steamIdInput = value, resolve = ResolveState.Idle, verify = VerifyState.Idle)
         }
+    }
 
     /** Resolve the current SteamID input (local for raw/`profiles`, network for vanity). */
     fun resolveSteamId() {
         val state = _uiState.value
         if (state.steamIdInput.isBlank()) return
+        // A new resolution supersedes any in-flight verification for the previous input as well.
+        cancelCredentialRequests()
+        val requestGeneration = ++credentialGeneration
+        val submittedInput = state.steamIdInput
+        val submittedApiKey = state.apiKey
         _uiState.update { it.copy(resolve = ResolveState.Resolving) }
-        viewModelScope.launch {
+        // Ownership is established before launch so the superseded job can never publish between
+        // the cancel above and the assignment below.
+        lateinit var job: Job
+        job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             val result = credentials.resolveSteamId(
-                input = state.steamIdInput,
-                apiKeyOverride = state.apiKey.ifBlank { null },
+                input = submittedInput,
+                apiKeyOverride = submittedApiKey.ifBlank { null },
             )
-            _uiState.update { it.copy(resolve = result.toResolveState()) }
+            if (!isCurrentCredentialRequest(credentialGeneration, requestGeneration)) return@launch
+            // Request identity is checked at publish time: only the current input, job, or date may publish.
+            // Keep this in sync across OnboardingViewModel, LibraryViewModel.changeMatch(), and HistoryScreen.
+            _uiState.update {
+                if (isCurrentCredentialRequest(credentialGeneration, requestGeneration)) {
+                    it.copy(resolve = result.toResolveState())
+                } else {
+                    it
+                }
+            }
         }
+        resolutionJob = job
+        job.invokeOnCompletion {
+            if (resolutionJob === job) resolutionJob = null
+        }
+        job.start()
     }
-
     /**
      * Verify the entered credentials against Steam and, only if that succeeds, persist them.
      *
      * Verification is the last credential step and a precondition of saving — this is the sole path
-     * to [CredentialsRepository.save] from the flow, so there is no state in which an unverified
+     * to [OnboardingCredentialsGateway.save] from the flow, so there is no state in which an unverified
      * credential is stored. That is also why verification is not one of setup's stages: a stage can
      * be declined, and this cannot be.
      */
@@ -213,23 +276,46 @@ class OnboardingViewModel @Inject constructor(
         val state = _uiState.value
         val resolved = state.resolve as? ResolveState.Resolved ?: return
         if (state.busy || state.identityChange != null) return
+        cancelCredentialRequests()
+        val requestGeneration = ++credentialGeneration
+        val submittedApiKey = state.apiKey
         _uiState.update {
             it.copy(step = OnboardingStep.VERIFY, verify = VerifyState.Verifying)
         }
-        viewModelScope.launch {
-            val apiKey = state.apiKey.ifBlank {
+        // Ownership is established before launch, as in resolveSteamId(): a verification
+        // invalidated by an edit must be discarded permanently, even if the displayed values later
+        // happen to match its own again.
+        lateinit var job: Job
+        job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            val apiKey = submittedApiKey.ifBlank {
                 // Editing with the key field left blank: keep the stored key.
                 (credentials.currentCredentials())?.apiKey.orEmpty()
             }
             val decision = decideVerification(
                 credentials.verify(apiKey = apiKey, steamId = resolved.steamId64),
             )
-            _uiState.update { it.applying(decision) }
-            // The sole call into persistence, behind the sole decision that admits it.
-            if (decision == VerificationDecision.Persist) persist(apiKey, resolved.steamId64)
+            if (!isCurrentCredentialRequest(credentialGeneration, requestGeneration)) return@launch
+            _uiState.update { current ->
+                if (isCurrentCredentialRequest(credentialGeneration, requestGeneration)) {
+                    current.applying(decision)
+                } else {
+                    current
+                }
+            }
+            // The sole call into persistence, behind the sole decision that admits it, and only
+            // while this verification still owns the request.
+            if (decision == VerificationDecision.Persist &&
+                isCurrentCredentialRequest(credentialGeneration, requestGeneration)
+            ) {
+                persist(apiKey, resolved.steamId64)
+            }
         }
+        verificationJob = job
+        job.invokeOnCompletion {
+            if (verificationJob === job) verificationJob = null
+        }
+        job.start()
     }
-
     /** Try verification again after a network failure, with both entered values still in place. */
     fun retryVerification() = finish()
 
@@ -351,6 +437,13 @@ class OnboardingViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private fun cancelCredentialRequests() {
+        resolutionJob?.cancel()
+        resolutionJob = null
+        verificationJob?.cancel()
+        verificationJob = null
     }
 
     private fun SteamIdResolution.toResolveState(): ResolveState = when (this) {

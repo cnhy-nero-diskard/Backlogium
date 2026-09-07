@@ -1,9 +1,14 @@
 package com.example.backlogium.di
 
+import com.example.backlogium.data.backup.BackupExportGateway
+import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
+import com.example.backlogium.data.repo.AccountChangeCoordinator
+import com.example.backlogium.data.repo.AccountChangeGateway
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.repo.OnboardingCredentialsGateway
 import com.example.backlogium.data.repo.DataStoreProgressMarksStore
 import com.example.backlogium.data.repo.AndroidSharedGameNotifier
 import com.example.backlogium.data.repo.DataStoreSettingsRepository
@@ -35,6 +40,8 @@ import com.example.backlogium.domain.PostPlayGenerations
 import com.example.backlogium.domain.ProgressMarksStore
 import com.example.backlogium.domain.SystemTimeProvider
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.work.setup.FirstRunSetupGateway
+import com.example.backlogium.work.setup.SetupCoordinator
 import com.example.backlogium.work.PostPlayWorkEnqueuer
 import com.example.backlogium.work.WorkManagerPostPlayWorkEnqueuer
 import dagger.Binds
@@ -118,6 +125,24 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindCredentialsProvider(impl: CredentialsRepository): CredentialsProvider
+
+    @Binds
+    @Singleton
+    abstract fun bindOnboardingCredentialsGateway(
+        impl: CredentialsRepository,
+    ): OnboardingCredentialsGateway
+
+    @Binds
+    @Singleton
+    abstract fun bindBackupExportGateway(impl: BackupRepository): BackupExportGateway
+
+    @Binds
+    @Singleton
+    abstract fun bindAccountChangeGateway(impl: AccountChangeCoordinator): AccountChangeGateway
+
+    @Binds
+    @Singleton
+    abstract fun bindFirstRunSetupGateway(impl: SetupCoordinator): FirstRunSetupGateway
 
     @Binds
     @Singleton

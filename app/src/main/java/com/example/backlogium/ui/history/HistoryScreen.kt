@@ -75,12 +75,14 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
     // the data, not a saved preference.
     var expandedDays by remember { mutableStateOf<Set<String>>(emptySet()) }
     var expandedGames by remember { mutableStateOf<Set<Pair<String, Long>>>(emptySet()) }
-    var autoExpandedToday by remember { mutableStateOf(false) }
+    var autoExpandedDate by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(state.today) {
-        if (!autoExpandedToday && state.today.isNotEmpty()) {
+        // Request identity is checked at publish time: only the current input, job, or date may publish.
+        // Keep this in sync across OnboardingViewModel, LibraryViewModel.changeMatch(), and HistoryScreen.
+        if (shouldAutoExpandHistoryDate(state.today, autoExpandedDate)) {
             expandedDays = expandedDays + state.today
-            autoExpandedToday = true
+            autoExpandedDate = state.today
         }
     }
 
@@ -117,6 +119,10 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
         }
     }
 }
+
+/** Expand only when a different non-blank date becomes current; data emissions for that date do not reopen it. */
+internal fun shouldAutoExpandHistoryDate(today: String, autoExpandedDate: String?): Boolean =
+    today.isNotEmpty() && today != autoExpandedDate
 
 /** One day's rows: its header, then (if expanded) a single connected block of its games. */
 private fun LazyListScope.dayItems(

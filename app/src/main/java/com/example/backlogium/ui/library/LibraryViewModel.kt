@@ -29,6 +29,7 @@ import com.example.backlogium.domain.LibraryXp
 import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.ui.search.gameSearchMatchTier
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -49,6 +50,19 @@ data class HltbPickerUiState(
     val failed: Boolean = false,
 )
 
+internal fun HltbPickerUiState.withSearchResult(
+    result: Result<List<HltbCandidate>>,
+    ownsRequest: Boolean,
+): HltbPickerUiState =
+    if (!ownsRequest) {
+        this
+    } else {
+        copy(
+            candidates = result.getOrDefault(emptyList()),
+            loading = false,
+            failed = result.isFailure,
+        )
+    }
 /** Transient manual-link state for the inline picker footer. */
 data class PickerManualLinkUiState(
     val input: String = "",
@@ -448,21 +462,28 @@ class LibraryViewModel @Inject constructor(
     fun changeMatch(appId: Long, name: String) {
         pickerJobs.remove(appId)?.cancel()
         pickerStates.update { it + (appId to HltbPickerUiState(loading = true)) }
-        val job = viewModelScope.launch {
-            val result = runCatching { hltbRepository.searchCandidates(name) }
+        lateinit var job: Job
+        job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            val result = try {
+                Result.success(hltbRepository.searchCandidates(name))
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Result.failure<List<HltbCandidate>>(error)
+            }
             pickerStates.update { states ->
                 val current = states[appId] ?: return@update states
-                states + (appId to current.copy(
-                    candidates = result.getOrDefault(emptyList()),
-                    loading = false,
-                    failed = result.isFailure,
-                ))
+                // Request identity is checked at publish time: only the current input, job, or date may publish.
+                // Keep this in sync across OnboardingViewModel, LibraryViewModel.changeMatch(), and HistoryScreen.
+                val ownsRequest = pickerJobs[appId] === job
+                states + (appId to current.withSearchResult(result, ownsRequest))
             }
         }
         pickerJobs[appId] = job
         job.invokeOnCompletion {
             if (pickerJobs[appId] === job) pickerJobs.remove(appId)
         }
+        job.start()
     }
 
     fun clearPicker(appId: Long) {

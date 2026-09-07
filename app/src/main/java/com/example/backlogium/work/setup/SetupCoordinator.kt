@@ -61,7 +61,7 @@ class SetupCoordinator @Inject constructor(
     private val source: SetupStageSource,
     private val store: SetupStateStore,
     @ApplicationScope private val scope: CoroutineScope,
-) {
+) : FirstRunSetupGateway {
     private val _state = MutableStateFlow(SetupRunState())
     val state: StateFlow<SetupRunState> = _state.asStateFlow()
 
@@ -70,7 +70,7 @@ class SetupCoordinator @Inject constructor(
      * restored on a cold launch after the process is killed mid-setup — at which point credentials
      * are already stored and nothing else distinguishes that install from a long-configured one.
      */
-    val firstRunSetupActive: Flow<Boolean> = store.firstRunSetupActiveFlow
+    override val firstRunSetupActive: Flow<Boolean> = store.firstRunSetupActiveFlow
 
     /** Serializes runs so two surfaces cannot drive the loop at the same time. */
     private val runLock = Mutex()
@@ -197,14 +197,14 @@ class SetupCoordinator @Inject constructor(
      * so the caller can advance the flow only once the claim is durable — otherwise a kill in the
      * gap would leave a configured install with no record that setup was still owed.
      */
-    suspend fun claimFirstRunSetup() = store.setFirstRunSetupActive(true)
+    override suspend fun claimFirstRunSetup() = store.setFirstRunSetupActive(true)
 
     /**
      * Release the takeover when the user leaves the first-run setup surface. Idempotent, and
      * ordinarily redundant: a completed run has already released it. It is what covers leaving
      * mid-run — "Skip setup" while stages are still going — where no completion is coming soon.
      */
-    suspend fun releaseFirstRunSetup() = store.setFirstRunSetupActive(false)
+    override suspend fun releaseFirstRunSetup() = store.setFirstRunSetupActive(false)
 
     /**
      * Reconcile the stage marker left by an older process, then continue any later selected stages
