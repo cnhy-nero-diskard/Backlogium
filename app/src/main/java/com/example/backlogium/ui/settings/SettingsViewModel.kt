@@ -83,6 +83,7 @@ data class SettingsUiState(
     /** Masked form of the API key; the raw key never reaches the UI. */
     val apiKeyMasked: String = "",
     val lastSyncAt: Long = 0L,
+    val lastSyncError: String? = null,
     val isSyncing: Boolean = false,
     val isReconciling: Boolean = false,
     val genreEnrichmentStatus: GenreEnrichmentStatus = GenreEnrichmentStatus.IDLE,
@@ -240,6 +241,7 @@ class SettingsViewModel @Inject constructor(
             steamId = configured?.steamId ?: "",
             apiKeyMasked = configured?.let { maskApiKey(it.apiKey) } ?: "",
             lastSyncAt = profile?.lastSyncAt ?: 0L,
+            lastSyncError = profile?.lastSyncError,
             isSyncing = syncing,
             historyImported = profile?.playtimeBackfilled ?: false,
             savedConfig = config,

@@ -12,13 +12,13 @@
 
 ## 3. Settings sync-failure haptic (#109)
 
-- [ ] 3.1 Track the player-initiated sync attempt in Settings and emit `HapticIntent.Reject` exactly once if **that** attempt settles with `lastSyncError`, mirroring `HomeScreen.kt:204-215` (design.md Decision 2). Verified by the tests in 3.4 and 3.5
-- [ ] 3.2 **Do not simply observe `lastSyncError` and buzz.** The worker writes it regardless of what started the run, so an unattributed observer buzzes for a background failure the player did not initiate — the exact hazard Home's comment documents
-- [ ] 3.3 Keep the visible error presentation unchanged. `app-ui/spec.md:2357-2358` requires the intent alongside, never instead of, the visible result
-- [ ] 3.4 Test: a manual sync started from the Settings button that fails delivers Reject once
-- [ ] 3.5 Test: a background sync failing while Settings is open delivers nothing — the attribution guard's regression test
-- [ ] 3.6 Test: a successful manual sync from Settings delivers no Reject
-- [ ] 3.7 Confirm Home's existing behaviour is unchanged and the two entry points cannot double-buzz, since each arms only on its own visible control
+- [x] 3.1 Track the player-initiated sync attempt in Settings and emit `HapticIntent.Reject` exactly once if **that** attempt settles with `lastSyncError`, mirroring `HomeScreen.kt:204-215` (design.md Decision 2). Verified by the tests in 3.4 and 3.5
+- [x] 3.2 **Do not simply observe `lastSyncError` and buzz.** The worker writes it regardless of what started the run, so an unattributed observer buzzes for a background failure the player did not initiate — the exact hazard Home's comment documents
+- [x] 3.3 Keep the visible error presentation unchanged. `app-ui/spec.md:2357-2358` requires the intent alongside, never instead of, the visible result
+- [x] 3.4 Test: a manual sync started from the Settings button that fails delivers Reject once
+- [x] 3.5 Test: a background sync failing while Settings is open delivers nothing — the attribution guard's regression test
+- [x] 3.6 Test: a successful manual sync from Settings delivers no Reject
+- [x] 3.7 Confirm Home's existing behaviour is unchanged and the two entry points cannot double-buzz, since each arms only on its own visible control
 
 ## 4. Repository boundary (#97, #125 — largest, do last)
 
