@@ -35,7 +35,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.backlogium.data.local.entity.HltbMatchStatus
+import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.components.HltbCandidateCard
 import com.example.backlogium.ui.components.HltbLengthsRow
@@ -134,7 +134,7 @@ fun HltbReviewScreen(
         if (selected.candidates.isNotEmpty()) {
             Text(
                 when (selected.matchStatus) {
-                    HltbMatchStatus.NEEDS_REVIEW -> "Choose the correct HowLongToBeat entry:"
+                    HltbMatchState.NEEDS_REVIEW -> "Choose the correct HowLongToBeat entry:"
                     else -> "Candidates — verify and select the correct match:"
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -158,7 +158,7 @@ fun HltbReviewScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        } else if (selected.matchStatus == HltbMatchStatus.UNMATCHED) {
+        } else if (selected.matchStatus == HltbMatchState.UNMATCHED) {
             // Unmatched rescue: Try broader search
             BroaderSearchSection(
                 state = broaderState,

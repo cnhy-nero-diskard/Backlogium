@@ -3,8 +3,8 @@ package com.example.backlogium.ui.collections
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.backlogium.data.local.dao.AchievementCounts
 import com.example.backlogium.data.repo.AchievementRepository
+import com.example.backlogium.data.repo.AchievementCountSummary
 import com.example.backlogium.data.repo.CollectionRepository
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
@@ -233,7 +233,7 @@ class CollectionViewModel @Inject constructor(
 
     private data class LibraryMetrics(
         val games: List<LibraryGame>,
-        val achievementsByGame: Map<Long, AchievementCounts>,
+        val achievementsByGame: Map<Long, AchievementCountSummary>,
         val sessionCountByGame: Map<Long, Int>,
         val trackedMinutesByGame: Map<Long, Int>,
         val personalPace: PersonalPaceProfile,

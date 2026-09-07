@@ -58,13 +58,13 @@ firebase deploy --only functions,firestore:rules     # deploy cloud side
 
 ## Invariants worth not breaking
 
-**Repositories expose domain models.** Room entities stay inside `data/`. Nothing
+**Repositories expose domain models.** Room entities and DAO projections stay inside `data/`. Nothing
 under `ui/` imports a storage type — no `data.local.entity.*`, no `SettingsDataStore`
-in a ViewModel. Verifiable (matching on `import` skips prose mentions in KDoc, and
+in a ViewModel. DAO projections are included in the same check. Verifiable (matching on `import` skips prose mentions in KDoc, and
 `--exclude-dir` skips the documented exception below):
 
 ```bash
-grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" \
+grep -rn "^import .*\(data\.local\.entity\|data\.local\.dao\|SettingsDataStore\)" \
   app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics
 ```
 

@@ -51,6 +51,20 @@ data class GameAchievement(
     val hidden: Boolean = false,
 )
 
+/** Unlocked and total counts for one game, as consumed by product surfaces. */
+data class AchievementCountSummary(
+    val appId: Long,
+    val total: Int,
+    val unlocked: Int,
+)
+
+/** Minimal achievement unlock facts needed for History thumbnails. */
+data class AchievementUnlockSummary(
+    val appId: Long,
+    val iconUrl: String?,
+    val unlockedAt: Long,
+)
+
 /** An unlocked achievement with the frozen percent used for its rarity tier and its game name. */
 data class UnlockedAchievementRarity(
     val appId: Long,
@@ -117,8 +131,8 @@ class AchievementRepository @Inject constructor(
         achievementDao.observeForGame(appId).map { rows -> rows.map(Achievement::toDomain) }
 
     /** Unlocked/total achievement counts, keyed by appId — feeds the Library row badge. */
-    val counts: Flow<Map<Long, AchievementCounts>> = achievementDao.observeCounts()
-        .map { it.associateBy(AchievementCounts::appId) }
+    val counts: Flow<Map<Long, AchievementCountSummary>> = achievementDao.observeCounts()
+        .map { rows -> rows.associate { row -> row.appId to row.toDomain() } }
 
     /**
      * Completion inputs for derived collections. A sync row with `hasAchievements = false` is a
@@ -180,8 +194,8 @@ class AchievementRepository @Inject constructor(
      * Achievements unlocked at or after [cutoffMillis], across every game — feeds the History
      * screen's per-day thumbnail row (regroup-history).
      */
-    fun unlockedSince(cutoffMillis: Long): Flow<List<AchievementUnlock>> =
-        achievementDao.observeUnlockedSince(cutoffMillis)
+    fun unlockedSince(cutoffMillis: Long): Flow<List<AchievementUnlockSummary>> =
+        achievementDao.observeUnlockedSince(cutoffMillis).map { rows -> rows.map(AchievementUnlock::toDomain) }
 
     /**
      * Fetches achievements for games selected by tier: hot (playtime delta), warm (recent play),
@@ -585,6 +599,18 @@ class AchievementRepository @Inject constructor(
         const val SCHEMA_WINDOW_MILLIS = 30L * 24 * 60 * 60 * 1000
     }
 }
+
+private fun AchievementCounts.toDomain() = AchievementCountSummary(
+    appId = appId,
+    total = total,
+    unlocked = unlocked,
+)
+
+private fun AchievementUnlock.toDomain() = AchievementUnlockSummary(
+    appId = appId,
+    iconUrl = iconUrl,
+    unlockedAt = unlockedAt,
+)
 
 private fun Achievement.toDomain() = GameAchievement(
     apiName = apiName,

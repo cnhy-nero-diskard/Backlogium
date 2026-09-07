@@ -2,9 +2,9 @@ package com.example.backlogium.ui.library
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.backlogium.data.local.dao.AchievementCounts
 import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.data.repo.AchievementRepository
+import com.example.backlogium.data.repo.AchievementCountSummary
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.GameRepository
@@ -607,7 +607,7 @@ private data class SelectionLookupState(
 
 private fun LibraryGame.toGoalUi(
     xp: XpInputs,
-    counts: Map<Long, AchievementCounts>,
+    counts: Map<Long, AchievementCountSummary>,
     ops: Map<Long, HltbFetchOp>,
     playingAppId: Long?,
 ) = GoalGameUi(
@@ -635,7 +635,7 @@ private fun LibraryGame.toGoalUi(
 
 private fun LibraryGame.toBacklogUi(
     xp: XpInputs,
-    counts: Map<Long, AchievementCounts>,
+    counts: Map<Long, AchievementCountSummary>,
     ops: Map<Long, HltbFetchOp>,
     playingAppId: Long?,
 ) = BacklogGameUi(

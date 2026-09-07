@@ -11,6 +11,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import javax.inject.Inject
@@ -22,6 +24,20 @@ class SteamAssetRepository @Inject constructor(
     private val store: SteamAssetStore,
     private val client: OkHttpClient,
 ) {
+    /** Observable storage facts for product surfaces; Room rows stay inside this repository. */
+    val storageState: Flow<SteamAssetStorageState> = combine(
+        assetDao.observeStoredSummary(),
+        assetDao.observeLastRun(),
+        assetDao.observeHasInventory(),
+    ) { stored, lastRun, hasInventory ->
+        SteamAssetStorageState(
+            storedCount = stored.count,
+            storedBytes = stored.bytes,
+            lastRun = lastRun?.toDomain(),
+            hasInventory = hasInventory,
+        )
+    }
+
     suspend fun inventory(): List<SteamAssetInventoryItem> {
         val all = linkedMapOf<String, SteamAssetInventoryItem>()
         fun add(url: String?, kind: SteamAssetKind) {
@@ -149,3 +165,12 @@ class SteamAssetRepository @Inject constructor(
         const val UNAVAILABLE_FRESHNESS_MS = 30L * 24 * 60 * 60 * 1000
     }
 }
+
+private fun SteamAssetDownloadState.toDomain() = SteamAssetRunSummary(
+    mode = runCatching { SteamAssetDownloadMode.valueOf(mode) }.getOrNull(),
+    completedAt = completedAt,
+    storedCount = storedCount,
+    alreadyPresentCount = alreadyPresentCount,
+    unavailableCount = unavailableCount,
+    failedCount = failedCount,
+)

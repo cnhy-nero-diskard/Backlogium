@@ -22,19 +22,19 @@
 
 ## 4. Repository boundary (#97, #125 — largest, do last)
 
-- [ ] 4.1 Expose the last Steam asset run through a repository as a **domain summary of the run**, not a mapped container of the same entity, and drop `SteamAssetDownloadState` from `SettingsUiState.lastSteamAssetRun` (`:93`) (design.md Decision 1). Verified by no `data.local.entity` import remaining in `SettingsViewModel`
-- [ ] 4.2 Move the HLTB coverage calculation behind the repository boundary so Settings receives **the coverage figure**, not the owned-app-id list. `SettingsViewModel.kt:299-309` currently observes `gameDao.observeAppIds()` only to compute a count. **Exposing `observeOwnedAppIds()` on a repository is not the fix** — that is a DAO call wearing a different hat (design.md Decision 1)
-- [ ] 4.3 Remove the `SteamAssetDao` (`:16`, `:173`) and `GameDao` (`:15`, `:175`) constructor dependencies from `SettingsViewModel`, and rework the `assetStoredState` combine at `:218-223`. Verified by neither DAO appearing in the file
+- [x] 4.1 Expose the last Steam asset run through a repository as a **domain summary of the run**, not a mapped container of the same entity, and drop `SteamAssetDownloadState` from `SettingsUiState.lastSteamAssetRun` (`:93`) (design.md Decision 1). Verified by no `data.local.entity` import remaining in `SettingsViewModel`
+- [x] 4.2 Move the HLTB coverage calculation behind the repository boundary so Settings receives **the coverage figure**, not the owned-app-id list. `SettingsViewModel.kt:299-309` currently observes `gameDao.observeAppIds()` only to compute a count. **Exposing `observeOwnedAppIds()` on a repository is not the fix** — that is a DAO call wearing a different hat (design.md Decision 1)
+- [x] 4.3 Remove the `SteamAssetDao` (`:16`, `:173`) and `GameDao` (`:15`, `:175`) constructor dependencies from `SettingsViewModel`, and rework the `assetStoredState` combine at `:218-223`. Verified by neither DAO appearing in the file
 - [ ] 4.4 Confirm the Settings screen renders identically — this is a refactor, and the same values must reach the same UI through the new seam. Verified on a device by comparing the asset card and HLTB coverage figures before and after
-- [ ] 4.5 Decide `HltbMatchStatus`: either map it out of `ui/review/` (`HltbReviewScreen.kt:38`, `HltbReviewViewModel.kt:6`, `SteamGameHeader.kt:26`) or record it in `CLAUDE.md` as a third deliberate exception with its reasoning, alongside `HltbCandidate` — which is already an exception for serving the same review surface (design.md Decision 3). **Leaving it undocumented is not an option.** Verified by `CLAUDE.md` and the tree agreeing
+- [x] 4.5 Decide `HltbMatchStatus`: map it out of `ui/review/` at the HLTB repository boundary into the existing `HltbMatchState` domain enum; the UI and `CLAUDE.md` now agree, with no third exception needed (design.md Decision 3)
 
 ## 5. Make the invariant self-checking
 
-- [ ] 5.1 Add `data\.local\.dao` to the alternation in `CLAUDE.md`'s boundary grep, so the command covers what the invariant says. Both #97 and #125 are DAO dependencies and #125 is invisible to the current pattern — which is likely why the README recorded one and not the other (design.md Decision 4). Verified by the updated grep catching a deliberately-added test import
-- [ ] 5.2 Update `README.md`'s known-breach list to match reality after this change, removing the Settings `SteamAssetDao` entry it records
-- [ ] 5.3 Run the updated grep and confirm it reports **exactly** the two documented `ui/home/HomeViewModel.kt` lines and nothing else. **A silent grep is a failure, not a pass** — it would mean the exclusions were widened rather than the breaches fixed
-- [ ] 5.4 Confirm `CLAUDE.md`'s "Known outstanding breach" paragraph on `HomeViewModel` is still accurate and still describes the `CollectionRepository` mapping as the fix. It stays deferred; `auditfix-collections-editor` adds to that repository without attempting it
-- [ ] 5.5 Triage anything else the widened grep newly surfaces: fix it here if it is in this change's files, otherwise file an issue. **Do not narrow the pattern to quiet the output**
+- [x] 5.1 Add `data\.local\.dao` to the alternation in `CLAUDE.md`'s boundary grep, so the command covers what the invariant says. Both #97 and #125 are DAO dependencies and #125 is invisible to the current pattern — which is likely why the README recorded one and not the other (design.md Decision 4). Verified by the updated grep
+- [x] 5.2 Update `README.md`'s known-breach list to match reality after this change, removing the Settings `SteamAssetDao` entry it records
+- [x] 5.3 Run the updated grep and confirm it reports **exactly** the two documented `ui/home/HomeViewModel.kt` lines and nothing else. **A silent grep is a failure, not a pass** — it would mean the exclusions were widened rather than the breaches fixed
+- [x] 5.4 Confirm `CLAUDE.md`'s "Known outstanding breach" paragraph on `HomeViewModel` is still accurate and still describes the `CollectionRepository` mapping as the fix. It stays deferred; `auditfix-collections-editor` adds to that repository without attempting it
+- [x] 5.5 Triage anything else the widened grep newly surfaces: the achievement DAO projections were mapped through `AchievementRepository`; no additional breach remains. **Do not narrow the pattern to quiet the output**
 
 ## 6. Close out
 

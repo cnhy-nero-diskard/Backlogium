@@ -1,7 +1,6 @@
 package com.example.backlogium.ui.home
 
 import androidx.lifecycle.ViewModel
-import com.example.backlogium.data.local.dao.AchievementCounts
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
@@ -10,6 +9,7 @@ import com.example.backlogium.data.local.SharedGameAnnouncement
 import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.repo.AchievementRepository
+import com.example.backlogium.data.repo.AchievementCountSummary
 import com.example.backlogium.data.repo.CollectionRepository
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
@@ -193,7 +193,7 @@ private data class HomeAnnouncements(
 private data class HomeCollectionInputs(
     val members: List<CollectionMember>,
     val libraryGames: List<LibraryGame>,
-    val counts: Map<Long, AchievementCounts>,
+    val counts: Map<Long, AchievementCountSummary>,
     val trackedMinutesByGame: Map<Long, Int>,
 )
 data class HomeCollectionGame(
