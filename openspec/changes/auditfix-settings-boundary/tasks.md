@@ -1,8 +1,8 @@
 ## 1. Prerequisites
 
-- [ ] 1.1 Confirm `auditfix-spec-truth` has landed, so #112's copy fix lands against the corrected `onboarding-credentials` text (#102) rather than alongside it
-- [ ] 1.2 Record the current output of `CLAUDE.md`'s boundary grep as the baseline this change moves, including the three unfiled `ui/review/HltbMatchStatus` lines. Verified by the baseline written down before any edit
-- [ ] 1.3 Read Home's attribution guard at `HomeScreen.kt:204-215` and its comment before writing the Settings equivalent — it is the established idiom and the reasoning it encodes is load-bearing (design.md Decision 2)
+- [x] 1.1 Confirm `auditfix-spec-truth` has landed, so #112's copy fix lands against the corrected `onboarding-credentials` text (#102) rather than alongside it
+- [x] 1.2 Record the current output of `CLAUDE.md`'s boundary grep as the baseline this change moves, including the three unfiled `ui/review/HltbMatchStatus` lines. Verified by the baseline written down before any edit
+- [x] 1.3 Read Home's attribution guard at `HomeScreen.kt:204-215` and its comment before writing the Settings equivalent — it is the established idiom and the reasoning it encodes is load-bearing (design.md Decision 2)
 
 ## 2. Empty-state copy (#112 — smallest, do first)
 
