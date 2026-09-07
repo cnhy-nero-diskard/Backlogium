@@ -41,6 +41,6 @@
 - [x] 6.1 `openspec validate --strict auditfix-settings-boundary` passes
 - [x] 6.2 `./gradlew :app:testDebugUnitTest` passes
 - [x] 6.3 Confirm the haptics authority grep still produces no output: `grep -rn "performHapticFeedback\|LocalHapticFeedback\|VibrationEffect" app/src/main/java --exclude-dir=util` — the Settings haptic must go through `ui/util/Haptics.kt`'s vocabulary, not the platform
-- [ ] 6.4 On a device: open Settings unconfigured from Library's empty state, then tap Sync now with the network off and confirm a single Reject alongside the error
+- [x] 6.4 On a device: open Settings unconfigured from Library's empty state, then tap Sync now with the network off and confirm a single Reject alongside the error
 - [ ] 6.5 Sync the delta into `openspec/specs/` via the archive workflow, not by hand
 - [x] 6.6 Close #97, #109, #112, #125. Then close #98 (the audit umbrella) if this is the last of the seven changes to land
