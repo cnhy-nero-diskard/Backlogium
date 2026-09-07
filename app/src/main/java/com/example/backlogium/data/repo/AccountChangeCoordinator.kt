@@ -25,9 +25,9 @@ class AccountChangeCoordinator @Inject constructor(
     private val syncCoordinator: SteamSyncCoordinator,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
     private val progressTransitions: ProgressTransitionCoordinator,
-) {
+) : AccountChangeGateway {
     /** Start a confirmed account change and finish it, or leave the marker for recovery on error. */
-    suspend fun apply(apiKey: String, steamId: String) {
+    override suspend fun apply(apiKey: String, steamId: String) {
         val normalizedApiKey = apiKey.trim()
         val normalizedSteamId = steamId.trim()
         require(normalizedApiKey.isNotBlank()) { "API key must not be blank" }

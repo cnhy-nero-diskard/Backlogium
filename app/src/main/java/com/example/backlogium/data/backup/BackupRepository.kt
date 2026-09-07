@@ -48,9 +48,9 @@ class BackupRepository @Inject constructor(
     private val time: TimeProvider,
     private val syncScheduler: SyncScheduler,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
-) {
+) : BackupExportGateway {
     /** Export to a user-chosen SAF destination. Independent of the auto-snapshot toggle. */
-    suspend fun exportTo(uri: Uri) {
+    override suspend fun exportTo(uri: Uri) {
         val file = exportMapper.buildExport()
         val bytes = json.encodeToString(BackupFile.serializer(), file).toByteArray()
         context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }

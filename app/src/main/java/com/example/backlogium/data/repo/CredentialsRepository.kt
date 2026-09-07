@@ -99,7 +99,7 @@ sealed interface VerificationProbe {
 class CredentialsRepository @Inject constructor(
     private val store: EncryptedCredentialStore,
     private val steamApi: SteamApi,
-) : CredentialsProvider {
+) : OnboardingCredentialsGateway {
     private val state = MutableStateFlow<CredentialsState>(CredentialsState.Unconfigured)
     private val seedMutex = Mutex()
     @Volatile private var seeded = false
@@ -124,7 +124,7 @@ class CredentialsRepository @Inject constructor(
      * is authoritative (even if the user later clears it). Suspends, so callers await the result
      * before reading credentials.
      */
-    suspend fun refresh(): CredentialsState {
+    override suspend fun refresh(): CredentialsState {
         seedIfNeeded()
         val apiKey = store.readApiKey()
         val steamId = store.readSteamId()
@@ -142,7 +142,7 @@ class CredentialsRepository @Inject constructor(
      * The repository reports that condition without writing anything: the destructive response
      * belongs to the confirmed account-change flow, not to a storage primitive.
      */
-    suspend fun save(apiKey: String, steamId: String): CredentialsSaveResult {
+    override suspend fun save(apiKey: String, steamId: String): CredentialsSaveResult {
         val normalizedSteamId = steamId.trim()
         val current = refresh()
         if (current is CredentialsState.Configured &&
@@ -177,7 +177,7 @@ class CredentialsRepository @Inject constructor(
      *
      * The key is never logged and never reaches the returned value — see [VerificationProbe].
      */
-    suspend fun verify(apiKey: String, steamId: String): CredentialVerification {
+    override suspend fun verify(apiKey: String, steamId: String): CredentialVerification {
         val key = apiKey.trim()
         val id = steamId.trim()
         if (key.isBlank()) return CredentialVerification.KeyRejected
@@ -210,7 +210,7 @@ class CredentialsRepository @Inject constructor(
      * uses [apiKeyOverride] when supplied (the key the user just typed during onboarding, not yet
      * saved), falling back to the stored key. Maps every failure mode to a typed [SteamIdResolution].
      */
-    suspend fun resolveSteamId(input: String, apiKeyOverride: String? = null): SteamIdResolution {
+    override suspend fun resolveSteamId(input: String, apiKeyOverride: String?): SteamIdResolution {
         return when (val parsed = SteamIdInput.parse(input)) {
             is SteamIdInput.Parsed.SteamId64 ->
                 if (SteamIdInput.isValidSteamId64(parsed.value)) {
@@ -229,9 +229,16 @@ class CredentialsRepository @Inject constructor(
         val apiKey = apiKeyOverride?.trim()?.takeIf { it.isNotBlank() }
             ?: store.readApiKey()?.takeIf { it.isNotBlank() }
             ?: return SteamIdResolution.NetworkError
-        val result = runCatching { steamApi.resolveVanityUrl(apiKey, token) }
-            .getOrElse { return SteamIdResolution.NetworkError }
-            .response
+        // Cancellation is rethrown rather than reported as a failure: runCatching would absorb the
+        // CancellationException (it is a Throwable) and let a cancelled — hence superseded — request
+        // continue into the publish guard as a NetworkError over its replacement.
+        val result = try {
+            steamApi.resolveVanityUrl(apiKey, token)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return SteamIdResolution.NetworkError
+        }.response
         return mapVanityResult(result.success, result.steamId)
     }
 
