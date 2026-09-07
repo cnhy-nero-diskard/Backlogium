@@ -36,8 +36,8 @@
 
 - [x] 5.1 Give all three sites the same short comment naming the rule and pointing at the others, so the next author copies the guarded version rather than the unguarded one. **Do not extract a shared helper** — the three identity tokens differ and a comparator-plus-publisher abstraction reads worse than the two lines it replaces (design.md Decision 5)
 - [x] 5.2 Confirm `refreshSelection`/`selectionLookupJob` in the same `LibraryViewModel` still needs no change: it cancels correctly and writes each result to Room as it arrives, so a cancelled run leaves consistent data. Verified by re-reading it against the new rule
-- [ ] 5.3 `openspec validate --strict auditfix-ui-async-identity` passes
-- [ ] 5.4 `./gradlew :app:testDebugUnitTest` passes
+- [x] 5.3 `openspec validate --strict auditfix-ui-async-identity` passes
+- [x] 5.4 `./gradlew :app:testDebugUnitTest` passes
 - [ ] 5.5 On a device: enter a vanity name, start resolution, edit the field mid-flight, and confirm the screen does not offer Finish for the abandoned input
 - [ ] 5.6 Sync the deltas into `openspec/specs/` via the archive workflow, not by hand
 - [ ] 5.7 Close #122, #126, #127
