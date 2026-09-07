@@ -3,6 +3,7 @@ package com.example.backlogium.data.local.dao
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import com.example.backlogium.data.local.entity.Session
 import kotlinx.coroutines.flow.Flow
@@ -17,29 +18,33 @@ interface SessionDao {
     suspend fun update(session: Session)
 
     /**
-     * Opens a session for [appId] only if it has no open session already, in one statement.
+     * Opens a session for [appId] only when no open session already exists.
      *
      * This is the enforcement point for "at most one open session per game" (auditfix-session-
-     * ledger-integrity, #116): the `WHERE NOT EXISTS` and the row it guards are evaluated by
-     * SQLite's own single-writer serialization, so two callers racing to open a session for the
-     * same game — neither holding a shared lock, as the presence path does not — cannot both
-     * succeed. The loser gets 0 rows affected and must fold its observation into the session that
-     * won, via [getOpenSession], rather than losing it.
+     * ledger-integrity, #116). The check and insert run inside one Room transaction, so two callers
+     * racing from an empty state cannot both pass the guard. The loser must fold its observation into
+     * the session that won, via [getOpenSession], rather than losing it.
      *
-     * Deliberately a guarded `INSERT` rather than a partial unique index: Room's `@Index` has no
-     * `WHERE` clause, so a partial index would need a hand-written migration outside Room's
-     * schema tracking, risking a validation mismatch on every device. This needs no migration and
-     * leaves the `(appId, startAt, endAt)` natural key untouched.
+     * Deliberately leaves the `(appId, startAt, endAt)` natural key non-unique: the backup/restore
+     * merge engine must tolerate a real-world collision among closed sessions. This needs no schema
+     * migration and enforces only the open-session invariant at the write boundary.
      *
      * @return the new row's id if this call opened the session, or -1 if a concurrent caller
      *   already holds one open and nothing was inserted.
      */
-    @Query(
-        "INSERT INTO sessions (appId, startAt, endAt, minutes, open) " +
-            "SELECT :appId, :startAt, :endAt, :minutes, 1 " +
-            "WHERE NOT EXISTS (SELECT 1 FROM sessions WHERE appId = :appId AND open = 1)",
-    )
-    suspend fun tryOpenSession(appId: Long, startAt: Long, endAt: Long?, minutes: Int): Long
+    @Transaction
+    suspend fun tryOpenSession(appId: Long, startAt: Long, endAt: Long?, minutes: Int): Long {
+        if (getOpenSession(appId) != null) return -1L
+        return insert(
+            Session(
+                appId = appId,
+                startAt = startAt,
+                endAt = endAt,
+                minutes = minutes,
+                open = true,
+            ),
+        )
+    }
 
     @Query("SELECT * FROM sessions WHERE appId = :appId AND open = 1 LIMIT 1")
     suspend fun getOpenSession(appId: Long): Session?
