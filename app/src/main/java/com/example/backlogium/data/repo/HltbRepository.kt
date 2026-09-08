@@ -31,7 +31,7 @@ import javax.inject.Singleton
 data class HltbReviewGame(
     val appId: Long,
     val candidates: List<HltbCandidate>,
-    val matchStatus: HltbMatchStatus = if (candidates.isEmpty()) HltbMatchStatus.UNMATCHED else HltbMatchStatus.NEEDS_REVIEW,
+    val matchStatus: HltbMatchState = if (candidates.isEmpty()) HltbMatchState.UNMATCHED else HltbMatchState.NEEDS_REVIEW,
 )
 
 /** Result of a user-triggered broader HLTB search (user-triggered rescue). */
@@ -67,7 +67,7 @@ class HltbRepository @Inject constructor(
 ) {
     /** Games flagged for manual match review, with their candidates. */
     val reviewQueue: Flow<List<HltbReviewGame>> = hltbDataDao.observeNeedsReview()
-        .map { rows -> rows.map { HltbReviewGame(it.appId, candidatesOf(it), it.matchStatus) } }
+        .map { rows -> rows.map { HltbReviewGame(it.appId, candidatesOf(it), it.matchStatus.toDomain()) } }
 
     /** How many games await manual review — the Library's review badge (still review-only). */
     val reviewCount: Flow<Int> = hltbDataDao.observeNeedsReview().map { it.size }
@@ -76,7 +76,7 @@ class HltbRepository @Inject constructor(
     val matchCenterQueue: Flow<List<HltbReviewGame>> = hltbDataDao.observeMatchCenter()
         .map { rows ->
             rows.map { row ->
-                HltbReviewGame(row.appId, candidatesOf(row), row.matchStatus)
+                HltbReviewGame(row.appId, candidatesOf(row), row.matchStatus.toDomain())
             }
         }
 

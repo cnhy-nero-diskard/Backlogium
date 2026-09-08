@@ -68,7 +68,7 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
     if (!state.configured) {
         EmptyState(
             title = "Steam not configured",
-            message = "Connect your Steam account from the Home screen to see your analytics.",
+            message = "Connect your Steam account from Settings to see your analytics.",
         )
         return
     }

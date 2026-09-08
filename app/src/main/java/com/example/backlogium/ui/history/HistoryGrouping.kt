@@ -1,6 +1,6 @@
 package com.example.backlogium.ui.history
 
-import com.example.backlogium.data.local.dao.AchievementUnlock
+import com.example.backlogium.data.repo.AchievementUnlockSummary
 import com.example.backlogium.data.repo.DayProgress
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.PlaySession
@@ -85,7 +85,7 @@ fun groupHistory(
     sessions: List<PlaySession>,
     games: List<LibraryGame>,
     dailyProgress: List<DayProgress>,
-    achievementUnlocks: List<AchievementUnlock>,
+    achievementUnlocks: List<AchievementUnlockSummary>,
     zone: ZoneId = ZoneId.systemDefault(),
 ): List<HistoryDayGroup> {
     val nameById = games.associate { it.appId to it.name }

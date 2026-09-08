@@ -24,3 +24,22 @@ data class SteamAssetRunCounts(
         SteamAssetOutcome.FAILED -> copy(failed = failed + 1)
     }
 }
+
+/** Domain summary of one completed asset download run. */
+data class SteamAssetRunSummary(
+    /** Null means the persisted mode was written by a newer app version. */
+    val mode: SteamAssetDownloadMode?,
+    val completedAt: Long,
+    val storedCount: Int,
+    val alreadyPresentCount: Int,
+    val unavailableCount: Int,
+    val failedCount: Int,
+)
+
+/** The asset facts that Settings needs, derived by [SteamAssetRepository]. */
+data class SteamAssetStorageState(
+    val storedCount: Int,
+    val storedBytes: Long,
+    val lastRun: SteamAssetRunSummary?,
+    val hasInventory: Boolean,
+)

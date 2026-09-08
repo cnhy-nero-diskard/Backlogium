@@ -11,8 +11,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.espresso.Espresso
-import com.example.backlogium.data.local.entity.SteamAssetDownloadState
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
+import com.example.backlogium.data.steamassets.SteamAssetRunSummary
 import com.example.backlogium.ui.theme.BacklogiumTheme
 import com.example.backlogium.work.SteamAssetDownloadProgress
 import com.example.backlogium.work.SteamAssetDownloadStatus
@@ -70,8 +70,8 @@ class OfflineSteamAssetsCardTest {
 
     @Test
     fun populatedInventory_showsSummaryAndLastRunAndEnablesButton() {
-        val lastRun = SteamAssetDownloadState(
-            mode = "DOWNLOAD_MISSING",
+        val lastRun = SteamAssetRunSummary(
+            mode = SteamAssetDownloadMode.DOWNLOAD_MISSING,
             completedAt = 1_000L,
             storedCount = 12,
             alreadyPresentCount = 3,

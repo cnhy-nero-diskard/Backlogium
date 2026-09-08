@@ -1,7 +1,7 @@
 package com.example.backlogium.ui.review
 
 import com.example.backlogium.data.hltb.HltbCandidate
-import com.example.backlogium.data.local.entity.HltbMatchStatus
+import com.example.backlogium.data.repo.HltbMatchState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -17,7 +17,7 @@ import org.junit.Test
  */
 class HltbMatchCenterSelectionTest {
 
-    private fun game(appId: Long, status: HltbMatchStatus) = MatchCenterGameUi(
+    private fun game(appId: Long, status: HltbMatchState) = MatchCenterGameUi(
         appId = appId,
         name = "Game $appId",
         matchStatus = status,
@@ -32,14 +32,14 @@ class HltbMatchCenterSelectionTest {
         rawDaoOrder: List<MatchCenterGameUi>,
     ): MatchCenterSelection = resolveMatchCenterSelection(
         prior,
-        rawDaoOrder.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW } +
-            rawDaoOrder.filter { it.matchStatus == HltbMatchStatus.UNMATCHED },
+        rawDaoOrder.filter { it.matchStatus == HltbMatchState.NEEDS_REVIEW } +
+            rawDaoOrder.filter { it.matchStatus == HltbMatchState.UNMATCHED },
     )
 
     private fun stateFor(rawDaoOrder: List<MatchCenterGameUi>, selection: MatchCenterSelection) =
         HltbMatchCenterUiState(
-            ambiguous = rawDaoOrder.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW },
-            unmatched = rawDaoOrder.filter { it.matchStatus == HltbMatchStatus.UNMATCHED },
+            ambiguous = rawDaoOrder.filter { it.matchStatus == HltbMatchState.NEEDS_REVIEW },
+            unmatched = rawDaoOrder.filter { it.matchStatus == HltbMatchState.UNMATCHED },
             selectedIndex = selection.index,
         )
 
@@ -48,9 +48,9 @@ class HltbMatchCenterSelectionTest {
         // Broader search success moves the selected game from the unmatched partition into the
         // review partition: [U1, U2, U3] becomes [N2, U1, U3]. An index would now point at U1.
         val before = queue(
-            game(1, HltbMatchStatus.UNMATCHED),
-            game(2, HltbMatchStatus.UNMATCHED),
-            game(3, HltbMatchStatus.UNMATCHED),
+            game(1, HltbMatchState.UNMATCHED),
+            game(2, HltbMatchState.UNMATCHED),
+            game(3, HltbMatchState.UNMATCHED),
         )
         val initial = deriveViewModelSelection(MatchCenterSelection(0, null), before)
         assertEquals(1L, initial.persistedAppId)
@@ -58,9 +58,9 @@ class HltbMatchCenterSelectionTest {
         val picked = MatchCenterSelection(index = 1, persistedAppId = 2L)
 
         val after = queue(
-            game(2, HltbMatchStatus.NEEDS_REVIEW),
-            game(1, HltbMatchStatus.UNMATCHED),
-            game(3, HltbMatchStatus.UNMATCHED),
+            game(2, HltbMatchState.NEEDS_REVIEW),
+            game(1, HltbMatchState.UNMATCHED),
+            game(3, HltbMatchState.UNMATCHED),
         )
         val reordered = deriveViewModelSelection(picked, after)
 
@@ -76,9 +76,9 @@ class HltbMatchCenterSelectionTest {
         // [U1, N2, U3] displays as [N2, U1, U3]. Deriving the index from raw order would select
         // N2 when the user picked U1.
         val raw = queue(
-            game(1, HltbMatchStatus.UNMATCHED),
-            game(2, HltbMatchStatus.NEEDS_REVIEW),
-            game(3, HltbMatchStatus.UNMATCHED),
+            game(1, HltbMatchState.UNMATCHED),
+            game(2, HltbMatchState.NEEDS_REVIEW),
+            game(3, HltbMatchState.UNMATCHED),
         )
         val derived = deriveViewModelSelection(MatchCenterSelection(index = 1, persistedAppId = 1L), raw)
 
@@ -92,8 +92,8 @@ class HltbMatchCenterSelectionTest {
         // Resolving the last game must clamp onto the neighbor of the old position (B), not
         // jump back to the first game.
         val queue2 = queue(
-            game(1, HltbMatchStatus.NEEDS_REVIEW),
-            game(2, HltbMatchStatus.NEEDS_REVIEW),
+            game(1, HltbMatchState.NEEDS_REVIEW),
+            game(2, HltbMatchState.NEEDS_REVIEW),
         )
         val clamped = deriveViewModelSelection(MatchCenterSelection(index = 2, persistedAppId = 3L), queue2)
 
@@ -106,8 +106,8 @@ class HltbMatchCenterSelectionTest {
     fun middleGameRemoved_keepsTheOldPosition() {
         // Resolving the middle game keeps the old position, which now lands on the next game.
         val queue2 = queue(
-            game(1, HltbMatchStatus.NEEDS_REVIEW),
-            game(3, HltbMatchStatus.NEEDS_REVIEW),
+            game(1, HltbMatchState.NEEDS_REVIEW),
+            game(3, HltbMatchState.NEEDS_REVIEW),
         )
         val clamped = deriveViewModelSelection(MatchCenterSelection(index = 1, persistedAppId = 2L), queue2)
 
@@ -119,8 +119,8 @@ class HltbMatchCenterSelectionTest {
     @Test
     fun firstGameRemoved_clampsToTheNewFirstGame() {
         val queue2 = queue(
-            game(2, HltbMatchStatus.NEEDS_REVIEW),
-            game(3, HltbMatchStatus.NEEDS_REVIEW),
+            game(2, HltbMatchState.NEEDS_REVIEW),
+            game(3, HltbMatchState.NEEDS_REVIEW),
         )
         val clamped = deriveViewModelSelection(MatchCenterSelection(index = 0, persistedAppId = 1L), queue2)
 
@@ -139,8 +139,8 @@ class HltbMatchCenterSelectionTest {
     @Test
     fun selectionMissingFromQueue_fallsBackToFirstGame() {
         val games = queue(
-            game(1, HltbMatchStatus.NEEDS_REVIEW),
-            game(2, HltbMatchStatus.UNMATCHED),
+            game(1, HltbMatchState.NEEDS_REVIEW),
+            game(2, HltbMatchState.UNMATCHED),
         )
 
         val fromNull = deriveViewModelSelection(MatchCenterSelection(0, null), games)
@@ -155,8 +155,8 @@ class HltbMatchCenterSelectionTest {
     @Test
     fun derivedIndex_feedsTheStateSelection() {
         val games = queue(
-            game(1, HltbMatchStatus.NEEDS_REVIEW),
-            game(2, HltbMatchStatus.UNMATCHED),
+            game(1, HltbMatchState.NEEDS_REVIEW),
+            game(2, HltbMatchState.UNMATCHED),
         )
         val selection = deriveViewModelSelection(MatchCenterSelection(index = 1, persistedAppId = 2L), games)
         val state = stateFor(games, selection)
@@ -178,11 +178,11 @@ class HltbMatchCenterSelectionTest {
         // derivation still clamps for the transient frame — the screen, however, sees the scoped
         // completion flag and finishes instead of stranding the user in B's review flow.
         val queue2 = queue(
-            game(2, HltbMatchStatus.NEEDS_REVIEW),
-            game(3, HltbMatchStatus.UNMATCHED),
+            game(2, HltbMatchState.NEEDS_REVIEW),
+            game(3, HltbMatchState.UNMATCHED),
         )
-        val display = queue2.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW } +
-            queue2.filter { it.matchStatus == HltbMatchStatus.UNMATCHED }
+        val display = queue2.filter { it.matchStatus == HltbMatchState.NEEDS_REVIEW } +
+            queue2.filter { it.matchStatus == HltbMatchState.UNMATCHED }
 
         val clamped = resolveMatchCenterSelection(MatchCenterSelection(index = 0, persistedAppId = 1L), display)
         assertEquals(0, clamped.index)
@@ -194,15 +194,15 @@ class HltbMatchCenterSelectionTest {
     @Test
     fun scopedAppPresent_routeIsNotComplete() {
         val games = queue(
-            game(1, HltbMatchStatus.NEEDS_REVIEW),
-            game(2, HltbMatchStatus.UNMATCHED),
+            game(1, HltbMatchState.NEEDS_REVIEW),
+            game(2, HltbMatchState.UNMATCHED),
         )
         assertFalse(isScopedAppMissing(scopedAppId = 1L, games = games))
     }
 
     @Test
     fun unscopedRoute_neverCompletesViaTheScopedFlag() {
-        val games = queue(game(1, HltbMatchStatus.NEEDS_REVIEW))
+        val games = queue(game(1, HltbMatchState.NEEDS_REVIEW))
         assertFalse(isScopedAppMissing(scopedAppId = null, games = games))
         assertFalse(isScopedAppMissing(scopedAppId = null, games = emptyList()))
     }
@@ -218,8 +218,8 @@ class HltbMatchCenterSelectionTest {
 
         val produced = HltbMatchCenterUiState(
             loading = false,
-            ambiguous = listOf(game(2, HltbMatchStatus.NEEDS_REVIEW)),
-            scopedAppMissing = isScopedAppMissing(1L, listOf(game(2, HltbMatchStatus.NEEDS_REVIEW))),
+            ambiguous = listOf(game(2, HltbMatchState.NEEDS_REVIEW)),
+            scopedAppMissing = isScopedAppMissing(1L, listOf(game(2, HltbMatchState.NEEDS_REVIEW))),
         )
         assertFalse(produced.loading)
         assertTrue(produced.scopedAppMissing)

@@ -54,6 +54,8 @@ import com.example.backlogium.data.repo.RemovedSharedGame
 import com.example.backlogium.data.updates.AppUpdateState
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
+import com.example.backlogium.ui.util.HapticIntent
+import com.example.backlogium.ui.util.HapticPlayer
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.ui.util.playIfNotSilent
 import com.example.backlogium.ui.util.rememberHaptics
@@ -124,6 +126,7 @@ fun SettingsScreen(
         onOpenDiagnostics = onOpenDiagnostics,
         onOpenSetup = onOpenSetup,
         onOpenUpdate = onOpenUpdate,
+        haptics = haptics,
         actions = remember(viewModel) {
             SettingsActions(
                 onSyncNow = viewModel::syncNow,
@@ -210,8 +213,23 @@ fun SettingsScreen(
     onOpenSetup: () -> Unit = {},
     onOpenUpdate: () -> Unit = {},
     actions: SettingsActions,
+    haptics: HapticPlayer = rememberHaptics(),
 ) {
     if (state.loading) return
+
+    // The error card is also used by background syncs. Only a sync initiated from this visible
+    // button arms Reject, so a background failure never produces an unattributable buzz.
+    var manualSyncAttempt by remember { mutableStateOf(false) }
+    var manualSyncInFlight by remember { mutableStateOf(false) }
+    LaunchedEffect(state.isSyncing) {
+        if (state.isSyncing && manualSyncAttempt) {
+            manualSyncInFlight = true
+        } else if (!state.isSyncing && manualSyncAttempt && manualSyncInFlight) {
+            if (state.lastSyncError != null) haptics.playIfNotSilent(HapticIntent.Reject)
+            manualSyncAttempt = false
+            manualSyncInFlight = false
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -237,7 +255,10 @@ fun SettingsScreen(
             syncing = state.isSyncing,
             reconciling = state.isReconciling,
             genreStatus = state.genreEnrichmentStatus,
-            onSyncNow = actions.onSyncNow,
+            onSyncNow = {
+                manualSyncAttempt = true
+                actions.onSyncNow()
+            },
             onReconcileNow = actions.onReconcileNow,
         )
 

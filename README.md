@@ -123,9 +123,9 @@ boundaries, see the [ASCII architecture map](docs/architecture-map.md).
 
 ### Data-Source Boundary
 
-Repositories expose domain models. Room entities stay inside `data/`. As a rule,
+Repositories expose domain models. Room entities and DAO projections stay inside `data/`. As a rule,
 nothing under `ui/` imports a storage type — no `data.local.entity.*`, and no
-`SettingsDataStore` in a ViewModel. The items below are the known exceptions to that
+`SettingsDataStore` in a ViewModel. DAO projections are included in the same check. The items below are the known exceptions to that
 rule; every other surface maps at the repository boundary, and Settings otherwise go
 through `SettingsRepository`.
 
@@ -133,7 +133,7 @@ Checkable from a shell — matching on `import` skips prose mentions in KDoc, an
 `--exclude-dir` skips the documented diagnostics exception:
 
 ```bash
-grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" \
+grep -rn "^import .*\(data\.local\.entity\|data\.local\.dao\|SettingsDataStore\)" \
   app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics
 ```
 
@@ -147,12 +147,8 @@ Two deliberate exceptions:
   look-alike domain models would only add a layer that can misrepresent what is being
   debugged. Scoped to this package; writes still go through `SyncRunRecorder`.
 
-Two known outstanding breaches (deferred boundary mapping), not deliberate exceptions:
+One known outstanding breach (deferred boundary mapping), not a deliberate exception:
 
-- `ui/settings/SettingsViewModel.kt` imports `data.local.entity.SteamAssetDownloadState`
-  and depends directly on `SteamAssetDao` to surface the offline-asset download state
-  (stored count, bytes, last run). Introduced with offline Steam assets (PR #79); the
-  fix is to map at the repository boundary.
 - `ui/home/HomeViewModel.kt` imports the `CollectionRepository` entities across its
   public API, and mapping at that boundary is deferred work. See `CLAUDE.md` for the
   detail.

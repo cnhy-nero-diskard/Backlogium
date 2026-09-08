@@ -1,6 +1,6 @@
 package com.example.backlogium.ui.history
 
-import com.example.backlogium.data.local.dao.AchievementUnlock
+import com.example.backlogium.data.repo.AchievementUnlockSummary
 import com.example.backlogium.data.repo.DayProgress
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.PlaySession
@@ -287,7 +287,7 @@ class HistoryGroupingTest {
         LibraryGame(appId = appId, name = name, iconUrl = "icon-$appId", playtimeForever = 0, isGoal = isGoal)
 
     private fun unlock(appId: Long, icon: String, day: String) =
-        AchievementUnlock(appId = appId, iconUrl = icon, unlockedAt = atUtcDate(day))
+        AchievementUnlockSummary(appId = appId, iconUrl = icon, unlockedAt = atUtcDate(day))
 
     private fun atUtcDate(isoDate: String): Long =
         LocalDate.parse(isoDate).atStartOfDay(zone).plusHours(12).toInstant().toEpochMilli()

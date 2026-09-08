@@ -24,6 +24,7 @@ import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
@@ -48,6 +49,11 @@ data class AppliedHltbDataset(
     val datasetVersion: Long,
     val gatheredAt: Long,
     val coveredAppIds: Set<Long>,
+)
+
+data class HltbDatasetCoverage(
+    val gatheredAt: Long?,
+    val coveredGameCount: Int,
 )
 
 sealed interface HltbDatasetProgress {
@@ -100,6 +106,17 @@ class HltbDatasetRepository @Inject constructor(
 
     val appliedState: Flow<AppliedHltbDataset?> = datasetDao.observeSnapshot().map { rows ->
         rows.toAppliedState()
+    }
+
+    /** Coverage for the current library, without exposing dataset or library identifiers upward. */
+    val coverage: Flow<HltbDatasetCoverage> = combine(
+        appliedState,
+        libraryCatalog.observeAppIds(),
+    ) { applied, libraryAppIds ->
+        HltbDatasetCoverage(
+            gatheredAt = applied?.gatheredAt,
+            coveredGameCount = applied?.coveredAppIds?.count { it in libraryAppIds } ?: 0,
+        )
     }
 
     override fun observeAll(): Flow<List<HltbData>> = datasetDao.observeAllRows()

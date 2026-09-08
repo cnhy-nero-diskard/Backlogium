@@ -58,7 +58,7 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
     if (!state.configured) {
         EmptyState(
             title = "Steam not configured",
-            message = "Connect your Steam account from the Home screen to track sessions.",
+            message = "Connect your Steam account from Settings to track sessions.",
         )
         return
     }

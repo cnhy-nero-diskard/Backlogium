@@ -23,9 +23,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import com.example.backlogium.data.hltb.HltbRoutes
-import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.hltb.SteamRoutes
+import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.ui.components.GameIcon
 import compose.icons.TablerIcons
 import compose.icons.tablericons.DeviceGamepad
@@ -75,9 +75,9 @@ fun SteamGameHeader(
                     style = MaterialTheme.typography.titleMedium,
                 )
                 val statusLabel = when (game.matchStatus) {
-                    HltbMatchStatus.NEEDS_REVIEW -> "Needs review"
-                    HltbMatchStatus.UNMATCHED -> "No match"
-                    HltbMatchStatus.RESOLVED -> "Resolved"
+                    HltbMatchState.NEEDS_REVIEW -> "Needs review"
+                    HltbMatchState.UNMATCHED -> "No match"
+                    HltbMatchState.RESOLVED -> "Resolved"
                     else -> game.matchStatus.name
                 }
                 Text(

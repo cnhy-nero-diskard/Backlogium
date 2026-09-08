@@ -12,12 +12,10 @@ import com.example.backlogium.data.backup.SnapshotMeta
 import com.example.backlogium.data.credentials.maskApiKey
 import com.example.backlogium.data.hltb.HltbContributionExporter
 import com.example.backlogium.data.hltb.HltbContributionPreparation
-import com.example.backlogium.data.local.dao.GameDao
-import com.example.backlogium.data.local.dao.SteamAssetDao
-import com.example.backlogium.data.local.entity.SteamAssetDownloadState
-import com.example.backlogium.data.local.dao.SteamAssetStoredSummary
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
+import com.example.backlogium.data.steamassets.SteamAssetRepository
+import com.example.backlogium.data.steamassets.SteamAssetRunSummary
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.FamilySharedGameRepository
 import com.example.backlogium.data.repo.ManualImportUnavailableAt
@@ -83,6 +81,7 @@ data class SettingsUiState(
     /** Masked form of the API key; the raw key never reaches the UI. */
     val apiKeyMasked: String = "",
     val lastSyncAt: Long = 0L,
+    val lastSyncError: String? = null,
     val isSyncing: Boolean = false,
     val isReconciling: Boolean = false,
     val genreEnrichmentStatus: GenreEnrichmentStatus = GenreEnrichmentStatus.IDLE,
@@ -90,7 +89,7 @@ data class SettingsUiState(
     val steamAssetProgress: SteamAssetDownloadProgress? = null,
     val storedSteamAssetCount: Int = 0,
     val storedSteamAssetBytes: Long = 0L,
-    val lastSteamAssetRun: SteamAssetDownloadState? = null,
+    val lastSteamAssetRun: SteamAssetRunSummary? = null,
     val hasSteamAssetInventory: Boolean = false,
     /** Explicit opt-in to poll Steam every 30 seconds before a game is detected. */
     val liveMonitorEnabled: Boolean = false,
@@ -170,9 +169,8 @@ class SettingsViewModel @Inject constructor(
     private val presenceServiceStarter: PresenceServiceStarter,
     private val syncScheduler: SyncScheduler,
     private val appUpdates: AppUpdateRepository,
-    private val steamAssetDao: SteamAssetDao,
+    private val steamAssets: SteamAssetRepository,
     private val sharedGames: FamilySharedGameRepository,
-    private val gameDao: GameDao,
     private val hltbDatasetRepository: HltbDatasetRepository,
     private val hltbContributionExporter: HltbContributionExporter,
 ) : ViewModel() {
@@ -215,13 +213,6 @@ class SettingsViewModel @Inject constructor(
         refreshSnapshots()
     }
 
-    private val assetStoredState = combine(
-        steamAssetDao.observeStoredSummary(),
-        steamAssetDao.observeLastRun(),
-        steamAssetDao.observeHasInventory(),
-    ) { summary, lastRun, hasInventory ->
-        AssetStoredState(summary, lastRun, hasInventory)
-    }
     private val assetWorkState = combine(syncScheduler.steamAssetDownloadStatus, syncScheduler.steamAssetDownloadProgress) { status, progress ->
         status to progress
     }
@@ -240,6 +231,7 @@ class SettingsViewModel @Inject constructor(
             steamId = configured?.steamId ?: "",
             apiKeyMasked = configured?.let { maskApiKey(it.apiKey) } ?: "",
             lastSyncAt = profile?.lastSyncAt ?: 0L,
+            lastSyncError = profile?.lastSyncError,
             isSyncing = syncing,
             historyImported = profile?.playtimeBackfilled ?: false,
             savedConfig = config,
@@ -254,10 +246,10 @@ class SettingsViewModel @Inject constructor(
         state.copy(genreEnrichmentStatus = genreStatus)
     }.combine(profileRepository.reconciliationInProgress) { state, reconciling ->
         state.copy(isReconciling = reconciling)
-    }.combine(assetStoredState) { state, asset ->
+    }.combine(steamAssets.storageState) { state, asset ->
         state.copy(
-            storedSteamAssetCount = asset.summary.count,
-            storedSteamAssetBytes = asset.summary.bytes,
+            storedSteamAssetCount = asset.storedCount,
+            storedSteamAssetBytes = asset.storedBytes,
             hasSteamAssetInventory = asset.hasInventory,
             lastSteamAssetRun = asset.lastRun,
         )
@@ -297,15 +289,13 @@ class SettingsViewModel @Inject constructor(
     ) { input, busy, message -> Triple(input, busy, message) }
 
     private val hltbDatasetLocalState = combine(
-        hltbDatasetRepository.appliedState,
-        gameDao.observeAppIds(),
+        hltbDatasetRepository.coverage,
         hltbDatasetCheckInProgress,
         combine(hltbDatasetCheckMessage, hltbDatasetProgress) { message, progress ->
             progress?.describe() ?: message
         },
-    ) { applied, ownedAppIds, checking, message ->
-        val coveredCount = applied?.coveredAppIds?.let { covered -> ownedAppIds.count { it in covered } } ?: 0
-        HltbDatasetLocal(applied?.gatheredAt, coveredCount, checking, message)
+    ) { coverage, checking, message ->
+        HltbDatasetLocal(coverage.gatheredAt, coverage.coveredGameCount, checking, message)
     }
 
     private val hltbContributionLocalState = combine(
@@ -806,11 +796,6 @@ class SettingsViewModel @Inject constructor(
 
     private data class HltbLocal(val dataset: HltbDatasetLocal, val contribution: HltbContributionLocal)
 }
-    private data class AssetStoredState(
-        val summary: SteamAssetStoredSummary,
-        val lastRun: SteamAssetDownloadState?,
-        val hasInventory: Boolean,
-    )
 
 
 /** Names what failed and where, rather than reporting only that the import failed (tasks.md 2.5). */

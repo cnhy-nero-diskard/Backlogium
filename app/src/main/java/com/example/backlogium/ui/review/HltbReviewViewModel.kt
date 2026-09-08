@@ -3,9 +3,9 @@ package com.example.backlogium.ui.review
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.hltb.HltbCandidate
-import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.repo.BroaderResult
 import com.example.backlogium.data.repo.GameRepository
+import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.data.repo.HltbRepository
 import com.example.backlogium.data.repo.ManualLinkPreviewResult
 import com.example.backlogium.data.hltb.HltbFailureClass
@@ -37,7 +37,7 @@ data class MatchCenterGameUi(
     val iconUrl: String = "",
     val headerUrl: String = "",
     val heroCapsuleUrl: String = "",
-    val matchStatus: HltbMatchStatus,
+    val matchStatus: HltbMatchState,
     val candidates: List<HltbCandidate>,
 )
 
@@ -213,8 +213,8 @@ class HltbReviewViewModel @Inject constructor(
                 candidates = entry.candidates,
             )
         }
-        val ambiguous = all.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW }
-        val unmatched = all.filter { it.matchStatus == HltbMatchStatus.UNMATCHED }
+        val ambiguous = all.filter { it.matchStatus == HltbMatchState.NEEDS_REVIEW }
+        val unmatched = all.filter { it.matchStatus == HltbMatchState.UNMATCHED }
         // Derive from the exact display order (`ambiguous + unmatched`), not raw DAO order:
         // observeMatchCenter() has no ORDER BY, so statuses can interleave and an index taken
         // from raw order would silently select a different game through allGames.
