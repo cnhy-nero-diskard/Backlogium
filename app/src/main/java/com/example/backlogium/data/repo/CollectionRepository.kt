@@ -1,5 +1,7 @@
 package com.example.backlogium.data.repo
 
+import com.example.backlogium.data.backup.DatabaseTransactionScope
+import com.example.backlogium.data.backup.PassThroughTransactionScope
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
@@ -15,6 +17,20 @@ import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** Plain-value end state submitted by the collection editor for one atomic save. */
+data class CollectionSaveDraft(
+    val id: Long,
+    val name: String,
+    val mode: CollectionMode,
+    val sort: CollectionSort,
+    val targetDate: String?,
+    val accent: CollectionAccent?,
+    val timeBasis: CollectionTimeBasis,
+    val description: String?,
+    val memberAppIds: List<Long>,
+    val doneAppIds: Set<Long>,
+)
+
 /**
  * Read/write access to custom collections and their members (add-custom-collections).
  * Collections are app-owned state persisted in Room — never touched by the Steam sync worker —
@@ -24,6 +40,7 @@ import javax.inject.Singleton
 class CollectionRepository @Inject constructor(
     private val collectionDao: CollectionDao,
     private val time: TimeProvider,
+    private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
 ) {
     val collections: Flow<List<Collection>> = collectionDao.observeCollections()
 
@@ -105,6 +122,57 @@ class CollectionRepository @Inject constructor(
         timeBasis,
         description,
     )
+
+    /** Commit the buffered collection fields and membership reconciliation as one unit. */
+    suspend fun save(draft: CollectionSaveDraft): Long = transaction.run {
+        val id = if (draft.id == 0L) {
+            create(
+                name = draft.name,
+                mode = draft.mode,
+                sort = draft.sort,
+                targetDate = draft.targetDate,
+                accent = draft.accent,
+                timeBasis = draft.timeBasis,
+                description = draft.description,
+            )
+        } else {
+            updateDetails(
+                id = draft.id,
+                name = draft.name,
+                mode = draft.mode,
+                sort = draft.sort,
+                targetDate = draft.targetDate,
+                accent = draft.accent,
+                timeBasis = draft.timeBasis,
+                description = draft.description,
+            )
+            draft.id
+        }
+
+        val desired = draft.memberAppIds.distinct()
+        val existing = collectionDao.getMembers(id)
+        val existingIds = existing.mapTo(mutableSetOf()) { it.appId }
+
+        desired.forEach { appId ->
+            if (appId !in existingIds) {
+                collectionDao.insertMember(
+                    CollectionMember(collectionId = id, appId = appId, orderIndex = 0),
+                )
+            }
+        }
+        desired.forEachIndexed { index, appId ->
+            collectionDao.setOrderIndex(id, appId, index)
+        }
+        existing.forEach { member ->
+            if (member.appId !in desired) {
+                collectionDao.removeMember(id, member.appId)
+            }
+        }
+        desired.forEach { appId ->
+            collectionDao.setMemberDone(id, appId, appId in draft.doneAppIds)
+        }
+        id
+    }
 
     /** Deleting a collection cascades to its memberships via the FK. */
     suspend fun delete(id: Long) = collectionDao.delete(id)

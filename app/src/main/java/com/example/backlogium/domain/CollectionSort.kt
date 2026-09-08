@@ -13,22 +13,19 @@ enum class CollectionSort {
     /** Completion fraction, highest first. */
     COMPLETION_FRACTION,
 
-    /** Days remaining to the deadline, fewest first. */
-    DAYS_REMAINING,
-
     /** Manual sequence order (ordered-queue members). */
     MANUAL_SEQUENCE,
 }
 
 /**
  * The sensible default sort per mode, applied when a collection is created: name for basic,
- * completion fraction for completion goal, days remaining for deadline goal, and manual
+ * completion fraction for completion goal and deadline goal, and manual
  * sequence for ordered queue (spec: "Default sort per mode").
  */
 fun CollectionMode.defaultSort(): CollectionSort = when (this) {
     CollectionMode.BASIC -> CollectionSort.NAME
     CollectionMode.COMPLETION_GOAL -> CollectionSort.COMPLETION_FRACTION
-    CollectionMode.DEADLINE_GOAL -> CollectionSort.DAYS_REMAINING
+    CollectionMode.DEADLINE_GOAL -> CollectionSort.COMPLETION_FRACTION
     CollectionMode.ORDERED_QUEUE -> CollectionSort.MANUAL_SEQUENCE
 }
 

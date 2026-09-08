@@ -4,11 +4,14 @@ import androidx.room.Room
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
+import com.example.backlogium.data.backup.DatabaseTransactionScope
+import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.repo.CollectionRepository
+import com.example.backlogium.data.repo.CollectionSaveDraft
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionTimeBasis
@@ -22,6 +25,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.lang.reflect.InvocationHandler
+import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Proxy
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -72,13 +78,42 @@ class CollectionDaoTest {
         displayOrder = displayOrder,
     )
 
+    private fun repository(
+        collectionDao: CollectionDao = dao,
+        transaction: DatabaseTransactionScope = RoomDatabaseTransactionScope(db),
+    ) = CollectionRepository(
+        collectionDao = collectionDao,
+        time = object : TimeProvider {
+            override fun nowMillis(): Long = 100L
+            override fun zone(): ZoneId = ZoneId.of("UTC")
+            override fun today(): LocalDate = LocalDate.of(2026, 8, 9)
+        },
+        transaction = transaction,
+    )
+
+    private fun daoFailingOn(methodName: String): CollectionDao =
+        Proxy.newProxyInstance(
+            CollectionDao::class.java.classLoader,
+            arrayOf(CollectionDao::class.java),
+            InvocationHandler { _, method, args ->
+                if (method.name == methodName) {
+                    throw IllegalStateException("injected collection save failure")
+                }
+                try {
+                    method.invoke(dao, *(args ?: emptyArray()))
+                } catch (error: InvocationTargetException) {
+                    throw error.targetException
+                }
+            },
+        ) as CollectionDao
+
     @Test
     fun create_insertsAndReadsBackAllFields() = runBlocking {
         val id = dao.insert(
             collection(
                 name = "Clear the backlog",
                 mode = CollectionMode.DEADLINE_GOAL,
-                sort = CollectionSort.DAYS_REMAINING,
+                sort = CollectionSort.COMPLETION_FRACTION,
                 targetDate = "2026-09-01",
                 description = "A focused plan",
                 displayOrder = 4,
@@ -87,7 +122,7 @@ class CollectionDaoTest {
         val stored = dao.getById(id)
         assertEquals("Clear the backlog", stored?.name)
         assertEquals(CollectionMode.DEADLINE_GOAL, stored?.mode)
-        assertEquals(CollectionSort.DAYS_REMAINING, stored?.sort)
+        assertEquals(CollectionSort.COMPLETION_FRACTION, stored?.sort)
         assertEquals("2026-09-01", stored?.targetDate)
         assertEquals(1L, stored?.createdAt)
         assertEquals("A focused plan", stored?.description)
@@ -216,19 +251,75 @@ class CollectionDaoTest {
     fun repositoryCreate_appendsAfterExistingDisplayOrder() = runBlocking {
         val first = dao.insert(collection(name = "First", displayOrder = 4))
         val second = dao.insert(collection(name = "Second", displayOrder = 9))
-        val repository = CollectionRepository(
-            collectionDao = dao,
-            time = object : TimeProvider {
-                override fun nowMillis(): Long = 100L
-                override fun zone(): ZoneId = ZoneId.of("UTC")
-                override fun today(): LocalDate = LocalDate.of(2026, 8, 9)
-            },
-        )
 
-        val created = repository.create(name = "Third", mode = CollectionMode.BASIC)
+        val created = repository().create(name = "Third", mode = CollectionMode.BASIC)
 
         assertEquals(listOf(first, second, created), dao.getAll().map { it.id })
         assertEquals(10, dao.getById(created)?.displayOrder)
+    }
+
+    @Test
+    fun repositorySave_rollsBackDetailsAndMembershipOnFailure() = runBlocking {
+        val id = dao.insert(
+            collection(name = "Before", mode = CollectionMode.ORDERED_QUEUE),
+        )
+        dao.insertMember(CollectionMember(id, 1L, orderIndex = 0, done = true))
+        dao.insertMember(CollectionMember(id, 2L, orderIndex = 1, done = false))
+        val before = dao.getById(id)
+        val membersBefore = dao.getMembers(id)
+
+        val failure = runCatching {
+            repository(daoFailingOn("setOrderIndex")).save(
+                CollectionSaveDraft(
+                    id = id,
+                    name = "After",
+                    mode = CollectionMode.ORDERED_QUEUE,
+                    sort = CollectionSort.MANUAL_SEQUENCE,
+                    targetDate = null,
+                    accent = null,
+                    timeBasis = CollectionTimeBasis.COMPLETIONIST,
+                    description = "Changed",
+                    memberAppIds = listOf(2L, 3L),
+                    doneAppIds = setOf(2L),
+                ),
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalStateException)
+        assertEquals(before, dao.getById(id))
+        assertEquals(membersBefore, dao.getMembers(id))
+    }
+
+    @Test
+    fun repositorySave_commitsDetailsMembershipOrderAndDoneMarksTogether() = runBlocking {
+        val id = dao.insert(
+            collection(name = "Before", mode = CollectionMode.ORDERED_QUEUE),
+        )
+        dao.insertMember(CollectionMember(id, 1L, orderIndex = 0, done = true))
+        dao.insertMember(CollectionMember(id, 2L, orderIndex = 1, done = false))
+
+        repository().save(
+            CollectionSaveDraft(
+                id = id,
+                name = "After",
+                mode = CollectionMode.ORDERED_QUEUE,
+                sort = CollectionSort.MANUAL_SEQUENCE,
+                targetDate = null,
+                accent = null,
+                timeBasis = CollectionTimeBasis.MAIN_STORY,
+                description = "Changed",
+                memberAppIds = listOf(2L, 3L),
+                doneAppIds = setOf(3L),
+            ),
+        )
+
+        val stored = dao.getById(id)
+        assertEquals("After", stored?.name)
+        assertEquals(CollectionTimeBasis.MAIN_STORY, stored?.timeBasis)
+        assertEquals("Changed", stored?.description)
+        assertEquals(listOf(2L, 3L), dao.getMembers(id).map { it.appId })
+        assertEquals(listOf(false, true), dao.getMembers(id).map { it.done })
+        assertEquals(listOf(0, 1), dao.getMembers(id).map { it.orderIndex })
     }
 
     @Test

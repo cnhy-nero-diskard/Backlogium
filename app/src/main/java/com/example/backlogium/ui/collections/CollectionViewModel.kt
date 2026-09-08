@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.AchievementCountSummary
 import com.example.backlogium.data.repo.CollectionRepository
+import com.example.backlogium.data.repo.CollectionSaveDraft
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.LiveStatusRepository
@@ -27,6 +28,7 @@ import com.example.backlogium.domain.PersonalPaceProfile
 import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.defaultSort
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -100,8 +102,8 @@ data class CollectionUiState(
  * Owns the collection management screen (tasks 4.2–4.6): create/edit of a collection's name,
  * mode, sort, accent, and deadline; add/remove of games; move up/down reordering and manual
  * done toggles for ordered-queue collections; and delete. Renders purely from local state
- * (Room + cached library) — no network. Membership edits are buffered and persisted atomically
- * on save, so cancelling (popping back) discards them.
+ * (Room + cached library) — no network. Membership edits are buffered and persisted through the
+ * repository-owned transaction on save, so cancelling (popping back) discards them.
  */
 @HiltViewModel
 class CollectionViewModel @Inject constructor(
@@ -421,61 +423,38 @@ class CollectionViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Persist everything atomically: the collection row (create or update) plus the reconciled
-     * member sequence — new members added, missing ones removed, the queue order written as
-     * the new orderIndex values, and the buffered done marks reconciled.
-     */
+    /** Persist the buffered fields and membership through the repository-owned transaction. */
     fun save() {
-        if (_saving.value) return
+        if (_saving.value || _name.value.trim().isEmpty()) return
+        val description = if (_descriptionTouched.value) {
+            _description.value
+        } else {
+            _originalDescription.value
+        }
+        val draft = CollectionSaveDraft(
+            id = collectionId,
+            name = _name.value,
+            mode = _mode.value,
+            sort = _sort.value,
+            targetDate = _targetDate.value?.toString(),
+            accent = _accent.value,
+            timeBasis = _timeBasis.value,
+            description = description,
+            memberAppIds = _memberAppIds.value,
+            doneAppIds = _doneMarks.value,
+        )
         _saving.value = true
         viewModelScope.launch {
-            val target = _targetDate.value?.toString()
-            val accent = _accent.value
-            val timeBasis = _timeBasis.value
-            val description = if (_descriptionTouched.value) {
-                _description.value
-            } else {
-                _originalDescription.value
+            try {
+                collectionRepository.save(draft)
+                _done.value = true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Keep the buffered draft editable; the saving flag is released below.
+            } finally {
+                _saving.value = false
             }
-            val id = if (collectionId == 0L) {
-                collectionRepository.create(
-                    name = _name.value,
-                    mode = _mode.value,
-                    sort = _sort.value,
-                    targetDate = target,
-                    accent = accent,
-                    timeBasis = timeBasis,
-                    description = description,
-                )
-            } else {
-                collectionRepository.updateDetails(
-                    id = collectionId,
-                    name = _name.value,
-                    mode = _mode.value,
-                    sort = _sort.value,
-                    targetDate = target,
-                    accent = accent,
-                    timeBasis = timeBasis,
-                    description = description,
-                )
-                collectionId
-            }
-
-            val existing = collectionRepository.getMembers(id).map { it.appId }.toSet()
-            val desired = _memberAppIds.value
-            desired.forEach { appId ->
-                if (appId !in existing) collectionRepository.addMember(id, appId)
-            }
-            collectionRepository.reorderMembers(id, desired)
-            existing.filterNot { it in desired }.forEach { appId ->
-                collectionRepository.removeMember(id, appId)
-            }
-            val doneSet = _doneMarks.value
-            desired.forEach { appId ->
-                collectionRepository.setMemberDone(id, appId, appId in doneSet)
-            }
-            _done.value = true
         }
     }
 

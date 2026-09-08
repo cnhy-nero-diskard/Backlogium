@@ -104,12 +104,7 @@ object CollectionSummary {
                 compareByDescending<CollectionMemberSignals> { it.completionFraction ?: -1.0 }
                     .thenBy { it.appId },
             )
-            CollectionSort.DAYS_REMAINING,
-            CollectionSort.MANUAL_SEQUENCE,
-            -> members.sortedWith(
-                compareBy<CollectionMemberSignals> { it.name.orEmpty().lowercase() }
-                    .thenBy { it.appId },
-            )
+            CollectionSort.MANUAL_SEQUENCE -> members
         }
     }
 
