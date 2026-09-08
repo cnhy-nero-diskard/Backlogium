@@ -16,6 +16,7 @@ import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.TimeProvider
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -256,6 +257,28 @@ class CollectionDaoTest {
 
         assertEquals(listOf(first, second, created), dao.getAll().map { it.id })
         assertEquals(10, dao.getById(created)?.displayOrder)
+    }
+
+    @Test
+    fun repositoryLegacyDeadlineSort_usesModeDefaultWithoutMigration() = runBlocking {
+        val id = dao.insert(
+            collection(
+                name = "Deadline",
+                mode = CollectionMode.DEADLINE_GOAL,
+                sort = CollectionSort.NAME,
+            ),
+        )
+        db.openHelper.writableDatabase.execSQL(
+            "UPDATE collections SET sort = ? WHERE id = ?",
+            arrayOf<Any>("DAYS_REMAINING", id),
+        )
+
+        assertEquals(CollectionSort.UNAVAILABLE, dao.getById(id)?.sort)
+        assertEquals(CollectionSort.COMPLETION_FRACTION, repository().getById(id)?.sort)
+        assertEquals(
+            CollectionSort.COMPLETION_FRACTION,
+            repository().collections.first().single().sort,
+        )
     }
 
     @Test

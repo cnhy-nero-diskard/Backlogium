@@ -105,6 +105,9 @@ object CollectionSummary {
                     .thenBy { it.appId },
             )
             CollectionSort.MANUAL_SEQUENCE -> members
+            // Room cannot apply a mode-aware converter; repositories normally resolve this marker,
+            // but keep pure derivation safe if a raw entity reaches the presentation boundary.
+            CollectionSort.UNAVAILABLE -> order(mode, mode.defaultSort(), members)
         }
     }
 

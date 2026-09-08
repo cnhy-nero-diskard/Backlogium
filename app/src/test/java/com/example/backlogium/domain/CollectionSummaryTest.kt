@@ -521,6 +521,7 @@ class CollectionSummaryTest {
     fun parseToleratesUnknownStoredSortName() {
         assertEquals(CollectionSort.NAME, collectionSortOrNull("NAME"))
         assertNull(collectionSortOrNull("DAYS_REMAINING"))
+        assertNull(collectionSortOrNull("UNAVAILABLE"))
         assertNull(collectionSortOrNull("SOME_REMOVED_SORT"))
         assertNull(collectionSortOrNull(null))
     }

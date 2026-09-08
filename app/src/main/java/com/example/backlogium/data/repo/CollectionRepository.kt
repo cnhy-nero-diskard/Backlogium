@@ -14,6 +14,7 @@ import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.defaultSort
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -42,13 +43,15 @@ class CollectionRepository @Inject constructor(
     private val time: TimeProvider,
     private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
 ) {
-    val collections: Flow<List<Collection>> = collectionDao.observeCollections()
+    val collections: Flow<List<Collection>> = collectionDao.observeCollections().map { rows ->
+        rows.map { it.resolveSortForMode() }
+    }
 
     val allMembers: Flow<List<CollectionMember>> = collectionDao.observeAllMembers()
 
     /** Custom collection summaries exposed without leaking Room entities to new UI surfaces. */
     val customOverviews: Flow<List<CustomCollectionOverview>> = combine(
-        collectionDao.observeCollections(),
+        collections,
         collectionDao.observeAllMembers(),
     ) { collections, members ->
         val membersByCollection = members.groupBy { it.collectionId }
@@ -74,7 +77,7 @@ class CollectionRepository @Inject constructor(
     fun members(collectionId: Long): Flow<List<CollectionMember>> =
         collectionDao.observeMembers(collectionId)
 
-    suspend fun getById(id: Long): Collection? = collectionDao.getById(id)
+    suspend fun getById(id: Long): Collection? = collectionDao.getById(id)?.resolveSortForMode()
 
     suspend fun getMembers(collectionId: Long): List<CollectionMember> =
         collectionDao.getMembers(collectionId)
@@ -93,7 +96,7 @@ class CollectionRepository @Inject constructor(
             Collection(
                 name = name,
                 mode = mode,
-                sort = sort ?: mode.defaultSort(),
+                sort = sort?.resolveForMode(mode) ?: mode.defaultSort(),
                 targetDate = targetDate.takeIf { mode == CollectionMode.DEADLINE_GOAL },
                 accent = accent,
                 timeBasis = timeBasis,
@@ -116,7 +119,7 @@ class CollectionRepository @Inject constructor(
         id,
         name,
         mode,
-        sort,
+        sort.resolveForMode(mode),
         targetDate.takeIf { mode == CollectionMode.DEADLINE_GOAL },
         accent,
         timeBasis,
@@ -195,3 +198,9 @@ class CollectionRepository @Inject constructor(
     suspend fun reorderCollections(orderedIds: List<Long>) =
         collectionDao.reorderCollections(orderedIds)
 }
+
+private fun Collection.resolveSortForMode(): Collection =
+    if (sort == CollectionSort.UNAVAILABLE) copy(sort = mode.defaultSort()) else this
+
+private fun CollectionSort.resolveForMode(mode: CollectionMode): CollectionSort =
+    if (this == CollectionSort.UNAVAILABLE) mode.defaultSort() else this

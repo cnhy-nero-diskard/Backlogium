@@ -15,6 +15,9 @@ enum class CollectionSort {
 
     /** Manual sequence order (ordered-queue members). */
     MANUAL_SEQUENCE,
+
+    /** Internal Room marker for a persisted sort key this build no longer understands. */
+    UNAVAILABLE,
 }
 
 /**
@@ -31,4 +34,8 @@ fun CollectionMode.defaultSort(): CollectionSort = when (this) {
 
 /** Parse a stored sort-key name, tolerating a value written by a build that no longer matches. */
 fun collectionSortOrNull(stored: String?): CollectionSort? =
-    stored?.let { runCatching { CollectionSort.valueOf(it) }.getOrNull() }
+    stored?.let {
+        runCatching { CollectionSort.valueOf(it) }
+            .getOrNull()
+            ?.takeUnless { it == CollectionSort.UNAVAILABLE }
+    }

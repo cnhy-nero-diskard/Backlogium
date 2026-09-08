@@ -368,7 +368,9 @@ class BackupMergeEngine @Inject constructor(
         val mode = runCatching { CollectionMode.valueOf(backupCollection.mode) }
             .getOrDefault(CollectionMode.BASIC)
         val sort = runCatching { CollectionSort.valueOf(backupCollection.sort) }
-            .getOrDefault(mode.defaultSort())
+            .getOrNull()
+            ?.takeUnless { it == CollectionSort.UNAVAILABLE }
+            ?: mode.defaultSort()
         val accent = CollectionAccent.parse(backupCollection.accent)
         val timeBasis = runCatching { CollectionTimeBasis.valueOf(backupCollection.timeBasis) }
             .getOrDefault(CollectionTimeBasis.COMPLETIONIST)

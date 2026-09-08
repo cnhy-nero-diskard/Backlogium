@@ -1719,6 +1719,7 @@ private fun sortLabel(sort: CollectionSort): String = when (sort) {
     CollectionSort.NAME -> "Name"
     CollectionSort.COMPLETION_FRACTION -> "Progress"
     CollectionSort.MANUAL_SEQUENCE -> "Manual"
+    CollectionSort.UNAVAILABLE -> "Default"
 }
 
 private val dateFormatter: DateTimeFormatter =
