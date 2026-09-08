@@ -129,7 +129,7 @@ class CollectionPacingTest {
         pace: PersonalPaceProfile,
     ): CollectionBanner = CollectionSummary.derive(
         mode = CollectionMode.DEADLINE_GOAL,
-        sort = CollectionSort.DAYS_REMAINING,
+        sort = CollectionSort.COMPLETION_FRACTION,
         targetDate = target,
         members = listOf(
             member(

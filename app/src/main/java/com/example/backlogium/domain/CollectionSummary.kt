@@ -104,12 +104,10 @@ object CollectionSummary {
                 compareByDescending<CollectionMemberSignals> { it.completionFraction ?: -1.0 }
                     .thenBy { it.appId },
             )
-            CollectionSort.DAYS_REMAINING,
-            CollectionSort.MANUAL_SEQUENCE,
-            -> members.sortedWith(
-                compareBy<CollectionMemberSignals> { it.name.orEmpty().lowercase() }
-                    .thenBy { it.appId },
-            )
+            CollectionSort.MANUAL_SEQUENCE -> members
+            // Room cannot apply a mode-aware converter; repositories normally resolve this marker,
+            // but keep pure derivation safe if a raw entity reaches the presentation boundary.
+            CollectionSort.UNAVAILABLE -> order(mode, mode.defaultSort(), members)
         }
     }
 

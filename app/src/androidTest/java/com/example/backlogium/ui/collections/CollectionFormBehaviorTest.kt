@@ -2,6 +2,7 @@ package com.example.backlogium.ui.collections
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -16,6 +17,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import org.junit.Rule
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class CollectionFormBehaviorTest {
@@ -79,6 +81,26 @@ class CollectionFormBehaviorTest {
 
         composeRule.onNodeWithTag("collection-name").assertIsFocused()
         composeRule.onNodeWithTag("collection-save").assertIsDisplayed()
+    }
+
+    @Test
+    fun blankName_disablesSaveAndDoesNotInvokeAction() {
+        var saveCalls = 0
+        composeRule.setContent {
+            BacklogiumTheme {
+                CollectionFormContent(
+                    state = formState().copy(name = "   "),
+                    actions = CollectionFormActions(onSave = { saveCalls++ }),
+                )
+            }
+        }
+
+        val save = composeRule.onNodeWithTag("collection-save")
+        save.assertIsNotEnabled()
+        runCatching { save.performClick() }
+        composeRule.waitForIdle()
+
+        assertEquals(0, saveCalls)
     }
 
     @Test

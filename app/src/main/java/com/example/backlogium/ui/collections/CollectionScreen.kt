@@ -68,6 +68,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1429,11 +1431,14 @@ fun CollectionFormContent(
         }
 
         FloatingActionButton(
-            onClick = actions.onSave,
+            onClick = { if (state.name.isNotBlank()) actions.onSave() },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .imePadding()
                 .padding(16.dp)
+                .semantics {
+                    if (state.name.isBlank()) disabled()
+                }
                 .testTag("collection-save"),
             containerColor = if (state.name.isBlank()) {
                 MaterialTheme.colorScheme.surfaceVariant
@@ -1698,7 +1703,7 @@ private fun AddGameRow(
 private fun sortOptions(mode: CollectionMode): List<CollectionSort> = when (mode) {
     CollectionMode.BASIC -> listOf(CollectionSort.NAME)
     CollectionMode.COMPLETION_GOAL -> listOf(CollectionSort.NAME, CollectionSort.COMPLETION_FRACTION)
-    CollectionMode.DEADLINE_GOAL -> listOf(CollectionSort.NAME, CollectionSort.DAYS_REMAINING)
+    CollectionMode.DEADLINE_GOAL -> listOf(CollectionSort.NAME, CollectionSort.COMPLETION_FRACTION)
     CollectionMode.ORDERED_QUEUE -> emptyList()
 }
 
@@ -1713,8 +1718,8 @@ private fun modeLabel(mode: CollectionMode): String = when (mode) {
 private fun sortLabel(sort: CollectionSort): String = when (sort) {
     CollectionSort.NAME -> "Name"
     CollectionSort.COMPLETION_FRACTION -> "Progress"
-    CollectionSort.DAYS_REMAINING -> "Deadline"
     CollectionSort.MANUAL_SEQUENCE -> "Manual"
+    CollectionSort.UNAVAILABLE -> "Default"
 }
 
 private val dateFormatter: DateTimeFormatter =

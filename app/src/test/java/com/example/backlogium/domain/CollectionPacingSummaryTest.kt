@@ -162,7 +162,7 @@ class CollectionPacingSummaryTest {
         playtimeMinutes: Int = 0,
     ): CollectionBanner = CollectionSummary.derive(
         mode = CollectionMode.DEADLINE_GOAL,
-        sort = CollectionSort.DAYS_REMAINING,
+        sort = CollectionSort.COMPLETION_FRACTION,
         targetDate = targetDate,
         members = listOf(
             member(

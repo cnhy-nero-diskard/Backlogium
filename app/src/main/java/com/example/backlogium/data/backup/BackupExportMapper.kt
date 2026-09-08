@@ -19,7 +19,9 @@ import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
+import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.domain.defaultSort
 import com.example.backlogium.gamification.AchievementInput
 import com.example.backlogium.gamification.GamePlaytimeInput
 import com.example.backlogium.gamification.Gamification
@@ -266,7 +268,7 @@ private fun Collection.toBackup() = BackupCollection(
     id = id,
     name = name,
     mode = mode.name,
-    sort = sort.name,
+    sort = (sort.takeUnless { it == CollectionSort.UNAVAILABLE } ?: mode.defaultSort()).name,
     targetDate = targetDate,
     createdAt = createdAt,
     accent = accent?.name,

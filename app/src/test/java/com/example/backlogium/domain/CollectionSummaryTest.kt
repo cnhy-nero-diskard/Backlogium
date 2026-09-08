@@ -483,6 +483,22 @@ class CollectionSummaryTest {
     }
 
     @Test
+    fun deadlineGoal_ordersByCompletionFraction_notAlphabetically() {
+        val members = listOf(
+            member(1, "Alpha", playtimeMinutes = 20, completionistMinutes = 100),
+            member(2, "Zulu", playtimeMinutes = 80, completionistMinutes = 100),
+        )
+
+        val ordered = CollectionSummary.order(
+            CollectionMode.DEADLINE_GOAL,
+            CollectionMode.DEADLINE_GOAL.defaultSort(),
+            members,
+        )
+
+        assertEquals(listOf("Zulu", "Alpha"), ordered.map { it.name })
+    }
+
+    @Test
     fun orderedQueue_usesManualOrderRegardlessOfSortSelection() {
         val members = listOf(member(2, "Zulu"), member(1, "Alpha"))
         val ordered = CollectionSummary.order(
@@ -497,15 +513,24 @@ class CollectionSummaryTest {
     fun defaultSortPerMode_matchesSensibleOrder() {
         assertEquals(CollectionSort.NAME, CollectionMode.BASIC.defaultSort())
         assertEquals(CollectionSort.COMPLETION_FRACTION, CollectionMode.COMPLETION_GOAL.defaultSort())
-        assertEquals(CollectionSort.DAYS_REMAINING, CollectionMode.DEADLINE_GOAL.defaultSort())
+        assertEquals(CollectionSort.COMPLETION_FRACTION, CollectionMode.DEADLINE_GOAL.defaultSort())
         assertEquals(CollectionSort.MANUAL_SEQUENCE, CollectionMode.ORDERED_QUEUE.defaultSort())
     }
 
     @Test
     fun parseToleratesUnknownStoredSortName() {
         assertEquals(CollectionSort.NAME, collectionSortOrNull("NAME"))
+        assertNull(collectionSortOrNull("DAYS_REMAINING"))
+        assertNull(collectionSortOrNull("UNAVAILABLE"))
         assertNull(collectionSortOrNull("SOME_REMOVED_SORT"))
         assertNull(collectionSortOrNull(null))
+    }
+
+    @Test
+    fun removedStoredSort_fallsBackToDeadlineModeDefault() {
+        val stored = collectionSortOrNull("DAYS_REMAINING")
+
+        assertEquals(CollectionSort.COMPLETION_FRACTION, stored ?: CollectionMode.DEADLINE_GOAL.defaultSort())
     }
 }
 

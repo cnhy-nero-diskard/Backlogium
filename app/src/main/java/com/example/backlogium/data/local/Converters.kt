@@ -47,7 +47,9 @@ class Converters {
 
     @TypeConverter
     fun toCollectionSort(value: String): CollectionSort =
-        runCatching { CollectionSort.valueOf(value) }.getOrDefault(CollectionSort.NAME)
+        // The mode is a separate Room column, so retain an explicit marker until the repository
+        // can apply the mode-specific default instead of guessing NAME here.
+        runCatching { CollectionSort.valueOf(value) }.getOrDefault(CollectionSort.UNAVAILABLE)
 
     @TypeConverter
     fun fromCollectionAccent(accent: CollectionAccent?): String? = accent?.name
