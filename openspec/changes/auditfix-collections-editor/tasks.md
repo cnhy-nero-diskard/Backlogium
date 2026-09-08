@@ -20,7 +20,7 @@
 - [x] 3.4 **Delete** the shared fallback branch in `CollectionSummary.order()` (`:107-113`) rather than repointing it, and let the `when` be exhaustive over the remaining keys. That branch is unreachable for `MANUAL_SEQUENCE` because `order()` returns early for `ORDERED_QUEUE` at `:98`; leaving a fallback is how the next unhandled key silently becomes alphabetical (design.md Decision 4). Verified by no catch-all branch remaining
 - [x] 3.5 Test: an existing deadline-goal collection with `DAYS_REMAINING` stored loads normally and is ordered by the mode default, via `collectionSortOrNull` returning null for an unparseable name. **No migration should be needed** — verify that rather than adding one
 - [x] 3.6 Test: a deadline-goal collection's members are ordered by completion fraction, not alphabetically — the regression test for #110
-- [ ] 3.7 Confirm the deadline banner still presents days remaining until the target date (`custom-collections/spec.md:139`). That is a collection-level value and is correct; only the member *sort* is removed. Verified by the banner unchanged on a device
+- [x] 3.7 Confirm the deadline banner still presents days remaining until the target date (`custom-collections/spec.md:139`). That is a collection-level value and is correct; only the member *sort* is removed. Verified by the banner unchanged on a device
 - [x] 3.8 Confirm ordered-queue collections still order by sequence regardless of sort selection, and that done-mark semantics are untouched
 
 ## 4. Transactional save (#124 — largest, do last)
@@ -41,6 +41,6 @@
 - [x] 5.1 `openspec validate --strict auditfix-collections-editor` passes
 - [x] 5.2 `./gradlew :app:testDebugUnitTest` passes
 - [x] 5.3 Confirm the `CLAUDE.md` boundary grep is no worse than before this change: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`. The `HomeViewModel` breach remains reported (it is deferred, not fixed here); no new line may appear
-- [ ] 5.4 On a device: create a deadline collection, add members with differing completion, and confirm they order by completion fraction with no "Deadline" sort offered
+- [x] 5.4 On a device: create a deadline collection, add members with differing completion, and confirm they order by completion fraction with no "Deadline" sort offered
 - [ ] 5.5 Sync the deltas into `openspec/specs/` via the archive workflow, not by hand
 - [ ] 5.6 Close #110, #123, #124
