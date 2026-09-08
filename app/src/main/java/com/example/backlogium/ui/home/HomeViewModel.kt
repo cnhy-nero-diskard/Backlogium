@@ -373,14 +373,12 @@ class HomeViewModel @Inject constructor(
                 mode = collection.mode,
                 accent = collection.accent,
                 banner = banner,
-                games = members.map { member ->
-                    val game = gamesById[member.appId]
-                    HomeCollectionGame(
-                        appId = member.appId,
-                        name = game?.name ?: "Game ${member.appId}",
-                        iconUrl = game?.iconUrl,
-                    )
-                },
+                games = homeCollectionGamesInDisplayOrder(
+                    mode = collection.mode,
+                    sort = collection.sort,
+                    signals = signals,
+                    gamesById = gamesById,
+                ),
             )
         }
 

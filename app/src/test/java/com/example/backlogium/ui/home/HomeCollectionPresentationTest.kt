@@ -1,9 +1,58 @@
 package com.example.backlogium.ui.home
 
+import com.example.backlogium.data.repo.LibraryGame
+import com.example.backlogium.domain.CollectionMemberSignals
+import com.example.backlogium.domain.CollectionMode
+import com.example.backlogium.domain.CollectionSort
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class HomeCollectionPresentationTest {
+
+    @Test
+    fun homeCollectionGames_followSelectedProgressOrderBeforeThumbnailLimit() {
+        val gamesById = mapOf(
+            1L to LibraryGame(
+                appId = 1L,
+                name = "Alpha",
+                iconUrl = "alpha",
+                playtimeForever = 20,
+            ),
+            2L to LibraryGame(
+                appId = 2L,
+                name = "Zulu",
+                iconUrl = "zulu",
+                playtimeForever = 80,
+            ),
+        )
+        val signals = listOf(
+            CollectionMemberSignals(
+                appId = 1L,
+                name = "Alpha",
+                playtimeMinutes = 20,
+                completionistMinutes = 100,
+                achievementsUnlocked = null,
+                achievementsTotal = null,
+            ),
+            CollectionMemberSignals(
+                appId = 2L,
+                name = "Zulu",
+                playtimeMinutes = 80,
+                completionistMinutes = 100,
+                achievementsUnlocked = null,
+                achievementsTotal = null,
+            ),
+        )
+
+        val games = homeCollectionGamesInDisplayOrder(
+            mode = CollectionMode.DEADLINE_GOAL,
+            sort = CollectionSort.COMPLETION_FRACTION,
+            signals = signals,
+            gamesById = gamesById,
+        )
+
+        assertEquals(listOf(2L, 1L), games.map { it.appId })
+    }
 
     @Test
     fun thumbnailPreview_keepsMemberOrder_andUsesThreeItemOverflow() {
