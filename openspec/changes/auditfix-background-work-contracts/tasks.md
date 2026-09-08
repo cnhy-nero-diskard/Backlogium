@@ -1,8 +1,8 @@
 ## 1. Prerequisites
 
-- [ ] 1.1 **Confirm `auditfix-session-ledger-integrity` has landed and its concurrency tests are green on master.** This change narrows the only cross-worker serialization of the session/daily-progress ledger; narrowing it while #116 is unfixed converts a two-caller race into a five-caller one. Verified by that change's single-open-session test passing on master
-- [ ] 1.2 Confirm `auditfix-spec-truth` has landed, since `PostPlaySyncWorker`'s lock sites are reviewed here against the restored targeted-fetch clause (#113)
-- [ ] 1.3 Re-read `SteamSyncCoordinator`'s KDoc and record the charter it actually claims — the raw session/daily-progress ledger boundary — as the standard each call site is then judged against. Verified by the charter written down before any site is changed
+- [x] 1.1 **Confirm `auditfix-session-ledger-integrity` has landed and its concurrency tests are green on master.** This change narrows the only cross-worker serialization of the session/daily-progress ledger; narrowing it while #116 is unfixed converts a two-caller race into a five-caller one. Verified by that change's single-open-session test passing on master
+- [x] 1.2 Confirm `auditfix-spec-truth` has landed, since `PostPlaySyncWorker`'s lock sites are reviewed here against the restored targeted-fetch clause (#113)
+- [x] 1.3 Re-read `SteamSyncCoordinator`'s KDoc and record the charter it actually claims — the raw session/daily-progress ledger boundary — as the standard each call site is then judged against. Verified by the charter written down before any site is changed
 
 ## 2. Narrow the coordinator (#99)
 
@@ -44,3 +44,9 @@
 - [ ] 5.4 On a device: opt into completion times, leave setup, force-stop the app, reopen, and confirm the stage continued rather than restarting
 - [ ] 5.5 Sync the delta into `openspec/specs/` via the archive workflow, not by hand
 - [ ] 5.6 Close #99, #107, #111
+
+## Prerequisite verification notes
+
+- auditfix-session-ledger-integrity is in master through f78f684; its WriteIntegrityDaoTest single-open-session concurrency suite passed with :app:testDebugUnitTest --tests com.example.backlogium.data.local.WriteIntegrityDaoTest.
+- auditfix-spec-truth is in master through 2b5f1fa.
+- SteamSyncCoordinator's charter is to serialize only operations that read or write the raw session/daily-progress ledger in this process. Database commits re-read their baselines, so the mutex is not the correctness mechanism; historical backfill shares this ledger boundary.
