@@ -1,8 +1,8 @@
 ## 1. Prerequisites
 
-- [ ] 1.1 Confirm `auditfix-spec-truth` has landed, so this change's `app-ui` addition is sequenced after that change's spec sync rather than merging alongside it
-- [ ] 1.2 Read `DatabaseTransactionScope` in `data/backup/` and how `SessionActionWriter` uses it — it is the house pattern for "the caller owns the transaction" and the transactional save should use it rather than a new mechanism. Verified by the plan naming it
-- [ ] 1.3 Read `CLAUDE.md`'s note on the deferred `HomeViewModel`/`CollectionRepository` entity-boundary breach before adding to that repository, so the new method does not widen it
+- [x] 1.1 Confirm `auditfix-spec-truth` has landed, so this change's `app-ui` addition is sequenced after that change's spec sync rather than merging alongside it
+- [x] 1.2 Read `DatabaseTransactionScope` in `data/backup/` and how `SessionActionWriter` uses it — it is the house pattern for "the caller owns the transaction" and the transactional save should use it rather than a new mechanism. Verified by the plan naming it
+- [x] 1.3 Read `CLAUDE.md`'s note on the deferred `HomeViewModel`/`CollectionRepository` entity-boundary breach before adding to that repository, so the new method does not widen it
 
 ## 2. Blank-name guard (#123 — smallest, do first)
 
