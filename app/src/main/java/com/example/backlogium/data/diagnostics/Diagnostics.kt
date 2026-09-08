@@ -112,7 +112,8 @@ class SyncRunRecorder @Inject constructor(
     private val dao: DiagnosticsDao,
     private val time: TimeProvider,
 ) {
-    fun begin(trigger: String): RunScope = RunScope(trigger, time.nowMillis())
+    fun begin(trigger: String, attempt: Int = 0): RunScope =
+        RunScope(trigger = trigger, startedAt = time.nowMillis(), attempt = attempt)
 
     suspend fun finish(scope: RunScope, outcome: SyncOutcome, errorMessage: String?, gamesExamined: Int, gamesUpdated: Int) {
         val endedAt = time.nowMillis()
@@ -121,6 +122,7 @@ class SyncRunRecorder @Inject constructor(
                 startedAt = scope.startedAt,
                 durationMs = (endedAt - scope.startedAt).coerceAtLeast(0),
                 trigger = scope.trigger,
+                attempt = scope.attempt,
                 requestCount = scope.metrics.values.sumOf { it.count },
                 requestMillis = scope.metrics.values.sumOf { it.durationMs },
                 gamesExamined = gamesExamined,
@@ -160,7 +162,11 @@ class SyncRunRecorder @Inject constructor(
      * `AchievementRepository.fetchGames`), so a single scope is never written from two coroutines
      * at once even though two *different* scopes can be in flight at the same time.
      */
-    class RunScope internal constructor(val trigger: String, val startedAt: Long) {
+    class RunScope internal constructor(
+        val trigger: String,
+        val startedAt: Long,
+        val attempt: Int = 0,
+    ) {
         internal data class Key(val endpoint: String, val status: Int?)
         internal data class TierCounts(var hot: Int = 0, var warm: Int = 0, var cold: Int = 0, var never: Int = 0)
         internal val metrics = linkedMapOf<Key, RequestMetrics>()

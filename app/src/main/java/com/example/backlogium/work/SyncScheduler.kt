@@ -14,6 +14,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkRequest
 import androidx.work.workDataOf
 import com.example.backlogium.di.ApplicationScope
+import com.example.backlogium.work.setup.HltbDatasetWorker
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -156,7 +157,7 @@ class SyncScheduler @Inject constructor(
         }
     }
 
-    /** Enqueue the periodic poll, keeping any already-scheduled work. Idempotent. */
+    /** Enqueue the periodic poll with an explicit periodic trigger, keeping existing work. */
     fun ensurePeriodicSync() {
         val request = PeriodicWorkRequestBuilder<SteamSyncWorker>(15, TimeUnit.MINUTES)
             .setConstraints(networkConstraints)
@@ -165,6 +166,7 @@ class SyncScheduler @Inject constructor(
                 WorkRequest.MIN_BACKOFF_MILLIS,
                 TimeUnit.MILLISECONDS,
             )
+            .setInputData(workDataOf(SteamSyncWorker.KEY_TRIGGER to SteamSyncWorker.TRIGGER_PERIODIC))
             .build()
 
         workManager.enqueueUniquePeriodicWork(
@@ -174,11 +176,15 @@ class SyncScheduler @Inject constructor(
         )
     }
 
-    /** Enqueue a one-time expedited poll, independent of the periodic schedule. */
+    /**
+     * Enqueue a one-time expedited poll with an explicit manual trigger. Its unique name remains
+     * separate from the periodic request so WorkManager KEEP cannot drop a player action.
+     */
     fun syncNow() {
         val request = OneTimeWorkRequestBuilder<SteamSyncWorker>()
             .setConstraints(networkConstraints)
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .setInputData(workDataOf(SteamSyncWorker.KEY_TRIGGER to SteamSyncWorker.TRIGGER_MANUAL))
             .build()
 
         workManager.enqueueUniqueWork(
@@ -252,6 +258,24 @@ class SyncScheduler @Inject constructor(
     }
 
     fun cancelSteamAssetDownload() = workManager.cancelUniqueWork(SteamAssetDownloadWorker.UNIQUE_WORK_NAME)
+
+    /** Enqueue a one-time completion-times dataset check. Duplicate requests keep the admitted job. */
+    fun ensureCompletionTimes() {
+        val request = OneTimeWorkRequestBuilder<HltbDatasetWorker>()
+            .setConstraints(networkConstraints)
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                WorkRequest.MIN_BACKOFF_MILLIS,
+                TimeUnit.MILLISECONDS,
+            )
+            .build()
+
+        workManager.enqueueUniqueWork(
+            HltbDatasetWorker.UNIQUE_WORK_NAME,
+            ExistingWorkPolicy.KEEP,
+            request,
+        )
+    }
 
     /**
      * Enqueue a one-time reconciliation pass. [force] bypasses the charging/unmetered

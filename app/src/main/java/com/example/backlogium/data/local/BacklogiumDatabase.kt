@@ -70,7 +70,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         WishlistItem::class,
         WishlistPriceObservation::class,
     ],
-    version = 29,
+    version = 30,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -722,6 +722,15 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL(
                     "UPDATE `player_profile` SET `pendingXpIntegrityCorrection` = 1 " +
                         "WHERE `totalXp` = 0",
+                )
+            }
+        }
+
+        /** v29 -> v30: preserve the originating worker trigger while recording retry attempts. */
+        val MIGRATION_29_30 = object : Migration(29, 30) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `sync_runs` ADD COLUMN `attempt` INTEGER NOT NULL DEFAULT 0",
                 )
             }
         }

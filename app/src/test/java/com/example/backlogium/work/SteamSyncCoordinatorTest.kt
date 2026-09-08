@@ -9,6 +9,36 @@ import org.junit.Test
 class SteamSyncCoordinatorTest {
 
     @Test
+    fun libraryScaleWorkReleasesCoordinatorBeforeNetworkCompletes() = runTest {
+        val coordinator = SteamSyncCoordinator()
+        val networkStarted = CompletableDeferred<Unit>()
+        val releaseNetwork = CompletableDeferred<Unit>()
+        val syncEntered = CompletableDeferred<Unit>()
+
+        val reconciliation = launch {
+            runAfterAccountChangeAdmission(
+                coordinator = coordinator,
+                accountChangePending = { false },
+                work = {
+                    networkStarted.complete(Unit)
+                    releaseNetwork.await()
+                },
+            )
+        }
+        networkStarted.await()
+
+        val sync = launch {
+            coordinator.withLock { syncEntered.complete(Unit) }
+        }
+        syncEntered.await()
+        assertEquals(false, releaseNetwork.isCompleted)
+
+        releaseNetwork.complete(Unit)
+        reconciliation.join()
+        sync.join()
+    }
+
+    @Test
     fun secondOperationWaitsUntilTheFirstReleasesTheProcessLock() = runTest {
         val coordinator = SteamSyncCoordinator()
         val entered = CompletableDeferred<Unit>()

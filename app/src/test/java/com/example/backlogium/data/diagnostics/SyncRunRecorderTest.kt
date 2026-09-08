@@ -48,6 +48,18 @@ class SyncRunRecorderTest {
     }
 
     @Test
+    fun `originating trigger and retry attempt are persisted separately`() = runBlocking {
+        val dao = RecordingDiagnosticsDao()
+        val recorder = SyncRunRecorder(dao, FixedTimeProvider)
+        val scope = recorder.begin(trigger = "manual", attempt = 1)
+
+        recorder.finish(scope, SyncOutcome.SUCCESS, null, gamesExamined = 0, gamesUpdated = 0)
+
+        assertEquals("manual", dao.runs.single().trigger)
+        assertEquals(1, dao.runs.single().attempt)
+    }
+
+    @Test
     fun clockRollbacksRecordedThisRunAppearOnThePersistedRun() = runBlocking {
         val dao = RecordingDiagnosticsDao()
         val recorder = SyncRunRecorder(dao, FixedTimeProvider)
