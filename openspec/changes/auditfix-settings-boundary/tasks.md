@@ -25,7 +25,7 @@
 - [x] 4.1 Expose the last Steam asset run through a repository as a **domain summary of the run**, not a mapped container of the same entity, and drop `SteamAssetDownloadState` from `SettingsUiState.lastSteamAssetRun` (`:93`) (design.md Decision 1). Verified by no `data.local.entity` import remaining in `SettingsViewModel`
 - [x] 4.2 Move the HLTB coverage calculation behind the repository boundary so Settings receives **the coverage figure**, not the owned-app-id list. `SettingsViewModel.kt:299-309` currently observes `gameDao.observeAppIds()` only to compute a count. **Exposing `observeOwnedAppIds()` on a repository is not the fix** — that is a DAO call wearing a different hat (design.md Decision 1)
 - [x] 4.3 Remove the `SteamAssetDao` (`:16`, `:173`) and `GameDao` (`:15`, `:175`) constructor dependencies from `SettingsViewModel`, and rework the `assetStoredState` combine at `:218-223`. Verified by neither DAO appearing in the file
-- [ ] 4.4 Confirm the Settings screen renders identically — this is a refactor, and the same values must reach the same UI through the new seam. Verified on a device by comparing the asset card and HLTB coverage figures before and after
+- [x] 4.4 Confirm the Settings screen renders identically — this is a refactor, and the same values must reach the same UI through the new seam. Verified on a device by comparing the asset card and HLTB coverage figures before and after
 - [x] 4.5 Decide `HltbMatchStatus`: map it out of `ui/review/` at the HLTB repository boundary into the existing `HltbMatchState` domain enum; the UI and `CLAUDE.md` now agree, with no third exception needed (design.md Decision 3)
 
 ## 5. Make the invariant self-checking
