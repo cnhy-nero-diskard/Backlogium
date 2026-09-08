@@ -38,9 +38,9 @@
 
 ## 5. Close out
 
-- [ ] 5.1 `openspec validate --strict auditfix-collections-editor` passes
-- [ ] 5.2 `./gradlew :app:testDebugUnitTest` passes
-- [ ] 5.3 Confirm the `CLAUDE.md` boundary grep is no worse than before this change: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`. The `HomeViewModel` breach remains reported (it is deferred, not fixed here); no new line may appear
+- [x] 5.1 `openspec validate --strict auditfix-collections-editor` passes
+- [x] 5.2 `./gradlew :app:testDebugUnitTest` passes
+- [x] 5.3 Confirm the `CLAUDE.md` boundary grep is no worse than before this change: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`. The `HomeViewModel` breach remains reported (it is deferred, not fixed here); no new line may appear
 - [ ] 5.4 On a device: create a deadline collection, add members with differing completion, and confirm they order by completion fraction with no "Deadline" sort offered
 - [ ] 5.5 Sync the deltas into `openspec/specs/` via the archive workflow, not by hand
 - [ ] 5.6 Close #110, #123, #124
