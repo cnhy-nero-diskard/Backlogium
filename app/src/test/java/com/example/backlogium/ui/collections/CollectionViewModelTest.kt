@@ -16,6 +16,9 @@ import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
+import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.HltbData
+import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.repo.AchievementRepository
@@ -32,6 +35,7 @@ import com.example.backlogium.data.repo.PresenceObserver
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.SteamStoreGenreDataSource
+import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.TimeProvider
 import java.lang.reflect.Proxy
@@ -99,6 +103,49 @@ class CollectionViewModelTest {
     }
 
     @Test
+    fun nonQueueMembers_renderInSelectedSortOrder() = withViewModel(
+        libraryGames = listOf(
+            Game(
+                appId = 1L,
+                name = "Alpha",
+                iconUrl = "",
+                playtimeForever = 20,
+                playtime2Weeks = 0,
+                lastPlaytime = 20,
+            ),
+            Game(
+                appId = 2L,
+                name = "Zulu",
+                iconUrl = "",
+                playtimeForever = 80,
+                playtime2Weeks = 0,
+                lastPlaytime = 80,
+            ),
+        ),
+        hltbData = listOf(
+            HltbData(
+                appId = 1L,
+                completionistMinutes = 100,
+                fetchedAt = 1L,
+                matchStatus = HltbMatchStatus.RESOLVED,
+            ),
+            HltbData(
+                appId = 2L,
+                completionistMinutes = 100,
+                fetchedAt = 1L,
+                matchStatus = HltbMatchStatus.RESOLVED,
+            ),
+        ),
+    ) { viewModel ->
+        viewModel.setMode(CollectionMode.DEADLINE_GOAL)
+        viewModel.addGame(1L)
+        viewModel.addGame(2L)
+        runCurrent()
+
+        assertEquals(listOf("Zulu", "Alpha"), viewModel.uiState.value.members.map { it.name })
+    }
+
+    @Test
     fun failedSave_releasesBusyStateAndCanBeRetried() {
         val transaction = FailOnceTransactionScope()
         withViewModel(transaction) { viewModel ->
@@ -129,12 +176,14 @@ class CollectionViewModelTest {
 
     private fun withViewModel(
         transaction: DatabaseTransactionScope = PassThroughTransactionScope,
+        libraryGames: List<Game> = emptyList(),
+        hltbData: List<HltbData> = emptyList(),
         block: suspend TestScope.(CollectionViewModel) -> Unit,
     ) = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         Dispatchers.setMain(dispatcher)
         try {
-            val viewModel = createViewModel(transaction)
+            val viewModel = createViewModel(transaction, libraryGames, hltbData)
             val stateCollector = launch {
                 viewModel.uiState.collect()
             }
@@ -146,9 +195,13 @@ class CollectionViewModelTest {
         }
     }
 
-    private fun createViewModel(transaction: DatabaseTransactionScope): CollectionViewModel {
+    private fun createViewModel(
+        transaction: DatabaseTransactionScope,
+        libraryGames: List<Game>,
+        hltbData: List<HltbData>,
+    ): CollectionViewModel {
         val time = FixedTimeProvider()
-        val gameDao = emptyGameDao()
+        val gameDao = emptyGameDao(libraryGames)
         val sessionRepository = SessionRepository(emptySessionDao())
         val hltbRepository = HltbRepository(
             dataSource = object : HltbDataSource {
@@ -156,7 +209,7 @@ class CollectionViewModelTest {
                 override suspend fun lookupById(hltbId: Long): HltbDirectLookupResult =
                     HltbDirectLookupResult.NotFound
             },
-            hltbDataDao = emptyHltbDataDao(),
+            hltbDataDao = emptyHltbDataDao(hltbData),
             datasetLookup = HltbDatasetLookup { null },
             json = Json,
             time = time,
@@ -335,9 +388,10 @@ class CollectionViewModelTest {
     private fun <T> emptyProxy(type: Class<T>): T =
         Proxy.newProxyInstance(type.classLoader, arrayOf(type)) { _, _, _ -> null } as T
 
-    private fun emptyGameDao(): GameDao = proxy(GameDao::class.java) { method ->
+    private fun emptyGameDao(libraryGames: List<Game>): GameDao = proxy(GameDao::class.java) { method ->
         when (method) {
-            "observeLibrary", "observeGoalGames", "observeBacklog" -> flowOf(emptyList<Any>())
+            "observeLibrary" -> flowOf(libraryGames)
+            "observeGoalGames", "observeBacklog" -> flowOf(emptyList<Game>())
             else -> null
         }
     }
@@ -355,10 +409,11 @@ class CollectionViewModelTest {
         }
     }
 
-    private fun emptyHltbDataDao(): HltbDataDao = proxy(HltbDataDao::class.java) { method ->
+    private fun emptyHltbDataDao(hltbData: List<HltbData>): HltbDataDao =
+        proxy(HltbDataDao::class.java) { method ->
         when (method) {
-            "observeNeedsReview", "observeMatchCenter", "observeAllWithDataset" ->
-                flowOf(emptyList<Any>())
+            "observeNeedsReview", "observeMatchCenter" -> flowOf(emptyList<HltbData>())
+            "observeAllWithDataset" -> flowOf(hltbData)
             else -> null
         }
     }

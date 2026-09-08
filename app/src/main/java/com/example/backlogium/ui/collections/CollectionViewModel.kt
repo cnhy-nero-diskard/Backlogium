@@ -281,6 +281,13 @@ class CollectionViewModel @Inject constructor(
                 manualDone = appId in s.doneMarks,
             )
         }
+        // The stored sequence remains the source of truth for queue editing, while non-queue
+        // collections render through their selected sort so newly added members land correctly.
+        val orderedMemberSignals = CollectionSummary.order(
+            mode = s.draft.mode,
+            sort = s.draft.sort,
+            members = memberSignals,
+        )
         val banner = CollectionSummary.derive(
             mode = s.draft.mode,
             sort = s.draft.sort,
@@ -304,7 +311,8 @@ class CollectionViewModel @Inject constructor(
             timeBasis = s.draft.timeBasis,
             banner = banner,
             today = today,
-            members = s.memberAppIds.map { appId ->
+            members = orderedMemberSignals.map { member ->
+                val appId = member.appId
                 val game = gamesById[appId]
                 CollectionMemberUi(
                     appId = appId,
