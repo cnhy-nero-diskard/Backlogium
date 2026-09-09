@@ -230,7 +230,8 @@ class LiveStatusRepository @Inject constructor(
         }
 
         val next = fetched.status.copy(sessionStartedAt = nextSession.startedAt)
-        _liveStatus.value = next
+        val committed = suppressIfHiddenSinceFetch(next)
+        _liveStatus.value = committed
         sessionEnd?.let(sessionEnds::publish)
         diagnostics?.record(trigger, fetched.outcome, fetched.appId)
 
@@ -239,7 +240,7 @@ class LiveStatusRepository @Inject constructor(
         // is the caller's reason for being here, and it must not be held up — or lost — by a Room
         // write or an admission lookup. A game with no derivable session makes this a no-op.
         runCatching { presenceObserver.onObservation(fetched.appId, time.nowMillis()) }
-        return next
+        return committed
     }
 
     /**
@@ -355,7 +356,11 @@ class LiveStatusRepository @Inject constructor(
         val hidden = hiddenGameDao.isHidden(raw.gameId ?: return)
         val updated = when {
             hidden && current.nowPlaying is NowPlaying.InGame ->
-                current.copy(nowPlaying = NowPlaying.NotPlaying)
+                current.copy(
+                    nowPlaying = NowPlaying.NotPlaying,
+                    presence = if (current.presence == LivePresence.IN_GAME) LivePresence.ONLINE
+                    else current.presence,
+                )
             !hidden && current.nowPlaying == NowPlaying.NotPlaying -> {
                 val game = gameDao.getById(raw.gameId)
                 val resolved = NowPlaying.InGame(
@@ -364,11 +369,34 @@ class LiveStatusRepository @Inject constructor(
                         ?: "App ${raw.gameId}",
                     iconUrl = game?.iconUrl?.takeIf { it.isNotBlank() } ?: raw.iconUrl,
                 )
-                current.copy(nowPlaying = resolved, rawNowPlaying = resolved)
+                current.copy(
+                    nowPlaying = resolved,
+                    rawNowPlaying = resolved,
+                    presence = LivePresence.IN_GAME,
+                )
             }
             else -> return
         }
         _liveStatus.value = updated
+    }
+
+    /**
+     * Re-check the hidden set against the raw signal immediately before commit. A poll that
+     * started [fetch] before a hide can suspend across the hide and [reconcileVisibility] write,
+     * then resume and publish a stale visible status that re-exposes the hidden game. This
+     * revalidation catches that interleaving: if the game was hidden between fetch and emit, the
+     * committed state matches the hidden-fetch shape instead.
+     */
+    private suspend fun suppressIfHiddenSinceFetch(status: LiveStatus): LiveStatus {
+        val raw = status.rawNowPlaying as? NowPlaying.InGame ?: return status
+        val gameId = raw.gameId ?: return status
+        if (!hiddenGameDao.isHidden(gameId)) return status
+        if (status.nowPlaying is NowPlaying.NotPlaying) return status
+        return status.copy(
+            nowPlaying = NowPlaying.NotPlaying,
+            presence = if (status.presence == LivePresence.IN_GAME) LivePresence.ONLINE
+            else status.presence,
+        )
     }
 
     /** Around-ness without a game: the same reading a player with no `gameid` at all gets. */

@@ -30,8 +30,10 @@ import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.RuleConfig
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -527,6 +529,11 @@ class LiveStatusRepositoryTest {
         val suppressed = repo.liveStatus.value
         assertEquals(NowPlaying.NotPlaying, suppressed.nowPlaying)
         assertEquals(
+            "presence is normalized: a hidden running game is not IN_GAME",
+            LivePresence.ONLINE,
+            suppressed.presence,
+        )
+        assertEquals(
             "the raw signal is preserved so the session keeps recording",
             10L,
             (suppressed.rawNowPlaying as NowPlaying.InGame).gameId,
@@ -573,6 +580,11 @@ class LiveStatusRepositoryTest {
             restored.nowPlaying,
         )
         assertEquals(
+            "presence is restored: an unhidden running game reads IN_GAME",
+            LivePresence.IN_GAME,
+            restored.presence,
+        )
+        assertEquals(
             "the raw signal is updated with the resolved name and icon",
             NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
             restored.rawNowPlaying,
@@ -582,6 +594,70 @@ class LiveStatusRepositoryTest {
             "no Steam fetch happened — the reconciliation is immediate",
             1,
             steamApi.callCount,
+        )
+    }
+
+    /**
+     * A concurrent poll that started [fetch] before a hide must not resurrect the visible state
+     * after [reconcileVisibility] has already suppressed it. The pre-hide [checkNow] suspends
+     * between fetch and emission; the hide and reconcile run in that gap; then the old poll
+     * resumes and publishes. The final UI-facing state must remain suppressed.
+     */
+    @Test
+    fun reconcileVisibility_concurrentPollCannotResurrectPreHideState() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao()
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal")),
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            repo.liveStatus.value.nowPlaying,
+        )
+
+        val gate = CompletableDeferred<Unit>()
+        steamApi.fetchGate = gate
+
+        val pendingCheck = async { repo.checkNow() }
+        runCurrent()
+
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        repo.reconcileVisibility()
+
+        val suppressed = repo.liveStatus.value
+        assertEquals(NowPlaying.NotPlaying, suppressed.nowPlaying)
+        assertEquals(LivePresence.ONLINE, suppressed.presence)
+
+        gate.complete(Unit)
+        pendingCheck.await()
+
+        val finalStatus = repo.liveStatus.value
+        assertEquals(
+            "the stale poll must not overwrite the reconciliation",
+            NowPlaying.NotPlaying,
+            finalStatus.nowPlaying,
+        )
+        assertEquals(
+            "presence must remain normalized after the stale poll",
+            LivePresence.ONLINE,
+            finalStatus.presence,
+        )
+        assertEquals(
+            "the raw signal is preserved across the interleaving",
+            10L,
+            (finalStatus.rawNowPlaying as NowPlaying.InGame).gameId,
         )
     }
 
@@ -745,6 +821,7 @@ class LiveStatusRepositoryTest {
         var throwOnNextCall = false
         var callCount = 0
             private set
+        var fetchGate: CompletableDeferred<Unit>? = null
 
         fun setInGame(gameId: Long, name: String) {
             // A reported gameid means the player is around: Steam reports personastate 1-6
@@ -764,6 +841,7 @@ class LiveStatusRepositoryTest {
             scope: SyncRunRecorder.RunScope?,
         ): PlayerSummariesResponse {
             callCount++
+            fetchGate?.await()
             if (throwOnNextCall) {
                 throwOnNextCall = false
                 throw java.io.IOException("transient failure")
