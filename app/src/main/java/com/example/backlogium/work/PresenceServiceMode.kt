@@ -28,3 +28,29 @@ internal fun presenceServiceMode(
         PresenceServiceMode.STOP
     }
 }
+
+/** What notification the foreground service should show after one observation. */
+internal enum class PresenceNotificationAction {
+    SHOW_GAME,
+    MONITORING,
+    CLEAR,
+}
+
+/**
+ * The foreground-service notification cannot be cancelled while the service is foreground, so a
+ * hidden game must replace the game-named notification with the generic monitoring shape rather
+ * than trying to clear it. Only [PresenceServiceMode.STOP] actually clears, because the service
+ * is leaving foreground at that point.
+ */
+internal fun presenceNotificationAction(
+    mode: PresenceServiceMode,
+    visibleGame: NowPlaying.InGame?,
+): PresenceNotificationAction = when (mode) {
+    PresenceServiceMode.PLAYING -> if (visibleGame != null) {
+        PresenceNotificationAction.SHOW_GAME
+    } else {
+        PresenceNotificationAction.MONITORING
+    }
+    PresenceServiceMode.MONITORING -> PresenceNotificationAction.MONITORING
+    PresenceServiceMode.STOP -> PresenceNotificationAction.CLEAR
+}

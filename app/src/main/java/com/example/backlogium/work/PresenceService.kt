@@ -148,11 +148,9 @@ class PresenceService : Service() {
                     sessionStartedAt = status.sessionStartedAt
                     notifications.update(visible.name, elapsedMinutes())
                 } else {
-                    // A hidden game keeps the service alive for session recording but is never
-                    // named in the notification (hidden-games spec, "No notification").
                     current = null
                     sessionStartedAt = status.sessionStartedAt
-                    notifications.clear()
+                    notifications.monitoring()
                 }
             }
 

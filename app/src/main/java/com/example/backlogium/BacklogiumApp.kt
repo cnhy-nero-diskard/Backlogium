@@ -56,7 +56,7 @@ internal suspend fun detectForegroundPresence(
         // LiveStatusRepository currently treats a cancelled network call like any other failed
         // observation. Re-assert cancellation here before acting on the retained status.
         currentCoroutineContext().ensureActive()
-        if (status.nowPlaying is NowPlaying.InGame) {
+        if (status.rawNowPlaying is NowPlaying.InGame) {
             startPresence()
             return true
         }

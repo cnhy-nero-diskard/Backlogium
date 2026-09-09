@@ -44,4 +44,59 @@ class PresenceServiceModeTest {
             ),
         )
     }
+
+    @Test
+    fun visibleGameShowsGameNotification() {
+        assertEquals(
+            PresenceNotificationAction.SHOW_GAME,
+            presenceNotificationAction(
+                mode = PresenceServiceMode.PLAYING,
+                visibleGame = NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = null),
+            ),
+        )
+    }
+
+    @Test
+    fun hiddenGameShowsMonitoringNotificationNotGameName() {
+        assertEquals(
+            "a hidden game must not name itself in the notification; the generic monitoring " +
+                "shape replaces the game-named notification while the service stays foreground",
+            PresenceNotificationAction.MONITORING,
+            presenceNotificationAction(
+                mode = PresenceServiceMode.PLAYING,
+                visibleGame = null,
+            ),
+        )
+    }
+
+    @Test
+    fun visibleToHiddenTransitionDropsGameIdentityFromNotification() {
+        val game = NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = null)
+        val visibleAction = presenceNotificationAction(
+            mode = PresenceServiceMode.PLAYING,
+            visibleGame = game,
+        )
+        val hiddenAction = presenceNotificationAction(
+            mode = PresenceServiceMode.PLAYING,
+            visibleGame = null,
+        )
+        assertEquals(PresenceNotificationAction.SHOW_GAME, visibleAction)
+        assertEquals(PresenceNotificationAction.MONITORING, hiddenAction)
+    }
+
+    @Test
+    fun monitoringModeShowsMonitoringNotification() {
+        assertEquals(
+            PresenceNotificationAction.MONITORING,
+            presenceNotificationAction(mode = PresenceServiceMode.MONITORING, visibleGame = null),
+        )
+    }
+
+    @Test
+    fun stopModeClearsNotification() {
+        assertEquals(
+            PresenceNotificationAction.CLEAR,
+            presenceNotificationAction(mode = PresenceServiceMode.STOP, visibleGame = null),
+        )
+    }
 }
