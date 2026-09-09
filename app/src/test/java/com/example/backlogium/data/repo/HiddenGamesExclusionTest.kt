@@ -56,6 +56,10 @@ class HiddenGamesExclusionTest {
             storeCacheDao = db.gameGenreCacheDao(),
             time = HiddenGamesTestTime,
         )
+        sessions = SessionRepository(
+            sessionDao = db.sessionDao(),
+            hiddenGamesRepository = hidden,
+        )
         games = GameRepository(
             gameDao = db.gameDao(),
             hltbRepository = HltbRepository(
@@ -73,10 +77,8 @@ class HiddenGamesExclusionTest {
             ),
             hiddenGamesRepository = hidden,
             steamApi = OfflineSteamApiDouble,
-        )
-        sessions = SessionRepository(
-            sessionDao = db.sessionDao(),
-            hiddenGamesRepository = hidden,
+            sessionRepository = sessions,
+            time = HiddenGamesTestTime,
         )
         collections = CollectionRepository(
             collectionDao = db.collectionDao(),

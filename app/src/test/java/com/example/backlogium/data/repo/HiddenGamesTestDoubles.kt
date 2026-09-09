@@ -3,6 +3,7 @@ package com.example.backlogium.data.repo
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.data.hltb.HltbDataSource
+import com.example.backlogium.data.hltb.HltbDirectLookupResult
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.NonGameCandidateRow
 import com.example.backlogium.data.local.entity.Game
@@ -15,9 +16,13 @@ import com.example.backlogium.data.remote.dto.GlobalAchievementPercentagesRespon
 import com.example.backlogium.data.remote.dto.OwnedGamesResponse
 import com.example.backlogium.data.remote.dto.PlayerAchievementsResponse
 import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
+import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.dto.StoreAppDetails
+import com.example.backlogium.data.remote.dto.StoreItemsResponse
+import com.example.backlogium.data.remote.dto.StorePriceEnvelope
+import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.domain.FakeGameDao
 import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.TimeProvider
@@ -65,6 +70,8 @@ internal object HiddenGamesTestTime : TimeProvider {
 internal object OfflineHltbSource : HltbDataSource {
     override suspend fun search(name: String): List<HltbCandidate> =
         error("exclusion must not reach HowLongToBeat")
+    override suspend fun lookupById(hltbId: Long): HltbDirectLookupResult =
+        error("exclusion must not reach HowLongToBeat")
 }
 
 internal object OfflineStoreApi : SteamStoreApi {
@@ -72,6 +79,11 @@ internal object OfflineStoreApi : SteamStoreApi {
         appId: Long,
         language: String,
     ): Response<Map<String, StoreAppDetails>> = error("exclusion must not reach the Steam Store")
+    override suspend fun appDetailsPrices(
+        appIds: String,
+        countryCode: String?,
+        filters: String,
+    ): Response<Map<String, StorePriceEnvelope>> = error("exclusion must not reach the Steam Store")
 }
 
 internal object OfflineSteamApiDouble : SteamApi {
@@ -120,4 +132,21 @@ internal object OfflineSteamApiDouble : SteamApi {
 
     override suspend fun getNumberOfCurrentPlayers(appId: Long): CurrentPlayersResponse =
         error("exclusion must not reach Steam")
+
+    override suspend fun getRecentlyPlayedGames(
+        key: String,
+        steamId: String,
+        count: Int,
+        scope: SyncRunRecorder.RunScope?,
+    ): RecentlyPlayedGamesResponse = error("exclusion must not reach Steam")
+
+    override suspend fun getWishlist(
+        steamId: String,
+        scope: SyncRunRecorder.RunScope?,
+    ): WishlistResponse = error("exclusion must not reach Steam")
+
+    override suspend fun getStoreItems(
+        inputJson: String,
+        scope: SyncRunRecorder.RunScope?,
+    ): StoreItemsResponse = error("exclusion must not reach Steam")
 }

@@ -14,6 +14,7 @@ import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -79,6 +80,9 @@ class NonGameBulkHideTest {
             val viewModel = viewModel()
             val collector = backgroundScope.launch { viewModel.uiState.collect() }
             advanceUntilIdle()
+            // Room-backed flows emit on Room's own threads, which advanceUntilIdle does not
+            // pump: await the candidates instead of assuming they arrived.
+            viewModel.uiState.first { it.nonGameCandidates.size == 2 }
 
             assertEquals(
                 listOf("SteamVR", "Wallpaper Engine"),
@@ -97,12 +101,16 @@ class NonGameBulkHideTest {
             val viewModel = viewModel()
             val collector = backgroundScope.launch { viewModel.uiState.collect() }
             advanceUntilIdle()
+            viewModel.uiState.first { it.nonGameCandidates.size == 2 }
 
             viewModel.openNonGameReview()
+            // The selection the review derives has to reach the UI state before the bulk
+            // action reads it back: the writes above are synchronous, the derivation is not.
+            viewModel.uiState.first { it.selectedCandidates.size == 2 }
             viewModel.requestBulkHide()
             advanceUntilIdle()
 
-            val effect = viewModel.uiState.value.pendingEffect
+            val effect = viewModel.uiState.first { it.pendingEffect != null }.pendingEffect
             assertNotNull("the group's combined effect must be disclosed", effect)
             assertEquals(setOf(APPLICATION, TOOL), effect!!.appIds.toSet())
             // The tool's 120 tracked minutes leave XP, and nothing is hidden until confirmation.
@@ -112,6 +120,7 @@ class NonGameBulkHideTest {
 
             viewModel.dismiss()
             advanceUntilIdle()
+            viewModel.uiState.first { it.pendingEffect == null }
             assertTrue("declining hides nothing", db.hiddenGameDao().hiddenAppIds().isEmpty())
             collector.cancel()
         } finally {
@@ -126,12 +135,17 @@ class NonGameBulkHideTest {
             val viewModel = viewModel()
             val collector = backgroundScope.launch { viewModel.uiState.collect() }
             advanceUntilIdle()
+            viewModel.uiState.first { it.nonGameCandidates.size == 2 }
 
             viewModel.openNonGameReview()
+            viewModel.uiState.first { it.selectedCandidates.size == 2 }
             viewModel.requestBulkHide()
             advanceUntilIdle()
+            viewModel.uiState.first { it.pendingEffect != null }
             viewModel.confirm()
             advanceUntilIdle()
+            // Hidden and offer update on separate emissions: wait for both halves together.
+            viewModel.uiState.first { it.hidden.size == 2 && it.nonGameCandidates.isEmpty() }
 
             assertEquals(setOf(APPLICATION, TOOL), db.hiddenGameDao().hiddenAppIds().toSet())
             assertTrue(db.hiddenGameDao().getAll().all { it.fromBulkAction })
@@ -141,8 +155,10 @@ class NonGameBulkHideTest {
 
             viewModel.requestUnhide(TOOL)
             advanceUntilIdle()
+            viewModel.uiState.first { it.pendingEffect != null }
             viewModel.confirm()
             advanceUntilIdle()
+            viewModel.uiState.first { it.hidden.size == 1 }
 
             assertEquals(listOf(APPLICATION), db.hiddenGameDao().hiddenAppIds())
             collector.cancel()
@@ -158,13 +174,18 @@ class NonGameBulkHideTest {
             val viewModel = viewModel()
             val collector = backgroundScope.launch { viewModel.uiState.collect() }
             advanceUntilIdle()
+            viewModel.uiState.first { it.nonGameCandidates.size == 2 }
 
             viewModel.openNonGameReview()
+            viewModel.uiState.first { it.selectedCandidates.size == 2 }
             viewModel.toggleCandidate(TOOL)
+            viewModel.uiState.first { it.selectedCandidates == setOf(APPLICATION) }
             viewModel.requestBulkHide()
             advanceUntilIdle()
+            viewModel.uiState.first { it.pendingEffect != null }
             viewModel.confirm()
             advanceUntilIdle()
+            viewModel.uiState.first { it.hidden.size == 1 }
 
             assertEquals(listOf(APPLICATION), db.hiddenGameDao().hiddenAppIds())
             collector.cancel()

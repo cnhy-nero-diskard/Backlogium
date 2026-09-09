@@ -166,6 +166,7 @@ class GamificationUpdaterTest {
                     ),
                 ),
             ),
+            FakeHiddenGameDao(),
         )
 
         updater.recompute(
@@ -195,6 +196,7 @@ class GamificationUpdaterTest {
             FakeHltbDataDao(),
             FakeAchievementDao(emptyList()),
             FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 0))),
+            FakeHiddenGameDao(),
         )
 
         // No RuleDraft involved: this is the background path, straight from persisted settings.
@@ -240,6 +242,7 @@ class GamificationUpdaterTest {
                 ),
             ),
             FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 0))),
+            FakeHiddenGameDao(),
         )
 
         updater.recompute(
@@ -347,6 +350,7 @@ class GamificationUpdaterTest {
             hltbDataDao = FakeHltbDataDao(datasetOnlyCompletionistByAppId = mapOf(1L to 1_000)),
             achievementDao = FakeAchievementDao(emptyList()),
             gameDao = FakeGameDao(listOf(testGame(appId = 1L, backfillMinutes = 5_000))),
+            hiddenGameDao = FakeHiddenGameDao(),
         )
 
         updater.recompute(

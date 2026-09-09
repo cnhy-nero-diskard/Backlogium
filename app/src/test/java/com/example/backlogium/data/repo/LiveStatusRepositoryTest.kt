@@ -597,7 +597,11 @@ class LiveStatusRepositoryTest {
             private set
 
         fun setInGame(gameId: Long, name: String) {
-            players = listOf(PlayerSummaryDto(gameId = gameId.toString(), gameExtraInfo = name))
+            // A reported gameid means the player is around: Steam reports personastate 1-6
+            // while gaming, never 0. The default 0 would read as offline.
+            players = listOf(
+                PlayerSummaryDto(gameId = gameId.toString(), gameExtraInfo = name, personaState = 1),
+            )
         }
 
         fun setNotInGame() {
