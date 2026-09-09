@@ -338,6 +338,39 @@ class LiveStatusRepository @Inject constructor(
         )
     }
 
+    /**
+     * Re-evaluate the current live presentation against the hidden set, without a Steam fetch.
+     *
+     * A hide/unhide write changes what [hiddenGameDao.isHidden] returns, but the in-memory
+     * [LiveStatus] still holds whatever the last poll emitted. Without this reconciliation the
+     * UI-facing [LiveStatus.nowPlaying] keeps naming a newly hidden game (or stays suppressed for
+     * a newly unhidden one) until the next poll lands — up to ~30 s during which every surface
+     * that reads [liveStatus] can still depict the hidden game. The raw signal and the recorded
+     * session are preserved: a hide does not end the session, and an unhide restores the name and
+     * icon from the owned-games table.
+     */
+    suspend fun reconcileVisibility() {
+        val current = _liveStatus.value
+        val raw = current.rawNowPlaying as? NowPlaying.InGame ?: return
+        val hidden = hiddenGameDao.isHidden(raw.gameId ?: return)
+        val updated = when {
+            hidden && current.nowPlaying is NowPlaying.InGame ->
+                current.copy(nowPlaying = NowPlaying.NotPlaying)
+            !hidden && current.nowPlaying == NowPlaying.NotPlaying -> {
+                val game = gameDao.getById(raw.gameId)
+                val resolved = NowPlaying.InGame(
+                    gameId = raw.gameId,
+                    name = game?.name?.takeIf { it.isNotBlank() } ?: raw.name.takeIf { it.isNotBlank() }
+                        ?: "App ${raw.gameId}",
+                    iconUrl = game?.iconUrl?.takeIf { it.isNotBlank() } ?: raw.iconUrl,
+                )
+                current.copy(nowPlaying = resolved, rawNowPlaying = resolved)
+            }
+            else -> return
+        }
+        _liveStatus.value = updated
+    }
+
     /** Around-ness without a game: the same reading a player with no `gameid` at all gets. */
     private fun presenceOf(
         player: com.example.backlogium.data.remote.dto.PlayerSummaryDto,

@@ -2,6 +2,7 @@ package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.repo.HiddenGamesRepository
+import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import javax.inject.Inject
 
@@ -54,6 +55,7 @@ class GameVisibilityUseCase @Inject constructor(
     private val settings: SettingsRepository,
     private val time: TimeProvider,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
+    private val liveStatus: LiveStatusRepository,
 ) {
 
     /**
@@ -84,6 +86,7 @@ class GameVisibilityUseCase @Inject constructor(
             hiddenGames.hide(appIds, fromBulkAction)
             appIds.forEach { gameDao.setGoalFlag(it, isGoal = false) }
             recompute()
+            liveStatus.reconcileVisibility()
         }
     }
 
@@ -102,6 +105,7 @@ class GameVisibilityUseCase @Inject constructor(
             hiddenGames.unhide(appIds)
             appIds.forEach { gameDao.setGoalFlag(it, isGoal = false) }
             recompute()
+            liveStatus.reconcileVisibility()
         }
     }
 

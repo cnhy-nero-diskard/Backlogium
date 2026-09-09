@@ -492,6 +492,99 @@ class LiveStatusRepositoryTest {
         collector.cancel()
     }
 
+    /**
+     * A hide write must suppress the UI-facing live presentation immediately, without waiting for
+     * the next Steam poll. The raw signal and the recorded session are preserved so the session
+     * keeps recording until Steam actually reports the game ended.
+     */
+    @Test
+    fun reconcileVisibility_afterHide_suppressesNowPlayingImmediately() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao()
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal")),
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        val visible = repo.checkNow()
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            visible.nowPlaying,
+        )
+
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        repo.reconcileVisibility()
+
+        val suppressed = repo.liveStatus.value
+        assertEquals(NowPlaying.NotPlaying, suppressed.nowPlaying)
+        assertEquals(
+            "the raw signal is preserved so the session keeps recording",
+            10L,
+            (suppressed.rawNowPlaying as NowPlaying.InGame).gameId,
+        )
+        assertEquals(1_000L, suppressed.sessionStartedAt)
+        assertEquals(LiveSessionState(appId = 10L, startedAt = 1_000L), settings.session.value)
+        assertEquals(
+            "no Steam fetch happened — the reconciliation is immediate",
+            1,
+            steamApi.callCount,
+        )
+    }
+
+    /**
+     * An unhide write must restore the UI-facing live presentation immediately, resolving the name
+     * and icon from the owned-games table. The session is preserved across the transition.
+     */
+    @Test
+    fun reconcileVisibility_afterUnhide_restoresNowPlayingImmediately() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao(setOf(10L))
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal")),
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        val hidden = repo.checkNow()
+        assertEquals(NowPlaying.NotPlaying, hidden.nowPlaying)
+        assertEquals(1_000L, hidden.sessionStartedAt)
+
+        hiddenGameDao.delete(listOf(10L))
+        repo.reconcileVisibility()
+
+        val restored = repo.liveStatus.value
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            restored.nowPlaying,
+        )
+        assertEquals(
+            "the raw signal is updated with the resolved name and icon",
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            restored.rawNowPlaying,
+        )
+        assertEquals(1_000L, restored.sessionStartedAt)
+        assertEquals(
+            "no Steam fetch happened — the reconciliation is immediate",
+            1,
+            steamApi.callCount,
+        )
+    }
+
     @Test
     fun failedObservationAndStoppedPolling_publishNothing() = runTest {
         val steamApi = FakeSteamApi()

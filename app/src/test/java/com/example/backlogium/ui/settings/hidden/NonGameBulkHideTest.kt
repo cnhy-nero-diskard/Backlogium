@@ -5,7 +5,26 @@ import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameGenreCache
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.repo.CredentialsProvider
+import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.HiddenGamesRepository
+import com.example.backlogium.data.repo.LiveStatusRepository
+import com.example.backlogium.data.repo.PlaySessionEndPublisher
+import com.example.backlogium.data.repo.PresenceObserver
+import com.example.backlogium.data.remote.SteamApi
+import com.example.backlogium.data.remote.dto.CurrentPlayersResponse
+import com.example.backlogium.data.remote.dto.GameSchemaResponse
+import com.example.backlogium.data.remote.dto.GlobalAchievementPercentagesResponse
+import com.example.backlogium.data.remote.dto.OwnedGamesResponse
+import com.example.backlogium.data.remote.dto.PlayerAchievementsResponse
+import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
+import com.example.backlogium.data.remote.dto.PlayerSummariesResult
+import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
+import com.example.backlogium.data.remote.dto.ResolveVanityResponse
+import com.example.backlogium.data.remote.dto.SteamLevelResponse
+import com.example.backlogium.data.remote.dto.StoreItemsResponse
+import com.example.backlogium.data.remote.dto.WishlistResponse
+import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.FakeSettingsRepository
 import com.example.backlogium.domain.GameVisibilityUseCase
@@ -219,8 +238,42 @@ class NonGameBulkHideTest {
                 settings = FakeSettingsRepository(),
                 time = FixedTime,
                 derivedStateWrites = DerivedStateWriteCoordinator(),
+                liveStatus = LiveStatusRepository(
+                    steamApi = NoOpSteamApi,
+                    gameDao = db.gameDao(),
+                    hiddenGameDao = db.hiddenGameDao(),
+                    profileDao = db.playerProfileDao(),
+                    credentials = NoOpCredentialsProvider,
+                    settings = FakeSettingsRepository(),
+                    time = FixedTime,
+                    sessionEnds = PlaySessionEndPublisher(),
+                    presenceObserver = NoOpPresenceObserver,
+                    scope = kotlinx.coroutines.GlobalScope,
+                ),
             ),
         )
+    }
+
+    private object NoOpSteamApi : SteamApi {
+        override suspend fun getWishlist(steamId: String, scope: SyncRunRecorder.RunScope?): WishlistResponse = error("not used")
+        override suspend fun getStoreItems(inputJson: String, scope: SyncRunRecorder.RunScope?): StoreItemsResponse = error("not used")
+        override suspend fun getPlayerSummaries(key: String, steamIds: String, scope: SyncRunRecorder.RunScope?): PlayerSummariesResponse = PlayerSummariesResponse(PlayerSummariesResult(emptyList()))
+        override suspend fun getOwnedGames(key: String, steamId: String, includeAppInfo: Int, includePlayedFreeGames: Int, scope: SyncRunRecorder.RunScope?): OwnedGamesResponse = error("not used")
+        override suspend fun getRecentlyPlayedGames(key: String, steamId: String, count: Int, scope: SyncRunRecorder.RunScope?): RecentlyPlayedGamesResponse = error("not used")
+        override suspend fun getSteamLevel(key: String, steamId: String, scope: SyncRunRecorder.RunScope?): SteamLevelResponse = error("not used")
+        override suspend fun getPlayerAchievements(key: String, steamId: String, appId: Long, scope: SyncRunRecorder.RunScope?): PlayerAchievementsResponse = error("not used")
+        override suspend fun getGlobalAchievementPercentages(gameId: Long, scope: SyncRunRecorder.RunScope?): GlobalAchievementPercentagesResponse = error("not used")
+        override suspend fun getSchemaForGame(key: String, appId: Long, scope: SyncRunRecorder.RunScope?): GameSchemaResponse = error("not used")
+        override suspend fun resolveVanityUrl(key: String, vanityUrl: String): ResolveVanityResponse = error("not used")
+        override suspend fun getNumberOfCurrentPlayers(appId: Long): CurrentPlayersResponse = error("not used")
+    }
+
+    private object NoOpCredentialsProvider : CredentialsProvider {
+        override suspend fun currentCredentials(): CredentialsState.Configured? = null
+    }
+
+    private object NoOpPresenceObserver : PresenceObserver {
+        override suspend fun onObservation(appId: Long?, observedAt: Long) = Unit
     }
 
     private fun game(appId: Long, name: String) = Game(
