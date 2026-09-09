@@ -42,7 +42,7 @@
 - [x] 5.2 `./gradlew :gamification:test :app:testDebugUnitTest` passes
 - [x] 5.3 On a device: start a reconciliation pass, tap **Sync now** during it, and confirm from the diagnostics surface that the manual run completed without waiting and is recorded as manual — #99 and #107 verified together on the real thing
 - [x] 5.4 On a device: opt into completion times, leave setup, force-stop the app, reopen, and confirm the stage continued rather than restarting
-- [ ] 5.5 Sync the delta into `openspec/specs/` via the archive workflow, not by hand
+- [x] 5.5 Sync the delta into `openspec/specs/` via the archive workflow, not by hand
 - [x] 5.6 Close #99, #107, #111
 
 ## Prerequisite verification notes
