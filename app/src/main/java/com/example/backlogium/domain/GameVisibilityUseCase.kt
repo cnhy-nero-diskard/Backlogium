@@ -20,8 +20,8 @@ data class VisibilityChangeEffect(
     val names: List<String>,
     /** True for a hide, false for an unhide; the disclosure reads differently for each. */
     val hiding: Boolean,
-    val totalXpBefore: Int,
-    val totalXpAfter: Int,
+    val totalXpBefore: Long,
+    val totalXpAfter: Long,
     val levelBefore: Int,
     val levelAfter: Int,
     /** Names of games whose goal designation this change will clear. Empty when none applies. */

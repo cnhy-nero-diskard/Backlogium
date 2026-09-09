@@ -408,10 +408,7 @@ class AchievementRepository @Inject constructor(
         onProgress: ((refreshed: Int, total: Int) -> Unit)? = null,
     ): ReconciliationFetch {
         val hidden = hiddenGamesRepository.hiddenAppIdSet()
-        val games = gameDao.getAll().filterNot { it.appId in hidden }
-        if (games.isEmpty()) return ReconciliationFetch(refreshed = 0, total = 0)
-
-        val hidden = hiddenGamesRepository.hiddenAppIdSet()
+        val games = gameDao.getAll()
         val visibleGames = if (hidden.isEmpty()) games else games.filterNot { it.appId in hidden }
         if (visibleGames.isEmpty()) return ReconciliationFetch(refreshed = 0, total = 0)
 
