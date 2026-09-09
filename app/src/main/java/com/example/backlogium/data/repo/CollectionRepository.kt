@@ -174,25 +174,24 @@ class CollectionRepository @Inject constructor(
         val hidden = hiddenGamesRepository.hiddenAppIdSet()
         val desiredSet = desired.toSet()
         val orderedExisting = existing.sortedBy { it.orderIndex }
-        val rankByAppId = orderedExisting.mapIndexed { index, member -> member.appId to index }.toMap()
         val hiddenRetained = orderedExisting.filter { it.appId in hidden && it.appId !in desiredSet }
-        // Rewriting only the visible draft to 0..N-1 would collide with a retained hidden row kept
-        // at its old index. Keep each hidden member in its stored slot and fill the gaps with the
-        // visible draft order, so a save while hidden leaves the full sequence unchanged and every
-        // retained row gets one unique contiguous index.
-        val total = desired.size + hiddenRetained.size
-        val merged: MutableList<Long?> = MutableList(total) { null }
-        hiddenRetained.forEachIndexed { position, member ->
-            val rank = rankByAppId[member.appId] ?: position
-            merged[minOf(rank, total - (hiddenRetained.size - position))] = member.appId
-        }
-        var cursor = 0
-        for (slot in 0 until total) {
-            if (merged[slot] == null) {
-                merged[slot] = desired[cursor++]
+        // The visible draft order is authoritative for visible members. Each retained hidden row is
+        // re-inserted immediately after its latest stored predecessor that survives in the merged
+        // order (at the start when none survives), so removing a visible neighbour never drags the
+        // hidden row across a survivor, while a save with no removals leaves the sequence unchanged.
+        val finalOrder = desired.toMutableList()
+        hiddenRetained.forEach { member ->
+            val storedPosition = orderedExisting.indexOfFirst { it.appId == member.appId }
+            val predecessors = if (storedPosition == -1) {
+                emptyList()
+            } else {
+                orderedExisting.subList(0, storedPosition)
             }
+            val latestPredecessorIndex = predecessors.mapNotNull { predecessor ->
+                finalOrder.indexOf(predecessor.appId).takeIf { it != -1 }
+            }.maxOrNull() ?: -1
+            finalOrder.add(latestPredecessorIndex + 1, member.appId)
         }
-        val finalOrder = merged.filterNotNull()
 
         desired.forEach { appId ->
             if (appId !in existingIds) {

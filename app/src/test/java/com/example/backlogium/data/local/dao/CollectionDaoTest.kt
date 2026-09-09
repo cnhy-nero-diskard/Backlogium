@@ -380,6 +380,72 @@ class CollectionDaoTest {
         assertEquals(listOf(1L, 2L, 3L), repository().getMembers(id).map { it.appId })
     }
 
+    /**
+     * Removing the visible predecessor while the middle member is hidden must not drag the hidden
+     * row across its surviving successor: A, H(hidden), B with A removed restores H, B — the order
+     * that would have applied had H never been hidden. Anchoring H to its absolute old rank kept
+     * it at index 1 and persisted B, H instead.
+     */
+    @Test
+    fun repositorySave_removingPredecessorKeepsHiddenBeforeSurvivor() = runBlocking {
+        val id = dao.insert(collection(name = "Queue", mode = CollectionMode.ORDERED_QUEUE))
+        dao.insertMember(CollectionMember(id, 1L, orderIndex = 0))
+        dao.insertMember(CollectionMember(id, 2L, orderIndex = 1))
+        dao.insertMember(CollectionMember(id, 3L, orderIndex = 2))
+
+        repository(hidden = setOf(2L)).save(
+            CollectionSaveDraft(
+                id = id,
+                name = "Queue",
+                mode = CollectionMode.ORDERED_QUEUE,
+                sort = CollectionSort.MANUAL_SEQUENCE,
+                targetDate = null,
+                accent = null,
+                timeBasis = CollectionTimeBasis.COMPLETIONIST,
+                description = null,
+                memberAppIds = listOf(3L),
+                doneAppIds = emptySet(),
+            ),
+        )
+
+        val stored = dao.getMembers(id)
+        assertEquals(listOf(2L, 3L), stored.map { it.appId })
+        assertEquals(listOf(0, 1), stored.map { it.orderIndex })
+        assertEquals(listOf(2L, 3L), repository().getMembers(id).map { it.appId })
+    }
+
+    /**
+     * Symmetric case: removing the visible successor leaves the hidden row after its surviving
+     * predecessor, so the merge does not move H when only its neighbour after it is gone.
+     */
+    @Test
+    fun repositorySave_removingSuccessorKeepsHiddenAfterPredecessor() = runBlocking {
+        val id = dao.insert(collection(name = "Queue", mode = CollectionMode.ORDERED_QUEUE))
+        dao.insertMember(CollectionMember(id, 1L, orderIndex = 0))
+        dao.insertMember(CollectionMember(id, 2L, orderIndex = 1))
+        dao.insertMember(CollectionMember(id, 3L, orderIndex = 2))
+
+        repository(hidden = setOf(2L)).save(
+            CollectionSaveDraft(
+                id = id,
+                name = "Queue",
+                mode = CollectionMode.ORDERED_QUEUE,
+                sort = CollectionSort.MANUAL_SEQUENCE,
+                targetDate = null,
+                accent = null,
+                timeBasis = CollectionTimeBasis.COMPLETIONIST,
+                description = null,
+                memberAppIds = listOf(1L),
+                doneAppIds = emptySet(),
+            ),
+        )
+
+        val stored = dao.getMembers(id)
+        assertEquals(listOf(1L, 2L), stored.map { it.appId })
+        assertEquals(listOf(0, 1), stored.map { it.orderIndex })
+        assertEquals(listOf(1L, 2L), repository().getMembers(id).map { it.appId })
+    }
+
     @Test
     fun repositorySave_commitsDetailsMembershipOrderAndDoneMarksTogether() = runBlocking {
         val id = dao.insert(
