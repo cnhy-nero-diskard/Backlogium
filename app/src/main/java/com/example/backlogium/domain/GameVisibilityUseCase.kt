@@ -83,10 +83,11 @@ class GameVisibilityUseCase @Inject constructor(
     suspend fun hide(appIds: Collection<Long>, fromBulkAction: Boolean = false) {
         if (appIds.isEmpty()) return
         derivedStateWrites.withLock {
-            hiddenGames.hide(appIds, fromBulkAction)
+            liveStatus.mutateHiddenSetAndReconcile {
+                hiddenGames.hide(appIds, fromBulkAction)
+            }
             appIds.forEach { gameDao.setGoalFlag(it, isGoal = false) }
             recompute()
-            liveStatus.reconcileVisibility()
         }
     }
 
@@ -102,10 +103,11 @@ class GameVisibilityUseCase @Inject constructor(
     suspend fun unhide(appIds: Collection<Long>) {
         if (appIds.isEmpty()) return
         derivedStateWrites.withLock {
-            hiddenGames.unhide(appIds)
+            liveStatus.mutateHiddenSetAndReconcile {
+                hiddenGames.unhide(appIds)
+            }
             appIds.forEach { gameDao.setGoalFlag(it, isGoal = false) }
             recompute()
-            liveStatus.reconcileVisibility()
         }
     }
 

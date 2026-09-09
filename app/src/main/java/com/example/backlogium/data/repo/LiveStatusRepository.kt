@@ -124,6 +124,7 @@ class LiveStatusRepository @Inject constructor(
     private var pollingJob: Job? = null
 
     private val visibilityMutex = Mutex()
+    private val visibilityGeneration = java.util.concurrent.atomic.AtomicLong(0)
 
     /** True while the recurring 30s poll loop is running. */
     val isPolling: Boolean get() = pollingJob?.isActive == true
@@ -347,6 +348,19 @@ class LiveStatusRepository @Inject constructor(
     }
 
     /**
+     * Mutate the hidden set and reconcile visibility atomically. The hidden-set write and the
+     * visibility reconciliation share the same ordering, so a projection that started before the
+     * write cannot emit a stale state after it. The generation is incremented before reconciliation,
+     * so any in-flight projection that started before the mutation will detect the change and
+     * re-read.
+     */
+    suspend fun mutateHiddenSetAndReconcile(mutate: suspend () -> Unit) = visibilityMutex.withLock {
+        mutate()
+        visibilityGeneration.incrementAndGet()
+        reconcileVisibilityLocked()
+    }
+
+    /**
      * Re-evaluate the current live presentation against the hidden set, without a Steam fetch.
      *
      * A hide/unhide write changes what [hiddenGameDao.isHidden] returns, but the in-memory
@@ -356,33 +370,53 @@ class LiveStatusRepository @Inject constructor(
      * that reads [liveStatus] can still depict the hidden game. The raw signal and the recorded
      * session are preserved: a hide does not end the session, and an unhide restores the name and
      * icon from the owned-games table.
+     *
+     * Increments the visibility generation before reconciling, so any in-flight projection that
+     * started before this call will detect the change and re-read.
      */
     suspend fun reconcileVisibility() = visibilityMutex.withLock {
+        visibilityGeneration.incrementAndGet()
+        reconcileVisibilityLocked()
+    }
+
+    private suspend fun reconcileVisibilityLocked() {
         val current = _liveStatus.value
-        val raw = current.rawNowPlaying as? NowPlaying.InGame ?: return@withLock
-        val hidden = hiddenGameDao.isHidden(raw.gameId ?: return@withLock)
+        val raw = current.rawNowPlaying as? NowPlaying.InGame ?: return
+        val gameId = raw.gameId ?: return
+        
+        val hiddenBefore = hiddenGameDao.isHidden(gameId)
+        
         val updated = when {
-            hidden && current.nowPlaying is NowPlaying.InGame ->
+            hiddenBefore && current.nowPlaying is NowPlaying.InGame ->
                 current.copy(
                     nowPlaying = NowPlaying.NotPlaying,
                     presence = if (current.presence == LivePresence.IN_GAME) LivePresence.ONLINE
                     else current.presence,
                 )
-            !hidden && current.nowPlaying == NowPlaying.NotPlaying -> {
-                val game = gameDao.getById(raw.gameId)
-                val resolved = NowPlaying.InGame(
-                    gameId = raw.gameId,
-                    name = game?.name?.takeIf { it.isNotBlank() } ?: raw.name.takeIf { it.isNotBlank() }
-                        ?: "App ${raw.gameId}",
-                    iconUrl = game?.iconUrl?.takeIf { it.isNotBlank() } ?: raw.iconUrl,
-                )
-                current.copy(
-                    nowPlaying = resolved,
-                    rawNowPlaying = resolved,
-                    presence = LivePresence.IN_GAME,
-                )
+            !hiddenBefore && current.nowPlaying == NowPlaying.NotPlaying -> {
+                val game = gameDao.getById(gameId)
+                val hiddenAfter = hiddenGameDao.isHidden(gameId)
+                if (hiddenAfter) {
+                    current.copy(
+                        nowPlaying = NowPlaying.NotPlaying,
+                        presence = if (current.presence == LivePresence.IN_GAME) LivePresence.ONLINE
+                        else current.presence,
+                    )
+                } else {
+                    val resolved = NowPlaying.InGame(
+                        gameId = gameId,
+                        name = game?.name?.takeIf { it.isNotBlank() } ?: raw.name.takeIf { it.isNotBlank() }
+                            ?: "App $gameId",
+                        iconUrl = game?.iconUrl?.takeIf { it.isNotBlank() } ?: raw.iconUrl,
+                    )
+                    current.copy(
+                        nowPlaying = resolved,
+                        rawNowPlaying = resolved,
+                        presence = LivePresence.IN_GAME,
+                    )
+                }
             }
-            else -> return@withLock
+            else -> return
         }
         _liveStatus.value = updated
     }
@@ -398,31 +432,48 @@ class LiveStatusRepository @Inject constructor(
      * - A poll that fetched hidden while the game was hidden, then the game was unhidden and
      *   reconciled before the poll commits: the suppressed fetch is restored to the visible shape,
      *   resolving the name and icon from the owned-games table the same way [fetch] does.
+     *
+     * After any suspension (e.g., [gameDao.getById]), the hidden state is re-read to detect
+     * mutations that occurred during the suspension. If the generation changed, the projection
+     * is recomputed based on the current hidden state.
      */
     private suspend fun reprojectHiddenState(status: LiveStatus): LiveStatus {
         val raw = status.rawNowPlaying as? NowPlaying.InGame ?: return status
         val gameId = raw.gameId ?: return status
-        val hidden = hiddenGameDao.isHidden(gameId)
+        
+        val genBefore = visibilityGeneration.get()
+        val hiddenBefore = hiddenGameDao.isHidden(gameId)
+        
         return when {
-            hidden && status.nowPlaying is NowPlaying.InGame ->
+            hiddenBefore && status.nowPlaying is NowPlaying.InGame ->
                 status.copy(
                     nowPlaying = NowPlaying.NotPlaying,
                     presence = if (status.presence == LivePresence.IN_GAME) LivePresence.ONLINE
                     else status.presence,
                 )
-            !hidden && status.nowPlaying is NowPlaying.NotPlaying -> {
+            !hiddenBefore && status.nowPlaying is NowPlaying.NotPlaying -> {
                 val game = gameDao.getById(gameId)
-                val resolved = NowPlaying.InGame(
-                    gameId = gameId,
-                    name = game?.name?.takeIf { it.isNotBlank() } ?: raw.name.takeIf { it.isNotBlank() }
-                        ?: "App $gameId",
-                    iconUrl = game?.iconUrl?.takeIf { it.isNotBlank() } ?: raw.iconUrl,
-                )
-                status.copy(
-                    nowPlaying = resolved,
-                    rawNowPlaying = resolved,
-                    presence = LivePresence.IN_GAME,
-                )
+                val genAfter = visibilityGeneration.get()
+                val hiddenAfter = if (genAfter != genBefore) hiddenGameDao.isHidden(gameId) else hiddenBefore
+                if (hiddenAfter) {
+                    status.copy(
+                        nowPlaying = NowPlaying.NotPlaying,
+                        presence = if (status.presence == LivePresence.IN_GAME) LivePresence.ONLINE
+                        else status.presence,
+                    )
+                } else {
+                    val resolved = NowPlaying.InGame(
+                        gameId = gameId,
+                        name = game?.name?.takeIf { it.isNotBlank() } ?: raw.name.takeIf { it.isNotBlank() }
+                            ?: "App $gameId",
+                        iconUrl = game?.iconUrl?.takeIf { it.isNotBlank() } ?: raw.iconUrl,
+                    )
+                    status.copy(
+                        nowPlaying = resolved,
+                        rawNowPlaying = resolved,
+                        presence = LivePresence.IN_GAME,
+                    )
+                }
             }
             else -> status
         }

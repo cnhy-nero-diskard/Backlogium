@@ -37,6 +37,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -852,6 +853,64 @@ class LiveStatusRepositoryTest {
             "the raw signal is preserved across the interleaving",
             10L,
             (finalStatus.rawNowPlaying as NowPlaying.InGame).gameId,
+        )
+    }
+
+    @Test
+    fun visibilityMutex_noStaleEmissionAfterHide() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao()
+        val gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal"))
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = gameDao,
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            repo.liveStatus.value.nowPlaying,
+        )
+
+        val emissions = mutableListOf<NowPlaying>()
+        val collector = launch {
+            repo.liveStatus.map { it.nowPlaying }.collect { emissions += it }
+        }
+        runCurrent()
+
+        hiddenGameDao.delete(listOf(10L))
+        val gate = CompletableDeferred<Unit>()
+        gameDao.getByIdGate = gate
+
+        val olderUnhide = async { repo.reconcileVisibility() }
+        runCurrent()
+
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        val newerHide = async { repo.reconcileVisibility() }
+        runCurrent()
+
+        gate.complete(Unit)
+        olderUnhide.await()
+        newerHide.await()
+        runCurrent()
+
+        collector.cancel()
+
+        val hideIndex = emissions.indexOf(NowPlaying.NotPlaying)
+        assertTrue("expected at least one NotPlaying emission", hideIndex >= 0)
+        val afterHide = emissions.subList(hideIndex, emissions.size)
+        assertFalse(
+            "no InGame emission is permitted after the newer hide committed; emissions were $emissions",
+            afterHide.any { it is NowPlaying.InGame },
         )
     }
 

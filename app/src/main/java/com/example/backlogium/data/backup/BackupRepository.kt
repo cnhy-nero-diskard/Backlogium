@@ -122,7 +122,9 @@ class BackupRepository @Inject constructor(
             // The merge may have changed the hidden set. Reconcile the live presentation so the
             // now-playing card, header presence, and FGS notification reflect the restored hidden
             // state immediately rather than waiting for the next presence poll. This must happen
-            // inside the derived-state lock to order against other visibility writes.
+            // inside the derived-state lock to order against other visibility writes. The
+            // reconciliation increments the visibility generation, so any in-flight projection
+            // that started before the merge will detect the change and re-read.
             liveStatusRepository.reconcileVisibility()
         }
         // Restore supplies only unlocked achievements and no per-game metadata, so a restored
