@@ -53,12 +53,20 @@ Otherwise:
 
 1. Check out the PR's head branch so the sync/archive edits land on the branch being
    merged. If that branch is already checked out in a separate worktree, switch to
-   that worktree directory instead:
+   that worktree directory instead. Before editing, fetch and fast-forward the branch
+   so the sync/archive edits land on top of the latest remote state — do not proceed
+   on a stale branch:
    ```bash
    git checkout <head-branch>
+   git fetch origin
+   git pull --ff-only
    # or, when using a worktree:
    cd <path-to-worktree>
+   git fetch origin
+   git pull --ff-only
    ```
+   If `git pull --ff-only` fails (local and remote diverged), stop and report before
+   continuing.
 2. Run `openspec status --change "<name>" --json` to inspect delta specs.
 3. If the change is still active and has delta specs → run `openspec-sync-specs`
    (agent-driven) to sync them into `openspec/specs/`, then commit and push; then run
@@ -109,6 +117,7 @@ gh pr merge <number> --merge --delete-branch
 ## Guardrails
 
 - Never merge without resolving which PR (prompt when ambiguous).
+- Never sync/archive or merge on a stale head branch; always fetch + `--ff-only` first, and stop if the branch diverged.
 - Do not skip the sync + archive gate unless the prompt explicitly marks the unarchive
   as deliberate.
 - Always target `master`; never merge into a feature branch.
