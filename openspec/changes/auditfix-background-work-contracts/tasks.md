@@ -43,7 +43,7 @@
 - [x] 5.3 On a device: start a reconciliation pass, tap **Sync now** during it, and confirm from the diagnostics surface that the manual run completed without waiting and is recorded as manual — #99 and #107 verified together on the real thing
 - [x] 5.4 On a device: opt into completion times, leave setup, force-stop the app, reopen, and confirm the stage continued rather than restarting
 - [ ] 5.5 Sync the delta into `openspec/specs/` via the archive workflow, not by hand
-- [ ] 5.6 Close #99, #107, #111
+- [x] 5.6 Close #99, #107, #111
 
 ## Prerequisite verification notes
 
@@ -58,3 +58,5 @@
 - Achievement overlap: `AchievementRepositoryTest.overlappingInlineAndReconciliationFetchOnlyOneGame` verifies one account/app fetch is shared across overlapping hot and cold tiers; the guard is account-keyed to avoid cross-account reuse.
 - Trigger identity: scheduler, recorder, and diagnostics tests cover explicit periodic/manual inputs, manual retry attempt persistence, and the Room 29->30 `attempt` schema.
 - Validation: `openspec validate --strict auditfix-background-work-contracts` passes; the full `:gamification:test :app:testDebugUnitTest` suite and upstream `WriteIntegrityDaoTest` class pass.\n- Completion times: the stage now uses `HltbDatasetWorker` plus `WorkStageRunner`; user-reported device verification passed on 2026-09-09. `SetupStageRegistryTest` verifies its independent durable work name and `HltbDatasetWorkerTest` verifies persisted progress labels/counts. Existing `SetupCoordinatorTest` and `WorkStageRunnerTest` cover active-marker/work-id recovery and reattachment behavior.
+
+- Issue closure: #99, #107, and #111 are closed after implementation and user-reported device verification.
