@@ -36,6 +36,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -661,6 +662,128 @@ class LiveStatusRepositoryTest {
         )
     }
 
+    /**
+     * A backup restore replaces the hidden set atomically (`deleteAll` + `upsertAll`). If the
+     * currently-running game's hidden state changes as a result, the live presentation must be
+     * reconciled immediately. This test simulates the restore pattern and verifies that
+     * [reconcileVisibility] correctly handles both directions in a single operation.
+     */
+    @Test
+    fun reconcileVisibility_afterBackupRestore_hidesOrUnhidesTheRunningGame() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao()
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal")),
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            repo.liveStatus.value.nowPlaying,
+        )
+
+        hiddenGameDao.deleteAll()
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        repo.reconcileVisibility()
+
+        val suppressed = repo.liveStatus.value
+        assertEquals(
+            "a restore that hides the running game must suppress the live presentation",
+            NowPlaying.NotPlaying,
+            suppressed.nowPlaying,
+        )
+        assertEquals(
+            10L,
+            (suppressed.rawNowPlaying as NowPlaying.InGame).gameId,
+        )
+
+        hiddenGameDao.deleteAll()
+        hiddenGameDao.upsertAll(emptyList())
+        repo.reconcileVisibility()
+
+        val restored = repo.liveStatus.value
+        assertEquals(
+            "a restore that unhides the running game must restore the live presentation",
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            restored.nowPlaying,
+        )
+        assertEquals(LivePresence.IN_GAME, restored.presence)
+    }
+
+    /**
+     * The symmetric interleaving: a poll that started [fetch] while the game was hidden builds
+     * `nowPlaying = NotPlaying` + raw `InGame`; before that poll commits, the user unhides the
+     * game and [reconcileVisibility] publishes visible `InGame`; the old poll then resumes and
+     * must not overwrite the visible state with its stale suppressed result. [reprojectHiddenState]
+     * re-projects the raw signal against the current hidden state in both directions, so the
+     * stale `NotPlaying` is restored to `InGame` at commit time.
+     */
+    @Test
+    fun reconcileVisibility_concurrentHiddenPollCannotOverwritePostUnhideState() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao(setOf(10L))
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal")),
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+        assertEquals(NowPlaying.NotPlaying, repo.liveStatus.value.nowPlaying)
+
+        val gate = CompletableDeferred<Unit>()
+        settings.liveSessionGate = gate
+
+        val pendingCheck = async { repo.checkNow() }
+        runCurrent()
+
+        hiddenGameDao.delete(listOf(10L))
+        repo.reconcileVisibility()
+
+        val restored = repo.liveStatus.value
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            restored.nowPlaying,
+        )
+        assertEquals(LivePresence.IN_GAME, restored.presence)
+
+        gate.complete(Unit)
+        pendingCheck.await()
+
+        val finalStatus = repo.liveStatus.value
+        assertEquals(
+            "the stale hidden poll must not overwrite the post-unhide reconciliation",
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            finalStatus.nowPlaying,
+        )
+        assertEquals(
+            "presence must remain IN_GAME after the stale poll",
+            LivePresence.IN_GAME,
+            finalStatus.presence,
+        )
+        assertEquals(
+            "the raw signal is preserved across the interleaving",
+            10L,
+            (finalStatus.rawNowPlaying as NowPlaying.InGame).gameId,
+        )
+    }
+
     @Test
     fun failedObservationAndStoppedPolling_publishNothing() = runTest {
         val steamApi = FakeSteamApi()
@@ -898,7 +1021,11 @@ class LiveStatusRepositoryTest {
     /** In-memory stand-in for the DataStore-backed implementation (only [session] is exercised). */
     private class FakeSettingsRepository : SettingsRepository {
         val session = MutableStateFlow(LiveSessionState())
-        override val liveSession: Flow<LiveSessionState> = session
+        var liveSessionGate: CompletableDeferred<Unit>? = null
+        override val liveSession: Flow<LiveSessionState> = flow {
+            liveSessionGate?.await()
+            emit(session.value)
+        }
         override suspend fun setLiveSession(appId: Long?, startedAt: Long) {
             session.value = LiveSessionState(appId, startedAt)
         }
