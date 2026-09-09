@@ -20,6 +20,8 @@ import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -492,29 +494,44 @@ class AchievementRepository @Inject constructor(
         schemaFetchedAt: Long?,
         scope: SyncRunRecorder.RunScope? = null,
     ): AchievementRefresh? {
-        val flight = CompletableDeferred<AchievementRefresh?>()
         val key = FetchKey(steamId = steamId, appId = appId)
-        val existing = inFlightGameFetches.putIfAbsent(key, flight)
-        if (existing != null) return existing.await()
+        while (true) {
+            val flight = CompletableDeferred<AchievementRefresh?>()
+            val existing = inFlightGameFetches.putIfAbsent(key, flight)
+            if (existing == null) {
+                return try {
+                    val result = fetchGameUncoordinated(
+                        apiKey = apiKey,
+                        steamId = steamId,
+                        appId = appId,
+                        schemaFetchedAt = schemaFetchedAt,
+                        scope = scope,
+                    )
+                    flight.complete(result)
+                    result
+                } catch (cancelled: CancellationException) {
+                    flight.cancel(cancelled)
+                    throw cancelled
+                } catch (error: Exception) {
+                    flight.completeExceptionally(error)
+                    throw error
+                } finally {
+                    inFlightGameFetches.remove(key, flight)
+                }
+            }
 
-        return try {
-            val result = fetchGameUncoordinated(
-                apiKey = apiKey,
-                steamId = steamId,
-                appId = appId,
-                schemaFetchedAt = schemaFetchedAt,
-                scope = scope,
-            )
-            flight.complete(result)
-            result
-        } catch (cancelled: CancellationException) {
-            flight.cancel(cancelled)
-            throw cancelled
-        } catch (error: Exception) {
-            flight.completeExceptionally(error)
-            throw error
-        } finally {
-            inFlightGameFetches.remove(key, flight)
+            try {
+                return existing.await()
+            } catch (_: CancellationException) {
+                // Cancellation is owned by the caller: a waiter cancelled in its own right must
+                // propagate, but a still-active waiter must not inherit the leader's cancellation
+                // (e.g. reconciliation stopped for constraints while a manual sync waits on it).
+                currentCoroutineContext().ensureActive()
+                // The leader is gone; clear the stale flight so the retry below can start a
+                // replacement. remove(key, existing) cannot disturb a replacement another waiter
+                // already registered.
+                inFlightGameFetches.remove(key, existing)
+            }
         }
     }
 
