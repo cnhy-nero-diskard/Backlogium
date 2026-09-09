@@ -225,7 +225,7 @@ class SteamSyncWorker @AssistedInject constructor(
         return try {
             val creds = credentials.currentCredentials()
             if (creds == null) {
-                recordError("Steam not configured")
+                recordErrorIfAccountActive(null, "Steam not configured")
                 outcome = SyncOutcome.SKIPPED_NO_CREDENTIALS
                 return Result.success()
             }
@@ -234,7 +234,10 @@ class SteamSyncWorker @AssistedInject constructor(
             workerSteamId = steamId
             val storedSteamId = profileDao.get()?.steamId?.takeIf { it.isNotBlank() }
             if (!canDiffAgainstAccount(storedSteamId, steamId)) {
-                recordError("Stored library belongs to a different Steam account; confirm the account change first")
+                recordErrorIfAccountActive(
+                    steamId,
+                    "Stored library belongs to a different Steam account; confirm the account change first",
+                )
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
                 return Result.success()
             }
@@ -252,7 +255,14 @@ class SteamSyncWorker @AssistedInject constructor(
             val owned = fetchOwnedGamesAfterPresenceDecision(
                 gameDetected = !summary?.gameId.isNullOrBlank(),
                 recordPresenceNotAttempted = {
-                    presenceServiceStarter.recordNotAttempted(trigger = "sync")
+                    // Presence decisions are account-owned diagnostics: the reset clears them, so
+                    // an admitted old run that reaches this point after a reset must not recreate
+                    // them. Revalidate under the same barrier that serializes the reset.
+                    syncCoordinator.withLock {
+                        if (isAccountActive(steamId)) {
+                            presenceServiceStarter.recordNotAttempted(trigger = "sync")
+                        }
+                    }
                     Unit
                 },
                 fetchOwnedGames = {
@@ -265,7 +275,10 @@ class SteamSyncWorker @AssistedInject constructor(
                 // An unconfirmed empty envelope usually means a private profile. Keep last-good
                 // data; an explicit `game_count: 0` continues through persistPoll so the completed
                 // empty-library baseline is durable.
-                recordError("No games returned — your Steam profile may be private")
+                recordErrorIfAccountActive(
+                    steamId,
+                    "No games returned — your Steam profile may be private",
+                )
                 outcome = SyncOutcome.SKIPPED_EMPTY_OWNED_GAMES
                 return Result.success()
             }
@@ -287,7 +300,9 @@ class SteamSyncWorker @AssistedInject constructor(
             throw e
         } catch (e: Exception) {
             // Network / transient error: surface it, keep data, let WorkManager back off.
-            recordError(e.message ?: "Sync failed")
+            // Guarded like every other unlocked account-owned write: an admitted old run that
+            // fails after a reset completed must not stamp its error onto the new account.
+            recordErrorIfAccountActive(workerSteamId, e.message ?: "Sync failed")
             error = e.message ?: "Sync failed"
             Result.retry()
         } finally {
@@ -424,8 +439,24 @@ class SteamSyncWorker @AssistedInject constructor(
     }
 
     private suspend fun isAccountActive(expectedSteamId: String?): Boolean =
-        accountChangeMarker.pendingSteamId() == null &&
-            credentials.currentCredentials()?.steamId == expectedSteamId
+        isSyncForActiveAccount(
+            markerSteamId = accountChangeMarker.pendingSteamId(),
+            currentSteamId = credentials.currentCredentials()?.steamId,
+            expectedSteamId = expectedSteamId,
+        )
+
+    /**
+     * Failure reporting outside the raw-commit transaction. The profile error column is
+     * account-owned and the reset clears it, so revalidate under the coordinator barrier: an
+     * admitted old run that fails after the reset must leave the new account untouched.
+     */
+    private suspend fun recordErrorIfAccountActive(expectedSteamId: String?, message: String) {
+        syncCoordinator.withLock {
+            if (isAccountActive(expectedSteamId)) {
+                recordError(message)
+            }
+        }
+    }
 
     private suspend fun readAndComputeDiff(
         polls: List<SessionDiffer.PollGame>,
@@ -616,3 +647,17 @@ class SteamSyncWorker @AssistedInject constructor(
 /** A stored playtime baseline is usable only for the same configured Steam account. */
 internal fun canDiffAgainstAccount(storedSteamId: String?, pollSteamId: String): Boolean =
     storedSteamId.isNullOrBlank() || storedSteamId == pollSteamId
+
+/**
+ * Whether an admitted sync for [expectedSteamId] may still commit account-owned writes.
+ *
+ * The durable marker being clear proves no reset is in flight, and the current credentials still
+ * naming the admitted account proves no reset has completed since admission. Both halves are
+ * required: the marker alone is already clear again once a reset finishes, and the credentials
+ * alone still name the old account while a reset waits on the process lock.
+ */
+internal fun isSyncForActiveAccount(
+    markerSteamId: String?,
+    currentSteamId: String?,
+    expectedSteamId: String?,
+): Boolean = markerSteamId == null && currentSteamId == expectedSteamId
