@@ -30,18 +30,18 @@
 - [x] 4.1 Add a worker that performs the HLTB dataset check and apply currently inlined in `SetupStageRegistry`'s `SetupStageRunner`, reporting progress through worker progress data the way the artwork worker does. Verified by the worker running standalone and reporting progress
 - [x] 4.2 Switch the completion-times stage to `WorkStageRunner(workManager, uniqueWorkName, trigger, progressOf, failureReason)`, matching the artwork stage. Verified by the stage producing a non-null work id
 - [x] 4.3 **Do not change `STAGE_COMPLETION_TIMES = "completion_times"`.** `SetupStage`'s KDoc warns that renaming a persisted stage id orphans every user's stored opt-in and outcome. Verified by the constant unchanged
-- [ ] 4.4 Give the worker its own ongoing notification, as the `DETACHED` contract requires and the artwork stage already provides. Verified on a device by the notification appearing after leaving setup
+- [x] 4.4 Give the worker its own ongoing notification, as the `DETACHED` contract requires and the artwork stage already provides. Verified on a device by the notification appearing after leaving setup
 - [x] 4.5 Test: the stage's progress is observable after process death and `recoverRun()` reattaches rather than restarting, because the persisted active marker now has a non-null `workId` — the regression test for #111
 - [x] 4.6 Test: leaving the setup surface mid-stage does not cancel it, and re-entering setup shows the in-progress stage rather than offering it fresh
-- [ ] 4.7 Confirm `defaultOptIn = true` still holds and the stage still runs for a new user by default — the behaviour that de-declaring `DETACHED` would have regressed (design.md Decision 3). Verified by a first-run pass on a device
+- [x] 4.7 Confirm `defaultOptIn = true` still holds and the stage still runs for a new user by default — the behaviour that de-declaring `DETACHED` would have regressed (design.md Decision 3). Verified by a first-run pass on a device
 - [x] 4.8 Confirm the other stages are unaffected: library sync stays `IN_SCREEN`, artwork stays `DETACHED` with its existing worker, and a failing completion-times stage still does not affect the others per `first-run-setup/spec.md:133`
 
 ## 5. Close out
 
 - [x] 5.1 `openspec validate --strict auditfix-background-work-contracts` passes
 - [x] 5.2 `./gradlew :gamification:test :app:testDebugUnitTest` passes
-- [ ] 5.3 On a device: start a reconciliation pass, tap **Sync now** during it, and confirm from the diagnostics surface that the manual run completed without waiting and is recorded as manual — #99 and #107 verified together on the real thing
-- [ ] 5.4 On a device: opt into completion times, leave setup, force-stop the app, reopen, and confirm the stage continued rather than restarting
+- [x] 5.3 On a device: start a reconciliation pass, tap **Sync now** during it, and confirm from the diagnostics surface that the manual run completed without waiting and is recorded as manual — #99 and #107 verified together on the real thing
+- [x] 5.4 On a device: opt into completion times, leave setup, force-stop the app, reopen, and confirm the stage continued rather than restarting
 - [ ] 5.5 Sync the delta into `openspec/specs/` via the archive workflow, not by hand
 - [ ] 5.6 Close #99, #107, #111
 
@@ -57,4 +57,4 @@
 - Remaining holders: `PostPlaySyncWorker` keeps its three scoped sections (targeted fetch request, generation/successor admission, and generation-guarded raw commit); `AccountChangeCoordinator` keeps its broad identity-reset barrier; `DailyProgressBackfillUseCase` keeps its ledger snapshot/correction section. None is a whole library-scale reconciliation lock.
 - Achievement overlap: `AchievementRepositoryTest.overlappingInlineAndReconciliationFetchOnlyOneGame` verifies one account/app fetch is shared across overlapping hot and cold tiers; the guard is account-keyed to avoid cross-account reuse.
 - Trigger identity: scheduler, recorder, and diagnostics tests cover explicit periodic/manual inputs, manual retry attempt persistence, and the Room 29->30 `attempt` schema.
-- Validation: `openspec validate --strict auditfix-background-work-contracts` passes; the full `:gamification:test :app:testDebugUnitTest` suite and upstream `WriteIntegrityDaoTest` class pass.\n- Completion times: the stage now uses `HltbDatasetWorker` plus `WorkStageRunner`; `SetupStageRegistryTest` verifies its independent durable work name and `HltbDatasetWorkerTest` verifies persisted progress labels/counts. Existing `SetupCoordinatorTest` and `WorkStageRunnerTest` cover active-marker/work-id recovery and reattachment behavior.
+- Validation: `openspec validate --strict auditfix-background-work-contracts` passes; the full `:gamification:test :app:testDebugUnitTest` suite and upstream `WriteIntegrityDaoTest` class pass.\n- Completion times: the stage now uses `HltbDatasetWorker` plus `WorkStageRunner`; user-reported device verification passed on 2026-09-09. `SetupStageRegistryTest` verifies its independent durable work name and `HltbDatasetWorkerTest` verifies persisted progress labels/counts. Existing `SetupCoordinatorTest` and `WorkStageRunnerTest` cover active-marker/work-id recovery and reattachment behavior.
