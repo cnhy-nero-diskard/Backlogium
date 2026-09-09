@@ -58,10 +58,33 @@ it ended. Records SHALL survive app restart and SHALL be readable without a netw
 A run triggered by the end of an observed play session SHALL be distinguishable by its trigger from
 a periodic or manual run, and SHALL identify the game it was scoped to.
 
+A periodic run and a manual, player-initiated run SHALL additionally be distinguishable from
+**each other**. The initiating trigger SHALL be determined by whatever enqueued the work and
+SHALL travel with it, rather than being inferred inside the run from state that cannot tell
+the two apart.
+
+Retry state SHALL be recorded as an attribute of a run alongside its trigger, and SHALL NOT
+replace it. A retried run SHALL still identify what originally initiated it, because a record
+that says only "retry" cannot be attributed to a player action or to the schedule — which is
+the distinction these records exist to preserve.
+
 #### Scenario: Successful run recorded
 - **WHEN** a sync run completes successfully
 - **THEN** a record is stored with its trigger, start time, duration, request count, work performed,
   and a successful outcome
+
+#### Scenario: Manual run is distinguishable from a periodic one
+- **WHEN** the player activates a manual sync action
+- **THEN** the stored record's trigger identifies it as player-initiated, and not as periodic
+
+#### Scenario: Periodic run is recorded as periodic
+- **WHEN** the periodic schedule starts a sync
+- **THEN** the stored record's trigger identifies it as periodic
+
+#### Scenario: Retry preserves the originating trigger
+- **WHEN** a run is retried after a failure
+- **THEN** the stored record identifies both that it was a retry and what originally initiated
+  the run, whether that was the schedule or the player
 
 #### Scenario: Failed run recorded
 - **WHEN** a sync run fails
