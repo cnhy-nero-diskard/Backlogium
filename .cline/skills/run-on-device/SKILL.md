@@ -49,11 +49,16 @@ Start-Process -FilePath ".\gradlew.bat" -ArgumentList ":app:installDebug" `
   -RedirectStandardOutput build_install.log -RedirectStandardError build_install_err.log -NoNewWindow -PassThru
 ```
 
-Then poll (e.g. `Start-Sleep -Seconds 25`) and read the logs until you see:
+**Do not end your turn after starting the process.** Stay in the same turn and poll
+(`Start-Sleep` + read the logs) in a loop until the build reaches a terminal state —
+a run that starts the build and then stops to await a nudge looks like a hang.
+Continue polling even if it takes several minutes; Gradle routinely takes 50s+.
 
-- `> Task :app:installDebug` … `Installed on 1 device.` and `BUILD SUCCESSFUL`.
+- Poll for the success terminal state: `> Task :app:installDebug` … `Installed on 1 device.` and `BUILD SUCCESSFUL`.
+- Poll for the failure terminal state: `BUILD FAILED`.
 
-If `BUILD FAILED`, read `build_install_err.log` and report the failure — do not proceed to launch.
+Only proceed once one of those two states appears. If `BUILD FAILED`, read
+`build_install_err.log` and report the failure — do not proceed to launch.
 
 ### 3. Launch on device
 
