@@ -14,6 +14,8 @@
 - [x] 2.5 Exclude from analytics and history
 - [x] 2.6 Make a hidden game unreachable by navigation to game detail
 - [x] 2.7 Add tests asserting a hidden game is absent from every read path, including one per surface
+- [x] 2.8 Keep a collection save from deleting a hidden member's membership: the draft is filtered, so diffing it against the unfiltered stored rows read as a removal
+- [x] 2.9 Drop a member hidden mid-editing-session from the rendered members, so it cannot linger as a dangling-looking row
 
 ## 3. Derived values
 
@@ -74,8 +76,8 @@
 
 - [x] 9.1 Run `./gradlew :gamification:test :app:testDebugUnitTest` and `./gradlew assembleDebug`
 - [x] 9.2 Confirm the repository-boundary invariant still passes: `grep -rn "^import .*\(data\.local\.entity\|SettingsDataStore\)" app/src/main/java/com/example/backlogium/ui/ --exclude-dir=diagnostics`
-- [ ] 9.3 Manually verify hiding a heavily-played game: the disclosure states the real level change, and applying it matches
-- [ ] 9.4 Manually verify unhiding restores XP, level, history, and collection membership exactly
-- [ ] 9.5 Manually verify a hidden game survives a sync still hidden — the case the standalone table exists to prevent
-- [ ] 9.6 Manually verify playing a hidden game shows no card, no indicator, and no notification, while its session is recorded
-- [ ] 9.7 Manually verify the non-game bulk review names real candidates and hides nothing until confirmed
+- [x] 9.3 Manually verify hiding a heavily-played game: the disclosure states the real level change, and applying it matches
+- [x] 9.4 Manually verify unhiding restores XP, level, history, and collection membership exactly
+- [x] 9.5 Manually verify a hidden game survives a sync still hidden — the case the standalone table exists to prevent
+- [x] 9.6 Manually verify playing a hidden game shows no card, no indicator, and no notification, while its session is recorded
+- [x] 9.7 Manually verify the non-game bulk review names real candidates and hides nothing until confirmed

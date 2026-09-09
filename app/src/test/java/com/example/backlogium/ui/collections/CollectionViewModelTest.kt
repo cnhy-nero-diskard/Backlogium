@@ -26,6 +26,7 @@ import com.example.backlogium.data.repo.CollectionRepository
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.GameGenreRepository
 import com.example.backlogium.data.repo.GameRepository
+import com.example.backlogium.data.repo.HiddenGamesRepository
 import com.example.backlogium.data.repo.fakeHiddenGamesRepository
 import com.example.backlogium.data.repo.HltbDatasetLookup
 import com.example.backlogium.data.repo.HltbRepository
@@ -104,6 +105,51 @@ class CollectionViewModelTest {
         assertTrue(viewModel.uiState.value.done)
     }
 
+    /**
+     * Hiding from this screen's own game-detail sheet has to take effect immediately. The member
+     * buffer is a snapshot taken when the screen opened, and the library it renders against is
+     * filtered — so a member hidden mid-session used to survive as a row whose game had vanished,
+     * which is exactly how a genuinely dangling member looks, and it rendered as one: "Game 2",
+     * no playtime, no sessions, and nothing to navigate to.
+     */
+    @Test
+    fun hidingAMemberMidSession_dropsItFromTheRenderedMembers() {
+        val hiddenGames = fakeHiddenGamesRepository()
+        withViewModel(
+            libraryGames = listOf(
+                Game(
+                    appId = 1L,
+                    name = "Alpha",
+                    iconUrl = "",
+                    playtimeForever = 20,
+                    playtime2Weeks = 0,
+                    lastPlaytime = 20,
+                ),
+                Game(
+                    appId = 2L,
+                    name = "Beta",
+                    iconUrl = "",
+                    playtimeForever = 80,
+                    playtime2Weeks = 0,
+                    lastPlaytime = 80,
+                ),
+            ),
+            hiddenGames = hiddenGames,
+        ) { viewModel ->
+            viewModel.addGame(1L)
+            viewModel.addGame(2L)
+            runCurrent()
+            assertEquals(listOf("Alpha", "Beta"), viewModel.uiState.value.members.map { it.name })
+
+            hiddenGames.hide(setOf(2L))
+            runCurrent()
+
+            val members = viewModel.uiState.value.members
+            assertEquals(listOf("Alpha"), members.map { it.name })
+            assertTrue(members.none { it.name == "Game 2" })
+        }
+    }
+
     @Test
     fun nonQueueMembers_renderInSelectedSortOrder() = withViewModel(
         libraryGames = listOf(
@@ -180,12 +226,13 @@ class CollectionViewModelTest {
         transaction: DatabaseTransactionScope = PassThroughTransactionScope,
         libraryGames: List<Game> = emptyList(),
         hltbData: List<HltbData> = emptyList(),
+        hiddenGames: HiddenGamesRepository = fakeHiddenGamesRepository(),
         block: suspend TestScope.(CollectionViewModel) -> Unit,
     ) = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         Dispatchers.setMain(dispatcher)
         try {
-            val viewModel = createViewModel(transaction, libraryGames, hltbData)
+            val viewModel = createViewModel(transaction, libraryGames, hltbData, hiddenGames)
             val stateCollector = launch {
                 viewModel.uiState.collect()
             }
@@ -201,6 +248,7 @@ class CollectionViewModelTest {
         transaction: DatabaseTransactionScope,
         libraryGames: List<Game>,
         hltbData: List<HltbData>,
+        hiddenGames: HiddenGamesRepository = fakeHiddenGamesRepository(),
     ): CollectionViewModel {
         val time = FixedTimeProvider()
         val gameDao = emptyGameDao(libraryGames)
@@ -229,7 +277,7 @@ class CollectionViewModelTest {
             gameDao = gameDao,
             hltbRepository = hltbRepository,
             gameGenreRepository = gameGenreRepository,
-            hiddenGamesRepository = fakeHiddenGamesRepository(),
+            hiddenGamesRepository = hiddenGames,
             steamApi = emptyProxy(SteamApi::class.java),
             sessionRepository = sessionRepository,
             time = time,
@@ -268,6 +316,7 @@ class CollectionViewModelTest {
                 transaction = transaction,
             ),
             gameRepository = gameRepository,
+            hiddenGamesRepository = hiddenGames,
             achievementRepository = achievementRepository,
             sessionRepository = sessionRepository,
             personalPaceRepository = PersonalPaceRepository(sessionRepository, time),

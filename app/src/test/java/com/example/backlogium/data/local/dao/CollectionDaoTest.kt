@@ -83,9 +83,10 @@ class CollectionDaoTest {
     private fun repository(
         collectionDao: CollectionDao = dao,
         transaction: DatabaseTransactionScope = RoomDatabaseTransactionScope(db),
+        hidden: Set<Long> = emptySet(),
     ) = CollectionRepository(
         collectionDao = collectionDao,
-        hiddenGamesRepository = fakeHiddenGamesRepository(),
+        hiddenGamesRepository = fakeHiddenGamesRepository(hidden = hidden),
         time = object : TimeProvider {
             override fun nowMillis(): Long = 100L
             override fun zone(): ZoneId = ZoneId.of("UTC")
@@ -313,6 +314,37 @@ class CollectionDaoTest {
         assertTrue(failure is IllegalStateException)
         assertEquals(before, dao.getById(id))
         assertEquals(membersBefore, dao.getMembers(id))
+    }
+
+    /**
+     * Hiding retains collection membership so unhiding restores it without the player re-adding
+     * the game. Every member read filters hidden games, so the editing buffer a save carries never
+     * contains one — and diffing that against the unfiltered stored rows once deleted the very
+     * membership hiding promised to keep, silently and for good.
+     */
+    @Test
+    fun repositorySave_retainsAHiddenMembersMembershipItCannotSeeInTheDraft() = runBlocking {
+        val id = dao.insert(collection(name = "Backlog"))
+        dao.insertMember(CollectionMember(id, 1L, orderIndex = 0))
+        dao.insertMember(CollectionMember(id, 2L, orderIndex = 1))
+
+        repository(hidden = setOf(2L)).save(
+            CollectionSaveDraft(
+                id = id,
+                name = "Renamed",
+                mode = CollectionMode.BASIC,
+                sort = CollectionSort.NAME,
+                targetDate = null,
+                accent = null,
+                timeBasis = CollectionTimeBasis.COMPLETIONIST,
+                description = null,
+                memberAppIds = listOf(1L),
+                doneAppIds = emptySet(),
+            ),
+        )
+
+        assertEquals("Renamed", dao.getById(id)?.name)
+        assertEquals(listOf(1L, 2L), dao.getMembers(id).map { it.appId }.sorted())
     }
 
     @Test

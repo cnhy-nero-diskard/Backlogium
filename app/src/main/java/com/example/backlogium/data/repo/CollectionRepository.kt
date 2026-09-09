@@ -168,6 +168,10 @@ class CollectionRepository @Inject constructor(
         val desired = draft.memberAppIds.distinct()
         val existing = collectionDao.getMembers(id)
         val existingIds = existing.mapTo(mutableSetOf()) { it.appId }
+        // The draft arrives filtered — a hidden member is absent from every member read, so it is
+        // absent from the editing buffer too. Diffing it against the unfiltered stored rows would
+        // therefore read as a removal and delete the membership hiding promised to retain.
+        val hidden = hiddenGamesRepository.hiddenAppIdSet()
 
         desired.forEach { appId ->
             if (appId !in existingIds) {
@@ -180,7 +184,7 @@ class CollectionRepository @Inject constructor(
             collectionDao.setOrderIndex(id, appId, index)
         }
         existing.forEach { member ->
-            if (member.appId !in desired) {
+            if (member.appId !in desired && member.appId !in hidden) {
                 collectionDao.removeMember(id, member.appId)
             }
         }
