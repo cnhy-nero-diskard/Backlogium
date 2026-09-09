@@ -150,21 +150,30 @@ class LiveStatusRepository @Inject constructor(
             val session = settings.liveSession.first()
             val appId = session.appId ?: return@launch
             val startedAt = session.startedAt ?: return@launch
-            // A session recorded before the game was hidden must not be presented after it.
-            if (hiddenGameDao.isHidden(appId)) return@launch
-            val game = gameDao.getById(appId)
-            val seeded = LiveStatus(
-                nowPlaying = NowPlaying.InGame(
-                    gameId = appId,
-                    name = game?.name?.takeIf { it.isNotBlank() } ?: "App $appId",
-                    iconUrl = game?.iconUrl?.takeIf { it.isNotBlank() },
-                ),
-                presence = LivePresence.IN_GAME,
-                sessionStartedAt = startedAt,
-            )
-            // Only if nothing real has landed yet: a checkNow() triggered at startup can easily
-            // win this race, and an observation always outranks a recollection.
-            _liveStatus.compareAndSet(LiveStatus(), seeded)
+            visibilityMutex.withLock {
+                // A session recorded before the game was hidden must not be presented after it.
+                // The check, the metadata read, and the seed emission share the visibility
+                // ordering with hide/unhide writes: a hide that starts while rehydration is
+                // suspended in getById blocks until rehydration commits, then reconciles the
+                // seeded state — so the seeded InGame can never land after the hidden commit.
+                if (hiddenGameDao.isHidden(appId)) return@withLock
+                val game = gameDao.getById(appId)
+                // A hidden-set write outside the ordering could still have landed while suspended
+                // above; re-read before emitting rather than trusting the pre-read.
+                if (hiddenGameDao.isHidden(appId)) return@withLock
+                val seeded = LiveStatus(
+                    nowPlaying = NowPlaying.InGame(
+                        gameId = appId,
+                        name = game?.name?.takeIf { it.isNotBlank() } ?: "App $appId",
+                        iconUrl = game?.iconUrl?.takeIf { it.isNotBlank() },
+                    ),
+                    presence = LivePresence.IN_GAME,
+                    sessionStartedAt = startedAt,
+                )
+                // Only if nothing real has landed yet: a checkNow() triggered at startup can easily
+                // win this race, and an observation always outranks a recollection.
+                _liveStatus.compareAndSet(LiveStatus(), seeded)
+            }
         }
     }
 

@@ -1027,6 +1027,89 @@ class LiveStatusRepositoryTest {
         )
     }
 
+    /**
+     * The cold-start writer shares the visibility ordering: a rehydration that read
+     * `isHidden == false` and suspended in `gameDao.getById` must not emit a visible state
+     * after a newer ordered hide commits. Without the ordering, the rehydration resumes and
+     * its CAS from the still-default state succeeds after the hide reconciled a default
+     * (a no-op), leaking the now-hidden game until the next poll. With the ordering, the
+     * hide blocks until rehydration commits, then reconciles the seeded state to suppressed —
+     * so no visible emission lands after the hidden-set commit.
+     */
+    @Test
+    fun rehydration_concurrentOrderedHide_noVisibleEmissionAfterHiddenSetCommit() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        settings.session.value = LiveSessionState(appId = 10L, startedAt = 1_000L)
+        val hiddenGameDao = FakeHiddenGameDao()
+        val gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal"))
+        // Pause rehydration after its hidden check, in the metadata read.
+        val gate = CompletableDeferred<Unit>()
+        gameDao.getByIdGate = gate
+
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = FakeTimeProvider(31_000L),
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = gameDao,
+        )
+
+        val events = mutableListOf<String>()
+        val collector = launch {
+            repo.liveStatus.map { it.nowPlaying }.collect {
+                events += "emit:$it"
+            }
+        }
+        runCurrent()
+
+        // The newer ordered hide (the path GameVisibilityUseCase.hide uses) starts while
+        // rehydration holds the visibility ordering.
+        val hide = async {
+            repo.mutateHiddenSetAndReconcile {
+                hiddenGameDao.upsertAll(
+                    listOf(
+                        com.example.backlogium.data.local.entity.HiddenGame(
+                            appId = 10L,
+                            hiddenAt = 0L,
+                        ),
+                    ),
+                )
+                events += "hidden-committed"
+            }
+        }
+        runCurrent()
+
+        assertTrue(
+            "the ordered hide must block while rehydration holds the visibility ordering; " +
+                "otherwise rehydration can emit a stale visible state after the commit",
+            "hidden-committed" !in events,
+        )
+
+        gate.complete(Unit)
+        hide.await()
+        runCurrent()
+
+        collector.cancel()
+
+        val finalStatus = repo.liveStatus.value
+        assertEquals(
+            "a hide that commits while rehydration is in flight must suppress the presentation",
+            NowPlaying.NotPlaying,
+            finalStatus.nowPlaying,
+        )
+
+        val commitIndex = events.indexOf("hidden-committed")
+        assertTrue("expected the hide to record its hidden-set commit", commitIndex >= 0)
+        val afterCommit = events.subList(commitIndex, events.size)
+        assertFalse(
+            "no visible emission is permitted after the hide's hidden-set commit; " +
+                "events were $events",
+            afterCommit.any { it.startsWith("emit:InGame") },
+        )
+    }
+
     @Test
     fun failedObservationAndStoppedPolling_publishNothing() = runTest {
         val steamApi = FakeSteamApi()
