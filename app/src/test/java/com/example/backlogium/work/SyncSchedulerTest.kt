@@ -4,6 +4,7 @@ import androidx.work.Configuration
 import androidx.work.NetworkType
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import androidx.work.impl.WorkManagerImpl
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.CoroutineScope
@@ -246,6 +247,23 @@ class SyncSchedulerTest {
     }
 
     @Test
+    fun `periodic and manual sync requests carry distinct trigger inputs`() {
+        scheduler.ensurePeriodicSync()
+        scheduler.syncNow()
+
+        assertEquals(
+            SteamSyncWorker.TRIGGER_PERIODIC,
+            inputFor(SteamSyncWorker.UNIQUE_PERIODIC_NAME)
+                .getString(SteamSyncWorker.KEY_TRIGGER),
+        )
+        assertEquals(
+            SteamSyncWorker.TRIGGER_MANUAL,
+            inputFor(SteamSyncWorker.ONE_TIME_NAME)
+                .getString(SteamSyncWorker.KEY_TRIGGER),
+        )
+    }
+
+    @Test
     fun `syncNow does not collide with the periodic Steam sync's work name`() {
         scheduler.ensurePeriodicSync()
         scheduler.syncNow()
@@ -255,4 +273,9 @@ class SyncSchedulerTest {
     }
 
     private fun workInfosFor(name: String): List<WorkInfo> = workManager.getWorkInfosForUniqueWork(name).get()
+
+    private fun inputFor(name: String) = WorkManagerImpl.getInstance()!!
+        .workDatabase.workSpecDao()
+        .getWorkSpec(workInfosFor(name).single().id.toString())!!
+        .input
 }

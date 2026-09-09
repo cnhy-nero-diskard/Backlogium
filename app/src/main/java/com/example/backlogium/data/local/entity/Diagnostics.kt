@@ -11,6 +11,8 @@ data class SyncRun(
     val startedAt: Long,
     val durationMs: Long,
     val trigger: String,
+    /** WorkManager run attempt, retained separately from the originating trigger. */
+    val attempt: Int = 0,
     val requestCount: Int,
     val requestMillis: Long,
     val gamesExamined: Int,

@@ -36,6 +36,7 @@ import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -242,6 +243,96 @@ class AchievementRepositoryTest {
         assertEquals(listOf(2L, 1L), api.playerAchievementCalls)
         assertEquals(2, result.total)
         assertEquals(2, result.refreshed)
+    }
+
+    @Test
+    fun overlappingInlineAndReconciliationFetchOnlyOneGame() = runTest {
+        val api = FakeSteamApi(gate = true)
+        val gameDao = FakeGameDao(game(1, forever = 100, weeks = 0))
+        val repo = repository(api, gameDao = gameDao)
+
+        val reconciliation = async {
+            repo.reconcileLibraryGames(KEY, STEAM_ID)
+        }
+        runCurrent()
+        assertEquals(listOf(1L), api.playerAchievementCalls)
+
+        val inline = async {
+            repo.syncLibraryGames(
+                apiKey = KEY,
+                steamId = STEAM_ID,
+                ownedGames = listOf(ownedGame(1, forever = 105, weeks = 0)),
+                playtimeDeltaByAppId = mapOf(1L to 5),
+            )
+        }
+        runCurrent()
+
+        assertEquals(
+            "the inline hot tier waits for the reconciliation fetch for the same game",
+            listOf(1L),
+            api.playerAchievementCalls,
+        )
+        api.release()
+        reconciliation.await()
+        inline.await()
+
+        assertEquals("one request serves both overlapping tiers", listOf(1L), api.playerAchievementCalls)
+    }
+
+    /**
+     * Cancellation is owned by the caller: when the reconciliation leader is stopped (e.g. its
+     * charging/unmetered constraints drop) a still-active manual sync waiting on the shared
+     * flight must start a replacement rather than inherit the leader's cancellation.
+     */
+    @Test
+    fun `a cancelled leader does not cancel a waiting manual sync`() = runTest {
+        val api = FakeSteamApi(gate = true)
+        val gameDao = FakeGameDao(game(1, forever = 100, weeks = 0))
+        val repo = repository(api, gameDao = gameDao)
+
+        val reconciliation = async {
+            repo.reconcileLibraryGames(KEY, STEAM_ID)
+        }
+        runCurrent()
+        assertEquals(listOf(1L), api.playerAchievementCalls)
+
+        val manual = async {
+            repo.syncLibraryGames(
+                apiKey = KEY,
+                steamId = STEAM_ID,
+                ownedGames = listOf(ownedGame(1, forever = 105, weeks = 0)),
+                playtimeDeltaByAppId = mapOf(1L to 5),
+            )
+        }
+        runCurrent()
+        assertEquals(
+            "the manual sync waits for the reconciliation fetch for the same game",
+            listOf(1L),
+            api.playerAchievementCalls,
+        )
+
+        reconciliation.cancel()
+        runCurrent()
+        assertEquals(
+            "the still-active waiter replaces the cancelled leader's flight",
+            listOf(1L, 1L),
+            api.playerAchievementCalls,
+        )
+
+        api.release()
+        try {
+            reconciliation.await()
+        } catch (_: CancellationException) {
+            // Expected: the leader's own cancellation still propagates to the leader.
+        }
+        manual.await()
+
+        assertEquals(
+            "the replacement request completes the manual sync",
+            listOf(1L, 1L),
+            api.playerAchievementCalls,
+        )
+        assertTrue("the manual sync must not inherit the leader's cancellation", manual.isCompleted)
     }
 
     @Test

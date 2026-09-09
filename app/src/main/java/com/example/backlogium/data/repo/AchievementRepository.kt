@@ -18,13 +18,17 @@ import com.example.backlogium.domain.AchievementDataState
 import com.example.backlogium.domain.SmartCollectionAchievementSignals
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -108,8 +112,9 @@ sealed interface SingleGameRefresh {
  * by tier (hot/warm/cold/never) and applies per-data-kind freshness windows so that inline
  * sync work is bounded and library-scale work is deferred to reconciliation.
  *
- * Requests are issued serially, one in flight at a time — see [fetchGames] for why that is a
- * decision rather than an omission.
+ * Each caller issues requests serially, one game at a time — see [fetchGames] for why that is a
+ * decision rather than an omission. Overlapping callers share an in-flight fetch for the same
+ * Steam account and app id, so widening worker concurrency does not double-spend that request.
  *
  * A per-game failure (private profile, no stats, transport error) never fails the caller —
  * it is skipped and any previously stored rows for that game are left intact.
@@ -126,6 +131,7 @@ class AchievementRepository @Inject constructor(
 
     /** Serializes merge application so a stale response cannot interleave with a newer one. */
     private val mergeMutex = Mutex()
+    private val inFlightGameFetches = ConcurrentHashMap<FetchKey, CompletableDeferred<AchievementRefresh?>>()
 
     fun observeForGame(appId: Long): Flow<List<GameAchievement>> =
         achievementDao.observeForGame(appId).map { rows -> rows.map(Achievement::toDomain) }
@@ -482,6 +488,56 @@ class AchievementRepository @Inject constructor(
 
     /** @return a write-free payload if this game's response is usable. */
     private suspend fun fetchGame(
+        apiKey: String,
+        steamId: String,
+        appId: Long,
+        schemaFetchedAt: Long?,
+        scope: SyncRunRecorder.RunScope? = null,
+    ): AchievementRefresh? {
+        val key = FetchKey(steamId = steamId, appId = appId)
+        while (true) {
+            val flight = CompletableDeferred<AchievementRefresh?>()
+            val existing = inFlightGameFetches.putIfAbsent(key, flight)
+            if (existing == null) {
+                return try {
+                    val result = fetchGameUncoordinated(
+                        apiKey = apiKey,
+                        steamId = steamId,
+                        appId = appId,
+                        schemaFetchedAt = schemaFetchedAt,
+                        scope = scope,
+                    )
+                    flight.complete(result)
+                    result
+                } catch (cancelled: CancellationException) {
+                    flight.cancel(cancelled)
+                    throw cancelled
+                } catch (error: Exception) {
+                    flight.completeExceptionally(error)
+                    throw error
+                } finally {
+                    inFlightGameFetches.remove(key, flight)
+                }
+            }
+
+            try {
+                return existing.await()
+            } catch (_: CancellationException) {
+                // Cancellation is owned by the caller: a waiter cancelled in its own right must
+                // propagate, but a still-active waiter must not inherit the leader's cancellation
+                // (e.g. reconciliation stopped for constraints while a manual sync waits on it).
+                currentCoroutineContext().ensureActive()
+                // The leader is gone; clear the stale flight so the retry below can start a
+                // replacement. remove(key, existing) cannot disturb a replacement another waiter
+                // already registered.
+                inFlightGameFetches.remove(key, existing)
+            }
+        }
+    }
+
+    private data class FetchKey(val steamId: String, val appId: Long)
+
+    private suspend fun fetchGameUncoordinated(
         apiKey: String,
         steamId: String,
         appId: Long,

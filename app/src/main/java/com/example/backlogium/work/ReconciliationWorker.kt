@@ -11,7 +11,7 @@ import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.repo.AchievementRepository
-import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.repo.CredentialsProvider
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
@@ -32,7 +32,7 @@ import timber.log.Timber
 class ReconciliationWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
-    private val credentials: CredentialsRepository,
+    private val credentials: CredentialsProvider,
     private val database: BacklogiumDatabase,
     private val achievementRepository: AchievementRepository,
     private val diagnostics: SyncRunRecorder,
@@ -40,15 +40,17 @@ class ReconciliationWorker @AssistedInject constructor(
     private val accountChangeMarker: AccountChangeMarkerStore,
 ) : CoroutineWorker(appContext, params) {
 
-    override suspend fun doWork(): Result =
-        syncCoordinator.withLock {
-            if (accountChangeMarker.pendingSteamId() != null) {
-                return@withLock Result.success()
-            }
-            doWorkLocked()
-        }
+    override suspend fun doWork(): Result {
+        // The marker check is a short admission barrier. The library-scale fetch must not hold
+        // the ledger mutex while it waits on Steam.
+        return runAfterAccountChangeAdmission(
+            coordinator = syncCoordinator,
+            accountChangePending = { accountChangeMarker.pendingSteamId() != null },
+            work = { doWorkUnlocked() },
+        ) ?: Result.success()
+    }
 
-    private suspend fun doWorkLocked(): Result {
+    private suspend fun doWorkUnlocked(): Result {
         val creds = credentials.currentCredentials()
         if (creds == null) {
             Timber.tag(TAG).i("Skipping reconciliation: no Steam credentials")
@@ -59,7 +61,10 @@ class ReconciliationWorker @AssistedInject constructor(
         val steamId = creds.steamId
         val force = inputData.getBoolean(KEY_FORCE, false)
 
-        val scope = diagnostics.begin(if (force) "reconciliation:forced" else "reconciliation:scheduled")
+        val scope = diagnostics.begin(
+            trigger = if (force) "reconciliation:forced" else "reconciliation:scheduled",
+            attempt = runAttemptCount,
+        )
         // Updated by onProgress after every committed game, so a cancelled pass
         // still has an accurate refreshed/total count to persist in the `finally` below — the
         // ReconciliationFetch return value is never reached if the coroutine is cancelled mid-sweep.
@@ -76,8 +81,14 @@ class ReconciliationWorker @AssistedInject constructor(
                 scope = scope,
                 onRefresh = { refresh ->
                     withContext(NonCancellable) {
-                        database.withTransaction {
-                            achievementRepository.applyRefreshes(listOf(refresh))
+                        // Only the durable refresh commit takes the process lock. The network
+                        // sweep and achievement fetch preparation stay outside it, so periodic and
+                        // manual playtime syncs can enter while this pass runs.
+                        syncCoordinator.withLock {
+                            if (!isAccountActive(steamId)) return@withLock
+                            database.withTransaction {
+                                achievementRepository.applyRefreshes(listOf(refresh))
+                            }
                         }
                     }
                 },
@@ -111,11 +122,25 @@ class ReconciliationWorker @AssistedInject constructor(
             // diagnostics call exists to close.
             withContext(NonCancellable) {
                 runCatching {
-                    diagnostics.finish(scope, outcome, errorMessage, gamesExamined = totalSoFar, gamesUpdated = refreshedSoFar)
+                    syncCoordinator.withLock {
+                        if (isAccountActive(steamId)) {
+                            diagnostics.finish(
+                                scope,
+                                outcome,
+                                errorMessage,
+                                gamesExamined = totalSoFar,
+                                gamesUpdated = refreshedSoFar,
+                            )
+                        }
+                    }
                 }
             }
         }
     }
+
+    private suspend fun isAccountActive(expectedSteamId: String): Boolean =
+        accountChangeMarker.pendingSteamId() == null &&
+            credentials.currentCredentials()?.steamId == expectedSteamId
 
     companion object {
         const val PERIODIC_NAME = "steam_achievement_reconciliation"

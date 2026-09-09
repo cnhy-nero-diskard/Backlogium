@@ -81,7 +81,7 @@ class PostPlaySyncWorker @AssistedInject constructor(
         // does not do; recorded nowhere, because there is no game to record it against.
         if (appId <= 0L || sessionEndAt <= 0L || steamId.isBlank()) return Result.success()
 
-        val scope = diagnostics.begin(trigger(appId, attempt))
+        val scope = diagnostics.begin(trigger(appId, attempt), attempt = runAttemptCount)
         var outcome = SyncOutcome.SUCCESS
         var error: String? = null
         var examined = 0

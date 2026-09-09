@@ -168,6 +168,7 @@ private fun DiagnosticsList(
             Card(Modifier.fillMaxWidth().clickable { onSelect(run) }) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("${run.outcome} - ${run.trigger}", style = MaterialTheme.typography.titleSmall)
+                    Text("Attempt ${run.attempt + 1}", style = MaterialTheme.typography.bodySmall)
                     Text(UiFormat.dateTime(run.startedAt), style = MaterialTheme.typography.bodySmall)
                     Text("${run.durationMs / 1000}s - ${run.requestCount} requests", style = MaterialTheme.typography.bodySmall)
                 }
@@ -224,7 +225,7 @@ private fun DiagnosticsDetail(run: SyncRun, breakdowns: List<RequestBreakdown>, 
         item { TextButton(onClick = onBack) { Text("Back") } }
         item { Text("Sync run", style = MaterialTheme.typography.headlineSmall) }
         item { Text("${run.outcome} - ${UiFormat.dateTime(run.startedAt)}") }
-        item { Text("Trigger: ${run.trigger}\nDuration: ${run.durationMs} ms\nRequests: ${run.requestCount} (${run.requestMillis} ms)\nGames: ${run.gamesExamined} examined, ${run.gamesUpdated} updated") }
+        item { Text("Trigger: ${run.trigger}\nAttempt: ${run.attempt + 1}\nDuration: ${run.durationMs} ms\nRequests: ${run.requestCount} (${run.requestMillis} ms)\nGames: ${run.gamesExamined} examined, ${run.gamesUpdated} updated") }
         run.errorMessage?.let { item { Text("Error: $it", color = MaterialTheme.colorScheme.error) } }
         item { HorizontalDivider() }
         item { Text("Request breakdown", style = MaterialTheme.typography.titleMedium) }

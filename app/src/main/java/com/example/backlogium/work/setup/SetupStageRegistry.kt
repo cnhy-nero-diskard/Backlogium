@@ -2,9 +2,6 @@ package com.example.backlogium.work.setup
 
 import android.content.Context
 import androidx.work.WorkManager
-import com.example.backlogium.data.repo.HltbDatasetCheckResult
-import com.example.backlogium.data.repo.HltbDatasetProgress
-import com.example.backlogium.data.repo.HltbDatasetRepository
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.work.SteamAssetDownloadWorker
 import com.example.backlogium.work.SteamSyncWorker
@@ -22,15 +19,15 @@ import javax.inject.Singleton
  * behaviour by being that poll, not by reimplementing it, which is what keeps setup clear of the
  * invariant that the on-device engine is the sole author of derived values.
  *
- * **The default opt-ins encode cost.** Sync is ticked: it is fast, and the app is meaningless
- * without it. Artwork and completion times are unticked: one is measured in tens of megabytes and
- * the other in wall-clock time, and someone setting up on mobile data should have to choose them.
+ * **The default opt-ins encode cost.** Sync and completion times are ticked: the first makes the
+ * app useful and the second is one small shared dataset. Artwork is unticked because it is
+ * measured in tens of megabytes; completion-time application runs in wall-clock time, and
+ * someone setting up on mobile data should have to choose the expensive option.
  */
 @Singleton
 class SetupStageRegistry @Inject constructor(
     @ApplicationContext context: Context,
     private val scheduler: SyncScheduler,
-    private val hltbDatasetRepository: HltbDatasetRepository,
 ) : SetupStageSource {
 
     private val workManager: WorkManager = WorkManager.getInstance(context)
@@ -87,15 +84,21 @@ class SetupStageRegistry @Inject constructor(
                 "has completion times. One small download.",
             defaultOptIn = true,
             execution = SetupStageExecution.DETACHED,
-            run = SetupStageRunner { onProgress ->
-                when (val result = hltbDatasetRepository.checkAndApply(onProgress = { progress ->
-                    onProgress(progress.toSetupStageProgress())
-                })) {
-                    is HltbDatasetCheckResult.Applied, is HltbDatasetCheckResult.UpToDate ->
-                        SetupOutcome.Succeeded
-                    is HltbDatasetCheckResult.Failed -> SetupOutcome.Failed(result.message)
-                }
-            },
+            run = WorkStageRunner(
+                workManager = workManager,
+                uniqueWorkName = HltbDatasetWorker.UNIQUE_WORK_NAME,
+                trigger = { scheduler.ensureCompletionTimes() },
+                progressOf = { data ->
+                    data.getString(HltbDatasetWorker.KEY_LABEL)?.let { label ->
+                        SetupStageProgress(
+                            processed = data.getInt(HltbDatasetWorker.KEY_PROCESSED, 0),
+                            total = data.getInt(HltbDatasetWorker.KEY_TOTAL, 0),
+                            label = label,
+                        )
+                    }
+                },
+                failureReason = "Completion times didn't finish. Re-run it from Settings.",
+            ),
         ),
     )
 
@@ -108,28 +111,4 @@ class SetupStageRegistry @Inject constructor(
         const val STAGE_STEAM_ASSETS = "steam_assets"
         const val STAGE_COMPLETION_TIMES = "completion_times"
     }
-}
-
-/** Adapts the dataset repository's own progress union onto the generic setup progress shape. */
-private fun HltbDatasetProgress.toSetupStageProgress(): SetupStageProgress = when (this) {
-    HltbDatasetProgress.Checking -> SetupStageProgress(
-        processed = 0,
-        total = 0,
-        label = "Checking for a completion-times dataset",
-    )
-    is HltbDatasetProgress.Downloading -> SetupStageProgress(
-        processed = bytesRead.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt(),
-        total = (totalBytes ?: 0L).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt(),
-        label = "Downloading completion times",
-    )
-    HltbDatasetProgress.Verifying -> SetupStageProgress(
-        processed = 0,
-        total = 0,
-        label = "Verifying the dataset",
-    )
-    HltbDatasetProgress.Applying -> SetupStageProgress(
-        processed = 0,
-        total = 0,
-        label = "Applying completion times",
-    )
 }
