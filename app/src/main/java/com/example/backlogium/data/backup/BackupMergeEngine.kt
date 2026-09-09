@@ -84,14 +84,21 @@ class BackupMergeEngine @Inject constructor(
         config: RuleConfig,
         configVersion: Long,
     ) {
-        mergeContents(file, config, configVersion)
+        mergeRawWithLockHeld(file)
+        recomputeAfterMerge(file, config, configVersion)
     }
 
-    private suspend fun mergeContents(
-        file: BackupFile,
-        config: RuleConfig,
-        configVersion: Long,
-    ) {
+    /**
+     * The atomic raw-data unit alone, without the gamification recompute. Called by
+     * [BackupRepository] inside [LiveStatusRepository.mutateHiddenSetAndReconcile] so the
+     * authoritative hidden-set replacement commits while holding the visibility ordering —
+     * otherwise an older live projection holding that ordering could emit a stale visible state
+     * after the restore's hidden row lands. Must be called with the derived-state coordinator
+     * already held, and must not be followed by anything inside the visibility ordering except
+     * the reconciliation that [mutateHiddenSetAndReconcile] performs: the recompute below stays
+     * outside it (see [recomputeAfterMerge]).
+     */
+    internal suspend fun mergeRawWithLockHeld(file: BackupFile) {
         val importedLongestStreak = file.playerProfile.longestStreak
         val importedBackfilled = file.playerProfile.playtimeBackfilled
 
@@ -132,7 +139,20 @@ class BackupMergeEngine @Inject constructor(
             // (PendingImportRecomputeUseCase) instead of leaving aggregates silently stale.
             playerProfileDao.markPendingImportRecompute()
         }
+    }
 
+    /**
+     * The post-commit recompute for a restore. Must be called with the derived-state coordinator
+     * already held, strictly after [mergeRawWithLockHeld] commits and strictly outside the
+     * visibility ordering — persist() suspends on DataStore and owns a non-reentrant coordinator
+     * that neither a Room transaction nor the live-state mutex may wrap (design.md decision 2).
+     */
+    internal suspend fun recomputeAfterMerge(
+        file: BackupFile,
+        config: RuleConfig,
+        configVersion: Long,
+    ) {
+        val importedLongestStreak = file.playerProfile.longestStreak
         // Outside the transaction by construction: persist() suspends on DataStore and owns a
         // coordinator that a Room transaction must never wrap (design.md decision 2).
         val result = gamificationUpdater.compute(time.today(), config)
@@ -141,6 +161,15 @@ class BackupMergeEngine @Inject constructor(
             RecomputeSource.RESTORE,
             configVersion,
         )
+    }
+
+    private suspend fun mergeContents(
+        file: BackupFile,
+        config: RuleConfig,
+        configVersion: Long,
+    ) {
+        mergeRawWithLockHeld(file)
+        recomputeAfterMerge(file, config, configVersion)
     }
 
     /**

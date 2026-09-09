@@ -914,6 +914,119 @@ class LiveStatusRepositoryTest {
         )
     }
 
+    /**
+     * The restore path must share the same visibility ordering as normal hide/unhide writes.
+     * A backup restore replaces the hidden set authoritatively (`deleteAll` + `upsertAll`, as in
+     * `BackupMergeEngine.mergeHiddenGames`) — committing that replacement outside
+     * `visibilityMutex` leaves the exact stale-emission window `mutateHiddenSetAndReconcile`
+     * closes: an older projection holding the mutex suspends, the restore commits the hidden row
+     * while it is suspended, then blocks on the reconcile; the older projection resumes with a
+     * stale hidden read and emits the now-hidden game after the hidden-set commit.
+     *
+     * This test pauses an older unhide projection in `gameDao.getById` (holding the mutex),
+     * commits a backup that hides the running game via `mutateHiddenSetAndReconcile` (the path
+     * `BackupRepository.importBackup` uses), and asserts no visible emission occurs after that
+     * hidden-set commit — not merely that the final state is corrected.
+     */
+    @Test
+    fun restoreHidingRunningGame_noVisibleEmissionAfterHiddenSetCommit() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao()
+        val gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal"))
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = gameDao,
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            repo.liveStatus.value.nowPlaying,
+        )
+
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        repo.reconcileVisibility()
+        assertEquals(NowPlaying.NotPlaying, repo.liveStatus.value.nowPlaying)
+
+        // Unhide without reconciling: hidden is now false while the presentation is still
+        // suppressed, so the older reconciliation below suspends restoring it.
+        hiddenGameDao.delete(listOf(10L))
+
+        val events = mutableListOf<String>()
+        val emissions = mutableListOf<NowPlaying>()
+        val collector = launch {
+            repo.liveStatus.map { it.nowPlaying }.collect {
+                emissions += it
+                events += "emit:$it"
+            }
+        }
+        runCurrent()
+
+        val gate = CompletableDeferred<Unit>()
+        gameDao.getByIdGate = gate
+
+        val olderUnhide = async { repo.reconcileVisibility() }
+        runCurrent()
+
+        // The restore's authoritative replacement, committed inside the visibility ordering via
+        // mutateHiddenSetAndReconcile (mirrors BackupRepository.importBackup holding the mutex
+        // across BackupMergeEngine.mergeRawWithLockHeld, never across the recompute).
+        val restore = async {
+            repo.mutateHiddenSetAndReconcile {
+                hiddenGameDao.deleteAll()
+                hiddenGameDao.upsertAll(
+                    listOf(
+                        com.example.backlogium.data.local.entity.HiddenGame(
+                            appId = 10L,
+                            hiddenAt = 0L,
+                        ),
+                    ),
+                )
+                events += "hidden-committed"
+            }
+        }
+        runCurrent()
+
+        assertTrue(
+            "the restore must block before its hidden-set commit while the older projection " +
+                "holds the visibility ordering; otherwise the older projection can emit a stale " +
+                "visible state after the commit",
+            "hidden-committed" !in events,
+        )
+
+        gate.complete(Unit)
+        olderUnhide.await()
+        restore.await()
+        runCurrent()
+
+        collector.cancel()
+
+        val finalStatus = repo.liveStatus.value
+        assertEquals(
+            "a restore that hides the running game must suppress the live presentation",
+            NowPlaying.NotPlaying,
+            finalStatus.nowPlaying,
+        )
+
+        val commitIndex = events.indexOf("hidden-committed")
+        assertTrue("expected the restore to record its hidden-set commit", commitIndex >= 0)
+        val afterCommit = events.subList(commitIndex, events.size)
+        assertFalse(
+            "no visible emission is permitted after the restore's hidden-set commit; " +
+                "events were $events",
+            afterCommit.any { it.startsWith("emit:InGame") },
+        )
+    }
+
     @Test
     fun failedObservationAndStoppedPolling_publishNothing() = runTest {
         val steamApi = FakeSteamApi()
