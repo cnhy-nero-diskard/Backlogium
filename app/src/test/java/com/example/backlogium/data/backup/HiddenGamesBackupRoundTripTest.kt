@@ -86,6 +86,29 @@ class HiddenGamesBackupRoundTripTest {
         assertEquals(300, restored.playerProfileDao().get()!!.totalXp)
     }
 
+    @Test
+    fun restoringABackupWithNothingHidden_clearsLocallyHiddenGames() = runBlocking {
+        source.gameDao().upsert(game(KEPT, "Kept Game"))
+        source.sessionDao().insert(session(KEPT, minutes = 300))
+
+        val file = exportMapper(source).buildExport()
+        assertTrue(file.hiddenGames.isEmpty())
+
+        restored.gameDao().upsert(game(KEPT, "Kept Game"))
+        restored.sessionDao().insert(session(KEPT, minutes = 300))
+        restored.hiddenGameDao().upsertAll(
+            listOf(HiddenGame(appId = KEPT, hiddenAt = HIDDEN_AT)),
+        )
+
+        mergeEngine(restored).merge(file, RuleConfig())
+
+        assertTrue(
+            "a backup with no hidden games replaces the local hidden set",
+            restored.hiddenGameDao().hiddenAppIds().isEmpty(),
+        )
+        assertEquals(300, restored.playerProfileDao().get()!!.totalXp)
+    }
+
     private fun newDatabase() = Room.inMemoryDatabaseBuilder(
         RuntimeEnvironment.getApplication(), BacklogiumDatabase::class.java,
     ).allowMainThreadQueries().build()

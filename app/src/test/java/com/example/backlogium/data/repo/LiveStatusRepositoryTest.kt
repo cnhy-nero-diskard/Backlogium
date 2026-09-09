@@ -5,6 +5,7 @@ import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.AcquiredGamesAnnouncement
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.PlayerProfile
@@ -169,13 +170,12 @@ class LiveStatusRepositoryTest {
     }
 
     /**
-     * A hidden game that is running reads as not running (add-hidden-games). Resolving it here is
-     * what makes every derived surface — the now-playing card, the profile header's presence line,
-     * the Library indicator, the ongoing notification — silent without any of them knowing about
-     * hidden games.
+     * A hidden game that is running reads as not running on every UI surface (add-hidden-games).
+     * The session lifecycle follows the raw Steam signal, not the suppressed one, so sessions are
+     * still recorded for hidden games (hidden-games spec, "Sessions still recorded").
      */
     @Test
-    fun inAHiddenGame_resolvesToNotPlaying() = runTest {
+    fun inAHiddenGame_resolvesToNotPlaying_butSessionIsStillTracked() = runTest {
         val steamApi = FakeSteamApi()
         val settings = FakeSettingsRepository()
         val repo = repository(
@@ -193,9 +193,65 @@ class LiveStatusRepositoryTest {
         assertEquals(NowPlaying.NotPlaying, status.nowPlaying)
         // The player is still around; presence just does not say what they are in.
         assertEquals(LivePresence.ONLINE, status.presence)
-        // No session is recorded for a game no surface may present as running.
-        assertEquals(null, status.sessionStartedAt)
+        // The raw signal drives session tracking: the session is recorded even though the UI
+        // sees NotPlaying, so unhiding restores the full history.
+        assertEquals(1_000L, status.sessionStartedAt)
+        assertEquals(LiveSessionState(appId = 10L, startedAt = 1_000L), settings.session.value)
+    }
+
+    /**
+     * Hiding an already-running game must not publish a spurious session end or clear the tracked
+     * session. The raw Steam signal still says the game is running, so the session continues until
+     * Steam actually reports it ended. This is especially important for Family Shared games with
+     * live monitoring off, whose sessions depend on continued observations.
+     */
+    @Test
+    fun hidingAnAlreadyRunningGame_keepsTheSessionAlive_andPublishesNoEnd() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val sessionEnds = PlaySessionEndPublisher()
+        val published = mutableListOf<PlaySessionEnd>()
+        val collector = launch { sessionEnds.events.collect { published += it } }
+        runCurrent()
+        val hiddenGameDao = FakeHiddenGameDao()
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            sessionEnds = sessionEnds,
+            hiddenGameDao = hiddenGameDao,
+        )
+
+        // Game 10 is running and visible: session starts.
+        steamApi.setInGame(gameId = 10L, name = "Shared Game")
+        repo.checkNow()
+        assertEquals(LiveSessionState(appId = 10L, startedAt = 1_000L), settings.session.value)
+        assertTrue(published.isEmpty())
+
+        // The game is now hidden while still running: UI resolves to NotPlaying, but the session
+        // is still tracked and no session end is published.
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        time.now = 31_000L
+        val status = repo.checkNow()
+        assertEquals(NowPlaying.NotPlaying, status.nowPlaying)
+        assertEquals(1_000L, status.sessionStartedAt)
+        assertEquals(LiveSessionState(appId = 10L, startedAt = 1_000L), settings.session.value)
+        assertTrue("hiding a running game must not publish a session end", published.isEmpty())
+
+        // Steam finally reports the game ended: now the session ends normally.
+        time.now = 61_000L
+        steamApi.setNotInGame()
+        repo.checkNow()
+        runCurrent()
         assertEquals(LiveSessionState(), settings.session.value)
+        assertEquals(1, published.size)
+        assertEquals(10L, published.single().appId)
+
+        collector.cancel()
     }
 
     @Test
@@ -491,10 +547,11 @@ class LiveStatusRepositoryTest {
         gameDao: GameDao = FakeGameDao(),
         sessionEnds: PlaySessionEndPublisher = PlaySessionEndPublisher(),
         hidden: Set<Long> = emptySet(),
+        hiddenGameDao: HiddenGameDao = FakeHiddenGameDao(hidden),
     ) = LiveStatusRepository(
         steamApi = steamApi,
         gameDao = gameDao,
-        hiddenGameDao = FakeHiddenGameDao(hidden),
+        hiddenGameDao = hiddenGameDao,
         profileDao = FakePlayerProfileDao(),
         credentials = FakeCredentialsProvider(),
         settings = settings,

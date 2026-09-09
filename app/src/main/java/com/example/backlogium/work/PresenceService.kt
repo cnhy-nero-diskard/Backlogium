@@ -140,12 +140,20 @@ class PresenceService : Service() {
     }
 
     private fun handle(status: LiveStatus) {
-        when (presenceServiceMode(liveMonitorEnabled, status.nowPlaying)) {
+        when (presenceServiceMode(liveMonitorEnabled, status.rawNowPlaying)) {
             PresenceServiceMode.PLAYING -> {
-                val nowPlaying = status.nowPlaying as NowPlaying.InGame
-                current = nowPlaying
-                sessionStartedAt = status.sessionStartedAt
-                notifications.update(nowPlaying.name, elapsedMinutes())
+                val visible = status.nowPlaying as? NowPlaying.InGame
+                if (visible != null) {
+                    current = visible
+                    sessionStartedAt = status.sessionStartedAt
+                    notifications.update(visible.name, elapsedMinutes())
+                } else {
+                    // A hidden game keeps the service alive for session recording but is never
+                    // named in the notification (hidden-games spec, "No notification").
+                    current = null
+                    sessionStartedAt = status.sessionStartedAt
+                    notifications.clear()
+                }
             }
 
             PresenceServiceMode.MONITORING -> {

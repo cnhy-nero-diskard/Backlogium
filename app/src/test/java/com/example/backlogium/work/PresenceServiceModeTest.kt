@@ -10,7 +10,7 @@ class PresenceServiceModeTest {
     fun idleMonitorKeepsTheServiceAlive() {
         assertEquals(
             PresenceServiceMode.MONITORING,
-            presenceServiceMode(liveMonitorEnabled = true, nowPlaying = NowPlaying.NotPlaying),
+            presenceServiceMode(liveMonitorEnabled = true, rawNowPlaying = NowPlaying.NotPlaying),
         )
     }
 
@@ -18,7 +18,7 @@ class PresenceServiceModeTest {
     fun idleServiceStopsWhenMonitorIsDisabled() {
         assertEquals(
             PresenceServiceMode.STOP,
-            presenceServiceMode(liveMonitorEnabled = false, nowPlaying = NowPlaying.NotPlaying),
+            presenceServiceMode(liveMonitorEnabled = false, rawNowPlaying = NowPlaying.NotPlaying),
         )
     }
 
@@ -28,7 +28,19 @@ class PresenceServiceModeTest {
             PresenceServiceMode.PLAYING,
             presenceServiceMode(
                 liveMonitorEnabled = false,
-                nowPlaying = NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = null),
+                rawNowPlaying = NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = null),
+            ),
+        )
+    }
+
+    @Test
+    fun hiddenGameKeepsTheServiceAliveForSessionRecording() {
+        assertEquals(
+            "a hidden game's raw signal is InGame, so the service stays alive",
+            PresenceServiceMode.PLAYING,
+            presenceServiceMode(
+                liveMonitorEnabled = false,
+                rawNowPlaying = NowPlaying.InGame(gameId = 10L, name = "", iconUrl = null),
             ),
         )
     }

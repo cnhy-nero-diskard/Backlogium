@@ -401,15 +401,16 @@ class BackupMergeEngine @Inject constructor(
     }
 
     /**
-     * Union, never a replace: a game hidden locally stays hidden even if the file predates the
-     * hide, matching how `playtimeBackfilled` and `longestStreak` are folded in. An import cannot
-     * un-hide something, which keeps the merge order-independent and never surprises the player
-     * with a game they removed from view reappearing.
+     * Replace, not union: the backup's hidden set is authoritative, so restoring a backup taken
+     * before anything was hidden leaves nothing hidden (hidden-games spec, "Restore from a backup
+     * with none hidden" → "no game is hidden"). The clear-and-insert runs inside the same
+     * transaction as every other raw-data write, so a crash between the two cannot leave a
+     * half-merged hidden set.
      */
     private suspend fun mergeHiddenGames(hidden: List<BackupHiddenGame>) {
+        hiddenGameDao.deleteAll()
         if (hidden.isEmpty()) return
-        val stored = hiddenGameDao.hiddenAppIds().toSet()
-        val rows = hidden.filterNot { it.appId in stored }.map {
+        val rows = hidden.map {
             HiddenGame(
                 appId = it.appId,
                 hiddenAt = it.hiddenAt.iso8601ToEpochMilli(),

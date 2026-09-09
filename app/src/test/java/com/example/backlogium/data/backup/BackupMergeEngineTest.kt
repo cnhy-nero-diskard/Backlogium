@@ -507,9 +507,12 @@ class BackupMergeEngineTest {
         assertEquals(emptyList<Long>(), harness.hiddenGameDao.hiddenAppIds())
     }
 
-    /** An import may add to the hidden set; it may never un-hide, so the merge stays reversible. */
+    /**
+     * The backup's hidden set is authoritative: a locally hidden game the file does not mention
+     * is unhidden by the restore (hidden-games spec, "Restore from a backup with none hidden").
+     */
     @Test
-    fun restore_doesNotUnhideAGameHiddenLocally() = runTest {
+    fun restore_fromAFileWithNothingHidden_clearsLocallyHiddenGames() = runTest {
         val harness = newEngine(games = mutableMapOf(1L to testGame(1L)))
         harness.hiddenGameDao.upsertAll(
             listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 1L, hiddenAt = 5L)),
@@ -517,8 +520,7 @@ class BackupMergeEngineTest {
 
         harness.engine.merge(baseFile(games = listOf(BackupGame(1L, "Kept", false, 0))), RuleConfig())
 
-        assertEquals(listOf(1L), harness.hiddenGameDao.hiddenAppIds())
-        assertEquals("the local hide timestamp is not overwritten", 5L, harness.hiddenGameDao.getAll().single().hiddenAt)
+        assertEquals(emptyList<Long>(), harness.hiddenGameDao.hiddenAppIds())
     }
 
     @Test

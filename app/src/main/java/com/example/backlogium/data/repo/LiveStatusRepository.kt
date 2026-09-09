@@ -64,6 +64,13 @@ data class LiveStatus(
     val presence: LivePresence = LivePresence.UNKNOWN,
     /** When [nowPlaying]'s session began, for the elapsed-time display. Null while not in a game. */
     val sessionStartedAt: Long? = null,
+    /**
+     * The raw Steam running-game signal before hidden-game suppression. Drives session lifecycle
+     * and the presence service so that hiding a running game keeps sessions recording until Steam
+     * actually reports the game ended (hidden-games spec, "Sessions still recorded"). UI surfaces
+     * consume [nowPlaying], which resolves hidden games to [NowPlaying.NotPlaying].
+     */
+    val rawNowPlaying: NowPlaying = nowPlaying,
 )
 
 private data class PresenceFetch(
@@ -206,8 +213,12 @@ class LiveStatusRepository @Inject constructor(
 
         val now = time.nowMillis()
         val previousSession = settings.liveSession.first()
-        val nextSession = LiveSessionTracker.next(previousSession, fetched.status.nowPlaying, now)
-        val sessionEnd = sessionEndIfAny(previousSession, fetched.status.nowPlaying, now, fetched.steamId)
+        // Session lifecycle follows the raw Steam signal, not the UI-suppressed one: a hidden
+        // game is still running, and its session must keep recording until Steam reports it ended
+        // (hidden-games spec, "Sessions still recorded").
+        val rawNowPlaying = fetched.status.rawNowPlaying
+        val nextSession = LiveSessionTracker.next(previousSession, rawNowPlaying, now)
+        val sessionEnd = sessionEndIfAny(previousSession, rawNowPlaying, now, fetched.steamId)
         if (sessionEnd != null) {
             settings.recordSessionEnd(sessionEnd, nextSession)
         } else if (nextSession != previousSession) {
@@ -292,11 +303,17 @@ class LiveStatusRepository @Inject constructor(
         }
 
         val gameId = player.gameId.toLongOrNull()
-        // The one resolution point: a hidden game reads exactly as no game at all. Presence still
-        // reports the player as around, because they are — it just does not say what they are in.
+        // The one resolution point: a hidden game reads exactly as no game at all on every UI
+        // surface. The raw running-game signal is preserved separately so the session lifecycle
+        // and the presence service keep recording until Steam actually reports the game ended
+        // (hidden-games spec, "Sessions still recorded").
         if (gameId != null && hiddenGameDao.isHidden(gameId)) {
             return PresenceFetch(
-                LiveStatus(NowPlaying.NotPlaying, presenceOf(player)),
+                LiveStatus(
+                    nowPlaying = NowPlaying.NotPlaying,
+                    presence = presenceOf(player),
+                    rawNowPlaying = NowPlaying.InGame(gameId = gameId, name = "", iconUrl = null),
+                ),
                 PresenceOutcome.HIDDEN_GAME,
                 appId = gameId,
                 steamId = steamId,
