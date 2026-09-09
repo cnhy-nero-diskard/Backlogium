@@ -172,6 +172,27 @@ class CollectionRepository @Inject constructor(
         // absent from the editing buffer too. Diffing it against the unfiltered stored rows would
         // therefore read as a removal and delete the membership hiding promised to retain.
         val hidden = hiddenGamesRepository.hiddenAppIdSet()
+        val desiredSet = desired.toSet()
+        val orderedExisting = existing.sortedBy { it.orderIndex }
+        val rankByAppId = orderedExisting.mapIndexed { index, member -> member.appId to index }.toMap()
+        val hiddenRetained = orderedExisting.filter { it.appId in hidden && it.appId !in desiredSet }
+        // Rewriting only the visible draft to 0..N-1 would collide with a retained hidden row kept
+        // at its old index. Keep each hidden member in its stored slot and fill the gaps with the
+        // visible draft order, so a save while hidden leaves the full sequence unchanged and every
+        // retained row gets one unique contiguous index.
+        val total = desired.size + hiddenRetained.size
+        val merged: MutableList<Long?> = MutableList(total) { null }
+        hiddenRetained.forEachIndexed { position, member ->
+            val rank = rankByAppId[member.appId] ?: position
+            merged[minOf(rank, total - (hiddenRetained.size - position))] = member.appId
+        }
+        var cursor = 0
+        for (slot in 0 until total) {
+            if (merged[slot] == null) {
+                merged[slot] = desired[cursor++]
+            }
+        }
+        val finalOrder = merged.filterNotNull()
 
         desired.forEach { appId ->
             if (appId !in existingIds) {
@@ -180,7 +201,7 @@ class CollectionRepository @Inject constructor(
                 )
             }
         }
-        desired.forEachIndexed { index, appId ->
+        finalOrder.forEachIndexed { index, appId ->
             collectionDao.setOrderIndex(id, appId, index)
         }
         existing.forEach { member ->

@@ -347,6 +347,39 @@ class CollectionDaoTest {
         assertEquals(listOf(1L, 2L), dao.getMembers(id).map { it.appId }.sorted())
     }
 
+    /**
+     * A rename-only save from a filtered draft must not disturb a hidden member's queue slot:
+     * rewriting the visible ids to 0..N-1 while keeping the hidden row at its old index once
+     * produced duplicate orderIndex values, leaving the restored order undefined after unhide.
+     */
+    @Test
+    fun repositorySave_keepsHiddenMembersQueueSlotWithUniqueIndices() = runBlocking {
+        val id = dao.insert(collection(name = "Queue", mode = CollectionMode.ORDERED_QUEUE))
+        dao.insertMember(CollectionMember(id, 1L, orderIndex = 0))
+        dao.insertMember(CollectionMember(id, 2L, orderIndex = 1))
+        dao.insertMember(CollectionMember(id, 3L, orderIndex = 2))
+
+        repository(hidden = setOf(2L)).save(
+            CollectionSaveDraft(
+                id = id,
+                name = "Queue",
+                mode = CollectionMode.ORDERED_QUEUE,
+                sort = CollectionSort.MANUAL_SEQUENCE,
+                targetDate = null,
+                accent = null,
+                timeBasis = CollectionTimeBasis.COMPLETIONIST,
+                description = null,
+                memberAppIds = listOf(1L, 3L),
+                doneAppIds = emptySet(),
+            ),
+        )
+
+        val stored = dao.getMembers(id)
+        assertEquals(listOf(1L, 2L, 3L), stored.map { it.appId })
+        assertEquals(listOf(0, 1, 2), stored.map { it.orderIndex })
+        assertEquals(listOf(1L, 2L, 3L), repository().getMembers(id).map { it.appId })
+    }
+
     @Test
     fun repositorySave_commitsDetailsMembershipOrderAndDoneMarksTogether() = runBlocking {
         val id = dao.insert(
