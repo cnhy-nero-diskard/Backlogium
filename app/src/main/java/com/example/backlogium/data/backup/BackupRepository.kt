@@ -119,11 +119,12 @@ class BackupRepository @Inject constructor(
         derivedStateWrites.withLock {
             val rules = settings.ruleConfigWithVersionFlow.first()
             mergeEngine.mergeWithLockHeld(file, rules.config, rules.version)
+            // The merge may have changed the hidden set. Reconcile the live presentation so the
+            // now-playing card, header presence, and FGS notification reflect the restored hidden
+            // state immediately rather than waiting for the next presence poll. This must happen
+            // inside the derived-state lock to order against other visibility writes.
+            liveStatusRepository.reconcileVisibility()
         }
-        // The merge may have changed the hidden set. Reconcile the live presentation so the
-        // now-playing card, header presence, and FGS notification reflect the restored hidden
-        // state immediately rather than waiting for the next presence poll.
-        liveStatusRepository.reconcileVisibility()
         // Restore supplies only unlocked achievements and no per-game metadata, so a restored
         // library reads as entirely unfetched. Kick off a deferred reconciliation pass to
         // converge the cold tier as soon as conditions allow rather than waiting a week.

@@ -784,6 +784,77 @@ class LiveStatusRepositoryTest {
         )
     }
 
+    /**
+     * The mutex ordering: an older reconciliation that read `isHidden == false` and suspended in
+     * `gameDao.getById` must not overwrite a newer hide's suppression. Without the mutex, the
+     * older work resumes and publishes `InGame` after the newer hide has already reconciled. With
+     * the mutex, the newer hide blocks until the older work commits, then re-reconciles against
+     * the current hidden state and suppresses the stale visible projection.
+     */
+    @Test
+    fun visibilityMutex_newerHideWinsOverOlderUnhideProjection() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao()
+        val gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal"))
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = gameDao,
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            repo.liveStatus.value.nowPlaying,
+        )
+
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        repo.reconcileVisibility()
+        assertEquals(NowPlaying.NotPlaying, repo.liveStatus.value.nowPlaying)
+
+        hiddenGameDao.delete(listOf(10L))
+        val gate = CompletableDeferred<Unit>()
+        gameDao.getByIdGate = gate
+
+        val olderUnhide = async { repo.reconcileVisibility() }
+        runCurrent()
+
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        val newerHide = async { repo.reconcileVisibility() }
+        runCurrent()
+
+        gate.complete(Unit)
+        olderUnhide.await()
+        newerHide.await()
+
+        val finalStatus = repo.liveStatus.value
+        assertEquals(
+            "the newer hide must win over the older unhide projection",
+            NowPlaying.NotPlaying,
+            finalStatus.nowPlaying,
+        )
+        assertEquals(
+            "presence must be normalized after the newer hide",
+            LivePresence.ONLINE,
+            finalStatus.presence,
+        )
+        assertEquals(
+            "the raw signal is preserved across the interleaving",
+            10L,
+            (finalStatus.rawNowPlaying as NowPlaying.InGame).gameId,
+        )
+    }
+
     @Test
     fun failedObservationAndStoppedPolling_publishNothing() = runTest {
         val steamApi = FakeSteamApi()
@@ -873,6 +944,7 @@ class LiveStatusRepositoryTest {
      * a recorded session is rehydrated. Every other member is unused by this test.
      */
     private class FakeGameDao(private vararg val games: Game) : GameDao {
+        var getByIdGate: CompletableDeferred<Unit>? = null
         override suspend fun upsertAll(games: List<Game>) = error("not used")
         override suspend fun upsert(game: Game) = error("not used")
         override suspend fun insertSteamGameIfMissing(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long, firstSeenAt: Long?, lastPlayedAt: Long?) = error("not used")
@@ -885,7 +957,10 @@ class LiveStatusRepositoryTest {
         override suspend fun allAppIds(): List<Long> = error("not used")
         override fun observeAppIds(): Flow<List<Long>> = error("not used")
         override suspend fun getAll(): List<Game> = error("not used")
-        override suspend fun getById(appId: Long): Game? = games.firstOrNull { it.appId == appId }
+        override suspend fun getById(appId: Long): Game? {
+            getByIdGate?.await()
+            return games.firstOrNull { it.appId == appId }
+        }
         override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = error("not used")
         override suspend fun setGoalFlag(appId: Long, isGoal: Boolean) = error("not used")
         override suspend fun count(): Int = error("not used")

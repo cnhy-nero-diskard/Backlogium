@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -120,6 +122,8 @@ class LiveStatusRepository @Inject constructor(
     val nowPlaying: Flow<NowPlaying> = liveStatus.map { it.nowPlaying }
 
     private var pollingJob: Job? = null
+
+    private val visibilityMutex = Mutex()
 
     /** True while the recurring 30s poll loop is running. */
     val isPolling: Boolean get() = pollingJob?.isActive == true
@@ -230,8 +234,11 @@ class LiveStatusRepository @Inject constructor(
         }
 
         val next = fetched.status.copy(sessionStartedAt = nextSession.startedAt)
-        val committed = reprojectHiddenState(next)
-        _liveStatus.value = committed
+        val committed = visibilityMutex.withLock {
+            val projected = reprojectHiddenState(next)
+            _liveStatus.value = projected
+            projected
+        }
         sessionEnd?.let(sessionEnds::publish)
         diagnostics?.record(trigger, fetched.outcome, fetched.appId)
 
@@ -350,10 +357,10 @@ class LiveStatusRepository @Inject constructor(
      * session are preserved: a hide does not end the session, and an unhide restores the name and
      * icon from the owned-games table.
      */
-    suspend fun reconcileVisibility() {
+    suspend fun reconcileVisibility() = visibilityMutex.withLock {
         val current = _liveStatus.value
-        val raw = current.rawNowPlaying as? NowPlaying.InGame ?: return
-        val hidden = hiddenGameDao.isHidden(raw.gameId ?: return)
+        val raw = current.rawNowPlaying as? NowPlaying.InGame ?: return@withLock
+        val hidden = hiddenGameDao.isHidden(raw.gameId ?: return@withLock)
         val updated = when {
             hidden && current.nowPlaying is NowPlaying.InGame ->
                 current.copy(
@@ -375,7 +382,7 @@ class LiveStatusRepository @Inject constructor(
                     presence = LivePresence.IN_GAME,
                 )
             }
-            else -> return
+            else -> return@withLock
         }
         _liveStatus.value = updated
     }
