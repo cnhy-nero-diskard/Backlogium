@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.work.SyncScheduler
@@ -48,6 +49,7 @@ class BackupRepository @Inject constructor(
     private val time: TimeProvider,
     private val syncScheduler: SyncScheduler,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
+    private val liveStatusRepository: LiveStatusRepository,
 ) : BackupExportGateway {
     /** Export to a user-chosen SAF destination. Independent of the auto-snapshot toggle. */
     override suspend fun exportTo(uri: Uri) {
@@ -116,7 +118,19 @@ class BackupRepository @Inject constructor(
     suspend fun importBackup(file: BackupFile) {
         derivedStateWrites.withLock {
             val rules = settings.ruleConfigWithVersionFlow.first()
-            mergeEngine.mergeWithLockHeld(file, rules.config, rules.version)
+            // The merge's authoritative hidden-set replacement must share the visibility ordering
+            // with normal hide/unhide writes: it commits while holding the live-state mutex (via
+            // mutateHiddenSetAndReconcile), so an older live projection holding that mutex cannot
+            // be interleaved with — it either commits fully before the hidden row lands, or blocks
+            // until after the restore has committed and reconciled. Committing the hidden row
+            // outside the mutex and reconciling afterward leaves a window where the older
+            // projection resumes with a stale hidden read and emits the now-hidden game. The mutex
+            // is held only across the raw-data transaction, never across the gamification
+            // recompute that follows.
+            liveStatusRepository.mutateHiddenSetAndReconcile {
+                mergeEngine.mergeRawWithLockHeld(file)
+            }
+            mergeEngine.recomputeAfterMerge(file, rules.config, rules.version)
         }
         // Restore supplies only unlocked achievements and no per-game metadata, so a restored
         // library reads as entirely unfetched. Kick off a deferred reconciliation pass to

@@ -429,6 +429,7 @@ class PostPlaySyncWorkerTest {
                         db.hltbDataDao(),
                         db.achievementDao(),
                         db.gameDao(),
+                        db.hiddenGameDao(),
                     ),
                     derivedStateWrites = DerivedStateWriteCoordinator(),
                 ),
@@ -458,11 +459,13 @@ class PostPlaySyncWorkerTest {
         sessionDao = db.sessionDao(),
         dailyProgressDao = db.dailyProgressDao(),
         profileDao = db.playerProfileDao(),
+        hiddenGameDao = db.hiddenGameDao(),
         differ = SessionDiffer(),
         time = time,
         sessionActionWriter = SessionActionWriter(
             sessionDao = db.sessionDao(),
             dailyProgressDao = db.dailyProgressDao(),
+            hiddenGameDao = db.hiddenGameDao(),
             time = time,
         ),
     )

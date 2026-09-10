@@ -1,6 +1,7 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.diagnostics.PresenceDecisionRecorder
 import com.example.backlogium.data.diagnostics.PresenceOutcome
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -20,6 +21,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -63,6 +66,13 @@ data class LiveStatus(
     val presence: LivePresence = LivePresence.UNKNOWN,
     /** When [nowPlaying]'s session began, for the elapsed-time display. Null while not in a game. */
     val sessionStartedAt: Long? = null,
+    /**
+     * The raw Steam running-game signal before hidden-game suppression. Drives session lifecycle
+     * and the presence service so that hiding a running game keeps sessions recording until Steam
+     * actually reports the game ended (hidden-games spec, "Sessions still recorded"). UI surfaces
+     * consume [nowPlaying], which resolves hidden games to [NowPlaying.NotPlaying].
+     */
+    val rawNowPlaying: NowPlaying = nowPlaying,
 )
 
 private data class PresenceFetch(
@@ -85,11 +95,18 @@ private data class PresenceFetch(
  * mid-session shows the panel immediately rather than after a network round-trip. This repository
  * also opportunistically writes the player's identity when a poll observes a newer persona name or
  * avatar than the last sync stored.
+ *
+ * A running game the player has hidden resolves to [NowPlaying.NotPlaying] here, at the single
+ * point every surface derives from (add-hidden-games). The now-playing card, the profile header's
+ * presence line, the Library's live indicator, and the ongoing notification all follow from this
+ * one resolution rather than each filtering hidden games themselves — a hiding feature that names
+ * the hidden game in a notification the moment it launches has not hidden it.
  */
 @Singleton
 class LiveStatusRepository @Inject constructor(
     private val steamApi: SteamApi,
     private val gameDao: GameDao,
+    private val hiddenGameDao: HiddenGameDao,
     private val profileDao: PlayerProfileDao,
     private val credentials: CredentialsProvider,
     private val settings: SettingsRepository,
@@ -105,6 +122,9 @@ class LiveStatusRepository @Inject constructor(
     val nowPlaying: Flow<NowPlaying> = liveStatus.map { it.nowPlaying }
 
     private var pollingJob: Job? = null
+
+    private val visibilityMutex = Mutex()
+    private val visibilityGeneration = java.util.concurrent.atomic.AtomicLong(0)
 
     /** True while the recurring 30s poll loop is running. */
     val isPolling: Boolean get() = pollingJob?.isActive == true
@@ -130,19 +150,30 @@ class LiveStatusRepository @Inject constructor(
             val session = settings.liveSession.first()
             val appId = session.appId ?: return@launch
             val startedAt = session.startedAt ?: return@launch
-            val game = gameDao.getById(appId)
-            val seeded = LiveStatus(
-                nowPlaying = NowPlaying.InGame(
-                    gameId = appId,
-                    name = game?.name?.takeIf { it.isNotBlank() } ?: "App $appId",
-                    iconUrl = game?.iconUrl?.takeIf { it.isNotBlank() },
-                ),
-                presence = LivePresence.IN_GAME,
-                sessionStartedAt = startedAt,
-            )
-            // Only if nothing real has landed yet: a checkNow() triggered at startup can easily
-            // win this race, and an observation always outranks a recollection.
-            _liveStatus.compareAndSet(LiveStatus(), seeded)
+            visibilityMutex.withLock {
+                // A session recorded before the game was hidden must not be presented after it.
+                // The check, the metadata read, and the seed emission share the visibility
+                // ordering with hide/unhide writes: a hide that starts while rehydration is
+                // suspended in getById blocks until rehydration commits, then reconciles the
+                // seeded state — so the seeded InGame can never land after the hidden commit.
+                if (hiddenGameDao.isHidden(appId)) return@withLock
+                val game = gameDao.getById(appId)
+                // A hidden-set write outside the ordering could still have landed while suspended
+                // above; re-read before emitting rather than trusting the pre-read.
+                if (hiddenGameDao.isHidden(appId)) return@withLock
+                val seeded = LiveStatus(
+                    nowPlaying = NowPlaying.InGame(
+                        gameId = appId,
+                        name = game?.name?.takeIf { it.isNotBlank() } ?: "App $appId",
+                        iconUrl = game?.iconUrl?.takeIf { it.isNotBlank() },
+                    ),
+                    presence = LivePresence.IN_GAME,
+                    sessionStartedAt = startedAt,
+                )
+                // Only if nothing real has landed yet: a checkNow() triggered at startup can easily
+                // win this race, and an observation always outranks a recollection.
+                _liveStatus.compareAndSet(LiveStatus(), seeded)
+            }
         }
     }
 
@@ -196,8 +227,12 @@ class LiveStatusRepository @Inject constructor(
 
         val now = time.nowMillis()
         val previousSession = settings.liveSession.first()
-        val nextSession = LiveSessionTracker.next(previousSession, fetched.status.nowPlaying, now)
-        val sessionEnd = sessionEndIfAny(previousSession, fetched.status.nowPlaying, now, fetched.steamId)
+        // Session lifecycle follows the raw Steam signal, not the UI-suppressed one: a hidden
+        // game is still running, and its session must keep recording until Steam reports it ended
+        // (hidden-games spec, "Sessions still recorded").
+        val rawNowPlaying = fetched.status.rawNowPlaying
+        val nextSession = LiveSessionTracker.next(previousSession, rawNowPlaying, now)
+        val sessionEnd = sessionEndIfAny(previousSession, rawNowPlaying, now, fetched.steamId)
         if (sessionEnd != null) {
             settings.recordSessionEnd(sessionEnd, nextSession)
         } else if (nextSession != previousSession) {
@@ -209,7 +244,11 @@ class LiveStatusRepository @Inject constructor(
         }
 
         val next = fetched.status.copy(sessionStartedAt = nextSession.startedAt)
-        _liveStatus.value = next
+        val committed = visibilityMutex.withLock {
+            val projected = reprojectHiddenState(next)
+            _liveStatus.value = projected
+            projected
+        }
         sessionEnd?.let(sessionEnds::publish)
         diagnostics?.record(trigger, fetched.outcome, fetched.appId)
 
@@ -218,7 +257,7 @@ class LiveStatusRepository @Inject constructor(
         // is the caller's reason for being here, and it must not be held up — or lost — by a Room
         // write or an admission lookup. A game with no derivable session makes this a no-op.
         runCatching { presenceObserver.onObservation(fetched.appId, time.nowMillis()) }
-        return next
+        return committed
     }
 
     /**
@@ -274,19 +313,30 @@ class LiveStatusRepository @Inject constructor(
 
         // No gameid → not in a game (or profile too private to expose it).
         if (player.gameId.isNullOrBlank()) {
-            val presence = if (player.personaState == PERSONA_STATE_OFFLINE) {
-                LivePresence.OFFLINE
-            } else {
-                LivePresence.ONLINE
-            }
             return PresenceFetch(
-                LiveStatus(NowPlaying.NotPlaying, presence),
+                LiveStatus(NowPlaying.NotPlaying, presenceOf(player)),
                 PresenceOutcome.NOT_PLAYING,
                 steamId = steamId,
             )
         }
 
         val gameId = player.gameId.toLongOrNull()
+        // The one resolution point: a hidden game reads exactly as no game at all on every UI
+        // surface. The raw running-game signal is preserved separately so the session lifecycle
+        // and the presence service keep recording until Steam actually reports the game ended
+        // (hidden-games spec, "Sessions still recorded").
+        if (gameId != null && hiddenGameDao.isHidden(gameId)) {
+            return PresenceFetch(
+                LiveStatus(
+                    nowPlaying = NowPlaying.NotPlaying,
+                    presence = presenceOf(player),
+                    rawNowPlaying = NowPlaying.InGame(gameId = gameId, name = "", iconUrl = null),
+                ),
+                PresenceOutcome.HIDDEN_GAME,
+                appId = gameId,
+                steamId = steamId,
+            )
+        }
         val name = player.gameExtraInfo?.takeIf { it.isNotBlank() }
             ?: gameId?.let { "App $it" }
             ?: "In game"
@@ -305,6 +355,144 @@ class LiveStatusRepository @Inject constructor(
             steamId = steamId,
         )
     }
+
+    /**
+     * Mutate the hidden set and reconcile visibility atomically. The hidden-set write and the
+     * visibility reconciliation share the same ordering, so a projection that started before the
+     * write cannot emit a stale state after it. The generation is incremented before reconciliation,
+     * so any in-flight projection that started before the mutation will detect the change and
+     * re-read.
+     */
+    suspend fun mutateHiddenSetAndReconcile(mutate: suspend () -> Unit) = visibilityMutex.withLock {
+        mutate()
+        visibilityGeneration.incrementAndGet()
+        reconcileVisibilityLocked()
+    }
+
+    /**
+     * Re-evaluate the current live presentation against the hidden set, without a Steam fetch.
+     *
+     * A hide/unhide write changes what [hiddenGameDao.isHidden] returns, but the in-memory
+     * [LiveStatus] still holds whatever the last poll emitted. Without this reconciliation the
+     * UI-facing [LiveStatus.nowPlaying] keeps naming a newly hidden game (or stays suppressed for
+     * a newly unhidden one) until the next poll lands — up to ~30 s during which every surface
+     * that reads [liveStatus] can still depict the hidden game. The raw signal and the recorded
+     * session are preserved: a hide does not end the session, and an unhide restores the name and
+     * icon from the owned-games table.
+     *
+     * Increments the visibility generation before reconciling, so any in-flight projection that
+     * started before this call will detect the change and re-read.
+     */
+    suspend fun reconcileVisibility() = visibilityMutex.withLock {
+        visibilityGeneration.incrementAndGet()
+        reconcileVisibilityLocked()
+    }
+
+    private suspend fun reconcileVisibilityLocked() {
+        val current = _liveStatus.value
+        val raw = current.rawNowPlaying as? NowPlaying.InGame ?: return
+        val gameId = raw.gameId ?: return
+        
+        val hiddenBefore = hiddenGameDao.isHidden(gameId)
+        
+        val updated = when {
+            hiddenBefore && current.nowPlaying is NowPlaying.InGame ->
+                current.copy(
+                    nowPlaying = NowPlaying.NotPlaying,
+                    presence = if (current.presence == LivePresence.IN_GAME) LivePresence.ONLINE
+                    else current.presence,
+                )
+            !hiddenBefore && current.nowPlaying == NowPlaying.NotPlaying -> {
+                val game = gameDao.getById(gameId)
+                val hiddenAfter = hiddenGameDao.isHidden(gameId)
+                if (hiddenAfter) {
+                    current.copy(
+                        nowPlaying = NowPlaying.NotPlaying,
+                        presence = if (current.presence == LivePresence.IN_GAME) LivePresence.ONLINE
+                        else current.presence,
+                    )
+                } else {
+                    val resolved = NowPlaying.InGame(
+                        gameId = gameId,
+                        name = game?.name?.takeIf { it.isNotBlank() } ?: raw.name.takeIf { it.isNotBlank() }
+                            ?: "App $gameId",
+                        iconUrl = game?.iconUrl?.takeIf { it.isNotBlank() } ?: raw.iconUrl,
+                    )
+                    current.copy(
+                        nowPlaying = resolved,
+                        rawNowPlaying = resolved,
+                        presence = LivePresence.IN_GAME,
+                    )
+                }
+            }
+            else -> return
+        }
+        _liveStatus.value = updated
+    }
+
+    /**
+     * Re-project the fetched raw signal against the *current* hidden state in both directions
+     * immediately before commit. A poll that started [fetch] before a hide/unhide can suspend
+     * across the write and [reconcileVisibility], then resume and publish a stale status that
+     * disagrees with the current hidden set. This catches both interleavings:
+     *
+     * - A poll that fetched visible while the game was unhidden, then the game was hidden and
+     *   reconciled before the poll commits: the visible fetch is suppressed to the hidden shape.
+     * - A poll that fetched hidden while the game was hidden, then the game was unhidden and
+     *   reconciled before the poll commits: the suppressed fetch is restored to the visible shape,
+     *   resolving the name and icon from the owned-games table the same way [fetch] does.
+     *
+     * After any suspension (e.g., [gameDao.getById]), the hidden state is re-read to detect
+     * mutations that occurred during the suspension. If the generation changed, the projection
+     * is recomputed based on the current hidden state.
+     */
+    private suspend fun reprojectHiddenState(status: LiveStatus): LiveStatus {
+        val raw = status.rawNowPlaying as? NowPlaying.InGame ?: return status
+        val gameId = raw.gameId ?: return status
+        
+        val genBefore = visibilityGeneration.get()
+        val hiddenBefore = hiddenGameDao.isHidden(gameId)
+        
+        return when {
+            hiddenBefore && status.nowPlaying is NowPlaying.InGame ->
+                status.copy(
+                    nowPlaying = NowPlaying.NotPlaying,
+                    presence = if (status.presence == LivePresence.IN_GAME) LivePresence.ONLINE
+                    else status.presence,
+                )
+            !hiddenBefore && status.nowPlaying is NowPlaying.NotPlaying -> {
+                val game = gameDao.getById(gameId)
+                val genAfter = visibilityGeneration.get()
+                val hiddenAfter = if (genAfter != genBefore) hiddenGameDao.isHidden(gameId) else hiddenBefore
+                if (hiddenAfter) {
+                    status.copy(
+                        nowPlaying = NowPlaying.NotPlaying,
+                        presence = if (status.presence == LivePresence.IN_GAME) LivePresence.ONLINE
+                        else status.presence,
+                    )
+                } else {
+                    val resolved = NowPlaying.InGame(
+                        gameId = gameId,
+                        name = game?.name?.takeIf { it.isNotBlank() } ?: raw.name.takeIf { it.isNotBlank() }
+                            ?: "App $gameId",
+                        iconUrl = game?.iconUrl?.takeIf { it.isNotBlank() } ?: raw.iconUrl,
+                    )
+                    status.copy(
+                        nowPlaying = resolved,
+                        rawNowPlaying = resolved,
+                        presence = LivePresence.IN_GAME,
+                    )
+                }
+            }
+            else -> status
+        }
+    }
+
+    /** Around-ness without a game: the same reading a player with no `gameid` at all gets. */
+    private fun presenceOf(
+        player: com.example.backlogium.data.remote.dto.PlayerSummaryDto,
+    ): LivePresence =
+        if (player.personaState == PERSONA_STATE_OFFLINE) LivePresence.OFFLINE else LivePresence.ONLINE
 
     /**
      * Keep the persisted header identity current within a session. The periodic sync owns the

@@ -79,6 +79,35 @@ class AchievementRepositoryTest {
     }
 
     /**
+     * Hiding a game stops it costing requests, which is the efficiency half of the feature rather
+     * than an incidental side effect: hiding a dozen tools removes a dozen games from the
+     * achievement path permanently (add-hidden-games).
+     */
+    @Test
+    fun `hidden games cost no achievement requests`() = runTest {
+        val api = FakeSteamApi()
+        val repo = repository(api, hidden = setOf(2L))
+        val played = listOf(ownedGame(1, forever = 500, weeks = 100), ownedGame(2, forever = 500, weeks = 100))
+
+        repo.syncLibraryGames(KEY, STEAM_ID, played, mapOf(1L to 30, 2L to 30))
+
+        assertEquals(listOf(1L), api.playerAchievementCalls)
+        assertFalse(api.schemaCalls.contains(2L))
+    }
+
+    /** Unhiding restores normal treatment: eligibility is recomputed, never a stored decision. */
+    @Test
+    fun `an unhidden game is fetched again`() = runTest {
+        val api = FakeSteamApi()
+        val repo = repository(api)
+        val played = listOf(ownedGame(1, forever = 500, weeks = 100), ownedGame(2, forever = 500, weeks = 100))
+
+        repo.syncLibraryGames(KEY, STEAM_ID, played, mapOf(1L to 30, 2L to 30))
+
+        assertEquals(listOf(1L, 2L), api.playerAchievementCalls.sorted())
+    }
+
+    /**
      * Serial fetching is a deliberate choice (see `fetchGames`), so it is asserted rather than left
      * to drift: the Steam client has no retry, backoff, or 429 handling, and after tiering there is
      * no pass large enough for concurrency to speed up. A future change that parallelises this
@@ -624,11 +653,13 @@ class AchievementRepositoryTest {
         gameDao: GameDao = FakeGameDao(),
         syncDao: GameAchievementSyncDao = FakeGameAchievementSyncDao(),
         achievementDao: FakeAchievementDao = FakeAchievementDao(),
+        hidden: Set<Long> = emptySet(),
     ) = AchievementRepository(
         steamApi = api,
         achievementDao = achievementDao,
         gameAchievementSyncDao = syncDao,
         gameDao = gameDao,
+        hiddenGamesRepository = fakeHiddenGamesRepository(hidden),
         time = FixedTimeProvider(NOW),
     )
 
@@ -843,6 +874,7 @@ class AchievementRepositoryTest {
         override suspend fun updateSteamFields(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long, lastPlayedAt: Long?, returnedToPlayAt: Long?) = error("not used")
         override suspend fun updateRecencyFields(appId: Long, firstSeenAt: Long?, lastPlayedAt: Long?, returnedToPlayAt: Long?) = error("not used")
         override fun observeLibrary(): Flow<List<Game>> = flowOf(games.toList())
+        override fun observeAllGames(): Flow<List<Game>> = flowOf(games.toList())
         override fun observeGoalGames(): Flow<List<Game>> = error("not used")
         override fun observeBacklog(): Flow<List<Game>> = error("not used")
         override suspend fun allAppIds(): List<Long> = games.map { it.appId }

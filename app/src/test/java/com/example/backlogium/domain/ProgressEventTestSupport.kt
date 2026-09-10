@@ -132,6 +132,7 @@ internal fun testUpdater(
     hltbDataDao = FakeHltbDataDao(),
     achievementDao = FakeAchievementDao(emptyList()),
     gameDao = FakeGameDao(emptyList()),
+    hiddenGameDao = FakeHiddenGameDao(),
     progressMarksStore = marksStore,
     transitionCoordinator = coordinator,
 )

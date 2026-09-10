@@ -20,6 +20,9 @@ class AccountRoomReset @Inject constructor(
             database.gameGenreCacheDao().deleteAll()
             database.gameAchievementSyncDao().deleteAll()
             database.collectionDao().deleteAllMembers()
+            // A hide is a statement about one account's library. Carrying it across would hide
+            // whatever the new account happens to own under the same app ids.
+            database.hiddenGameDao().deleteAll()
             database.collectionDao().deleteAll()
             database.dailyProgressDao().deleteAll()
             database.diagnosticsDao().deleteAll()

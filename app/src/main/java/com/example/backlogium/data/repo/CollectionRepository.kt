@@ -36,10 +36,16 @@ data class CollectionSaveDraft(
  * Read/write access to custom collections and their members (add-custom-collections).
  * Collections are app-owned state persisted in Room — never touched by the Steam sync worker —
  * so every flow here is a plain local observer and every mutation is a plain Room write.
+ *
+ * Membership of a hidden game is **retained and filtered on read** (add-hidden-games): the row
+ * stays, so unhiding restores the game to the collections it was in rather than asking the player
+ * to re-add it, while every member read — contents, counts, and the derived banner built from
+ * them — behaves as though the collection never contained it.
  */
 @Singleton
 class CollectionRepository @Inject constructor(
     private val collectionDao: CollectionDao,
+    private val hiddenGamesRepository: HiddenGamesRepository,
     private val time: TimeProvider,
     private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
 ) {
@@ -47,12 +53,12 @@ class CollectionRepository @Inject constructor(
         rows.map { it.resolveSortForMode() }
     }
 
-    val allMembers: Flow<List<CollectionMember>> = collectionDao.observeAllMembers()
+    val allMembers: Flow<List<CollectionMember>> = collectionDao.observeAllMembers().visibleMembers()
 
     /** Custom collection summaries exposed without leaking Room entities to new UI surfaces. */
     val customOverviews: Flow<List<CustomCollectionOverview>> = combine(
         collections,
-        collectionDao.observeAllMembers(),
+        collectionDao.observeAllMembers().visibleMembers(),
     ) { collections, members ->
         val membersByCollection = members.groupBy { it.collectionId }
         collections.map { collection ->
@@ -75,12 +81,19 @@ class CollectionRepository @Inject constructor(
     }
 
     fun members(collectionId: Long): Flow<List<CollectionMember>> =
-        collectionDao.observeMembers(collectionId)
+        collectionDao.observeMembers(collectionId).visibleMembers()
 
     suspend fun getById(id: Long): Collection? = collectionDao.getById(id)?.resolveSortForMode()
 
-    suspend fun getMembers(collectionId: Long): List<CollectionMember> =
-        collectionDao.getMembers(collectionId)
+    suspend fun getMembers(collectionId: Long): List<CollectionMember> {
+        val hidden = hiddenGamesRepository.hiddenAppIdSet()
+        return collectionDao.getMembers(collectionId).filterNot { it.appId in hidden }
+    }
+
+    private fun Flow<List<CollectionMember>>.visibleMembers(): Flow<List<CollectionMember>> =
+        combine(hiddenGamesRepository.hiddenAppIds) { members, hidden ->
+            if (hidden.isEmpty()) members else members.filterNot { it.appId in hidden }
+        }
 
     /** Create a collection and return its new id; a fresh collection defaults its sort per mode. */
     suspend fun create(
@@ -155,6 +168,30 @@ class CollectionRepository @Inject constructor(
         val desired = draft.memberAppIds.distinct()
         val existing = collectionDao.getMembers(id)
         val existingIds = existing.mapTo(mutableSetOf()) { it.appId }
+        // The draft arrives filtered — a hidden member is absent from every member read, so it is
+        // absent from the editing buffer too. Diffing it against the unfiltered stored rows would
+        // therefore read as a removal and delete the membership hiding promised to retain.
+        val hidden = hiddenGamesRepository.hiddenAppIdSet()
+        val desiredSet = desired.toSet()
+        val orderedExisting = existing.sortedBy { it.orderIndex }
+        val hiddenRetained = orderedExisting.filter { it.appId in hidden && it.appId !in desiredSet }
+        // The visible draft order is authoritative for visible members. Each retained hidden row is
+        // re-inserted immediately after its latest stored predecessor that survives in the merged
+        // order (at the start when none survives), so removing a visible neighbour never drags the
+        // hidden row across a survivor, while a save with no removals leaves the sequence unchanged.
+        val finalOrder = desired.toMutableList()
+        hiddenRetained.forEach { member ->
+            val storedPosition = orderedExisting.indexOfFirst { it.appId == member.appId }
+            val predecessors = if (storedPosition == -1) {
+                emptyList()
+            } else {
+                orderedExisting.subList(0, storedPosition)
+            }
+            val latestPredecessorIndex = predecessors.mapNotNull { predecessor ->
+                finalOrder.indexOf(predecessor.appId).takeIf { it != -1 }
+            }.maxOrNull() ?: -1
+            finalOrder.add(latestPredecessorIndex + 1, member.appId)
+        }
 
         desired.forEach { appId ->
             if (appId !in existingIds) {
@@ -163,11 +200,11 @@ class CollectionRepository @Inject constructor(
                 )
             }
         }
-        desired.forEachIndexed { index, appId ->
+        finalOrder.forEachIndexed { index, appId ->
             collectionDao.setOrderIndex(id, appId, index)
         }
         existing.forEach { member ->
-            if (member.appId !in desired) {
+            if (member.appId !in desired && member.appId !in hidden) {
                 collectionDao.removeMember(id, member.appId)
             }
         }

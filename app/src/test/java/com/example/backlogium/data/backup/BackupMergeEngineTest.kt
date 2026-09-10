@@ -30,6 +30,7 @@ import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
+import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.RuleConfig
@@ -59,6 +60,7 @@ class BackupMergeEngineTest {
         val collectionDao: FakeCollectionDao,
         val achievementDao: FakeAchievementDao,
         val excludedDao: FakeExcludedSharedGameDao,
+        val hiddenGameDao: FakeHiddenGameDao,
     )
 
     private fun newEngine(
@@ -81,14 +83,16 @@ class BackupMergeEngineTest {
         val collectionDao = FakeCollectionDao(collections)
         val excludedDao = FakeExcludedSharedGameDao()
         val time = FixedTimeProvider(today, nowMillis)
+        val hiddenGameDao = FakeHiddenGameDao()
         val gamificationUpdater = GamificationUpdater(
             sessionDao, dailyProgressDao, profileDao, hltbDataDao, achievementDao, gameDao,
+            hiddenGameDao,
         )
         val engine = BackupMergeEngine(
             gameDao, sessionDao, dailyProgressDao, hltbDataDao, achievementDao, profileDao,
-            collectionDao, excludedDao, gamificationUpdater, time,
+            collectionDao, excludedDao, hiddenGameDao, gamificationUpdater, time,
         )
-        return Harness(engine, gameDao, sessionDao, profileDao, collectionDao, achievementDao, excludedDao)
+        return Harness(engine, gameDao, sessionDao, profileDao, collectionDao, achievementDao, excludedDao, hiddenGameDao)
     }
 
     private fun baseFile(
@@ -102,6 +106,7 @@ class BackupMergeEngineTest {
         collections: List<BackupCollection> = emptyList(),
         collectionMembers: List<BackupCollectionMember> = emptyList(),
         excludedSharedGames: List<BackupExcludedSharedGame> = emptyList(),
+        hiddenGames: List<BackupHiddenGame> = emptyList(),
         hltbData: List<BackupHltbData> = emptyList(),
     ) = BackupFile(
         exportedAt = "2026-07-01T00:00:00Z",
@@ -124,6 +129,7 @@ class BackupMergeEngineTest {
         collections = collections,
         collectionMembers = collectionMembers,
         excludedSharedGames = excludedSharedGames,
+        hiddenGames = hiddenGames,
     )
 
     @Test
@@ -459,6 +465,62 @@ class BackupMergeEngineTest {
         val all = harness.sessionDao.getAll()
         assertEquals(1, all.size)
         assertEquals(25, all.single().minutes)
+    }
+
+    /**
+     * A restore that dropped the hidden set would silently unhide everything and re-apply XP the
+     * player deliberately removed, so the set is carried and reapplied (add-hidden-games).
+     */
+    @Test
+    fun restore_reappliesTheHiddenSet_andItsPlaytimeStaysOutOfXp() = runTest {
+        val harness = newEngine(
+            games = mutableMapOf(1L to testGame(1L), 2L to testGame(2L)),
+            sessions = mutableListOf(
+                Session(appId = 1L, startAt = 1_000L, endAt = 2_000L, minutes = 300, open = false),
+                Session(appId = 2L, startAt = 3_000L, endAt = 4_000L, minutes = 400, open = false),
+            ),
+        )
+        val file = baseFile(
+            games = listOf(
+                BackupGame(appId = 1L, name = "Kept", isGoal = false, backfillMinutes = 0),
+                BackupGame(appId = 2L, name = "Tool", isGoal = false, backfillMinutes = 0),
+            ),
+            hiddenGames = listOf(
+                BackupHiddenGame(appId = 2L, hiddenAt = "2026-07-01T00:00:00Z", fromBulkAction = true),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        assertEquals(listOf(2L), harness.hiddenGameDao.hiddenAppIds())
+        assertTrue(harness.hiddenGameDao.getAll().single().fromBulkAction)
+        // 300 minutes from the visible game only: the hidden game's 400 never re-enter XP.
+        assertEquals(300, harness.profileDao.get()!!.totalXp)
+    }
+
+    @Test
+    fun restore_fromAFileWithNothingHidden_hidesNothing() = runTest {
+        val harness = newEngine(games = mutableMapOf(1L to testGame(1L)))
+
+        harness.engine.merge(baseFile(games = listOf(BackupGame(1L, "Kept", false, 0))), RuleConfig())
+
+        assertEquals(emptyList<Long>(), harness.hiddenGameDao.hiddenAppIds())
+    }
+
+    /**
+     * The backup's hidden set is authoritative: a locally hidden game the file does not mention
+     * is unhidden by the restore (hidden-games spec, "Restore from a backup with none hidden").
+     */
+    @Test
+    fun restore_fromAFileWithNothingHidden_clearsLocallyHiddenGames() = runTest {
+        val harness = newEngine(games = mutableMapOf(1L to testGame(1L)))
+        harness.hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 1L, hiddenAt = 5L)),
+        )
+
+        harness.engine.merge(baseFile(games = listOf(BackupGame(1L, "Kept", false, 0))), RuleConfig())
+
+        assertEquals(emptyList<Long>(), harness.hiddenGameDao.hiddenAppIds())
     }
 
     @Test
@@ -981,6 +1043,7 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
     ) = Unit
 
     override fun observeLibrary(): Flow<List<Game>> = flowOf(store.values.toList())
+    override fun observeAllGames(): Flow<List<Game>> = flowOf(store.values.toList())
     override fun observeGoalGames(): Flow<List<Game>> = flowOf(emptyList())
     override fun observeBacklog(): Flow<List<Game>> = flowOf(emptyList())
     override suspend fun allAppIds(): List<Long> = store.keys.toList()
@@ -1113,6 +1176,7 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     override suspend fun getAll(): List<Session> = store.sortedBy { it.startAt }
     override suspend fun deleteAll() = store.clear()
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(store.minOfOrNull { it.startAt })
+    override fun observeEarliestVisibleSessionStart(): Flow<Long?> = flowOf(store.minOfOrNull { it.startAt })
     override fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>> = flowOf(
         store.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.minOf { it.startAt }) },
     )

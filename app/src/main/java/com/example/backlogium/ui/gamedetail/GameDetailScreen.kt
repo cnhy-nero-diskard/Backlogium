@@ -82,10 +82,12 @@ import com.example.backlogium.gamification.RarityStanding
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.components.RecencyBadge
 import com.example.backlogium.ui.components.SteamArtworkWithFallback
+import com.example.backlogium.ui.components.VisibilityChangeDialog
 import com.example.backlogium.ui.theme.rarityHalo
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.CircleCheck
+import compose.icons.tablericons.CircleMinus
 import compose.icons.tablericons.Clock
 import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.ExternalLink
@@ -119,6 +121,12 @@ fun GameDetailScreen(
     viewModel: GameDetailViewModel = hiltViewModel(),
     onAccentColorChanged: (Color?) -> Unit = {},
     onRemoved: () -> Unit = {},
+    /**
+     * Leave this surface. Raised when the game becomes hidden — from this screen's own hide
+     * action, or from anywhere else while it happens to be open — so the player lands back where
+     * they came from rather than on a detail screen for a game that is no longer in the library.
+     */
+    onDismiss: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val overlay = presentation == GameDetailPresentation.COLLECTION_OVERLAY
@@ -139,8 +147,20 @@ fun GameDetailScreen(
     LaunchedEffect(viewModel, onRemoved) {
         viewModel.removedSharedGameEvents.collect { onRemoved() }
     }
+    LaunchedEffect(state.dismissed) {
+        if (state.dismissed) onDismiss()
+    }
+
     DisposableEffect(viewModel) {
         onDispose { viewModel.stopPolling() }
+    }
+
+    state.hideEffect?.let { effect ->
+        VisibilityChangeDialog(
+            effect = effect,
+            onConfirm = viewModel::confirmHide,
+            onDismiss = viewModel::dismissHide,
+        )
     }
 
     // Full destinations report the wash to the shell so it can bleed behind the profile header.
@@ -213,6 +233,8 @@ private fun GameDetailList(
                 summary = state.summary,
                 onRemoveSharedGame = viewModel::removeSharedGame,
                 onSetManualPlaytime = viewModel::setManualPlaytime,
+                hidePending = state.hidePreviewing,
+                onHide = viewModel::requestHide,
             )
         }
         state.rarityStanding?.let { standing ->
@@ -326,9 +348,12 @@ private fun GameSummarySection(
     summary: GameSummaryUi,
     onRemoveSharedGame: () -> Unit = {},
     onSetManualPlaytime: (Double) -> Unit = {},
+    hidePending: Boolean = false,
+    onHide: () -> Unit = {},
 ) {
     val uriHandler = LocalUriHandler.current
     val linkLabel = name.takeIf { it.isNotBlank() }?.let { "Open $it on Steam" } ?: "Open game on Steam"
+    val hideLabel = name.takeIf { it.isNotBlank() }?.let { "Hide $it" } ?: "Hide this game"
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column {
@@ -391,6 +416,25 @@ private fun GameSummarySection(
                     )
                     Spacer(Modifier.width(8.dp))
                     Text("View on Steam")
+                }
+                // Hiding is reachable from the game's own surface, which is where the player is
+                // when they decide a thing is not a game they want to see. The action is never
+                // offered for an already-hidden game, since that game is not reachable.
+                TextButton(
+                    onClick = onHide,
+                    enabled = !hidePending,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentDescription = hideLabel },
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+                ) {
+                    Icon(
+                        imageVector = TablerIcons.CircleMinus,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (hidePending) "Checking effect…" else "Hide this game")
                 }
             }
         }

@@ -17,8 +17,8 @@ enum class RecomputeSource {
      * A player-initiated removal of a Family Shared game's tracked history, or the reversal of
      * one (auditfix-session-ledger-integrity, #104) — bookkeeping performed in a settings
      * surface, not play. Both directions can move derived values, exactly like [RESTORE] can,
-     * and neither is progress the player earned. `add-hidden-games` (0/55 tasks) adds its own
-     * source for hide/unhide alongside this one rather than widening it — the two are both
+     * and neither is progress the player earned. `add-hidden-games` adds its own source for
+     * hide/unhide alongside this one rather than widening it — the two are both
      * administrative and both non-earned, but a reader tracing a baseline reseed should still be
      * able to tell a removal from a hide.
      */
@@ -32,4 +32,12 @@ enum class RecomputeSource {
      * sources rather than fire a cascade of level-up events for play that happened long ago.
      */
     XP_INTEGRITY_CORRECTION,
+
+    /**
+     * A game was hidden or unhidden (add-hidden-games). Not earned, so it emits no progress
+     * events and reseeds the baseline — **including downward**, which is the point: hiding a
+     * heavily-played game lowers the level, and a stale high-water mark left behind would
+     * swallow the next genuine level-up.
+     */
+    VISIBILITY_CHANGE,
 }

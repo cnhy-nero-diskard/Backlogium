@@ -26,6 +26,8 @@ import com.example.backlogium.data.repo.CollectionRepository
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.GameGenreRepository
 import com.example.backlogium.data.repo.GameRepository
+import com.example.backlogium.data.repo.HiddenGamesRepository
+import com.example.backlogium.data.repo.fakeHiddenGamesRepository
 import com.example.backlogium.data.repo.HltbDatasetLookup
 import com.example.backlogium.data.repo.HltbRepository
 import com.example.backlogium.data.repo.LiveStatusRepository
@@ -36,6 +38,7 @@ import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.SteamStoreGenreDataSource
 import com.example.backlogium.domain.CollectionMode
+import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.TimeProvider
 import java.lang.reflect.Proxy
@@ -100,6 +103,154 @@ class CollectionViewModelTest {
         assertEquals("Keep this", stored.name)
         assertEquals(listOf(42L), store.members.filter { it.collectionId == stored.id }.map { it.appId })
         assertTrue(viewModel.uiState.value.done)
+    }
+
+    /**
+     * Hiding from this screen's own game-detail sheet has to take effect immediately. The member
+     * buffer is a snapshot taken when the screen opened, and the library it renders against is
+     * filtered — so a member hidden mid-session used to survive as a row whose game had vanished,
+     * which is exactly how a genuinely dangling member looks, and it rendered as one: "Game 2",
+     * no playtime, no sessions, and nothing to navigate to.
+     */
+    @Test
+    fun hidingAMemberMidSession_dropsItFromTheRenderedMembers() {
+        val hiddenGames = fakeHiddenGamesRepository()
+        withViewModel(
+            libraryGames = listOf(
+                Game(
+                    appId = 1L,
+                    name = "Alpha",
+                    iconUrl = "",
+                    playtimeForever = 20,
+                    playtime2Weeks = 0,
+                    lastPlaytime = 20,
+                ),
+                Game(
+                    appId = 2L,
+                    name = "Beta",
+                    iconUrl = "",
+                    playtimeForever = 80,
+                    playtime2Weeks = 0,
+                    lastPlaytime = 80,
+                ),
+            ),
+            hiddenGames = hiddenGames,
+        ) { viewModel ->
+            viewModel.addGame(1L)
+            viewModel.addGame(2L)
+            runCurrent()
+            assertEquals(listOf("Alpha", "Beta"), viewModel.uiState.value.members.map { it.name })
+
+            hiddenGames.hide(setOf(2L))
+            runCurrent()
+
+            val members = viewModel.uiState.value.members
+            assertEquals(listOf("Alpha"), members.map { it.name })
+            assertTrue(members.none { it.name == "Game 2" })
+        }
+    }
+
+    /**
+     * Reordering uses visible positions while the buffer retains hidden ids: with raw [A, H, B]
+     * and H hidden mid-session, moving visible B up must move B, not raw index 1 (H). Applying
+     * filtered UI indices to the raw buffer moved the hidden game instead, so the visible list
+     * appeared not to respond and saving persisted an invisible reorder that moved H.
+     */
+    @Test
+    fun reorderingWithHiddenMemberMidSession_movesVisibleGamesWithoutMovingHidden() {
+        val hiddenGames = fakeHiddenGamesRepository()
+        withViewModel(
+            libraryGames = listOf(
+                Game(
+                    appId = 1L,
+                    name = "Alpha",
+                    iconUrl = "",
+                    playtimeForever = 20,
+                    playtime2Weeks = 0,
+                    lastPlaytime = 20,
+                ),
+                Game(
+                    appId = 2L,
+                    name = "Beta",
+                    iconUrl = "",
+                    playtimeForever = 80,
+                    playtime2Weeks = 0,
+                    lastPlaytime = 80,
+                ),
+                Game(
+                    appId = 3L,
+                    name = "Gamma",
+                    iconUrl = "",
+                    playtimeForever = 10,
+                    playtime2Weeks = 0,
+                    lastPlaytime = 10,
+                ),
+            ),
+            hiddenGames = hiddenGames,
+        ) { viewModel ->
+            viewModel.setMode(CollectionMode.ORDERED_QUEUE)
+            viewModel.addGame(1L)
+            viewModel.addGame(2L)
+            viewModel.addGame(3L)
+            runCurrent()
+            assertEquals(
+                listOf("Alpha", "Beta", "Gamma"),
+                viewModel.uiState.value.members.map { it.name },
+            )
+
+            hiddenGames.hide(setOf(2L))
+            runCurrent()
+            assertEquals(
+                listOf("Alpha", "Gamma"),
+                viewModel.uiState.value.members.map { it.name },
+            )
+
+            // Move visible Gamma up (visible 1 -> 0): the visible reorder must occur.
+            viewModel.moveMember(1, 0)
+            runCurrent()
+            assertEquals(
+                listOf("Gamma", "Alpha"),
+                viewModel.uiState.value.members.map { it.name },
+            )
+
+            // Symmetric move-down restores the visible order.
+            viewModel.moveMember(0, 1)
+            runCurrent()
+            assertEquals(
+                listOf("Alpha", "Gamma"),
+                viewModel.uiState.value.members.map { it.name },
+            )
+
+            // Re-apply the visible swap so there is a reorder to persist, then verify H stayed
+            // in its stored slot: unhiding must restore Beta in the middle with the visible
+            // swap applied around it, rather than H having moved to either end.
+            viewModel.moveMember(1, 0)
+            runCurrent()
+            assertEquals(
+                listOf("Gamma", "Alpha"),
+                viewModel.uiState.value.members.map { it.name },
+            )
+
+            hiddenGames.unhide(listOf(2L))
+            runCurrent()
+            assertEquals(
+                listOf("Gamma", "Beta", "Alpha"),
+                viewModel.uiState.value.members.map { it.name },
+            )
+
+            // Saving while hidden must round-trip the hidden membership without moving it.
+            hiddenGames.hide(setOf(2L))
+            runCurrent()
+            viewModel.setName("Queue")
+            viewModel.save()
+            runCurrent()
+            val storedId = store.collections.single().id
+            assertEquals(
+                listOf(3L, 2L, 1L),
+                store.members.filter { it.collectionId == storedId }
+                    .sortedBy { it.orderIndex }.map { it.appId },
+            )
+        }
     }
 
     @Test
@@ -178,12 +329,13 @@ class CollectionViewModelTest {
         transaction: DatabaseTransactionScope = PassThroughTransactionScope,
         libraryGames: List<Game> = emptyList(),
         hltbData: List<HltbData> = emptyList(),
+        hiddenGames: HiddenGamesRepository = fakeHiddenGamesRepository(),
         block: suspend TestScope.(CollectionViewModel) -> Unit,
     ) = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         Dispatchers.setMain(dispatcher)
         try {
-            val viewModel = createViewModel(transaction, libraryGames, hltbData)
+            val viewModel = createViewModel(transaction, libraryGames, hltbData, hiddenGames)
             val stateCollector = launch {
                 viewModel.uiState.collect()
             }
@@ -199,10 +351,14 @@ class CollectionViewModelTest {
         transaction: DatabaseTransactionScope,
         libraryGames: List<Game>,
         hltbData: List<HltbData>,
+        hiddenGames: HiddenGamesRepository = fakeHiddenGamesRepository(),
     ): CollectionViewModel {
         val time = FixedTimeProvider()
         val gameDao = emptyGameDao(libraryGames)
-        val sessionRepository = SessionRepository(emptySessionDao())
+        val sessionRepository = SessionRepository(
+            emptySessionDao(),
+            hiddenGamesRepository = fakeHiddenGamesRepository(),
+        )
         val hltbRepository = HltbRepository(
             dataSource = object : HltbDataSource {
                 override suspend fun search(name: String) = emptyList<com.example.backlogium.data.hltb.HltbCandidate>()
@@ -211,6 +367,7 @@ class CollectionViewModelTest {
             },
             hltbDataDao = emptyHltbDataDao(hltbData),
             datasetLookup = HltbDatasetLookup { null },
+            hiddenGameDao = FakeHiddenGameDao(),
             json = Json,
             time = time,
         )
@@ -223,6 +380,7 @@ class CollectionViewModelTest {
             gameDao = gameDao,
             hltbRepository = hltbRepository,
             gameGenreRepository = gameGenreRepository,
+            hiddenGamesRepository = hiddenGames,
             steamApi = emptyProxy(SteamApi::class.java),
             sessionRepository = sessionRepository,
             time = time,
@@ -232,12 +390,14 @@ class CollectionViewModelTest {
             achievementDao = emptyAchievementDao(),
             gameAchievementSyncDao = emptyGameAchievementSyncDao(),
             gameDao = gameDao,
+            hiddenGamesRepository = fakeHiddenGamesRepository(),
             time = time,
         )
         val settings = emptySettingsRepository()
         val liveStatusRepository = LiveStatusRepository(
             steamApi = emptyProxy(SteamApi::class.java),
             gameDao = gameDao,
+            hiddenGameDao = FakeHiddenGameDao(),
             profileDao = emptyProxy(PlayerProfileDao::class.java),
             credentials = object : CredentialsProvider {
                 override suspend fun currentCredentials() = null
@@ -254,10 +414,12 @@ class CollectionViewModelTest {
             savedStateHandle = SavedStateHandle(),
             collectionRepository = CollectionRepository(
                 collectionDao = store.dao,
+                hiddenGamesRepository = fakeHiddenGamesRepository(),
                 time = time,
                 transaction = transaction,
             ),
             gameRepository = gameRepository,
+            hiddenGamesRepository = hiddenGames,
             achievementRepository = achievementRepository,
             sessionRepository = sessionRepository,
             personalPaceRepository = PersonalPaceRepository(sessionRepository, time),

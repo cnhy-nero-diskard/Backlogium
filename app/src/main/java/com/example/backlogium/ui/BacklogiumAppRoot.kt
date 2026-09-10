@@ -48,6 +48,7 @@ import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.setup.SetupScreen
 import com.example.backlogium.ui.review.HltbReviewScreen
 import com.example.backlogium.ui.settings.SettingsScreen
+import com.example.backlogium.ui.settings.hidden.HiddenGamesScreen
 import com.example.backlogium.BuildConfig
 import com.example.backlogium.ui.updates.AppUpdateSheet
 import com.example.backlogium.ui.updates.AppUpdateViewModel
@@ -68,6 +69,9 @@ private fun hltbReviewRoute(appId: Long?) = if (appId == null) "hltb_review" els
 /** Route for the credentials onboarding flow — reached from the Settings account section. */
 private const val ROUTE_ONBOARDING = "onboarding"
 private const val ROUTE_DIAGNOSTICS = "diagnostics"
+
+/** Route for the hidden-games section — the way back to anything hidden (add-hidden-games). */
+private const val ROUTE_HIDDEN_GAMES = "hidden_games"
 
 /** Route for re-running first-run setup — reached from the Settings setup section. */
 private const val ROUTE_SETUP = "setup"
@@ -230,9 +234,11 @@ fun BacklogiumAppRoot(
                         onOpenSetup = { navController.navigate(ROUTE_SETUP) },
                         onOpenDiagnostics = { navController.navigate(ROUTE_DIAGNOSTICS) },
                         onOpenUpdate = { updateSheetVisible = true },
+                        onOpenHiddenGames = { navController.navigate(ROUTE_HIDDEN_GAMES) },
                     )
                 }
                 composable(ROUTE_DIAGNOSTICS) { DiagnosticsScreen() }
+                composable(ROUTE_HIDDEN_GAMES) { HiddenGamesScreen() }
                 composable(ROUTE_SETUP) { SetupScreen() }
                 composable(ROUTE_ONBOARDING) {
                     OnboardingScreen(onCompleted = { navController.popBackStack() })
@@ -254,6 +260,7 @@ fun BacklogiumAppRoot(
                     GameDetailScreen(
                         onAccentColorChanged = { accentColor = it },
                         onRemoved = { navController.popBackStack() },
+                        onDismiss = { navController.popBackStack() },
                     )
                 }
                 composable(ROUTE_COLLECTIONS) {

@@ -19,15 +19,21 @@ data class StoreAppDetails(
 )
 
 /**
- * [type] and [name] are read only by family-shared admission: the store is what confirms an
- * unowned app id is a *game* rather than a tool, application, video, or demo — Family Sharing
- * covers a whole library, and admitting a screensaver as a tracked game would erode trust in the
- * whole feature. Genre enrichment ignores both.
+ * [type] is read by family-shared admission and the hidden-games non-game review: the store is
+ * what confirms an unowned app id is a *game* rather than a tool, application, video, or demo —
+ * Family Sharing covers a whole library, and admitting a screensaver as a tracked game would erode
+ * trust in the whole feature. [name] is read only by family-shared admission. Genre enrichment
+ * reads [genres] and [type], ignoring [name].
  */
 @Serializable
 data class StoreAppData(
-    val genres: List<StoreGenreDto> = emptyList(),
+    /**
+     * The store's own app kind — `game`, `application`, `tool`, `demo`, `music`, … Already present
+     * in every `appdetails` response and previously discarded; recording it is what makes the
+     * non-game bulk review possible without a single extra request (add-hidden-games).
+     */
     val type: String? = null,
+    val genres: List<StoreGenreDto> = emptyList(),
     val name: String? = null,
 )
 

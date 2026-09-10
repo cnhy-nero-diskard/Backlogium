@@ -87,6 +87,7 @@ fun SettingsScreen(
     onOpenDiagnostics: () -> Unit,
     onOpenSetup: () -> Unit = {},
     onOpenUpdate: () -> Unit = {},
+    onOpenHiddenGames: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -126,6 +127,7 @@ fun SettingsScreen(
         onOpenDiagnostics = onOpenDiagnostics,
         onOpenSetup = onOpenSetup,
         onOpenUpdate = onOpenUpdate,
+        onOpenHiddenGames = onOpenHiddenGames,
         haptics = haptics,
         actions = remember(viewModel) {
             SettingsActions(
@@ -212,6 +214,7 @@ fun SettingsScreen(
     onOpenDiagnostics: () -> Unit = {},
     onOpenSetup: () -> Unit = {},
     onOpenUpdate: () -> Unit = {},
+    onOpenHiddenGames: () -> Unit = {},
     actions: SettingsActions,
     haptics: HapticPlayer = rememberHaptics(),
 ) {
@@ -313,6 +316,13 @@ fun SettingsScreen(
         SectionHeader("Daily quest")
         DailyQuestCard(state = state, actions = actions)
 
+        SectionHeader("Hidden games")
+        HiddenGamesCard(
+            hiddenCount = state.hiddenGameCount,
+            nonGameCandidateCount = state.nonGameCandidateCount,
+            onOpen = onOpenHiddenGames,
+        )
+
         SectionHeader("Data")
         HistoryImportCard(
             imported = state.historyImported,
@@ -404,6 +414,34 @@ private fun RunSetupCard(configured: Boolean, onOpenSetup: () -> Unit) {
                     "Sync your library, download artwork, or fetch completion times"
                 } else {
                     "Connect your Steam account first — every step needs it"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * The way back to anything hidden (add-hidden-games). Present whether or not anything is hidden:
+ * the section is where a player looks to find out, and a hide with no route back would be a trap.
+ * The count lives here; the section itself owns the list and every mutation.
+ */
+@Composable
+private fun HiddenGamesCard(
+    hiddenCount: Int,
+    nonGameCandidateCount: Int,
+    onOpen: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth().clickable { onOpen() }) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Hidden games", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = when {
+                    hiddenCount > 0 -> "$hiddenCount hidden — unhide any of them here"
+                    nonGameCandidateCount > 0 ->
+                        "Nothing is hidden. $nonGameCandidateCount library items are applications or tools"
+                    else -> "Nothing is hidden"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

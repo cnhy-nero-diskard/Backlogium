@@ -9,6 +9,7 @@ import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDataOrigin
 import com.example.backlogium.data.local.entity.HltbMatchStatus
+import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
@@ -210,7 +211,7 @@ class HltbBroaderRepositoryTest {
             override suspend fun search(name: String): List<HltbCandidate> = emptyList()
             override suspend fun lookupById(hltbId: Long): HltbDirectLookupResult = HltbDirectLookupResult.NotFound
         },
-    ) = HltbRepository(dataSource, dao, FakeLookup(), Json, FixedTime)
+    ) = HltbRepository(dataSource, dao, FakeLookup(), FakeHiddenGameDao(), Json, FixedTime)
 
     private class FakeLookup : HltbDatasetLookup {
         override suspend fun find(appId: Long): HltbData? = null

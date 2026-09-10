@@ -12,6 +12,7 @@ import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.PlayerProfile
@@ -38,8 +39,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import java.time.Instant
-import java.time.ZoneId
 
 /**
  * Keep the owned-games poll independent from the optional fine-grained presence decision. A
@@ -70,36 +69,6 @@ internal suspend fun <T> fetchOwnedGamesAfterPresenceDecision(
         kotlin.Result.failure(error)
     }
 }
-
-/** Minutes credited to one local calendar date by a sync poll. */
-internal data class DailyProgressCredit(
-    val minutesPlayed: Int,
-    val goalMinutesPlayed: Int,
-)
-
-/**
- * Attribute only newly observed session minutes to each session's start date. A session remains
- * atomic across midnight; [SessionDiffer.SessionAction.addedMinutes] is the delta for an Extend,
- * not the session's accumulated total.
- */
-internal fun attributeDailyProgress(
-    actions: List<SessionDiffer.SessionAction>,
-    goalAppIds: Set<Long>,
-    zone: ZoneId,
-): Map<String, DailyProgressCredit> = actions
-    .asSequence()
-    .filter { it.addedMinutes > 0 }
-    .groupBy { action ->
-        Instant.ofEpochMilli(action.startAt).atZone(zone).toLocalDate().toString()
-    }
-    .mapValues { (_, dayActions) ->
-        DailyProgressCredit(
-            minutesPlayed = dayActions.sumOf { it.addedMinutes },
-            goalMinutesPlayed = dayActions
-                .filter { it.appId in goalAppIds }
-                .sumOf { it.addedMinutes },
-        )
-    }
 
 /**
  * What one poll writes for one observed game's three recency columns.
@@ -186,6 +155,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private val credentials: CredentialsProvider,
     private val database: BacklogiumDatabase,
     private val gameDao: GameDao,
+    private val hiddenGameDao: HiddenGameDao,
     private val sessionDao: SessionDao,
     private val profileDao: PlayerProfileDao,
     private val differ: SessionDiffer,
@@ -556,6 +526,9 @@ class SteamSyncWorker @AssistedInject constructor(
             )
         }
 
+        // Daily progress for this poll's actions is credited inside the committer above
+        // (PlaytimeObservationCommitter), which excludes hidden games there — crediting here as
+        // well would count every hidden and visible minute twice.
         if (profileBefore == null) profileDao.insertIfMissing()
         val currentProfile = profileDao.get() ?: PlayerProfile()
         val identity = mergePlayerIdentity(

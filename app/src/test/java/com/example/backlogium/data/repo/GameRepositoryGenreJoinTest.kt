@@ -62,12 +62,19 @@ class GameRepositoryGenreJoinTest {
         db = Room.inMemoryDatabaseBuilder(
             RuntimeEnvironment.getApplication(), BacklogiumDatabase::class.java,
         ).allowMainThreadQueries().build()
+        val hidden = HiddenGamesRepository(
+            hiddenGameDao = db.hiddenGameDao(),
+            gameDao = db.gameDao(),
+            storeCacheDao = db.gameGenreCacheDao(),
+            time = OfflineTime,
+        )
         repository = GameRepository(
             gameDao = db.gameDao(),
             hltbRepository = HltbRepository(
                 dataSource = OfflineHltb,
                 hltbDataDao = db.hltbDataDao(),
                 datasetLookup = HltbDatasetLookup { null },
+                hiddenGameDao = db.hiddenGameDao(),
                 json = Json,
                 time = OfflineTime,
             ),
@@ -76,8 +83,9 @@ class GameRepositoryGenreJoinTest {
                 store = SteamStoreGenreDataSource(OfflineStore),
                 time = OfflineTime,
             ),
+            hiddenGamesRepository = hidden,
             steamApi = OfflineSteamApi,
-            sessionRepository = SessionRepository(db.sessionDao()),
+            sessionRepository = SessionRepository(db.sessionDao(), hidden),
             time = OfflineTime,
         )
     }

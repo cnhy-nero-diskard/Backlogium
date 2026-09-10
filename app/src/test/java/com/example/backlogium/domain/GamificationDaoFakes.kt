@@ -9,12 +9,14 @@ import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameSessionCounts
 import com.example.backlogium.data.local.dao.GameSessionInstant
 import com.example.backlogium.data.local.dao.GameTrackedMinutes
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDataOrigin
 import com.example.backlogium.data.local.entity.HltbMatchStatus
@@ -24,6 +26,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 
 /**
  * In-memory DAO stand-ins shared by the tests that drive [GamificationUpdater] — directly, or
@@ -49,6 +52,7 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
     override suspend fun getAll(): List<Session> = sessions
     override suspend fun deleteAll() = Unit
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(sessions.minOfOrNull { it.startAt })
+    override fun observeEarliestVisibleSessionStart(): Flow<Long?> = flowOf(sessions.minOfOrNull { it.startAt })
     override fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>> = flowOf(
         sessions.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.minOf { it.startAt }) },
     )
@@ -176,14 +180,20 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
     }
 
     override fun observeLibrary(): Flow<List<Game>> = flowOf(store.values.toList())
+    override fun observeAllGames(): Flow<List<Game>> = flowOf(store.values.toList())
     override fun observeGoalGames(): Flow<List<Game>> = flowOf(emptyList())
     override fun observeBacklog(): Flow<List<Game>> = flowOf(emptyList())
     override suspend fun allAppIds(): List<Long> = store.keys.toList()
     override fun observeAppIds(): Flow<List<Long>> = flowOf(store.keys.toList())
     override suspend fun getAll(): List<Game> = store.values.toList()
     override suspend fun getById(appId: Long): Game? = store[appId]
-    override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = Unit
-    override suspend fun setGoalFlag(appId: Long, isGoal: Boolean) = Unit
+    override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) {
+        store[appId]?.let { store[appId] = it.copy(isGoal = isGoal, targetMinutes = targetMinutes) }
+    }
+
+    override suspend fun setGoalFlag(appId: Long, isGoal: Boolean) {
+        store[appId]?.let { store[appId] = it.copy(isGoal = isGoal) }
+    }
     override suspend fun count(): Int = store.size
     override suspend fun deleteAll() = store.clear()
     override suspend fun setBackfillMinutes(appId: Long, minutes: Int) {
@@ -413,3 +423,36 @@ internal fun testGame(
     source = source,
     manualSharedMinutes = manualSharedMinutes,
 )
+
+/**
+ * In-memory stand-ins for the hidden set, shared by the tests of every repository that now
+ * excludes hidden games. Observable, so a test can hide a game and assert the surfaces react
+ * rather than only asserting a fixed starting state.
+ */
+internal class FakeHiddenGameDao(hidden: Set<Long> = emptySet()) : HiddenGameDao {
+    private val rows = MutableStateFlow(
+        hidden.associateWith { HiddenGame(appId = it, hiddenAt = 0L) },
+    )
+
+    override suspend fun upsertAll(hidden: List<HiddenGame>) {
+        rows.value = rows.value + hidden.associateBy { it.appId }
+    }
+
+    override fun observeAll(): Flow<List<HiddenGame>> =
+        rows.map { it.values.sortedByDescending(HiddenGame::hiddenAt) }
+
+    override suspend fun getAll(): List<HiddenGame> =
+        rows.value.values.sortedByDescending(HiddenGame::hiddenAt)
+
+    override suspend fun hiddenAppIds(): List<Long> = rows.value.keys.toList()
+
+    override suspend fun isHidden(appId: Long): Boolean = appId in rows.value
+
+    override suspend fun delete(appIds: List<Long>) {
+        rows.value = rows.value - appIds.toSet()
+    }
+
+    override suspend fun deleteAll() {
+        rows.value = emptyMap()
+    }
+}

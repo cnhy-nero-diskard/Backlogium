@@ -8,6 +8,7 @@ import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDataOrigin
 import com.example.backlogium.data.local.entity.HltbMatchStatus
+import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -164,6 +165,111 @@ class HltbRepositoryTest {
         assertEquals(2, candidates.size)
         assertEquals("Portal", candidates.first().name)
         assertTrue(candidates.first().confidence >= HltbMatcher.CONFIDENT_THRESHOLD)
+    }
+
+    /**
+     * A hidden game costs no HowLongToBeat request, on the batch path or the individual one, and
+     * its cached row is left exactly as it was (add-hidden-games).
+     */
+    @Test
+    fun refreshSelection_skipsHiddenGamesEntirely() = runTest {
+        val dao = FakeHltbDataDao()
+        val searches = mutableListOf<String>()
+        val repository = repository(
+            dao = dao,
+            results = mapOf("Portal" to listOf(candidate("Portal")), "Wallpaper Engine" to listOf(candidate("Wallpaper Engine"))),
+            searches = searches,
+            hidden = setOf(2L),
+        )
+
+        val reported = mutableListOf<Triple<String, HltbRefreshOutcome, Pair<Int, Int>>>()
+        val result = repository.refreshSelection(
+            games = listOf(1L to "Portal", 2L to "Wallpaper Engine"),
+        ) { done, total, name, outcome ->
+            reported += Triple(name, outcome, done to total)
+        }
+
+        assertEquals(1, result.attempted)
+        assertEquals(1, result.refreshed)
+        assertNull("no row may be written for a hidden game", dao.getByAppId(2L))
+        // Progress totals describe the visible work, not the original selection.
+        assertEquals(
+            listOf(Triple("Portal", HltbRefreshOutcome.Refreshed(HltbMatchState.RESOLVED), 1 to 1)),
+            reported,
+        )
+        assertTrue("hidden game must cost no request", searches.none { it == "Wallpaper Engine" })
+    }
+
+    @Test
+    fun fetchForGame_makesNoRequestForAHiddenGame() = runTest {
+        val dao = FakeHltbDataDao()
+        val searches = mutableListOf<String>()
+        val datasetRow = HltbData(
+            appId = 2L,
+            hltbId = 22L,
+            completionistMinutes = 200,
+            fetchedAt = 1_234L,
+            matchStatus = HltbMatchStatus.RESOLVED,
+            origin = HltbDataOrigin.DATASET,
+        )
+        val repository = repository(
+            dao = dao,
+            results = mapOf("Wallpaper Engine" to listOf(candidate("Wallpaper Engine"))),
+            searches = searches,
+            datasetRows = mapOf(2L to datasetRow),
+            hidden = setOf(2L),
+        )
+
+        assertNull(repository.fetchForGame(appId = 2L, name = "Wallpaper Engine"))
+        assertNull("hidden must not materialize the dataset", dao.getByAppId(2L))
+        assertTrue("hidden game must cost no request", searches.isEmpty())
+    }
+
+    @Test
+    fun searchBroaderCandidates_makesNoRequestForAHiddenGame() = runTest {
+        val dao = FakeHltbDataDao(
+            initial = listOf(
+                HltbData(
+                    appId = 2L,
+                    fetchedAt = 1_000L,
+                    matchStatus = HltbMatchStatus.UNMATCHED,
+                ),
+            ),
+        )
+        val searches = mutableListOf<String>()
+        val repository = repository(
+            dao = dao,
+            searches = searches,
+            hidden = setOf(2L),
+        )
+
+        assertTrue(repository.searchBroaderCandidates(2L, "Late Match: Enhanced Edition") is BroaderResult.NotEligible)
+        assertTrue("hidden game must cost no request", searches.isEmpty())
+        assertEquals(HltbMatchStatus.UNMATCHED, dao.getByAppId(2L)?.matchStatus)
+    }
+
+    @Test
+    fun matchCenterQueue_excludesHiddenGames() = runTest {
+        val dao = FakeHltbDataDao(
+            initial = listOf(
+                HltbData(
+                    appId = 1L,
+                    fetchedAt = 1_000L,
+                    matchStatus = HltbMatchStatus.NEEDS_REVIEW,
+                    candidatesJson = "[]",
+                ),
+                HltbData(
+                    appId = 2L,
+                    fetchedAt = 1_000L,
+                    matchStatus = HltbMatchStatus.UNMATCHED,
+                ),
+            ),
+        )
+        val repository = repository(dao = dao, hidden = setOf(2L))
+
+        assertEquals(listOf(1L), repository.matchCenterQueue.first().map { it.appId })
+        assertEquals(listOf(1L), repository.reviewQueue.first().map { it.appId })
+        assertEquals(1, repository.reviewCount.first())
     }
 
     @Test
@@ -323,10 +429,12 @@ class HltbRepositoryTest {
         cancellation: Set<String> = emptySet(),
         datasetRows: Map<Long, HltbData> = emptyMap(),
         searches: MutableList<String>? = null,
+        hidden: Set<Long> = emptySet(),
     ) = HltbRepository(
         dataSource = FakeHltbDataSource(results, failing, cancellation, searches),
         hltbDataDao = dao,
         datasetLookup = FakeHltbDatasetLookup(datasetRows),
+        hiddenGameDao = FakeHiddenGameDao(hidden),
         json = Json,
         time = FixedTime,
     )

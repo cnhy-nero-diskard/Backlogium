@@ -12,6 +12,7 @@ import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.repo.CollectionRepository
 import com.example.backlogium.data.repo.CollectionSaveDraft
+import com.example.backlogium.data.repo.fakeHiddenGamesRepository
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionTimeBasis
@@ -82,8 +83,10 @@ class CollectionDaoTest {
     private fun repository(
         collectionDao: CollectionDao = dao,
         transaction: DatabaseTransactionScope = RoomDatabaseTransactionScope(db),
+        hidden: Set<Long> = emptySet(),
     ) = CollectionRepository(
         collectionDao = collectionDao,
+        hiddenGamesRepository = fakeHiddenGamesRepository(hidden = hidden),
         time = object : TimeProvider {
             override fun nowMillis(): Long = 100L
             override fun zone(): ZoneId = ZoneId.of("UTC")
@@ -311,6 +314,136 @@ class CollectionDaoTest {
         assertTrue(failure is IllegalStateException)
         assertEquals(before, dao.getById(id))
         assertEquals(membersBefore, dao.getMembers(id))
+    }
+
+    /**
+     * Hiding retains collection membership so unhiding restores it without the player re-adding
+     * the game. Every member read filters hidden games, so the editing buffer a save carries never
+     * contains one — and diffing that against the unfiltered stored rows once deleted the very
+     * membership hiding promised to keep, silently and for good.
+     */
+    @Test
+    fun repositorySave_retainsAHiddenMembersMembershipItCannotSeeInTheDraft() = runBlocking {
+        val id = dao.insert(collection(name = "Backlog"))
+        dao.insertMember(CollectionMember(id, 1L, orderIndex = 0))
+        dao.insertMember(CollectionMember(id, 2L, orderIndex = 1))
+
+        repository(hidden = setOf(2L)).save(
+            CollectionSaveDraft(
+                id = id,
+                name = "Renamed",
+                mode = CollectionMode.BASIC,
+                sort = CollectionSort.NAME,
+                targetDate = null,
+                accent = null,
+                timeBasis = CollectionTimeBasis.COMPLETIONIST,
+                description = null,
+                memberAppIds = listOf(1L),
+                doneAppIds = emptySet(),
+            ),
+        )
+
+        assertEquals("Renamed", dao.getById(id)?.name)
+        assertEquals(listOf(1L, 2L), dao.getMembers(id).map { it.appId }.sorted())
+    }
+
+    /**
+     * A rename-only save from a filtered draft must not disturb a hidden member's queue slot:
+     * rewriting the visible ids to 0..N-1 while keeping the hidden row at its old index once
+     * produced duplicate orderIndex values, leaving the restored order undefined after unhide.
+     */
+    @Test
+    fun repositorySave_keepsHiddenMembersQueueSlotWithUniqueIndices() = runBlocking {
+        val id = dao.insert(collection(name = "Queue", mode = CollectionMode.ORDERED_QUEUE))
+        dao.insertMember(CollectionMember(id, 1L, orderIndex = 0))
+        dao.insertMember(CollectionMember(id, 2L, orderIndex = 1))
+        dao.insertMember(CollectionMember(id, 3L, orderIndex = 2))
+
+        repository(hidden = setOf(2L)).save(
+            CollectionSaveDraft(
+                id = id,
+                name = "Queue",
+                mode = CollectionMode.ORDERED_QUEUE,
+                sort = CollectionSort.MANUAL_SEQUENCE,
+                targetDate = null,
+                accent = null,
+                timeBasis = CollectionTimeBasis.COMPLETIONIST,
+                description = null,
+                memberAppIds = listOf(1L, 3L),
+                doneAppIds = emptySet(),
+            ),
+        )
+
+        val stored = dao.getMembers(id)
+        assertEquals(listOf(1L, 2L, 3L), stored.map { it.appId })
+        assertEquals(listOf(0, 1, 2), stored.map { it.orderIndex })
+        assertEquals(listOf(1L, 2L, 3L), repository().getMembers(id).map { it.appId })
+    }
+
+    /**
+     * Removing the visible predecessor while the middle member is hidden must not drag the hidden
+     * row across its surviving successor: A, H(hidden), B with A removed restores H, B — the order
+     * that would have applied had H never been hidden. Anchoring H to its absolute old rank kept
+     * it at index 1 and persisted B, H instead.
+     */
+    @Test
+    fun repositorySave_removingPredecessorKeepsHiddenBeforeSurvivor() = runBlocking {
+        val id = dao.insert(collection(name = "Queue", mode = CollectionMode.ORDERED_QUEUE))
+        dao.insertMember(CollectionMember(id, 1L, orderIndex = 0))
+        dao.insertMember(CollectionMember(id, 2L, orderIndex = 1))
+        dao.insertMember(CollectionMember(id, 3L, orderIndex = 2))
+
+        repository(hidden = setOf(2L)).save(
+            CollectionSaveDraft(
+                id = id,
+                name = "Queue",
+                mode = CollectionMode.ORDERED_QUEUE,
+                sort = CollectionSort.MANUAL_SEQUENCE,
+                targetDate = null,
+                accent = null,
+                timeBasis = CollectionTimeBasis.COMPLETIONIST,
+                description = null,
+                memberAppIds = listOf(3L),
+                doneAppIds = emptySet(),
+            ),
+        )
+
+        val stored = dao.getMembers(id)
+        assertEquals(listOf(2L, 3L), stored.map { it.appId })
+        assertEquals(listOf(0, 1), stored.map { it.orderIndex })
+        assertEquals(listOf(2L, 3L), repository().getMembers(id).map { it.appId })
+    }
+
+    /**
+     * Symmetric case: removing the visible successor leaves the hidden row after its surviving
+     * predecessor, so the merge does not move H when only its neighbour after it is gone.
+     */
+    @Test
+    fun repositorySave_removingSuccessorKeepsHiddenAfterPredecessor() = runBlocking {
+        val id = dao.insert(collection(name = "Queue", mode = CollectionMode.ORDERED_QUEUE))
+        dao.insertMember(CollectionMember(id, 1L, orderIndex = 0))
+        dao.insertMember(CollectionMember(id, 2L, orderIndex = 1))
+        dao.insertMember(CollectionMember(id, 3L, orderIndex = 2))
+
+        repository(hidden = setOf(2L)).save(
+            CollectionSaveDraft(
+                id = id,
+                name = "Queue",
+                mode = CollectionMode.ORDERED_QUEUE,
+                sort = CollectionSort.MANUAL_SEQUENCE,
+                targetDate = null,
+                accent = null,
+                timeBasis = CollectionTimeBasis.COMPLETIONIST,
+                description = null,
+                memberAppIds = listOf(1L),
+                doneAppIds = emptySet(),
+            ),
+        )
+
+        val stored = dao.getMembers(id)
+        assertEquals(listOf(1L, 2L), stored.map { it.appId })
+        assertEquals(listOf(0, 1), stored.map { it.orderIndex })
+        assertEquals(listOf(1L, 2L), repository().getMembers(id).map { it.appId })
     }
 
     @Test

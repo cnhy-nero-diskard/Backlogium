@@ -16,6 +16,7 @@ import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.HltbDatasetDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -30,6 +31,7 @@ import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.local.entity.GameGenreCache
+import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDatasetLength
 import com.example.backlogium.data.local.entity.HltbDatasetMapping
@@ -69,8 +71,9 @@ import com.example.backlogium.data.local.entity.SyncRun
         ExcludedSharedGame::class,
         WishlistItem::class,
         WishlistPriceObservation::class,
+        HiddenGame::class,
     ],
-    version = 30,
+    version = 32,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -89,6 +92,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun steamAssetDao(): SteamAssetDao
     abstract fun excludedSharedGameDao(): ExcludedSharedGameDao
     abstract fun wishlistDao(): WishlistDao
+    abstract fun hiddenGameDao(): HiddenGameDao
 
     companion object {
         const val NAME = "backlogium.db"
@@ -732,6 +736,36 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE `sync_runs` ADD COLUMN `attempt` INTEGER NOT NULL DEFAULT 0",
                 )
+            }
+        }
+
+        /**
+         * v30 -> v31: additive only — create the `hidden_games` table (add-hidden-games). No
+         * existing row is altered: an upgrade starts with nothing hidden, which is the previous
+         * behaviour exactly. Deliberately no foreign key to `games`, so a hide outlives a game
+         * temporarily leaving the library and is never cascade-deleted by an ownership change.
+         */
+        val MIGRATION_30_31 = object : Migration(30, 31) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `hidden_games` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`hiddenAt` INTEGER NOT NULL, " +
+                        "`fromBulkAction` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`))",
+                )
+            }
+        }
+
+        /**
+         * v31 -> v32: additive only — `game_genre_cache` gains the app's store `type`
+         * (add-hidden-games). Deliberately not backfilled: the value arrives with each game's next
+         * natural store-enrichment pass, and a null type means *unknown*, which the non-game review
+         * treats as "not offered" rather than guessing either way.
+         */
+        val MIGRATION_31_32 = object : Migration(31, 32) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `game_genre_cache` ADD COLUMN `appType` TEXT")
             }
         }
 

@@ -114,6 +114,7 @@ class SharedGameConverterTest {
             hltbDataDao = FakeHltbDataDao(),
             achievementDao = FakeAchievementDao(emptyList()),
             gameDao = dao,
+            hiddenGameDao = FakeHiddenGameDao(),
         )
         val today = java.time.LocalDate.of(2026, 8, 24)
         updater.recompute(today = today, source = RecomputeSource.SYNC)
@@ -147,6 +148,7 @@ class SharedGameConverterTest {
             hltbDataDao = FakeHltbDataDao(),
             achievementDao = FakeAchievementDao(emptyList()),
             gameDao = dao,
+            hiddenGameDao = FakeHiddenGameDao(),
         )
         val today = java.time.LocalDate.of(2026, 8, 24)
         updater.recompute(today = today, source = RecomputeSource.SYNC)

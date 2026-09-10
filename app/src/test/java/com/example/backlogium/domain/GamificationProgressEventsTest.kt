@@ -194,6 +194,7 @@ class GamificationProgressEventsTest {
         hltbDataDao = FakeHltbDataDao(),
         achievementDao = FakeAchievementDao(emptyList()),
         gameDao = FakeGameDao(emptyList()),
+        hiddenGameDao = FakeHiddenGameDao(),
         progressMarksStore = marksStore,
     )
 

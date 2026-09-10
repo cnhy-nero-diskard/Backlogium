@@ -8,6 +8,7 @@ import com.example.backlogium.data.repo.AchievementCountSummary
 import com.example.backlogium.data.repo.CollectionRepository
 import com.example.backlogium.data.repo.CollectionSaveDraft
 import com.example.backlogium.data.repo.GameRepository
+import com.example.backlogium.data.repo.HiddenGamesRepository
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.NowPlaying
@@ -110,6 +111,7 @@ class CollectionViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val collectionRepository: CollectionRepository,
     private val gameRepository: GameRepository,
+    private val hiddenGamesRepository: HiddenGamesRepository,
     private val achievementRepository: AchievementRepository,
     private val sessionRepository: SessionRepository,
     private val personalPaceRepository: PersonalPaceRepository,
@@ -239,6 +241,7 @@ class CollectionViewModel @Inject constructor(
         val sessionCountByGame: Map<Long, Int>,
         val trackedMinutesByGame: Map<Long, Int>,
         val personalPace: PersonalPaceProfile,
+        val hiddenAppIds: Set<Long> = emptySet(),
     )
 
     private val libraryMetrics: StateFlow<LibraryMetrics> = combine(
@@ -249,6 +252,8 @@ class CollectionViewModel @Inject constructor(
         personalPaceRepository.profile,
     ) { games, achievementsByGame, sessionCountByGame, trackedMinutesByGame, personalPace ->
         LibraryMetrics(games, achievementsByGame, sessionCountByGame, trackedMinutesByGame, personalPace)
+    }.combine(hiddenGamesRepository.hiddenAppIds) { metrics, hidden ->
+        metrics.copy(hiddenAppIds = hidden)
     }.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,
@@ -266,7 +271,12 @@ class CollectionViewModel @Inject constructor(
     ) { metrics, s, density, nowPlaying, today ->
         val gamesById = metrics.games.associateBy { it.appId }
         val playingAppId = (nowPlaying as? NowPlaying.InGame)?.gameId
-        val memberSignals = s.memberAppIds.map { appId ->
+        // Hiding during an editing session must take effect here, not on the next visit: the
+        // buffer below is a snapshot taken when the screen opened, so a game hidden from this
+        // screen's own detail sheet would otherwise linger as a member whose game has left the
+        // library — indistinguishable from a genuinely dangling row, and rendered as one. The
+        // buffer keeps the id so saving still round-trips the membership hiding retains.
+        val memberSignals = s.memberAppIds.filterNot { it in metrics.hiddenAppIds }.map { appId ->
             val game = gamesById[appId]
             CollectionMemberSignals(
                 appId = appId,
@@ -413,14 +423,36 @@ class CollectionViewModel @Inject constructor(
         _memberAppIds.update { current -> current.filterNot { it == appId } }
     }
 
-    /** Move a member up/down in the editing sequence (ordered-queue reordering). */
+    /**
+     * Move a member up/down in the editing sequence (ordered-queue reordering).
+     *
+     * Indices are in the visible queue order — the raw buffer with hidden members filtered out,
+     * which is what the editor renders for an ordered queue. The buffer retains hidden ids so
+     * saving round-trips them, so visible positions cannot be applied to the raw list directly:
+     * with raw [A, H, B] and H hidden, visible [A, B], moving visible B up (1 -> 0) must move B,
+     * not raw index 1 (H). The visible order is permuted, then merged back with hidden ids kept
+     * at their stored slots, so a visible reorder never moves a hidden member.
+     */
     fun moveMember(fromIndex: Int, toIndex: Int) {
+        val hidden = libraryMetrics.value.hiddenAppIds
         _memberAppIds.update { current ->
-            if (fromIndex !in current.indices || toIndex !in current.indices) return@update current
-            val reordered = current.toMutableList()
-            val moved = reordered.removeAt(fromIndex)
-            reordered.add(toIndex, moved)
-            reordered
+            if (hidden.isEmpty()) {
+                if (fromIndex !in current.indices || toIndex !in current.indices) return@update current
+                if (fromIndex == toIndex) return@update current
+                val reordered = current.toMutableList()
+                val moved = reordered.removeAt(fromIndex)
+                reordered.add(toIndex, moved)
+                reordered
+            } else {
+                val visible = current.filterNot { it in hidden }
+                if (fromIndex !in visible.indices || toIndex !in visible.indices) return@update current
+                if (fromIndex == toIndex) return@update current
+                val reorderedVisible = visible.toMutableList()
+                val moved = reorderedVisible.removeAt(fromIndex)
+                reorderedVisible.add(toIndex, moved)
+                val fill = reorderedVisible.iterator()
+                current.map { id -> if (id in hidden) id else fill.next() }
+            }
         }
     }
 

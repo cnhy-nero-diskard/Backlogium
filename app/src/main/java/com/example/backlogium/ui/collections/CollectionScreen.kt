@@ -243,6 +243,7 @@ fun CollectionScreen(
                 presentation = GameDetailPresentation.COLLECTION_OVERLAY,
                 onRemoved = { selectedGameAppId = null },
                 viewModel = hiltViewModel(key = appId.toString()),
+                onDismiss = { selectedGameAppId = null },
             )
         }
     }

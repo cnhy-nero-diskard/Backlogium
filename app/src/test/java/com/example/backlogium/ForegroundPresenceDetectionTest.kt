@@ -107,6 +107,25 @@ class ForegroundPresenceDetectionTest {
         assertEquals(0, starts)
     }
 
+    @Test
+    fun startsPresenceWhenNowPlayingIsSuppressedButRawIsInGame() = runTest {
+        val hiddenGame = LiveStatus(
+            nowPlaying = NowPlaying.NotPlaying,
+            rawNowPlaying = NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = null),
+            presence = LivePresence.IN_GAME,
+        )
+        var starts = 0
+
+        val detected = detectForegroundPresence(
+            checkNow = { hiddenGame },
+            startPresence = { starts++ },
+            delayBeforeRetry = {},
+        )
+
+        assertTrue(detected)
+        assertEquals(1, starts)
+    }
+
     private fun inGameStatus() = LiveStatus(
         nowPlaying = NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = null),
         presence = LivePresence.IN_GAME,

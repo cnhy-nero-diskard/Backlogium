@@ -85,6 +85,8 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_27_28,
         BacklogiumDatabase.MIGRATION_28_29,
         BacklogiumDatabase.MIGRATION_29_30,
+        BacklogiumDatabase.MIGRATION_30_31,
+        BacklogiumDatabase.MIGRATION_31_32,
     )
 
     @Test

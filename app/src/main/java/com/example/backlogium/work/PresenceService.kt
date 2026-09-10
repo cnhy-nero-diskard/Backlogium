@@ -140,21 +140,25 @@ class PresenceService : Service() {
     }
 
     private fun handle(status: LiveStatus) {
-        when (presenceServiceMode(liveMonitorEnabled, status.nowPlaying)) {
-            PresenceServiceMode.PLAYING -> {
-                val nowPlaying = status.nowPlaying as NowPlaying.InGame
-                current = nowPlaying
+        val mode = presenceServiceMode(liveMonitorEnabled, status.rawNowPlaying)
+        val visible = status.nowPlaying as? NowPlaying.InGame
+        when (presenceNotificationAction(mode, visible)) {
+            PresenceNotificationAction.SHOW_GAME -> {
+                current = visible
                 sessionStartedAt = status.sessionStartedAt
-                notifications.update(nowPlaying.name, elapsedMinutes())
+                notifications.update(visible!!.name, elapsedMinutes())
             }
 
-            PresenceServiceMode.MONITORING -> {
+            PresenceNotificationAction.MONITORING -> {
                 current = null
-                sessionStartedAt = null
+                sessionStartedAt = when (mode) {
+                    PresenceServiceMode.PLAYING -> status.sessionStartedAt
+                    else -> null
+                }
                 notifications.monitoring()
             }
 
-            PresenceServiceMode.STOP -> {
+            PresenceNotificationAction.CLEAR -> {
                 current = null
                 sessionStartedAt = null
                 notifications.clear()

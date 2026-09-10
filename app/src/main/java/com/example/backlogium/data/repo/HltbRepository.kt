@@ -9,6 +9,7 @@ import com.example.backlogium.data.hltb.HltbGameLink
 import com.example.backlogium.data.hltb.HltbMatcher
 import com.example.backlogium.data.hltb.HltbQueryGenerator
 import com.example.backlogium.data.hltb.classifyHltbFailure
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDataOrigin
@@ -17,6 +18,7 @@ import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -56,29 +58,47 @@ sealed interface ManualLinkPreviewResult {
  *
  * A lookup failure never overwrites or clears the affected game's cached row — failures are
  * surfaced by returning null so last-good data survives.
+ *
+ * Hidden games consume no remote work (add-hidden-games): [queryResult] is the single funnel
+ * every live lookup passes through, so the individual and batch paths are both covered by one
+ * check; [refreshSelection] removes them from the target set so progress totals describe the
+ * visible work; [fetchForGame] returns the cached row without touching the dataset or network;
+ * and [searchBroaderCandidates] reports [BroaderResult.NotEligible] without issuing requests.
+ * Their cached rows are left exactly as they are — hiding destroys nothing — they simply stop
+ * being refreshed. Unhiding restores normal treatment with no bookkeeping.
  */
 @Singleton
 class HltbRepository @Inject constructor(
     private val dataSource: HltbDataSource,
     private val hltbDataDao: HltbDataDao,
     private val datasetLookup: HltbDatasetLookup,
+    private val hiddenGameDao: HiddenGameDao,
     private val json: Json,
     private val time: TimeProvider,
 ) {
-    /** Games flagged for manual match review, with their candidates. */
-    val reviewQueue: Flow<List<HltbReviewGame>> = hltbDataDao.observeNeedsReview()
-        .map { rows -> rows.map { HltbReviewGame(it.appId, candidatesOf(it), it.matchStatus.toDomain()) } }
+    /** Games flagged for manual match review, with their candidates; hidden games excluded. */
+    val reviewQueue: Flow<List<HltbReviewGame>> = combine(
+        hltbDataDao.observeNeedsReview(),
+        hiddenGameDao.observeAll(),
+    ) { rows, hiddenRows ->
+        val hidden = hiddenRows.mapTo(mutableSetOf()) { it.appId }
+        rows.filterNot { it.appId in hidden }
+            .map { HltbReviewGame(it.appId, candidatesOf(it), it.matchStatus.toDomain()) }
+    }
 
     /** How many games await manual review — the Library's review badge (still review-only). */
-    val reviewCount: Flow<Int> = hltbDataDao.observeNeedsReview().map { it.size }
+    val reviewCount: Flow<Int> = reviewQueue.map { it.size }
 
-    /** Match-center actionable set: both NEEDS_REVIEW and UNMATCHED, for rescue. */
-    val matchCenterQueue: Flow<List<HltbReviewGame>> = hltbDataDao.observeMatchCenter()
-        .map { rows ->
-            rows.map { row ->
-                HltbReviewGame(row.appId, candidatesOf(row), row.matchStatus.toDomain())
-            }
+    /** Match-center actionable set: both NEEDS_REVIEW and UNMATCHED, for rescue; hidden excluded. */
+    val matchCenterQueue: Flow<List<HltbReviewGame>> = combine(
+        hltbDataDao.observeMatchCenter(),
+        hiddenGameDao.observeAll(),
+    ) { rows, hiddenRows ->
+        val hidden = hiddenRows.mapTo(mutableSetOf()) { it.appId }
+        rows.filterNot { it.appId in hidden }.map { row ->
+            HltbReviewGame(row.appId, candidatesOf(row), row.matchStatus.toDomain())
         }
+    }
 
     /** Cache-over-dataset rows from one SQLite query and one transaction snapshot. */
     val allData: Flow<List<HltbData>> = hltbDataDao.observeAllWithDataset()
@@ -89,8 +109,13 @@ class HltbRepository @Inject constructor(
      * Cache first, then the applied dataset, and only then the live source. A dataset hit is
      * materialized in the cache without contacting HowLongToBeat. Returns null only on lookup
      * failure.
+     *
+     * A hidden game costs no work: the cached row is returned as-is without consulting the
+     * dataset (which would write) or the network, so hiding never creates a row and unhiding
+     * restores the normal cache → dataset → network order (add-hidden-games).
      */
     suspend fun fetchForGame(appId: Long, name: String): HltbData? {
+        if (hiddenGameDao.isHidden(appId)) return hltbDataDao.getByAppId(appId)
         hltbDataDao.getByAppId(appId)?.let { return it }
         datasetLookup.find(appId)?.let { datasetRow ->
             hltbDataDao.upsert(datasetRow)
@@ -115,8 +140,14 @@ class HltbRepository @Inject constructor(
      * or rewritten while the requests were in flight is left untouched and the stale
      * result is discarded as [BroaderResult.NotEligible]. On exhausted search or failure
      * the UNMATCHED row is preserved.
+     *
+     * A hidden game is [BroaderResult.NotEligible] without issuing any request: rescue is
+     * only reachable from the match-center queue, which already excludes hidden games, so a
+     * direct call must not bypass that exclusion (add-hidden-games). Unhiding restores
+     * eligibility with no bookkeeping.
      */
     suspend fun searchBroaderCandidates(appId: Long, originalName: String): BroaderResult {
+        if (hiddenGameDao.isHidden(appId)) return BroaderResult.NotEligible
         val existing = hltbDataDao.getByAppId(appId) ?: return BroaderResult.NotEligible
         if (existing.matchStatus != HltbMatchStatus.UNMATCHED) return BroaderResult.NotEligible
 
@@ -231,17 +262,23 @@ class HltbRepository @Inject constructor(
      *
      * Note it is only called from inside the loop: an empty selection reports nothing at all, so
      * a caller rendering progress must not read "no emissions yet" as a stalled run.
+     *
+     * Hidden games are excluded from [games] before anything else (add-hidden-games).
      */
     suspend fun refreshSelection(
         games: List<Pair<Long, String>>,
         onProgress: suspend (done: Int, total: Int, name: String, outcome: HltbRefreshOutcome) -> Unit =
             { _, _, _, _ -> },
     ): HltbBatchResult {
+        // Hidden games are removed from the target set, not merely skipped inside the loop, so the
+        // progress totals a caller renders describe the work actually being done.
+        val hidden = hiddenGameDao.hiddenAppIds().toSet()
+        val visible = if (hidden.isEmpty()) games else games.filterNot { it.first in hidden }
         var refreshed = 0
         var noMatch = 0
         var failed = 0
         val failureClasses = mutableSetOf<HltbFailureClass>()
-        games.forEachIndexed { index, (appId, name) ->
+        visible.forEachIndexed { index, (appId, name) ->
             if (index > 0) delay(INTER_REQUEST_DELAY_MS)
             val outcome = queryResult(appId, name).outcome
             when (outcome) {
@@ -252,10 +289,10 @@ class HltbRepository @Inject constructor(
                     failureClasses += outcome.failureClass
                 }
             }
-            onProgress(index + 1, games.size, name, outcome)
+            onProgress(index + 1, visible.size, name, outcome)
         }
         return HltbBatchResult(
-            attempted = games.size,
+            attempted = visible.size,
             refreshed = refreshed,
             noMatch = noMatch,
             failed = failed,
@@ -273,6 +310,11 @@ class HltbRepository @Inject constructor(
     )
 
     private suspend fun queryResult(appId: Long, name: String): QueryResult {
+        // A hidden game costs no requests. Reported as a no-match rather than a failure: nothing
+        // went wrong, and a failure outcome would make a batch look like it hit a transport error.
+        if (hiddenGameDao.isHidden(appId)) {
+            return QueryResult(row = hltbDataDao.getByAppId(appId), outcome = HltbRefreshOutcome.NoMatch)
+        }
         val candidates = try {
             dataSource.search(name)
         } catch (cancellation: CancellationException) {

@@ -5,6 +5,7 @@ import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
@@ -14,6 +15,7 @@ import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDataOrigin
 import com.example.backlogium.data.local.entity.HltbMatchStatus
@@ -60,6 +62,7 @@ class BackupMergeEngine @Inject constructor(
     private val playerProfileDao: PlayerProfileDao,
     private val collectionDao: CollectionDao,
     private val excludedSharedGameDao: ExcludedSharedGameDao,
+    private val hiddenGameDao: HiddenGameDao,
     private val gamificationUpdater: GamificationUpdater,
     private val time: TimeProvider,
     private val derivedStateWrites: DerivedStateWriteCoordinator = DerivedStateWriteCoordinator(),
@@ -81,14 +84,21 @@ class BackupMergeEngine @Inject constructor(
         config: RuleConfig,
         configVersion: Long,
     ) {
-        mergeContents(file, config, configVersion)
+        mergeRawWithLockHeld(file)
+        recomputeAfterMerge(file, config, configVersion)
     }
 
-    private suspend fun mergeContents(
-        file: BackupFile,
-        config: RuleConfig,
-        configVersion: Long,
-    ) {
+    /**
+     * The atomic raw-data unit alone, without the gamification recompute. Called by
+     * [BackupRepository] inside [LiveStatusRepository.mutateHiddenSetAndReconcile] so the
+     * authoritative hidden-set replacement commits while holding the visibility ordering —
+     * otherwise an older live projection holding that ordering could emit a stale visible state
+     * after the restore's hidden row lands. Must be called with the derived-state coordinator
+     * already held, and must not be followed by anything inside the visibility ordering except
+     * the reconciliation that [mutateHiddenSetAndReconcile] performs: the recompute below stays
+     * outside it (see [recomputeAfterMerge]).
+     */
+    internal suspend fun mergeRawWithLockHeld(file: BackupFile) {
         val importedLongestStreak = file.playerProfile.longestStreak
         val importedBackfilled = file.playerProfile.playtimeBackfilled
 
@@ -106,6 +116,9 @@ class BackupMergeEngine @Inject constructor(
             file.achievements.forEach { mergeAchievement(it) }
             file.collections.forEach { mergeCollection(it) }
             file.collectionMembers.forEach { mergeCollectionMember(it) }
+            // Applied before the recompute below, so the restored XP already excludes the games the
+            // file records as hidden rather than briefly counting them and then correcting.
+            mergeHiddenGames(file.hiddenGames)
 
             // playtimeBackfilled is a historical fact ("has this account ever backfilled"), not a
             // derivation — folded in like longestStreak, as a one-way OR rather than a replace, so
@@ -126,7 +139,20 @@ class BackupMergeEngine @Inject constructor(
             // (PendingImportRecomputeUseCase) instead of leaving aggregates silently stale.
             playerProfileDao.markPendingImportRecompute()
         }
+    }
 
+    /**
+     * The post-commit recompute for a restore. Must be called with the derived-state coordinator
+     * already held, strictly after [mergeRawWithLockHeld] commits and strictly outside the
+     * visibility ordering — persist() suspends on DataStore and owns a non-reentrant coordinator
+     * that neither a Room transaction nor the live-state mutex may wrap (design.md decision 2).
+     */
+    internal suspend fun recomputeAfterMerge(
+        file: BackupFile,
+        config: RuleConfig,
+        configVersion: Long,
+    ) {
+        val importedLongestStreak = file.playerProfile.longestStreak
         // Outside the transaction by construction: persist() suspends on DataStore and owns a
         // coordinator that a Room transaction must never wrap (design.md decision 2).
         val result = gamificationUpdater.compute(time.today(), config)
@@ -135,6 +161,15 @@ class BackupMergeEngine @Inject constructor(
             RecomputeSource.RESTORE,
             configVersion,
         )
+    }
+
+    private suspend fun mergeContents(
+        file: BackupFile,
+        config: RuleConfig,
+        configVersion: Long,
+    ) {
+        mergeRawWithLockHeld(file)
+        recomputeAfterMerge(file, config, configVersion)
     }
 
     /**
@@ -392,6 +427,26 @@ class BackupMergeEngine @Inject constructor(
                 displayOrder = displayOrder,
             ),
         )
+    }
+
+    /**
+     * Replace, not union: the backup's hidden set is authoritative, so restoring a backup taken
+     * before anything was hidden leaves nothing hidden (hidden-games spec, "Restore from a backup
+     * with none hidden" → "no game is hidden"). The clear-and-insert runs inside the same
+     * transaction as every other raw-data write, so a crash between the two cannot leave a
+     * half-merged hidden set.
+     */
+    private suspend fun mergeHiddenGames(hidden: List<BackupHiddenGame>) {
+        hiddenGameDao.deleteAll()
+        if (hidden.isEmpty()) return
+        val rows = hidden.map {
+            HiddenGame(
+                appId = it.appId,
+                hiddenAt = it.hiddenAt.iso8601ToEpochMilli(),
+                fromBulkAction = it.fromBulkAction,
+            )
+        }
+        hiddenGameDao.upsertAll(rows)
     }
 
     private suspend fun mergeCollectionMember(backupMember: BackupCollectionMember) {

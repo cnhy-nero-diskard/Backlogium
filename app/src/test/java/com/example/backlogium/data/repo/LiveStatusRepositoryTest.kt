@@ -5,6 +5,7 @@ import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.AcquiredGamesAnnouncement
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.PlayerProfile
@@ -22,16 +23,21 @@ import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.dto.StoreItemsResponse
 import com.example.backlogium.data.remote.dto.WishlistResponse
+import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortPrefs
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.RuleConfig
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -165,6 +171,109 @@ class LiveStatusRepositoryTest {
         )
         assertEquals(LivePresence.IN_GAME, status.presence)
         assertEquals(1_000L, status.sessionStartedAt)
+    }
+
+    /**
+     * A hidden game that is running reads as not running on every UI surface (add-hidden-games).
+     * The session lifecycle follows the raw Steam signal, not the suppressed one, so sessions are
+     * still recorded for hidden games (hidden-games spec, "Sessions still recorded").
+     */
+    @Test
+    fun inAHiddenGame_resolvesToNotPlaying_butSessionIsStillTracked() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = FakeTimeProvider(1_000L),
+            scope = this,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Wallpaper Engine", iconUrl = "icon://we")),
+            hidden = setOf(10L),
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Wallpaper Engine")
+        val status = repo.checkNow()
+
+        assertEquals(NowPlaying.NotPlaying, status.nowPlaying)
+        // The player is still around; presence just does not say what they are in.
+        assertEquals(LivePresence.ONLINE, status.presence)
+        // The raw signal drives session tracking: the session is recorded even though the UI
+        // sees NotPlaying, so unhiding restores the full history.
+        assertEquals(1_000L, status.sessionStartedAt)
+        assertEquals(LiveSessionState(appId = 10L, startedAt = 1_000L), settings.session.value)
+    }
+
+    /**
+     * Hiding an already-running game must not publish a spurious session end or clear the tracked
+     * session. The raw Steam signal still says the game is running, so the session continues until
+     * Steam actually reports it ended. This is especially important for Family Shared games with
+     * live monitoring off, whose sessions depend on continued observations.
+     */
+    @Test
+    fun hidingAnAlreadyRunningGame_keepsTheSessionAlive_andPublishesNoEnd() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val sessionEnds = PlaySessionEndPublisher()
+        val published = mutableListOf<PlaySessionEnd>()
+        val collector = launch { sessionEnds.events.collect { published += it } }
+        runCurrent()
+        val hiddenGameDao = FakeHiddenGameDao()
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            sessionEnds = sessionEnds,
+            hiddenGameDao = hiddenGameDao,
+        )
+
+        // Game 10 is running and visible: session starts.
+        steamApi.setInGame(gameId = 10L, name = "Shared Game")
+        repo.checkNow()
+        assertEquals(LiveSessionState(appId = 10L, startedAt = 1_000L), settings.session.value)
+        assertTrue(published.isEmpty())
+
+        // The game is now hidden while still running: UI resolves to NotPlaying, but the session
+        // is still tracked and no session end is published.
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        time.now = 31_000L
+        val status = repo.checkNow()
+        assertEquals(NowPlaying.NotPlaying, status.nowPlaying)
+        assertEquals(1_000L, status.sessionStartedAt)
+        assertEquals(LiveSessionState(appId = 10L, startedAt = 1_000L), settings.session.value)
+        assertTrue("hiding a running game must not publish a session end", published.isEmpty())
+
+        // Steam finally reports the game ended: now the session ends normally.
+        time.now = 61_000L
+        steamApi.setNotInGame()
+        repo.checkNow()
+        runCurrent()
+        assertEquals(LiveSessionState(), settings.session.value)
+        assertEquals(1, published.size)
+        assertEquals(10L, published.single().appId)
+
+        collector.cancel()
+    }
+
+    @Test
+    fun construction_withAHiddenRecordedSession_seedsNothing() = runTest {
+        val settings = FakeSettingsRepository()
+        settings.session.value = LiveSessionState(appId = 10L, startedAt = 1_000L)
+
+        val repo = repository(
+            steamApi = FakeSteamApi(),
+            settings = settings,
+            time = FakeTimeProvider(31_000L),
+            scope = this,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Wallpaper Engine", iconUrl = "icon://we")),
+            hidden = setOf(10L),
+        )
+        runCurrent()
+
+        assertEquals(LiveStatus(), repo.liveStatus.value)
     }
 
     @Test
@@ -387,6 +496,620 @@ class LiveStatusRepositoryTest {
         collector.cancel()
     }
 
+    /**
+     * A hide write must suppress the UI-facing live presentation immediately, without waiting for
+     * the next Steam poll. The raw signal and the recorded session are preserved so the session
+     * keeps recording until Steam actually reports the game ended.
+     */
+    @Test
+    fun reconcileVisibility_afterHide_suppressesNowPlayingImmediately() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao()
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal")),
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        val visible = repo.checkNow()
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            visible.nowPlaying,
+        )
+
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        repo.reconcileVisibility()
+
+        val suppressed = repo.liveStatus.value
+        assertEquals(NowPlaying.NotPlaying, suppressed.nowPlaying)
+        assertEquals(
+            "presence is normalized: a hidden running game is not IN_GAME",
+            LivePresence.ONLINE,
+            suppressed.presence,
+        )
+        assertEquals(
+            "the raw signal is preserved so the session keeps recording",
+            10L,
+            (suppressed.rawNowPlaying as NowPlaying.InGame).gameId,
+        )
+        assertEquals(1_000L, suppressed.sessionStartedAt)
+        assertEquals(LiveSessionState(appId = 10L, startedAt = 1_000L), settings.session.value)
+        assertEquals(
+            "no Steam fetch happened — the reconciliation is immediate",
+            1,
+            steamApi.callCount,
+        )
+    }
+
+    /**
+     * An unhide write must restore the UI-facing live presentation immediately, resolving the name
+     * and icon from the owned-games table. The session is preserved across the transition.
+     */
+    @Test
+    fun reconcileVisibility_afterUnhide_restoresNowPlayingImmediately() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao(setOf(10L))
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal")),
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        val hidden = repo.checkNow()
+        assertEquals(NowPlaying.NotPlaying, hidden.nowPlaying)
+        assertEquals(1_000L, hidden.sessionStartedAt)
+
+        hiddenGameDao.delete(listOf(10L))
+        repo.reconcileVisibility()
+
+        val restored = repo.liveStatus.value
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            restored.nowPlaying,
+        )
+        assertEquals(
+            "presence is restored: an unhidden running game reads IN_GAME",
+            LivePresence.IN_GAME,
+            restored.presence,
+        )
+        assertEquals(
+            "the raw signal is updated with the resolved name and icon",
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            restored.rawNowPlaying,
+        )
+        assertEquals(1_000L, restored.sessionStartedAt)
+        assertEquals(
+            "no Steam fetch happened — the reconciliation is immediate",
+            1,
+            steamApi.callCount,
+        )
+    }
+
+    /**
+     * A concurrent poll that started [fetch] before a hide must not resurrect the visible state
+     * after [reconcileVisibility] has already suppressed it. The pre-hide [checkNow] suspends
+     * between fetch and emission; the hide and reconcile run in that gap; then the old poll
+     * resumes and publishes. The final UI-facing state must remain suppressed.
+     */
+    @Test
+    fun reconcileVisibility_concurrentPollCannotResurrectPreHideState() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao()
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal")),
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            repo.liveStatus.value.nowPlaying,
+        )
+
+        val gate = CompletableDeferred<Unit>()
+        steamApi.fetchGate = gate
+
+        val pendingCheck = async { repo.checkNow() }
+        runCurrent()
+
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        repo.reconcileVisibility()
+
+        val suppressed = repo.liveStatus.value
+        assertEquals(NowPlaying.NotPlaying, suppressed.nowPlaying)
+        assertEquals(LivePresence.ONLINE, suppressed.presence)
+
+        gate.complete(Unit)
+        pendingCheck.await()
+
+        val finalStatus = repo.liveStatus.value
+        assertEquals(
+            "the stale poll must not overwrite the reconciliation",
+            NowPlaying.NotPlaying,
+            finalStatus.nowPlaying,
+        )
+        assertEquals(
+            "presence must remain normalized after the stale poll",
+            LivePresence.ONLINE,
+            finalStatus.presence,
+        )
+        assertEquals(
+            "the raw signal is preserved across the interleaving",
+            10L,
+            (finalStatus.rawNowPlaying as NowPlaying.InGame).gameId,
+        )
+    }
+
+    /**
+     * A backup restore replaces the hidden set atomically (`deleteAll` + `upsertAll`). If the
+     * currently-running game's hidden state changes as a result, the live presentation must be
+     * reconciled immediately. This test simulates the restore pattern and verifies that
+     * [reconcileVisibility] correctly handles both directions in a single operation.
+     */
+    @Test
+    fun reconcileVisibility_afterBackupRestore_hidesOrUnhidesTheRunningGame() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao()
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal")),
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            repo.liveStatus.value.nowPlaying,
+        )
+
+        hiddenGameDao.deleteAll()
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        repo.reconcileVisibility()
+
+        val suppressed = repo.liveStatus.value
+        assertEquals(
+            "a restore that hides the running game must suppress the live presentation",
+            NowPlaying.NotPlaying,
+            suppressed.nowPlaying,
+        )
+        assertEquals(
+            10L,
+            (suppressed.rawNowPlaying as NowPlaying.InGame).gameId,
+        )
+
+        hiddenGameDao.deleteAll()
+        hiddenGameDao.upsertAll(emptyList())
+        repo.reconcileVisibility()
+
+        val restored = repo.liveStatus.value
+        assertEquals(
+            "a restore that unhides the running game must restore the live presentation",
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            restored.nowPlaying,
+        )
+        assertEquals(LivePresence.IN_GAME, restored.presence)
+    }
+
+    /**
+     * The symmetric interleaving: a poll that started [fetch] while the game was hidden builds
+     * `nowPlaying = NotPlaying` + raw `InGame`; before that poll commits, the user unhides the
+     * game and [reconcileVisibility] publishes visible `InGame`; the old poll then resumes and
+     * must not overwrite the visible state with its stale suppressed result. [reprojectHiddenState]
+     * re-projects the raw signal against the current hidden state in both directions, so the
+     * stale `NotPlaying` is restored to `InGame` at commit time.
+     */
+    @Test
+    fun reconcileVisibility_concurrentHiddenPollCannotOverwritePostUnhideState() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao(setOf(10L))
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal")),
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+        assertEquals(NowPlaying.NotPlaying, repo.liveStatus.value.nowPlaying)
+
+        val gate = CompletableDeferred<Unit>()
+        settings.liveSessionGate = gate
+
+        val pendingCheck = async { repo.checkNow() }
+        runCurrent()
+
+        hiddenGameDao.delete(listOf(10L))
+        repo.reconcileVisibility()
+
+        val restored = repo.liveStatus.value
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            restored.nowPlaying,
+        )
+        assertEquals(LivePresence.IN_GAME, restored.presence)
+
+        gate.complete(Unit)
+        pendingCheck.await()
+
+        val finalStatus = repo.liveStatus.value
+        assertEquals(
+            "the stale hidden poll must not overwrite the post-unhide reconciliation",
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            finalStatus.nowPlaying,
+        )
+        assertEquals(
+            "presence must remain IN_GAME after the stale poll",
+            LivePresence.IN_GAME,
+            finalStatus.presence,
+        )
+        assertEquals(
+            "the raw signal is preserved across the interleaving",
+            10L,
+            (finalStatus.rawNowPlaying as NowPlaying.InGame).gameId,
+        )
+    }
+
+    /**
+     * The mutex ordering: an older reconciliation that read `isHidden == false` and suspended in
+     * `gameDao.getById` must not overwrite a newer hide's suppression. Without the mutex, the
+     * older work resumes and publishes `InGame` after the newer hide has already reconciled. With
+     * the mutex, the newer hide blocks until the older work commits, then re-reconciles against
+     * the current hidden state and suppresses the stale visible projection.
+     */
+    @Test
+    fun visibilityMutex_newerHideWinsOverOlderUnhideProjection() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao()
+        val gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal"))
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = gameDao,
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            repo.liveStatus.value.nowPlaying,
+        )
+
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        repo.reconcileVisibility()
+        assertEquals(NowPlaying.NotPlaying, repo.liveStatus.value.nowPlaying)
+
+        hiddenGameDao.delete(listOf(10L))
+        val gate = CompletableDeferred<Unit>()
+        gameDao.getByIdGate = gate
+
+        val olderUnhide = async { repo.reconcileVisibility() }
+        runCurrent()
+
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        val newerHide = async { repo.reconcileVisibility() }
+        runCurrent()
+
+        gate.complete(Unit)
+        olderUnhide.await()
+        newerHide.await()
+
+        val finalStatus = repo.liveStatus.value
+        assertEquals(
+            "the newer hide must win over the older unhide projection",
+            NowPlaying.NotPlaying,
+            finalStatus.nowPlaying,
+        )
+        assertEquals(
+            "presence must be normalized after the newer hide",
+            LivePresence.ONLINE,
+            finalStatus.presence,
+        )
+        assertEquals(
+            "the raw signal is preserved across the interleaving",
+            10L,
+            (finalStatus.rawNowPlaying as NowPlaying.InGame).gameId,
+        )
+    }
+
+    @Test
+    fun visibilityMutex_noStaleEmissionAfterHide() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao()
+        val gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal"))
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = gameDao,
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            repo.liveStatus.value.nowPlaying,
+        )
+
+        val emissions = mutableListOf<NowPlaying>()
+        val collector = launch {
+            repo.liveStatus.map { it.nowPlaying }.collect { emissions += it }
+        }
+        runCurrent()
+
+        hiddenGameDao.delete(listOf(10L))
+        val gate = CompletableDeferred<Unit>()
+        gameDao.getByIdGate = gate
+
+        val olderUnhide = async { repo.reconcileVisibility() }
+        runCurrent()
+
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        val newerHide = async { repo.reconcileVisibility() }
+        runCurrent()
+
+        gate.complete(Unit)
+        olderUnhide.await()
+        newerHide.await()
+        runCurrent()
+
+        collector.cancel()
+
+        val hideIndex = emissions.indexOf(NowPlaying.NotPlaying)
+        assertTrue("expected at least one NotPlaying emission", hideIndex >= 0)
+        val afterHide = emissions.subList(hideIndex, emissions.size)
+        assertFalse(
+            "no InGame emission is permitted after the newer hide committed; emissions were $emissions",
+            afterHide.any { it is NowPlaying.InGame },
+        )
+    }
+
+    /**
+     * The restore path must share the same visibility ordering as normal hide/unhide writes.
+     * A backup restore replaces the hidden set authoritatively (`deleteAll` + `upsertAll`, as in
+     * `BackupMergeEngine.mergeHiddenGames`) — committing that replacement outside
+     * `visibilityMutex` leaves the exact stale-emission window `mutateHiddenSetAndReconcile`
+     * closes: an older projection holding the mutex suspends, the restore commits the hidden row
+     * while it is suspended, then blocks on the reconcile; the older projection resumes with a
+     * stale hidden read and emits the now-hidden game after the hidden-set commit.
+     *
+     * This test pauses an older unhide projection in `gameDao.getById` (holding the mutex),
+     * commits a backup that hides the running game via `mutateHiddenSetAndReconcile` (the path
+     * `BackupRepository.importBackup` uses), and asserts no visible emission occurs after that
+     * hidden-set commit — not merely that the final state is corrected.
+     */
+    @Test
+    fun restoreHidingRunningGame_noVisibleEmissionAfterHiddenSetCommit() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000L)
+        val hiddenGameDao = FakeHiddenGameDao()
+        val gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal"))
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = time,
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = gameDao,
+        )
+
+        steamApi.setInGame(gameId = 10L, name = "Portal")
+        repo.checkNow()
+        assertEquals(
+            NowPlaying.InGame(gameId = 10L, name = "Portal", iconUrl = "icon://portal"),
+            repo.liveStatus.value.nowPlaying,
+        )
+
+        hiddenGameDao.upsertAll(
+            listOf(com.example.backlogium.data.local.entity.HiddenGame(appId = 10L, hiddenAt = 0L)),
+        )
+        repo.reconcileVisibility()
+        assertEquals(NowPlaying.NotPlaying, repo.liveStatus.value.nowPlaying)
+
+        // Unhide without reconciling: hidden is now false while the presentation is still
+        // suppressed, so the older reconciliation below suspends restoring it.
+        hiddenGameDao.delete(listOf(10L))
+
+        val events = mutableListOf<String>()
+        val emissions = mutableListOf<NowPlaying>()
+        val collector = launch {
+            repo.liveStatus.map { it.nowPlaying }.collect {
+                emissions += it
+                events += "emit:$it"
+            }
+        }
+        runCurrent()
+
+        val gate = CompletableDeferred<Unit>()
+        gameDao.getByIdGate = gate
+
+        val olderUnhide = async { repo.reconcileVisibility() }
+        runCurrent()
+
+        // The restore's authoritative replacement, committed inside the visibility ordering via
+        // mutateHiddenSetAndReconcile (mirrors BackupRepository.importBackup holding the mutex
+        // across BackupMergeEngine.mergeRawWithLockHeld, never across the recompute).
+        val restore = async {
+            repo.mutateHiddenSetAndReconcile {
+                hiddenGameDao.deleteAll()
+                hiddenGameDao.upsertAll(
+                    listOf(
+                        com.example.backlogium.data.local.entity.HiddenGame(
+                            appId = 10L,
+                            hiddenAt = 0L,
+                        ),
+                    ),
+                )
+                events += "hidden-committed"
+            }
+        }
+        runCurrent()
+
+        assertTrue(
+            "the restore must block before its hidden-set commit while the older projection " +
+                "holds the visibility ordering; otherwise the older projection can emit a stale " +
+                "visible state after the commit",
+            "hidden-committed" !in events,
+        )
+
+        gate.complete(Unit)
+        olderUnhide.await()
+        restore.await()
+        runCurrent()
+
+        collector.cancel()
+
+        val finalStatus = repo.liveStatus.value
+        assertEquals(
+            "a restore that hides the running game must suppress the live presentation",
+            NowPlaying.NotPlaying,
+            finalStatus.nowPlaying,
+        )
+
+        val commitIndex = events.indexOf("hidden-committed")
+        assertTrue("expected the restore to record its hidden-set commit", commitIndex >= 0)
+        val afterCommit = events.subList(commitIndex, events.size)
+        assertFalse(
+            "no visible emission is permitted after the restore's hidden-set commit; " +
+                "events were $events",
+            afterCommit.any { it.startsWith("emit:InGame") },
+        )
+    }
+
+    /**
+     * The cold-start writer shares the visibility ordering: a rehydration that read
+     * `isHidden == false` and suspended in `gameDao.getById` must not emit a visible state
+     * after a newer ordered hide commits. Without the ordering, the rehydration resumes and
+     * its CAS from the still-default state succeeds after the hide reconciled a default
+     * (a no-op), leaking the now-hidden game until the next poll. With the ordering, the
+     * hide blocks until rehydration commits, then reconciles the seeded state to suppressed —
+     * so no visible emission lands after the hidden-set commit.
+     */
+    @Test
+    fun rehydration_concurrentOrderedHide_noVisibleEmissionAfterHiddenSetCommit() = runTest {
+        val steamApi = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        settings.session.value = LiveSessionState(appId = 10L, startedAt = 1_000L)
+        val hiddenGameDao = FakeHiddenGameDao()
+        val gameDao = FakeGameDao(game(appId = 10L, name = "Portal", iconUrl = "icon://portal"))
+        // Pause rehydration after its hidden check, in the metadata read.
+        val gate = CompletableDeferred<Unit>()
+        gameDao.getByIdGate = gate
+
+        val repo = repository(
+            steamApi = steamApi,
+            settings = settings,
+            time = FakeTimeProvider(31_000L),
+            scope = this,
+            hiddenGameDao = hiddenGameDao,
+            gameDao = gameDao,
+        )
+
+        val events = mutableListOf<String>()
+        val collector = launch {
+            repo.liveStatus.map { it.nowPlaying }.collect {
+                events += "emit:$it"
+            }
+        }
+        runCurrent()
+
+        // The newer ordered hide (the path GameVisibilityUseCase.hide uses) starts while
+        // rehydration holds the visibility ordering.
+        val hide = async {
+            repo.mutateHiddenSetAndReconcile {
+                hiddenGameDao.upsertAll(
+                    listOf(
+                        com.example.backlogium.data.local.entity.HiddenGame(
+                            appId = 10L,
+                            hiddenAt = 0L,
+                        ),
+                    ),
+                )
+                events += "hidden-committed"
+            }
+        }
+        runCurrent()
+
+        assertTrue(
+            "the ordered hide must block while rehydration holds the visibility ordering; " +
+                "otherwise rehydration can emit a stale visible state after the commit",
+            "hidden-committed" !in events,
+        )
+
+        gate.complete(Unit)
+        hide.await()
+        runCurrent()
+
+        collector.cancel()
+
+        val finalStatus = repo.liveStatus.value
+        assertEquals(
+            "a hide that commits while rehydration is in flight must suppress the presentation",
+            NowPlaying.NotPlaying,
+            finalStatus.nowPlaying,
+        )
+
+        val commitIndex = events.indexOf("hidden-committed")
+        assertTrue("expected the hide to record its hidden-set commit", commitIndex >= 0)
+        val afterCommit = events.subList(commitIndex, events.size)
+        assertFalse(
+            "no visible emission is permitted after the hide's hidden-set commit; " +
+                "events were $events",
+            afterCommit.any { it.startsWith("emit:InGame") },
+        )
+    }
+
     @Test
     fun failedObservationAndStoppedPolling_publishNothing() = runTest {
         val steamApi = FakeSteamApi()
@@ -441,9 +1164,12 @@ class LiveStatusRepositoryTest {
         scope: CoroutineScope,
         gameDao: GameDao = FakeGameDao(),
         sessionEnds: PlaySessionEndPublisher = PlaySessionEndPublisher(),
+        hidden: Set<Long> = emptySet(),
+        hiddenGameDao: HiddenGameDao = FakeHiddenGameDao(hidden),
     ) = LiveStatusRepository(
         steamApi = steamApi,
         gameDao = gameDao,
+        hiddenGameDao = hiddenGameDao,
         profileDao = FakePlayerProfileDao(),
         credentials = FakeCredentialsProvider(),
         settings = settings,
@@ -473,18 +1199,23 @@ class LiveStatusRepositoryTest {
      * a recorded session is rehydrated. Every other member is unused by this test.
      */
     private class FakeGameDao(private vararg val games: Game) : GameDao {
+        var getByIdGate: CompletableDeferred<Unit>? = null
         override suspend fun upsertAll(games: List<Game>) = error("not used")
         override suspend fun upsert(game: Game) = error("not used")
         override suspend fun insertSteamGameIfMissing(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long, firstSeenAt: Long?, lastPlayedAt: Long?) = error("not used")
         override suspend fun updateSteamFields(appId: Long, name: String, iconUrl: String, playtimeForever: Int, playtime2Weeks: Int, lastPlaytime: Int, lastSyncedAt: Long, lastPlayedAt: Long?, returnedToPlayAt: Long?) = error("not used")
         override suspend fun updateRecencyFields(appId: Long, firstSeenAt: Long?, lastPlayedAt: Long?, returnedToPlayAt: Long?) = error("not used")
         override fun observeLibrary(): Flow<List<Game>> = error("not used")
+        override fun observeAllGames(): Flow<List<Game>> = error("not used")
         override fun observeGoalGames(): Flow<List<Game>> = error("not used")
         override fun observeBacklog(): Flow<List<Game>> = error("not used")
         override suspend fun allAppIds(): List<Long> = error("not used")
         override fun observeAppIds(): Flow<List<Long>> = error("not used")
         override suspend fun getAll(): List<Game> = error("not used")
-        override suspend fun getById(appId: Long): Game? = games.firstOrNull { it.appId == appId }
+        override suspend fun getById(appId: Long): Game? {
+            getByIdGate?.await()
+            return games.firstOrNull { it.appId == appId }
+        }
         override suspend fun setGoal(appId: Long, isGoal: Boolean, targetMinutes: Int?) = error("not used")
         override suspend fun setGoalFlag(appId: Long, isGoal: Boolean) = error("not used")
         override suspend fun count(): Int = error("not used")
@@ -543,9 +1274,14 @@ class LiveStatusRepositoryTest {
         var throwOnNextCall = false
         var callCount = 0
             private set
+        var fetchGate: CompletableDeferred<Unit>? = null
 
         fun setInGame(gameId: Long, name: String) {
-            players = listOf(PlayerSummaryDto(gameId = gameId.toString(), gameExtraInfo = name))
+            // A reported gameid means the player is around: Steam reports personastate 1-6
+            // while gaming, never 0. The default 0 would read as offline.
+            players = listOf(
+                PlayerSummaryDto(gameId = gameId.toString(), gameExtraInfo = name, personaState = 1),
+            )
         }
 
         fun setNotInGame() {
@@ -558,6 +1294,7 @@ class LiveStatusRepositoryTest {
             scope: SyncRunRecorder.RunScope?,
         ): PlayerSummariesResponse {
             callCount++
+            fetchGate?.await()
             if (throwOnNextCall) {
                 throwOnNextCall = false
                 throw java.io.IOException("transient failure")
@@ -614,7 +1351,11 @@ class LiveStatusRepositoryTest {
     /** In-memory stand-in for the DataStore-backed implementation (only [session] is exercised). */
     private class FakeSettingsRepository : SettingsRepository {
         val session = MutableStateFlow(LiveSessionState())
-        override val liveSession: Flow<LiveSessionState> = session
+        var liveSessionGate: CompletableDeferred<Unit>? = null
+        override val liveSession: Flow<LiveSessionState> = flow {
+            liveSessionGate?.await()
+            emit(session.value)
+        }
         override suspend fun setLiveSession(appId: Long?, startedAt: Long) {
             session.value = LiveSessionState(appId, startedAt)
         }
