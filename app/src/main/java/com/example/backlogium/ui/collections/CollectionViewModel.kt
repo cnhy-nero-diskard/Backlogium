@@ -423,14 +423,36 @@ class CollectionViewModel @Inject constructor(
         _memberAppIds.update { current -> current.filterNot { it == appId } }
     }
 
-    /** Move a member up/down in the editing sequence (ordered-queue reordering). */
+    /**
+     * Move a member up/down in the editing sequence (ordered-queue reordering).
+     *
+     * Indices are in the visible queue order — the raw buffer with hidden members filtered out,
+     * which is what the editor renders for an ordered queue. The buffer retains hidden ids so
+     * saving round-trips them, so visible positions cannot be applied to the raw list directly:
+     * with raw [A, H, B] and H hidden, visible [A, B], moving visible B up (1 -> 0) must move B,
+     * not raw index 1 (H). The visible order is permuted, then merged back with hidden ids kept
+     * at their stored slots, so a visible reorder never moves a hidden member.
+     */
     fun moveMember(fromIndex: Int, toIndex: Int) {
+        val hidden = libraryMetrics.value.hiddenAppIds
         _memberAppIds.update { current ->
-            if (fromIndex !in current.indices || toIndex !in current.indices) return@update current
-            val reordered = current.toMutableList()
-            val moved = reordered.removeAt(fromIndex)
-            reordered.add(toIndex, moved)
-            reordered
+            if (hidden.isEmpty()) {
+                if (fromIndex !in current.indices || toIndex !in current.indices) return@update current
+                if (fromIndex == toIndex) return@update current
+                val reordered = current.toMutableList()
+                val moved = reordered.removeAt(fromIndex)
+                reordered.add(toIndex, moved)
+                reordered
+            } else {
+                val visible = current.filterNot { it in hidden }
+                if (fromIndex !in visible.indices || toIndex !in visible.indices) return@update current
+                if (fromIndex == toIndex) return@update current
+                val reorderedVisible = visible.toMutableList()
+                val moved = reorderedVisible.removeAt(fromIndex)
+                reorderedVisible.add(toIndex, moved)
+                val fill = reorderedVisible.iterator()
+                current.map { id -> if (id in hidden) id else fill.next() }
+            }
         }
     }
 

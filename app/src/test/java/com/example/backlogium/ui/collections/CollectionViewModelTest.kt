@@ -150,6 +150,109 @@ class CollectionViewModelTest {
         }
     }
 
+    /**
+     * Reordering uses visible positions while the buffer retains hidden ids: with raw [A, H, B]
+     * and H hidden mid-session, moving visible B up must move B, not raw index 1 (H). Applying
+     * filtered UI indices to the raw buffer moved the hidden game instead, so the visible list
+     * appeared not to respond and saving persisted an invisible reorder that moved H.
+     */
+    @Test
+    fun reorderingWithHiddenMemberMidSession_movesVisibleGamesWithoutMovingHidden() {
+        val hiddenGames = fakeHiddenGamesRepository()
+        withViewModel(
+            libraryGames = listOf(
+                Game(
+                    appId = 1L,
+                    name = "Alpha",
+                    iconUrl = "",
+                    playtimeForever = 20,
+                    playtime2Weeks = 0,
+                    lastPlaytime = 20,
+                ),
+                Game(
+                    appId = 2L,
+                    name = "Beta",
+                    iconUrl = "",
+                    playtimeForever = 80,
+                    playtime2Weeks = 0,
+                    lastPlaytime = 80,
+                ),
+                Game(
+                    appId = 3L,
+                    name = "Gamma",
+                    iconUrl = "",
+                    playtimeForever = 10,
+                    playtime2Weeks = 0,
+                    lastPlaytime = 10,
+                ),
+            ),
+            hiddenGames = hiddenGames,
+        ) { viewModel ->
+            viewModel.setMode(CollectionMode.ORDERED_QUEUE)
+            viewModel.addGame(1L)
+            viewModel.addGame(2L)
+            viewModel.addGame(3L)
+            runCurrent()
+            assertEquals(
+                listOf("Alpha", "Beta", "Gamma"),
+                viewModel.uiState.value.members.map { it.name },
+            )
+
+            hiddenGames.hide(setOf(2L))
+            runCurrent()
+            assertEquals(
+                listOf("Alpha", "Gamma"),
+                viewModel.uiState.value.members.map { it.name },
+            )
+
+            // Move visible Gamma up (visible 1 -> 0): the visible reorder must occur.
+            viewModel.moveMember(1, 0)
+            runCurrent()
+            assertEquals(
+                listOf("Gamma", "Alpha"),
+                viewModel.uiState.value.members.map { it.name },
+            )
+
+            // Symmetric move-down restores the visible order.
+            viewModel.moveMember(0, 1)
+            runCurrent()
+            assertEquals(
+                listOf("Alpha", "Gamma"),
+                viewModel.uiState.value.members.map { it.name },
+            )
+
+            // Re-apply the visible swap so there is a reorder to persist, then verify H stayed
+            // in its stored slot: unhiding must restore Beta in the middle with the visible
+            // swap applied around it, rather than H having moved to either end.
+            viewModel.moveMember(1, 0)
+            runCurrent()
+            assertEquals(
+                listOf("Gamma", "Alpha"),
+                viewModel.uiState.value.members.map { it.name },
+            )
+
+            hiddenGames.unhide(listOf(2L))
+            runCurrent()
+            assertEquals(
+                listOf("Gamma", "Beta", "Alpha"),
+                viewModel.uiState.value.members.map { it.name },
+            )
+
+            // Saving while hidden must round-trip the hidden membership without moving it.
+            hiddenGames.hide(setOf(2L))
+            runCurrent()
+            viewModel.setName("Queue")
+            viewModel.save()
+            runCurrent()
+            val storedId = store.collections.single().id
+            assertEquals(
+                listOf(3L, 2L, 1L),
+                store.members.filter { it.collectionId == storedId }
+                    .sortedBy { it.orderIndex }.map { it.appId },
+            )
+        }
+    }
+
     @Test
     fun nonQueueMembers_renderInSelectedSortOrder() = withViewModel(
         libraryGames = listOf(
