@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DatePicker
@@ -27,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -583,13 +583,26 @@ private fun GapPlanMemberRow(
         // saying the identical words is noise. The reason still exists on the candidate — it is
         // what guarantees a game recommended on duration alone has an explanation at all — this
         // is only a decision about not rendering the same fact twice.
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // Rendered as read-only labels rather than disabled chips. A reason is a fact the plan is
+        // asking the player to weigh, and a disabled control is styled to say "unavailable" — on
+        // device the greyed-out text read as switched off rather than as information, which is the
+        // opposite of the point. These are never tappable, so nothing is lost by not looking it.
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             member.reasons.filterNot { it is GapPlanReason.Fit }.forEach { reason ->
-                AssistChip(
-                    onClick = {},
-                    enabled = false,
-                    label = { Text(GapPlanPresentation.reasonLabel(reason)) },
-                )
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ) {
+                    Text(
+                        text = GapPlanPresentation.reasonLabel(reason),
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    )
+                }
             }
         }
     }
