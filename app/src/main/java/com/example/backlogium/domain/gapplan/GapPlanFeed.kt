@@ -19,6 +19,23 @@ import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** Store art for one game, carried alongside the inputs so a card needs no second read path. */
+data class GapPlanArtwork(
+    val iconUrl: String,
+    val headerUrl: String,
+)
+
+/**
+ * One feed emission: what the engine reads, plus what the cards render.
+ *
+ * The two travel together rather than as separate flows so a member card cannot end up showing
+ * art from a different library emission than the plan it belongs to.
+ */
+data class GapPlanFeedSnapshot(
+    val inputs: GapPlanInputs,
+    val artwork: Map<Long, GapPlanArtwork>,
+)
+
 /**
  * The one place gap-plan inputs are assembled.
  *
@@ -72,7 +89,7 @@ class GapPlanFeed @Inject constructor(
      * that repository, but the planning window is derived here, from a freshly read date.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val inputs: Flow<GapPlanInputs> = currentDate.currentDate.flatMapLatest { today ->
+    val snapshots: Flow<GapPlanFeedSnapshot> = currentDate.currentDate.flatMapLatest { today ->
         val affinityCutoff = today
             .minusDays(GenreAffinity.LOOKBACK_DAYS)
             .atStartOfDay(currentDate.zone)
@@ -86,24 +103,29 @@ class GapPlanFeed @Inject constructor(
             paceRepository.profile,
             metadata,
         ) { library, trackedMinutes, windowedSessions, profile, meta ->
-            GapPlanInputs(
-                games = library.map { game -> game.toGapPlanGame(trackedMinutes, meta) },
-                playedDates = windowedSessions.map { session ->
-                    PlayedDate(
-                        appId = session.appId,
-                        date = Instant.ofEpochMilli(session.startAt)
-                            .atZone(currentDate.zone)
-                            .toLocalDate(),
-                    )
+            GapPlanFeedSnapshot(
+                inputs = GapPlanInputs(
+                    games = library.map { game -> game.toGapPlanGame(trackedMinutes, meta) },
+                    playedDates = windowedSessions.map { session ->
+                        PlayedDate(
+                            appId = session.appId,
+                            date = Instant.ofEpochMilli(session.startAt)
+                                .atZone(currentDate.zone)
+                                .toLocalDate(),
+                        )
+                    },
+                    reviewsByAppId = meta.reviewsByApp,
+                    // Labels come from the library join the app already performs, so a genre
+                    // reason names the same words the rest of the app shows for that genre.
+                    genreLabels = library
+                        .flatMap { it.genres }
+                        .associate { it.id to it.label },
+                    paceProfile = profile,
+                    today = today,
+                ),
+                artwork = library.associate {
+                    it.appId to GapPlanArtwork(iconUrl = it.iconUrl, headerUrl = it.headerUrl)
                 },
-                reviewsByAppId = meta.reviewsByApp,
-                // Labels come from the library join the app already performs, so a genre reason
-                // names the same words the rest of the app shows for that genre.
-                genreLabels = library
-                    .flatMap { it.genres }
-                    .associate { it.id to it.label },
-                paceProfile = profile,
-                today = today,
             )
         }
     }
