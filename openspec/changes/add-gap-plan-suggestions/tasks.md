@@ -29,8 +29,8 @@
 
 ## 5. Collection Adoption
 
-- [ ] 5.1 Map an accepted snapshot to a `CollectionSaveDraft` with `id = 0`, name `Before <anticipated title>`, deadline mode, the deadline mode's default sort, ISO target date, null accent and description, selected basis, exact distinct membership, and no done marks, and verify mapping tests cover Story, Completionist, edited previews, and family-shared members.
-- [ ] 5.2 Save the mapped draft through the existing database transaction and return the created collection id while preserving the preview on failure, and verify integration tests prove collection-plus-membership atomicity, retry behavior, and stable membership after recommendation inputs change.
+- [x] 5.1 Map an accepted snapshot to a `CollectionSaveDraft` with `id = 0`, name `Before <anticipated title>`, deadline mode, the deadline mode's default sort, ISO target date, null accent and description, selected basis, exact distinct membership, and no done marks, and verify mapping tests cover Story, Completionist, edited previews, and family-shared members.
+- [x] 5.2 Save the mapped draft through the existing database transaction and return the created collection id while preserving the preview on failure, and verify integration tests prove collection-plus-membership atomicity, retry behavior, and stable membership after recommendation inputs change.
 
 ## 6. Gap-Plan UI
 
