@@ -7,8 +7,10 @@ player's reliable Personal Pace or an explicit one-off time budget.
 
 ### Requirement: Gap plan request
 The system SHALL let the player create a gap-plan request with a non-empty anticipated-title label,
-a future local target date, and either Story or Completionist play intent. The request SHALL allow
-unplayed games and already-started unfinished games to be included, with both included by default.
+a future local target date, and either Story or Completionist play intent. The target date SHALL be
+no more than 1,095 days after the current local date, the same planning horizon the existing pace
+fit derivation applies. The request SHALL allow unplayed games and already-started unfinished games
+to be included, with both included by default.
 
 #### Scenario: Complete request
 - **WHEN** the player supplies an anticipated title, a date after the current local date, and a play intent
@@ -17,6 +19,11 @@ unplayed games and already-started unfinished games to be included, with both in
 #### Scenario: Target date is not in the future
 - **WHEN** the selected target date is today or earlier
 - **THEN** generation remains unavailable until the player selects a future date
+
+#### Scenario: Target date is beyond the planning horizon
+- **WHEN** the selected target date is more than 1,095 days after the current local date
+- **THEN** generation remains unavailable, because capacity is projected one day at a time and a
+  forecast over that span is neither bounded work nor a meaningful plan
 
 #### Scenario: Started games are included
 - **WHEN** the request permits started games
@@ -94,7 +101,10 @@ The system SHALL prefer candidates using selected-basis fit, confidence-adjusted
 quality, recent genre affinity, and completion momentum for already-started games. It SHALL favor
 genre variety when otherwise comparable candidates are combined into one plan. A missing rating or
 genre signal SHALL remain distinguishable from a poor value and SHALL NOT by itself make a fitting
-game ineligible. Identical inputs SHALL produce identical plans with app id as the final tie-breaker.
+game ineligible. A missing signal SHALL contribute a declared neutral value rather than a zero, so an
+un-enriched game is never ranked below a game the player's own library facts rate poorly. Identical
+local inputs SHALL produce identical plan membership with app id as the final tie-breaker, regardless
+of whether any live lookup succeeded, failed, or was still outstanding.
 
 #### Scenario: Review confidence breaks an otherwise equal choice
 - **WHEN** two candidates are otherwise equal and one has the higher confidence-adjusted Steam review quality
@@ -105,11 +115,11 @@ game ineligible. Identical inputs SHALL produce identical plans with app id as t
 - **THEN** the matching candidate is preferred
 
 #### Scenario: Existing progress contributes momentum
-- **WHEN** two otherwise equal candidates fit and one has meaningful unfinished progress
-- **THEN** the started candidate receives a completion-momentum preference without automatically displacing every unplayed candidate
+- **WHEN** two otherwise equal candidates fit, one is unplayed and the other has recorded playtime part-way through its selected estimate
+- **THEN** the started candidate receives a completion-momentum preference proportional to the fraction already played, which is the smallest of the preference components and does not by itself displace a stronger unplayed candidate
 
-#### Scenario: Comparable bundle choices differ in variety
-- **WHEN** two candidate combinations have comparable fit and quality but one covers a broader set of Store genres
+#### Scenario: Equal bundle choices differ in variety
+- **WHEN** two candidate combinations have equal mean candidate quality and equal planned minutes but one covers a broader set of Store genres
 - **THEN** the more varied combination is preferred
 
 #### Scenario: Rating unavailable offline
@@ -135,24 +145,30 @@ justification.
 - **WHEN** a game is recommended using only duration and library facts
 - **THEN** its explanation states the available fit facts without inventing rating, preference, or live-community claims
 
-### Requirement: Optional multiplayer live enrichment
-After deriving a bounded local shortlist, the system MAY fetch a current-player count only for a
-candidate whose cached Store participation categories identify multiplayer, online co-op, or a
-massively multiplayer mode. Available counts SHALL act only as a multiplayer-viability preference
-among shortlisted candidates. An unavailable count SHALL NOT exclude a candidate or prevent local
-plans from being produced.
+### Requirement: Live counts decorate finalized plans only
+Plan membership SHALL be derived entirely from local state, and the three variants SHALL finalize
+before any current-player lookup is issued. After they finalize, the system MAY fetch a current-player
+count for a member whose cached Store participation categories identify multiplayer, online co-op, or
+a massively multiplayer mode. An available count SHALL only order multiplayer members within the
+variant that already contains them and supply a factual explanation; it SHALL NOT add a game, remove
+a game, or move a game between variants. An unavailable count SHALL NOT exclude a member or prevent
+local plans from being produced.
 
-#### Scenario: Single-player candidate
-- **WHEN** a shortlisted candidate has no multiplayer participation category
+#### Scenario: Single-player member
+- **WHEN** a plan member has no multiplayer participation category
 - **THEN** gap-plan generation issues no current-player lookup for it
 
 #### Scenario: Multiplayer count is available
-- **WHEN** a shortlisted multiplayer candidate has an available current-player count
-- **THEN** the count can refine its multiplayer-viability preference and appears as a factual explanation
+- **WHEN** a multiplayer plan member has an available current-player count
+- **THEN** the count orders it among the other multiplayer members of its variant and appears as a factual explanation
 
 #### Scenario: Live lookup is unavailable
 - **WHEN** a multiplayer current-player lookup fails or the device is offline
 - **THEN** the locally derived plan remains usable and the missing count is not interpreted as zero players
+
+#### Scenario: Enrichment cannot change membership
+- **WHEN** the same request is generated once with every live lookup succeeding and once with every live lookup failing
+- **THEN** both runs contain exactly the same games in the same variants, differing only in row order within a variant and in the presence of live explanations
 
 ### Requirement: Plans remain transient until accepted
 Generated variants SHALL be transient recommendation snapshots. Regeneration MAY replace an

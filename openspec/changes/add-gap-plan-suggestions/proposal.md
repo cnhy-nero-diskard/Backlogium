@@ -22,9 +22,10 @@ an explainable recommendation without giving up the app's offline-first behavior
   opaque recommendation score.
 - Add bounded, credential-free acquisition and offline caching of Steam review summaries and Store
   participation categories needed by recommendation ranking and multiplayer classification.
-- Optionally enrich only multiplayer-dependent games in the small generated shortlist with fresh,
-  non-persisted current-player counts. Live-data failure does not block, remove, or invalidate an
-  otherwise valid local plan.
+- Finalize plan membership from local state alone, then optionally decorate only the multiplayer
+  games a plan already contains with fresh, non-persisted current-player counts. Counts order rows
+  and state a fact; they never decide which games a plan contains, so an offline run and an enriched
+  run produce the same plan.
 - Keep generated plans transient until the player confirms one. Confirmation atomically creates a
   stable deadline-goal collection carrying the target date, selected HLTB basis, generated name, and
   accepted membership; later metadata changes do not silently replace its members.
@@ -38,8 +39,10 @@ an explainable recommendation without giving up the app's offline-first behavior
   acquisition, bounded refresh, local caching, freshness, and unavailable-data semantics.
 
 ### Modified Capabilities
-- `steam-player-count`: Permits bounded on-demand current-player lookups for multiplayer games in a
-  generated shortlist while preserving non-persistence and failure-as-unavailable behavior.
+- `steam-player-count`: Permits bounded on-demand current-player lookups for the multiplayer games a
+  finalized gap plan already contains, while preserving non-persistence and failure-as-unavailable
+  behavior. Also scopes the existing 30-second repetition to the game-detail lifecycle, which today
+  reads as an obligation on every lookup and would otherwise contradict the new one-shot use.
 - `custom-collections`: Defines atomic creation of a deadline-goal collection from an accepted gap
   plan.
 - `app-ui`: Adds the gap-plan setup, results, explanation, live-enrichment, and save-confirmation
@@ -53,8 +56,11 @@ an explainable recommendation without giving up the app's offline-first behavior
   achievements, and cached Steam suggestion metadata without exposing Room entities to product UI.
 - Adds Store response models, a local metadata cache, Room migration, repository policy, and bounded
   background enrichment independent of authenticated Steam sync.
-- Extends the current-player lookup contract with a bounded shortlist request lifecycle, without
-  making live counts a persisted or required input.
+- Widens Store enrichment eligibility so records already cached without participation-category data
+  refresh on the next run rather than waiting out their existing freshness window, which is what lets
+  an upgraded install use the feature on day one instead of a month later.
+- Extends the current-player lookup contract with a bounded post-finalization request lifecycle,
+  without making live counts a persisted, required, or membership-deciding input.
 - Adds Home/Collections navigation and Compose/ViewModel state for setup, three plan variants,
   explanations, candidate replacement, and atomic adoption into collections.
 - Does not change the gamification engine, cloud poller, authenticated Steam sync contract, or the

@@ -24,15 +24,22 @@ positive total-hours budget and explain why it is needed.
 - **THEN** setup explains that tracked history is insufficient and requires a positive one-off total-hours budget
 
 ### Requirement: Three explainable plan results
-The result surface SHALL present Relaxed, Balanced, and Full variants distinctly. Each variant SHALL
-show its available time, planned time, remaining reserve, capacity source, and suggested games. Each
-game SHALL show selected-basis remaining time and concise available recommendation reasons. Missing
-HLTB coverage, ratings, genre affinity, or live counts SHALL be disclosed without rendering a false
-zero or blocking otherwise valid results.
+The result surface SHALL present Relaxed, Balanced, and Full variants distinctly. It SHALL state the
+request's full forecast capacity once for all three variants, and each variant SHALL then show its own
+budget, its planned time, its remaining reserve measured against that variant's own budget, its
+capacity source, and its suggested games. Stating only the per-variant figures is not sufficient: a
+variant that plans below full capacity SHALL make the withheld portion visible rather than presenting
+its reduced budget as all the time the player has. Each game SHALL show selected-basis remaining time
+and concise available recommendation reasons. Missing HLTB coverage, ratings, genre affinity, or live
+counts SHALL be disclosed without rendering a false zero or blocking otherwise valid results.
 
 #### Scenario: Three variants generated
 - **WHEN** generation succeeds
 - **THEN** the result distinguishes Relaxed, Balanced, and Full plans and their different time budgets
+
+#### Scenario: Withheld capacity stays visible
+- **WHEN** a Relaxed plan budgets 70% of the forecast capacity and fills nearly all of it
+- **THEN** the surface shows both the small reserve against the Relaxed budget and the full forecast capacity, so the deliberately withheld time is not presented as unavailable
 
 #### Scenario: Incomplete HLTB coverage
 - **WHEN** library games were excluded because the selected estimate is missing
@@ -50,7 +57,9 @@ zero or blocking otherwise valid results.
 The result surface SHALL hold one generated snapshot stable until the player explicitly regenerates
 or edits it. The player SHALL be able to remove a suggested game or replace it with another eligible
 candidate without exceeding the selected variant's budget. In-flight enrichment belonging to an
-abandoned generation SHALL NOT update its replacement.
+abandoned generation SHALL NOT update its replacement, and enrichment belonging to the current
+generation SHALL only reorder rows or add explanations — it SHALL NOT change which games a variant
+contains after the player has been shown it.
 
 #### Scenario: Remove a game
 - **WHEN** the player removes a game from a variant
@@ -63,6 +72,10 @@ abandoned generation SHALL NOT update its replacement.
 #### Scenario: Explicit regeneration
 - **WHEN** the player regenerates after recommendation inputs changed
 - **THEN** a new snapshot replaces the prior unaccepted result
+
+#### Scenario: Live counts arrive after the plan renders
+- **WHEN** current-player counts for the current generation resolve while the player is reading the result
+- **THEN** the same games remain in the same variants, gaining live explanations and multiplayer row ordering only
 
 ### Requirement: Save accepted variant
 Each non-empty variant SHALL offer an explicit action to review its final membership and create a
