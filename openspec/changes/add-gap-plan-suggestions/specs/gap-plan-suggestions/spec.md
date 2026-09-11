@@ -1,7 +1,8 @@
 ## Purpose
 
-Defines explainable, deadline-constrained bundles of playable library games that fit either a
-player's reliable Personal Pace or an explicit one-off time budget.
+Defines rerollable, deadline-constrained single-game suggestions — one per planning intensity —
+drawn from playable library games that fit either a player's reliable Personal Pace or an explicit
+one-off time budget, and presented with the facts needed to judge them.
 
 ## ADDED Requirements
 
@@ -14,7 +15,7 @@ to be included, with both included by default.
 
 #### Scenario: Complete request
 - **WHEN** the player supplies an anticipated title, a date after the current local date, and a play intent
-- **THEN** the system can generate gap plans from the request
+- **THEN** the system can generate gap-plan suggestions from the request
 
 #### Scenario: Target date is not in the future
 - **WHEN** the selected target date is today or earlier
@@ -33,11 +34,12 @@ to be included, with both included by default.
 The system SHALL calculate plan capacity from tomorrow through the target date inclusive. When the
 Personal Pace profile is reliable, capacity SHALL be its projected gaming minutes for that range.
 When the profile is learning, the system SHALL require a positive one-off total-hours budget instead
-and SHALL identify the resulting plans as manually budgeted rather than Personal Pace forecasts.
+and SHALL identify the resulting suggestions as manually budgeted rather than Personal Pace
+forecasts.
 
 #### Scenario: Reliable Personal Pace
 - **WHEN** the player generates a request with a reliable Personal Pace profile
-- **THEN** the full plan budget equals the profile's expected gaming minutes from tomorrow through the target date inclusive
+- **THEN** the full capacity equals the profile's expected gaming minutes from tomorrow through the target date inclusive
 
 #### Scenario: Personal Pace is learning
 - **WHEN** the player generates a request while Personal Pace is learning
@@ -45,40 +47,48 @@ and SHALL identify the resulting plans as manually budgeted rather than Personal
 
 #### Scenario: Manual budget supplied
 - **WHEN** the player supplies a positive total-hours budget for a learning profile
-- **THEN** that duration becomes the full plan budget and the plans are labeled as manually budgeted
+- **THEN** that duration becomes the full capacity and the suggestions are labeled as manually budgeted
 
-### Requirement: Three planning intensities
-Each successful request SHALL produce Relaxed, Balanced, and Full plan variants whose budgets are
-respectively 70%, 85%, and 100% of the request's full capacity. Each variant SHALL contain at most
-five distinct games, and the sum of their selected-basis remaining minutes SHALL NOT exceed that
-variant's budget.
+### Requirement: One pick per planning intensity
+Each successful request SHALL produce exactly three picks — Relaxed, Balanced, and Full — each
+containing exactly one game, whose selected-basis remaining time SHALL NOT exceed that tier's share
+of the request's full capacity: respectively 70%, 85%, and 100%.
 
-#### Scenario: Intensity budgets
+A tier SHALL **target** its share rather than merely cap it: the pick SHALL be drawn from the
+eligible candidates nearest that tier's share, so the three represent three meaningfully different
+lengths of commitment. Treating a share only as a ceiling is insufficient, because every tier could
+then return the same very short game and the choice between tiers would carry no information.
+
+The three picks SHALL be distinct games.
+
+#### Scenario: Tiers differ in length
+- **WHEN** the eligible pool contains games spanning the full range of the request's capacity
+- **THEN** the Relaxed pick is shorter than the Balanced pick, which is shorter than the Full pick,
+  each approaching its own share of capacity rather than sitting arbitrarily far below it
+
+#### Scenario: Intensity ceilings
 - **WHEN** the full capacity is 6,000 minutes
-- **THEN** Relaxed uses at most 4,200 minutes, Balanced uses at most 5,100 minutes, and Full uses at most 6,000 minutes
+- **THEN** the Relaxed pick needs at most 4,200 minutes, Balanced at most 5,100, and Full at most 6,000
 
-#### Scenario: Several short games fit
-- **WHEN** more than five eligible short games fit a variant's budget
-- **THEN** that variant contains no more than five games
+#### Scenario: Picks are distinct
+- **WHEN** one game is the nearest fit for more than one tier
+- **THEN** it occupies only one of them and the others take their next-nearest eligible candidate
 
-#### Scenario: Only one game fits
-- **WHEN** only one eligible candidate can fit a variant's budget
-- **THEN** the variant may contain that one game rather than requiring an arbitrary minimum count
-
-#### Scenario: No game fits
-- **WHEN** no eligible candidate fits a variant's budget
-- **THEN** that variant is empty and explains that no covered game fits its available time
+#### Scenario: No game fits a tier
+- **WHEN** no eligible candidate fits a tier's share of capacity
+- **THEN** that tier has no pick and explains that no covered game fits its available time, without
+  preventing the other tiers from offering theirs
 
 ### Requirement: Candidate eligibility and remaining work
 The system SHALL derive candidates from visible Steam-owned and family-shared library games. It
 SHALL exclude hidden games, games disallowed by the request's started/unplayed selection, games
 already complete at the selected HLTB basis, games lacking a positive estimate for that basis, and
-games whose remaining time cannot fit even the Full budget. Remaining work SHALL be
+games whose remaining time cannot fit even the Full share. Remaining work SHALL be
 `max(selected estimate - truthful displayed playtime, 0)`.
 
 #### Scenario: Family-shared game is eligible
 - **WHEN** a visible family-shared game has a positive selected estimate and remaining work that fits
-- **THEN** it can be recommended and its source remains identifiable
+- **THEN** it can be suggested and its source remains identifiable
 
 #### Scenario: Partially played game
 - **WHEN** a permitted game has 300 played minutes against a 900-minute selected estimate
@@ -96,89 +106,94 @@ games whose remaining time cannot fit even the Full budget. Remaining work SHALL
 - **WHEN** truthful displayed playtime is at or beyond the selected estimate
 - **THEN** the game is excluded as already complete for this request
 
-### Requirement: Explainable candidate preference
-The system SHALL prefer candidates using selected-basis fit, confidence-adjusted Steam review
-quality, recent genre affinity, and completion momentum for already-started games. It SHALL favor
-genre variety when otherwise comparable candidates are combined into one plan. A missing rating or
-genre signal SHALL remain distinguishable from a poor value and SHALL NOT by itself make a fitting
-game ineligible. A missing signal SHALL contribute a declared neutral value rather than a zero, so an
-un-enriched game is never ranked below a game the player's own library facts rate poorly. Identical
-local inputs SHALL produce identical plan membership with app id as the final tie-breaker, regardless
-of whether any live lookup succeeded, failed, or was still outstanding.
+### Requirement: Unweighted selection among eligible candidates
+Within the candidates eligible for a tier, the system SHALL select uniformly at random. It SHALL NOT
+rank or weight candidates by Steam review quality, genre affinity, completion momentum, or any
+composite of them, and SHALL NOT present a selection score to the player.
 
-#### Scenario: Review confidence breaks an otherwise equal choice
-- **WHEN** two candidates are otherwise equal and one has the higher confidence-adjusted Steam review quality
-- **THEN** the higher-quality candidate is preferred
+Those signals SHALL instead be presented as facts about a pick, so the player decides whether a
+suggestion is worth their time. A missing rating or genre signal SHALL remain distinguishable from a
+poor one, SHALL NOT make a fitting game ineligible, and SHALL NOT be rendered as a zero.
 
-#### Scenario: Recent genre affinity breaks an otherwise equal choice
-- **WHEN** two candidates are otherwise equal and one matches genres represented more strongly in the player's recent completed-session history
-- **THEN** the matching candidate is preferred
+#### Scenario: A well-reviewed game holds no selection advantage
+- **WHEN** two candidates are equally near a tier's target and one has far stronger Steam reviews
+- **THEN** both remain equally likely to be picked, and the difference is shown on whichever is
+  picked rather than deciding which is picked
 
-#### Scenario: Existing progress contributes momentum
-- **WHEN** two otherwise equal candidates fit, one is unplayed and the other has recorded playtime part-way through its selected estimate
-- **THEN** the started candidate receives a completion-momentum preference proportional to the fraction already played, which is the smallest of the preference components and does not by itself displace a stronger unplayed candidate
+#### Scenario: An un-enriched game can still be suggested
+- **WHEN** a fitting candidate has no cached review summary or Store genres
+- **THEN** it remains equally eligible, and its card identifies the missing facts as unavailable
+  rather than showing a fabricated rating or genre
 
-#### Scenario: Equal bundle choices differ in variety
-- **WHEN** two candidate combinations have equal mean candidate quality and equal planned minutes but one covers a broader set of Store genres
-- **THEN** the more varied combination is preferred
+#### Scenario: Selection uses no personal preference signal
+- **WHEN** the player's recent history strongly favours one genre
+- **THEN** that history does not make its games more likely to be picked, though it may still be
+  stated on a pick that matches it
 
-#### Scenario: Rating unavailable offline
-- **WHEN** a fitting candidate has no cached Steam review summary
-- **THEN** it remains eligible with rating identified as unavailable rather than receiving a fabricated zero rating
+### Requirement: Rerollable picks with a stable shown result
+Each generation SHALL draw a seed. Identical request inputs, identical local state, and an identical
+seed SHALL produce identical picks. An explicit reroll SHALL draw a new seed.
 
-#### Scenario: Deterministic tie
-- **WHEN** all recommendation inputs for two candidates are equal
-- **THEN** their Steam app ids provide a stable final ordering
+A shown result SHALL remain stable until the player rerolls or edits it, so a suggestion can be
+considered and committed to rather than changing underfoot. A reroll SHALL produce a visibly
+different set of picks whenever the eligible pool is large enough to allow one.
 
-### Requirement: Recommendation explanations
-Every recommended game SHALL expose its estimated remaining time and the available reasons that
-materially supported its recommendation. Reasons SHALL use recognizable facts such as Steam review
-quality and volume, recent genre affinity, existing progress, bundle fit, family-sharing source, and
-multiplayer viability; the system SHALL NOT present an unexplained composite score as user-facing
-justification.
+#### Scenario: Reroll changes the picks
+- **WHEN** the player rerolls and more eligible candidates exist than the three already shown
+- **THEN** the picks change, rather than repeating the previous set
 
-#### Scenario: Multiple reasons are available
-- **WHEN** a game has review, genre, progress, and fit signals
-- **THEN** its recommendation presents concise fact-based reasons derived from those signals
+#### Scenario: The shown result holds still
+- **WHEN** ratings, Personal Pace, playtime, or live counts change while a result is open
+- **THEN** the displayed picks remain exactly as shown until the player rerolls
+
+#### Scenario: A pool too small to vary
+- **WHEN** the eligible pool cannot produce a different set
+- **THEN** the result says so rather than appearing to have ignored the reroll
+
+#### Scenario: Accepted picks are unaffected by later change
+- **WHEN** recommendation inputs change after the player confirms a pick for collection creation
+- **THEN** the created collection retains exactly the accepted game
+
+### Requirement: Picks are presented with the facts that judge them
+Every pick SHALL show its selected-basis remaining time, its Store genres, its Steam review
+description with review count, and — for a pick whose cached participation categories identify
+multiplayer, online co-op, or a massively multiplayer mode — its current player count. Any of these
+facts that is unavailable SHALL be omitted or identified as unavailable rather than rendered as a
+zero, an empty rating, or a fabricated genre. The system SHALL NOT present an unexplained composite
+score as justification.
+
+#### Scenario: A fully enriched pick
+- **WHEN** a pick has cached genres, a cached review summary, and an available player count
+- **THEN** all four facts are shown alongside its remaining time
+
+#### Scenario: A single-player pick
+- **WHEN** a pick advertises no multiplayer participation category
+- **THEN** no player count is shown for it and none is requested
 
 #### Scenario: Sparse metadata
-- **WHEN** a game is recommended using only duration and library facts
-- **THEN** its explanation states the available fit facts without inventing rating, preference, or live-community claims
+- **WHEN** a pick has neither cached reviews nor cached genres
+- **THEN** its remaining time is still shown and the absent facts are omitted rather than invented
 
-### Requirement: Live counts decorate finalized plans only
-Plan membership SHALL be derived entirely from local state, and the three variants SHALL finalize
-before any current-player lookup is issued. After they finalize, the system MAY fetch a current-player
-count for a member whose cached Store participation categories identify multiplayer, online co-op, or
-a massively multiplayer mode. An available count SHALL only order multiplayer members within the
-variant that already contains them and supply a factual explanation; it SHALL NOT add a game, remove
-a game, or move a game between variants. An unavailable count SHALL NOT exclude a member or prevent
-local plans from being produced.
+### Requirement: Live counts decorate finalized picks only
+Pick selection SHALL be derived entirely from local state, and all three picks SHALL finalize before
+any current-player lookup is issued. After they finalize, the system MAY fetch a current-player
+count for a pick whose cached Store participation categories identify multiplayer, online co-op, or
+a massively multiplayer mode. An available count SHALL supply a factual statement about that pick
+and nothing more; it SHALL NOT change which game any tier offers. An unavailable count SHALL NOT
+exclude a pick or prevent local suggestions from being produced.
 
-#### Scenario: Single-player member
-- **WHEN** a plan member has no multiplayer participation category
+#### Scenario: Single-player pick
+- **WHEN** a pick has no multiplayer participation category
 - **THEN** gap-plan generation issues no current-player lookup for it
 
 #### Scenario: Multiplayer count is available
-- **WHEN** a multiplayer plan member has an available current-player count
-- **THEN** the count orders it among the other multiplayer members of its variant and appears as a factual explanation
+- **WHEN** a multiplayer pick has an available current-player count
+- **THEN** the count appears as a factual statement on that pick
 
 #### Scenario: Live lookup is unavailable
-- **WHEN** a multiplayer current-player lookup fails or the device is offline
-- **THEN** the locally derived plan remains usable and the missing count is not interpreted as zero players
+- **WHEN** a current-player lookup fails or the device is offline
+- **THEN** the locally selected picks remain usable and the missing count is not interpreted as zero players
 
-#### Scenario: Enrichment cannot change membership
-- **WHEN** the same request is generated once with every live lookup succeeding and once with every live lookup failing
-- **THEN** both runs contain exactly the same games in the same variants, differing only in row order within a variant and in the presence of live explanations
-
-### Requirement: Plans remain transient until accepted
-Generated variants SHALL be transient recommendation snapshots. Regeneration MAY replace an
-unaccepted snapshot, but changes in ratings, Personal Pace, playtime, or live counts SHALL NOT alter
-the membership of a plan after the player confirms it for collection creation.
-
-#### Scenario: Inputs change before regeneration
-- **WHEN** recommendation inputs change while an unaccepted result is open
-- **THEN** the displayed snapshot remains stable until the player explicitly regenerates it
-
-#### Scenario: Plan is accepted
-- **WHEN** the player confirms one variant and its current membership
-- **THEN** that exact accepted membership is submitted for stable collection creation
+#### Scenario: Enrichment cannot change the picks
+- **WHEN** the same request and seed are generated once with every live lookup succeeding and once with every live lookup failing
+- **THEN** both runs offer exactly the same three games in the same tiers, differing only in the presence of live player counts

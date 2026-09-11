@@ -23,69 +23,94 @@ positive total-hours budget and explain why it is needed.
 - **WHEN** Personal Pace is learning
 - **THEN** setup explains that tracked history is insufficient and requires a positive one-off total-hours budget
 
-### Requirement: Three explainable plan results
-The result surface SHALL present Relaxed, Balanced, and Full variants distinctly. It SHALL state the
-request's full forecast capacity once for all three variants, and each variant SHALL then show its own
-budget, its planned time, its remaining reserve measured against that variant's own budget, its
-capacity source, and its suggested games. Stating only the per-variant figures is not sufficient: a
-variant that plans below full capacity SHALL make the withheld portion visible rather than presenting
-its reduced budget as all the time the player has. Each game SHALL show selected-basis remaining time
-and concise available recommendation reasons. Missing HLTB coverage, ratings, genre affinity, or live
-counts SHALL be disclosed without rendering a false zero or blocking otherwise valid results.
+### Requirement: Three single-game suggestions
+The result surface SHALL present exactly three suggestions — Relaxed, Balanced, and Full — one game
+each. It SHALL state the request's full forecast capacity once for all three, and each SHALL then
+show its own share of that capacity, its pick's selected-basis remaining time, and its capacity
+source. A tier that plans below full capacity SHALL make the withheld portion visible rather than
+presenting its reduced share as all the time the player has.
 
-#### Scenario: Three variants generated
+Each pick SHALL show the facts that let the player judge it without leaving the surface: Store
+genres, Steam review description with review count, and current player count for a multiplayer pick.
+Missing HLTB coverage, ratings, genres, or live counts SHALL be disclosed or omitted without
+rendering a false zero and without blocking otherwise valid suggestions.
+
+#### Scenario: Three picks presented
 - **WHEN** generation succeeds
-- **THEN** the result distinguishes Relaxed, Balanced, and Full plans and their different time budgets
+- **THEN** the result distinguishes Relaxed, Balanced, and Full, each offering one game of a
+  different length
 
 #### Scenario: Withheld capacity stays visible
-- **WHEN** a Relaxed plan budgets 70% of the forecast capacity and fills nearly all of it
-- **THEN** the surface shows both the small reserve against the Relaxed budget and the full forecast capacity, so the deliberately withheld time is not presented as unavailable
+- **WHEN** the Relaxed tier uses 70% of the forecast capacity
+- **THEN** the surface shows both that tier's own share and the full forecast capacity, so the
+  deliberately withheld time is not presented as unavailable
+
+#### Scenario: Pick facts are shown
+- **WHEN** a pick has cached genres, a cached review summary, and an available player count
+- **THEN** its card presents all of them alongside its remaining time
 
 #### Scenario: Incomplete HLTB coverage
 - **WHEN** library games were excluded because the selected estimate is missing
-- **THEN** the result states that recommendation coverage is incomplete without treating those games as short or complete
+- **THEN** the result states that suggestion coverage is incomplete without treating those games as short or complete
 
 #### Scenario: Offline result
 - **WHEN** the device is offline
-- **THEN** cached local plans render immediately, unavailable live facts are omitted or identified as unavailable, and no blocking network error replaces the plans
+- **THEN** locally selected picks render immediately, unavailable live facts are omitted or identified as unavailable, and no blocking network error replaces them
 
-#### Scenario: Family-shared recommendation
-- **WHEN** a family-shared game is recommended
+#### Scenario: Family-shared suggestion
+- **WHEN** a family-shared game is suggested
 - **THEN** the game is visibly identified as family-shared
 
-### Requirement: Stable result interaction
-The result surface SHALL hold one generated snapshot stable until the player explicitly regenerates
-or edits it. The player SHALL be able to remove a suggested game or replace it with another eligible
-candidate without exceeding the selected variant's budget. In-flight enrichment belonging to an
-abandoned generation SHALL NOT update its replacement, and enrichment belonging to the current
-generation SHALL only reorder rows or add explanations — it SHALL NOT change which games a variant
-contains after the player has been shown it.
+#### Scenario: A tier with nothing that fits
+- **WHEN** no eligible game fits a tier's share of capacity
+- **THEN** that tier says so and the other tiers still present their picks
 
-#### Scenario: Remove a game
-- **WHEN** the player removes a game from a variant
-- **THEN** the variant updates its planned and reserve time while the other accepted choices remain
+### Requirement: Inspect a suggestion without leaving the surface
+Activating a suggestion SHALL open a compact game-detail overlay over the gap-plan surface, using
+the same partial-height overlay treatment the Collection surface uses for its own game detail. The
+overlay SHALL leave part of the gap-plan result visible above it, SHALL be dismissible by its own
+control and by system back, and both SHALL return to the result with its picks unchanged. Opening or
+dismissing the overlay SHALL NOT reroll, regenerate, or otherwise alter the suggestions.
 
-#### Scenario: Replacement would exceed budget
-- **WHEN** a replacement candidate would make the variant exceed its budget
-- **THEN** that replacement cannot be confirmed as part of the variant
+#### Scenario: Open a suggestion's detail
+- **WHEN** the player activates a suggested game's card
+- **THEN** a partial-height game-detail overlay rises over the gap-plan result, which remains partly visible above it
 
-#### Scenario: Explicit regeneration
-- **WHEN** the player regenerates after recommendation inputs changed
-- **THEN** a new snapshot replaces the prior unaccepted result
+#### Scenario: Dismiss returns to the same picks
+- **WHEN** the player dismisses the overlay by its control or by system back
+- **THEN** the gap-plan result returns with exactly the same three picks it had before
 
-#### Scenario: Live counts arrive after the plan renders
-- **WHEN** current-player counts for the current generation resolve while the player is reading the result
-- **THEN** the same games remain in the same variants, gaining live explanations and multiplayer row ordering only
+#### Scenario: Inspection is not a reroll
+- **WHEN** the player opens and closes several suggestions in turn
+- **THEN** no suggestion changes as a result
 
-### Requirement: Save accepted variant
-Each non-empty variant SHALL offer an explicit action to review its final membership and create a
-deadline collection. The confirmation SHALL show the generated collection name, target date, HLTB
-basis, and member count. A successful save SHALL navigate to or expose the created collection; a
-failed save SHALL stop its busy indication and keep the preview available for retry.
+### Requirement: Rebuilding produces a visibly different result
+The result surface SHALL offer exactly one control that produces a new set of suggestions, and
+activating it SHALL change the picks whenever the eligible pool allows a different set. The surface
+SHALL NOT present two controls for the same action, and SHALL NOT offer a control whose activation
+leaves the result unchanged without saying why.
+
+#### Scenario: Rebuild rerolls
+- **WHEN** the player activates the rebuild control and more eligible candidates exist than those shown
+- **THEN** a different set of three picks replaces the previous one
+
+#### Scenario: Rebuild cannot vary
+- **WHEN** the eligible pool is too small to produce a different set
+- **THEN** the surface says so rather than appearing to have ignored the action
+
+#### Scenario: Inputs change while a result is open
+- **WHEN** recommendation inputs change while an unaccepted result is open
+- **THEN** the displayed picks remain stable until the player rebuilds
+
+### Requirement: Save an accepted suggestion
+Each tier with a pick SHALL offer an explicit action to review it and create a deadline collection.
+The confirmation SHALL show the generated collection name, target date, HLTB basis, and the game it
+will contain. A successful save SHALL navigate to or expose the created collection; a failed save
+SHALL stop its busy indication and keep the suggestion available for retry.
 
 #### Scenario: Confirm save
-- **WHEN** the player confirms the reviewed plan details
-- **THEN** the accepted variant is submitted for atomic deadline-collection creation
+- **WHEN** the player confirms the reviewed details
+- **THEN** the accepted pick is submitted for atomic deadline-collection creation
 
 #### Scenario: Save succeeds
 - **WHEN** deadline-collection creation succeeds
@@ -93,4 +118,4 @@ failed save SHALL stop its busy indication and keep the preview available for re
 
 #### Scenario: Save fails
 - **WHEN** deadline-collection creation fails
-- **THEN** the UI reports the failure, becomes interactive again, and retains the accepted preview for retry
+- **THEN** the UI reports the failure, becomes interactive again, and retains the accepted suggestion for retry

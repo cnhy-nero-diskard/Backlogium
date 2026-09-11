@@ -20,10 +20,10 @@ commitment rather than changing whenever a cache or live request emits.
 
 **Goals:**
 
-- Keep eligibility, capacity, candidate scoring, bundle composition, and explanations in a pure,
-  deterministic domain engine with injected dates and plain values.
-- Produce meaningfully different risk envelopes without claiming statistical confidence the source
-  data cannot establish.
+- Keep eligibility, capacity, per-tier target selection, and the presented facts in a pure domain
+  engine with injected dates, an injected seed, and plain values.
+- Produce three meaningfully different lengths of commitment without claiming statistical confidence
+  the source data cannot establish, and without ranking games by a composite the player cannot see.
 - Add review and multiplayer metadata through bounded, credential-free, independently failing
   enrichment paths.
 - Finalize one immutable result snapshot per generation and convert the accepted membership through
@@ -36,9 +36,11 @@ commitment rather than changing whenever a cache or live request emits.
 - Predicting or scraping release dates; the anticipated title and date are player-confirmed inputs.
 - Automatically refreshing HLTB data, resolving HLTB matches, or treating missing lengths as zero.
 - Learning a durable taste profile, collecting explicit likes/dislikes, or using cloud inference.
+- Ranking suggestions. The engine selects among fitting candidates without preference and presents
+  the facts; judging a game is the player's job.
 - Reserving capacity against other collections, constructing a daily calendar, or guaranteeing a
   completion date.
-- Persisting recommendation snapshots, current-player counts, or derived scores.
+- Persisting recommendation snapshots, seeds, or current-player counts.
 - Backing up refreshable Steam review and participation-category caches.
 - Letting any network fact decide which games a plan contains.
 
@@ -110,76 +112,42 @@ Achievement completion is not used as a second eligibility definition. The reque
 how long the selected HLTB run remains, so mixing an achievement-first completion rule into this path
 would produce contradictions such as calling a Story run complete only after every trophy.
 
-### 4. Separate candidate quality from bundle composition
+### 4. Select uniformly among the candidates nearest a tier's target
 
-Candidate quality uses normalized components and retains the component values that generated its
-reason codes:
+Each tier targets a share of full capacity — 70%, 85%, 100% — and its pick is drawn **uniformly at
+random** from the eligible candidates nearest that target, with the three picks constrained to be
+distinct.
 
-```text
-candidateQuality = 0.50 * reviewQuality
-                 + 0.30 * genreAffinity
-                 + 0.20 * completionMomentum
-```
+Targeting rather than capping is what makes the tiers mean anything. Under a cap alone, "fits within
+70%" and "fits within 100%" are satisfied by the same two-hour game, so all three tiers could return
+the same length and the choice between them would carry no information. Targeting makes Relaxed a
+short commitment and Full a long one, which is the question the player is actually answering.
 
-`reviewQuality` is the 95% Wilson lower bound of positive versus negative reviews. This prevents
-tiny perfect samples from dominating established ratings.
+Selection is unweighted, and this is the significant reversal from the first design. Review quality,
+genre affinity, and completion momentum no longer choose anything. They are shown on a pick so the
+player can judge it. The reasoning is that a recommender which ranks by an opaque composite is
+asking to be trusted, while one that offers a fitting game and states its Steam rating, its genres,
+its player count, and how much of it is left is asking to be *checked* — and the second is the
+honest posture for a signal set this thin.
 
-A missing review summary contributes the explicit neutral constant `0.5` and carries no review
-reason; a missing or empty genre signal does the same for `genreAffinity`. A fixed neutral is still
-a chosen value rather than an absence, and its consequence is stated here rather than discovered
-later: on a fresh install, an offline device, or any library the bounded enrichment has not yet
-reached, every candidate shares both neutral constants, so 80% of `candidateQuality` is a constant
-and ranking collapses onto `completionMomentum` plus the bundle-level terms. That is the intended
-degradation — a plan built from duration and progress alone, disclosed as such. A neutral was still
-preferred over a zero, which would rank an un-enriched game below a genuinely badly reviewed one.
+**What this deletes.** The previous design carried a considerable machine for choosing: a weighted
+`candidateQuality`, a `bundleValue` objective over mean quality, budget utilization and pairwise
+genre diversity, and a fixed-width beam search with a 32-entry frontier, a declared processing
+order, and a documented tie-break chain — all of it justified by the need to pick five games well
+and reproducibly. None of that survives. One game per tier needs no combination search, and uniform
+selection needs no ranking. This is a large amount of designed and tested behaviour being removed
+deliberately, and it is recorded here rather than quietly dropped, because a future reader will
+otherwise find its absence surprising.
 
-`genreAffinity` is derived from the latest 56 completed local dates with the same 28-day recency
-half-life as Personal Pace. Each game contributes at most once per active date to each of its broad
-genres, regardless of minutes that day. Genre weights are normalized against the strongest observed
-genre; a game uses the mean of its known genre weights. Date-level presence was chosen over raw
-minutes because an endless game or one unattended marathon would otherwise dominate the player's
-inferred taste.
+Within-bundle genre diversity is dropped outright rather than reinterpreted as diversity *across*
+the three tiers. Cross-tier diversity is defensible and was considered, but it constrains a
+selection that is otherwise uniform, and reintroducing a preference immediately after removing all
+of them would undo the point. If three shooters in a row proves annoying in practice, that is a
+later change with its own evidence.
 
-`completionMomentum` is the clamped played fraction of the selected estimate for an unfinished
-started game and zero for an unplayed game. It is deliberately the smallest component: existing
-progress should help surface a finishable game without turning every plan into backlog cleanup.
-
-Each variant independently searches combinations of one to five candidates under its minute budget.
-Bundle value is:
-
-```text
-bundleValue       = 0.60 * mean(candidateQuality)
-                  + 0.30 * budgetUtilization
-                  + 0.10 * genreDiversity
-
-budgetUtilization = plannedMinutes / thisVariantBudgetMinutes
-```
-
-Genre diversity is based on pairwise overlap among games with known genres; unknown genres are
-neutral rather than maximally diverse. Mean candidate quality, rather than summed quality, avoids
-giving five mediocre one-hour games an automatic advantage over two excellent games. Utilization
-still rewards using the available window.
-
-That objective is deliberately non-monotone: `mean(candidateQuality)` rewards small sets while
-`budgetUtilization` rewards large ones, so a partial combination's value bounds nothing about the
-value of any combination extending it. The pruning rule is therefore part of the contract rather
-than an implementation detail, because it decides the answer:
-
-```text
-order      candidates processed by candidateQuality desc, remaining minutes asc, app id asc
-frontier   at most 32 partial combinations retained after each candidate is considered
-key        bundleValue of the partial combination, scored exactly as a final bundle
-tie-break  planned minutes desc, member count asc, lexicographic app-id list
-```
-
-A fixed width and a fixed processing order are what make "identical inputs produce identical plans" a
-testable property rather than an aspiration. Objective components, planned minutes, member count, and
-the lexicographically sorted app-id list provide deterministic comparison of finished bundles in that
-order.
-
-A greedy next-best-game algorithm was rejected because an early medium-length selection can prevent a
-later combination with better total quality, fit, and diversity. An exhaustive search was rejected
-because `n choose 5` is unbounded for a large library.
+A missing rating or genre no longer needs a neutral constant, because nothing is being scored. It is
+simply a fact the card does not show. That removes the whole neutral-versus-zero problem rather than
+solving it.
 
 ### 5. Reuse Store appdetails for participation categories and cache reviews separately
 
@@ -242,77 +210,72 @@ and is therefore already classified as transient, so a throttled client backs of
 hammering — but the aggregate figure is the one to check against Steam's behavior, not the per-chain
 one.
 
-### 6. Live counts decorate finalized plans and never choose their members
+### 6. Live counts decorate finalized picks and never choose them
 
-Plan membership is a function of local state only. The three variants finalize from cached and locally
-derived facts before any network request is made, so an offline device, a timed-out enrichment, and a
-fully enriched run all produce exactly the same games.
+The picks are a function of local state and the seed. All three finalize before any network request,
+so an offline device, a timed-out enrichment, and a fully enriched run all offer the same games.
 
-After the variants finalize, the ViewModel performs one current-player lookup per distinct multiplayer
-member of those variants — at most fifteen app ids, because three variants of at most five games
-cannot contain more, and usually fewer once shared members are deduplicated. Lookups run with a
-concurrency of 4 inside an 8-second overall enrichment window. A generation identity owns every
-lookup; cancellation, navigation, or regeneration invalidates that identity so a predecessor cannot
-publish into its successor, and any result arriving after the window is discarded.
+After they finalize, the ViewModel performs one current-player lookup per distinct multiplayer pick
+— at most three, because the result holds one game per tier. Lookups run with a concurrency of 4
+inside an 8-second overall window. A generation identity owns every lookup; a reroll, cancellation,
+or navigation invalidates that identity so a predecessor cannot publish into its successor, and any
+result arriving after the window is discarded.
 
-An available count may do exactly two things: order multiplayer rows within the variant that already
-contains them, and supply a factual "playing now" reason chip. It may not add a game, remove a game,
-or move a game between variants. Unavailable counts contribute no ordering preference and remain
-different from a successful count of zero.
+An available count may state a fact on the pick that already exists. It may not change which game a
+tier offers. With one pick per tier there is no row order left for a count to influence, which
+removes the previous design's one remaining avenue for a network fact to affect what the player
+sees — an improvement the simplification gets for free.
 
-Letting counts swap otherwise-similar multiplayer alternatives was rejected. It would have required an
-invented similarity threshold, and it would have made the same request produce different plans
-depending on whether the network answered in time — contradicting the requirement that identical
-inputs produce identical plans, and undermining a snapshot the player is being asked to commit a month
-to. Persisting counts or reusing them on game detail was rejected separately: a stale live fact would
-be misleading and would contradict the current player-count lifecycle.
+Persisting counts or reusing them on game detail was rejected separately: a stale live fact would be
+misleading and would contradict the current player-count lifecycle.
 
-### 7. Keep editing transient and adoption stable
+### 7. Reroll by seed, and keep adoption stable
 
-The ViewModel retains the ranked eligible pool with the finalized result. Removing a member or
-choosing a replacement reruns validation and bundle totals locally; replacement choices that exceed
-the selected budget remain unavailable. Neither operation mutates library or collection state.
+Each generation draws a seed and retains it with the result. Identical inputs and an identical seed
+produce identical picks; rebuilding draws a new seed. This is what lets a shown result hold still
+while it is being considered — the property that makes a suggestion something you can commit a month
+to — while still letting the player ask for a different one.
 
-Acceptance maps the final preview to the existing atomic `CollectionSaveDraft` path. Every field of
-that draft is set explicitly, `id` included — `CollectionRepository.save` branches on `id == 0L` to
-choose creation over update, so it is the field that decides what the save means:
+It also replaces the previous design's normative claim that identical inputs produce identical
+membership. That claim was correct and testable, and it was also precisely what made the rebuild
+control a no-op: with nothing else varying, pressing it could only return what was already on
+screen. Seeding preserves the useful half of the property and discards the half that made the
+surface feel broken.
 
-```text
-id           = 0            // 0 selects creation; any other value would update an existing row
-name         = "Before <anticipated title>"
-mode         = DEADLINE_GOAL
-sort         = CollectionMode.DEADLINE_GOAL.defaultSort()
-targetDate   = confirmed target date, ISO-8601
-accent       = null         // default neutral styling, as a manually created collection gets
-timeBasis    = MAIN_STORY or COMPLETIONIST
-description  = null
-memberAppIds = accepted app ids
-doneAppIds   = empty
-```
+Per-slot editing — remove a member, choose a replacement from a filtered pool — is removed with the
+bundles it served. With one game per tier, "swap this one" and "reroll" are the same request, and
+offering both a browse-and-search replacement sheet and a reroll button would reintroduce exactly
+the busywork this design is removing. A player who wants a different game presses rebuild.
 
-This creates a normal collection with stable membership and all existing edit, backup, sync-survival,
-and forecasting behavior. A new recommendation-specific collection table and an auto-updating smart
-collection were rejected: both would duplicate collection behavior, and automatic membership drift
-would undermine a plan the player had committed to follow.
+Acceptance maps the accepted pick to the existing atomic `CollectionSaveDraft` path, unchanged, with
+`memberAppIds` carrying the single accepted game. Every field is still set explicitly, `id` included,
+because `CollectionRepository.save` branches on `id == 0L` to choose creation over update.
 
-### 8. Add one pushed adaptive surface, not another navigation destination
+### 8. One pushed surface, three cards, and detail in place
 
-Home and Collections link to the same route. Setup and results share one ViewModel-scoped flow so the
-player can go back to adjust inputs without writing preferences.
+Home and Collections link to the same route. Setup and results share one ViewModel-scoped flow so
+the player can adjust inputs without writing preferences.
 
-Results present the capacity figures at two levels, because a per-variant figure alone would hide the
-policy. The request's full forecast capacity is stated once for all three variants; each variant then
-states its own budget, its planned minutes, and its reserve as `variantBudget - planned`. A Relaxed
-card that showed only "4,200 available, 300 reserve" would conceal the 1,800 minutes the 70% intensity
-deliberately withheld, which is the opposite of what decision 2 claims to offer.
+Results present capacity at two levels, because a per-tier figure alone would hide the policy. The
+request's full forecast capacity is stated once; each tier then states its own share. A Relaxed card
+showing only its own smaller number would conceal the time the 70% intensity deliberately withheld,
+which is the opposite of what choosing an intensity is meant to offer.
 
-Each variant card also carries capacity provenance, up to five game cards, factual reason chips, HLTB
-coverage disclosure, replacement, and save actions. Family-shared membership is always labeled.
+Each tier renders one game card carrying the facts that judge it: Store genres, Steam review
+description with volume, current players where the pick is multiplayer, and remaining time at the
+selected basis. Family-shared picks are labelled. An unavailable fact is omitted rather than shown
+as a zero.
 
-The save confirmation repeats the generated name, target date, basis, and member count before the
-atomic write. On failure it releases busy state and retains the preview. The surface follows existing
-game-card artwork, density, reduced-motion, and collection-overlay patterns rather than introducing a
-new visual system.
+Activating a card opens the **existing** collection game-detail overlay — partial height, leaving
+the result visible above, dismissed by its own control or system back. Reusing that treatment rather
+than building a second compact detail matters for more than consistency: the overlay already has
+specified artwork fallbacks and dismissal behaviour, and a parallel implementation would drift from
+them. Inspection never rerolls, so a player can open all three in turn and still accept the one they
+started with.
+
+Exactly one control produces a new set. The first implementation shipped two — a primary button and
+a separate "Regenerate" — invoking the same action, which was worse than redundant given the picks
+could not vary: it promised a reroll that did not exist. One control, and it genuinely rerolls.
 
 ## Risks / Trade-offs
 
@@ -324,26 +287,28 @@ new visual system.
   the aggregate bound rather than the per-chain one, keep both chains stopping on the first transient
   failure, and rely on 429 already being classified as transient; revisit the shared spacing if Steam
   throttles in practice.
-- [Wilson quality still reduces taste to community sentiment] -> Keep review quality to half of
-  candidate quality, expose the underlying review fact, and combine it with personal and plan-level
-  signals.
-- [A library the enrichment has not reached ranks almost entirely on progress] -> Accept and disclose
-  it; the plan states the facts it used, and the coverage disclosure says what was missing rather than
-  implying the ranking was better informed than it was.
-- [Genre affinity can mistake repeated obligation for enjoyment] -> Count active dates rather than
-  hours, use recency decay, keep the signal weak and explainable, and do not persist a behavioral
-  profile.
-- [Beam search can miss the mathematical global optimum] -> Fix the width, the processing order, and
-  the frontier key so the result is at least reproducible, and test adversarial packing cases;
-  recommendation usefulness matters more than claiming exact optimization.
-- [A current-player snapshot varies by time zone and hour] -> Keep it out of membership entirely, use
-  it only to order rows and state a fact, label it as current, and do not persist it.
+- [Uniform selection will sometimes offer a poorly reviewed or unappealing game] -> Accept it as the
+  cost of not ranking, and answer it with presentation rather than filtering: the card states the
+  rating, volume, genres, players, and remaining time, and rebuilding is one tap. A filter on
+  quality would reintroduce the opaque judgement this design removes.
+- [A library the enrichment has not reached offers picks with almost no facts attached] -> Accept and
+  disclose it. Selection is unaffected, since nothing is ranked, but the cards will be sparse and the
+  coverage disclosure says so rather than implying more was known.
+- [Genre affinity can mistake repeated obligation for enjoyment] -> It no longer selects anything, so
+  the risk is reduced to a possibly odd sentence on a card. Count active dates rather than hours, use
+  recency decay, and do not persist a behavioral profile.
+- [A small eligible pool makes rerolling produce the same picks] -> Detect it and say so, rather than
+  letting the control appear ignored. This is the failure mode that made the previous rebuild button
+  feel broken, and it is now an explicit state instead of an unexplained no-op.
+- [A current-player snapshot varies by time zone and hour] -> Keep it out of selection entirely, use
+  it only to state a fact, label it as current, and do not persist it.
 - [A learning player can enter an unrealistic manual budget] -> Label manual provenance clearly and
   apply the same visible utilization levels rather than presenting a Personal Pace claim.
 - [Independent gap plans and existing collections can overcommit the same future time] -> Preserve the
   existing non-reservation model and avoid language implying that capacity has been booked.
-- [Five-game cap can leave substantial time unused when only very short games qualify] -> Show the
-  reserve honestly; the cap protects result readability and the request for a focused set.
+- [One game per tier can leave substantial time unused when nothing near a target qualifies] -> Show
+  the tier's share and the pick's remaining time honestly, and let rebuilding look again. Three
+  legible choices are the point; filling the window exactly is not.
 
 ## Migration Plan
 
@@ -354,17 +319,17 @@ new visual system.
    freshness.
 2. Extend Store parsing and family-shared seeding, then add review acquisition, repository mapping,
    bounded worker scheduling, and migration tests before exposing the cache to recommendations.
-3. Add and test the pure recommendation engine, including confidence-adjusted reviews, recency genre
-   affinity, capacity provenance, eligibility, bundle search, explanations, and deterministic ties.
-4. Add the aggregation feed, then the post-finalization live-count decoration, keeping the local path
-   complete on its own so the decoration is never load-bearing.
-5. Add setup/results navigation and UI, then map acceptance through the existing atomic collection
-   save protocol.
+3. Add and test the pure engine: eligibility, capacity provenance, per-tier target selection, seeded
+   uniform draw, distinctness across tiers, and the facts carried on a pick.
+4. Add the aggregation feed, then the post-finalization live-count decoration for at most three app
+   ids, keeping the local path complete on its own so the decoration is never load-bearing.
+5. Add setup/results navigation, the three single-pick cards, and the in-place detail overlay, then
+   map acceptance through the existing atomic collection save protocol.
 6. Verify offline generation, cancellation ownership, process recreation before save, save failure,
    and both fresh-install and upgraded-database behavior — the upgraded case specifically confirming
    that a pre-existing enriched library acquires categories rather than waiting 30 days.
 
-Rollback removes the route, worker, feed, and recommendation engine. The extra cache table and
+Rollback removes the route, worker, feed, and selection engine. The extra cache table and
 nullable category column can remain inert under a downgraded feature build; no user-authored state
 depends on them. Collections already accepted by the player remain ordinary deadline collections and
 must not be deleted during rollback.
