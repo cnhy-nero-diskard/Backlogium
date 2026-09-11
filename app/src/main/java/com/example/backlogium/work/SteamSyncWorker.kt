@@ -163,6 +163,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private val achievementRepository: AchievementRepository,
     private val backupRepository: BackupRepository,
     private val genreEnrichmentScheduler: GenreEnrichmentScheduler,
+    private val reviewEnrichmentScheduler: ReviewEnrichmentScheduler,
     private val presenceServiceStarter: PresenceServiceStarter,
     private val diagnostics: SyncRunRecorder,
     private val time: TimeProvider,
@@ -390,8 +391,10 @@ class SteamSyncWorker @AssistedInject constructor(
 
                     // Store metadata is a separately scheduled best-effort concern: never await it
                     // or make an otherwise-valid owned-games poll fail because the public Store is
-                    // unavailable.
+                    // unavailable. The two chains are enqueued independently and guarded
+                    // independently, so neither can prevent the other from being scheduled.
                     runCatching { genreEnrichmentScheduler.ensureEnqueued() }
+                    runCatching { reviewEnrichmentScheduler.ensureEnqueued() }
 
                     // Derived values deliberately follow through the existing cross-store
                     // write-ahead protocol, after a version check against the configuration read

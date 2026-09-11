@@ -12,6 +12,7 @@ import com.example.backlogium.data.remote.dto.StoreAppDetails
 import com.example.backlogium.data.remote.dto.StoreCategoryDto
 import com.example.backlogium.data.remote.dto.StoreGenreDto
 import com.example.backlogium.data.remote.dto.StorePriceEnvelope
+import com.example.backlogium.data.remote.dto.StoreReviewsResponse
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -314,6 +315,15 @@ class GameGenreRepositoryTest {
             countryCode: String?,
             filters: String,
         ): Response<Map<String, StorePriceEnvelope>> = error("prices are not part of this test")
+
+        /** Review summaries are a separate chain; this double must never be asked for one. */
+        override suspend fun appReviews(
+            appId: Long,
+            json: Int,
+            language: String,
+            purchaseType: String,
+            pageSize: Int,
+        ): Response<StoreReviewsResponse> = error("reviews are not part of this test")
 
         val requested = mutableListOf<Long>()
 

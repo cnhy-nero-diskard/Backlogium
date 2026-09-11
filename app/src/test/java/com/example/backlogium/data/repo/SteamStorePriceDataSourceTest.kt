@@ -3,6 +3,7 @@ package com.example.backlogium.data.repo
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.StoreAppDetails
 import com.example.backlogium.data.remote.dto.StorePriceEnvelope
+import com.example.backlogium.data.remote.dto.StoreReviewsResponse
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -166,6 +167,15 @@ class SteamStorePriceDataSourceTest {
                 ?: return Response.error(500, "no body".toResponseBody("text/plain".toMediaType()))
             return Response.success(body)
         }
+
+        /** Review summaries are a separate chain; this double must never be asked for one. */
+        override suspend fun appReviews(
+            appId: Long,
+            json: Int,
+            language: String,
+            purchaseType: String,
+            pageSize: Int,
+        ): Response<StoreReviewsResponse> = error("reviews are not part of this test")
     }
 
     private companion object {
