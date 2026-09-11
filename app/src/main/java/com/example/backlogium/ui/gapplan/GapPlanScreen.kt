@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.domain.gapplan.GapPlanIntent
+import com.example.backlogium.domain.gapplan.GapPlanReason
 import com.example.backlogium.domain.gapplan.PlanIntensity
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.util.UiFormat
@@ -59,16 +60,6 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlin.math.roundToInt
 
-/**
- * The gap-plan builder: one pushed surface carrying setup and results together.
- *
- * Setup stays visible above the result rather than being replaced by it, so adjusting an input and
- * regenerating is one screen rather than a round trip — and nothing about setup is written
- * anywhere, so going back costs nothing.
- *
- * Deliberately silent: every control here is navigation, filtering, or list interaction, none of
- * which is in the app's haptic vocabulary. No platform haptic call appears in this package.
- */
 /**
  * Every action the surface can take, hoisted into one value.
  *
@@ -162,7 +153,9 @@ fun GapPlanContent(state: GapPlanUiState, actions: GapPlanActions) {
     Column(Modifier.fillMaxSize()) {
         GapPlanHeader(onDone = actions.onDone)
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag(TAG_PLAN_LIST),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -585,8 +578,13 @@ private fun GapPlanMemberRow(
                 Icon(TablerIcons.X, contentDescription = "Remove ${member.name}")
             }
         }
+        // Fit is deliberately not repeated as a chip: the row above already states the remaining
+        // time as its own subtitle, in the most prominent place on the card, and a chip beside it
+        // saying the identical words is noise. The reason still exists on the candidate — it is
+        // what guarantees a game recommended on duration alone has an explanation at all — this
+        // is only a decision about not rendering the same fact twice.
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            member.reasons.forEach { reason ->
+            member.reasons.filterNot { it is GapPlanReason.Fit }.forEach { reason ->
                 AssistChip(
                     onClick = {},
                     enabled = false,
@@ -669,6 +667,13 @@ private fun GapPlanSaveDialog(
 }
 
 /** Stable handles for behaviour tests, so an assertion never depends on user-facing wording. */
+
+/**
+ * The scrolling container. A behaviour test has to drive *this* to reach a row, because a lazy
+ * list has not composed the items that are still off screen and a node-level scroll cannot find
+ * what does not yet exist.
+ */
+internal const val TAG_PLAN_LIST = "gapplan-list"
 internal const val TAG_TITLE_FIELD = "gapplan-title"
 internal const val TAG_DATE_ROW = "gapplan-date-row"
 internal const val TAG_PICK_DATE = "gapplan-pick-date"

@@ -11,6 +11,12 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
@@ -138,10 +144,15 @@ class GapPlanScreenBehaviorTest {
     fun allThreeVariantsRenderWithTheirOwnBudgets() {
         setContent(state = { GapPlanUiState(loading = false, result = result()) })
 
+        // The capacity header is asserted before scrolling past it: it sits above the variants,
+        // and scrolling back up to a lazy item that has since been recycled is a different test.
+        scrollTo(hasTestTag(TAG_CAPACITY_SOURCE))
+        composeRule.onNodeWithTag(TAG_CAPACITY_SOURCE).assertIsDisplayed()
+
         PlanIntensity.entries.forEach { intensity ->
-            composeRule.onNodeWithTag(variantTag(intensity)).performScrollTo().assertIsDisplayed()
+            scrollTo(hasTestTag(variantTag(intensity)))
+            composeRule.onNodeWithTag(variantTag(intensity)).assertIsDisplayed()
         }
-        composeRule.onNodeWithTag(TAG_CAPACITY_SOURCE).performScrollTo().assertIsDisplayed()
     }
 
     /** A plan built without ratings or genres still renders, and says what it could not see. */
@@ -161,10 +172,15 @@ class GapPlanScreenBehaviorTest {
         setContent(state = { GapPlanUiState(loading = false, result = sparse) })
 
         GapPlanPresentation.coverageDisclosures(sparse.coverage).forEach { disclosure ->
-            composeRule.onNodeWithText(disclosure).performScrollTo().assertIsDisplayed()
+            scrollTo(hasText(disclosure))
+            composeRule.onNodeWithText(disclosure).assertIsDisplayed()
         }
-        // The fit chip is present; no rating or genre chip is invented to fill the space.
-        composeRule.onNodeWithText("10h left").performScrollTo().assertIsDisplayed()
+        // Remaining time is stated exactly once per row — as the row's own subtitle, not also as
+        // a chip repeating the same words — and no rating or genre chip is invented to fill the
+        // space a sparse library leaves empty.
+        val remaining = inVariant(PlanIntensity.RELAXED, hasText("10h left"))
+        scrollTo(remaining)
+        composeRule.onNode(remaining).assertIsDisplayed()
     }
 
     @Test
@@ -175,8 +191,12 @@ class GapPlanScreenBehaviorTest {
             },
         )
 
-        composeRule.onNodeWithText(GapPlanPresentation.emptyVariantMessage())
-            .performScrollTo().assertIsDisplayed()
+        val message = inVariant(
+            PlanIntensity.RELAXED,
+            hasText(GapPlanPresentation.emptyVariantMessage()),
+        )
+        scrollTo(message)
+        composeRule.onNode(message).assertIsDisplayed()
         // A variant with nothing in it offers no save action.
         composeRule.onNodeWithTag(saveTag(PlanIntensity.FULL)).assertDoesNotExistNow()
     }
@@ -200,7 +220,9 @@ class GapPlanScreenBehaviorTest {
             },
         )
 
-        composeRule.onNodeWithText("Family shared").performScrollTo().assertIsDisplayed()
+        val label = inVariant(PlanIntensity.RELAXED, hasText("Family shared"))
+        scrollTo(label)
+        composeRule.onNode(label).assertIsDisplayed()
     }
 
     @Test
@@ -211,7 +233,12 @@ class GapPlanScreenBehaviorTest {
             actions = GapPlanActions(onRemove = { intensity, appId -> removed = intensity to appId }),
         )
 
-        composeRule.onNodeWithTag(removeTag(2L)).performScrollTo().performClick()
+        // Scoped to the Relaxed card: the same member appears in all three variants, so an
+        // unscoped tag would be ambiguous — and "which variant reported the removal" is precisely
+        // what this test is about.
+        val remove = inVariant(PlanIntensity.RELAXED, hasTestTag(removeTag(2L)))
+        scrollTo(remove)
+        composeRule.onNode(remove).performClick()
 
         assertEquals(PlanIntensity.RELAXED to 2L, removed)
     }
@@ -295,7 +322,9 @@ class GapPlanScreenBehaviorTest {
         val after = state.result!!.variant(PlanIntensity.RELAXED)!!.members.map { it.appId }
         assertEquals(before.sorted(), after.sorted())
         assertTrue("row order may change", before != after)
-        composeRule.onNodeWithText("900 playing now").performScrollTo().assertIsDisplayed()
+        val chip = inVariant(PlanIntensity.RELAXED, hasText("900 playing now"))
+        scrollTo(chip)
+        composeRule.onNode(chip).assertIsDisplayed()
     }
 
     /** The confirmation restates exactly what is about to be written, before anything is. */
@@ -318,10 +347,12 @@ class GapPlanScreenBehaviorTest {
         )
 
         composeRule.onNodeWithTag(TAG_SAVE_DIALOG).assertIsDisplayed()
-        composeRule.onNodeWithText("Before Silksong").assertIsDisplayed()
-        composeRule.onNodeWithText("Deadline 2026-12-01").assertIsDisplayed()
-        composeRule.onNodeWithText("Main Story").assertIsDisplayed()
-        composeRule.onNodeWithText("2 games").assertIsDisplayed()
+        // Scoped to the dialog: the capacity header behind it also renders "Before Silksong", and
+        // the assertion is about what the *confirmation* restates before anything is written.
+        composeRule.onNode(inDialog(hasText("Before Silksong"))).assertIsDisplayed()
+        composeRule.onNode(inDialog(hasText("Deadline 2026-12-01"))).assertIsDisplayed()
+        composeRule.onNode(inDialog(hasText("Main Story"))).assertIsDisplayed()
+        composeRule.onNode(inDialog(hasText("2 games"))).assertIsDisplayed()
     }
 
     /** While saving, the confirm action is unavailable rather than re-submittable. */
@@ -351,10 +382,17 @@ class GapPlanScreenBehaviorTest {
             state = { GapPlanUiState(loading = false, result = result(), saveError = true) },
         )
 
-        composeRule.onNodeWithTag(TAG_SAVE_ERROR).performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag(variantTag(PlanIntensity.RELAXED)).performScrollTo()
-            .assertIsDisplayed()
-        composeRule.onNodeWithTag(saveTag(PlanIntensity.RELAXED)).performScrollTo().assertIsEnabled()
+        // The error sits below all three variant cards, so the list has to be scrolled to it —
+        // a lazy item that is still off screen has not been composed for a node-level scroll to
+        // find.
+        scrollTo(hasTestTag(TAG_SAVE_ERROR))
+        composeRule.onNodeWithTag(TAG_SAVE_ERROR).assertIsDisplayed()
+
+        // And the preview is still there, still offering the same save.
+        scrollTo(hasTestTag(variantTag(PlanIntensity.RELAXED)))
+        composeRule.onNodeWithTag(variantTag(PlanIntensity.RELAXED)).assertIsDisplayed()
+        scrollTo(hasTestTag(saveTag(PlanIntensity.RELAXED)))
+        composeRule.onNodeWithTag(saveTag(PlanIntensity.RELAXED)).assertIsEnabled()
     }
 
     /** A cleared date is representable: generation is gated on one being present. */
@@ -450,6 +488,31 @@ class GapPlanScreenBehaviorTest {
 
         assertEquals(picked, state.setup.targetDate)
     }
+
+    /**
+     * Drives the lazy list rather than the node.
+     *
+     * `performScrollTo()` on a node only works once that node exists; a `LazyColumn` has not
+     * composed the rows still off screen, so anything below the fold has to be reached through the
+     * list itself.
+     */
+    private fun scrollTo(matcher: SemanticsMatcher) =
+        composeRule.onNodeWithTag(TAG_PLAN_LIST).performScrollToNode(matcher)
+
+    /**
+     * Scopes a matcher to one variant card.
+     *
+     * The fixture deliberately puts the same members in all three variants — that is what a real
+     * generation often produces — so an unscoped member matcher is ambiguous. Scoping also makes
+     * the assertion say what it means: not "this row exists somewhere" but "this row is in the
+     * Relaxed plan".
+     */
+    private fun inVariant(intensity: PlanIntensity, matcher: SemanticsMatcher): SemanticsMatcher =
+        matcher and hasAnyAncestor(hasTestTag(variantTag(intensity)))
+
+    /** Scopes a matcher to the save confirmation, which overlays content sharing its wording. */
+    private fun inDialog(matcher: SemanticsMatcher): SemanticsMatcher =
+        matcher and hasAnyAncestor(hasTestTag(TAG_SAVE_DIALOG))
 
     private fun setContent(
         state: () -> GapPlanUiState,
