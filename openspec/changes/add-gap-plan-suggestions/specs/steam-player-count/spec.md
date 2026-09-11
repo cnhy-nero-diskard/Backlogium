@@ -1,3 +1,10 @@
+## Purpose
+
+Defines how the app looks up a game's current Steam concurrent-player count: an unauthenticated
+lookup that is never persisted. The game detail screen polls it every 30 seconds while open; other
+callers — a finalized gap plan's multiplayer members — issue one bounded, one-shot lookup under
+their own lifecycle. Polling is a property of the detail screen, not of every lookup.
+
 ## MODIFIED Requirements
 
 ### Requirement: Current player count lookup
