@@ -61,10 +61,23 @@ then return the same very short game and the choice between tiers would carry no
 
 The three picks SHALL be distinct games.
 
+The three picks SHALL also be ordered by commitment: the Relaxed pick's remaining time SHALL NOT
+exceed the Balanced pick's, which SHALL NOT exceed the Full pick's. This holds unconditionally, not
+only when the pool spans the request's capacity. A lower intensity offering a longer game than a
+higher one contradicts what the tier labels promise, and a pool whose eligible games cluster well
+below every share — ordinary for a library with few resolved lengths — otherwise produces exactly
+that.
+
 #### Scenario: Tiers differ in length
 - **WHEN** the eligible pool contains games spanning the full range of the request's capacity
-- **THEN** the Relaxed pick is shorter than the Balanced pick, which is shorter than the Full pick,
-  each approaching its own share of capacity rather than sitting arbitrarily far below it
+- **THEN** each pick approaches its own share of capacity rather than sitting arbitrarily far below
+  it, so the three represent three meaningfully different lengths of commitment
+
+#### Scenario: A clustered pool still orders its tiers
+- **WHEN** every eligible candidate sits well below all three shares, so several are equally near
+  more than one tier
+- **THEN** the picks are still ordered shortest to longest across Relaxed, Balanced, and Full,
+  rather than landing in whatever tiers they were drawn for
 
 #### Scenario: Intensity ceilings
 - **WHEN** the full capacity is 6,000 minutes

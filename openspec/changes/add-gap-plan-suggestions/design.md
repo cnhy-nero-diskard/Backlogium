@@ -149,6 +149,21 @@ A missing rating or genre no longer needs a neutral constant, because nothing is
 simply a fact the card does not show. That removes the whole neutral-versus-zero problem rather than
 solving it.
 
+**Ordering is imposed after the draw, not during it.** The three picks are drawn as above, then
+assigned to tiers in ascending remaining time. Constraining each lower tier to draw only below the
+tier above was rejected: it can empty a tier where a distinct eligible game existed, which
+contradicts the distinctness scenario's "next-nearest eligible candidate". Reassignment cannot break
+a ceiling, because shares increase with intensity — matching ascending lengths to ascending shares is
+feasible whenever any assignment is, so the sorted assignment is safe exactly when the drawn one was.
+
+This was found on a real library rather than in review, and the numbers are worth keeping because
+they show how ordinary the case is: three eligible games at 91h 55m, 93h 44m and 142h 29m against a
+302h 54m forecast, where a reroll put the 93h 44m game at Relaxed and the 91h 55m game at Balanced.
+Both sat far below both the 212h and 257h shares, so the nearness band held both for both tiers and
+the draw was free to invert them. Targeting alone guarantees ordering only when the pool spans the
+request's capacity; a library with few resolved HLTB lengths does not, and that is the common case
+rather than the exception.
+
 ### 5. Reuse Store appdetails for participation categories and cache reviews separately
 
 Extend the existing Store appdetails DTO and definitive result to carry only the participation

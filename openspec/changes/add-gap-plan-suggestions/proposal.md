@@ -13,8 +13,8 @@ an explainable recommendation without giving up the app's offline-first behavior
   and already-started games.
 - Offer exactly three suggestions from visible Steam-owned and family-shared games — one game each
   for Relaxed, Balanced, and Full — where a tier *targets* 70%, 85%, or 100% of available time
-  rather than merely capping it, so the three are three meaningfully different lengths of
-  commitment. The three are distinct games.
+  rather than merely capping it, so the three are three different lengths of commitment, always
+  ordered shortest to longest. The three are distinct games.
 - Select uniformly at random among the candidates nearest a tier's target, and present the facts
   that judge a pick rather than ranking by them. The app surfaces Store genres, Steam review
   description and volume, current players, and remaining time; the player decides. No composite
