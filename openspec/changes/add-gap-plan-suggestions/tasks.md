@@ -43,9 +43,9 @@
 
 ## 7. Verification
 
-- [ ] 7.1 Run `./gradlew :app:testDebugUnitTest` and fix all selection, repository, worker, ViewModel, migration, and regression test failures.
-- [ ] 7.2 Run `./gradlew assembleDebug` and verify the debug APK compiles with Room schema export, Hilt bindings, WorkManager registration, navigation, and Compose resources.
-- [ ] 7.3 Run the repository UI-to-storage import boundary grep and haptic-authority grep documented in `CLAUDE.md`, and verify the new product UI imports no Room/DAO/DataStore types and introduces no platform haptic call.
+- [x] 7.1 Run `./gradlew :app:testDebugUnitTest` and fix all selection, repository, worker, ViewModel, migration, and regression test failures.
+- [x] 7.2 Run `./gradlew assembleDebug` and verify the debug APK compiles with Room schema export, Hilt bindings, WorkManager registration, navigation, and Compose resources.
+- [x] 7.3 Run the repository UI-to-storage import boundary grep and haptic-authority grep documented in `CLAUDE.md`, and verify the new product UI imports no Room/DAO/DataStore types and introduces no platform haptic call.
 - [ ] 7.4 Exercise on a device or emulator with reliable pace, learning/manual budget, offline mode, missing HLTB/reviews, family sharing, multiplayer decoration, and accepted collection save; confirm the three picks are three distinct games of visibly different lengths, that rebuilding changes them, that opening a pick's detail overlay and dismissing it leaves them unchanged, and that all three cards stay readable on narrow and wide layouts.
 - [x] 7.5 Exercise an upgraded database seeded with freshly checked pre-change metadata rows and confirm participation categories are acquired on the next enrichment run rather than after the 30-day window, so the multiplayer path is live on an existing install.
 - [x] 7.6 Update the `steam-player-count` capability's Purpose during spec sync so it no longer scopes current-player lookups to the game detail screen; the delta's requirement change alone does not carry that prose.
