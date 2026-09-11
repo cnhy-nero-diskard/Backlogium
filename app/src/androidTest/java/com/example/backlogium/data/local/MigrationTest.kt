@@ -87,6 +87,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_29_30,
         BacklogiumDatabase.MIGRATION_30_31,
         BacklogiumDatabase.MIGRATION_31_32,
+        BacklogiumDatabase.MIGRATION_32_33,
     )
 
     @Test
@@ -1095,6 +1096,115 @@ class MigrationTest {
                     assertTrue(cursor.moveToFirst())
                     assertEquals(0L, cursor.getLong(0))
                     assertEquals(1, cursor.getInt(1))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    /**
+     * v32 -> v33: an already-enriched library keeps every genre row and its original check time,
+     * gains an explicitly *unknown* category payload, and gains an empty review cache
+     * (add-gap-plan-suggestions).
+     *
+     * The freshness assertion is the point of the hop: nothing resets `checkedAt`, because the
+     * genre data those rows carry is still valid. What makes the multiplayer path live on day one
+     * is the widened eligibility predicate asserted below, not a discarded timestamp.
+     */
+    @Test
+    fun v32ToV33_preservesEnrichedGenreRowsAsUnknownCategoriesAndAddsAnEmptyReviewCache() {
+        val databaseName = "migration-v32-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 32)
+        try {
+            database.execSQL(
+                "INSERT INTO games " +
+                    "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+                    "isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, firstSeenAt, " +
+                    "lastPlayedAt, returnedToPlayAt, manualSharedMinutes) VALUES " +
+                    "(570, 'Dota 2', '', 100, 0, 100, 0, NULL, 1700000000000, 0, 'STEAM_OWNED', " +
+                    "1700000000000, NULL, NULL, 0)",
+            )
+            database.execSQL(
+                "INSERT INTO game_genre_cache (appId, genresJson, checkedAt, appType) VALUES " +
+                    "(570, '[{\"id\":\"1\",\"label\":\"Action\"}]', 1700000000000, 'game')",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                33,
+                true,
+                BacklogiumDatabase.MIGRATION_32_33,
+            )
+            try {
+                migrated.query(
+                    "SELECT genresJson, checkedAt, appType, categoriesJson " +
+                        "FROM game_genre_cache WHERE appId = 570",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("[{\"id\":\"1\",\"label\":\"Action\"}]", cursor.getString(0))
+                    // Untouched: genre freshness is still valid and is deliberately not discarded.
+                    assertEquals(1700000000000L, cursor.getLong(1))
+                    assertEquals("game", cursor.getString(2))
+                    // Unknown, never "advertises none" — only the latter may read as single-player.
+                    assertTrue(cursor.isNull(3))
+                }
+
+                // A fresh row with no categories is eligible *immediately*, not in 30 days. The
+                // predicate is the shipped DAO query's, so an upgraded install picks these up on
+                // the very next enrichment batch.
+                migrated.query(
+                    "SELECT games.appId FROM games " +
+                        "LEFT JOIN game_genre_cache ON games.appId = game_genre_cache.appId " +
+                        "WHERE games.appId NOT IN (SELECT appId FROM hidden_games) " +
+                        "AND (game_genre_cache.appId IS NULL " +
+                        "OR game_genre_cache.checkedAt < 1600000000000 " +
+                        "OR game_genre_cache.categoriesJson IS NULL)",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(570L, cursor.getLong(0))
+                    assertFalse(cursor.moveToNext())
+                }
+
+                // The review cache exists, starts empty — no row means "never checked" — and is
+                // writable with a cascading link to games.
+                migrated.query("SELECT COUNT(*) FROM steam_review_cache").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+                assertForeignKeyReferencesGames(migrated, "steam_review_cache")
+                migrated.execSQL(
+                    "INSERT INTO steam_review_cache " +
+                        "(appId, description, positive, negative, total, available, checkedAt) " +
+                        "VALUES (570, 'Very Positive', 2234895, 541071, 2775966, 1, 1700000000001)",
+                )
+                migrated.execSQL(
+                    "UPDATE game_genre_cache SET categoriesJson = '[]' WHERE appId = 570",
+                )
+                migrated.query(
+                    "SELECT total, available FROM steam_review_cache WHERE appId = 570",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(2775966, cursor.getInt(0))
+                    assertEquals(1, cursor.getInt(1))
+                }
+                // Once answered, the same row is no longer eligible on the category clause alone.
+                migrated.query(
+                    "SELECT COUNT(*) FROM games " +
+                        "LEFT JOIN game_genre_cache ON games.appId = game_genre_cache.appId " +
+                        "WHERE games.appId NOT IN (SELECT appId FROM hidden_games) " +
+                        "AND (game_genre_cache.appId IS NULL " +
+                        "OR game_genre_cache.checkedAt < 1600000000000 " +
+                        "OR game_genre_cache.categoriesJson IS NULL)",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
                 }
             } finally {
                 migrated.close()

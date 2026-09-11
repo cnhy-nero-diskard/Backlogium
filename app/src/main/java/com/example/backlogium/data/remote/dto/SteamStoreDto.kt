@@ -35,11 +35,32 @@ data class StoreAppData(
     val type: String? = null,
     val genres: List<StoreGenreDto> = emptyList(),
     val name: String? = null,
+    /**
+     * Participation categories — "Multi-player", "Online Co-op", "MMO", … — already present in
+     * every `appdetails` response and previously discarded. Retaining them is what makes the
+     * gap-plan multiplayer classification possible without a single extra request
+     * (add-gap-plan-suggestions).
+     */
+    val categories: List<StoreCategoryDto> = emptyList(),
 )
 
-/** Broad Store genre only; categories and community tags intentionally have no DTO surface. */
+/** Broad Store genre only; community tags intentionally have no DTO surface. */
 @Serializable
 data class StoreGenreDto(
     @SerialName("id") val id: String? = null,
+    @SerialName("description") val description: String? = null,
+)
+
+/**
+ * One participation category. **Not a copy of [StoreGenreDto] with a different name**: Steam sends
+ * a genre's `id` as a JSON *string* and a category's as a JSON *number*, so sharing one shape
+ * would fail to deserialize every response that carries categories.
+ *
+ * [description] is the localized label. It is retained for display only — classification matches
+ * on [id], which does not change with the request's `l=` parameter.
+ */
+@Serializable
+data class StoreCategoryDto(
+    @SerialName("id") val id: Int? = null,
     @SerialName("description") val description: String? = null,
 )

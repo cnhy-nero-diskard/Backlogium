@@ -32,6 +32,18 @@ class GameGenreRepository @Inject constructor(
     }
 
     /**
+     * Participation categories per app id, for the gap-plan multiplayer classification.
+     *
+     * A game is absent from the map when it has no cache row, and maps to **null** when its row
+     * carries no category payload — both mean *unknown*. Only a present, non-null, possibly empty
+     * list is an answer, so no consumer can reach "advertises none" by accident
+     * (add-gap-plan-suggestions).
+     */
+    val allCategories: Flow<Map<Long, List<GameCategory>?>> = cacheDao.observeAll().map { rows ->
+        rows.associate { it.appId to GameCategoryCodec.decodeOrNull(it.categoriesJson) }
+    }
+
+    /**
      * Refreshes one missing-first, bounded batch. Only definitive results are written; a Store
      * failure keeps last-known data intact and asks WorkManager to retry the chain later.
      */
@@ -42,7 +54,8 @@ class GameGenreRepository @Inject constructor(
         for ((index, appId) in appIds.withIndex()) {
             if (index > 0) delay(MIN_REQUEST_SPACING_MILLIS)
             when (val result = store.genresFor(appId)) {
-                is StoreGenreResult.Details -> write(appId, result.genres, result.appType)
+                is StoreGenreResult.Details ->
+                    write(appId, result.genres, result.appType, result.categories)
                 is StoreGenreResult.TransientFailure -> transientFailure = true
             }
             if (transientFailure) break
@@ -61,15 +74,30 @@ class GameGenreRepository @Inject constructor(
      * Admission only admits store type `game` (see SteamStoreAppDataSource), so the seeded row
      * records that type alongside the genres.
      */
-    suspend fun storeGenres(appId: Long, genres: List<GameGenre>) = write(appId, genres, appType = "game")
+    suspend fun storeGenres(
+        appId: Long,
+        genres: List<GameGenre>,
+        categories: List<GameCategory>?,
+    ) = write(appId, genres, appType = "game", categories = categories)
 
-    private suspend fun write(appId: Long, genres: List<GameGenre>, appType: String?) {
+    /**
+     * [categories] is written through verbatim, null included. A null payload leaves the row
+     * eligible for the next enrichment batch regardless of its freshness, which is precisely what
+     * should happen when the Store declined to describe the app's participation modes.
+     */
+    private suspend fun write(
+        appId: Long,
+        genres: List<GameGenre>,
+        appType: String?,
+        categories: List<GameCategory>?,
+    ) {
         cacheDao.upsert(
             GameGenreCache(
                 appId = appId,
                 genresJson = GameGenreCodec.encode(genres),
                 checkedAt = time.nowMillis(),
                 appType = appType,
+                categoriesJson = categories?.let(GameCategoryCodec::encode),
             ),
         )
     }

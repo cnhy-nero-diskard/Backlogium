@@ -16,7 +16,16 @@ import javax.inject.Singleton
  * game because the store was down once.
  */
 sealed interface StoreAppInfo {
-    data class Game(val name: String, val genres: List<GameGenre>) : StoreAppInfo
+    /**
+     * [categories] are the same response's participation categories. Non-null by construction:
+     * this value is only produced from a successful envelope, which *is* an answer about the
+     * app's participation modes even when it lists none (add-gap-plan-suggestions).
+     */
+    data class Game(
+        val name: String,
+        val genres: List<GameGenre>,
+        val categories: List<GameCategory> = emptyList(),
+    ) : StoreAppInfo
 
     /** The store answered and this app id is not a game (tool, application, video, demo, DLC). */
     data object NotAGame : StoreAppInfo
@@ -46,7 +55,11 @@ class SteamStoreAppDataSource @Inject constructor(
 
             val name = data.name?.trim().orEmpty()
             if (name.isEmpty()) return StoreAppInfo.Unavailable()
-            StoreAppInfo.Game(name = name, genres = data.genres.toGameGenres())
+            StoreAppInfo.Game(
+                name = name,
+                genres = data.genres.toGameGenres(),
+                categories = data.categories.toGameCategories(),
+            )
         } catch (error: IOException) {
             StoreAppInfo.Unavailable(error)
         } catch (error: HttpException) {

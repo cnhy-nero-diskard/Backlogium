@@ -23,13 +23,23 @@ interface GameGenreCacheDao {
      * Hidden games are excluded: enrichment is a request budget spent on games the player can see
      * (add-hidden-games). Unhiding makes a game eligible again with no extra bookkeeping, because
      * eligibility is this query rather than a stored flag.
+     *
+     * A row whose `categoriesJson` is null is eligible **regardless of `checkedAt`**
+     * (add-gap-plan-suggestions). Such a row was written before participation categories were
+     * retained, so it has never been checked for the data now required — freshness for the genres
+     * it does carry says nothing about categories it was never asked for. Without this clause an
+     * upgraded install would refetch nothing for up to 30 days and the multiplayer path would sit
+     * inert on exactly the libraries with the most data. Null-category rows sort with the missing
+     * rows rather than behind the stale ones, so an upgrade backfills them first.
      */
     @Query(
         "SELECT games.appId FROM games " +
             "LEFT JOIN game_genre_cache ON games.appId = game_genre_cache.appId " +
             "WHERE games.appId NOT IN (SELECT appId FROM hidden_games) " +
-            "AND (game_genre_cache.appId IS NULL OR game_genre_cache.checkedAt < :staleBefore) " +
-            "ORDER BY CASE WHEN game_genre_cache.appId IS NULL THEN 0 ELSE 1 END, " +
+            "AND (game_genre_cache.appId IS NULL OR game_genre_cache.checkedAt < :staleBefore " +
+            "OR game_genre_cache.categoriesJson IS NULL) " +
+            "ORDER BY CASE WHEN game_genre_cache.appId IS NULL " +
+            "OR game_genre_cache.categoriesJson IS NULL THEN 0 ELSE 1 END, " +
             "game_genre_cache.checkedAt ASC LIMIT :limit",
     )
     suspend fun eligibleAppIds(staleBefore: Long, limit: Int): List<Long>
@@ -38,7 +48,8 @@ interface GameGenreCacheDao {
         "SELECT COUNT(*) FROM games " +
             "LEFT JOIN game_genre_cache ON games.appId = game_genre_cache.appId " +
             "WHERE games.appId NOT IN (SELECT appId FROM hidden_games) " +
-            "AND (game_genre_cache.appId IS NULL OR game_genre_cache.checkedAt < :staleBefore)",
+            "AND (game_genre_cache.appId IS NULL OR game_genre_cache.checkedAt < :staleBefore " +
+            "OR game_genre_cache.categoriesJson IS NULL)",
     )
     suspend fun eligibleCount(staleBefore: Long): Int
 
