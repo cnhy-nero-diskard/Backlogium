@@ -18,10 +18,17 @@ data class GapPlanSetupUi(
     val intent: GapPlanIntent = GapPlanIntent.STORY,
     val includeUnplayed: Boolean = true,
     val includeStarted: Boolean = true,
-    /** Only collected, and only required, when Personal Pace is learning. */
-    val manualTotalHours: String = "",
+    /**
+     * Only collected, and only required, when Personal Pace is learning.
+     *
+     * An `Int` rather than free text because this is an estimate, not a measurement: the setup
+     * copy asks for *roughly* how many hours the player expects, and a text field would invite a
+     * precision the answer does not have. Zero means "not chosen yet", which is what gates
+     * generation.
+     */
+    val manualTotalHours: Int = 0,
 ) {
-    val manualHoursValue: Int? get() = manualTotalHours.trim().toIntOrNull()
+    val manualHoursValue: Int? get() = manualTotalHours.takeIf { it > 0 }
 }
 
 /** One suggested game as its card renders it. */

@@ -10,8 +10,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import com.example.backlogium.domain.gapplan.CapacityProvenance
 import com.example.backlogium.domain.gapplan.GapPlanCoverage
@@ -57,7 +58,12 @@ class GapPlanScreenBehaviorTest {
         composeRule.onNodeWithTag(TAG_TITLE_FIELD).performTextInput("Silksong")
         composeRule.onNodeWithTag(TAG_GENERATE).assertIsNotEnabled()
 
-        composeRule.onNodeWithTag(TAG_DATE_FIELD).performTextInput("2026-12-01")
+        // The date arrives from the picker, which is the only way to set one.
+        composeRule.onNodeWithTag(TAG_PICK_DATE).performClick()
+        composeRule.onNodeWithText("Cancel").performClick()
+        composeRule.onNodeWithTag(TAG_GENERATE).assertIsNotEnabled()
+
+        state = state.copy(setup = state.setup.copy(targetDate = LocalDate.now().plusDays(60)))
         composeRule.onNodeWithTag(TAG_GENERATE).assertIsEnabled()
     }
 
@@ -89,11 +95,11 @@ class GapPlanScreenBehaviorTest {
         var state by mutableStateOf(GapPlanUiState(loading = false, requiresManualBudget = false))
         setContent(state = { state })
 
-        composeRule.onNodeWithTag(TAG_HOURS_FIELD).assertDoesNotExistNow()
+        composeRule.onNodeWithTag(TAG_HOURS_SLIDER).assertDoesNotExistNow()
         composeRule.onNodeWithText(GapPlanPresentation.reliablePaceExplanation()).assertIsDisplayed()
 
         state = state.copy(requiresManualBudget = true)
-        composeRule.onNodeWithTag(TAG_HOURS_FIELD).assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_HOURS_SLIDER).assertIsDisplayed()
         composeRule.onNodeWithText(GapPlanPresentation.manualBudgetExplanation()).assertIsDisplayed()
     }
 
@@ -370,10 +376,79 @@ class GapPlanScreenBehaviorTest {
             ),
         )
 
-        composeRule.onNodeWithTag(TAG_DATE_FIELD).performTextClearance()
+        composeRule.onNodeWithTag(TAG_CLEAR_DATE).performClick()
 
         assertNull(state.setup.targetDate)
         composeRule.onNodeWithTag(TAG_GENERATE).assertIsNotEnabled()
+        // Clear is offered only while there is something to clear.
+        composeRule.onNodeWithTag(TAG_CLEAR_DATE).assertDoesNotExistNow()
+    }
+
+    /**
+     * The slider reports whole hours and states the running total, so the value the plan will be
+     * built from is visible while it is being chosen rather than only after.
+     */
+    @Test
+    fun theHoursSliderReportsWholeHoursAndStatesTheRunningTotal() {
+        var state by mutableStateOf(
+            GapPlanUiState(loading = false, requiresManualBudget = true),
+        )
+        setContent(
+            state = { state },
+            actions = GapPlanActions(
+                onManualHoursChange = {
+                    state = state.copy(setup = state.setup.copy(manualTotalHours = it))
+                },
+            ),
+        )
+
+        // Nothing chosen yet reads as a prompt, not as a budget of zero hours.
+        composeRule.onNodeWithText("Drag to set the hours you expect to have").assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_GENERATE).assertIsNotEnabled()
+
+        composeRule.onNodeWithTag(TAG_HOURS_SLIDER).performSemanticsAction(
+            SemanticsActions.SetProgress,
+        ) { it(120f) }
+
+        assertTrue("the slider must report whole hours", state.setup.manualTotalHours > 0)
+        composeRule.onNodeWithText("About ${state.setup.manualTotalHours} hours before then")
+            .assertIsDisplayed()
+    }
+
+    /** The date row shows the chosen day in the same format the collection editor uses. */
+    @Test
+    fun theDateRowShowsNoDateUntilOneIsPickedAndThenShowsIt() {
+        var state by mutableStateOf(GapPlanUiState(loading = false))
+        setContent(state = { state })
+
+        composeRule.onNodeWithText("No target date set").assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_CLEAR_DATE).assertDoesNotExistNow()
+
+        val picked = LocalDate.parse("2026-12-01")
+        state = state.copy(setup = state.setup.copy(targetDate = picked))
+
+        composeRule.onNodeWithTag(TAG_DATE_ROW).assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_CLEAR_DATE).assertIsDisplayed()
+    }
+
+    /** Dismissing the picker leaves the previous answer alone rather than clearing it. */
+    @Test
+    fun cancellingThePickerDoesNotChangeTheDate() {
+        val picked = LocalDate.parse("2026-12-01")
+        var state by mutableStateOf(
+            GapPlanUiState(loading = false, setup = GapPlanSetupUi(targetDate = picked)),
+        )
+        setContent(
+            state = { state },
+            actions = GapPlanActions(
+                onTargetDateChange = { state = state.copy(setup = state.setup.copy(targetDate = it)) },
+            ),
+        )
+
+        composeRule.onNodeWithTag(TAG_PICK_DATE).performClick()
+        composeRule.onNodeWithText("Cancel").performClick()
+
+        assertEquals(picked, state.setup.targetDate)
     }
 
     private fun setContent(

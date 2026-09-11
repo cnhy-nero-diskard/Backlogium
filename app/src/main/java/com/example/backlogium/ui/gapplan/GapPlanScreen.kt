@@ -12,11 +12,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -24,16 +26,20 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -46,8 +52,12 @@ import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowBack
 import compose.icons.tablericons.Refresh
 import compose.icons.tablericons.X
+import java.time.Instant
 import java.time.LocalDate
-import java.time.format.DateTimeParseException
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import kotlin.math.roundToInt
 
 /**
  * The gap-plan builder: one pushed surface carrying setup and results together.
@@ -72,7 +82,7 @@ data class GapPlanActions(
     val onIntentChange: (GapPlanIntent) -> Unit = {},
     val onIncludeUnplayedChange: (Boolean) -> Unit = {},
     val onIncludeStartedChange: (Boolean) -> Unit = {},
-    val onManualHoursChange: (String) -> Unit = {},
+    val onManualHoursChange: (Int) -> Unit = {},
     val onGenerate: () -> Unit = {},
     val onRegenerate: () -> Unit = {},
     val onRemove: (PlanIntensity, Long) -> Unit = { _, _ -> },
@@ -255,7 +265,7 @@ private fun GapPlanSetupCard(state: GapPlanUiState, actions: GapPlanActions) {
                     .fillMaxWidth()
                     .testTag(TAG_TITLE_FIELD),
             )
-            GapPlanDateField(
+            GapPlanDateRow(
                 value = state.setup.targetDate,
                 onChange = actions.onTargetDateChange,
             )
@@ -269,15 +279,9 @@ private fun GapPlanSetupCard(state: GapPlanUiState, actions: GapPlanActions) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (state.requiresManualBudget) {
-                OutlinedTextField(
-                    value = state.setup.manualTotalHours,
-                    onValueChange = actions.onManualHoursChange,
-                    label = { Text("Hours you expect to have") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag(TAG_HOURS_FIELD),
+                GapPlanHoursSlider(
+                    hours = state.setup.manualTotalHours,
+                    onChange = actions.onManualHoursChange,
                 )
             }
 
@@ -339,30 +343,116 @@ private fun GapPlanSetupCard(state: GapPlanUiState, actions: GapPlanActions) {
 }
 
 /**
- * A plain ISO date field rather than a picker dialog.
+ * The target date, picked rather than typed.
  *
- * A malformed or partial entry clears the date instead of guessing one: generation is gated on a
- * date being present, so "not yet a date" has to be representable.
+ * Matches the deadline-collection editor pattern: a read-only row with Pick and Clear actions over
+ * a [DatePickerDialog]. Typing an ISO date on a phone keyboard to choose a day up to three years
+ * out would be worse in every way, and a second way of entering the same kind of date would
+ * eventually drift from the first.
+ *
+ * Clearing is offered because "not yet a date" has to stay representable. Generation is gated on a
+ * date being present, and a field that always holds *some* date would quietly plan against a
+ * default the player never chose.
+ *
+ * The picker works in UTC, like the collection editor, so the selected calendar day is the day the
+ * player tapped rather than one shifted by the device offset.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GapPlanDateRow(value: LocalDate?, onChange: (LocalDate?) -> Unit) {
+    var showPicker by rememberSaveable { mutableStateOf(false) }
+
+    Card(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .testTag(TAG_DATE_ROW),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = value?.format(gapPlanDateFormatter) ?: "No target date set",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            TextButton(onClick = { showPicker = true }, modifier = Modifier.testTag(TAG_PICK_DATE)) {
+                Text("Pick")
+            }
+            if (value != null) {
+                TextButton(
+                    onClick = { onChange(null) },
+                    modifier = Modifier.testTag(TAG_CLEAR_DATE),
+                ) {
+                    Text("Clear")
+                }
+            }
+        }
+    }
+
+    if (showPicker) {
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = value
+                ?.atStartOfDay(ZoneOffset.UTC)
+                ?.toInstant()
+                ?.toEpochMilli(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showPicker = false
+                        pickerState.selectedDateMillis?.let { millis ->
+                            onChange(
+                                Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate(),
+                            )
+                        }
+                    },
+                ) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("Cancel") }
+            },
+        ) {
+            DatePicker(state = pickerState)
+        }
+    }
+}
+
+/**
+ * The one-off budget, as a coarse slider rather than a number field.
+ *
+ * The question being asked is "roughly how many hours do you expect to have", and a keyboard entry
+ * would invite a precision the answer does not have: 137 is not a more honest estimate than 135.
+ * Five-hour steps and a stated total keep it an estimate while still showing exactly what the plan
+ * will be built from.
+ *
+ * Zero is a real position on the scale. It means "not chosen yet", which is what keeps generation
+ * unavailable until the player actually answers.
  */
 @Composable
-private fun GapPlanDateField(value: LocalDate?, onChange: (LocalDate?) -> Unit) {
-    OutlinedTextField(
-        value = value?.toString().orEmpty(),
-        onValueChange = { text ->
-            onChange(
-                try {
-                    LocalDate.parse(text.trim())
-                } catch (_: DateTimeParseException) {
-                    null
-                },
-            )
-        },
-        label = { Text("Target date (YYYY-MM-DD)") },
-        singleLine = true,
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag(TAG_DATE_FIELD),
-    )
+private fun GapPlanHoursSlider(hours: Int, onChange: (Int) -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            text = if (hours > 0) {
+                "About $hours hours before then"
+            } else {
+                "Drag to set the hours you expect to have"
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.testTag(TAG_HOURS_VALUE),
+        )
+        Slider(
+            value = hours.toFloat(),
+            onValueChange = { onChange(it.roundToInt()) },
+            valueRange = 0f..GapPlanViewModel.MAX_MANUAL_HOURS.toFloat(),
+            // One stop per step, minus the two endpoints the range already provides.
+            steps = (GapPlanViewModel.MAX_MANUAL_HOURS / GapPlanViewModel.MANUAL_HOURS_STEP) - 1,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(TAG_HOURS_SLIDER),
+        )
+    }
 }
 
 @Composable
@@ -580,8 +670,11 @@ private fun GapPlanSaveDialog(
 
 /** Stable handles for behaviour tests, so an assertion never depends on user-facing wording. */
 internal const val TAG_TITLE_FIELD = "gapplan-title"
-internal const val TAG_DATE_FIELD = "gapplan-date"
-internal const val TAG_HOURS_FIELD = "gapplan-hours"
+internal const val TAG_DATE_ROW = "gapplan-date-row"
+internal const val TAG_PICK_DATE = "gapplan-pick-date"
+internal const val TAG_CLEAR_DATE = "gapplan-clear-date"
+internal const val TAG_HOURS_SLIDER = "gapplan-hours-slider"
+internal const val TAG_HOURS_VALUE = "gapplan-hours-value"
 internal const val TAG_GENERATE = "gapplan-generate"
 internal const val TAG_REGENERATE = "gapplan-regenerate"
 internal const val TAG_VALIDATION = "gapplan-validation"
@@ -600,3 +693,7 @@ internal fun replacementOptionTag(appId: Long) = "gapplan-swap-option-$appId"
 
 /** Keeps the swap list readable; the ranking already put the best candidates first. */
 private const val MAX_REPLACEMENT_OPTIONS = 8
+
+/** Matches the collection editor deadline formatting, so one date reads the same everywhere. */
+private val gapPlanDateFormatter: DateTimeFormatter =
+    DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)

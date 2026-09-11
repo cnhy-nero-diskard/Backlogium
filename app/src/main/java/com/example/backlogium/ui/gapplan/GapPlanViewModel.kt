@@ -76,8 +76,10 @@ class GapPlanViewModel @Inject constructor(
 
     fun setIncludeStarted(include: Boolean) = updateSetup { it.copy(includeStarted = include) }
 
-    fun setManualTotalHours(hours: String) =
-        updateSetup { it.copy(manualTotalHours = hours.filter(Char::isDigit).take(MAX_HOURS_DIGITS)) }
+    /** Clamped to the slider's own range, so no caller can push the budget outside it. */
+    fun setManualTotalHours(hours: Int) = updateSetup {
+        it.copy(manualTotalHours = hours.coerceIn(0, MAX_MANUAL_HOURS))
+    }
 
     /**
      * Generates all three variants from local state, then decorates them.
@@ -273,8 +275,17 @@ class GapPlanViewModel @Inject constructor(
     private fun updateSetup(transform: (GapPlanSetupUi) -> GapPlanSetupUi) =
         _uiState.update { it.copy(setup = transform(it.setup), validationError = null) }
 
-    private companion object {
-        /** Four digits is more hours than the planning horizon can hold; beyond it is a typo. */
-        const val MAX_HOURS_DIGITS = 4
+    companion object {
+        /**
+         * The top of the manual-budget slider, in hours.
+         *
+         * 500 hours is already an implausible amount of play for a gap most players are planning,
+         * and the figure only ever scales a plan the player can see — so a ceiling costs nothing
+         * and keeps the slider's low end, where real answers live, actually usable.
+         */
+        const val MAX_MANUAL_HOURS = 500
+
+        /** Slider granularity. Finer steps would imply a precision the estimate does not have. */
+        const val MANUAL_HOURS_STEP = 5
     }
 }

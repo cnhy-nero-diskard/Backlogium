@@ -84,8 +84,18 @@ class GapPlanViewModelTest {
         fillSetup(viewModel)
         assertFalse("without hours, generation must not be offered", viewModel.uiState.value.canGenerate)
 
-        viewModel.setManualTotalHours("20")
+        viewModel.setManualTotalHours(20)
         assertTrue(viewModel.uiState.value.canGenerate)
+        // Clamped to the slider range, so nothing can push the budget past its ceiling.
+        viewModel.setManualTotalHours(10_000)
+        assertEquals(
+            GapPlanViewModel.MAX_MANUAL_HOURS,
+            viewModel.uiState.value.setup.manualTotalHours,
+        )
+        viewModel.setManualTotalHours(-5)
+        assertEquals(0, viewModel.uiState.value.setup.manualTotalHours)
+        assertFalse("zero hours is not an answer", viewModel.uiState.value.canGenerate)
+        viewModel.setManualTotalHours(20)
         viewModel.generate()
         advanceUntilIdle()
 
