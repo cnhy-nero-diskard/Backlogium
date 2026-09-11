@@ -1,7 +1,6 @@
 package com.example.backlogium.domain.gapplan
 
 import com.example.backlogium.data.repo.GameReviewSummary
-import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.PersonalPaceProfile
 import java.time.LocalDate
 
@@ -9,7 +8,7 @@ import java.time.LocalDate
  * Everything one generation reads, gathered before any of it runs.
  *
  * A single snapshot of inputs rather than a set of live flows: the engine must be able to say that
- * two variants were built from the same facts, which is not true if each one re-reads a stream
+ * all three picks were drawn from the same facts, which is not true if each tier re-reads a stream
  * that can emit between them.
  */
 data class GapPlanInputs(
@@ -17,7 +16,7 @@ data class GapPlanInputs(
     /** Completed sessions in the affinity window, reduced to game-and-date. */
     val playedDates: List<PlayedDate>,
     val reviewsByAppId: Map<Long, GameReviewSummary>,
-    /** Store genre id to its label, for naming a genre reason the player can recognise. */
+    /** Store genre id to its label, for naming the genres a card shows. */
     val genreLabels: Map<String, String>,
     val paceProfile: PersonalPaceProfile,
     /**
@@ -30,21 +29,31 @@ data class GapPlanInputs(
 /**
  * The pure gap-plan engine.
  *
- * No Room, no Retrofit, no Android, no clock. Everything it needs arrives as plain values, which
- * is what lets the whole of eligibility, scoring, composition, and explanation be exercised
- * exhaustively from a JVM test — including the cases a device can only reach by accident, like an
- * empty library or a pool where every candidate ties.
+ * No Room, no Retrofit, no Android, no clock, and no random source of its own. Everything it needs
+ * arrives as plain values — the seed included — which is what lets eligibility, capacity, the draw,
+ * and the presented facts be exercised exhaustively from a JVM test, including the cases a device
+ * can only reach by accident: an empty library, a pool where every candidate ties, a tier nothing
+ * fits.
  */
 object GapPlanEngine {
 
     /**
-     * Generates all three variants from local state alone.
+     * Draws one pick per tier from local state alone.
      *
-     * Membership is a function of the inputs and nothing else. No network fact participates, so an
-     * offline device, a timed-out enrichment, and a fully enriched run produce exactly the same
-     * games — which is the property that lets a player commit a month to the result.
+     * The picks are a function of the inputs and [seed], and of nothing else. No network fact
+     * participates, so an offline device, a timed-out enrichment, and a fully enriched run all
+     * offer exactly the same three games — which is the property that lets a player commit a month
+     * to what they are looking at.
+     *
+     * [seed] is supplied by the caller rather than drawn here. That is what makes a reroll a real
+     * one: the previous design's membership was fully determined by the inputs, so with nothing
+     * else varying the rebuild control could only ever return what was already on screen.
      */
-    fun generate(request: GapPlanRequest, inputs: GapPlanInputs): Result<GapPlanSnapshot> {
+    fun generate(
+        request: GapPlanRequest,
+        inputs: GapPlanInputs,
+        seed: Long,
+    ): Result<GapPlanSnapshot> {
         val capacity = request.resolveCapacity(inputs.paceProfile, inputs.today)
             .getOrElse { return Result.failure(it) }
 
@@ -62,66 +71,49 @@ object GapPlanEngine {
             today = inputs.today,
         )
         val pool = eligibility.eligible.map { it.toCandidate(inputs, weights) }
-
-        val variants = PlanIntensity.entries.map { intensity ->
-            val budget = intensity.budgetMinutes(capacity.fullCapacityMinutes)
-            GapPlanVariant(
-                intensity = intensity,
-                budgetMinutes = budget,
-                members = GapPlanComposer.compose(pool, budget),
-            )
-        }
+        val draw = GapPlanSelection.draw(
+            pool = pool,
+            fullCapacityMinutes = capacity.fullCapacityMinutes,
+            seed = seed,
+        )
 
         return Result.success(
             GapPlanSnapshot(
                 request = request,
                 capacity = capacity,
-                variants = variants,
+                seed = seed,
+                picks = draw.picks,
                 coverage = eligibility.coverage,
-                eligiblePool = pool.sortedWith(GapPlanComposer.PROCESSING_ORDER),
+                canVary = draw.canVary,
             ),
         )
     }
 
     /**
-     * Builds one candidate, retaining each component's value alongside the reason it produced.
+     * Builds one candidate: the work figures the draw reads, and the facts its card will state.
      *
-     * Score and reason come from the same call for each component deliberately. Deriving the
-     * number in one place and the explanation in another is how a plan ends up ranking a game for
-     * a reason it does not show, or showing one it did not use.
+     * Nothing derived here influences whether this candidate is chosen. The facts are attached at
+     * the same point the numbers are so a card cannot end up describing a different game's state
+     * than the one the tier offers.
      */
     private fun EligibleGame.toCandidate(
         inputs: GapPlanInputs,
         weights: Map<String, Double>,
-    ): GapPlanCandidate {
-        val (reviewScore, reviewReason) =
-            ReviewQuality.scoreAndReason(inputs.reviewsByAppId[game.appId])
-        val (affinityScore, affinityReason) =
-            GenreAffinity.scoreAndReason(game.genreIds, weights, inputs.genreLabels)
-        val (momentumScore, momentumReason) =
-            CompletionMomentum.scoreAndReason(playedMinutes, estimateMinutes)
-
-        return GapPlanCandidate(
-            appId = game.appId,
-            name = game.name,
-            source = game.source,
-            remainingMinutes = remainingMinutes,
-            estimateMinutes = estimateMinutes,
-            playedMinutes = playedMinutes,
-            genreIds = game.genreIds,
-            multiplayer = game.multiplayer,
-            reviewQuality = reviewScore,
-            genreAffinity = affinityScore,
-            completionMomentum = momentumScore,
-            // Fit is always available and always stated, so a game recommended on duration and
-            // library facts alone still explains itself rather than appearing unjustified.
-            reasons = listOfNotNull(
-                GapPlanReason.Fit(remainingMinutes),
-                reviewReason,
-                affinityReason,
-                momentumReason,
-                GapPlanReason.FamilyShared.takeIf { game.source == GameSource.FAMILY_SHARED },
-            ),
-        )
-    }
+    ): GapPlanCandidate = GapPlanCandidate(
+        appId = game.appId,
+        name = game.name,
+        source = game.source,
+        remainingMinutes = remainingMinutes,
+        estimateMinutes = estimateMinutes,
+        playedMinutes = playedMinutes,
+        // Resolved to labels here rather than in the UI: the labels come from the same library
+        // join the rest of the app reads, so a pick names a genre in the app's own words.
+        genreLabels = game.genreIds.mapNotNull(inputs.genreLabels::get),
+        multiplayer = game.multiplayer,
+        facts = listOfNotNull(
+            ReviewQuality.factFor(inputs.reviewsByAppId[game.appId]),
+            GenreAffinity.factFor(game.genreIds, weights, inputs.genreLabels),
+            CompletionMomentum.factFor(playedMinutes, estimateMinutes),
+        ),
+    )
 }

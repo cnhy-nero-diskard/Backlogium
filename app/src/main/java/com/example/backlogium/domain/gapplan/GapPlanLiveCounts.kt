@@ -27,20 +27,22 @@ fun interface CurrentPlayerCounts {
 }
 
 /**
- * Bounded, post-finalization current-player lookups for a generation's multiplayer members.
+ * Bounded, post-finalization current-player lookups for a generation's multiplayer picks.
  *
  * Every bound here exists because the alternative is an unthrottled burst against Steam from a
  * screen the player just opened:
  *
- * - **At most fifteen app ids.** Three variants of at most five games cannot contain more, and
- *   usually contain fewer once members shared between variants are deduplicated. The ceiling is
- *   enforced anyway rather than assumed from the plan's shape.
- * - **Concurrency four.** Enough to finish quickly, far short of fifteen simultaneous requests.
- * - **One eight-second window for the whole pass.** Not per request: the plan is already complete
- *   and usable without any of this, so the enrichment gets one bounded chance and is then done.
+ * - **At most three app ids.** A result holds one pick per intensity tier, so three is the whole
+ *   ceiling — and usually fewer, because single-player picks are never looked up at all. The
+ *   ceiling is enforced rather than assumed from the result's shape, so a future tier could not
+ *   widen it silently.
+ * - **Concurrency four.** Enough that the three finish together rather than in series.
+ * - **One eight-second window for the whole pass.** Not per request: the picks are already
+ *   complete and usable without any of this, so the enrichment gets one bounded chance and is
+ *   then done.
  *
- * Nothing here is persisted, and nothing here decides membership. A failed or late lookup leaves a
- * plan that was already finished.
+ * Nothing here is persisted, and nothing here decides which games are offered. A failed or late
+ * lookup leaves a result that was already finished.
  */
 @Singleton
 class GapPlanLiveCounts @Inject constructor(
@@ -48,14 +50,14 @@ class GapPlanLiveCounts @Inject constructor(
 ) {
     /**
      * The distinct multiplayer app ids worth a lookup for this generation, capped and ordered
-     * deterministically so the cap never silently depends on variant iteration order.
+     * deterministically so the cap never silently depends on tier iteration order.
      *
-     * Single-player members are absent entirely — no lookup is issued for them at all, rather than
-     * issued and discarded.
+     * Single-player picks are absent entirely — no lookup is issued for them at all, rather than
+     * issued and discarded — so a wholly single-player result makes no request whatsoever.
      */
-    fun lookupTargets(snapshot: GapPlanSnapshot): List<Long> = snapshot.variants
+    fun lookupTargets(snapshot: GapPlanSnapshot): List<Long> = snapshot.picks
         .asSequence()
-        .flatMap { it.members.asSequence() }
+        .mapNotNull { it.game }
         .filter { it.multiplayer }
         .map { it.appId }
         .distinct()
@@ -95,8 +97,8 @@ class GapPlanLiveCounts @Inject constructor(
     }
 
     companion object {
-        /** Three variants of at most five games; the ceiling is enforced, not inferred. */
-        const val MAX_LOOKUPS = 15
+        /** One pick per tier, so three; the ceiling is enforced, not inferred from the result. */
+        const val MAX_LOOKUPS = 3
         const val MAX_CONCURRENCY = 4
 
         /** One window for the whole pass, not per request. */

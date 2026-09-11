@@ -5,7 +5,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Commits an accepted variant as a deadline collection, through the transaction collections
+ * Commits an accepted pick as a deadline collection, through the transaction collections
  * already use.
  *
  * The one behaviour worth naming: **nothing here touches the preview**. On failure it returns a
@@ -28,6 +28,9 @@ class GapPlanCollectionCreator @Inject constructor(
      * The failure is captured rather than thrown so the surface can release its busy state and
      * offer a retry, which is the difference between a recoverable error and a lost plan.
      */
-    suspend fun create(snapshot: GapPlanSnapshot, variant: GapPlanVariant): Result<Long> =
-        runCatching { collectionRepository.save(GapPlanAdoption.toDraft(snapshot, variant)) }
+    suspend fun create(snapshot: GapPlanSnapshot, pick: GapPlanPick): Result<Long> = runCatching {
+        val draft = GapPlanAdoption.toDraft(snapshot, pick)
+            ?: error("a tier with no pick has nothing to adopt")
+        collectionRepository.save(draft)
+    }
 }

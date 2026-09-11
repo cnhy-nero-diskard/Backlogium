@@ -2,8 +2,8 @@ package com.example.backlogium.ui.gapplan
 
 import com.example.backlogium.domain.gapplan.CapacityProvenance
 import com.example.backlogium.domain.gapplan.GapPlanCoverage
+import com.example.backlogium.domain.gapplan.GapPlanFact
 import com.example.backlogium.domain.gapplan.GapPlanIntent
-import com.example.backlogium.domain.gapplan.GapPlanReason
 import com.example.backlogium.domain.gapplan.GapPlanRequestError
 import com.example.backlogium.domain.gapplan.PlanIntensity
 import com.example.backlogium.ui.util.UiFormat
@@ -12,8 +12,8 @@ import com.example.backlogium.ui.util.UiFormat
  * Every user-facing string the gap-plan surface shows, as pure functions.
  *
  * Kept out of the composables so the wording can be asserted directly — several of these sentences
- * are the *only* place a missing signal is disclosed, and a test that could only reach them
- * through a rendered tree would be easy to leave un-asserted.
+ * are the *only* place a missing fact is disclosed, and a test that could only reach them through a
+ * rendered tree would be easy to leave un-asserted.
  */
 object GapPlanPresentation {
 
@@ -23,9 +23,15 @@ object GapPlanPresentation {
         PlanIntensity.FULL -> "Full"
     }
 
-    /** States the intensity as a share of capacity, so the choice is legible rather than branded. */
+    /**
+     * States the intensity as a share of capacity it aims at, not one it merely stays under.
+     *
+     * "Around" rather than "up to" is the whole distinction between this design and the one it
+     * replaced: a tier targets its share, so a Relaxed pick is a genuinely shorter commitment
+     * rather than any short game that happens to fit.
+     */
     fun intensityRule(intensity: PlanIntensity): String =
-        "${intensity.percent}% of your forecast time"
+        "Around ${intensity.percent}% of your forecast time"
 
     fun intentLabel(intent: GapPlanIntent): String = when (intent) {
         GapPlanIntent.STORY -> "Story"
@@ -48,34 +54,40 @@ object GapPlanPresentation {
     }
 
     /**
-     * The full forecast, stated once for all three variants.
+     * The full forecast, stated once for all three tiers.
      *
-     * Without this line a Relaxed card showing "4,200 available, 300 left" would present its
-     * reduced budget as all the time the player has — concealing exactly the time the intensity
+     * Without this line a Relaxed card showing only its own smaller share would present that
+     * figure as all the time the player has — concealing exactly the time the intensity
      * deliberately withheld, which is the opposite of what the choice is for.
      */
     fun fullCapacityLine(fullCapacityMinutes: Int): String =
         "You have about ${UiFormat.minutes(fullCapacityMinutes)} before then."
 
-    /** A variant's own three figures, always together so none can be read as the whole picture. */
-    fun variantBudgetLine(variant: GapPlanVariantUi): String =
-        "${UiFormat.minutes(variant.budgetMinutes)} budget · " +
-            "${UiFormat.minutes(variant.plannedMinutes)} planned · " +
-            "${UiFormat.minutes(variant.reserveMinutes)} reserve"
+    /** This tier's own share of the forecast, which its pick is drawn to approach. */
+    fun pickShareLine(pick: GapPlanPickUi): String =
+        "Planning around ${UiFormat.minutes(pick.budgetMinutes)} of it"
 
-    /** The share of the forecast this variant is deliberately not planning against. */
-    fun withheldLine(variant: GapPlanVariantUi, fullCapacityMinutes: Int): String? {
-        val withheld = fullCapacityMinutes - variant.budgetMinutes
+    /** The share of the forecast this tier is deliberately not planning against. */
+    fun withheldLine(pick: GapPlanPickUi, fullCapacityMinutes: Int): String? {
+        val withheld = fullCapacityMinutes - pick.budgetMinutes
         if (withheld <= 0) return null
         return "Holding back ${UiFormat.minutes(withheld)} of your forecast."
     }
 
-    fun emptyVariantMessage(): String =
-        "No game with a known length fits this plan's time. Try a longer gap or a fuller plan."
+    /** A pick's remaining work, stated once, in the most prominent place on its card. */
+    fun remainingLine(game: GapPlanGameUi): String = "${UiFormat.minutes(game.remainingMinutes)} left"
+
+    /** Store genres, or null when none are cached — never an empty line or an invented genre. */
+    fun genreLine(game: GapPlanGameUi): String? =
+        game.genreLabels.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+
+    fun emptyPickMessage(): String =
+        "No game with a known length fits this much time. Try a longer gap or a fuller plan."
 
     /**
-     * What the ranking could not see. Stated rather than implied: a plan built without ratings or
-     * genres is still useful, but it should not look better informed than it was.
+     * What the cards will not be able to show. Stated rather than implied: a suggestion with no
+     * rating and no genres is still a perfectly valid suggestion, because nothing was ranked — but
+     * its card will be sparse, and saying so is better than looking under-built.
      */
     fun coverageDisclosures(coverage: GapPlanCoverage): List<String> = buildList {
         if (coverage.missingSelectedEstimate > 0) {
@@ -85,23 +97,33 @@ object GapPlanPresentation {
             )
         }
         if (coverage.withCachedReviews == 0 && coverage.visibleGames > 0) {
-            add("No Steam ratings are cached yet, so ratings did not influence this plan.")
+            add("No Steam ratings are cached yet, so these cards cannot show them.")
         }
         if (coverage.withKnownGenres == 0 && coverage.visibleGames > 0) {
-            add("No Store genres are cached yet, so genre variety did not influence this plan.")
+            add("No Store genres are cached yet, so these cards cannot show them.")
         }
     }
 
-    /** One reason chip. Each states a fact; none renders a score. */
-    fun reasonLabel(reason: GapPlanReason): String = when (reason) {
-        is GapPlanReason.ReviewQuality ->
-            "${reason.description} (${UiFormat.count(reason.total)} reviews)"
-        is GapPlanReason.GenreAffinity -> "You have been playing ${reason.genreLabel}"
-        is GapPlanReason.Progress ->
-            "${UiFormat.minutes(reason.playedMinutes)} of ${UiFormat.minutes(reason.estimateMinutes)} played"
-        is GapPlanReason.Fit -> "${UiFormat.minutes(reason.remainingMinutes)} left"
-        GapPlanReason.FamilyShared -> "Family shared"
-        is GapPlanReason.PlayingNow -> "${UiFormat.count(reason.players)} playing now"
+    /**
+     * Why a rebuild changed nothing.
+     *
+     * The state exists at all because a control that appears ignored is worse than no control. The
+     * previous surface had exactly that problem for a different reason — picks were fully
+     * determined by the inputs, so rebuilding could only return them — and the fix is not to hide
+     * the control but to explain the one case where it still cannot help.
+     */
+    fun rebuildDidNotVaryMessage(): String =
+        "There are not enough games of the right lengths to offer a different set. Widen the " +
+            "included games, or try a different date."
+
+    /** One fact label. Each states something checkable; none renders a score. */
+    fun factLabel(fact: GapPlanFact): String = when (fact) {
+        is GapPlanFact.Reviews ->
+            "${fact.description} (${UiFormat.count(fact.total)} reviews)"
+        is GapPlanFact.GenreAffinity -> "You have been playing ${fact.genreLabel}"
+        is GapPlanFact.Progress ->
+            "${UiFormat.minutes(fact.playedMinutes)} of ${UiFormat.minutes(fact.estimateMinutes)} played"
+        is GapPlanFact.PlayingNow -> "${UiFormat.count(fact.players)} playing now"
     }
 
     fun validationMessage(error: GapPlanRequestError): String = when (error) {
@@ -121,24 +143,16 @@ object GapPlanPresentation {
     fun reliablePaceExplanation(): String =
         "Your available time is forecast from recent tracked activity."
 
-    /** How much of the library this swap can actually reach, so the sheet is not a mystery list. */
-    fun swapPoolSummary(count: Int): String = when (count) {
-        0 -> "No other game fits this plan's remaining time."
-        1 -> "1 game fits this plan's remaining time."
-        else -> "${UiFormat.count(count)} games fit this plan's remaining time."
-    }
-
-    fun noSwapCandidatesMessage(): String =
-        "Nothing else in your library fits the time this plan has left. Remove another game first, " +
-            "or try a fuller plan."
-
     /**
-     * Deliberately distinct from [noSwapCandidatesMessage]. The pool is not empty — this search
-     * just did not match it — and conflating the two would tell the player to give up when they
-     * only need a different word.
+     * How the picks were chosen, said plainly on the result.
+     *
+     * The app is offering three fitting games and showing what is known about each, rather than
+     * claiming to have judged them. A player who is not told that would reasonably assume the top
+     * card is the recommended one.
      */
-    fun noSwapMatchesMessage(query: String): String =
-        "No game matching \"$query\" fits this plan's remaining time."
+    fun selectionExplanation(): String =
+        "Three games that fit, picked at random from what your library offers. The facts are here " +
+            "so you can judge them — rebuild for a different set."
 
     fun saveFailureMessage(): String =
         "The collection could not be created. Your plan is still here — try again."

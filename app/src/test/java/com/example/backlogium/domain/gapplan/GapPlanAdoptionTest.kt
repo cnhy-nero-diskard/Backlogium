@@ -27,7 +27,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 
 /**
- * Turning a preview into a durable collection.
+ * Turning an accepted pick into a durable collection.
  *
  * The mapping is asserted field by field because a draft is an *end state*: an unstated field is a
  * silent decision, and one of them — `id` — decides whether the save creates a collection or
@@ -46,11 +46,10 @@ class GapPlanAdoptionTest {
 
     @After fun tearDown() = db.close()
 
-    @Test fun aStoryPlanMapsToACreatingDeadlineDraftWithEveryFieldStated() {
+    @Test fun aStoryPickMapsToACreatingDeadlineDraftWithEveryFieldStated() {
         val snapshot = snapshot(GapPlanIntent.STORY, title = "  Hollow Knight: Silksong  ")
-        val variant = snapshot.variant(PlanIntensity.BALANCED)!!
 
-        val draft = GapPlanAdoption.toDraft(snapshot, variant)
+        val draft = GapPlanAdoption.toDraft(snapshot, snapshot.pick(PlanIntensity.BALANCED)!!)!!
 
         // 0 selects creation. Any other value would update an existing row instead.
         assertEquals(0L, draft.id)
@@ -61,93 +60,93 @@ class GapPlanAdoptionTest {
         assertNull(draft.accent)
         assertNull(draft.description)
         assertEquals(CollectionTimeBasis.MAIN_STORY, draft.timeBasis)
-        assertEquals(listOf(1L, 2L, 3L), draft.memberAppIds)
+        assertEquals(listOf(2L), draft.memberAppIds)
         assertEquals(emptySet<Long>(), draft.doneAppIds)
     }
 
-    @Test fun aCompletionistPlanCarriesTheCompletionistBasis() {
+    @Test fun aCompletionistPickCarriesTheCompletionistBasis() {
         val snapshot = snapshot(GapPlanIntent.COMPLETIONIST)
 
-        val draft = GapPlanAdoption.toDraft(snapshot, snapshot.variant(PlanIntensity.FULL)!!)
+        val draft = GapPlanAdoption.toDraft(snapshot, snapshot.pick(PlanIntensity.FULL)!!)!!
 
         assertEquals(CollectionTimeBasis.COMPLETIONIST, draft.timeBasis)
     }
 
-    /** The collection contains exactly what the player was looking at when they confirmed. */
-    @Test fun anEditedPreviewIsWhatGetsSaved() {
+    /** The collection contains exactly the one game the tier was offering. */
+    @Test fun eachTierAdoptsItsOwnPick() {
         val snapshot = snapshot(GapPlanIntent.STORY)
-        val edited = GapPlanEditing.remove(snapshot.variant(PlanIntensity.FULL)!!, appId = 1)
 
-        assertEquals(listOf(2L, 3L), GapPlanAdoption.toDraft(snapshot, edited).memberAppIds)
+        assertEquals(
+            listOf(1L),
+            GapPlanAdoption.toDraft(snapshot, snapshot.pick(PlanIntensity.RELAXED)!!)!!.memberAppIds,
+        )
+        assertEquals(
+            listOf(3L),
+            GapPlanAdoption.toDraft(snapshot, snapshot.pick(PlanIntensity.FULL)!!)!!.memberAppIds,
+        )
     }
 
-    @Test fun familySharedMembersAreSavedLikeAnyOther() {
+    /** A tier with no pick has nothing to adopt, and says so rather than writing an empty plan. */
+    @Test fun anEmptyTierProducesNoDraft() {
+        val snapshot = snapshotOf(pick(PlanIntensity.FULL, null))
+
+        assertNull(GapPlanAdoption.toDraft(snapshot, snapshot.pick(PlanIntensity.FULL)!!))
+    }
+
+    @Test fun aFamilySharedPickIsSavedLikeAnyOther() {
         val shared = candidate(9, 100).copy(source = GameSource.FAMILY_SHARED)
-        val snapshot = snapshot(GapPlanIntent.STORY)
-        val variant = snapshot.variant(PlanIntensity.FULL)!!.copy(members = listOf(shared))
+        val snapshot = snapshotOf(
+            pick(PlanIntensity.FULL, shared),
+            request = gapRequest(targetDate = LocalDate.parse("2026-11-10")),
+        )
 
-        assertEquals(listOf(9L), GapPlanAdoption.toDraft(snapshot, variant).memberAppIds)
+        assertEquals(
+            listOf(9L),
+            GapPlanAdoption.toDraft(snapshot, snapshot.pick(PlanIntensity.FULL)!!)!!.memberAppIds,
+        )
     }
 
-    @Test fun duplicateMembershipCannotReachTheDraft() {
-        val snapshot = snapshot(GapPlanIntent.STORY)
-        val duplicated = snapshot.variant(PlanIntensity.FULL)!!.let {
-            it.copy(members = it.members + it.members.first())
-        }
-
-        assertEquals(listOf(1L, 2L, 3L), GapPlanAdoption.toDraft(snapshot, duplicated).memberAppIds)
-    }
-
-    /** The collection row and every membership row commit as one unit, through the existing path. */
+    /** The collection row and its membership row commit as one unit, through the existing path. */
     @Test fun savingCreatesAnOrdinaryDeadlineCollectionWithItsMembership() = runTest {
         db.gameDao().upsertAll((1L..3L).map(::game))
         val creator = creator()
         val snapshot = snapshot(GapPlanIntent.STORY)
 
-        val id = creator.create(snapshot, snapshot.variant(PlanIntensity.FULL)!!).getOrThrow()
+        val id = creator.create(snapshot, snapshot.pick(PlanIntensity.FULL)!!).getOrThrow()
 
         val collection = db.collectionDao().getById(id)!!
         assertEquals("Before Anticipated Game", collection.name)
         assertEquals(CollectionMode.DEADLINE_GOAL, collection.mode)
         assertEquals("2026-11-10", collection.targetDate)
         assertEquals(CollectionTimeBasis.MAIN_STORY, collection.timeBasis)
-        assertEquals(
-            listOf(1L, 2L, 3L),
-            db.collectionDao().getMembers(id).sortedBy { it.orderIndex }.map { it.appId },
-        )
+        assertEquals(listOf(3L), db.collectionDao().getMembers(id).map { it.appId })
         assertTrue(db.collectionDao().getMembers(id).none { it.done })
     }
 
     /**
-     * A failure must leave the preview intact and retryable. Being sent back to regenerate a plan
-     * the player had already decided on is the difference between a recoverable error and a lost
-     * decision.
+     * A failure must leave the result intact and retryable. Being sent back to rebuild is worse
+     * now than it was: rebuilding genuinely rerolls, so it would not even return the same game the
+     * player had decided on.
      */
     @Test fun aFailedSaveReportsTheFailureAndLeavesTheSnapshotUsable() = runTest {
         db.gameDao().upsertAll((1L..3L).map(::game))
         val snapshot = snapshot(GapPlanIntent.STORY)
         val transaction = FlakyTransaction()
 
-        val result = creator(transaction).create(snapshot, snapshot.variant(PlanIntensity.FULL)!!)
+        val result = creator(transaction).create(snapshot, snapshot.pick(PlanIntensity.FULL)!!)
 
         assertTrue(result.isFailure)
         // The failure is captured, never thrown into the surface: a lost plan and a retryable one
         // are the difference between this and letting it propagate.
         assertNull(db.collectionDao().observeCollections().first().firstOrNull())
         // The snapshot the caller still holds is unchanged and can be submitted again.
-        assertEquals(
-            listOf(1L, 2L, 3L),
-            snapshot.variant(PlanIntensity.FULL)!!.members.map { it.appId },
-        )
+        assertEquals(3L, snapshot.pick(PlanIntensity.FULL)!!.game!!.appId)
 
-        // Retrying the very same accepted membership succeeds.
+        // Retrying the very same accepted pick succeeds.
         transaction.failNext = false
-        val id = creator(transaction).create(snapshot, snapshot.variant(PlanIntensity.FULL)!!)
+        val id = creator(transaction).create(snapshot, snapshot.pick(PlanIntensity.FULL)!!)
             .getOrThrow()
-        assertEquals(
-            listOf(1L, 2L, 3L),
-            db.collectionDao().getMembers(id).sortedBy { it.orderIndex }.map { it.appId },
-        )
+        assertEquals(listOf(3L), db.collectionDao().getMembers(id).map { it.appId })
     }
 
     /**
@@ -164,28 +163,26 @@ class GapPlanAdoptionTest {
 
     /**
      * A gap-plan collection is an ordinary one once created: later changes to recommendation
-     * inputs cannot reach back and alter what the player agreed to.
+     * inputs — a reroll included — cannot reach back and alter what the player agreed to.
      */
     @Test fun membershipIsStableAfterRecommendationInputsChange() = runTest {
         db.gameDao().upsertAll((1L..4L).map(::game))
         val creator = creator()
         val snapshot = snapshot(GapPlanIntent.STORY)
-        val id = creator.create(snapshot, snapshot.variant(PlanIntensity.FULL)!!).getOrThrow()
+        val id = creator.create(snapshot, snapshot.pick(PlanIntensity.FULL)!!).getOrThrow()
 
-        // A later, quite different plan is generated and saved separately.
-        val later = snapshot(GapPlanIntent.COMPLETIONIST, title = "Something Else").let {
-            it.copy(
-                variants = it.variants.map { variant ->
-                    variant.copy(members = listOf(candidate(4, 100)))
-                },
-            )
-        }
-        creator.create(later, later.variant(PlanIntensity.FULL)!!).getOrThrow()
-
-        assertEquals(
-            listOf(1L, 2L, 3L),
-            db.collectionDao().getMembers(id).sortedBy { it.orderIndex }.map { it.appId },
+        // A later, quite different result is generated and saved separately.
+        val later = snapshotOf(
+            pick(PlanIntensity.FULL, candidate(4, 100)),
+            request = gapRequest(
+                title = "Something Else",
+                targetDate = LocalDate.parse("2026-11-10"),
+                intent = GapPlanIntent.COMPLETIONIST,
+            ),
         )
+        creator.create(later, later.pick(PlanIntensity.FULL)!!).getOrThrow()
+
+        assertEquals(listOf(3L), db.collectionDao().getMembers(id).map { it.appId })
         assertEquals(2, db.collectionDao().observeCollections().first().size)
     }
 
@@ -205,30 +202,21 @@ class GapPlanAdoptionTest {
         ),
     )
 
+    /** One distinct game per tier, shortest at Relaxed — the shape a real draw produces. */
     private fun snapshot(
         intent: GapPlanIntent,
         title: String = "Anticipated Game",
-    ): GapPlanSnapshot {
-        val members = listOf(candidate(1, 100), candidate(2, 200), candidate(3, 300))
-        return GapPlanSnapshot(
-            request = gapRequest(
-                title = title,
-                targetDate = LocalDate.parse("2026-11-10"),
-                intent = intent,
-            ),
-            capacity = GapPlanCapacity(
-                fullCapacityMinutes = 1_000,
-                provenance = CapacityProvenance.PERSONAL_PACE,
-                startDate = TODAY.plusDays(1),
-                endDate = LocalDate.parse("2026-11-10"),
-            ),
-            variants = PlanIntensity.entries.map {
-                GapPlanVariant(it, budgetMinutes = 1_000, members = members)
-            },
-            coverage = GapPlanCoverage(3, 3, 0, 0, 0, 0),
-            eligiblePool = members,
-        )
-    }
+    ): GapPlanSnapshot = snapshotOf(
+        pick(PlanIntensity.RELAXED, candidate(1, 100), budgetMinutes = 700),
+        pick(PlanIntensity.BALANCED, candidate(2, 200), budgetMinutes = 850),
+        pick(PlanIntensity.FULL, candidate(3, 300), budgetMinutes = 1_000),
+        request = gapRequest(
+            title = title,
+            targetDate = LocalDate.parse("2026-11-10"),
+            intent = intent,
+        ),
+        fullCapacityMinutes = 1_000,
+    )
 
     private fun game(appId: Long) = Game(
         appId = appId, name = "Game $appId", iconUrl = "", playtimeForever = 0,

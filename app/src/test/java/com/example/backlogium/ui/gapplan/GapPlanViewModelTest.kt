@@ -5,16 +5,17 @@ import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.gapplan.CapacityProvenance
 import com.example.backlogium.domain.gapplan.CurrentPlayerCounts
+import com.example.backlogium.domain.gapplan.GapPlanFact
 import com.example.backlogium.domain.gapplan.GapPlanIntent
 import com.example.backlogium.domain.gapplan.GapPlanLiveCounts
-import com.example.backlogium.domain.gapplan.GapPlanReason
 import com.example.backlogium.domain.gapplan.GapPlanRequestError
+import com.example.backlogium.domain.gapplan.GapPlanSeeds
 import com.example.backlogium.domain.gapplan.GapPlanTestEnvironment
 import com.example.backlogium.domain.gapplan.PlanIntensity
 import com.example.backlogium.domain.gapplan.TODAY
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -23,6 +24,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -30,13 +32,14 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The gap-plan session, over the real stack with every network path broken.
  *
  * The behaviours that matter most here are the ones a player would only notice after committing a
- * month to a plan: that the snapshot holds still, that an edit changes only what was asked, and
- * that a failed save keeps the decision the player already made.
+ * month to a suggestion: that a shown result holds still, that rebuilding genuinely changes it,
+ * that inspecting a pick does not, and that a failed save keeps the decision already made.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -57,7 +60,7 @@ class GapPlanViewModelTest {
 
     @Test fun aReliableProfileNeedsNoManualBudgetAndReportsPersonalPaceProvenance() = runTest {
         seedLibrary()
-        env.seedReliablePace(appId = 1)
+        env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
         advanceUntilIdle()
 
@@ -70,7 +73,26 @@ class GapPlanViewModelTest {
         val result = viewModel.uiState.value.result!!
         assertEquals(CapacityProvenance.PERSONAL_PACE, result.provenance)
         assertTrue(result.fullCapacityMinutes > 0)
-        assertEquals(3, result.variants.size)
+        assertEquals(3, result.picks.size)
+        assertEquals(
+            listOf(PlanIntensity.RELAXED, PlanIntensity.BALANCED, PlanIntensity.FULL),
+            result.picks.map { it.intensity },
+        )
+    }
+
+    /** Three tiers, one game each, all distinct. */
+    @Test fun eachTierOffersOneDistinctGame() = runTest {
+        seedLibrary()
+        env.seedReliablePace(appId = PACE_GAME)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        fillSetup(viewModel)
+        viewModel.generate()
+        advanceUntilIdle()
+
+        val picked = viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId }
+        assertEquals(3, picked.size)
+        assertEquals(3, picked.toSet().size)
     }
 
     /** A learning profile cannot make a feasibility claim, so it asks for the budget instead. */
@@ -106,7 +128,7 @@ class GapPlanViewModelTest {
 
     @Test fun aTargetDateBeyondTheHorizonIsReportedRatherThanPlanned() = runTest {
         seedLibrary()
-        env.seedReliablePace(appId = 1)
+        env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
         advanceUntilIdle()
 
@@ -122,13 +144,14 @@ class GapPlanViewModelTest {
         assertNull(viewModel.uiState.value.result)
     }
 
-    /** An offline library with no cached metadata still plans, and discloses what was missing. */
-    @Test fun anOfflineLibraryWithNoMetadataStillProducesPlansAndDisclosesCoverage() = runTest {
+    /** An offline library with no cached metadata still suggests, and discloses what was missing. */
+    @Test fun anOfflineLibraryWithNoMetadataStillOffersPicksAndDisclosesCoverage() = runTest {
         env.addGame(1)
         env.addHltb(1, mainStory = 600)
         env.addGame(2)
         // 2 has no HLTB row at all.
-        env.seedReliablePace(appId = 1)
+        env.addGame(PACE_GAME)
+        env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
         advanceUntilIdle()
 
@@ -137,21 +160,21 @@ class GapPlanViewModelTest {
         advanceUntilIdle()
 
         val result = viewModel.uiState.value.result!!
-        assertEquals(listOf(1L), result.variant(PlanIntensity.FULL)!!.members.map { it.appId })
+        assertEquals(listOf(1L), result.picks.mapNotNull { it.game?.appId })
         assertFalse(result.coverage.isComplete)
-        assertEquals(1, result.coverage.missingSelectedEstimate)
+        assertEquals(2, result.coverage.missingSelectedEstimate)
         assertEquals(0, result.coverage.withCachedReviews)
-        // Nothing claims a rating it does not have.
-        assertTrue(
-            result.variant(PlanIntensity.FULL)!!.members
-                .single().reasons.none { it is GapPlanReason.ReviewQuality },
-        )
+        // Nothing claims a rating or a genre it does not have.
+        val game = result.pick(PlanIntensity.FULL)!!.game!!
+        assertTrue(game.facts.none { it is GapPlanFact.Reviews })
+        assertTrue(game.genreLabels.isEmpty())
     }
 
-    @Test fun anEmptyLibraryProducesThreeEmptyVariantsRatherThanAnError() = runTest {
+    @Test fun anEmptyEligiblePoolProducesThreeEmptyTiersRatherThanAnError() = runTest {
         env.addGame(1)
-        env.seedReliablePace(appId = 1)
-        // Game 1 has no estimate, so nothing is eligible.
+        env.addGame(PACE_GAME)
+        env.seedReliablePace(appId = PACE_GAME)
+        // No game has an estimate, so nothing is eligible.
         val viewModel = viewModel()
         advanceUntilIdle()
 
@@ -161,17 +184,16 @@ class GapPlanViewModelTest {
 
         val result = viewModel.uiState.value.result!!
         assertNull(viewModel.uiState.value.validationError)
-        assertTrue(result.variants.all { it.isEmpty })
+        assertTrue(result.picks.all { it.isEmpty })
     }
 
     /**
-     * The reserve is measured against the variant's own budget, while the request's whole forecast
-     * stays visible. Showing only the per-variant figure would present a Relaxed plan's reduced
-     * budget as all the time the player has.
+     * Each tier reports its own share while the request's whole forecast stays visible. Showing
+     * only the per-tier figure would present a Relaxed share as all the time the player has.
      */
-    @Test fun eachVariantReportsItsOwnBudgetWhileTheFullForecastStaysVisible() = runTest {
+    @Test fun eachTierReportsItsOwnShareWhileTheFullForecastStaysVisible() = runTest {
         seedLibrary()
-        env.seedReliablePace(appId = 1)
+        env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
         advanceUntilIdle()
         fillSetup(viewModel)
@@ -179,18 +201,118 @@ class GapPlanViewModelTest {
         advanceUntilIdle()
 
         val result = viewModel.uiState.value.result!!
-        val relaxed = result.variant(PlanIntensity.RELAXED)!!
+        val relaxed = result.pick(PlanIntensity.RELAXED)!!
         assertEquals(result.fullCapacityMinutes * 70 / 100, relaxed.budgetMinutes)
-        assertEquals(relaxed.budgetMinutes - relaxed.plannedMinutes, relaxed.reserveMinutes)
         assertTrue(
             "the withheld 30% must be recoverable from the state",
             relaxed.budgetMinutes < result.fullCapacityMinutes,
         )
     }
 
-    @Test fun removingAMemberUpdatesOnlyThatVariant() = runTest {
+    /**
+     * Rebuilding is a real reroll.
+     *
+     * The previous surface could not do this: picks were fully determined by the inputs, so the
+     * control could only ever repaint what was already there. Each generation now draws a seed.
+     */
+    @Test fun rebuildingChangesThePicks() = runTest {
         seedLibrary()
-        env.seedReliablePace(appId = 1)
+        env.seedReliablePace(appId = PACE_GAME)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        fillSetup(viewModel)
+        viewModel.generate()
+        advanceUntilIdle()
+
+        val before = viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId }
+
+        viewModel.generate()
+        advanceUntilIdle()
+
+        val after = viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId }
+        assertNotEquals(before, after)
+        assertFalse(viewModel.uiState.value.rebuildDidNotVary)
+    }
+
+    /**
+     * And when it cannot, it says so rather than appearing to have been ignored.
+     *
+     * Three widely separated lengths give each tier exactly one option, so no seed can produce a
+     * different set. That is a real library shape, not a contrived one — a small backlog with one
+     * long game, one medium and one short reaches it immediately.
+     */
+    @Test fun aRebuildThatCannotVarySaysSo() = runTest {
+        env.addGame(PACE_GAME)
+        env.seedReliablePace(appId = PACE_GAME, minutesPerDay = 120)
+        // The forecast for 60 days lands near 7,200 minutes, so these three sit one per band.
+        env.addGame(1)
+        env.addHltb(1, mainStory = 7_000)
+        env.addGame(2)
+        env.addHltb(2, mainStory = 5_800)
+        env.addGame(3)
+        env.addHltb(3, mainStory = 4_700)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        fillSetup(viewModel)
+        viewModel.generate()
+        advanceUntilIdle()
+        val before = viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId }
+
+        viewModel.generate()
+        advanceUntilIdle()
+
+        val after = viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId }
+        assertEquals(before, after)
+        assertTrue(
+            "an unchanged rebuild has to explain itself",
+            viewModel.uiState.value.rebuildDidNotVary,
+        )
+    }
+
+    /** A first build has no previous set to differ from, so it never reports a failed reroll. */
+    @Test fun aFirstBuildNeverReportsAnUnchangedPool() = runTest {
+        env.addGame(PACE_GAME)
+        env.seedReliablePace(appId = PACE_GAME)
+        env.addGame(1)
+        env.addHltb(1, mainStory = 600)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        fillSetup(viewModel)
+        viewModel.generate()
+        advanceUntilIdle()
+
+        assertFalse(viewModel.uiState.value.rebuildDidNotVary)
+        assertEquals(listOf(1L), viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId })
+    }
+
+    /** An unaccepted result holds still until the player explicitly rebuilds it. */
+    @Test fun libraryChangesDoNotDisturbAnOpenResultUntilRebuild() = runTest {
+        seedLibrary()
+        env.seedReliablePace(appId = PACE_GAME)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        fillSetup(viewModel)
+        viewModel.generate()
+        advanceUntilIdle()
+
+        val before = viewModel.uiState.value.result!!.picks.map { it.game?.appId }
+
+        // A new game arrives while the player is reading the result.
+        env.addGame(99, name = "Newcomer")
+        env.addHltb(99, mainStory = 120)
+        env.addReview(99, "Overwhelmingly Positive", positive = 100_000, negative = 100)
+        advanceUntilIdle()
+
+        assertEquals(before, viewModel.uiState.value.result!!.picks.map { it.game?.appId })
+    }
+
+    /**
+     * Inspecting a pick is not a reroll. A player can open all three in turn and still accept the
+     * one they started with.
+     */
+    @Test fun inspectingAPickLeavesThePicksUnchanged() = runTest {
+        seedLibrary()
+        env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
         advanceUntilIdle()
         fillSetup(viewModel)
@@ -198,75 +320,21 @@ class GapPlanViewModelTest {
         advanceUntilIdle()
 
         val before = viewModel.uiState.value.result!!
-        val target = before.variant(PlanIntensity.FULL)!!
-        val removed = target.members.first().appId
-        val otherVariantBefore = before.variant(PlanIntensity.RELAXED)!!.members.map { it.appId }
+        val picks = before.picks.mapNotNull { it.game?.appId }
 
-        viewModel.removeMember(PlanIntensity.FULL, removed)
-
-        val after = viewModel.uiState.value.result!!
-        val updated = after.variant(PlanIntensity.FULL)!!
-        assertFalse(updated.members.any { it.appId == removed })
-        assertEquals(target.members.size - 1, updated.members.size)
-        assertEquals(updated.budgetMinutes - updated.plannedMinutes, updated.reserveMinutes)
-        assertEquals(otherVariantBefore, after.variant(PlanIntensity.RELAXED)!!.members.map { it.appId })
-    }
-
-    @Test fun onlyBudgetValidReplacementsAreOffered() = runTest {
-        seedLibrary()
-        env.seedReliablePace(appId = 1)
-        val viewModel = viewModel()
-        advanceUntilIdle()
-        fillSetup(viewModel)
-        viewModel.generate()
-        advanceUntilIdle()
-
-        val variant = viewModel.uiState.value.result!!.variant(PlanIntensity.FULL)!!
-        val member = variant.members.first()
-        viewModel.offerReplacements(PlanIntensity.FULL, member.appId)
-
-        val offered = viewModel.uiState.value.replacement!!
-        assertEquals(member.appId, offered.forAppId)
-        val headroom = variant.budgetMinutes - variant.plannedMinutes + member.remainingMinutes
-        assertTrue(offered.candidates.all { it.remainingMinutes <= headroom })
-        assertTrue(offered.candidates.none { c -> variant.members.any { it.appId == c.appId } })
-    }
-
-    /** An unaccepted snapshot holds still until the player explicitly regenerates it. */
-    @Test fun libraryChangesDoNotDisturbAnOpenResultUntilRegeneration() = runTest {
-        seedLibrary()
-        env.seedReliablePace(appId = 1)
-        val viewModel = viewModel()
-        advanceUntilIdle()
-        fillSetup(viewModel)
-        viewModel.generate()
-        advanceUntilIdle()
-
-        val before = viewModel.uiState.value.result!!.variants.map { v -> v.members.map { it.appId } }
-
-        // A new, very attractive game arrives while the player is reading the result.
-        env.addGame(99, name = "Newcomer")
-        env.addHltb(99, mainStory = 120)
-        env.addReview(99, "Overwhelmingly Positive", positive = 100_000, negative = 100)
-        advanceUntilIdle()
-
-        assertEquals(
-            before,
-            viewModel.uiState.value.result!!.variants.map { v -> v.members.map { it.appId } },
-        )
-
-        viewModel.generate()
-        advanceUntilIdle()
-
-        assertTrue(
-            "an explicit rebuild may take the newcomer into account",
-            viewModel.uiState.value.result!!.variants.any { v -> v.members.any { it.appId == 99L } },
-        )
+        picks.forEach { appId ->
+            viewModel.inspect(appId)
+            assertEquals(appId, viewModel.uiState.value.inspectingAppId)
+            assertEquals(before, viewModel.uiState.value.result)
+            viewModel.dismissInspection()
+            assertNull(viewModel.uiState.value.inspectingAppId)
+            assertEquals(before, viewModel.uiState.value.result)
+        }
     }
 
     @Test fun savingCreatesTheCollectionAndExposesItForNavigation() = runTest {
         seedLibrary()
-        env.seedReliablePace(appId = 1)
+        env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
         advanceUntilIdle()
         fillSetup(viewModel)
@@ -279,8 +347,8 @@ class GapPlanViewModelTest {
         assertEquals(TODAY.plusDays(60), confirmation.targetDate)
         assertEquals(GapPlanIntent.STORY, confirmation.intent)
         assertEquals(
-            viewModel.uiState.value.result!!.variant(PlanIntensity.FULL)!!.members.size,
-            confirmation.memberCount,
+            viewModel.uiState.value.result!!.pick(PlanIntensity.FULL)!!.game!!.name,
+            confirmation.gameName,
         )
 
         viewModel.confirmSave()
@@ -292,28 +360,50 @@ class GapPlanViewModelTest {
         assertNull(viewModel.uiState.value.confirmation)
         assertFalse(viewModel.uiState.value.saving)
         assertEquals("Before Anticipated Game", env.db.collectionDao().getById(created)!!.name)
+        assertEquals(1, env.db.collectionDao().getMembers(created).size)
 
         viewModel.consumeCreatedCollection()
         assertNull(viewModel.uiState.value.createdCollectionId)
     }
 
-    /** A failed save releases busy state and keeps the preview, so the decision is not lost. */
-    @Test fun aFailedSaveIsRecoverableAndRetainsThePreview() = runTest {
+    /** An empty tier offers nothing to review, so the confirmation never opens for it. */
+    @Test fun anEmptyTierCannotBeSaved() = runTest {
+        env.addGame(PACE_GAME)
+        env.seedReliablePace(appId = PACE_GAME)
+        env.addGame(1)
+        env.addHltb(1, mainStory = 600)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        fillSetup(viewModel)
+        viewModel.generate()
+        advanceUntilIdle()
+
+        // One game, so the widest tier claims it and the other two are empty.
+        assertTrue(viewModel.uiState.value.result!!.pick(PlanIntensity.RELAXED)!!.isEmpty)
+        viewModel.reviewSave(PlanIntensity.RELAXED)
+
+        assertNull(viewModel.uiState.value.confirmation)
+    }
+
+    /** A failed save releases busy state and keeps the result, so the decision is not lost. */
+    @Test fun aFailedSaveIsRecoverableAndRetainsTheResult() = runTest {
         val failing = GapPlanTestEnvironment(transaction = RefusingTransaction())
         try {
             failing.addGame(1)
             failing.addHltb(1, mainStory = 600)
-            failing.seedReliablePace(appId = 1)
+            failing.addGame(PACE_GAME)
+            failing.seedReliablePace(appId = PACE_GAME)
             val viewModel = GapPlanViewModel(
                 feed = failing.feed,
                 liveCounts = GapPlanLiveCounts(CurrentPlayerCounts { null }),
                 collectionCreator = failing.collectionCreator,
+                seeds = sequentialSeeds(),
             )
             advanceUntilIdle()
             fillSetup(viewModel)
             viewModel.generate()
             advanceUntilIdle()
-            val preview = viewModel.uiState.value.result!!
+            val result = viewModel.uiState.value.result!!
 
             viewModel.reviewSave(PlanIntensity.FULL)
             viewModel.confirmSave()
@@ -323,8 +413,8 @@ class GapPlanViewModelTest {
             assertTrue(viewModel.uiState.value.saveError)
             assertFalse(viewModel.uiState.value.saving)
             assertNull(viewModel.uiState.value.createdCollectionId)
-            // The preview is exactly as it was, ready to submit again.
-            assertEquals(preview, viewModel.uiState.value.result)
+            // The result is exactly as it was, ready to submit again.
+            assertEquals(result, viewModel.uiState.value.result)
 
             viewModel.clearSaveError()
             assertFalse(viewModel.uiState.value.saveError)
@@ -333,10 +423,10 @@ class GapPlanViewModelTest {
         }
     }
 
-    /** Single-player members cost no lookup at all, rather than one that is issued and discarded. */
-    @Test fun noLiveLookupIsIssuedForASinglePlayerOnlyPlan() = runTest {
+    /** Single-player picks cost no lookup at all, rather than one issued and discarded. */
+    @Test fun noLiveLookupIsIssuedForAWhollySinglePlayerResult() = runTest {
         seedLibrary()
-        env.seedReliablePace(appId = 1)
+        env.seedReliablePace(appId = PACE_GAME)
         val requested = AtomicInteger()
         val viewModel = viewModel(
             counts = CurrentPlayerCounts { requested.incrementAndGet(); 100 },
@@ -348,14 +438,13 @@ class GapPlanViewModelTest {
 
         assertEquals(0, requested.get())
         assertTrue(
-            viewModel.uiState.value.result!!.variants.all { variant ->
-                variant.members.none { m -> m.reasons.any { it is GapPlanReason.PlayingNow } }
-            },
+            viewModel.uiState.value.result!!.picks.mapNotNull { it.game }
+                .all { game -> game.facts.none { it is GapPlanFact.PlayingNow } },
         )
     }
 
-    /** And a multiplayer member gains a factual chip once its count arrives. */
-    @Test fun aMultiplayerMemberGainsALiveChipWithoutChangingMembership() = runTest {
+    /** And a multiplayer pick gains a factual label once its count arrives. */
+    @Test fun aMultiplayerPickGainsALiveFactWithoutChangingTheGame() = runTest {
         env.addGame(1)
         env.addHltb(1, mainStory = 600)
         env.addStoreMetadata(
@@ -363,20 +452,22 @@ class GapPlanViewModelTest {
             genres = listOf(GameGenre("1", "Action")),
             categories = listOf(GameCategory(1, "Multi-player")),
         )
-        env.seedReliablePace(appId = 1)
+        env.addGame(PACE_GAME)
+        env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel(counts = CurrentPlayerCounts { 4_321 })
         advanceUntilIdle()
         fillSetup(viewModel)
         viewModel.generate()
         advanceUntilIdle()
 
-        val member = viewModel.uiState.value.result!!.variant(PlanIntensity.FULL)!!.members.single()
-        assertEquals(1L, member.appId)
-        assertTrue(member.isMultiplayer)
-        assertTrue(member.reasons.contains(GapPlanReason.PlayingNow(4_321)))
+        val game = viewModel.uiState.value.result!!.pick(PlanIntensity.FULL)!!.game!!
+        assertEquals(1L, game.appId)
+        assertTrue(game.isMultiplayer)
+        assertEquals(listOf("Action"), game.genreLabels)
+        assertTrue(game.facts.contains(GapPlanFact.PlayingNow(4_321)))
     }
 
-    @Test fun familySharedMembersAreLabelled() = runTest {
+    @Test fun familySharedPicksAreLabelled() = runTest {
         env.addGame(1, source = GameSource.FAMILY_SHARED, manualSharedMinutes = 60)
         env.addHltb(1, mainStory = 600)
         // Paced on a separate owned game: a family-shared game counts tracked sessions as
@@ -389,15 +480,23 @@ class GapPlanViewModelTest {
         viewModel.generate()
         advanceUntilIdle()
 
-        val member = viewModel.uiState.value.result!!.variant(PlanIntensity.FULL)!!.members.single()
-        assertTrue(member.isFamilyShared)
-        assertEquals(540, member.remainingMinutes)
+        val game = viewModel.uiState.value.result!!.pick(PlanIntensity.FULL)!!.game!!
+        assertTrue(game.isFamilyShared)
+        assertEquals(540, game.remainingMinutes)
     }
 
+    /**
+     * Six games of widely varied lengths, plus a separate owned game carrying the pace.
+     *
+     * The pace game deliberately has no estimate so it never enters the pool: a game seeded with
+     * forty days of sessions would be scored as heavily played, and the tests that assert on which
+     * games were picked would be describing the fixture rather than the draw.
+     */
     private suspend fun seedLibrary() {
+        env.addGame(PACE_GAME)
         (1L..6L).forEach { appId ->
             env.addGame(appId)
-            env.addHltb(appId, mainStory = 200 * appId.toInt())
+            env.addHltb(appId, mainStory = 500 * appId.toInt())
             env.addStoreMetadata(appId, genres = listOf(GameGenre("$appId", "Genre $appId")))
         }
     }
@@ -414,10 +513,24 @@ class GapPlanViewModelTest {
         feed = env.feed,
         liveCounts = GapPlanLiveCounts(counts),
         collectionCreator = env.collectionCreator,
+        seeds = sequentialSeeds(),
     )
 
+    /**
+     * Seeds 1, 2, 3, … rather than real randomness.
+     *
+     * The properties under test are that identical seeds reproduce a result and that a *different*
+     * seed changes it. Neither is assertable against a real generator: the test would have to say
+     * "probably different", which is not an assertion. Successive integers also make the reroll
+     * loop's behaviour legible — attempt one uses 1, the rebuild starts from 2.
+     */
+    private fun sequentialSeeds(): GapPlanSeeds {
+        val next = AtomicLong(0L)
+        return GapPlanSeeds { next.incrementAndGet() }
+    }
+
     private companion object {
-        /** An owned game used only to establish a pace, never to be planned. */
+        /** An owned game used only to establish a pace, never to be suggested. */
         const val PACE_GAME = 500L
     }
 

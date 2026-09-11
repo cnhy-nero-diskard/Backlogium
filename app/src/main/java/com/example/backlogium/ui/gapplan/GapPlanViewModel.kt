@@ -3,19 +3,19 @@ package com.example.backlogium.ui.gapplan
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.domain.gapplan.GapPlanAdoption
+import com.example.backlogium.domain.gapplan.GapPlanArtwork
 import com.example.backlogium.domain.gapplan.GapPlanCandidate
 import com.example.backlogium.domain.gapplan.GapPlanCollectionCreator
 import com.example.backlogium.domain.gapplan.GapPlanDecoration
-import com.example.backlogium.domain.gapplan.GapPlanEditException
-import com.example.backlogium.domain.gapplan.GapPlanEditing
 import com.example.backlogium.domain.gapplan.GapPlanEngine
 import com.example.backlogium.domain.gapplan.GapPlanFeed
-import com.example.backlogium.domain.gapplan.GapPlanArtwork
+import com.example.backlogium.domain.gapplan.GapPlanInputs
 import com.example.backlogium.domain.gapplan.GapPlanIntent
 import com.example.backlogium.domain.gapplan.GapPlanLiveCounts
+import com.example.backlogium.domain.gapplan.GapPlanRequest
 import com.example.backlogium.domain.gapplan.GapPlanRequestException
+import com.example.backlogium.domain.gapplan.GapPlanSeeds
 import com.example.backlogium.domain.gapplan.GapPlanSnapshot
-import com.example.backlogium.domain.gapplan.GapPlanVariant
 import com.example.backlogium.domain.gapplan.GenerationOwnership
 import com.example.backlogium.domain.gapplan.PlanIntensity
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -29,19 +29,19 @@ import java.time.LocalDate
 import javax.inject.Inject
 
 /**
- * Owns one gap-plan session: the setup buffer, one generated snapshot, local edits to it, and the
- * atomic save.
+ * Owns one gap-plan session: the setup buffer, one generated snapshot, and the atomic save.
  *
  * The snapshot is held here rather than re-derived from a flow, and that is deliberate. A result
- * that re-emitted whenever the library, pace, or metadata caches changed would reshuffle a plan
- * under a player who is midway through deciding whether to commit a month to it. Inputs are read
- * once per generation; nothing after that changes the plan except the player.
+ * that re-emitted whenever the library, pace, or metadata caches changed would reshuffle picks
+ * under a player who is midway through deciding whether to commit a month to one. Inputs are read
+ * once per generation; nothing after that changes the picks except the player rebuilding.
  */
 @HiltViewModel
 class GapPlanViewModel @Inject constructor(
     private val feed: GapPlanFeed,
     private val liveCounts: GapPlanLiveCounts,
     private val collectionCreator: GapPlanCollectionCreator,
+    private val seeds: GapPlanSeeds,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(GapPlanUiState())
@@ -49,16 +49,16 @@ class GapPlanViewModel @Inject constructor(
 
     private val ownership = GenerationOwnership()
 
-    /** The accepted snapshot, with the eligible pool edits are validated against. */
+    /** The result currently on screen. */
     private var snapshot: GapPlanSnapshot? = null
 
-    /** Icon and header art per app id, joined once so member cards need no second read path. */
+    /** Icon and header art per app id, joined once so pick cards need no second read path. */
     private var artwork: Map<Long, GapPlanArtwork> = emptyMap()
 
     init {
         viewModelScope.launch {
-            // One read, only to learn whether a manual budget is required and to seed artwork.
-            // Generation reads the feed again, so a plan is never built from a stale snapshot.
+            // One read, only to learn whether a manual budget is required. Generation reads the
+            // feed again, so picks are never drawn from a stale snapshot.
             val seed = feed.snapshots.first()
             _uiState.update {
                 it.copy(loading = false, requiresManualBudget = !seed.inputs.paceProfile.isReliable)
@@ -82,12 +82,18 @@ class GapPlanViewModel @Inject constructor(
     }
 
     /**
-     * Generates all three variants from local state, then decorates them.
+     * Produces a new set of three picks — the surface's one and only such control.
      *
-     * The order is the contract: variants are published *before* any network call, so the plan is
-     * complete and readable whether or not the decoration ever answers. The generation identity is
-     * claimed first, so a regeneration invalidates this attempt the moment it starts rather than
-     * whenever this coroutine happens to notice.
+     * The order is the contract: the picks are published *before* any network call, so the result
+     * is complete and readable whether or not the live counts ever answer. The generation identity
+     * is claimed first, so a rebuild invalidates the previous attempt the moment it starts rather
+     * than whenever its coroutine happens to notice.
+     *
+     * When a result is already on screen this is a **reroll**, and it is expected to change what is
+     * shown. Successive seeds are tried until the picks differ, because a single new seed can
+     * legitimately redraw the same games and a control that silently returned its own previous
+     * answer is the failure this replaced. If the pool genuinely cannot produce a different set the
+     * state says so instead.
      */
     fun generate() {
         val state = _uiState.value
@@ -96,12 +102,19 @@ class GapPlanViewModel @Inject constructor(
         val id = ownership.claim()
 
         _uiState.update {
-            it.copy(generating = true, validationError = null, saveError = false, createdCollectionId = null)
+            it.copy(
+                generating = true,
+                validationError = null,
+                saveError = false,
+                rebuildDidNotVary = false,
+                createdCollectionId = null,
+            )
         }
         viewModelScope.launch {
             val fresh = feed.snapshots.first()
-            val generated = GapPlanEngine.generate(request, fresh.inputs)
-            val plan = generated.getOrElse { error ->
+            val previous = snapshot
+            val drawn = drawDistinctFrom(previous, request, fresh.inputs)
+            val plan = drawn.getOrElse { error ->
                 ownership.ifCurrent(id) {
                     _uiState.update {
                         it.copy(
@@ -114,60 +127,60 @@ class GapPlanViewModel @Inject constructor(
                 return@launch
             }
 
-            val published = ownership.ifCurrent(id) { publish(plan, fresh.artwork) }
+            // A rebuild that returned its own previous picks has to say so; a first build has no
+            // previous set to differ from and never reports it.
+            val didNotVary = previous != null && plan.pickedAppIds == previous.pickedAppIds
+            val published = ownership.ifCurrent(id) { publish(plan, fresh.artwork, didNotVary) }
             if (!published) return@launch
 
-            // Only now, with three finalized variants already on screen.
+            // Only now, with three finalized picks already on screen.
             val counts = liveCounts.fetch(liveCounts.lookupTargets(plan))
             if (counts.isEmpty()) return@launch
-            ownership.ifCurrent(id) { publish(GapPlanDecoration.apply(plan, counts), fresh.artwork) }
+            ownership.ifCurrent(id) {
+                publish(GapPlanDecoration.apply(plan, counts), fresh.artwork, didNotVary)
+            }
         }
     }
-
-    /** Removes a member from one variant, leaving the other variants and choices untouched. */
-    fun removeMember(intensity: PlanIntensity, appId: Long) = editVariant(intensity) { variant, _ ->
-        GapPlanEditing.remove(variant, appId)
-    }
-
-    /** Opens the swap sheet with only the candidates this variant's budget can actually hold. */
-    fun offerReplacements(intensity: PlanIntensity, appId: Long) {
-        val plan = snapshot ?: return
-        val variant = plan.variant(intensity) ?: return
-        val offered = GapPlanEditing.replacementsFor(variant, plan.eligiblePool, appId)
-        _uiState.update {
-            it.copy(
-                replacement = GapPlanReplacementUi(
-                    forAppId = appId,
-                    intensity = intensity,
-                    candidates = offered.map(::memberUi),
-                ),
-            )
-        }
-    }
-
-    fun dismissReplacements() = _uiState.update { it.copy(replacement = null) }
 
     /**
-     * Applies a swap. A rejection leaves the variant exactly as it was — the sheet only ever
-     * offers budget-valid candidates, so this branch is a guard rather than a normal path.
+     * Draws until the picks differ from [previous], or until the attempts run out.
+     *
+     * Bounded rather than looped until success: [GapPlanSnapshot.canVary] says whether *some* tier
+     * had a choice, not that a different set is reachable, so an unbounded retry could spin on a
+     * pool where one tier's two candidates are the only variation and both produce the same trio
+     * after distinctness. A handful of attempts finds a different set whenever one is at all
+     * likely, and the honest answer when it does not is the unchanged-pool state.
      */
-    fun replaceMember(intensity: PlanIntensity, removeAppId: Long, addAppId: Long) {
-        val plan = snapshot ?: return
-        val variant = plan.variant(intensity) ?: return
-        GapPlanEditing.replace(variant, plan.eligiblePool, removeAppId, addAppId)
-            .onSuccess { updated ->
-                snapshot = plan.withVariant(updated)
-                _uiState.update { it.copy(result = snapshot?.toUi(), replacement = null) }
-            }
-            .onFailure { error ->
-                if (error is GapPlanEditException) _uiState.update { it.copy(replacement = null) }
-            }
+    private fun drawDistinctFrom(
+        previous: GapPlanSnapshot?,
+        request: GapPlanRequest,
+        inputs: GapPlanInputs,
+    ): Result<GapPlanSnapshot> {
+        var attempt = GapPlanEngine.generate(request, inputs, seeds.next())
+        if (previous == null) return attempt
+        repeat(MAX_REROLL_ATTEMPTS - 1) {
+            val plan = attempt.getOrNull() ?: return attempt
+            if (!plan.canVary || plan.pickedAppIds != previous.pickedAppIds) return attempt
+            attempt = GapPlanEngine.generate(request, inputs, seeds.next())
+        }
+        return attempt
     }
+
+    /**
+     * Opens a pick's detail overlay.
+     *
+     * Inspection is deliberately separate from every other action here: it changes one nullable
+     * field and touches neither the snapshot nor the seed, so a player can open all three picks in
+     * turn and still accept the one they started with.
+     */
+    fun inspect(appId: Long) = _uiState.update { it.copy(inspectingAppId = appId) }
+
+    fun dismissInspection() = _uiState.update { it.copy(inspectingAppId = null) }
 
     /** Opens the confirmation, which restates what is about to be written before it is. */
     fun reviewSave(intensity: PlanIntensity) {
         val plan = snapshot ?: return
-        val variant = plan.variant(intensity)?.takeIf { !it.isEmpty } ?: return
+        val game = plan.pick(intensity)?.game ?: return
         _uiState.update {
             it.copy(
                 saveError = false,
@@ -176,7 +189,7 @@ class GapPlanViewModel @Inject constructor(
                     collectionName = GapPlanAdoption.collectionName(plan.request.anticipatedTitle),
                     targetDate = plan.request.targetDate,
                     intent = plan.request.intent,
-                    memberCount = variant.members.size,
+                    gameName = game.name,
                 ),
             )
         }
@@ -185,18 +198,19 @@ class GapPlanViewModel @Inject constructor(
     fun dismissConfirmation() = _uiState.update { it.copy(confirmation = null) }
 
     /**
-     * Commits the reviewed variant.
+     * Commits the reviewed pick.
      *
-     * A failure releases busy state and **keeps the preview**, so the player retries the decision
-     * they already made rather than regenerating a plan from scratch.
+     * A failure releases busy state and **keeps the result**, so the player retries the decision
+     * they already made rather than rebuilding a set of picks from scratch — which, now that
+     * rebuilding genuinely rerolls, would not even return the same game.
      */
     fun confirmSave() {
         val plan = snapshot ?: return
         val intensity = _uiState.value.confirmation?.intensity ?: return
-        val variant = plan.variant(intensity) ?: return
+        val pick = plan.pick(intensity)?.takeIf { !it.isEmpty } ?: return
         _uiState.update { it.copy(saving = true, saveError = false) }
         viewModelScope.launch {
-            collectionCreator.create(plan, variant)
+            collectionCreator.create(plan, pick)
                 .onSuccess { id ->
                     _uiState.update {
                         it.copy(saving = false, confirmation = null, createdCollectionId = id)
@@ -223,25 +237,22 @@ class GapPlanViewModel @Inject constructor(
         super.onCleared()
     }
 
-    private fun publish(plan: GapPlanSnapshot, art: Map<Long, GapPlanArtwork>) {
+    private fun publish(
+        plan: GapPlanSnapshot,
+        art: Map<Long, GapPlanArtwork>,
+        didNotVary: Boolean,
+    ) {
         snapshot = plan
         artwork = art
-        _uiState.update { it.copy(generating = false, result = plan.toUi(), validationError = null) }
+        _uiState.update {
+            it.copy(
+                generating = false,
+                result = plan.toUi(),
+                validationError = null,
+                rebuildDidNotVary = didNotVary,
+            )
+        }
     }
-
-    private fun editVariant(
-        intensity: PlanIntensity,
-        edit: (GapPlanVariant, GapPlanSnapshot) -> GapPlanVariant,
-    ) {
-        val plan = snapshot ?: return
-        val variant = plan.variant(intensity) ?: return
-        snapshot = plan.withVariant(edit(variant, plan))
-        _uiState.update { it.copy(result = snapshot?.toUi()) }
-    }
-
-    private fun GapPlanSnapshot.withVariant(updated: GapPlanVariant) = copy(
-        variants = variants.map { if (it.intensity == updated.intensity) updated else it },
-    )
 
     private fun GapPlanSnapshot.toUi() = GapPlanResultUi(
         anticipatedTitle = request.anticipatedTitle,
@@ -249,19 +260,18 @@ class GapPlanViewModel @Inject constructor(
         intent = request.intent,
         fullCapacityMinutes = capacity.fullCapacityMinutes,
         provenance = capacity.provenance,
-        variants = variants.map { variant ->
-            GapPlanVariantUi(
-                intensity = variant.intensity,
-                budgetMinutes = variant.budgetMinutes,
-                plannedMinutes = variant.plannedMinutes,
-                reserveMinutes = variant.reserveMinutes,
-                members = variant.members.map(::memberUi),
+        picks = picks.map { pick ->
+            GapPlanPickUi(
+                intensity = pick.intensity,
+                budgetMinutes = pick.budgetMinutes,
+                unusedMinutes = pick.unusedMinutes,
+                game = pick.game?.let(::gameUi),
             )
         },
         coverage = coverage,
     )
 
-    private fun memberUi(candidate: GapPlanCandidate): GapPlanMemberUi {
+    private fun gameUi(candidate: GapPlanCandidate): GapPlanGameUi {
         val art = artwork[candidate.appId]
         return candidate.toUi(
             iconUrl = art?.iconUrl.orEmpty(),
@@ -284,5 +294,8 @@ class GapPlanViewModel @Inject constructor(
 
         /** Slider granularity. Finer steps would imply a precision the estimate does not have. */
         const val MANUAL_HOURS_STEP = 5
+
+        /** Seeds tried before a rebuild concedes that the pool produced the same set. */
+        const val MAX_REROLL_ATTEMPTS = 8
     }
 }

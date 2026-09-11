@@ -4,8 +4,8 @@ import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.gapplan.CapacityProvenance
 import com.example.backlogium.domain.gapplan.GapPlanCandidate
 import com.example.backlogium.domain.gapplan.GapPlanCoverage
+import com.example.backlogium.domain.gapplan.GapPlanFact
 import com.example.backlogium.domain.gapplan.GapPlanIntent
-import com.example.backlogium.domain.gapplan.GapPlanReason
 import com.example.backlogium.domain.gapplan.GapPlanRequest
 import com.example.backlogium.domain.gapplan.GapPlanRequestError
 import com.example.backlogium.domain.gapplan.PlanIntensity
@@ -32,7 +32,7 @@ data class GapPlanSetupUi(
 }
 
 /** One suggested game as its card renders it. */
-data class GapPlanMemberUi(
+data class GapPlanGameUi(
     val appId: Long,
     val name: String,
     val iconUrl: String,
@@ -40,42 +40,44 @@ data class GapPlanMemberUi(
     val remainingMinutes: Int,
     val isFamilyShared: Boolean,
     val isMultiplayer: Boolean,
+    /** Store genres, already resolved to labels. Empty means none are cached yet. */
+    val genreLabels: List<String>,
     /**
-     * Fact-bearing chips, in the order the engine produced them. Deliberately the domain reasons
-     * rather than pre-rendered strings, so the surface can present them and a test can assert that
-     * an absent signal produced no chip at all.
+     * The facts that let the player judge this pick, in the order the engine produced them.
+     * Deliberately the domain facts rather than pre-rendered strings, so the surface can present
+     * them and a test can assert that an absent signal produced no label at all.
      */
-    val reasons: List<GapPlanReason>,
+    val facts: List<GapPlanFact>,
 )
 
-/** One plan variant as its card renders it. */
-data class GapPlanVariantUi(
+/** One tier's offer as its card renders it. */
+data class GapPlanPickUi(
     val intensity: PlanIntensity,
     val budgetMinutes: Int,
-    val plannedMinutes: Int,
-    val reserveMinutes: Int,
-    val members: List<GapPlanMemberUi>,
+    val unusedMinutes: Int,
+    /** Null when nothing in the eligible pool fits this tier's share of capacity. */
+    val game: GapPlanGameUi?,
 ) {
-    val isEmpty: Boolean get() = members.isEmpty()
+    val isEmpty: Boolean get() = game == null
 }
 
-/** The generated result, held stable until the player regenerates or edits it. */
+/** The generated result, held stable until the player rebuilds. */
 data class GapPlanResultUi(
     val anticipatedTitle: String,
     val targetDate: LocalDate,
     val intent: GapPlanIntent,
     /**
-     * The request's whole forecast, stated once for all three variants. Without it a Relaxed card
-     * showing only its own budget and reserve would present its reduced budget as all the time the
-     * player has — concealing exactly what the intensity choice is for.
+     * The request's whole forecast, stated once for all three tiers. Without it a Relaxed card
+     * showing only its own share would present that reduced figure as all the time the player
+     * has — concealing exactly what the intensity choice is for.
      */
     val fullCapacityMinutes: Int,
     val provenance: CapacityProvenance,
-    val variants: List<GapPlanVariantUi>,
+    val picks: List<GapPlanPickUi>,
     val coverage: GapPlanCoverage,
 ) {
-    fun variant(intensity: PlanIntensity): GapPlanVariantUi? =
-        variants.firstOrNull { it.intensity == intensity }
+    fun pick(intensity: PlanIntensity): GapPlanPickUi? =
+        picks.firstOrNull { it.intensity == intensity }
 }
 
 /** The confirmation shown before anything is written. */
@@ -84,21 +86,14 @@ data class GapPlanSaveConfirmationUi(
     val collectionName: String,
     val targetDate: LocalDate,
     val intent: GapPlanIntent,
-    val memberCount: Int,
-)
-
-/** An offered swap for one member, already filtered to what the budget can hold. */
-data class GapPlanReplacementUi(
-    val forAppId: Long,
-    val intensity: PlanIntensity,
-    val candidates: List<GapPlanMemberUi>,
+    val gameName: String,
 )
 
 /**
  * Everything the gap-plan route renders.
  *
  * [result] and [setup] coexist rather than replacing one another: the player can go back to adjust
- * inputs without losing the plan they are looking at, and nothing about setup is persisted.
+ * inputs without losing the picks they are looking at, and nothing about setup is persisted.
  */
 data class GapPlanUiState(
     val loading: Boolean = true,
@@ -111,7 +106,17 @@ data class GapPlanUiState(
     val validationError: GapPlanRequestError? = null,
     val saveError: Boolean = false,
     val confirmation: GapPlanSaveConfirmationUi? = null,
-    val replacement: GapPlanReplacementUi? = null,
+    /**
+     * The last rebuild could not produce a different set, because the eligible pool has no other
+     * candidate near any tier's share.
+     *
+     * Held as explicit state rather than inferred by the surface: a control that appears to have
+     * been ignored is the exact failure the single rebuild control was introduced to fix, and the
+     * only honest answer is to say why nothing changed.
+     */
+    val rebuildDidNotVary: Boolean = false,
+    /** The pick whose detail overlay is open, or null. Inspection never alters the picks. */
+    val inspectingAppId: Long? = null,
     /** Set once a save succeeds, so the route can open the created collection. */
     val createdCollectionId: Long? = null,
 ) {
@@ -136,11 +141,11 @@ internal fun GapPlanSetupUi.toRequest(requiresManualBudget: Boolean): GapPlanReq
     )
 }
 
-/** A domain candidate to its card, joined with the library facts the card renders. */
+/** A domain candidate to its card, joined with the library artwork the card renders. */
 internal fun GapPlanCandidate.toUi(
     iconUrl: String,
     headerUrl: String,
-): GapPlanMemberUi = GapPlanMemberUi(
+): GapPlanGameUi = GapPlanGameUi(
     appId = appId,
     name = name,
     iconUrl = iconUrl,
@@ -148,5 +153,6 @@ internal fun GapPlanCandidate.toUi(
     remainingMinutes = remainingMinutes,
     isFamilyShared = source == GameSource.FAMILY_SHARED,
     isMultiplayer = multiplayer,
-    reasons = reasons,
+    genreLabels = genreLabels,
+    facts = facts,
 )

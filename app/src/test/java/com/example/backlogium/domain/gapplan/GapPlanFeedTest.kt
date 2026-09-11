@@ -162,12 +162,13 @@ class GapPlanFeedTest {
         assertTrue(inputs.reviewsByAppId.isEmpty())
         assertTrue(inputs.genreLabels.isEmpty())
         assertTrue(inputs.games.all { it.genreIds.isEmpty() && !it.multiplayer })
-        // And the engine still plans from it.
+        // And the engine still offers a pick from it.
         val snapshot = GapPlanEngine.generate(
             gapRequest(manualTotalHours = 20),
             inputs.copy(paceProfile = learningPace(inputs.today)),
+            seed = 1L,
         ).getOrThrow()
-        assertEquals(listOf(1L), snapshot.variant(PlanIntensity.FULL)!!.members.map { it.appId })
+        assertEquals(listOf(1L), snapshot.pickedAppIds)
     }
 
     /** A checked-unavailable review row stays distinct from never having asked. */

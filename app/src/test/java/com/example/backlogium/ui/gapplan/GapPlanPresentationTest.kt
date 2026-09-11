@@ -2,8 +2,8 @@ package com.example.backlogium.ui.gapplan
 
 import com.example.backlogium.domain.gapplan.CapacityProvenance
 import com.example.backlogium.domain.gapplan.GapPlanCoverage
+import com.example.backlogium.domain.gapplan.GapPlanFact
 import com.example.backlogium.domain.gapplan.GapPlanIntent
-import com.example.backlogium.domain.gapplan.GapPlanReason
 import com.example.backlogium.domain.gapplan.GapPlanRequestError
 import com.example.backlogium.domain.gapplan.PlanIntensity
 import org.junit.Assert.assertEquals
@@ -14,42 +14,56 @@ import org.junit.Test
 /**
  * The words the surface actually says.
  *
- * Several of these sentences are the *only* place a missing signal is disclosed, so they are
- * asserted directly rather than only through a rendered tree — a disclosure that quietly stopped
- * being produced would otherwise fail no test at all.
+ * Several of these sentences are the *only* place a missing fact is disclosed, so they are asserted
+ * directly rather than only through a rendered tree — a disclosure that quietly stopped being
+ * produced would otherwise fail no test at all.
  */
 class GapPlanPresentationTest {
 
     /**
-     * The full forecast is stated separately from any variant's budget. Without it a Relaxed card
-     * showing only its own figures would present its reduced budget as all the time the player
-     * has, concealing exactly the time the intensity deliberately withheld.
+     * The full forecast is stated separately from any tier's share. Without it a Relaxed card
+     * showing only its own figure would present that reduced share as all the time the player has,
+     * concealing exactly the time the intensity deliberately withheld.
      */
-    @Test fun theFullForecastAndTheVariantsWithheldShareAreBothStated() {
-        val relaxed = variant(PlanIntensity.RELAXED, budget = 4_200, planned = 4_000)
+    @Test fun theFullForecastAndTheTiersWithheldShareAreBothStated() {
+        val relaxed = pickUi(PlanIntensity.RELAXED, budget = 4_200, remaining = 4_000)
 
         assertEquals(
             "You have about 100h before then.",
             GapPlanPresentation.fullCapacityLine(6_000),
         )
-        assertEquals(
-            "70h budget · 66h 40m planned · 3h 20m reserve",
-            GapPlanPresentation.variantBudgetLine(relaxed),
-        )
+        assertEquals("Planning around 70h of it", GapPlanPresentation.pickShareLine(relaxed))
         assertEquals(
             "Holding back 30h of your forecast.",
             GapPlanPresentation.withheldLine(relaxed, fullCapacityMinutes = 6_000),
         )
     }
 
-    /** The Full variant withholds nothing, so it says nothing about withholding. */
-    @Test fun aFullVariantHasNoWithheldLine() {
+    /** The Full tier withholds nothing, so it says nothing about withholding. */
+    @Test fun aFullTierHasNoWithheldLine() {
         assertNull(
             GapPlanPresentation.withheldLine(
-                variant(PlanIntensity.FULL, budget = 6_000, planned = 5_000),
+                pickUi(PlanIntensity.FULL, budget = 6_000, remaining = 5_000),
                 fullCapacityMinutes = 6_000,
             ),
         )
+    }
+
+    /** A pick's remaining time is stated once, in its own line. */
+    @Test fun aPicksRemainingTimeIsStatedAsItsOwnLine() {
+        assertEquals(
+            "10h left",
+            GapPlanPresentation.remainingLine(gameUi(remaining = 600)),
+        )
+    }
+
+    /** Genres are joined into one line, and omitted entirely when none are cached. */
+    @Test fun genresAreJoinedOrOmittedRatherThanRenderedEmpty() {
+        assertEquals(
+            "Action · RPG",
+            GapPlanPresentation.genreLine(gameUi(genres = listOf("Action", "RPG"))),
+        )
+        assertNull(GapPlanPresentation.genreLine(gameUi(genres = emptyList())))
     }
 
     /**
@@ -84,10 +98,15 @@ class GapPlanPresentationTest {
     }
 
     /**
-     * A library the enrichment has not reached ranks on duration and progress alone. That is the
-     * accepted degradation, and the plan says so rather than looking better informed than it was.
+     * A library the enrichment has not reached still gets valid suggestions — nothing is ranked, so
+     * selection is unaffected — but its cards will be sparse, and the disclosure says so.
+     *
+     * The wording matters here and is the reason this is asserted rather than eyeballed. It used to
+     * say ratings "did not influence this plan", which was true of one run and false as a general
+     * claim: ratings never influence a plan now. Saying the cards cannot *show* them is the only
+     * version that stays true when the cache fills up.
      */
-    @Test fun anUnenrichedLibraryDisclosesThatRatingsAndGenresDidNotInfluenceThePlan() {
+    @Test fun anUnenrichedLibraryDisclosesWhatItsCardsCannotShow() {
         val disclosures = GapPlanPresentation.coverageDisclosures(
             GapPlanCoverage(
                 visibleGames = 10,
@@ -102,6 +121,10 @@ class GapPlanPresentationTest {
         assertEquals(2, disclosures.size)
         assertTrue(disclosures.any { it.contains("No Steam ratings") })
         assertTrue(disclosures.any { it.contains("No Store genres") })
+        assertTrue(
+            "a disclosure must not claim a signal influenced the picks",
+            disclosures.none { it.contains("influence") },
+        )
     }
 
     @Test fun aFullyCoveredLibraryDisclosesNothing() {
@@ -113,42 +136,61 @@ class GapPlanPresentationTest {
         )
     }
 
-    /** Every chip states a fact. There is no composite score to render, by construction. */
-    @Test fun everyReasonRendersAsACheckableFact() {
+    /** Every label states a fact. There is no composite score to render, by construction. */
+    @Test fun everyFactRendersAsACheckableStatement() {
         assertEquals(
             "Very Positive (2,775,966 reviews)",
-            GapPlanPresentation.reasonLabel(
-                GapPlanReason.ReviewQuality("Very Positive", positive = 2_234_895, total = 2_775_966),
+            GapPlanPresentation.factLabel(
+                GapPlanFact.Reviews("Very Positive", positive = 2_234_895, total = 2_775_966),
             ),
         )
         assertEquals(
             "You have been playing Action",
-            GapPlanPresentation.reasonLabel(GapPlanReason.GenreAffinity("Action")),
+            GapPlanPresentation.factLabel(GapPlanFact.GenreAffinity("Action")),
         )
         assertEquals(
             "5h of 10h played",
-            GapPlanPresentation.reasonLabel(GapPlanReason.Progress(300, 600)),
+            GapPlanPresentation.factLabel(GapPlanFact.Progress(300, 600)),
         )
-        assertEquals("10h left", GapPlanPresentation.reasonLabel(GapPlanReason.Fit(600)))
-        assertEquals("Family shared", GapPlanPresentation.reasonLabel(GapPlanReason.FamilyShared))
         assertEquals(
             "4,321 playing now",
-            GapPlanPresentation.reasonLabel(GapPlanReason.PlayingNow(4_321)),
+            GapPlanPresentation.factLabel(GapPlanFact.PlayingNow(4_321)),
         )
     }
 
-    @Test fun theThreeIntensitiesAreNamedAndTheirShareOfCapacityIsStated() {
+    /**
+     * A tier targets its share rather than merely fitting under it, and the copy has to say so.
+     * "Up to 70%" would describe the design this replaced, under which all three tiers could offer
+     * the same short game.
+     */
+    @Test fun theThreeIntensitiesAreNamedAndTheirTargetShareIsStated() {
         assertEquals("Relaxed", GapPlanPresentation.intensityName(PlanIntensity.RELAXED))
         assertEquals("Balanced", GapPlanPresentation.intensityName(PlanIntensity.BALANCED))
         assertEquals("Full", GapPlanPresentation.intensityName(PlanIntensity.FULL))
         assertEquals(
-            "70% of your forecast time",
+            "Around 70% of your forecast time",
             GapPlanPresentation.intensityRule(PlanIntensity.RELAXED),
         )
         assertEquals(
-            "100% of your forecast time",
+            "Around 100% of your forecast time",
             GapPlanPresentation.intensityRule(PlanIntensity.FULL),
         )
+    }
+
+    /** The surface says the picks were not judged, so no card reads as the recommended one. */
+    @Test fun theSelectionExplanationSaysThePicksWereNotRanked() {
+        val explanation = GapPlanPresentation.selectionExplanation()
+
+        assertTrue(explanation.contains("at random"))
+        assertTrue(explanation.contains("judge them"))
+    }
+
+    /** An unchanged rebuild explains itself rather than looking like an ignored control. */
+    @Test fun anUnchangedRebuildExplainsWhyNothingMoved() {
+        val message = GapPlanPresentation.rebuildDidNotVaryMessage()
+
+        assertTrue(message.contains("not enough games"))
+        assertTrue("it must suggest a way out", message.contains("Widen"))
     }
 
     /** The basis the plan was measured in is the basis the collection will carry. */
@@ -181,18 +223,33 @@ class GapPlanPresentationTest {
         assertTrue(GapPlanPresentation.saveFailureMessage().contains("still here"))
     }
 
-    @Test fun anEmptyVariantExplainsItselfRatherThanRenderingBlank() {
-        val message = GapPlanPresentation.emptyVariantMessage()
+    @Test fun anEmptyTierExplainsItselfRatherThanRenderingBlank() {
+        val message = GapPlanPresentation.emptyPickMessage()
 
         assertTrue(message.contains("known length"))
         assertTrue(message.isNotBlank())
     }
 
-    private fun variant(intensity: PlanIntensity, budget: Int, planned: Int) = GapPlanVariantUi(
+    private fun pickUi(intensity: PlanIntensity, budget: Int, remaining: Int) = GapPlanPickUi(
         intensity = intensity,
         budgetMinutes = budget,
-        plannedMinutes = planned,
-        reserveMinutes = budget - planned,
-        members = emptyList(),
+        unusedMinutes = budget - remaining,
+        game = gameUi(remaining = remaining),
+    )
+
+    private fun gameUi(
+        remaining: Int = 600,
+        genres: List<String> = listOf("Action"),
+        facts: List<GapPlanFact> = emptyList(),
+    ) = GapPlanGameUi(
+        appId = 1L,
+        name = "Game 1",
+        iconUrl = "",
+        headerUrl = "",
+        remainingMinutes = remaining,
+        isFamilyShared = false,
+        isMultiplayer = false,
+        genreLabels = genres,
+        facts = facts,
     )
 }

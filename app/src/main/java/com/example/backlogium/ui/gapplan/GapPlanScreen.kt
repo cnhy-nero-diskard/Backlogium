@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.gapplan
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,18 +11,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -37,7 +36,6 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -50,14 +48,13 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.domain.gapplan.GapPlanIntent
-import com.example.backlogium.domain.gapplan.GapPlanReason
 import com.example.backlogium.domain.gapplan.PlanIntensity
 import com.example.backlogium.ui.components.GameIcon
-import com.example.backlogium.ui.util.UiFormat
+import com.example.backlogium.ui.gamedetail.GameDetailPresentation
+import com.example.backlogium.ui.gamedetail.GameDetailScreen
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowBack
 import compose.icons.tablericons.Refresh
-import compose.icons.tablericons.X
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -79,11 +76,10 @@ data class GapPlanActions(
     val onIncludeUnplayedChange: (Boolean) -> Unit = {},
     val onIncludeStartedChange: (Boolean) -> Unit = {},
     val onManualHoursChange: (Int) -> Unit = {},
+    /** Build the first set, and reroll every set after it. There is only ever this one. */
     val onGenerate: () -> Unit = {},
-    val onRemove: (PlanIntensity, Long) -> Unit = { _, _ -> },
-    val onOfferReplacements: (PlanIntensity, Long) -> Unit = { _, _ -> },
-    val onChooseReplacement: (Long) -> Unit = {},
-    val onDismissReplacements: () -> Unit = {},
+    val onInspect: (Long) -> Unit = {},
+    val onDismissInspection: () -> Unit = {},
     val onReviewSave: (PlanIntensity) -> Unit = {},
     val onConfirmSave: () -> Unit = {},
     val onDismissConfirmation: () -> Unit = {},
@@ -91,11 +87,11 @@ data class GapPlanActions(
 )
 
 /**
- * The gap-plan builder: one pushed surface carrying setup and results together.
+ * The gap-plan builder: one pushed surface carrying setup and the three picks together.
  *
  * Setup stays visible above the result rather than being replaced by it, so adjusting an input and
- * regenerating is one screen rather than a round trip — and nothing about setup is written
- * anywhere, so going back costs nothing.
+ * rebuilding is one screen rather than a round trip — and nothing about setup is written anywhere,
+ * so going back costs nothing.
  */
 @Composable
 fun GapPlanScreen(
@@ -122,14 +118,8 @@ fun GapPlanScreen(
             onIncludeStartedChange = viewModel::setIncludeStarted,
             onManualHoursChange = viewModel::setManualTotalHours,
             onGenerate = viewModel::generate,
-            onRemove = viewModel::removeMember,
-            onOfferReplacements = viewModel::offerReplacements,
-            onChooseReplacement = { addAppId ->
-                state.replacement?.let { replacement ->
-                    viewModel.replaceMember(replacement.intensity, replacement.forAppId, addAppId)
-                }
-            },
-            onDismissReplacements = viewModel::dismissReplacements,
+            onInspect = viewModel::inspect,
+            onDismissInspection = viewModel::dismissInspection,
             onReviewSave = viewModel::reviewSave,
             onConfirmSave = viewModel::confirmSave,
             onDismissConfirmation = viewModel::dismissConfirmation,
@@ -143,9 +133,28 @@ fun GapPlanScreen(
  *
  * Deliberately silent: every control here is navigation, filtering, or list interaction, none of
  * which is in the app's haptic vocabulary. No platform haptic call appears in this package.
+ *
+ * [detail] is the inspection overlay's body, defaulting to the existing collection game-detail
+ * screen. It is a slot rather than a hard call because that screen resolves its own
+ * `hiltViewModel`, which a behaviour test driving this composable from hoisted state cannot
+ * provide — and the behaviour worth testing here is the overlay's *lifecycle*: that activating a
+ * pick opens it, that both dismissal routes close it, and that neither rerolls. What the detail
+ * itself renders is the game-detail screen's own contract, tested where it lives.
  */
 @Composable
-fun GapPlanContent(state: GapPlanUiState, actions: GapPlanActions) {
+fun GapPlanContent(
+    state: GapPlanUiState,
+    actions: GapPlanActions,
+    detail: @Composable (Long) -> Unit = { appId ->
+        GameDetailScreen(
+            appId = appId,
+            presentation = GameDetailPresentation.COLLECTION_OVERLAY,
+            viewModel = hiltViewModel(key = appId.toString()),
+            onRemoved = actions.onDismissInspection,
+            onDismiss = actions.onDismissInspection,
+        )
+    },
+) {
     if (state.loading) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
@@ -166,6 +175,15 @@ fun GapPlanContent(state: GapPlanUiState, actions: GapPlanActions) {
 
             state.result?.let { result ->
                 item { GapPlanCapacityCard(result) }
+                if (state.rebuildDidNotVary) {
+                    item {
+                        Text(
+                            text = GapPlanPresentation.rebuildDidNotVaryMessage(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.testTag(TAG_NO_VARIATION),
+                        )
+                    }
+                }
                 GapPlanPresentation.coverageDisclosures(result.coverage).forEach { disclosure ->
                     item {
                         Text(
@@ -175,16 +193,13 @@ fun GapPlanContent(state: GapPlanUiState, actions: GapPlanActions) {
                         )
                     }
                 }
-                result.variants.forEach { variant ->
-                    item(key = "variant-${variant.intensity}") {
-                        GapPlanVariantCard(
-                            variant = variant,
+                result.picks.forEach { pick ->
+                    item(key = "pick-${pick.intensity}") {
+                        GapPlanPickCard(
+                            pick = pick,
                             fullCapacityMinutes = result.fullCapacityMinutes,
-                            onRemove = { appId -> actions.onRemove(variant.intensity, appId) },
-                            onReplace = { appId ->
-                                actions.onOfferReplacements(variant.intensity, appId)
-                            },
-                            onSave = { actions.onReviewSave(variant.intensity) },
+                            onInspect = actions.onInspect,
+                            onSave = { actions.onReviewSave(pick.intensity) },
                         )
                     }
                 }
@@ -204,12 +219,8 @@ fun GapPlanContent(state: GapPlanUiState, actions: GapPlanActions) {
         }
     }
 
-    state.replacement?.let { replacement ->
-        GapPlanReplacementSheet(
-            replacement = replacement,
-            onChoose = actions.onChooseReplacement,
-            onDismiss = actions.onDismissReplacements,
-        )
+    state.inspectingAppId?.let { appId ->
+        GapPlanDetailOverlay(onDismiss = actions.onDismissInspection) { detail(appId) }
     }
 
     state.confirmation?.let { confirmation ->
@@ -312,10 +323,10 @@ private fun GapPlanSetupCard(state: GapPlanUiState, actions: GapPlanActions) {
                 )
             }
 
-            // One control, not two. This was briefly a "Build plans" button beside a separate
-            // "Regenerate" button that invoked exactly the same action, which is worse than
-            // redundant: plan membership is deterministic, so with unchanged inputs both produce
-            // a byte-identical result and a second button implied otherwise.
+            // One control, and it genuinely rerolls. It was briefly a "Build plans" button beside
+            // a separate "Regenerate" invoking the same action, which was worse than redundant
+            // while picks were fully determined by the inputs: it promised a different result that
+            // could not exist. Each generation now draws its own seed, so this produces a new set.
             Button(
                 onClick = actions.onGenerate,
                 enabled = state.canGenerate,
@@ -323,9 +334,9 @@ private fun GapPlanSetupCard(state: GapPlanUiState, actions: GapPlanActions) {
             ) {
                 if (state.result != null) {
                     Icon(TablerIcons.Refresh, contentDescription = null)
-                    Text("Rebuild plans", Modifier.padding(start = 8.dp))
+                    Text("Rebuild", Modifier.padding(start = 8.dp))
                 } else {
-                    Text("Build plans")
+                    Text("Suggest three games")
                 }
             }
             if (state.generating) {
@@ -460,7 +471,7 @@ private fun GapPlanToggleRow(label: String, checked: Boolean, onCheckedChange: (
     }
 }
 
-/** The request's whole forecast and where it came from, stated once above all three variants. */
+/** The request's whole forecast and where it came from, stated once above all three picks. */
 @Composable
 private fun GapPlanCapacityCard(result: GapPlanResultUi) {
     Card(Modifier.fillMaxWidth()) {
@@ -485,57 +496,67 @@ private fun GapPlanCapacityCard(result: GapPlanResultUi) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.testTag(TAG_CAPACITY_SOURCE),
             )
+            Text(
+                text = GapPlanPresentation.selectionExplanation(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag(TAG_SELECTION_EXPLANATION),
+            )
         }
     }
 }
 
+/**
+ * One tier: its share of the forecast, and the single game drawn for it.
+ *
+ * Both capacity figures appear — this tier's share here, the request's full forecast on the card
+ * above — because a Relaxed card stating only its own smaller number would hide the time the 70%
+ * intensity deliberately withheld.
+ */
 @Composable
-private fun GapPlanVariantCard(
-    variant: GapPlanVariantUi,
+private fun GapPlanPickCard(
+    pick: GapPlanPickUi,
     fullCapacityMinutes: Int,
-    onRemove: (Long) -> Unit,
-    onReplace: (Long) -> Unit,
+    onInspect: (Long) -> Unit,
     onSave: () -> Unit,
 ) {
-    Card(Modifier.fillMaxWidth().testTag(variantTag(variant.intensity))) {
+    Card(Modifier.fillMaxWidth().testTag(pickTag(pick.intensity))) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                text = GapPlanPresentation.intensityName(variant.intensity),
+                text = GapPlanPresentation.intensityName(pick.intensity),
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                text = GapPlanPresentation.intensityRule(variant.intensity),
+                text = GapPlanPresentation.intensityRule(pick.intensity),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = GapPlanPresentation.variantBudgetLine(variant),
+                text = GapPlanPresentation.pickShareLine(pick),
                 style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag(shareTag(pick.intensity)),
             )
-            GapPlanPresentation.withheldLine(variant, fullCapacityMinutes)?.let { withheld ->
+            GapPlanPresentation.withheldLine(pick, fullCapacityMinutes)?.let { withheld ->
                 Text(
                     text = withheld,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag(withheldTag(pick.intensity)),
                 )
             }
 
-            if (variant.isEmpty) {
+            val game = pick.game
+            if (game == null) {
                 Text(
-                    text = GapPlanPresentation.emptyVariantMessage(),
+                    text = GapPlanPresentation.emptyPickMessage(),
                     style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.testTag(emptyTag(pick.intensity)),
                 )
             } else {
-                variant.members.forEach { member ->
-                    GapPlanMemberRow(
-                        member = member,
-                        onRemove = { onRemove(member.appId) },
-                        onReplace = { onReplace(member.appId) },
-                    )
-                }
+                GapPlanGameRow(game = game, onInspect = { onInspect(game.appId) })
                 Button(
                     onClick = onSave,
-                    modifier = Modifier.testTag(saveTag(variant.intensity)),
+                    modifier = Modifier.testTag(saveTag(pick.intensity)),
                 ) {
                     Text("Save as collection")
                 }
@@ -544,61 +565,77 @@ private fun GapPlanVariantCard(
     }
 }
 
+/**
+ * The picked game, and the facts that let the player judge it.
+ *
+ * The whole row is the inspection control. Activating it opens the game-detail overlay rather than
+ * navigating, so judging a suggestion never costs leaving the result — and it changes nothing about
+ * the picks, which is what lets a player open all three in turn and still accept the first.
+ */
 @Composable
-private fun GapPlanMemberRow(
-    member: GapPlanMemberUi,
-    onRemove: () -> Unit,
-    onReplace: () -> Unit,
-) {
+private fun GapPlanGameRow(game: GapPlanGameUi, onInspect: () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
-            .testTag(memberTag(member.appId)),
+            .clickable(onClick = onInspect)
+            .testTag(gameTag(game.appId))
+            .padding(vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            GameIcon(iconUrl = member.iconUrl)
+            GameIcon(iconUrl = game.iconUrl)
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
                 Text(
-                    text = member.name,
+                    text = game.name,
                     style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                // The remaining time is stated here and only here. It is the most prominent place
+                // on the card, and a fact label repeating the identical words beside it is noise.
                 Text(
-                    text = "${UiFormat.minutes(member.remainingMinutes)} left",
+                    text = GapPlanPresentation.remainingLine(game),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            TextButton(onClick = onReplace, modifier = Modifier.testTag(replaceTag(member.appId))) {
-                Text("Swap")
-            }
-            IconButton(onClick = onRemove, modifier = Modifier.testTag(removeTag(member.appId))) {
-                Icon(TablerIcons.X, contentDescription = "Remove ${member.name}")
+            if (game.isFamilyShared) {
+                Text(
+                    text = "Family shared",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag(familySharedTag(game.appId)),
+                )
             }
         }
-        // Fit is deliberately not repeated as a chip: the row above already states the remaining
-        // time as its own subtitle, in the most prominent place on the card, and a chip beside it
-        // saying the identical words is noise. The reason still exists on the candidate — it is
-        // what guarantees a game recommended on duration alone has an explanation at all — this
-        // is only a decision about not rendering the same fact twice.
-        // Rendered as read-only labels rather than disabled chips. A reason is a fact the plan is
-        // asking the player to weigh, and a disabled control is styled to say "unavailable" — on
+
+        // Omitted entirely when no genres are cached, rather than rendered as an empty line: an
+        // unavailable fact must not look like a fact with no content.
+        GapPlanPresentation.genreLine(game)?.let { genres ->
+            Text(
+                text = genres,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag(genreTag(game.appId)),
+            )
+        }
+
+        // Rendered as read-only labels rather than disabled chips. A fact is something the player
+        // is being asked to weigh, and a disabled control is styled to say "unavailable" — on
         // device the greyed-out text read as switched off rather than as information, which is the
         // opposite of the point. These are never tappable, so nothing is lost by not looking it.
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            member.reasons.filterNot { it is GapPlanReason.Fit }.forEach { reason ->
+            game.facts.forEach { fact ->
                 Surface(
                     shape = MaterialTheme.shapes.small,
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 ) {
                     Text(
-                        text = GapPlanPresentation.reasonLabel(reason),
+                        text = GapPlanPresentation.factLabel(fact),
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     )
@@ -609,126 +646,28 @@ private fun GapPlanMemberRow(
 }
 
 /**
- * The swap surface, and the only route into the rest of the eligible pool.
+ * A pick's detail, in place.
  *
- * Plan membership is deterministic, so rebuilding with unchanged inputs returns the same games —
- * by design, because a plan that reshuffled on every tap could not be committed to. The cost is
- * that the ranking buries everything below the top few, and this sheet is what answers it: the
- * *whole* budget-valid pool, searchable, rather than the first handful.
+ * The **existing** collection game-detail overlay, not a second compact detail built for this
+ * surface: that treatment already has specified artwork fallbacks and dismissal behaviour, and a
+ * parallel implementation would drift from them. `skipPartiallyExpanded = false` matches the
+ * collection surface exactly, which is what leaves the result visible above the sheet — the
+ * property that makes inspecting a pick cheaper than navigating to it.
  *
- * Every candidate offered here already fits the variant's remaining time, so nothing shown can be
- * chosen and then refused.
+ * [BackHandler] is explicit rather than relying on the sheet's own back handling, because the
+ * dismissal must clear the ViewModel's inspection state too — a sheet that closed itself while the
+ * state still named a game would reopen on the next recomposition.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GapPlanReplacementSheet(
-    replacement: GapPlanReplacementUi,
-    onChoose: (Long) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var query by rememberSaveable { mutableStateOf("") }
-    val matches = remember(replacement.candidates, query) {
-        val trimmed = query.trim()
-        if (trimmed.isEmpty()) replacement.candidates
-        else replacement.candidates.filter { it.name.contains(trimmed, ignoreCase = true) }
-    }
-
+private fun GapPlanDetailOverlay(onDismiss: () -> Unit, content: @Composable () -> Unit) {
+    BackHandler(onBack = onDismiss)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        // Expanded on open for the same reason the update sheet is: this is a list to browse, and
-        // at partial height most of it would sit below the fold.
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        modifier = Modifier.testTag(TAG_SWAP_SHEET),
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
+        modifier = Modifier.testTag(TAG_DETAIL_OVERLAY),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("Swap in another game", style = MaterialTheme.typography.titleMedium)
-            Text(
-                text = GapPlanPresentation.swapPoolSummary(replacement.candidates.size),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag(TAG_SWAP_COUNT),
-            )
-
-            if (replacement.candidates.isEmpty()) {
-                Text(GapPlanPresentation.noSwapCandidatesMessage())
-                return@Column
-            }
-
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                label = { Text("Search your library") },
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag(TAG_SWAP_SEARCH),
-            )
-
-            if (matches.isEmpty()) {
-                // Distinct from having nothing that fits at all: the pool is not empty, this
-                // search just did not match it, and saying so is the difference between "try
-                // another word" and "give up".
-                Text(
-                    text = GapPlanPresentation.noSwapMatchesMessage(query.trim()),
-                    modifier = Modifier.testTag(TAG_SWAP_NO_MATCH),
-                )
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = SWAP_LIST_MAX_HEIGHT)
-                        .testTag(TAG_SWAP_LIST),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    items(matches, key = { it.appId }) { candidate ->
-                        GapPlanReplacementRow(
-                            candidate = candidate,
-                            onClick = { onChoose(candidate.appId) },
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun GapPlanReplacementRow(candidate: GapPlanMemberUi, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .testTag(replacementOptionTag(candidate.appId))
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        GameIcon(iconUrl = candidate.iconUrl, iconSize = 32.dp)
-        Column(Modifier.weight(1f).padding(start = 12.dp)) {
-            Text(
-                text = candidate.name,
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = UiFormat.minutes(candidate.remainingMinutes) + " left",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        if (candidate.isFamilyShared) {
-            Text(
-                text = "Family shared",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        content()
     }
 }
 
@@ -748,7 +687,7 @@ private fun GapPlanSaveDialog(
                 Text(confirmation.collectionName, style = MaterialTheme.typography.titleSmall)
                 Text("Deadline ${confirmation.targetDate}")
                 Text(GapPlanPresentation.intentBasisLabel(confirmation.intent))
-                Text("${confirmation.memberCount} games")
+                Text(confirmation.gameName)
             }
         },
         confirmButton = {
@@ -783,26 +722,23 @@ internal const val TAG_HOURS_SLIDER = "gapplan-hours-slider"
 internal const val TAG_HOURS_VALUE = "gapplan-hours-value"
 internal const val TAG_GENERATE = "gapplan-generate"
 internal const val TAG_VALIDATION = "gapplan-validation"
-internal const val TAG_SWAP_SHEET = "gapplan-swap-sheet"
-internal const val TAG_SWAP_SEARCH = "gapplan-swap-search"
-internal const val TAG_SWAP_LIST = "gapplan-swap-list"
-internal const val TAG_SWAP_COUNT = "gapplan-swap-count"
-internal const val TAG_SWAP_NO_MATCH = "gapplan-swap-no-match"
 internal const val TAG_FULL_CAPACITY = "gapplan-full-capacity"
 internal const val TAG_CAPACITY_SOURCE = "gapplan-capacity-source"
+internal const val TAG_SELECTION_EXPLANATION = "gapplan-selection-explanation"
+internal const val TAG_NO_VARIATION = "gapplan-no-variation"
+internal const val TAG_DETAIL_OVERLAY = "gapplan-detail-overlay"
 internal const val TAG_SAVE_DIALOG = "gapplan-save-dialog"
 internal const val TAG_CONFIRM_SAVE = "gapplan-confirm-save"
 internal const val TAG_SAVE_ERROR = "gapplan-save-error"
 
-internal fun variantTag(intensity: PlanIntensity) = "gapplan-variant-${intensity.name}"
+internal fun pickTag(intensity: PlanIntensity) = "gapplan-pick-${intensity.name}"
+internal fun shareTag(intensity: PlanIntensity) = "gapplan-share-${intensity.name}"
+internal fun withheldTag(intensity: PlanIntensity) = "gapplan-withheld-${intensity.name}"
+internal fun emptyTag(intensity: PlanIntensity) = "gapplan-empty-${intensity.name}"
 internal fun saveTag(intensity: PlanIntensity) = "gapplan-save-${intensity.name}"
-internal fun memberTag(appId: Long) = "gapplan-member-$appId"
-internal fun removeTag(appId: Long) = "gapplan-remove-$appId"
-internal fun replaceTag(appId: Long) = "gapplan-replace-$appId"
-internal fun replacementOptionTag(appId: Long) = "gapplan-swap-option-$appId"
-
-/** Bounds the sheet so the search field stays reachable; the list scrolls within it. */
-private val SWAP_LIST_MAX_HEIGHT = 420.dp
+internal fun gameTag(appId: Long) = "gapplan-game-$appId"
+internal fun genreTag(appId: Long) = "gapplan-genres-$appId"
+internal fun familySharedTag(appId: Long) = "gapplan-family-shared-$appId"
 
 /** Matches the collection editor deadline formatting, so one date reads the same everywhere. */
 private val gapPlanDateFormatter: DateTimeFormatter =

@@ -13,60 +13,72 @@ import java.util.concurrent.atomic.AtomicInteger
  * The bounds on post-finalization enrichment.
  *
  * Each of these exists because the alternative is an unthrottled burst against Steam from a screen
- * the player just opened — and because a plan that is already complete must never be held hostage
- * to a decoration that cannot answer.
+ * the player just opened — and because a result that is already complete must never be held
+ * hostage to a decoration that cannot answer.
  */
 class GapPlanLiveCountsTest {
 
-    @Test fun onlyMultiplayerMembersAreEverLookedUp() {
+    @Test fun onlyMultiplayerPicksAreEverLookedUp() {
         val liveCounts = GapPlanLiveCounts(repository())
-        val snapshot = snapshot(
-            listOf(
-                candidate(1, 100, multiplayer = false),
-                candidate(2, 100, multiplayer = true),
-                candidate(3, 100, multiplayer = false),
-            ),
-        )
-
-        assertEquals(listOf(2L), liveCounts.lookupTargets(snapshot))
-    }
-
-    @Test fun aMemberSharedAcrossVariantsIsLookedUpOnce() {
-        val shared = candidate(2, 100, multiplayer = true)
-        val liveCounts = GapPlanLiveCounts(repository())
-        val snapshot = GapPlanSnapshot(
-            request = gapRequest(),
-            capacity = capacity(),
-            variants = PlanIntensity.entries.map {
-                GapPlanVariant(it, budgetMinutes = 1_000, members = listOf(shared))
-            },
-            coverage = GapPlanCoverage(1, 1, 0, 0, 0, 0),
-            eligiblePool = listOf(shared),
+        val snapshot = snapshotOf(
+            pick(PlanIntensity.RELAXED, candidate(1, 100, multiplayer = false)),
+            pick(PlanIntensity.BALANCED, candidate(2, 200, multiplayer = true)),
+            pick(PlanIntensity.FULL, candidate(3, 300, multiplayer = false)),
         )
 
         assertEquals(listOf(2L), liveCounts.lookupTargets(snapshot))
     }
 
     /**
-     * Three variants of five cannot exceed fifteen, but the ceiling is enforced rather than
-     * inferred from the plan's shape — an invariant that holds by accident is one edit away from
-     * not holding.
+     * A wholly single-player result issues no request at all — not one that is issued and then
+     * discarded.
      */
-    @Test fun theFifteenIdCeilingIsEnforcedNotAssumed() {
+    @Test fun aWhollySinglePlayerResultIssuesNoLookupWhatsoever() = runTest {
+        val requested = AtomicInteger()
+        val liveCounts = GapPlanLiveCounts(
+            CurrentPlayerCounts { appId ->
+                requested.incrementAndGet()
+                appId.toInt()
+            },
+        )
+        val snapshot = snapshotOf(
+            pick(PlanIntensity.RELAXED, candidate(1, 100)),
+            pick(PlanIntensity.BALANCED, candidate(2, 200)),
+            pick(PlanIntensity.FULL, candidate(3, 300)),
+        )
+
+        val targets = liveCounts.lookupTargets(snapshot)
+        assertEquals(emptyList<Long>(), targets)
+        assertEquals(emptyMap<Long, Int>(), liveCounts.fetch(targets))
+        assertEquals(0, requested.get())
+    }
+
+    @Test fun anEmptyTierContributesNoTarget() {
+        val liveCounts = GapPlanLiveCounts(repository())
+        val snapshot = snapshotOf(
+            pick(PlanIntensity.RELAXED, null),
+            pick(PlanIntensity.FULL, candidate(2, 200, multiplayer = true)),
+        )
+
+        assertEquals(listOf(2L), liveCounts.lookupTargets(snapshot))
+    }
+
+    /**
+     * A result holds one pick per tier, so three is the whole ceiling — but it is enforced rather
+     * than inferred from the result's shape. An invariant that holds by accident is one edit away
+     * from not holding.
+     */
+    @Test fun theThreeIdCeilingIsEnforcedNotAssumed() {
         val liveCounts = GapPlanLiveCounts(repository())
         val many = (1L..40L).map { candidate(it, 100, multiplayer = true) }
-        val snapshot = GapPlanSnapshot(
-            request = gapRequest(),
-            capacity = capacity(),
-            variants = listOf(GapPlanVariant(PlanIntensity.FULL, 100_000, many)),
-            coverage = GapPlanCoverage(40, 40, 0, 0, 0, 0),
-            eligiblePool = many,
+        val snapshot = snapshotOf(
+            *many.map { pick(PlanIntensity.FULL, it) }.toTypedArray(),
         )
 
         val targets = liveCounts.lookupTargets(snapshot)
         assertEquals(GapPlanLiveCounts.MAX_LOOKUPS, targets.size)
         // Deterministic, so the cap never silently depends on iteration order.
-        assertEquals((1L..15L).toList(), targets)
+        assertEquals(listOf(1L, 2L, 3L), targets)
     }
 
     @Test fun aSuccessfulZeroIsRetainedAndAFailureIsAbsentRatherThanZero() = runTest {
@@ -92,7 +104,12 @@ class GapPlanLiveCountsTest {
         assertEquals(0, requested.get())
     }
 
-    /** Never more than four requests in flight at once. */
+    /**
+     * Never more than four requests in flight at once.
+     *
+     * Exercised over more ids than a result can hold, because the bound belongs to the fetch and
+     * must not become untestable just because the caller's ceiling happens to be smaller than it.
+     */
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test fun concurrencyIsBoundedToFour() = runTest {
         val inFlight = AtomicInteger()
@@ -112,44 +129,29 @@ class GapPlanLiveCountsTest {
     }
 
     /**
-     * One window for the whole pass. A slow endpoint must not hold a finished plan open, and the
+     * One window for the whole pass. A slow endpoint must not hold a finished result open, and the
      * counts that *did* arrive are still real facts worth showing.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test fun theWindowBoundsTheWholePassAndKeepsWhatAlreadyAnswered() = runTest {
         val counts = CurrentPlayerCounts { appId ->
-            // The first four answer at once; everything after stalls past the window.
-            if (appId > 4L) delay(GapPlanLiveCounts.WINDOW_MILLIS * 10)
+            // The first two answer at once; everything after stalls past the window.
+            if (appId > 2L) delay(GapPlanLiveCounts.WINDOW_MILLIS * 10)
             appId.toInt()
         }
 
-        val result = GapPlanLiveCounts(counts).fetch((1L..15L).toList())
+        val result = GapPlanLiveCounts(counts).fetch(listOf(1L, 2L, 3L))
 
-        assertEquals(setOf(1L, 2L, 3L, 4L), result.keys)
+        assertEquals(setOf(1L, 2L), result.keys)
         // The virtual clock advanced by the window, not by the stalled calls.
         assertEquals(GapPlanLiveCounts.WINDOW_MILLIS, testScheduler.currentTime)
     }
 
     @Test fun theDeclaredBoundsAreTheOnesInTheSpec() {
-        assertEquals(15, GapPlanLiveCounts.MAX_LOOKUPS)
+        assertEquals(3, GapPlanLiveCounts.MAX_LOOKUPS)
         assertEquals(4, GapPlanLiveCounts.MAX_CONCURRENCY)
         assertEquals(8_000L, GapPlanLiveCounts.WINDOW_MILLIS)
     }
-
-    private fun capacity() = GapPlanCapacity(
-        fullCapacityMinutes = 1_000,
-        provenance = CapacityProvenance.PERSONAL_PACE,
-        startDate = TODAY.plusDays(1),
-        endDate = TODAY.plusDays(60),
-    )
-
-    private fun snapshot(members: List<GapPlanCandidate>) = GapPlanSnapshot(
-        request = gapRequest(),
-        capacity = capacity(),
-        variants = listOf(GapPlanVariant(PlanIntensity.FULL, 1_000, members)),
-        coverage = GapPlanCoverage(members.size, members.size, 0, 0, 0, 0),
-        eligiblePool = members,
-    )
 
     private fun repository(
         counts: Map<Long, Int> = emptyMap(),

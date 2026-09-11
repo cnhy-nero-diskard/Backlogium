@@ -43,6 +43,10 @@ enum class CapacityProvenance {
  * probability. Inflating every HLTB estimate and also shrinking capacity was rejected: two
  * arbitrary safety adjustments are hard to explain and compound into excessive conservatism. One
  * visible utilization choice, made by the player, is the honest version of the same idea.
+ *
+ * The percent is a **target**, not merely a ceiling — see [GapPlanSelection]. Under a ceiling
+ * alone, "fits within 70%" and "fits within 100%" are both satisfied by the same two-hour game,
+ * so all three tiers could offer the same length and choosing between them would say nothing.
  */
 enum class PlanIntensity(val percent: Int) {
     RELAXED(70),
@@ -51,13 +55,13 @@ enum class PlanIntensity(val percent: Int) {
 }
 
 /**
- * This intensity's budget, in whole minutes.
+ * This intensity's share of capacity, in whole minutes.
  *
  * Integer arithmetic rather than `floor(minutes * 0.70)` deliberately. The two agree
  * mathematically, but binary floating point does not represent 0.70 exactly, so the double form
- * can land a hair below an exact boundary and floor to one minute less — a difference that would
- * make an otherwise-identical rerun produce a different plan. Determinism is a stated property of
- * this engine, so the arithmetic that decides budgets does not go through doubles at all.
+ * can land a hair below an exact boundary and floor to one minute less. A pick is reproducible
+ * from its inputs and its seed, and that property would be quietly conditional on rounding if the
+ * arithmetic deciding shares went through doubles.
  */
 fun PlanIntensity.budgetMinutes(fullCapacityMinutes: Int): Int =
     (fullCapacityMinutes.toLong().coerceAtLeast(0L) * percent / 100).toInt()
@@ -179,42 +183,43 @@ class GapPlanRequestException(val error: GapPlanRequestError) :
     IllegalArgumentException(error.name)
 
 /**
- * One fact that materially supported a recommendation.
+ * One fact a pick's card states, so the player can judge the suggestion themselves.
  *
- * Every case carries the numbers it was derived from rather than a phrase, so the presentation
- * layer states a fact the player can check. An opaque composite score is deliberately not
- * representable here: there is no `Score` case to reach for.
+ * These are **presented**, never used to choose. That reversal is what the name records: they were
+ * `GapPlanReason` while a weighted composite ranked candidates by them, and calling them reasons
+ * now would claim they justified a selection that is in fact uniform. A recommender that ranks by
+ * an opaque score is asking to be trusted; one that offers a fitting game and states its rating,
+ * its volume, and how much of it is left is asking to be checked.
+ *
+ * Every case carries the numbers it was derived from rather than a phrase, so the surface states
+ * something checkable. A composite is deliberately not representable here: there is no `Score`
+ * case to reach for, and nothing left that would populate one.
  */
-sealed interface GapPlanReason {
+sealed interface GapPlanFact {
     /** Steam's own description plus the volume behind it — never a rating the app invented. */
-    data class ReviewQuality(
+    data class Reviews(
         val description: String,
         val positive: Int,
         val total: Int,
-    ) : GapPlanReason
+    ) : GapPlanFact
 
     /** The player's own recent history, named by the genre it matched. */
-    data class GenreAffinity(val genreLabel: String) : GapPlanReason
+    data class GenreAffinity(val genreLabel: String) : GapPlanFact
 
     /** Existing progress through the selected basis, as played and total minutes. */
-    data class Progress(val playedMinutes: Int, val estimateMinutes: Int) : GapPlanReason
-
-    /** How the game fits the variant it is in. */
-    data class Fit(val remainingMinutes: Int) : GapPlanReason
-
-    /** Family Sharing is always labelled — the player does not own this one. */
-    data object FamilyShared : GapPlanReason
+    data class Progress(val playedMinutes: Int, val estimateMinutes: Int) : GapPlanFact
 
     /** A live, non-persisted concurrent-player count. Only ever added after finalization. */
-    data class PlayingNow(val players: Int) : GapPlanReason
+    data class PlayingNow(val players: Int) : GapPlanFact
 }
 
 /**
- * One eligible game, with the derived component values that produced its reasons retained
- * alongside them.
+ * One eligible game, with everything a card needs to present it.
  *
- * The components are kept because the composer needs them numerically and the explanation needs
- * them factually; deriving them twice would let the two disagree about the same game.
+ * [remainingMinutes], [genreLabels], and [source] are structural rather than entries in [facts],
+ * because the card renders each of them in its own place — the remaining time as the pick's
+ * subtitle, the genres as their own line, family sharing as a label. A fact case that duplicated
+ * one of them would only let the card print the same sentence twice.
  */
 data class GapPlanCandidate(
     val appId: Long,
@@ -225,63 +230,43 @@ data class GapPlanCandidate(
     /** The selected-basis estimate this candidate's remaining work was measured against. */
     val estimateMinutes: Int,
     val playedMinutes: Int,
-    /** Broad Store genres. Empty means unknown, which scores neutral rather than zero. */
-    val genreIds: List<String>,
+    /** Broad Store genre labels, already resolved. Empty means unknown, and is shown as nothing. */
+    val genreLabels: List<String>,
     /** True only when cached participation categories say so; unknown categories are not true. */
     val multiplayer: Boolean,
-    val reviewQuality: Double,
-    val genreAffinity: Double,
-    val completionMomentum: Double,
-    val reasons: List<GapPlanReason>,
-) {
-    /**
-     * The weighted quality of this candidate on its own, before any plan-level consideration.
-     *
-     * Reviews carry half of it because they are the only signal about the game itself rather than
-     * about the player's relationship to it. Momentum is deliberately the smallest term: existing
-     * progress should help a finishable game surface, not turn every plan into backlog cleanup.
-     */
-    val quality: Double
-        get() = REVIEW_WEIGHT * reviewQuality +
-            GENRE_WEIGHT * genreAffinity +
-            MOMENTUM_WEIGHT * completionMomentum
-
-    companion object {
-        const val REVIEW_WEIGHT = 0.50
-        const val GENRE_WEIGHT = 0.30
-        const val MOMENTUM_WEIGHT = 0.20
-    }
-}
+    val facts: List<GapPlanFact>,
+)
 
 /**
- * One finalized plan variant.
+ * One tier's offer: its share of the request's capacity, and the single game drawn for it.
  *
- * [reserveMinutes] is measured against **this variant's own budget**, not the request's full
- * capacity. Both figures are presented, because a Relaxed card showing only "4,200 available, 300
- * reserve" would conceal the 1,800 minutes the 70% intensity deliberately withheld — the opposite
- * of what the intensity choice is meant to offer.
+ * [game] is nullable because "nothing in your library fits this much time" is a real answer. The
+ * tier says so and the other two still present theirs, rather than the whole result failing.
+ *
+ * [unusedMinutes] is measured against **this tier's own share**, not the request's full capacity.
+ * Both figures are presented, because a Relaxed card showing only "4,200 available" would conceal
+ * the 1,800 minutes the 70% intensity deliberately withheld — the opposite of what choosing an
+ * intensity is meant to offer.
  */
-data class GapPlanVariant(
+data class GapPlanPick(
     val intensity: PlanIntensity,
     val budgetMinutes: Int,
-    val members: List<GapPlanCandidate>,
+    val game: GapPlanCandidate?,
 ) {
-    val plannedMinutes: Int get() = members.sumOf { it.remainingMinutes }
-    val reserveMinutes: Int get() = (budgetMinutes - plannedMinutes).coerceAtLeast(0)
-    val isEmpty: Boolean get() = members.isEmpty()
-
-    companion object {
-        /** A focused set the player can actually read and act on, not a backlog dump. */
-        const val MAX_MEMBERS = 5
-    }
+    val isEmpty: Boolean get() = game == null
+    val plannedMinutes: Int get() = game?.remainingMinutes ?: 0
+    val unusedMinutes: Int get() = (budgetMinutes - plannedMinutes).coerceAtLeast(0)
 }
 
 /**
  * What the library could not contribute, stated rather than hidden.
  *
  * A game with no estimate for the selected basis is *unknown*, never zero work — treating it as
- * zero would make it look free and rank it first. Counting it here lets the result say the
- * ranking was less informed than it looks, instead of implying full coverage.
+ * zero would make it look free and offer it first. Counting it here lets the result say the pool
+ * was smaller than the library, instead of implying full coverage.
+ *
+ * [withCachedReviews] and [withKnownGenres] no longer describe how well informed a *ranking* was,
+ * because nothing is ranked. They describe how much a card will be able to show.
  */
 data class GapPlanCoverage(
     val visibleGames: Int,
@@ -296,21 +281,29 @@ data class GapPlanCoverage(
 
 /**
  * One immutable generation. Nothing here is persisted; the snapshot exists for as long as the
- * player is looking at it, and only the membership they accept becomes durable state.
+ * player is looking at it, and only the pick they accept becomes durable state.
  *
- * [eligiblePool] is retained with the result so a removal or replacement can be validated locally
- * against the same facts the plan was built from, without a regeneration that would also change
- * the other variants under the player.
+ * [seed] is retained so the generation is reproducible: identical inputs and an identical seed
+ * produce identical picks, which is what lets a shown result hold still while it is being
+ * considered. Rebuilding draws a new seed, which is what makes the control a real reroll rather
+ * than the guaranteed no-op it was when membership was fully determined by the inputs.
+ *
+ * [canVary] records whether any tier actually had a choice. Without it, a reroll over a pool too
+ * small to produce a different set would look like a control the app had ignored.
  */
 data class GapPlanSnapshot(
     val request: GapPlanRequest,
     val capacity: GapPlanCapacity,
-    val variants: List<GapPlanVariant>,
+    val seed: Long,
+    val picks: List<GapPlanPick>,
     val coverage: GapPlanCoverage,
-    val eligiblePool: List<GapPlanCandidate>,
+    val canVary: Boolean,
 ) {
-    fun variant(intensity: PlanIntensity): GapPlanVariant? =
-        variants.firstOrNull { it.intensity == intensity }
+    fun pick(intensity: PlanIntensity): GapPlanPick? =
+        picks.firstOrNull { it.intensity == intensity }
+
+    /** The picked games, in tier order: the identity a reroll has to change to have done anything. */
+    val pickedAppIds: List<Long> get() = picks.mapNotNull { it.game?.appId }
 }
 
 /** Minutes in an hour, named so the manual-budget conversion does not read as a magic number. */

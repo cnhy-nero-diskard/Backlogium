@@ -13,26 +13,26 @@ data class PlayedDate(
  * Inferred taste, derived from what the player recently chose to play rather than from anything
  * they were asked to declare.
  *
- * Two decisions keep this honest and are both load-bearing:
+ * It no longer selects anything. A weighted affinity score used to be 30% of a composite that
+ * ranked candidates, which meant a derivation that can mistake repeated obligation for enjoyment
+ * was quietly deciding what the app offered. Now it only ever names a genre on a pick that happens
+ * to match — "you have been playing Action" — which the player can dismiss in a glance if it is
+ * wrong. The neutral constant for an unknown genre went with the score: nothing is being compared,
+ * so there is nothing for a placeholder to keep comparable.
+ *
+ * Two decisions still keep the derivation honest and are both load-bearing:
  *
  * **Active dates, not minutes.** A game contributes at most once per date to each of its genres,
  * however long it was played that day. An endless game, or one unattended weekend marathon, would
- * otherwise dominate the profile and every plan after it would be built from a single outlier.
+ * otherwise dominate the profile.
  *
  * **The same recency decay as Personal Pace.** 56 completed days with a 28-day half-life, so the
  * two derivations agree about what "recently" means instead of quietly disagreeing.
  *
- * Nothing here is persisted. There is no durable taste profile to go stale, be wrong about a
- * player who has changed, or need a way to correct.
+ * Nothing here is persisted. There is no durable taste profile to go stale, be wrong about a player
+ * who has changed, or need a way to correct.
  */
 object GenreAffinity {
-
-    /**
-     * The value used when a game's genres are unknown, or when there is no history to compare them
-     * to. Neutral for the same reason [ReviewQuality.NEUTRAL] is: an un-enriched game must not be
-     * ranked below one the player's own history actively disfavours.
-     */
-    const val NEUTRAL = 0.5
 
     const val LOOKBACK_DAYS: Long = 56L
     private const val HALF_LIFE_DAYS = 28.0
@@ -40,9 +40,10 @@ object GenreAffinity {
     /**
      * Recency-weighted genre weights, normalized so the strongest observed genre is 1.0.
      *
-     * Normalization is what makes the result comparable across players: an absolute weighted count
-     * would mean something different for someone who plays daily than for someone who plays twice
-     * a month, and the ranking only ever needs the relative shape.
+     * Normalization is what keeps the weights comparable within one player's history: an absolute
+     * weighted count would mean something different for someone who plays daily than for someone
+     * who plays twice a month, and only the relative shape is ever read — to find which of a
+     * candidate's genres the player has most been playing.
      *
      * [genreIdsByApp] supplies each played game's genres; a game with none simply contributes
      * nothing, which is different from contributing zero to every genre.
@@ -75,31 +76,26 @@ object GenreAffinity {
     }
 
     /**
-     * A candidate's affinity, and the reason it justifies.
+     * The affinity fact for a candidate, or null when there is nothing to say.
      *
-     * The mean of the game's *known* genre weights, so a four-genre game is not penalised against
-     * a one-genre game simply for being described in more detail. A game whose genres are unknown,
-     * or whose genres the player has no history with, scores [NEUTRAL] and carries no reason —
-     * the plan does not claim a preference it cannot show.
-     *
-     * The reason names the single strongest matching genre, because "you have been playing Action"
-     * is a fact the player can check and "your genre affinity is 0.72" is not.
+     * The fact names the single strongest matching genre, because "you have been playing Action"
+     * is something the player can check and "your genre affinity is 0.72" is not. A game whose
+     * genres are unknown, or whose genres the player has no recent history with, carries no fact —
+     * the card does not claim a preference it cannot show.
      */
-    fun scoreAndReason(
+    fun factFor(
         genreIds: List<String>,
         weights: Map<String, Double>,
         genreLabels: Map<String, String>,
-    ): Pair<Double, GapPlanReason?> {
-        if (genreIds.isEmpty() || weights.isEmpty()) return NEUTRAL to null
+    ): GapPlanFact.GenreAffinity? {
+        if (genreIds.isEmpty() || weights.isEmpty()) return null
         val matched = genreIds.distinct().mapNotNull { id -> weights[id]?.let { id to it } }
-        if (matched.isEmpty()) return NEUTRAL to null
-        val score = matched.sumOf { it.second } / matched.size
+        if (matched.isEmpty()) return null
         // Ties resolve on genre id so the named genre is stable across identical runs.
         val strongest = matched.sortedWith(
             compareByDescending<Pair<String, Double>> { it.second }.thenBy { it.first },
         ).first()
-        val label = genreLabels[strongest.first]
-        return score.coerceIn(0.0, 1.0) to label?.let(GapPlanReason::GenreAffinity)
+        return genreLabels[strongest.first]?.let(GapPlanFact::GenreAffinity)
     }
 
     private fun recencyWeight(date: LocalDate, latest: LocalDate): Double {
@@ -109,21 +105,18 @@ object GenreAffinity {
 }
 
 /**
- * How far through the selected estimate an already-started game is, as a fraction.
+ * How far through the selected estimate an already-started game is.
  *
- * Zero for an unplayed game — which is a real zero, not a missing value: "has made no progress" is
- * something the library definitely knows. This is the smallest component of candidate quality by
- * design, so it nudges a nearly-finished game upward without letting every plan become backlog
- * cleanup.
+ * Stated as the two minute figures it was derived from, not as the fraction it used to contribute
+ * to candidate quality. The fraction was the smallest term of a composite whose job was to nudge a
+ * nearly-finished game upward; with nothing being ranked, what remains is the useful half — a card
+ * saying "9h of 15h played", which is a fact the player can weigh for themselves.
  */
 object CompletionMomentum {
 
-    fun scoreAndReason(
-        playedMinutes: Int,
-        estimateMinutes: Int,
-    ): Pair<Double, GapPlanReason?> {
-        if (estimateMinutes <= 0 || playedMinutes <= 0) return 0.0 to null
-        val fraction = (playedMinutes.toDouble() / estimateMinutes.toDouble()).coerceIn(0.0, 1.0)
-        return fraction to GapPlanReason.Progress(playedMinutes, estimateMinutes)
+    /** Null for an unplayed game: "no progress" is worth showing nowhere. */
+    fun factFor(playedMinutes: Int, estimateMinutes: Int): GapPlanFact.Progress? {
+        if (estimateMinutes <= 0 || playedMinutes <= 0) return null
+        return GapPlanFact.Progress(playedMinutes, estimateMinutes)
     }
 }

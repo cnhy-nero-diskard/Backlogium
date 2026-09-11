@@ -71,13 +71,19 @@ internal fun learningPace(today: LocalDate = TODAY): PersonalPaceProfile =
         today = today,
     )
 
-/** A candidate built directly, for composer tests that are about packing rather than scoring. */
+/**
+ * A candidate built directly, for selection tests that are about lengths rather than eligibility.
+ *
+ * Only [remainingMinutes] and [appId] matter to the draw. The candidate carries no quality figures
+ * at all any more: there is nothing on it a test could set to try to influence which tier picks it,
+ * which is the property the unweighted design is meant to have.
+ */
 internal fun candidate(
     appId: Long,
     remainingMinutes: Int,
-    quality: Double = 0.5,
-    genreIds: List<String> = listOf("1"),
+    genreLabels: List<String> = listOf("Action"),
     multiplayer: Boolean = false,
+    facts: List<GapPlanFact> = emptyList(),
 ) = GapPlanCandidate(
     appId = appId,
     name = "Game $appId",
@@ -85,12 +91,48 @@ internal fun candidate(
     remainingMinutes = remainingMinutes,
     estimateMinutes = remainingMinutes,
     playedMinutes = 0,
-    genreIds = genreIds,
+    genreLabels = genreLabels,
     multiplayer = multiplayer,
-    // The three components are chosen so the weighted sum is exactly `quality`, letting a packing
-    // test state the candidate quality it means instead of solving for it.
-    reviewQuality = quality,
-    genreAffinity = quality,
-    completionMomentum = quality,
-    reasons = listOf(GapPlanReason.Fit(remainingMinutes)),
+    facts = facts,
+)
+
+/** A finalized pick, for the decoration and live-count tests that start from a finished result. */
+internal fun pick(
+    intensity: PlanIntensity,
+    game: GapPlanCandidate?,
+    budgetMinutes: Int = 10_000,
+) = GapPlanPick(intensity = intensity, budgetMinutes = budgetMinutes, game = game)
+
+/**
+ * A finalized snapshot assembled from picks, for the tests that begin after selection.
+ *
+ * Built directly rather than generated so a test can state the exact shape it needs — a wholly
+ * single-player result, one empty tier, three multiplayer picks — without solving for a library
+ * and a seed that would happen to produce it.
+ */
+internal fun snapshotOf(
+    vararg picks: GapPlanPick,
+    request: GapPlanRequest = gapRequest(),
+    fullCapacityMinutes: Int = 10_000,
+    seed: Long = 1L,
+    canVary: Boolean = true,
+) = GapPlanSnapshot(
+    request = request,
+    capacity = GapPlanCapacity(
+        fullCapacityMinutes = fullCapacityMinutes,
+        provenance = CapacityProvenance.PERSONAL_PACE,
+        startDate = TODAY.plusDays(1),
+        endDate = request.targetDate,
+    ),
+    seed = seed,
+    picks = picks.toList(),
+    coverage = GapPlanCoverage(
+        visibleGames = picks.count { it.game != null },
+        withSelectedEstimate = picks.count { it.game != null },
+        missingSelectedEstimate = 0,
+        alreadyComplete = 0,
+        withCachedReviews = 0,
+        withKnownGenres = 0,
+    ),
+    canVary = canVary,
 )

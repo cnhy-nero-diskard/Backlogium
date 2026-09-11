@@ -8,137 +8,156 @@ import org.junit.Test
 /**
  * What a live count is allowed to do, and — far more importantly — what it is not.
  *
- * The headline test is [everyLookupSucceedingAndEveryLookupFailingProduceIdenticalMembership].
- * If that ever fails, the same request produces different plans depending on whether the network
- * answered in time, and a snapshot the player is asked to commit a month to stops meaning
- * anything.
+ * The headline test is [everyLookupSucceedingAndEveryLookupFailingOfferTheSameGames]. If that ever
+ * fails, the same request produces different suggestions depending on whether the network answered
+ * in time, and a result the player is asked to commit a month to stops meaning anything.
+ *
+ * One avenue closed itself when the result became one game per tier. Counts used to reorder the
+ * multiplayer members inside a five-game variant, which was defensible but still meant an enriched
+ * run and an offline run presented the same plan differently. With a single pick per tier there is
+ * no order left to influence, and the only thing a count can now do is state a fact.
  */
 class GapPlanDecorationTest {
 
     private val single = candidate(1, remainingMinutes = 100)
-    private val multiA = candidate(2, remainingMinutes = 100, multiplayer = true)
-    private val multiB = candidate(3, remainingMinutes = 100, multiplayer = true)
-    private val multiC = candidate(4, remainingMinutes = 100, multiplayer = true)
+    private val multiA = candidate(2, remainingMinutes = 200, multiplayer = true)
+    private val multiB = candidate(3, remainingMinutes = 300, multiplayer = true)
 
-    @Test fun availableCountsOrderMultiplayerRowsHighestFirst() {
-        val decorated = decorate(
-            members = listOf(multiA, multiB, multiC),
-            counts = mapOf(2L to 10, 3L to 900, 4L to 50),
+    @Test fun anAvailableCountStatesAFactOnTheMultiplayerPick() {
+        val decorated = GapPlanDecoration.apply(
+            snapshotOf(pick(PlanIntensity.FULL, multiA)),
+            mapOf(2L to 1_234),
         )
 
-        assertEquals(listOf(3L, 4L, 2L), decorated.map { it.appId })
+        assertTrue(
+            decorated.pick(PlanIntensity.FULL)!!.game!!.facts
+                .contains(GapPlanFact.PlayingNow(1_234)),
+        )
     }
 
-    /** Single-player rows never move because a neighbour's count arrived. */
-    @Test fun singlePlayerRowsKeepTheirPositions() {
-        val decorated = decorate(
-            members = listOf(multiA, single, multiB),
-            counts = mapOf(2L to 10, 3L to 900),
+    /** A successful zero is a real observation and is stated as one. */
+    @Test fun aSuccessfulZeroIsStatedRatherThanOmitted() {
+        val decorated = GapPlanDecoration.apply(
+            snapshotOf(pick(PlanIntensity.FULL, multiA)),
+            mapOf(2L to 0),
         )
 
-        assertEquals(listOf(3L, 1L, 2L), decorated.map { it.appId })
-        // The single-player row is in slot 1 both before and after.
-        assertEquals(1L, decorated[1].appId)
+        assertTrue(
+            decorated.pick(PlanIntensity.FULL)!!.game!!.facts
+                .contains(GapPlanFact.PlayingNow(0)),
+        )
     }
 
-    /** An unavailable count is not a zero, and contributes no ordering preference of its own. */
-    @Test fun unavailableCountsSortBehindAvailableOnesAndClaimNothing() {
-        val decorated = decorate(
-            members = listOf(multiA, multiB, multiC),
-            counts = mapOf(3L to 0),
+    /** An unavailable count is not a zero. It is simply nothing the card can say. */
+    @Test fun anUnavailableCountClaimsNothing() {
+        val decorated = GapPlanDecoration.apply(
+            snapshotOf(pick(PlanIntensity.FULL, multiA), pick(PlanIntensity.BALANCED, multiB)),
+            mapOf(2L to 40),
         )
 
-        // A successful count of zero is a real fact and outranks two unknowns.
-        assertEquals(listOf(3L, 2L, 4L), decorated.map { it.appId })
-        assertEquals(
-            listOf(GapPlanReason.PlayingNow(0)),
-            decorated.first().reasons.filterIsInstance<GapPlanReason.PlayingNow>(),
+        assertTrue(
+            decorated.pick(PlanIntensity.FULL)!!.game!!.facts
+                .contains(GapPlanFact.PlayingNow(40)),
         )
-        assertTrue(decorated[1].reasons.none { it is GapPlanReason.PlayingNow })
-        assertTrue(decorated[2].reasons.none { it is GapPlanReason.PlayingNow })
+        assertTrue(
+            decorated.pick(PlanIntensity.BALANCED)!!.game!!.facts
+                .none { it is GapPlanFact.PlayingNow },
+        )
     }
 
     /**
      * The property the whole "decoration only" decision rests on. Run the same snapshot with every
-     * lookup succeeding and with every lookup failing: the games, and the variants they are in,
-     * must be identical. Only row order and reason chips may differ.
+     * lookup succeeding and with every lookup failing: the games, and the tiers they are in, must
+     * be identical. Only the presence of a player count may differ.
      */
-    @Test fun everyLookupSucceedingAndEveryLookupFailingProduceIdenticalMembership() {
-        val snapshot = snapshot(listOf(multiA, single, multiB, multiC))
+    @Test fun everyLookupSucceedingAndEveryLookupFailingOfferTheSameGames() {
+        val snapshot = snapshotOf(
+            pick(PlanIntensity.RELAXED, single),
+            pick(PlanIntensity.BALANCED, multiA),
+            pick(PlanIntensity.FULL, multiB),
+        )
 
-        val enriched = GapPlanDecoration.apply(snapshot, mapOf(2L to 5, 3L to 900, 4L to 50))
+        val enriched = GapPlanDecoration.apply(snapshot, mapOf(2L to 5, 3L to 900))
         val offline = GapPlanDecoration.apply(snapshot, emptyMap())
 
+        assertEquals(enriched.pickedAppIds, offline.pickedAppIds)
         assertEquals(
-            enriched.variants.map { v -> v.members.map { it.appId }.sorted() },
-            offline.variants.map { v -> v.members.map { it.appId }.sorted() },
+            enriched.picks.map { it.intensity to it.game?.appId },
+            offline.picks.map { it.intensity to it.game?.appId },
         )
         assertEquals(
-            enriched.variants.map { it.intensity },
-            offline.variants.map { it.intensity },
+            enriched.picks.map { it.plannedMinutes },
+            offline.picks.map { it.plannedMinutes },
         )
-        assertEquals(enriched.variants.map { it.plannedMinutes }, offline.variants.map { it.plannedMinutes })
-        // The permitted differences, both present.
-        assertEquals(
-            listOf(3L, 1L, 4L, 2L),
-            enriched.variants.first().members.map { it.appId },
+        // The one permitted difference, present in both directions.
+        assertTrue(
+            enriched.picks.mapNotNull { it.game }
+                .any { game -> game.facts.any { it is GapPlanFact.PlayingNow } },
         )
-        assertEquals(
-            listOf(2L, 1L, 3L, 4L),
-            offline.variants.first().members.map { it.appId },
+        assertTrue(
+            offline.picks.mapNotNull { it.game }
+                .none { game -> game.facts.any { it is GapPlanFact.PlayingNow } },
         )
-        assertTrue(enriched.variants.first().members.any { m -> m.reasons.any { it is GapPlanReason.PlayingNow } })
-        assertTrue(offline.variants.first().members.none { m -> m.reasons.any { it is GapPlanReason.PlayingNow } })
     }
 
-    /** Decoration touches membership in no way at all, not even for a count of a non-member. */
-    @Test fun aCountForAGameThatIsNotInThePlanAddsNothing() {
-        val decorated = decorate(listOf(multiA), counts = mapOf(99L to 5_000))
+    /** Decoration touches the picks in no way at all, not even for a count of a non-pick. */
+    @Test fun aCountForAGameThatWasNotPickedAddsNothing() {
+        val decorated = GapPlanDecoration.apply(
+            snapshotOf(pick(PlanIntensity.FULL, multiA)),
+            mapOf(99L to 5_000),
+        )
 
-        assertEquals(listOf(2L), decorated.map { it.appId })
-        assertTrue(decorated.single().reasons.none { it is GapPlanReason.PlayingNow })
+        assertEquals(listOf(2L), decorated.pickedAppIds)
+        assertTrue(
+            decorated.pick(PlanIntensity.FULL)!!.game!!.facts
+                .none { it is GapPlanFact.PlayingNow },
+        )
     }
 
-    /** A second pass replaces the previous count rather than stacking a second chip. */
+    /** An empty tier has nothing to annotate, and must not be disturbed. */
+    @Test fun anEmptyTierIsLeftAlone() {
+        val decorated = GapPlanDecoration.apply(
+            snapshotOf(pick(PlanIntensity.RELAXED, null), pick(PlanIntensity.FULL, multiA)),
+            mapOf(2L to 12),
+        )
+
+        assertTrue(decorated.pick(PlanIntensity.RELAXED)!!.isEmpty)
+        assertEquals(listOf(2L), decorated.pickedAppIds)
+    }
+
+    /** A second pass replaces the previous count rather than stacking a second label. */
     @Test fun redecoratingReplacesRatherThanAccumulates() {
-        val once = GapPlanDecoration.apply(snapshot(listOf(multiA)), mapOf(2L to 10))
+        val once = GapPlanDecoration.apply(
+            snapshotOf(pick(PlanIntensity.FULL, multiA)),
+            mapOf(2L to 10),
+        )
         val twice = GapPlanDecoration.apply(once, mapOf(2L to 20))
 
-        val reasons = twice.variants.first().members.single()
-            .reasons.filterIsInstance<GapPlanReason.PlayingNow>()
-        assertEquals(listOf(GapPlanReason.PlayingNow(20)), reasons)
+        assertEquals(
+            listOf(GapPlanFact.PlayingNow(20)),
+            twice.pick(PlanIntensity.FULL)!!.game!!.facts
+                .filterIsInstance<GapPlanFact.PlayingNow>(),
+        )
 
         // And a later pass with nothing available clears the stale fact rather than keeping it.
         val cleared = GapPlanDecoration.apply(twice, emptyMap())
         assertTrue(
-            cleared.variants.first().members.single()
-                .reasons.none { it is GapPlanReason.PlayingNow },
+            cleared.pick(PlanIntensity.FULL)!!.game!!.facts
+                .none { it is GapPlanFact.PlayingNow },
         )
     }
 
-    @Test fun aVariantWithOneMultiplayerMemberIsAnnotatedButNotReordered() {
-        val decorated = decorate(listOf(single, multiA), counts = mapOf(2L to 7))
+    /** A count never displaces the facts the pick already carried. */
+    @Test fun decorationPreservesTheFactsTheCardAlreadyHad() {
+        val reviewed = multiA.copy(facts = listOf(GapPlanFact.Reviews("Very Positive", 90, 100)))
+        val decorated = GapPlanDecoration.apply(
+            snapshotOf(pick(PlanIntensity.FULL, reviewed)),
+            mapOf(2L to 9),
+        )
 
-        assertEquals(listOf(1L, 2L), decorated.map { it.appId })
-        assertTrue(decorated[1].reasons.contains(GapPlanReason.PlayingNow(7)))
-        assertFalse(decorated[0].reasons.any { it is GapPlanReason.PlayingNow })
+        val facts = decorated.pick(PlanIntensity.FULL)!!.game!!.facts
+        assertTrue(facts.contains(GapPlanFact.Reviews("Very Positive", 90, 100)))
+        assertTrue(facts.contains(GapPlanFact.PlayingNow(9)))
+        assertFalse(facts.isEmpty())
     }
-
-    private fun decorate(members: List<GapPlanCandidate>, counts: Map<Long, Int>) =
-        GapPlanDecoration.apply(snapshot(members), counts).variants.first().members
-
-    private fun snapshot(members: List<GapPlanCandidate>) = GapPlanSnapshot(
-        request = gapRequest(),
-        capacity = GapPlanCapacity(
-            fullCapacityMinutes = 1_000,
-            provenance = CapacityProvenance.PERSONAL_PACE,
-            startDate = TODAY.plusDays(1),
-            endDate = TODAY.plusDays(60),
-        ),
-        variants = listOf(
-            GapPlanVariant(PlanIntensity.FULL, budgetMinutes = 1_000, members = members),
-        ),
-        coverage = GapPlanCoverage(members.size, members.size, 0, 0, 0, 0),
-        eligiblePool = members,
-    )
 }

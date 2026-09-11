@@ -19,6 +19,7 @@ import com.example.backlogium.data.repo.SessionEndOutbox
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.SharedGameNotifier
 import com.example.backlogium.domain.gapplan.CurrentPlayerCounts
+import com.example.backlogium.domain.gapplan.GapPlanSeeds
 import com.example.backlogium.data.updates.AndroidInstalledPackageInfoProvider
 import com.example.backlogium.data.updates.AppUpdateRepository
 import com.example.backlogium.data.updates.DataStoreAppUpdateRepository
@@ -55,6 +56,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import javax.inject.Singleton
+import kotlin.random.Random
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -169,6 +171,15 @@ abstract class AppModule {
         @Singleton
         fun provideCurrentPlayerCounts(repository: GameRepository): CurrentPlayerCounts =
             CurrentPlayerCounts(repository::currentPlayerCount)
+
+        /**
+         * Seeds for gap-plan generation. Nothing is persisted: a seed lives only as long as the
+         * result it produced, which is what makes rebuilding a reroll rather than a replay
+         * (add-gap-plan-suggestions).
+         */
+        @Provides
+        @Singleton
+        fun provideGapPlanSeeds(): GapPlanSeeds = GapPlanSeeds { Random.nextLong() }
 
         /**
          * Process-lifetime scope for shared repository flows. A [SupervisorJob] keeps one failing
