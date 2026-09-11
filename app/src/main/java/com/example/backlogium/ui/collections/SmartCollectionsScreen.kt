@@ -30,6 +30,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,6 +51,7 @@ fun CollectionsScreen(
     onCreateCustomCollection: () -> Unit,
     onOpenCustomCollection: (Long) -> Unit,
     onOpenSmartCollection: (SmartCollectionId) -> Unit,
+    onPlanGap: () -> Unit = {},
     viewModel: SmartCollectionsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -73,6 +75,16 @@ fun CollectionsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item { CustomCollectionsSectionHeader(onCreateCustomCollection) }
+            // The same builder Home opens. One route, two entry points: a plan built from here and
+            // a plan built from Home must be the same plan.
+            item {
+                TextButton(
+                    onClick = onPlanGap,
+                    modifier = Modifier.testTag(COLLECTIONS_PLAN_GAP_TAG),
+                ) {
+                    Text("Plan a gap before a release")
+                }
+            }
             if (state.customCollections.isEmpty()) {
                 item {
                     CollectionEmptyCard(
@@ -436,3 +448,6 @@ fun SmartCollectionDetailScreen(
         }
     }
 }
+
+/** Stable handle for the Collections gap-plan entry. */
+internal const val COLLECTIONS_PLAN_GAP_TAG = "collections-plan-gap"
