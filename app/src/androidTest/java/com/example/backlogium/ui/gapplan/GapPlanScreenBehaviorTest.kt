@@ -262,6 +262,7 @@ class GapPlanScreenBehaviorTest {
             actions = GapPlanActions(onChooseReplacement = { chosen = it }),
         )
 
+        composeRule.onNodeWithTag(TAG_SWAP_SHEET).assertIsDisplayed()
         composeRule.onNodeWithTag(replacementOptionTag(7L)).assertIsDisplayed().performClick()
 
         assertEquals(7L, chosen)
@@ -279,7 +280,99 @@ class GapPlanScreenBehaviorTest {
             },
         )
 
-        composeRule.onNodeWithText("Nothing else fits this plan's remaining time.").assertIsDisplayed()
+        composeRule.onNodeWithText(GapPlanPresentation.noSwapCandidatesMessage()).assertIsDisplayed()
+        // With nothing to choose from there is no search field to offer either.
+        composeRule.onNodeWithTag(TAG_SWAP_SEARCH).assertDoesNotExistNow()
+    }
+
+    /**
+     * The swap sheet is the only route into the rest of the eligible pool, so it offers all of it
+     * rather than a truncated head. Membership is deterministic by design — rebuilding with the
+     * same inputs returns the same games — and this is what keeps the other candidates reachable.
+     */
+    @Test
+    fun theSwapSheetOffersTheWholePoolAndSaysHowLargeItIs() {
+        val pool = (10L..40L).map { member(it, name = "Candidate $it", remainingMinutes = 60) }
+        setContent(
+            state = {
+                GapPlanUiState(
+                    loading = false,
+                    result = result(),
+                    replacement = GapPlanReplacementUi(2L, PlanIntensity.RELAXED, pool),
+                )
+            },
+        )
+
+        composeRule.onNodeWithTag(TAG_SWAP_COUNT).assertIsDisplayed()
+        composeRule.onNodeWithText(GapPlanPresentation.swapPoolSummary(pool.size))
+            .assertIsDisplayed()
+
+        // Far more than the handful the old dialog showed; the list scrolls to reach the tail.
+        composeRule.onNodeWithTag(TAG_SWAP_LIST)
+            .performScrollToNode(hasTestTag(replacementOptionTag(40L)))
+        composeRule.onNodeWithTag(replacementOptionTag(40L)).assertIsDisplayed()
+    }
+
+    @Test
+    fun searchingTheSwapSheetNarrowsItToMatchingGames() {
+        var chosen: Long? = null
+        setContent(
+            state = {
+                GapPlanUiState(
+                    loading = false,
+                    result = result(),
+                    replacement = GapPlanReplacementUi(
+                        2L,
+                        PlanIntensity.RELAXED,
+                        listOf(
+                            member(10, name = "Hollow Knight"),
+                            member(11, name = "Celeste"),
+                            member(12, name = "Hades"),
+                        ),
+                    ),
+                )
+            },
+            actions = GapPlanActions(onChooseReplacement = { chosen = it }),
+        )
+
+        composeRule.onNodeWithTag(TAG_SWAP_SEARCH).performTextInput("hollow")
+
+        composeRule.onNodeWithTag(replacementOptionTag(10L)).assertIsDisplayed()
+        composeRule.onNodeWithTag(replacementOptionTag(11L)).assertDoesNotExistNow()
+        composeRule.onNodeWithTag(replacementOptionTag(12L)).assertDoesNotExistNow()
+
+        composeRule.onNodeWithTag(replacementOptionTag(10L)).performClick()
+        assertEquals(10L, chosen)
+    }
+
+    /**
+     * A search that matches nothing is not the same as a pool with nothing in it, and says so —
+     * the difference between "try another word" and "give up".
+     */
+    @Test
+    fun aSearchMatchingNothingIsDistinctFromAnEmptyPool() {
+        setContent(
+            state = {
+                GapPlanUiState(
+                    loading = false,
+                    result = result(),
+                    replacement = GapPlanReplacementUi(
+                        2L,
+                        PlanIntensity.RELAXED,
+                        listOf(member(10, name = "Hollow Knight")),
+                    ),
+                )
+            },
+        )
+
+        composeRule.onNodeWithTag(TAG_SWAP_SEARCH).performTextInput("zzzz")
+
+        composeRule.onNodeWithTag(TAG_SWAP_NO_MATCH).assertIsDisplayed()
+        composeRule.onNodeWithText(GapPlanPresentation.noSwapMatchesMessage("zzzz"))
+            .assertIsDisplayed()
+        // The pool itself is not empty, so the give-up message must not appear.
+        composeRule.onNodeWithText(GapPlanPresentation.noSwapCandidatesMessage())
+            .assertDoesNotExistNow()
     }
 
     /**

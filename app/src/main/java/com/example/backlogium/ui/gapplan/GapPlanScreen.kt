@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.gapplan
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,9 +10,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -23,7 +26,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -31,8 +34,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -75,7 +80,6 @@ data class GapPlanActions(
     val onIncludeStartedChange: (Boolean) -> Unit = {},
     val onManualHoursChange: (Int) -> Unit = {},
     val onGenerate: () -> Unit = {},
-    val onRegenerate: () -> Unit = {},
     val onRemove: (PlanIntensity, Long) -> Unit = { _, _ -> },
     val onOfferReplacements: (PlanIntensity, Long) -> Unit = { _, _ -> },
     val onChooseReplacement: (Long) -> Unit = {},
@@ -118,7 +122,6 @@ fun GapPlanScreen(
             onIncludeStartedChange = viewModel::setIncludeStarted,
             onManualHoursChange = viewModel::setManualTotalHours,
             onGenerate = viewModel::generate,
-            onRegenerate = viewModel::regenerate,
             onRemove = viewModel::removeMember,
             onOfferReplacements = viewModel::offerReplacements,
             onChooseReplacement = { addAppId ->
@@ -202,7 +205,7 @@ fun GapPlanContent(state: GapPlanUiState, actions: GapPlanActions) {
     }
 
     state.replacement?.let { replacement ->
-        GapPlanReplacementDialog(
+        GapPlanReplacementSheet(
             replacement = replacement,
             onChoose = actions.onChooseReplacement,
             onDismiss = actions.onDismissReplacements,
@@ -309,23 +312,20 @@ private fun GapPlanSetupCard(state: GapPlanUiState, actions: GapPlanActions) {
                 )
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = actions.onGenerate,
-                    enabled = state.canGenerate,
-                    modifier = Modifier.testTag(TAG_GENERATE),
-                ) {
-                    Text(if (state.result == null) "Build plans" else "Rebuild plans")
-                }
+            // One control, not two. This was briefly a "Build plans" button beside a separate
+            // "Regenerate" button that invoked exactly the same action, which is worse than
+            // redundant: plan membership is deterministic, so with unchanged inputs both produce
+            // a byte-identical result and a second button implied otherwise.
+            Button(
+                onClick = actions.onGenerate,
+                enabled = state.canGenerate,
+                modifier = Modifier.testTag(TAG_GENERATE),
+            ) {
                 if (state.result != null) {
-                    OutlinedButton(
-                        onClick = actions.onRegenerate,
-                        enabled = state.canGenerate,
-                        modifier = Modifier.testTag(TAG_REGENERATE),
-                    ) {
-                        Icon(TablerIcons.Refresh, contentDescription = null)
-                        Text("Regenerate", Modifier.padding(start = 8.dp))
-                    }
+                    Icon(TablerIcons.Refresh, contentDescription = null)
+                    Text("Rebuild plans", Modifier.padding(start = 8.dp))
+                } else {
+                    Text("Build plans")
                 }
             }
             if (state.generating) {
@@ -608,40 +608,128 @@ private fun GapPlanMemberRow(
     }
 }
 
+/**
+ * The swap surface, and the only route into the rest of the eligible pool.
+ *
+ * Plan membership is deterministic, so rebuilding with unchanged inputs returns the same games —
+ * by design, because a plan that reshuffled on every tap could not be committed to. The cost is
+ * that the ranking buries everything below the top few, and this sheet is what answers it: the
+ * *whole* budget-valid pool, searchable, rather than the first handful.
+ *
+ * Every candidate offered here already fits the variant's remaining time, so nothing shown can be
+ * chosen and then refused.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GapPlanReplacementDialog(
+private fun GapPlanReplacementSheet(
     replacement: GapPlanReplacementUi,
     onChoose: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    var query by rememberSaveable { mutableStateOf("") }
+    val matches = remember(replacement.candidates, query) {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) replacement.candidates
+        else replacement.candidates.filter { it.name.contains(trimmed, ignoreCase = true) }
+    }
+
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text("Swap in another game") },
-        text = {
+        // Expanded on open for the same reason the update sheet is: this is a list to browse, and
+        // at partial height most of it would sit below the fold.
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        modifier = Modifier.testTag(TAG_SWAP_SHEET),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Swap in another game", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = GapPlanPresentation.swapPoolSummary(replacement.candidates.size),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag(TAG_SWAP_COUNT),
+            )
+
             if (replacement.candidates.isEmpty()) {
-                Text("Nothing else fits this plan's remaining time.")
+                Text(GapPlanPresentation.noSwapCandidatesMessage())
+                return@Column
+            }
+
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                label = { Text("Search your library") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(TAG_SWAP_SEARCH),
+            )
+
+            if (matches.isEmpty()) {
+                // Distinct from having nothing that fits at all: the pool is not empty, this
+                // search just did not match it, and saying so is the difference between "try
+                // another word" and "give up".
+                Text(
+                    text = GapPlanPresentation.noSwapMatchesMessage(query.trim()),
+                    modifier = Modifier.testTag(TAG_SWAP_NO_MATCH),
+                )
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    replacement.candidates.take(MAX_REPLACEMENT_OPTIONS).forEach { candidate ->
-                        TextButton(
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = SWAP_LIST_MAX_HEIGHT)
+                        .testTag(TAG_SWAP_LIST),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    items(matches, key = { it.appId }) { candidate ->
+                        GapPlanReplacementRow(
+                            candidate = candidate,
                             onClick = { onChoose(candidate.appId) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag(replacementOptionTag(candidate.appId)),
-                        ) {
-                            Text(
-                                text = "${candidate.name} · " +
-                                    UiFormat.minutes(candidate.remainingMinutes),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
+                        )
                     }
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
+        }
+    }
+}
+
+@Composable
+private fun GapPlanReplacementRow(candidate: GapPlanMemberUi, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag(replacementOptionTag(candidate.appId))
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        GameIcon(iconUrl = candidate.iconUrl, iconSize = 32.dp)
+        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+            Text(
+                text = candidate.name,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = UiFormat.minutes(candidate.remainingMinutes) + " left",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (candidate.isFamilyShared) {
+            Text(
+                text = "Family shared",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 /** Restates exactly what is about to be written, before anything is. */
@@ -694,8 +782,12 @@ internal const val TAG_CLEAR_DATE = "gapplan-clear-date"
 internal const val TAG_HOURS_SLIDER = "gapplan-hours-slider"
 internal const val TAG_HOURS_VALUE = "gapplan-hours-value"
 internal const val TAG_GENERATE = "gapplan-generate"
-internal const val TAG_REGENERATE = "gapplan-regenerate"
 internal const val TAG_VALIDATION = "gapplan-validation"
+internal const val TAG_SWAP_SHEET = "gapplan-swap-sheet"
+internal const val TAG_SWAP_SEARCH = "gapplan-swap-search"
+internal const val TAG_SWAP_LIST = "gapplan-swap-list"
+internal const val TAG_SWAP_COUNT = "gapplan-swap-count"
+internal const val TAG_SWAP_NO_MATCH = "gapplan-swap-no-match"
 internal const val TAG_FULL_CAPACITY = "gapplan-full-capacity"
 internal const val TAG_CAPACITY_SOURCE = "gapplan-capacity-source"
 internal const val TAG_SAVE_DIALOG = "gapplan-save-dialog"
@@ -709,8 +801,8 @@ internal fun removeTag(appId: Long) = "gapplan-remove-$appId"
 internal fun replaceTag(appId: Long) = "gapplan-replace-$appId"
 internal fun replacementOptionTag(appId: Long) = "gapplan-swap-option-$appId"
 
-/** Keeps the swap list readable; the ranking already put the best candidates first. */
-private const val MAX_REPLACEMENT_OPTIONS = 8
+/** Bounds the sheet so the search field stays reachable; the list scrolls within it. */
+private val SWAP_LIST_MAX_HEIGHT = 420.dp
 
 /** Matches the collection editor deadline formatting, so one date reads the same everywhere. */
 private val gapPlanDateFormatter: DateTimeFormatter =

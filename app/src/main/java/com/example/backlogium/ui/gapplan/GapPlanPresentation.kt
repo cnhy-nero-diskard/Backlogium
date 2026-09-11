@@ -121,6 +121,25 @@ object GapPlanPresentation {
     fun reliablePaceExplanation(): String =
         "Your available time is forecast from recent tracked activity."
 
+    /** How much of the library this swap can actually reach, so the sheet is not a mystery list. */
+    fun swapPoolSummary(count: Int): String = when (count) {
+        0 -> "No other game fits this plan's remaining time."
+        1 -> "1 game fits this plan's remaining time."
+        else -> "${UiFormat.count(count)} games fit this plan's remaining time."
+    }
+
+    fun noSwapCandidatesMessage(): String =
+        "Nothing else in your library fits the time this plan has left. Remove another game first, " +
+            "or try a fuller plan."
+
+    /**
+     * Deliberately distinct from [noSwapCandidatesMessage]. The pool is not empty — this search
+     * just did not match it — and conflating the two would tell the player to give up when they
+     * only need a different word.
+     */
+    fun noSwapMatchesMessage(query: String): String =
+        "No game matching \"$query\" fits this plan's remaining time."
+
     fun saveFailureMessage(): String =
         "The collection could not be created. Your plan is still here — try again."
 }

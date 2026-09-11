@@ -255,11 +255,11 @@ class GapPlanViewModelTest {
             viewModel.uiState.value.result!!.variants.map { v -> v.members.map { it.appId } },
         )
 
-        viewModel.regenerate()
+        viewModel.generate()
         advanceUntilIdle()
 
         assertTrue(
-            "an explicit regeneration may take the newcomer into account",
+            "an explicit rebuild may take the newcomer into account",
             viewModel.uiState.value.result!!.variants.any { v -> v.members.any { it.appId == 99L } },
         )
     }

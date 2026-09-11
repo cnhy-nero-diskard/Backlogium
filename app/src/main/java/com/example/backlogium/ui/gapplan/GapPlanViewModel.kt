@@ -164,9 +164,6 @@ class GapPlanViewModel @Inject constructor(
             }
     }
 
-    /** Regeneration is always explicit: nothing else replaces a snapshot the player is reading. */
-    fun regenerate() = generate()
-
     /** Opens the confirmation, which restates what is about to be written before it is. */
     fun reviewSave(intensity: PlanIntensity) {
         val plan = snapshot ?: return
