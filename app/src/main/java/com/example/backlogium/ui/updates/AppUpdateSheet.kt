@@ -19,6 +19,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -44,7 +45,16 @@ fun AppUpdateSheet(
     val context = LocalContext.current
     val sections = update.releaseNoteSections()
     val fullChangelogUrl = update.validatedFullChangelogUrl()
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // Opened fully expanded rather than at the default partial height. The whole sheet — notes,
+    // progress, and the action row alike — is one scrolling column, and at partial height a long
+    // changelog pushes the update and decline controls past the bottom of the screen while the
+    // column reports no scroll range of its own, so they are reachable only by dragging the sheet
+    // up first. Expanding on open is what keeps those controls actually available, which is what
+    // the update-review requirement asks for.
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

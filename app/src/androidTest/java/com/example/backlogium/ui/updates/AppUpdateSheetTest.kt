@@ -78,29 +78,39 @@ class AppUpdateSheetTest {
     }
 
     /**
-     * Long release notes are rendered in full rather than truncated.
+     * A long changelog is rendered in full and every item can be scrolled to.
      *
-     * Presence, not visibility, is what this can honestly assert. `ModalBottomSheet` opens
-     * partially expanded and measures its content column at the sheet's full potential height, so
-     * with twelve items the column runs roughly a thousand pixels past the bottom of the screen
-     * while reporting a scroll range of zero — there is nothing for an inner scroll to move, and
-     * the remaining items are reached by dragging the sheet up instead.
-     *
-     * Asserting `isDisplayed` on the last item would therefore be asserting the sheet's expansion
-     * state and the height of the test device, neither of which is what this test is about. The
-     * real risk with a long changelog is items being dropped or cut off, and that is what is
-     * checked here.
+     * This is assertable only because the sheet opens fully expanded. At the default partial
+     * height its content column is measured at the sheet's full potential height, so twelve items
+     * ran about a thousand pixels past the bottom of the screen while the column reported a scroll
+     * range of zero — nothing for an inner scroll to move, and the last items reachable only by
+     * dragging the sheet up. `skipPartiallyExpanded` is what gives the column a real viewport to
+     * scroll within.
      */
     @Test
-    fun longStructuredContentIsRenderedInFull() {
+    fun longStructuredContentRemainsScrollable() {
         setSheet(AppUpdateUiState(available = update(structuredNotes = longNotes())))
 
+        // Nothing is dropped or truncated on the way in.
         (1..12).forEach { index ->
             composeRule.onNodeWithText("Last item $index").assertExists()
         }
-        // The container is a scrollable one, so the content that overflows is reachable rather
-        // than clipped away.
-        composeRule.onNodeWithTag(SHEET_CONTENT).assertExists()
+
+        scrollTo(hasText("Last item 12", substring = true))
+        composeRule.onNodeWithText("Last item 12").assertIsDisplayed()
+    }
+
+    /**
+     * The controls the update-review requirement calls for stay reachable even when the notes are
+     * long enough to fill the sheet — the case where a partially expanded sheet would have pushed
+     * them off screen with no way to scroll to them.
+     */
+    @Test
+    fun aLongChangelogStillLeavesTheUpdateControlsReachable() {
+        setSheet(AppUpdateUiState(available = update(structuredNotes = longNotes())))
+
+        scrollTo(hasText("Update"))
+        composeRule.onNodeWithText("Update").assertIsDisplayed()
     }
 
     @Test
