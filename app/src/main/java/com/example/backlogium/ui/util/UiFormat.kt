@@ -82,4 +82,38 @@ object UiFormat {
 
     /** Locale-grouped integer, e.g. "1,206,380" — for counts large enough that digit-grouping matters. */
     fun count(value: Int): String = NumberFormat.getIntegerInstance().format(value)
+
+    /**
+     * Abbreviated integer, e.g. "677K" or "1.1M" — for counts that sit beside other values in a
+     * dense row, where the exact digits carry no decision and the width does.
+     *
+     * One decimal place only below ten of a unit ("1.1M", but "12M"), because the second digit is
+     * where an abbreviation stops being easier to read than the number it replaced. Anything under
+     * a thousand is left alone: "842" is already as short as it gets.
+     */
+    fun compactCount(value: Int): String {
+        val safe = value.coerceAtLeast(0)
+        if (safe < 1_000) return safe.toString()
+        // The unit is chosen against what the smaller one would actually print, not against a raw
+        // threshold: rounding can push a value into the next unit, and 999,950 in thousands rounds
+        // to 1,000 — rendering "1000K", which is longer than the figure it was meant to shorten.
+        // Comparing the rounded *millions* instead would switch at 950,000 and turn a perfectly
+        // good "950K" into "1M".
+        val thousands = safe / 1_000.0
+        if (safe < 1_000_000 && roundToTenth(thousands) < 1_000.0) {
+            return abbreviate(thousands, "K")
+        }
+        return abbreviate(safe / 1_000_000.0, "M")
+    }
+
+    private fun abbreviate(scaled: Double, suffix: String): String {
+        val rounded = roundToTenth(scaled)
+        return if (rounded < 10.0 && rounded != kotlin.math.floor(rounded)) {
+            "$rounded$suffix"
+        } else {
+            "${Math.round(rounded)}$suffix"
+        }
+    }
+
+    private fun roundToTenth(value: Double): Double = Math.round(value * 10.0) / 10.0
 }

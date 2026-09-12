@@ -59,6 +59,9 @@ data class GapPlanPickUi(
     val game: GapPlanGameUi?,
 ) {
     val isEmpty: Boolean get() = game == null
+
+    /** What this tier's pick actually commits, which the capacity bar fills to. */
+    val plannedMinutes: Int get() = game?.remainingMinutes ?: 0
 }
 
 /** The generated result, held stable until the player rebuilds. */

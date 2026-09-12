@@ -10,76 +10,155 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
 
 /**
- * The words the surface actually says.
+ * The words the surface actually says — and, as much, how few of them there are.
  *
- * Several of these sentences are the *only* place a missing fact is disclosed, so they are asserted
- * directly rather than only through a rendered tree — a disclosure that quietly stopped being
- * produced would otherwise fail no test at all.
+ * Several of these are the *only* place a missing fact is disclosed, so they are asserted directly
+ * rather than only through a rendered tree: a disclosure that quietly stopped being produced would
+ * otherwise fail no test at all. The length assertions are not fussiness either. An earlier version
+ * stated every figure as its own sentence, which was individually defensible and collectively
+ * unreadable, and a surface the player skims past discloses nothing whatever it says.
  */
 class GapPlanPresentationTest {
 
-    /**
-     * The full forecast is stated separately from any tier's share. Without it a Relaxed card
-     * showing only its own figure would present that reduced share as all the time the player has,
-     * concealing exactly the time the intensity deliberately withheld.
-     */
-    @Test fun theFullForecastAndTheTiersWithheldShareAreBothStated() {
-        val relaxed = pickUi(PlanIntensity.RELAXED, budget = 4_200, remaining = 4_000)
+    /** The whole forecast is stated once, as a bare duration. The bars carry what it means. */
+    @Test fun theFullForecastIsABareDuration() {
+        assertEquals("100h", GapPlanPresentation.fullCapacity(6_000))
+    }
 
+    /** A tier's share and its pick's length travel together, as the bar's caption. */
+    @Test fun aTiersCaptionStatesThePickAgainstItsShare() {
         assertEquals(
-            "You have about 100h before then.",
-            GapPlanPresentation.fullCapacityLine(6_000),
-        )
-        assertEquals("Planning around 70h of it", GapPlanPresentation.pickShareLine(relaxed))
-        assertEquals(
-            "Holding back 30h of your forecast.",
-            GapPlanPresentation.withheldLine(relaxed, fullCapacityMinutes = 6_000),
+            "66h 40m of 70h",
+            GapPlanPresentation.pickAgainstShare(pickUi(PlanIntensity.RELAXED, 4_200, 4_000)),
         )
     }
 
-    /** The Full tier withholds nothing, so it says nothing about withholding. */
-    @Test fun aFullTierHasNoWithheldLine() {
-        assertNull(
-            GapPlanPresentation.withheldLine(
-                pickUi(PlanIntensity.FULL, budget = 6_000, remaining = 5_000),
-                fullCapacityMinutes = 6_000,
+    /** An empty tier has no pick to measure, so its caption is the share alone. */
+    @Test fun anEmptyTiersCaptionIsJustItsShare() {
+        assertEquals(
+            "70h",
+            GapPlanPresentation.pickAgainstShare(
+                GapPlanPickUi(PlanIntensity.RELAXED, 4_200, 4_200, game = null),
             ),
         )
     }
 
-    /** A pick's remaining time is stated once, in its own line. */
-    @Test fun aPicksRemainingTimeIsStatedAsItsOwnLine() {
-        assertEquals(
-            "10h left",
-            GapPlanPresentation.remainingLine(gameUi(remaining = 600)),
-        )
+    /**
+     * A forecast is the default, so it says nothing; a manual budget is the player's own estimate
+     * and must not read as a forecast. Labelling the default would be noise on a surface that has
+     * no room for any.
+     */
+    @Test fun onlyAManualBudgetCarriesACaveat() {
+        assertNull(GapPlanPresentation.capacityCaveat(CapacityProvenance.PERSONAL_PACE))
+        val manual = GapPlanPresentation.capacityCaveat(CapacityProvenance.MANUAL)!!
+        assertTrue(manual.contains("not a forecast"))
     }
 
-    /** Genres are joined into one line, and omitted entirely when none are cached. */
+    /** The collapsed request restates every input, so reopening the form is an informed choice. */
+    @Test fun theCollapsedSummaryCarriesEveryInput() {
+        val summary = GapPlanPresentation.requestSummary(
+            GapPlanResultUi(
+                anticipatedTitle = "Silksong",
+                targetDate = LocalDate.parse("2027-01-15"),
+                intent = GapPlanIntent.COMPLETIONIST,
+                fullCapacityMinutes = 6_000,
+                provenance = CapacityProvenance.PERSONAL_PACE,
+                picks = emptyList(),
+                coverage = GapPlanCoverage(0, 0, 0, 0, 0, 0),
+            ),
+        )
+
+        assertEquals("Silksong · 2027-01-15 · Completionist", summary)
+    }
+
+    /** Genres are joined into one short line, and omitted entirely when none are cached. */
     @Test fun genresAreJoinedOrOmittedRatherThanRenderedEmpty() {
         assertEquals(
-            "Action · RPG",
+            "Action, RPG",
             GapPlanPresentation.genreLine(gameUi(genres = listOf("Action", "RPG"))),
         )
         assertNull(GapPlanPresentation.genreLine(gameUi(genres = emptyList())))
     }
 
-    /**
-     * A manual budget is the player's own estimate. Presenting it as a Personal Pace forecast
-     * would attribute a confidence the data cannot support.
-     */
-    @Test fun capacityProvenanceIsNamedAndTheTwoSourcesReadDifferently() {
-        val forecast = GapPlanPresentation.capacitySource(CapacityProvenance.PERSONAL_PACE)
-        val manual = GapPlanPresentation.capacitySource(CapacityProvenance.MANUAL)
+    // --- Review standing ---------------------------------------------------------------------
 
-        assertTrue(forecast.contains("tracked activity"))
-        assertTrue(manual.contains("hours you entered"))
-        assertTrue("a manual budget must not read as a forecast", manual.contains("not a Personal Pace"))
+    /**
+     * Steam's bands, as ratios. The band boundaries are asserted from both sides because they are
+     * where a colour changes, and an off-by-one there is invisible until a game lands on it.
+     */
+    @Test fun reviewStandingFollowsTheRatioAtEveryBandBoundary() {
+        assertEquals(ReviewStanding.POSITIVE, standing(positive = 70, total = 100))
+        assertEquals(ReviewStanding.MIXED, standing(positive = 69, total = 100))
+        assertEquals(ReviewStanding.MIXED, standing(positive = 40, total = 100))
+        assertEquals(ReviewStanding.NEGATIVE, standing(positive = 39, total = 100))
     }
 
-    /** Missing lengths are disclosed as unknown, never implied to be short. */
+    @Test fun anOverwhelminglyPositiveGameIsPositiveAndAPannedOneIsNegative() {
+        assertEquals(ReviewStanding.POSITIVE, standing(2_234_895, 2_320_000))
+        assertEquals(ReviewStanding.NEGATIVE, standing(200, 10_000))
+    }
+
+    /**
+     * The standing must not come from the description's words.
+     *
+     * That string is localized — the reviews endpoint is asked for `language=all` — so a word match
+     * would silently mis-colour every non-English response. Two summaries with contradictory
+     * descriptions and identical counts must therefore agree, which a word match could not manage.
+     */
+    @Test fun standingIgnoresTheDescriptionText() {
+        val counts = 90 to 100
+        val english = GapPlanFact.Reviews("Very Positive", counts.first, counts.second)
+        val localized = GapPlanFact.Reviews("Sehr positiv", counts.first, counts.second)
+        val misleading = GapPlanFact.Reviews("Overwhelmingly Negative", counts.first, counts.second)
+
+        assertEquals(ReviewStanding.POSITIVE, GapPlanPresentation.reviewStanding(english))
+        assertEquals(ReviewStanding.POSITIVE, GapPlanPresentation.reviewStanding(localized))
+        assertEquals(ReviewStanding.POSITIVE, GapPlanPresentation.reviewStanding(misleading))
+    }
+
+    /** No reviews is no standing, rather than a default one. */
+    @Test fun anEmptySampleHasNoStanding() {
+        assertNull(GapPlanPresentation.reviewStanding(GapPlanFact.Reviews("No user reviews", 0, 0)))
+    }
+
+    // --- Indicator values --------------------------------------------------------------------
+
+    /**
+     * Values are abbreviated because they sit in a dense row beside three other indicators. The
+     * exact digit count carries no decision here; the width does.
+     */
+    @Test fun indicatorValuesAreTheirShortestUnambiguousForm() {
+        assertEquals(
+            "Very Positive · 2.8M",
+            GapPlanPresentation.reviewLabel(GapPlanFact.Reviews("Very Positive", 2_234_895, 2_775_966)),
+        )
+        assertEquals("4.3K", GapPlanPresentation.playerCountLabel(GapPlanFact.PlayingNow(4_321)))
+        assertEquals("5h in", GapPlanPresentation.progressLabel(GapPlanFact.Progress(300, 600)))
+        assertEquals("10h", GapPlanPresentation.remaining(gameUi(remaining = 600)))
+    }
+
+    /** Every card leads with the same hook, so the surface offers rather than describes. */
+    @Test fun everyCardLeadsWithARecommendationHook() {
+        assertEquals("You might like", GapPlanPresentation.recommendationHook())
+    }
+
+    @Test fun theThreeIntensitiesAreNamedAndTheirShareIsABarePercent() {
+        assertEquals("Relaxed", GapPlanPresentation.intensityName(PlanIntensity.RELAXED))
+        assertEquals("Balanced", GapPlanPresentation.intensityName(PlanIntensity.BALANCED))
+        assertEquals("Full", GapPlanPresentation.intensityName(PlanIntensity.FULL))
+        assertEquals("70%", GapPlanPresentation.intensityShare(PlanIntensity.RELAXED))
+        assertEquals("100%", GapPlanPresentation.intensityShare(PlanIntensity.FULL))
+    }
+
+    // --- Disclosures -------------------------------------------------------------------------
+
+    /**
+     * Missing lengths are still disclosed as unknown rather than short — that distinction is the
+     * whole reason the disclosure exists, and it survives the compression.
+     */
     @Test fun missingHltbCoverageIsDisclosedAsUnknownRatherThanShort() {
         val disclosures = GapPlanPresentation.coverageDisclosures(
             GapPlanCoverage(
@@ -93,34 +172,16 @@ class GapPlanPresentationTest {
         )
 
         assertEquals(1, disclosures.size)
-        assertTrue(disclosures.single().contains("3 of your games"))
+        assertTrue(disclosures.single().contains("3 games skipped"))
         assertTrue(disclosures.single().contains("unknown, not short"))
     }
 
-    /**
-     * A library the enrichment has not reached still gets valid suggestions — nothing is ranked, so
-     * selection is unaffected — but its cards will be sparse, and the disclosure says so.
-     *
-     * The wording matters here and is the reason this is asserted rather than eyeballed. It used to
-     * say ratings "did not influence this plan", which was true of one run and false as a general
-     * claim: ratings never influence a plan now. Saying the cards cannot *show* them is the only
-     * version that stays true when the cache fills up.
-     */
-    @Test fun anUnenrichedLibraryDisclosesWhatItsCardsCannotShow() {
+    @Test fun anUnenrichedLibraryDisclosesThatNoRatingsAreCached() {
         val disclosures = GapPlanPresentation.coverageDisclosures(
-            GapPlanCoverage(
-                visibleGames = 10,
-                withSelectedEstimate = 10,
-                missingSelectedEstimate = 0,
-                alreadyComplete = 0,
-                withCachedReviews = 0,
-                withKnownGenres = 0,
-            ),
+            GapPlanCoverage(10, 10, 0, 0, withCachedReviews = 0, withKnownGenres = 0),
         )
 
-        assertEquals(2, disclosures.size)
-        assertTrue(disclosures.any { it.contains("No Steam ratings") })
-        assertTrue(disclosures.any { it.contains("No Store genres") })
+        assertTrue(disclosures.any { it.contains("No ratings cached") })
         assertTrue(
             "a disclosure must not claim a signal influenced the picks",
             disclosures.none { it.contains("influence") },
@@ -130,67 +191,35 @@ class GapPlanPresentationTest {
     @Test fun aFullyCoveredLibraryDisclosesNothing() {
         assertEquals(
             emptyList<String>(),
-            GapPlanPresentation.coverageDisclosures(
-                GapPlanCoverage(10, 10, 0, 0, 10, 10),
-            ),
+            GapPlanPresentation.coverageDisclosures(GapPlanCoverage(10, 10, 0, 0, 10, 10)),
         )
     }
 
-    /** Every label states a fact. There is no composite score to render, by construction. */
-    @Test fun everyFactRendersAsACheckableStatement() {
-        assertEquals(
-            "Very Positive (2,775,966 reviews)",
-            GapPlanPresentation.factLabel(
-                GapPlanFact.Reviews("Very Positive", positive = 2_234_895, total = 2_775_966),
-            ),
+    /** Every aside has to fit one line beside an icon; a paragraph would not be read at all. */
+    @Test fun everyAsideIsShortEnoughToRenderBesideAnIcon() {
+        val asides = GapPlanPresentation.coverageDisclosures(
+            GapPlanCoverage(10, 7, 3, 0, 0, 0),
+        ) + listOf(
+            GapPlanPresentation.selectionExplanation(),
+            GapPlanPresentation.rebuildDidNotVaryMessage(),
+            GapPlanPresentation.saveFailureMessage(),
+            GapPlanPresentation.emptyPickMessage(),
+            GapPlanPresentation.reliablePaceExplanation(),
         )
-        assertEquals(
-            "You have been playing Action",
-            GapPlanPresentation.factLabel(GapPlanFact.GenreAffinity("Action")),
-        )
-        assertEquals(
-            "5h of 10h played",
-            GapPlanPresentation.factLabel(GapPlanFact.Progress(300, 600)),
-        )
-        assertEquals(
-            "4,321 playing now",
-            GapPlanPresentation.factLabel(GapPlanFact.PlayingNow(4_321)),
-        )
-    }
 
-    /**
-     * A tier targets its share rather than merely fitting under it, and the copy has to say so.
-     * "Up to 70%" would describe the design this replaced, under which all three tiers could offer
-     * the same short game.
-     */
-    @Test fun theThreeIntensitiesAreNamedAndTheirTargetShareIsStated() {
-        assertEquals("Relaxed", GapPlanPresentation.intensityName(PlanIntensity.RELAXED))
-        assertEquals("Balanced", GapPlanPresentation.intensityName(PlanIntensity.BALANCED))
-        assertEquals("Full", GapPlanPresentation.intensityName(PlanIntensity.FULL))
-        assertEquals(
-            "Around 70% of your forecast time",
-            GapPlanPresentation.intensityRule(PlanIntensity.RELAXED),
-        )
-        assertEquals(
-            "Around 100% of your forecast time",
-            GapPlanPresentation.intensityRule(PlanIntensity.FULL),
-        )
+        asides.forEach { aside ->
+            assertTrue("too long to sit beside an icon: \"$aside\"", aside.length <= MAX_ASIDE)
+        }
     }
 
     /** The surface says the picks were not judged, so no card reads as the recommended one. */
     @Test fun theSelectionExplanationSaysThePicksWereNotRanked() {
-        val explanation = GapPlanPresentation.selectionExplanation()
-
-        assertTrue(explanation.contains("at random"))
-        assertTrue(explanation.contains("judge them"))
+        assertTrue(GapPlanPresentation.selectionExplanation().contains("at random"))
     }
 
     /** An unchanged rebuild explains itself rather than looking like an ignored control. */
     @Test fun anUnchangedRebuildExplainsWhyNothingMoved() {
-        val message = GapPlanPresentation.rebuildDidNotVaryMessage()
-
-        assertTrue(message.contains("not enough games"))
-        assertTrue("it must suggest a way out", message.contains("Widen"))
+        assertTrue(GapPlanPresentation.rebuildDidNotVaryMessage().contains("No other games"))
     }
 
     /** The basis the plan was measured in is the basis the collection will carry. */
@@ -201,8 +230,10 @@ class GapPlanPresentationTest {
 
     @Test fun everyValidationErrorNamesSomethingThePlayerCanFix() {
         GapPlanRequestError.entries.forEach { error ->
-            val message = GapPlanPresentation.validationMessage(error)
-            assertTrue("$error produced an empty message", message.isNotBlank())
+            assertTrue(
+                "$error produced an empty message",
+                GapPlanPresentation.validationMessage(error).isNotBlank(),
+            )
         }
         assertTrue(
             GapPlanPresentation.validationMessage(GapPlanRequestError.TARGET_DATE_BEYOND_HORIZON)
@@ -210,25 +241,20 @@ class GapPlanPresentationTest {
         )
     }
 
-    /** The manual-hours ask explains itself rather than only stating that it is required. */
+    /** The manual-hours ask still explains itself rather than only stating that it is required. */
     @Test fun theManualBudgetExplanationSaysWhyItIsBeingAsked() {
         val explanation = GapPlanPresentation.manualBudgetExplanation()
 
-        assertTrue(explanation.contains("not enough tracked play history"))
+        assertTrue(explanation.contains("Not enough tracked history"))
         assertTrue(explanation.contains("how many hours"))
     }
 
-    /** A failed save says the plan survived, because that is the part the player needs to know. */
-    @Test fun theSaveFailureMessageSaysThePlanIsStillThere() {
-        assertTrue(GapPlanPresentation.saveFailureMessage().contains("still here"))
-    }
-
     @Test fun anEmptyTierExplainsItselfRatherThanRenderingBlank() {
-        val message = GapPlanPresentation.emptyPickMessage()
-
-        assertTrue(message.contains("known length"))
-        assertTrue(message.isNotBlank())
+        assertTrue(GapPlanPresentation.emptyPickMessage().contains("Nothing fits"))
     }
+
+    private fun standing(positive: Int, total: Int): ReviewStanding? =
+        GapPlanPresentation.reviewStanding(GapPlanFact.Reviews("ignored", positive, total))
 
     private fun pickUi(intensity: PlanIntensity, budget: Int, remaining: Int) = GapPlanPickUi(
         intensity = intensity,
@@ -252,4 +278,9 @@ class GapPlanPresentationTest {
         genreLabels = genres,
         facts = facts,
     )
+
+    private companion object {
+        /** Roughly what fits one line beside a 13dp icon at label size on a narrow phone. */
+        const val MAX_ASIDE = 56
+    }
 }

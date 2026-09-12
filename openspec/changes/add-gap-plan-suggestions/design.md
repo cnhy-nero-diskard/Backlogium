@@ -292,6 +292,42 @@ Exactly one control produces a new set. The first implementation shipped two —
 a separate "Regenerate" — invoking the same action, which was worse than redundant given the picks
 could not vary: it promised a reroll that did not exist. One control, and it genuinely rerolls.
 
+### 9. Draw the proportions, and let the setup get out of the way
+
+The first result surface stated everything in sentences: a tier's rule, its share, its withheld
+remainder, the pick's remaining time, its progress, its rating, its player count, and a paragraph
+explaining that nothing was ranked. Each line was defensible on its own and the whole was
+unreadable — the three recommendations did not fit one screen, and the surface read as a description
+of a gap rather than as three games being offered.
+
+**Proportions become one bar.** A tier's share of the forecast, the time the intensity withholds,
+and the pick's own length are three numbers with one relationship, so they are drawn as one
+indicator: a track the width of the full forecast, a segment up to the tier's share, and a fill up
+to the pick's length. That replaces three sentences with one row and makes the withheld remainder
+something the player sees rather than something they compute. Started-game progress gets the same
+treatment for the same reason. This is the one place in this feature where a chart earns its place:
+these quantities are *parts of a whole*, which is exactly what a bar is for, and nothing else here
+is.
+
+**Review standing is coloured by ratio, never by wording.** Steam's own bands are ratio bands, and
+the description string is localized — matching "Positive" against it is the same mistake the
+category decision already rejected for participation ids, and would silently mis-colour every
+response the moment the endpoint answers in another language. The fact already carries positive and
+total, so the standing is derived from those: positive at or above 70%, mixed from 40%, negative
+below it.
+
+**Setup collapses once a result exists.** Keeping the form above the results is what made scrolling
+mandatory, and after generating, the inputs are no longer the thing the player is looking at. They
+collapse to one summary row that reopens on demand. The alternative — a separate setup screen — was
+rejected because adjusting an input and rebuilding is the core loop, and a round trip through a
+second destination would make the cheapest action the slowest one.
+
+**The copy is cut, not moved.** The disclosure that nothing is ranked stays, because it is the
+honest posture the whole selection design rests on, but as one short line rather than a paragraph.
+The coverage disclosure keeps the distinction that matters — unknown length, not short — in the
+fewest words that still carry it. Conciseness here is not decoration: a surface the player skims
+past discloses nothing at all, whatever it says.
+
 ## Risks / Trade-offs
 
 - [Steam review and Store endpoints are undocumented or can change shape] -> Keep narrow DTOs, pin

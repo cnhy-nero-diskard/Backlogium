@@ -9,11 +9,30 @@ import com.example.backlogium.domain.gapplan.PlanIntensity
 import com.example.backlogium.ui.util.UiFormat
 
 /**
+ * Where a game stands with Steam's reviewers, in the three bands worth colouring.
+ *
+ * Derived from the positive-to-total ratio, never from the review description's words. Steam's own
+ * bands are ratio bands, and the description is localized text — matching "Positive" against it is
+ * the same mistake the participation-category decision already rejected, and would silently
+ * mis-colour every response the moment the endpoint answers in another language.
+ */
+enum class ReviewStanding {
+    POSITIVE,
+    MIXED,
+    NEGATIVE,
+}
+
+/**
  * Every user-facing string the gap-plan surface shows, as pure functions.
  *
- * Kept out of the composables so the wording can be asserted directly — several of these sentences
- * are the *only* place a missing fact is disclosed, and a test that could only reach them through a
+ * Kept out of the composables so the wording can be asserted directly — several of these are the
+ * *only* place a missing fact is disclosed, and a test that could only reach them through a
  * rendered tree would be easy to leave un-asserted.
+ *
+ * The copy here is deliberately terse. An earlier version stated every figure as its own sentence,
+ * which was individually defensible and collectively unreadable: the three recommendations did not
+ * fit one screen, and a surface the player skims past discloses nothing at all whatever it says.
+ * Anything that exists in proportion to something else is now drawn rather than narrated.
  */
 object GapPlanPresentation {
 
@@ -23,15 +42,8 @@ object GapPlanPresentation {
         PlanIntensity.FULL -> "Full"
     }
 
-    /**
-     * States the intensity as a share of capacity it aims at, not one it merely stays under.
-     *
-     * "Around" rather than "up to" is the whole distinction between this design and the one it
-     * replaced: a tier targets its share, so a Relaxed pick is a genuinely shorter commitment
-     * rather than any short game that happens to fit.
-     */
-    fun intensityRule(intensity: PlanIntensity): String =
-        "Around ${intensity.percent}% of your forecast time"
+    /** The tier's share, as a bare percent. The bar beside it carries what that means. */
+    fun intensityShare(intensity: PlanIntensity): String = "${intensity.percent}%"
 
     fun intentLabel(intent: GapPlanIntent): String = when (intent) {
         GapPlanIntent.STORY -> "Story"
@@ -44,87 +56,102 @@ object GapPlanPresentation {
     }
 
     /**
-     * Names where the capacity figure came from. A Personal Pace forecast is a claim the app can
-     * make from tracked history; a manual budget is the player's own estimate. Presenting the
-     * second as the first would attribute a confidence the data cannot support.
+     * The request, as one line, once a result exists and the form has collapsed.
+     *
+     * Everything the player chose, in the order they chose it, so reopening the form to change one
+     * input is a decision they can make without reopening it first.
      */
-    fun capacitySource(provenance: CapacityProvenance): String = when (provenance) {
-        CapacityProvenance.PERSONAL_PACE -> "Forecast from your recent tracked activity"
-        CapacityProvenance.MANUAL -> "Based on the hours you entered, not a Personal Pace forecast"
-    }
+    fun requestSummary(result: GapPlanResultUi): String =
+        "${result.anticipatedTitle} · ${result.targetDate} · ${intentLabel(result.intent)}"
+
+    /** The whole forecast, stated once. The per-tier bars are measured against it. */
+    fun fullCapacity(fullCapacityMinutes: Int): String = UiFormat.minutes(fullCapacityMinutes)
 
     /**
-     * The full forecast, stated once for all three tiers.
-     *
-     * Without this line a Relaxed card showing only its own smaller share would present that
-     * figure as all the time the player has — concealing exactly the time the intensity
-     * deliberately withheld, which is the opposite of what the choice is for.
+     * Where a manual budget came from, kept because presenting one as a Personal Pace forecast
+     * would attribute a confidence the data cannot support. The reliable case says nothing: a
+     * forecast is the default, and labelling the default is noise.
      */
-    fun fullCapacityLine(fullCapacityMinutes: Int): String =
-        "You have about ${UiFormat.minutes(fullCapacityMinutes)} before then."
-
-    /** This tier's own share of the forecast, which its pick is drawn to approach. */
-    fun pickShareLine(pick: GapPlanPickUi): String =
-        "Planning around ${UiFormat.minutes(pick.budgetMinutes)} of it"
-
-    /** The share of the forecast this tier is deliberately not planning against. */
-    fun withheldLine(pick: GapPlanPickUi, fullCapacityMinutes: Int): String? {
-        val withheld = fullCapacityMinutes - pick.budgetMinutes
-        if (withheld <= 0) return null
-        return "Holding back ${UiFormat.minutes(withheld)} of your forecast."
+    fun capacityCaveat(provenance: CapacityProvenance): String? = when (provenance) {
+        CapacityProvenance.PERSONAL_PACE -> null
+        CapacityProvenance.MANUAL -> "Your estimate, not a forecast"
     }
 
-    /** A pick's remaining work, stated once, in the most prominent place on its card. */
-    fun remainingLine(game: GapPlanGameUi): String = "${UiFormat.minutes(game.remainingMinutes)} left"
+    /** This tier's share and the pick's length, as the bar's caption. */
+    fun pickAgainstShare(pick: GapPlanPickUi): String {
+        val share = UiFormat.minutes(pick.budgetMinutes)
+        val game = pick.game ?: return share
+        return "${UiFormat.minutes(game.remainingMinutes)} of $share"
+    }
 
     /** Store genres, or null when none are cached — never an empty line or an invented genre. */
     fun genreLine(game: GapPlanGameUi): String? =
-        game.genreLabels.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+        game.genreLabels.takeIf { it.isNotEmpty() }?.joinToString(", ")
 
-    fun emptyPickMessage(): String =
-        "No game with a known length fits this much time. Try a longer gap or a fuller plan."
+    /** The lead-in on every card. The feature offers games; it does not describe a gap. */
+    fun recommendationHook(): String = "You might like"
+
+    fun emptyPickMessage(): String = "Nothing fits this much time"
 
     /**
-     * What the cards will not be able to show. Stated rather than implied: a suggestion with no
-     * rating and no genres is still a perfectly valid suggestion, because nothing was ranked — but
-     * its card will be sparse, and saying so is better than looking under-built.
+     * What the cards cannot show, in the fewest words that keep the distinction that matters: a
+     * game with no cached length is *unknown*, not short. Nothing else here needs saying — a
+     * suggestion with no rating is still a valid suggestion, because nothing was ranked.
      */
     fun coverageDisclosures(coverage: GapPlanCoverage): List<String> = buildList {
         if (coverage.missingSelectedEstimate > 0) {
-            add(
-                "${coverage.missingSelectedEstimate} of your games have no completion length yet " +
-                    "and were left out — they are unknown, not short.",
-            )
+            add("${coverage.missingSelectedEstimate} games skipped — length unknown, not short")
         }
         if (coverage.withCachedReviews == 0 && coverage.visibleGames > 0) {
-            add("No Steam ratings are cached yet, so these cards cannot show them.")
-        }
-        if (coverage.withKnownGenres == 0 && coverage.visibleGames > 0) {
-            add("No Store genres are cached yet, so these cards cannot show them.")
+            add("No ratings cached yet")
         }
     }
 
     /**
      * Why a rebuild changed nothing.
      *
-     * The state exists at all because a control that appears ignored is worse than no control. The
-     * previous surface had exactly that problem for a different reason — picks were fully
-     * determined by the inputs, so rebuilding could only return them — and the fix is not to hide
-     * the control but to explain the one case where it still cannot help.
+     * The state exists because a control that appears ignored is worse than no control — the exact
+     * failure the single rebuild control was introduced to fix.
      */
-    fun rebuildDidNotVaryMessage(): String =
-        "There are not enough games of the right lengths to offer a different set. Widen the " +
-            "included games, or try a different date."
+    fun rebuildDidNotVaryMessage(): String = "No other games of these lengths to offer"
 
-    /** One fact label. Each states something checkable; none renders a score. */
-    fun factLabel(fact: GapPlanFact): String = when (fact) {
-        is GapPlanFact.Reviews ->
-            "${fact.description} (${UiFormat.count(fact.total)} reviews)"
-        is GapPlanFact.GenreAffinity -> "You have been playing ${fact.genreLabel}"
-        is GapPlanFact.Progress ->
-            "${UiFormat.minutes(fact.playedMinutes)} of ${UiFormat.minutes(fact.estimateMinutes)} played"
-        is GapPlanFact.PlayingNow -> "${UiFormat.count(fact.players)} playing now"
+    /**
+     * That the three were not judged, in one line.
+     *
+     * Cut from a paragraph, not dropped: it is the honest posture the whole selection design rests
+     * on, and without it the top card reads as the recommended one.
+     */
+    fun selectionExplanation(): String = "Picked at random from what fits"
+
+    /** A pick's remaining work. Icon-led at the call site, so the value stands alone here. */
+    fun remaining(game: GapPlanGameUi): String = UiFormat.minutes(game.remainingMinutes)
+
+    /**
+     * Where this game stands with reviewers.
+     *
+     * Steam's bands, as ratios: positive from 70%, mixed from 40%, negative below. A summary with
+     * no reviews at all has no standing to report rather than a default one.
+     */
+    fun reviewStanding(fact: GapPlanFact.Reviews): ReviewStanding? {
+        if (fact.total <= 0) return null
+        val ratio = fact.positive.toDouble() / fact.total.toDouble()
+        return when {
+            ratio >= POSITIVE_RATIO -> ReviewStanding.POSITIVE
+            ratio >= MIXED_RATIO -> ReviewStanding.MIXED
+            else -> ReviewStanding.NEGATIVE
+        }
     }
+
+    /** Steam's own words plus the volume behind them, compacted. */
+    fun reviewLabel(fact: GapPlanFact.Reviews): String =
+        "${fact.description} · ${UiFormat.compactCount(fact.total)}"
+
+    fun playerCountLabel(fact: GapPlanFact.PlayingNow): String =
+        UiFormat.compactCount(fact.players)
+
+    /** Played against the estimate, as the progress bar's caption. */
+    fun progressLabel(fact: GapPlanFact.Progress): String =
+        "${UiFormat.minutes(fact.playedMinutes)} in"
 
     fun validationMessage(error: GapPlanRequestError): String = when (error) {
         GapPlanRequestError.MISSING_TITLE -> "Name the game or update you are waiting for."
@@ -137,23 +164,13 @@ object GapPlanPresentation {
 
     /** Why a one-off budget is being asked for, rather than just that it is required. */
     fun manualBudgetExplanation(): String =
-        "There is not enough tracked play history yet to forecast your time, so enter roughly how " +
-            "many hours you expect to have before then."
+        "Not enough tracked history to forecast your time — roughly how many hours will you have?"
 
-    fun reliablePaceExplanation(): String =
-        "Your available time is forecast from recent tracked activity."
+    fun reliablePaceExplanation(): String = "Time forecast from your recent activity"
 
-    /**
-     * How the picks were chosen, said plainly on the result.
-     *
-     * The app is offering three fitting games and showing what is known about each, rather than
-     * claiming to have judged them. A player who is not told that would reasonably assume the top
-     * card is the recommended one.
-     */
-    fun selectionExplanation(): String =
-        "Three games that fit, picked at random from what your library offers. The facts are here " +
-            "so you can judge them — rebuild for a different set."
+    fun saveFailureMessage(): String = "Could not create the collection — try again"
 
-    fun saveFailureMessage(): String =
-        "The collection could not be created. Your plan is still here — try again."
+    /** Steam's band boundaries, named so the colouring is not three magic numbers. */
+    private const val POSITIVE_RATIO = 0.70
+    private const val MIXED_RATIO = 0.40
 }

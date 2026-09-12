@@ -42,6 +42,9 @@
 - [x] 6.5 Reduce the result to exactly one control that produces a new set, remove the duplicate regenerate control, surface the pool-too-small-to-vary state, and verify UI tests cover a reroll changing the picks, the unchanged-pool state explaining itself, review-save, retry, and open-created-collection without haptics outside the shared vocabulary.
 - [x] 6.6 Register one pushed gap-plan route and add entry actions on Home and Collections without changing bottom navigation, and verify navigation tests open the same builder from both surfaces and return/open the created collection correctly.
 
+- [x] 6.7 Rebuild the result to read at a glance: collapse setup to a reopenable summary once a result exists so all three recommendations fit one screen without scrolling, give each recommendation an outlined card, replace the tier-rule/share/withheld/progress sentences with proportional bars, lead every indicator with an icon, and cut the ranking and coverage disclosures to their shortest truthful form — verifying Compose tests cover the collapsed summary, the outline, and a tier's share, withheld remainder, and pick length all being carried by one indicator.
+- [x] 6.8 Frame the surface as a recommendation rather than a gap description: recommendation wording on the title, the build control, and a per-card lead-in, a review indicator coloured from the positive-to-total ratio rather than the description's words, and the matched genre emphasised within its statement — verifying presentation tests cover the three review standings at their band boundaries and that no standing is derived from description text.
+
 ## 7. Verification
 
 - [x] 7.1 Run `./gradlew :app:testDebugUnitTest` and fix all selection, repository, worker, ViewModel, migration, and regression test failures.

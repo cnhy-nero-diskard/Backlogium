@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -16,13 +17,10 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.test.espresso.Espresso
@@ -47,6 +45,10 @@ import java.time.LocalDate
  * Stateless by construction, so every state a player could reach — offline, sparse, an empty tier,
  * a rebuild that could not vary, mid-save-failure — is one value away rather than something that
  * has to be provoked through a real ViewModel and a real database.
+ *
+ * **Nothing here scrolls to find a recommendation.** That is the point of several of these tests
+ * rather than an accident of how they are written: all three are meant to be on screen at once, so
+ * an assertion that had to scroll to reach one would be passing while the surface failed.
  */
 class GapPlanScreenBehaviorTest {
 
@@ -132,41 +134,73 @@ class GapPlanScreenBehaviorTest {
         assertTrue(state.setup.includeStarted)
     }
 
-    // --- The three picks ----------------------------------------------------------------------
+    // --- One screen ---------------------------------------------------------------------------
 
+    /**
+     * All three, at once, without a scroll.
+     *
+     * Asserted with no `performScrollToNode` anywhere on purpose: the whole reason the result
+     * container is a plain Column rather than a lazy list is that the third card must already be
+     * composed and on screen, and a test that scrolled to it would pass either way.
+     */
     @Test
-    fun allThreeTiersRenderOneGameEachWithTheirOwnShares() {
+    fun allThreeRecommendationsAreOnScreenAtOnce() {
         setContent(state = { GapPlanUiState(loading = false, result = result()) })
 
-        // The capacity header is asserted before scrolling past it: it sits above the picks, and
-        // scrolling back up to a lazy item that has since been recycled is a different test.
-        scrollTo(hasTestTag(TAG_CAPACITY_SOURCE))
-        composeRule.onNodeWithTag(TAG_CAPACITY_SOURCE).assertIsDisplayed()
-
         PlanIntensity.entries.forEach { intensity ->
-            scrollTo(hasTestTag(pickTag(intensity)))
             composeRule.onNodeWithTag(pickTag(intensity)).assertIsDisplayed()
-            scrollTo(hasTestTag(shareTag(intensity)))
-            composeRule.onNodeWithText(
-                GapPlanPresentation.pickShareLine(result().pick(intensity)!!),
-            ).assertIsDisplayed()
+            composeRule.onNodeWithTag(hookTag(intensity)).assertIsDisplayed()
         }
     }
 
-    /**
-     * A Relaxed tier must still show the capacity the intensity withheld — otherwise its reduced
-     * share reads as all the time the player has.
-     */
+    /** Once a result exists the form collapses to a summary, and reopens on demand. */
     @Test
-    fun aRelaxedTiersWithheldCapacityStaysVisible() {
+    fun setupCollapsesOnceAResultExistsAndReopensOnDemand() {
         setContent(state = { GapPlanUiState(loading = false, result = result()) })
 
-        composeRule.onNodeWithTag(TAG_FULL_CAPACITY).performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText(GapPlanPresentation.fullCapacityLine(6_000)).assertIsDisplayed()
-        scrollTo(hasTestTag(withheldTag(PlanIntensity.RELAXED)))
-        composeRule.onNodeWithText("Holding back 30h of your forecast.").assertIsDisplayed()
-        // And the Full tier withholds nothing, so it says nothing.
-        composeRule.onNodeWithTag(withheldTag(PlanIntensity.FULL)).assertDoesNotExistNow()
+        composeRule.onNodeWithTag(TAG_SETUP_SUMMARY).assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_SETUP_FORM).assertDoesNotExistNow()
+        composeRule.onNodeWithText(GapPlanPresentation.requestSummary(result())).assertIsDisplayed()
+
+        composeRule.onNodeWithTag(TAG_EDIT_SETUP).performClick()
+
+        composeRule.onNodeWithTag(TAG_SETUP_FORM).assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_TITLE_FIELD).assertIsDisplayed()
+        // And the summary steps aside, so only one generate control is ever on screen.
+        composeRule.onNodeWithTag(TAG_SETUP_SUMMARY).assertDoesNotExistNow()
+        composeRule.onAllNodesWithTag(TAG_GENERATE).assertCountEquals(1)
+    }
+
+    /** The setup form is the whole surface until there is something to show instead. */
+    @Test
+    fun theFormIsShownWhileThereIsNoResult() {
+        setContent(state = { GapPlanUiState(loading = false) })
+
+        composeRule.onNodeWithTag(TAG_SETUP_FORM).assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_SETUP_SUMMARY).assertDoesNotExistNow()
+    }
+
+    // --- The cards ----------------------------------------------------------------------------
+
+    /**
+     * Proportions are drawn, not narrated.
+     *
+     * Each tier carries one indicator holding its share, the withheld remainder and the pick's
+     * length together — so the sentences that used to state each of those separately must be gone,
+     * not merely shortened.
+     */
+    @Test
+    fun eachTierCarriesOneProportionalIndicatorInsteadOfSentences() {
+        setContent(state = { GapPlanUiState(loading = false, result = result()) })
+
+        PlanIntensity.entries.forEach { intensity ->
+            composeRule.onNodeWithTag(shareTag(intensity)).assertIsDisplayed()
+            composeRule.onNode(
+                inPick(intensity, hasText(GapPlanPresentation.pickAgainstShare(result().pick(intensity)!!))),
+            ).assertIsDisplayed()
+        }
+        composeRule.onNodeWithText("Holding back 30h of your forecast.").assertDoesNotExistNow()
+        composeRule.onNodeWithText("Planning around 70h of it").assertDoesNotExistNow()
     }
 
     /** A fully enriched pick shows every fact that lets the player judge it. */
@@ -179,21 +213,31 @@ class GapPlanScreenBehaviorTest {
             facts = listOf(
                 GapPlanFact.Reviews("Overwhelmingly Positive", 250_000, 260_000),
                 GapPlanFact.PlayingNow(4_321),
+                GapPlanFact.GenreAffinity("Metroidvania"),
             ),
         )
         setContent(state = { GapPlanUiState(loading = false, result = result(game = enriched)) })
 
-        scrollTo(hasTestTag(pickTag(PlanIntensity.RELAXED)))
-        listOf(
-            "10h left",
-            "Action · Metroidvania",
-            "Overwhelmingly Positive (260,000 reviews)",
-            "4,321 playing now",
-        ).forEach { text ->
-            val node = inPick(PlanIntensity.RELAXED, hasText(text))
-            scrollTo(node)
-            composeRule.onNode(node).assertIsDisplayed()
-        }
+        composeRule.onNodeWithTag(genreTag(2L)).assertIsDisplayed()
+        composeRule.onNodeWithTag(reviewTag(2L)).assertIsDisplayed()
+        composeRule.onNodeWithTag(playersTag(2L)).assertIsDisplayed()
+        composeRule.onNodeWithTag(affinityTag(2L)).assertIsDisplayed()
+        // Abbreviated, because four indicators share one row.
+        composeRule.onNode(inPick(PlanIntensity.RELAXED, hasText("Action, Metroidvania")))
+            .assertIsDisplayed()
+        composeRule.onNode(inPick(PlanIntensity.RELAXED, hasText("Overwhelmingly Positive · 260K")))
+            .assertIsDisplayed()
+        composeRule.onNode(inPick(PlanIntensity.RELAXED, hasText("4.3K"))).assertIsDisplayed()
+    }
+
+    /** A started game's progress is a bar, not a sentence. */
+    @Test
+    fun startedProgressIsDrawnRatherThanStated() {
+        val started = game(2, facts = listOf(GapPlanFact.Progress(1_312, 6_827)))
+        setContent(state = { GapPlanUiState(loading = false, result = result(game = started)) })
+
+        composeRule.onNodeWithTag(progressTag(2L)).assertIsDisplayed()
+        composeRule.onNodeWithText("21h 52m of 113h 47m played").assertDoesNotExistNow()
     }
 
     /** A suggestion with no cached facts still renders, and says what it could not show. */
@@ -213,29 +257,23 @@ class GapPlanScreenBehaviorTest {
         setContent(state = { GapPlanUiState(loading = false, result = sparse) })
 
         GapPlanPresentation.coverageDisclosures(sparse.coverage).forEach { disclosure ->
-            scrollTo(hasText(disclosure))
             composeRule.onNodeWithText(disclosure).assertIsDisplayed()
         }
-        // Remaining time is still stated, once, as the pick's own subtitle.
-        val remaining = inPick(PlanIntensity.RELAXED, hasText("10h left"))
-        scrollTo(remaining)
-        composeRule.onNode(remaining).assertIsDisplayed()
-        // And nothing is invented to fill the space a sparse library leaves empty.
+        // The remaining time is still there; the facts that were never cached simply are not.
+        composeRule.onNode(inPick(PlanIntensity.RELAXED, hasText("10h"))).assertIsDisplayed()
         composeRule.onNodeWithTag(genreTag(1L)).assertDoesNotExistNow()
+        composeRule.onNodeWithTag(reviewTag(1L)).assertDoesNotExistNow()
+        composeRule.onNodeWithTag(playersTag(1L)).assertDoesNotExistNow()
     }
 
     @Test
     fun anEmptyTierExplainsItselfInsteadOfRenderingBlank() {
         setContent(state = { GapPlanUiState(loading = false, result = result(game = null)) })
 
-        val message = inPick(
-            PlanIntensity.RELAXED,
-            hasText(GapPlanPresentation.emptyPickMessage()),
-        )
-        scrollTo(message)
-        composeRule.onNode(message).assertIsDisplayed()
-        // A tier with nothing in it offers no save action.
+        composeRule.onNodeWithTag(emptyTag(PlanIntensity.RELAXED)).assertIsDisplayed()
+        // A tier with nothing in it offers no save action and no recommendation hook.
         composeRule.onNodeWithTag(saveTag(PlanIntensity.FULL)).assertDoesNotExistNow()
+        composeRule.onNodeWithTag(hookTag(PlanIntensity.FULL)).assertDoesNotExistNow()
     }
 
     /** One tier without a pick does not stop the others from offering theirs. */
@@ -243,26 +281,20 @@ class GapPlanScreenBehaviorTest {
     fun aStarvedTierDoesNotSuppressTheOthers() {
         setContent(
             state = {
-                GapPlanUiState(
-                    loading = false,
-                    result = result().let { base ->
-                        base.copy(
+                result().let { base ->
+                    GapPlanUiState(
+                        loading = false,
+                        result = base.copy(
                             picks = base.picks.map { pick ->
-                                if (pick.intensity == PlanIntensity.RELAXED) {
-                                    pick.copy(game = null)
-                                } else {
-                                    pick
-                                }
+                                if (pick.intensity == PlanIntensity.RELAXED) pick.copy(game = null) else pick
                             },
-                        )
-                    },
-                )
+                        ),
+                    )
+                }
             },
         )
 
-        scrollTo(hasTestTag(emptyTag(PlanIntensity.RELAXED)))
         composeRule.onNodeWithTag(emptyTag(PlanIntensity.RELAXED)).assertIsDisplayed()
-        scrollTo(hasTestTag(saveTag(PlanIntensity.FULL)))
         composeRule.onNodeWithTag(saveTag(PlanIntensity.FULL)).assertIsEnabled()
     }
 
@@ -274,9 +306,7 @@ class GapPlanScreenBehaviorTest {
             },
         )
 
-        val label = inPick(PlanIntensity.RELAXED, hasTestTag(familySharedTag(1L)))
-        scrollTo(label)
-        composeRule.onNode(label).assertIsDisplayed()
+        composeRule.onNodeWithTag(familySharedTag(1L)).assertIsDisplayed()
     }
 
     // --- Inspection in place -----------------------------------------------------------------
@@ -298,9 +328,8 @@ class GapPlanScreenBehaviorTest {
             ),
         )
 
-        val row = inPick(PlanIntensity.RELAXED, hasTestTag(gameTag(2L)))
-        scrollTo(row)
-        composeRule.onNode(row).performClick()
+        // The whole card is the target, which is what the outline marks out.
+        composeRule.onNodeWithTag(pickTag(PlanIntensity.RELAXED)).performClick()
 
         assertEquals(2L, inspected)
         composeRule.onNodeWithTag(TAG_DETAIL_OVERLAY).assertIsDisplayed()
@@ -312,9 +341,7 @@ class GapPlanScreenBehaviorTest {
     @Test
     fun theResultRemainsPresentBehindTheOverlay() {
         setContent(
-            state = {
-                GapPlanUiState(loading = false, result = result(), inspectingAppId = 2L)
-            },
+            state = { GapPlanUiState(loading = false, result = result(), inspectingAppId = 2L) },
         )
 
         composeRule.onNodeWithTag(TAG_DETAIL_OVERLAY).assertIsDisplayed()
@@ -384,37 +411,35 @@ class GapPlanScreenBehaviorTest {
     // --- Rebuilding --------------------------------------------------------------------------
 
     /**
-     * Exactly one control produces a new set.
+     * Exactly one control produces a new set, in either layout.
      *
      * The surface briefly shipped two — a primary button and a separate "Regenerate" invoking the
      * same action — which was worse than redundant while the picks could not vary: it promised a
-     * reroll that did not exist. There is one now, and it genuinely rerolls.
+     * reroll that did not exist. Collapsing setup moved the control rather than adding one, and
+     * that is the thing most likely to regress here.
      */
     @Test
-    fun exactlyOneControlProducesANewSet() {
+    fun exactlyOneControlProducesANewSetInEitherLayout() {
         var rebuilds = 0
-        setContent(
-            state = { GapPlanUiState(loading = false, result = result()) },
-            actions = GapPlanActions(onGenerate = { rebuilds++ }),
-        )
+        var state by mutableStateOf(GapPlanUiState(loading = false))
+        setContent(state = { state }, actions = GapPlanActions(onGenerate = { rebuilds++ }))
 
+        composeRule.onAllNodesWithTag(TAG_GENERATE).assertCountEquals(1)
+
+        state = state.copy(result = result())
         composeRule.onAllNodesWithTag(TAG_GENERATE).assertCountEquals(1)
         composeRule.onNodeWithText("Regenerate").assertDoesNotExistNow()
 
-        composeRule.onNodeWithTag(TAG_GENERATE).performScrollTo().performClick()
+        composeRule.onNodeWithTag(TAG_GENERATE).performClick()
         assertEquals(1, rebuilds)
     }
 
-    /** Before a result exists the control asks for one; afterwards it offers to rebuild. */
+    /** Before a result exists the control asks for a recommendation, in those words. */
     @Test
-    fun theControlNamesWhatItWillDo() {
-        var state by mutableStateOf(GapPlanUiState(loading = false))
-        setContent(state = { state })
+    fun theControlAsksForARecommendation() {
+        setContent(state = { GapPlanUiState(loading = false) })
 
-        composeRule.onNodeWithText("Suggest three games").assertIsDisplayed()
-
-        state = state.copy(result = result())
-        composeRule.onNodeWithText("Rebuild").assertIsDisplayed()
+        composeRule.onNodeWithText("Recommend three games").assertIsDisplayed()
     }
 
     /** A rebuild that could not vary says so, rather than appearing to have been ignored. */
@@ -426,7 +451,6 @@ class GapPlanScreenBehaviorTest {
             },
         )
 
-        scrollTo(hasTestTag(TAG_NO_VARIATION))
         composeRule.onNodeWithTag(TAG_NO_VARIATION).assertIsDisplayed()
         composeRule.onNodeWithText(GapPlanPresentation.rebuildDidNotVaryMessage())
             .assertIsDisplayed()
@@ -444,9 +468,20 @@ class GapPlanScreenBehaviorTest {
     fun theResultSaysThePicksWereNotRanked() {
         setContent(state = { GapPlanUiState(loading = false, result = result()) })
 
-        scrollTo(hasTestTag(TAG_SELECTION_EXPLANATION))
         composeRule.onNodeWithTag(TAG_SELECTION_EXPLANATION).assertIsDisplayed()
-        composeRule.onNodeWithText(GapPlanPresentation.selectionExplanation()).assertIsDisplayed()
+    }
+
+    /** A forecast says nothing about its source; a manual budget must not read as one. */
+    @Test
+    fun onlyAManuallyBudgetedResultCarriesACapacityCaveat() {
+        var state by mutableStateOf(GapPlanUiState(loading = false, result = result()))
+        setContent(state = { state })
+
+        composeRule.onNodeWithTag(TAG_FULL_CAPACITY).assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_CAPACITY_SOURCE).assertDoesNotExistNow()
+
+        state = state.copy(result = result(provenance = CapacityProvenance.MANUAL))
+        composeRule.onNodeWithTag(TAG_CAPACITY_SOURCE).assertIsDisplayed()
     }
 
     // --- Saving ------------------------------------------------------------------------------
@@ -459,7 +494,6 @@ class GapPlanScreenBehaviorTest {
             actions = GapPlanActions(onReviewSave = { reviewed = it }),
         )
 
-        scrollTo(hasTestTag(saveTag(PlanIntensity.BALANCED)))
         composeRule.onNodeWithTag(saveTag(PlanIntensity.BALANCED)).performClick()
 
         assertEquals(PlanIntensity.BALANCED, reviewed)
@@ -485,8 +519,8 @@ class GapPlanScreenBehaviorTest {
         )
 
         composeRule.onNodeWithTag(TAG_SAVE_DIALOG).assertIsDisplayed()
-        // Scoped to the dialog: the capacity header behind it also renders "Before Silksong", and
-        // the assertion is about what the *confirmation* restates before anything is written.
+        // Scoped to the dialog: the summary row behind it also names the request, and the
+        // assertion is about what the *confirmation* restates before anything is written.
         composeRule.onNode(inDialog(hasText("Before Silksong"))).assertIsDisplayed()
         composeRule.onNode(inDialog(hasText("Deadline 2026-12-01"))).assertIsDisplayed()
         composeRule.onNode(inDialog(hasText("Main Story"))).assertIsDisplayed()
@@ -520,15 +554,8 @@ class GapPlanScreenBehaviorTest {
             state = { GapPlanUiState(loading = false, result = result(), saveError = true) },
         )
 
-        // The error sits below all three cards, so the list has to be scrolled to it — a lazy item
-        // that is still off screen has not been composed for a node-level scroll to find.
-        scrollTo(hasTestTag(TAG_SAVE_ERROR))
         composeRule.onNodeWithTag(TAG_SAVE_ERROR).assertIsDisplayed()
-
-        // And the result is still there, still offering the same save.
-        scrollTo(hasTestTag(pickTag(PlanIntensity.RELAXED)))
         composeRule.onNodeWithTag(pickTag(PlanIntensity.RELAXED)).assertIsDisplayed()
-        scrollTo(hasTestTag(saveTag(PlanIntensity.RELAXED)))
         composeRule.onNodeWithTag(saveTag(PlanIntensity.RELAXED)).assertIsEnabled()
     }
 
@@ -567,9 +594,7 @@ class GapPlanScreenBehaviorTest {
      */
     @Test
     fun theHoursSliderReportsWholeHoursAndStatesTheRunningTotal() {
-        var state by mutableStateOf(
-            GapPlanUiState(loading = false, requiresManualBudget = true),
-        )
+        var state by mutableStateOf(GapPlanUiState(loading = false, requiresManualBudget = true))
         setContent(
             state = { state },
             actions = GapPlanActions(
@@ -580,7 +605,7 @@ class GapPlanScreenBehaviorTest {
         )
 
         // Nothing chosen yet reads as a prompt, not as a budget of zero hours.
-        composeRule.onNodeWithText("Drag to set the hours you expect to have").assertIsDisplayed()
+        composeRule.onNodeWithText("Drag to set your hours").assertIsDisplayed()
         composeRule.onNodeWithTag(TAG_GENERATE).assertIsNotEnabled()
 
         composeRule.onNodeWithTag(TAG_HOURS_SLIDER).performSemanticsAction(
@@ -588,8 +613,7 @@ class GapPlanScreenBehaviorTest {
         ) { it(120f) }
 
         assertTrue("the slider must report whole hours", state.setup.manualTotalHours > 0)
-        composeRule.onNodeWithText("About ${state.setup.manualTotalHours} hours before then")
-            .assertIsDisplayed()
+        composeRule.onNodeWithText("About ${state.setup.manualTotalHours} hours").assertIsDisplayed()
     }
 
     /** The date row shows the chosen day in the same format the collection editor uses. */
@@ -601,8 +625,7 @@ class GapPlanScreenBehaviorTest {
         composeRule.onNodeWithText("No target date set").assertIsDisplayed()
         composeRule.onNodeWithTag(TAG_CLEAR_DATE).assertDoesNotExistNow()
 
-        val picked = LocalDate.parse("2026-12-01")
-        state = state.copy(setup = state.setup.copy(targetDate = picked))
+        state = state.copy(setup = state.setup.copy(targetDate = LocalDate.parse("2026-12-01")))
 
         composeRule.onNodeWithTag(TAG_DATE_ROW).assertIsDisplayed()
         composeRule.onNodeWithTag(TAG_CLEAR_DATE).assertIsDisplayed()
@@ -629,21 +652,11 @@ class GapPlanScreenBehaviorTest {
     }
 
     /**
-     * Drives the lazy list rather than the node.
+     * Scopes a matcher to one recommendation card.
      *
-     * `performScrollTo()` on a node only works once that node exists; a `LazyColumn` has not
-     * composed the rows still off screen, so anything below the fold has to be reached through the
-     * list itself.
-     */
-    private fun scrollTo(matcher: SemanticsMatcher) =
-        composeRule.onNodeWithTag(TAG_PLAN_LIST).performScrollToNode(matcher)
-
-    /**
-     * Scopes a matcher to one pick card.
-     *
-     * The three cards render the same kinds of line, so an unscoped matcher would be ambiguous.
-     * Scoping also makes the assertion say what it means: not "this line exists somewhere" but
-     * "this line is on the Relaxed card".
+     * The three cards render the same kinds of indicator, so an unscoped matcher would be
+     * ambiguous. Scoping also makes the assertion say what it means: not "this value exists
+     * somewhere" but "this value is on the Relaxed card".
      */
     private fun inPick(intensity: PlanIntensity, matcher: SemanticsMatcher): SemanticsMatcher =
         matcher and hasAnyAncestor(hasTestTag(pickTag(intensity)))
@@ -674,12 +687,13 @@ class GapPlanScreenBehaviorTest {
     private fun result(
         coverage: GapPlanCoverage = GapPlanCoverage(4, 4, 0, 0, 4, 4),
         game: GapPlanGameUi? = game(2),
+        provenance: CapacityProvenance = CapacityProvenance.PERSONAL_PACE,
     ) = GapPlanResultUi(
         anticipatedTitle = "Silksong",
         targetDate = LocalDate.parse("2026-12-01"),
         intent = GapPlanIntent.STORY,
         fullCapacityMinutes = 6_000,
-        provenance = CapacityProvenance.PERSONAL_PACE,
+        provenance = provenance,
         picks = PlanIntensity.entries.map { intensity ->
             val budget = intensity.budgetMinutes(6_000)
             GapPlanPickUi(
