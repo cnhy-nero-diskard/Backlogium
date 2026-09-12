@@ -90,10 +90,9 @@ class GapPlanViewModel @Inject constructor(
      * than whenever its coroutine happens to notice.
      *
      * When a result is already on screen this is a **reroll**, and it is expected to change what is
-     * shown. Successive seeds are tried until the picks differ, because a single new seed can
-     * legitimately redraw the same games and a control that silently returned its own previous
-     * answer is the failure this replaced. If the pool genuinely cannot produce a different set the
-     * state says so instead.
+     * shown. A single new seed can legitimately redraw the same games, so when that happens the
+     * selection performs an exact search for another reachable set. If the pool genuinely cannot
+     * produce a different set the state says so instead.
      */
     fun generate() {
         val state = _uiState.value
@@ -143,27 +142,27 @@ class GapPlanViewModel @Inject constructor(
     }
 
     /**
-     * Draws until the picks differ from [previous], or until the attempts run out.
+     * Draws until the picks differ from [previous], then proves whether an alternate is reachable.
      *
-     * Bounded rather than looped until success: [GapPlanSnapshot.canVary] says whether *some* tier
-     * had a choice, not that a different set is reachable, so an unbounded retry could spin on a
-     * pool where one tier's two candidates are the only variation and both produce the same trio
-     * after distinctness. A handful of attempts finds a different set whenever one is at all
-     * likely, and the honest answer when it does not is the unchanged-pool state.
+     * The first draw retains the ordinary seeded selection. If it repeats the visible set, the
+     * second draw uses the selection engine's exact alternate search instead of guessing how many
+     * seeds are enough to find one.
      */
     private fun drawDistinctFrom(
         previous: GapPlanSnapshot?,
         request: GapPlanRequest,
         inputs: GapPlanInputs,
     ): Result<GapPlanSnapshot> {
-        var attempt = GapPlanEngine.generate(request, inputs, seeds.next())
+        val attempt = GapPlanEngine.generate(request, inputs, seeds.next())
         if (previous == null) return attempt
-        repeat(MAX_REROLL_ATTEMPTS - 1) {
-            val plan = attempt.getOrNull() ?: return attempt
-            if (!plan.canVary || plan.pickedAppIds != previous.pickedAppIds) return attempt
-            attempt = GapPlanEngine.generate(request, inputs, seeds.next())
-        }
-        return attempt
+        val plan = attempt.getOrNull() ?: return attempt
+        if (plan.pickedAppIds != previous.pickedAppIds) return attempt
+        return GapPlanEngine.generateDifferentFrom(
+            request = request,
+            inputs = inputs,
+            seed = seeds.next(),
+            previousPickedAppIds = previous.pickedAppIds,
+        ) ?: attempt
     }
 
     /**
@@ -295,7 +294,5 @@ class GapPlanViewModel @Inject constructor(
         /** Slider granularity. Finer steps would imply a precision the estimate does not have. */
         const val MANUAL_HOURS_STEP = 5
 
-        /** Seeds tried before a rebuild concedes that the pool produced the same set. */
-        const val MAX_REROLL_ATTEMPTS = 8
     }
 }

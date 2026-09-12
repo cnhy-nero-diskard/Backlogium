@@ -94,6 +94,83 @@ object GapPlanSelection {
     }
 
     /**
+     * Finds a reachable draw whose visible app ids differ from [previousPickedAppIds], or returns
+     * null when every reachable draw is the same. This is an exact search, not another series of
+     * random attempts: once a candidate outside the previous set is chosen, the completed draw is
+     * necessarily different, and if none is available a branch can contain only the at most three
+     * previous ids. That makes the no-alternate answer provable without making a reroll unbounded.
+     */
+    internal fun drawDifferent(
+        pool: List<GapPlanCandidate>,
+        fullCapacityMinutes: Int,
+        seed: Long,
+        previousPickedAppIds: List<Long>,
+    ): Draw? {
+        val previousIds = previousPickedAppIds.toSet()
+        val random = Random(seed)
+        val orderedPool = pool.sortedBy { it.appId }
+
+        fun rotate(candidates: List<GapPlanCandidate>): List<GapPlanCandidate> {
+            if (candidates.isEmpty()) return candidates
+            val offset = random.nextInt(candidates.size)
+            return candidates.drop(offset) + candidates.take(offset)
+        }
+
+        fun search(
+            tierIndex: Int,
+            remaining: List<GapPlanCandidate>,
+            drawn: Map<PlanIntensity, GapPlanPick>,
+            canVary: Boolean,
+        ): Draw? {
+            if (tierIndex == TIER_ORDER.size) {
+                val picks = orderByCommitment(PlanIntensity.entries.map { drawn.getValue(it) })
+                return if (picks.mapNotNull { it.game?.appId } != previousPickedAppIds) {
+                    Draw(picks = picks, canVary = canVary)
+                } else {
+                    null
+                }
+            }
+
+            val intensity = TIER_ORDER[tierIndex]
+            val budget = intensity.budgetMinutes(fullCapacityMinutes)
+            val near = nearest(remaining, budget)
+            val (outsidePrevious, insidePrevious) = near.partition { it.appId !in previousIds }
+            val choices: List<GapPlanCandidate?> = if (near.isEmpty()) {
+                listOf(null)
+            } else {
+                // Outside candidates are tried first because selecting one proves the final set
+                // differs; the small inside branch is what establishes that no such candidate is
+                // reachable after an earlier choice changes the remaining pool.
+                rotate(outsidePrevious) + rotate(insidePrevious)
+            }
+
+            for (chosen in choices) {
+                val nextRemaining = chosen?.let { remaining - it } ?: remaining
+                val pick = GapPlanPick(
+                    intensity = intensity,
+                    budgetMinutes = budget,
+                    game = chosen,
+                )
+                val result = search(
+                    tierIndex = tierIndex + 1,
+                    remaining = nextRemaining,
+                    drawn = drawn + (intensity to pick),
+                    canVary = canVary || near.size > 1,
+                )
+                if (result != null) return result
+            }
+            return null
+        }
+
+        return search(
+            tierIndex = 0,
+            remaining = orderedPool,
+            drawn = emptyMap(),
+            canVary = false,
+        )
+    }
+
+    /**
      * Reassigns the drawn games to their tiers shortest-first, so a lower intensity can never offer
      * a longer commitment than a higher one.
      *

@@ -234,6 +234,26 @@ class GapPlanViewModelTest {
         assertFalse(viewModel.uiState.value.rebuildDidNotVary)
     }
 
+    /** An alternate reachable trio is found even when every supplied reroll seed repeats the first. */
+    @Test fun aReachableRerollDoesNotConcedeAfterEightIdenticalSeeds() = runTest {
+        seedLibrary()
+        env.seedReliablePace(appId = PACE_GAME)
+        val viewModel = viewModel(seeds = repeatedSeeds(seed = 1L, count = 10))
+        advanceUntilIdle()
+        fillSetup(viewModel)
+        viewModel.generate()
+        advanceUntilIdle()
+
+        val before = viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId }
+
+        viewModel.generate()
+        advanceUntilIdle()
+
+        val after = viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId }
+        assertNotEquals(before, after)
+        assertFalse(viewModel.uiState.value.rebuildDidNotVary)
+    }
+
     /**
      * And when it cannot, it says so rather than appearing to have been ignored.
      *
@@ -509,11 +529,12 @@ class GapPlanViewModelTest {
 
     private fun viewModel(
         counts: CurrentPlayerCounts = CurrentPlayerCounts { null },
+        seeds: GapPlanSeeds = sequentialSeeds(),
     ) = GapPlanViewModel(
         feed = env.feed,
         liveCounts = GapPlanLiveCounts(counts),
         collectionCreator = env.collectionCreator,
-        seeds = sequentialSeeds(),
+        seeds = seeds,
     )
 
     /**
@@ -527,6 +548,12 @@ class GapPlanViewModelTest {
     private fun sequentialSeeds(): GapPlanSeeds {
         val next = AtomicLong(0L)
         return GapPlanSeeds { next.incrementAndGet() }
+    }
+
+    private fun repeatedSeeds(seed: Long, count: Int): GapPlanSeeds {
+        val supplied = List(count) { seed }
+        val next = AtomicInteger()
+        return GapPlanSeeds { supplied.getOrElse(next.getAndIncrement()) { seed } }
     }
 
     private companion object {

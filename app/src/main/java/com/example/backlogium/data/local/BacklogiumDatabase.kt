@@ -76,7 +76,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         HiddenGame::class,
         SteamReviewCache::class,
     ],
-    version = 33,
+    version = 34,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -808,6 +808,13 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) " +
                         "ON UPDATE NO ACTION ON DELETE CASCADE )",
                 )
+            }
+        }
+
+        /** v33 -> v34: retain refused review attempts without presenting them as unavailable. */
+        val MIGRATION_33_34 = object : Migration(33, 34) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `steam_review_cache` ADD COLUMN `declinedAt` INTEGER")
             }
         }
 

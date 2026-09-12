@@ -179,11 +179,11 @@ class SteamReviewRepositoryTest {
     }
 
     /**
-     * A declined app id writes nothing and the batch keeps going. It is neither an absence to
-     * cache nor a reason to abandon the other twenty-four ids in the run.
+     * A declined app id gets queue bookkeeping and the batch keeps going. It is neither an
+     * unavailable review fact nor a reason to abandon the other twenty-four ids in the run.
      */
     @Test
-    fun aDeclinedAppIdIsSkippedWithoutEndingTheBatchOrCachingAnAbsence() = runTest {
+    fun aDeclinedAppIdGetsCooldownWithoutEndingTheBatchOrCachingAnAbsence() = runTest {
         gameDao.upsertAll(listOf(game(1), game(2)))
         val store = FakeReviewApi(declined = setOf(1L))
 
@@ -192,9 +192,43 @@ class SteamReviewRepositoryTest {
         assertEquals(2, batch.attempted)
         assertFalse(batch.transientFailure)
         assertEquals(listOf(1L, 2L), store.requested)
-        // Nothing written for 1, so it is asked again next run.
-        assertEquals(listOf(2L), cacheDao.observeAll().first().map { it.appId })
-        assertTrue(batch.hasMoreEligible)
+        val rows = cacheDao.observeAll().first().associateBy { it.appId }
+        assertEquals(setOf(1L, 2L), rows.keys)
+        assertEquals(NOW, rows.getValue(1L).declinedAt)
+        assertNull(repository(store).allReviews.first()[1L])
+        // The declined row is held out until its cooldown expires, so it cannot be retried forever
+        // ahead of the rest of the library.
+        assertFalse(batch.hasMoreEligible)
+        store.requested.clear()
+        assertEquals(0, repository(store).enrichNextBatch().attempted)
+        assertTrue(store.requested.isEmpty())
+    }
+
+    /** More than one full declined batch still lets later missing games reach the Store. */
+    @Test
+    fun aDeclinedPrefixDoesNotStarveLaterMissingApps() = runTest {
+        val totalGames = SteamReviewRepository.MAX_APPS_PER_BATCH + 5L
+        val declinedPrefix = (1L..(SteamReviewRepository.MAX_APPS_PER_BATCH + 1L)).toSet()
+        gameDao.upsertAll((1L..totalGames).map(::game))
+        val store = FakeReviewApi(declined = declinedPrefix)
+        val repository = repository(store)
+
+        val first = repository.enrichNextBatch()
+
+        assertEquals(
+            (1L..SteamReviewRepository.MAX_APPS_PER_BATCH.toLong()).toList(),
+            store.requested,
+        )
+        assertTrue(first.hasMoreEligible)
+
+        val second = repository.enrichNextBatch()
+
+        assertEquals(
+            (SteamReviewRepository.MAX_APPS_PER_BATCH.toLong() + 1L..totalGames).toList(),
+            store.requested.drop(SteamReviewRepository.MAX_APPS_PER_BATCH),
+        )
+        assertEquals(5, second.attempted)
+        assertFalse(second.hasMoreEligible)
     }
 
     @Test

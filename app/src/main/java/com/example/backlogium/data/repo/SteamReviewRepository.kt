@@ -64,20 +64,22 @@ class SteamReviewRepository @Inject constructor(
      * Cached review summaries per app id, decoded once at the repository boundary. A game with no
      * cache row is absent from the map, so no consumer can mistake "never checked" for "no
      * reviews" — the distinction is carried by the map's shape rather than by a flag a caller
-     * could forget to read.
+     * could forget to read. A declined-attempt row is also absent: it exists only to advance the
+     * enrichment queue and is not a review fact.
      */
     val allReviews: Flow<Map<Long, GameReviewSummary>> = cacheDao.observeAll().map { rows ->
-        rows.associate { it.appId to it.toDomain() }
+        rows.mapNotNull { row -> row.toDomain()?.let { row.appId to it } }.toMap()
     }
 
     /**
      * Refreshes one missing-first, bounded batch, mirroring the Store genre chain's policy so the
      * two place a predictable combined load on one host.
      *
-     * Only the two definitive outcomes are written. A [StoreReviewResult.Declined] app id writes
-     * nothing and the batch *continues* — one app id the Store will not describe is not a reason
-     * to abandon progress on the other twenty-four — while a transient failure stops the batch so
-     * WorkManager backs off instead of hammering a Store that is already throttling.
+     * Only the two definitive outcomes become review facts. A [StoreReviewResult.Declined] app id
+     * gets a durable cooldown marker and the batch *continues* — one app id the Store will not
+     * describe is not a reason to abandon progress on the other twenty-four — while a transient
+     * failure stops the batch so WorkManager backs off instead of hammering a Store that is already
+     * throttling.
      */
     suspend fun enrichNextBatch(): ReviewEnrichmentBatch {
         val staleBefore = time.nowMillis() - FRESHNESS_WINDOW_MILLIS
@@ -88,8 +90,9 @@ class SteamReviewRepository @Inject constructor(
             when (val result = store.reviewsFor(appId)) {
                 is StoreReviewResult.Summary -> write(appId, result)
                 StoreReviewResult.Unavailable -> writeUnavailable(appId)
-                // Says nothing about the game: no row, so it stays eligible for a later run.
-                StoreReviewResult.Declined -> Unit
+                // Says nothing about the game: retain only a cooldown marker, not an unavailable
+                // review fact, so the rest of the missing queue can make progress.
+                StoreReviewResult.Declined -> writeDeclined(appId)
                 is StoreReviewResult.TransientFailure -> transientFailure = true
             }
             if (transientFailure) break
@@ -108,13 +111,32 @@ class SteamReviewRepository @Inject constructor(
             total = summary.total,
             available = true,
             checkedAt = time.nowMillis(),
+            declinedAt = null,
         ),
     )
 
     /** Counts stay null: an unavailable row must never be able to present itself as zero reviews. */
     private suspend fun writeUnavailable(appId: Long) = cacheDao.upsert(
-        SteamReviewCache(appId = appId, available = false, checkedAt = time.nowMillis()),
+        SteamReviewCache(
+            appId = appId,
+            available = false,
+            checkedAt = time.nowMillis(),
+            declinedAt = null,
+        ),
     )
+
+    /** Retains queue progress without turning a refused Store envelope into a reviewless fact. */
+    private suspend fun writeDeclined(appId: Long) {
+        val now = time.nowMillis()
+        cacheDao.upsert(
+            SteamReviewCache(
+                appId = appId,
+                available = false,
+                checkedAt = now,
+                declinedAt = now,
+            ),
+        )
+    }
 
     companion object {
         /** Matches the Store genre chain, for one predictable freshness rule across both caches. */
@@ -125,13 +147,15 @@ class SteamReviewRepository @Inject constructor(
 }
 
 /**
- * A stored row to its domain state. [SteamReviewCache.available] is authoritative: a row written
- * as available always carries its counts, and a row written as unavailable never does. A row that
- * somehow claims availability without counts is read as [GameReviewSummary.Unavailable] rather
- * than being padded with zeros, because a fabricated zero is exactly the rating this cache must
- * never produce.
+ * A stored row to its domain state. A row with [SteamReviewCache.declinedAt] is queue bookkeeping,
+ * not a review fact, so it is omitted. Otherwise [SteamReviewCache.available] is authoritative: a
+ * row written as available always carries its counts, and a row written as unavailable never does.
+ * A row that somehow claims availability without counts is read as [GameReviewSummary.Unavailable]
+ * rather than being padded with zeros, because a fabricated zero is exactly the rating this cache
+ * must never produce.
  */
-private fun SteamReviewCache.toDomain(): GameReviewSummary {
+private fun SteamReviewCache.toDomain(): GameReviewSummary? {
+    if (declinedAt != null) return null
     if (!available) return GameReviewSummary.Unavailable
     val description = description?.trim().orEmpty()
     val positive = positive

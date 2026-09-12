@@ -10,13 +10,14 @@ import androidx.room.ForeignKey
  * different endpoints that succeed, fail, and go stale independently: one `appdetails` failure
  * must not hold back durable review progress, and neither must the reverse.
  *
- * [available] is what distinguishes the two definitive answers. `true` means Steam supplied a
- * usable summary and the three counts are present; `false` means Steam answered and this game has
- * no user reviews at all, which is a fact worth caching so it is not re-requested every run. No
- * row means the game has never been checked — never "zero reviews".
+ * [available] is what distinguishes the two definitive answers when [declinedAt] is null. `true`
+ * means Steam supplied a usable summary and the three counts are present; `false` means Steam
+ * answered and this game has no user reviews at all, which is a fact worth caching so it is not
+ * re-requested every run. No row means the game has never been checked — never "zero reviews".
  *
- * A response the Store *declines* to answer writes no row at all, so a delisted game stays unknown
- * rather than being recorded as reviewless.
+ * A response the Store *declines* to answer writes a row with [declinedAt] so the attempt can leave
+ * the immediate queue while the game stays unknown to consumers rather than being recorded as
+ * reviewless. The marker is cleared by either definitive outcome.
  *
  * The foreign key cascades like [GameGenreCache]'s, so an account change that clears `games`
  * clears this refreshable cache with it and no separate reset step can be forgotten.
@@ -42,4 +43,6 @@ data class SteamReviewCache(
     val total: Int? = null,
     val available: Boolean,
     val checkedAt: Long,
+    /** When non-null, the Store declined this attempt and the row is in its retry cooldown. */
+    val declinedAt: Long? = null,
 )

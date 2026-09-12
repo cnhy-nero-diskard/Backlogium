@@ -88,6 +88,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_30_31,
         BacklogiumDatabase.MIGRATION_31_32,
         BacklogiumDatabase.MIGRATION_32_33,
+        BacklogiumDatabase.MIGRATION_33_34,
     )
 
     @Test
@@ -1205,6 +1206,66 @@ class MigrationTest {
                 ).use { cursor ->
                     assertTrue(cursor.moveToFirst())
                     assertEquals(0, cursor.getInt(0))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun v33ToV34_addsDeclinedAttemptTimestampAndPreservesExistingReviewRows() {
+        val databaseName = "migration-v33-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 33)
+        try {
+            database.execSQL(
+                "INSERT INTO games " +
+                    "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+                    "isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, firstSeenAt, " +
+                    "lastPlayedAt, returnedToPlayAt, manualSharedMinutes) VALUES " +
+                    "(570, 'Dota 2', '', 100, 0, 100, 0, NULL, 1700000000000, 0, 'STEAM_OWNED', " +
+                    "1700000000000, NULL, NULL, 0)",
+            )
+            database.execSQL(
+                "INSERT INTO steam_review_cache " +
+                    "(appId, description, positive, negative, total, available, checkedAt) " +
+                    "VALUES (570, 'Very Positive', 90, 10, 100, 1, 1700000000000)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                34,
+                true,
+                BacklogiumDatabase.MIGRATION_33_34,
+            )
+            try {
+                assertTableInfo(
+                    migrated,
+                    "steam_review_cache",
+                    listOf(
+                        ColumnInfo("appId", "INTEGER", notNull = true, pk = 1),
+                        ColumnInfo("description", "TEXT", notNull = false, pk = 0),
+                        ColumnInfo("positive", "INTEGER", notNull = false, pk = 0),
+                        ColumnInfo("negative", "INTEGER", notNull = false, pk = 0),
+                        ColumnInfo("total", "INTEGER", notNull = false, pk = 0),
+                        ColumnInfo("available", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("checkedAt", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("declinedAt", "INTEGER", notNull = false, pk = 0),
+                    ),
+                )
+                migrated.query(
+                    "SELECT description, total, declinedAt FROM steam_review_cache WHERE appId = 570",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("Very Positive", cursor.getString(0))
+                    assertEquals(100, cursor.getInt(1))
+                    assertTrue(cursor.isNull(2))
                 }
             } finally {
                 migrated.close()

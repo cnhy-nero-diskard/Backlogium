@@ -90,6 +90,53 @@ object GapPlanEngine {
     }
 
     /**
+     * Generates a different reachable draw for a reroll, or null when the eligible pool cannot
+     * produce one. The selection search is exhaustive over the only choices that can preserve the
+     * previous visible set, so null is a real impossibility rather than an unlucky run of seeds.
+     */
+    internal fun generateDifferentFrom(
+        request: GapPlanRequest,
+        inputs: GapPlanInputs,
+        seed: Long,
+        previousPickedAppIds: List<Long>,
+    ): Result<GapPlanSnapshot>? {
+        val capacity = request.resolveCapacity(inputs.paceProfile, inputs.today)
+            .getOrElse { return Result.failure(it) }
+
+        val fullBudget = PlanIntensity.FULL.budgetMinutes(capacity.fullCapacityMinutes)
+        val eligibility = deriveEligibility(
+            games = inputs.games,
+            request = request,
+            fullBudgetMinutes = fullBudget,
+            hasCachedReview = { appId -> inputs.reviewsByAppId.containsKey(appId) },
+        )
+
+        val weights = GenreAffinity.weights(
+            playedDates = inputs.playedDates,
+            genreIdsByApp = inputs.games.associate { it.appId to it.genreIds },
+            today = inputs.today,
+        )
+        val pool = eligibility.eligible.map { it.toCandidate(inputs, weights) }
+        val draw = GapPlanSelection.drawDifferent(
+            pool = pool,
+            fullCapacityMinutes = capacity.fullCapacityMinutes,
+            seed = seed,
+            previousPickedAppIds = previousPickedAppIds,
+        ) ?: return null
+
+        return Result.success(
+            GapPlanSnapshot(
+                request = request,
+                capacity = capacity,
+                seed = seed,
+                picks = draw.picks,
+                coverage = eligibility.coverage,
+                canVary = draw.canVary,
+            ),
+        )
+    }
+
+    /**
      * Builds one candidate: the work figures the draw reads, and the facts its card will state.
      *
      * Nothing derived here influences whether this candidate is chosen. The facts are attached at
