@@ -81,8 +81,8 @@ internal fun GapPlanPickCard(
         border = CardDefaults.outlinedCardBorder(),
     ) {
         Column(
-            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             GapPlanTierRow(pick = pick, canSave = game != null, onSave = onSave)
             CapacityBar(
@@ -166,7 +166,7 @@ private fun GapPlanGameRow(game: GapPlanGameUi) {
         GameIcon(iconUrl = game.iconUrl, iconSize = 40.dp)
         Column(
             Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,

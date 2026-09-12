@@ -39,6 +39,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,6 +53,7 @@ import compose.icons.TablerIcons
 import compose.icons.tablericons.AlertCircle
 import compose.icons.tablericons.ArrowBack
 import compose.icons.tablericons.Clock
+import compose.icons.tablericons.Dice
 import compose.icons.tablericons.Pencil
 import compose.icons.tablericons.Refresh
 import java.time.Instant
@@ -173,7 +175,7 @@ fun GapPlanContent(
         Modifier
             .fillMaxSize()
             .padding(horizontal = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         GapPlanHeader(onDone = actions.onDone)
 
@@ -203,6 +205,16 @@ fun GapPlanContent(
                 onRebuild = actions.onGenerate,
             )
 
+            // On its own line rather than trailing the summary row, where the pencil and rebuild
+            // controls left it about a third of the width and it ellipsised to "Picked at random
+            // fr…". A disclosure that nothing was ranked is the posture the whole selection design
+            // rests on; truncated, it discloses nothing at all.
+            Notice(
+                text = GapPlanPresentation.selectionExplanation(),
+                icon = TablerIcons.Dice,
+                modifier = Modifier.testTag(TAG_SELECTION_EXPLANATION),
+            )
+
             if (state.rebuildDidNotVary) {
                 Notice(
                     text = GapPlanPresentation.rebuildDidNotVaryMessage(),
@@ -222,7 +234,7 @@ fun GapPlanContent(
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
                     .testTag(TAG_PLAN_LIST),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 result.picks.forEach { pick ->
                     GapPlanPickCard(
@@ -333,14 +345,6 @@ private fun GapPlanSummaryRow(
                             modifier = Modifier.testTag(TAG_CAPACITY_SOURCE),
                         )
                     }
-                    Text(
-                        text = "· ${GapPlanPresentation.selectionExplanation()}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.testTag(TAG_SELECTION_EXPLANATION),
-                    )
                 }
             }
             IconButton(onClick = onEdit, modifier = Modifier.testTag(TAG_EDIT_SETUP)) {
@@ -363,14 +367,18 @@ private fun GapPlanSummaryRow(
 
 /** A short, icon-led aside. Never a paragraph — the surface has no room for one. */
 @Composable
-private fun Notice(text: String, modifier: Modifier = Modifier) {
+private fun Notice(
+    text: String,
+    modifier: Modifier = Modifier,
+    icon: ImageVector = TablerIcons.AlertCircle,
+) {
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         Icon(
-            TablerIcons.AlertCircle,
+            icon,
             contentDescription = null,
             modifier = Modifier.size(13.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
