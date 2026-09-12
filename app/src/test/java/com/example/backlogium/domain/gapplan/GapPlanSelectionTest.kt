@@ -44,6 +44,115 @@ class GapPlanSelectionTest {
         )
     }
 
+    /**
+     * The case targeting alone does not cover, and the reason ordering is imposed separately.
+     *
+     * Three games clustered far below every share — a real shape for a library where few games have
+     * a resolved length. All of them sit inside several tiers' nearness bands at once, so the draw
+     * is free to hand the longer of two near-identical games to Relaxed and the shorter to Balanced.
+     * These are the figures that exposed it on a real library: 91h 55m, 93h 44m and 142h 29m against
+     * a 302h 54m forecast.
+     */
+    @Test fun aClusteredPoolIsStillOrderedShortestToLongest() {
+        val pool = listOf(
+            candidate(1, remainingMinutes = 5_515),
+            candidate(2, remainingMinutes = 5_624),
+            candidate(3, remainingMinutes = 8_549),
+        )
+
+        // Every seed, because the inversion only showed up on some of them.
+        (1L..60L).forEach { seed ->
+            val picks = GapPlanSelection.draw(pool, fullCapacityMinutes = 18_174, seed = seed).picks
+            assertEquals(
+                "seed $seed did not order the tiers",
+                listOf(5_515, 5_624, 8_549),
+                picks.map { it.game?.remainingMinutes },
+            )
+        }
+    }
+
+    /** The ordering is a property of every draw, not of a pool shape that happens to produce it. */
+    @Test fun picksAreNeverDecreasingInLengthAcrossTiers() {
+        val pools = listOf(
+            (1L..100L).map { candidate(it, it.toInt() * 100) },
+            (1L..5L).map { candidate(it, 600 + it.toInt()) },
+            listOf(candidate(1, 9_500), candidate(2, 9_400), candidate(3, 400)),
+            listOf(candidate(1, 100), candidate(2, 100), candidate(3, 100)),
+        )
+
+        pools.forEachIndexed { index, pool ->
+            (1L..40L).forEach { seed ->
+                val lengths = GapPlanSelection.draw(pool, 10_000, seed).picks
+                    .mapNotNull { it.game?.remainingMinutes }
+                assertEquals(
+                    "pool $index seed $seed was not ordered",
+                    lengths.sorted(),
+                    lengths,
+                )
+            }
+        }
+    }
+
+    /**
+     * Reassignment cannot hand a tier a game its share cannot hold.
+     *
+     * Shares rise with intensity, so pairing ascending lengths with ascending shares is feasible
+     * whenever any pairing is — but that is an argument, and this is the check.
+     */
+    @Test fun reorderingNeverPushesAPickPastItsTiersShare() {
+        val pools = listOf(
+            (1L..100L).map { candidate(it, it.toInt() * 100) },
+            listOf(candidate(1, 9_900), candidate(2, 8_400), candidate(3, 6_900)),
+            listOf(candidate(1, 5_515), candidate(2, 5_624), candidate(3, 8_549)),
+        )
+
+        pools.forEach { pool ->
+            (1L..40L).forEach { seed ->
+                GapPlanSelection.draw(pool, 10_000, seed).picks.forEach { pick ->
+                    val game = pick.game ?: return@forEach
+                    assertTrue(
+                        "${pick.intensity} held ${game.remainingMinutes} against ${pick.budgetMinutes}",
+                        game.remainingMinutes <= pick.budgetMinutes,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Reassignment skips an empty tier rather than closing the gap.
+     *
+     * Only the lower tiers can ever be the empty ones — Full has the widest ceiling and draws
+     * first, so anything that fits Relaxed fits Full. Both shapes are exercised because the
+     * reassignment walks the tiers and the games as two sequences of different lengths, and
+     * pulling a game down into a hole is exactly the way that goes wrong.
+     */
+    @Test fun reassignmentSkipsEmptyTiersInsteadOfClosingTheGap() {
+        // Two games, both above the 7,000 Relaxed share: Relaxed stays empty.
+        val oneHole = GapPlanSelection.draw(
+            listOf(candidate(1, 9_500), candidate(2, 8_000)),
+            fullCapacityMinutes = 10_000,
+            seed = 3L,
+        ).picks
+        assertNull(oneHole.single { it.intensity == PlanIntensity.RELAXED }.game)
+        assertEquals(
+            listOf(8_000, 9_500),
+            oneHole.mapNotNull { it.game?.remainingMinutes },
+        )
+
+        // One game: only Full draws, and the early return must not move it anywhere.
+        val twoHoles = GapPlanSelection.draw(
+            listOf(candidate(1, 9_500)),
+            fullCapacityMinutes = 10_000,
+            seed = 3L,
+        ).picks
+        assertEquals(
+            9_500,
+            twoHoles.single { it.intensity == PlanIntensity.FULL }.game!!.remainingMinutes,
+        )
+        assertTrue(twoHoles.filter { it.intensity != PlanIntensity.FULL }.all { it.isEmpty })
+    }
+
     /** Each tier's own ceiling still holds: targeting a share never overruns it. */
     @Test fun noPickExceedsItsTiersShareOfCapacity() {
         val pool = (1L..100L).map { candidate(it, remainingMinutes = it.toInt() * 100) }

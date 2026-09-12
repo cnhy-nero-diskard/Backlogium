@@ -47,7 +47,7 @@ object GapPlanSelection {
     )
 
     /**
-     * Draws all three tiers from one pool.
+     * Draws all three tiers from one pool, then orders them by commitment.
      *
      * Tiers are visited **widest share first**. Full has the largest ceiling and should get first
      * claim on the longest fitting game; going the other way would let Relaxed take a game Full
@@ -72,7 +72,9 @@ object GapPlanSelection {
             val budget = intensity.budgetMinutes(fullCapacityMinutes)
             val near = nearest(remaining, budget)
             // A tier with one option is forced whatever the seed is; one with several is what
-            // makes rebuilding able to produce a different set at all.
+            // makes rebuilding able to produce a different set at all. Necessary, not sufficient:
+            // a choice that the ordering below undoes changes nothing the player sees, which is
+            // why the caller compares actual picks rather than trusting this flag.
             if (near.size > 1) canVary = true
             val chosen = if (near.isEmpty()) null else near[random.nextInt(near.size)]
             if (chosen != null) remaining.remove(chosen)
@@ -86,9 +88,44 @@ object GapPlanSelection {
         // Presented in ascending intensity, which is the order the player reads them in, not the
         // order they were drawn in.
         return Draw(
-            picks = PlanIntensity.entries.map { drawn.getValue(it) },
+            picks = orderByCommitment(PlanIntensity.entries.map { drawn.getValue(it) }),
             canVary = canVary,
         )
+    }
+
+    /**
+     * Reassigns the drawn games to their tiers shortest-first, so a lower intensity can never offer
+     * a longer commitment than a higher one.
+     *
+     * Targeting a share guarantees that ordering only when the eligible pool spans the request's
+     * capacity. A library with few resolved HLTB lengths does not span it — and then several games
+     * sit inside several tiers' nearness bands at once, and the draw is free to put the longer of
+     * two clustered games at Relaxed and the shorter at Balanced. That reads as the Relaxed card
+     * asking for *more* commitment than Balanced, which is the opposite of what its label promises.
+     *
+     * Ordering is imposed here rather than inside the draw. Constraining each lower tier to draw
+     * only below the tier above would empty a tier where a distinct eligible game existed, which
+     * contradicts the distinctness rule; reassignment leaves membership exactly as drawn.
+     *
+     * **No pick can overrun its new ceiling.** Shares increase with intensity, so pairing ascending
+     * lengths with ascending shares is feasible whenever any pairing is: if the i-th shortest game
+     * exceeded the i-th smallest share, then that game and every longer one — one more game than
+     * there are wider tiers — would fit only the tiers above it, which the draw itself has already
+     * ruled out.
+     *
+     * Tiers with no pick keep none; they are skipped rather than shifting the games between the
+     * tiers that do have one.
+     */
+    private fun orderByCommitment(picks: List<GapPlanPick>): List<GapPlanPick> {
+        // Stable, so two games of identical length keep the tiers they were drawn into. Settling
+        // that tie on app id instead would make it seed-independent, and a reroll could then never
+        // swap them — variation the player can actually see, between two differently named games.
+        val byCommitment = picks.mapNotNull { it.game }.sortedBy { it.remainingMinutes }
+        if (byCommitment.size < 2) return picks
+        var next = 0
+        return picks.map { pick ->
+            if (pick.game == null) pick else pick.copy(game = byCommitment[next++])
+        }
     }
 
     /**

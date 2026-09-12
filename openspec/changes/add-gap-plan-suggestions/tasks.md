@@ -19,7 +19,7 @@
 - [x] 3.4 Implement per-tier target selection: draw uniformly at random, from a seeded generator, among the eligible candidates nearest a tier's share of capacity, enforcing distinctness across the three tiers, and verify tests cover tiers yielding different lengths, an exhausted pool leaving a tier empty, distinctness when one game is nearest for two tiers, and identical inputs plus an identical seed producing identical picks.
 - [x] 3.5 Delete the bundle composer — beam search, the 32-entry frontier, `bundleValue`, budget utilization, pairwise genre diversity, and the finished-bundle tie-break chain — along with the tests that exist only to pin them, and verify the remaining suite still builds and passes.
 - [x] 3.6 Remove the remove-and-replace editing surface and its validation, which the single-pick result supersedes, and verify nothing else depends on the retained eligible pool for per-slot replacement.
-- [ ] 3.7 Assign the three drawn picks to tiers in ascending remaining time, so a lower intensity can never offer a longer commitment than a higher one, and verify tests cover a clustered pool whose candidates all sit far below every share, an ordering that holds across many seeds, a tier left empty being skipped rather than shifting the others, and no pick exceeding its reassigned tier's ceiling.
+- [x] 3.7 Assign the three drawn picks to tiers in ascending remaining time, so a lower intensity can never offer a longer commitment than a higher one, and verify tests cover a clustered pool whose candidates all sit far below every share, an ordering that holds across many seeds, a tier left empty being skipped rather than shifting the others, and no pick exceeding its reassigned tier's ceiling.
 
 ## 4. Aggregation And Live Enrichment
 
