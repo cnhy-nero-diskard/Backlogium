@@ -76,7 +76,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         HiddenGame::class,
         SteamReviewCache::class,
     ],
-    version = 34,
+    version = 35,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -815,6 +815,25 @@ abstract class BacklogiumDatabase : RoomDatabase() {
         val MIGRATION_33_34 = object : Migration(33, 34) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `steam_review_cache` ADD COLUMN `declinedAt` INTEGER")
+            }
+        }
+
+        /**
+         * v34 -> v35: cool down refused category checks and distinguish review facts from markers.
+         * The default preserves every old definitive row; v34 refusal rows are identified by their
+         * non-null `declinedAt` and corrected to factless markers after the new column is added.
+         */
+        val MIGRATION_34_35 = object : Migration(34, 35) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `game_genre_cache` ADD COLUMN `categoriesDeclinedAt` INTEGER")
+                db.execSQL(
+                    "ALTER TABLE `steam_review_cache` " +
+                        "ADD COLUMN `hasFact` INTEGER NOT NULL DEFAULT 1",
+                )
+                db.execSQL(
+                    "UPDATE `steam_review_cache` SET `hasFact` = 0 " +
+                        "WHERE `declinedAt` IS NOT NULL",
+                )
             }
         }
 

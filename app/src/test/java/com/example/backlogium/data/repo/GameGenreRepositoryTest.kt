@@ -236,12 +236,13 @@ class GameGenreRepositoryTest {
     }
 
     /**
-     * A refused envelope writes a *null* payload, so the row stays eligible and is asked again
-     * next run. The alternative — an encoded empty list — would read as "advertises none" and
-     * quietly classify a delisted multiplayer game single-player.
+     * A refused envelope writes a *null* payload and a cooldown marker. Null remains unknown, but
+     * the marker keeps a permanently refused app from being asked again on every continuation. The
+     * alternative — an encoded empty list — would read as "advertises none" and quietly classify a
+     * delisted multiplayer game single-player.
      */
     @Test
-    fun aRefusedEnvelopeLeavesTheCategoryPayloadNullAndTheRowEligible() = runTest {
+    fun aRefusedEnvelopeLeavesTheCategoryPayloadUnknownAndEntersCooldown() = runTest {
         gameDao.upsert(game(1))
         val store = FakeStoreApi(refused = setOf(1L))
 
@@ -252,8 +253,12 @@ class GameGenreRepositoryTest {
         val row = cacheDao.observeAll().first().single()
         assertNull(row.categoriesJson)
         assertNull(GameCategoryCodec.decodeOrNull(row.categoriesJson))
-        // Still work to do, even though `checkedAt` was just stamped.
-        assertTrue(first.hasMoreEligible)
+        assertEquals(NOW, row.categoriesDeclinedAt)
+        // The refusal is held out until its cooldown expires.
+        assertFalse(first.hasMoreEligible)
+        assertEquals(0, repository(store).enrichNextBatch().attempted)
+
+        time.now = NOW + GameGenreRepository.FRESHNESS_WINDOW_MILLIS + 1
         assertEquals(1, repository(store).enrichNextBatch().attempted)
     }
 

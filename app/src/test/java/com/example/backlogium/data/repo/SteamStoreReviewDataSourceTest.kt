@@ -82,6 +82,31 @@ class SteamStoreReviewDataSourceTest {
         )
     }
 
+    @Test fun aPartialSummaryIsDeclinedRatherThanFillingMissingCountsWithZero() = runBlocking {
+        assertEquals(
+            StoreReviewResult.Declined,
+            source(
+                Response.success(
+                    StoreReviewsResponse(
+                        success = 1,
+                        querySummary = StoreReviewSummaryDto("Positive", null, 1, 10),
+                    ),
+                ),
+            ).reviewsFor(7),
+        )
+        assertEquals(
+            StoreReviewResult.Declined,
+            source(
+                Response.success(
+                    StoreReviewsResponse(
+                        success = 1,
+                        querySummary = StoreReviewSummaryDto("Positive", 9, null, 10),
+                    ),
+                ),
+            ).reviewsFor(7),
+        )
+    }
+
     /**
      * A refused envelope says nothing about the game. Writing an absence for it would classify a
      * delisted title as unreviewed for the next 30 days on an answer that was never given.

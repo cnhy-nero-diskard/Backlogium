@@ -81,9 +81,9 @@ class GapPlanScreenBehaviorTest {
         composeRule.onNodeWithTag(TAG_GENERATE).assertIsEnabled()
     }
 
-    /** A date past the planning horizon is reported, in words that say what to do about it. */
+    /** A date past the planning horizon is unavailable and is explained in words. */
     @Test
-    fun aRejectedHorizonIsExplainedRatherThanSilentlyDisablingTheButton() {
+    fun anOutOfRangeDateDisablesGenerationAndIsExplained() {
         setContent(
             state = {
                 GapPlanUiState(
@@ -101,6 +101,27 @@ class GapPlanScreenBehaviorTest {
         composeRule.onNodeWithText(
             GapPlanPresentation.validationMessage(GapPlanRequestError.TARGET_DATE_BEYOND_HORIZON),
         ).assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_GENERATE).assertIsNotEnabled()
+    }
+
+    @Test
+    fun aTodayOrPastDateDisablesGeneration() {
+        var state by mutableStateOf(
+            GapPlanUiState(
+                loading = false,
+                today = LocalDate.now(),
+                setup = GapPlanSetupUi(
+                    anticipatedTitle = "Sequel",
+                    targetDate = LocalDate.now(),
+                ),
+            ),
+        )
+        setContent(state = { state })
+
+        composeRule.onNodeWithTag(TAG_GENERATE).assertIsNotEnabled()
+
+        state = state.copy(setup = state.setup.copy(targetDate = LocalDate.now().minusDays(1)))
+        composeRule.onNodeWithTag(TAG_GENERATE).assertIsNotEnabled()
     }
 
     /** The hours field exists only when Personal Pace cannot forecast, and says why. */

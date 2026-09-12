@@ -178,6 +178,37 @@ class SteamReviewRepositoryTest {
         assertEquals(staleAt, preserved.checkedAt)
     }
 
+    @Test
+    fun aDeclinedRefreshPreservesAndServesTheLastKnownSummaryDuringCooldown() = runTest {
+        gameDao.upsert(game(1))
+        val staleAt = NOW - SteamReviewRepository.FRESHNESS_WINDOW_MILLIS - 1
+        cacheDao.upsert(
+            SteamReviewCache(
+                appId = 1,
+                description = "Overwhelmingly Positive",
+                positive = 900,
+                negative = 10,
+                total = 910,
+                available = true,
+                checkedAt = staleAt,
+            ),
+        )
+        val store = FakeReviewApi(declined = setOf(1L))
+
+        repository(store).enrichNextBatch()
+
+        val row = cacheDao.observeAll().first().single()
+        assertEquals("Overwhelmingly Positive", row.description)
+        assertEquals(900, row.positive)
+        assertEquals(10, row.negative)
+        assertEquals(910, row.total)
+        assertEquals(NOW, row.declinedAt)
+        assertEquals(
+            GameReviewSummary.Available("Overwhelmingly Positive", 900, 10, 910),
+            repository(store).allReviews.first().getValue(1L),
+        )
+    }
+
     /**
      * A declined app id gets queue bookkeeping and the batch keeps going. It is neither an
      * unavailable review fact nor a reason to abandon the other twenty-four ids in the run.

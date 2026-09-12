@@ -18,6 +18,9 @@ interface SteamReviewCacheDao {
     @Query("SELECT * FROM steam_review_cache")
     fun observeAll(): Flow<List<SteamReviewCache>>
 
+    @Query("SELECT * FROM steam_review_cache WHERE appId = :appId LIMIT 1")
+    suspend fun findByAppId(appId: Long): SteamReviewCache?
+
     /**
      * Missing rows first, then the oldest stale rows — the same missing-before-stale policy
      * [GameGenreCacheDao.eligibleAppIds] applies, so a new library backfills review summaries

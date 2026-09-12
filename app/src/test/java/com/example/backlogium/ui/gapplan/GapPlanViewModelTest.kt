@@ -8,17 +8,19 @@ import com.example.backlogium.domain.gapplan.CurrentPlayerCounts
 import com.example.backlogium.domain.gapplan.GapPlanFact
 import com.example.backlogium.domain.gapplan.GapPlanIntent
 import com.example.backlogium.domain.gapplan.GapPlanLiveCounts
-import com.example.backlogium.domain.gapplan.GapPlanRequestError
 import com.example.backlogium.domain.gapplan.GapPlanSeeds
 import com.example.backlogium.domain.gapplan.GapPlanTestEnvironment
 import com.example.backlogium.domain.gapplan.PlanIntensity
 import com.example.backlogium.domain.gapplan.TODAY
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -126,7 +128,7 @@ class GapPlanViewModelTest {
         assertEquals(1_200, result.fullCapacityMinutes)
     }
 
-    @Test fun aTargetDateBeyondTheHorizonIsReportedRatherThanPlanned() = runTest {
+    @Test fun aTargetDateBeyondTheHorizonIsUnavailable() = runTest {
         seedLibrary()
         env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
@@ -134,13 +136,11 @@ class GapPlanViewModelTest {
 
         viewModel.setAnticipatedTitle("Sequel")
         viewModel.setTargetDate(TODAY.plusDays(2_000))
+        assertFalse(viewModel.uiState.value.canGenerate)
         viewModel.generate()
         advanceUntilIdle()
 
-        assertEquals(
-            GapPlanRequestError.TARGET_DATE_BEYOND_HORIZON,
-            viewModel.uiState.value.validationError,
-        )
+        assertNull(viewModel.uiState.value.validationError)
         assertNull(viewModel.uiState.value.result)
     }
 
@@ -254,6 +254,47 @@ class GapPlanViewModelTest {
         assertFalse(viewModel.uiState.value.rebuildDidNotVary)
     }
 
+    @Test
+    fun aRerollCancelsThePreviousLiveCountEnrichment() = runTest {
+        seedLibrary()
+        env.seedReliablePace(appId = PACE_GAME)
+        (1L..6L).forEach { appId ->
+            env.addStoreMetadata(
+                appId,
+                categories = listOf(GameCategory(1, "Multi-player")),
+            )
+        }
+        val calls = AtomicInteger()
+        val cancellations = AtomicInteger()
+        val viewModel = viewModel(
+            counts = CurrentPlayerCounts {
+                val call = calls.incrementAndGet()
+                try {
+                    delay(1_000)
+                    null
+                } catch (error: CancellationException) {
+                    if (call <= 3) cancellations.incrementAndGet()
+                    throw error
+                }
+            },
+        )
+        advanceUntilIdle()
+        fillSetup(viewModel)
+        viewModel.generate()
+        viewModel.uiState.first { it.result != null && !it.generating }
+        runCurrent()
+        assertEquals(3, calls.get())
+
+        viewModel.generate()
+        advanceUntilIdle()
+
+        assertEquals(
+            "all three requests from the superseded pass must be cancelled",
+            3,
+            cancellations.get(),
+        )
+    }
+
     /**
      * And when it cannot, it says so rather than appearing to have been ignored.
      *
@@ -350,6 +391,39 @@ class GapPlanViewModelTest {
             assertNull(viewModel.uiState.value.inspectingAppId)
             assertEquals(before, viewModel.uiState.value.result)
         }
+    }
+
+    @Test
+    fun aSaveConfirmationCommitsTheReviewedSnapshotAfterARerollPublishes() = runTest {
+        env.addGame(PACE_GAME)
+        env.seedReliablePace(appId = PACE_GAME)
+        (1L..4L).forEach { appId ->
+            env.addGame(appId)
+            env.addHltb(appId, mainStory = 600)
+        }
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        fillSetup(viewModel)
+        viewModel.generate()
+        advanceUntilIdle()
+
+        val reviewed = viewModel.uiState.value.result!!.pick(PlanIntensity.FULL)!!.game!!
+        viewModel.reviewSave(PlanIntensity.FULL)
+        val confirmation = viewModel.uiState.value.confirmation!!
+
+        viewModel.generate()
+        advanceUntilIdle()
+
+        assertNotEquals(
+            reviewed.appId,
+            viewModel.uiState.value.result!!.pick(PlanIntensity.FULL)!!.game!!.appId,
+        )
+        assertEquals(reviewed.name, confirmation.gameName)
+
+        viewModel.confirmSave()
+        val created = viewModel.uiState.first { it.createdCollectionId != null }.createdCollectionId!!
+
+        assertEquals(reviewed.appId, env.db.collectionDao().getMembers(created).single().appId)
     }
 
     @Test fun savingCreatesTheCollectionAndExposesItForNavigation() = runTest {

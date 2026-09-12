@@ -24,20 +24,22 @@ interface GameGenreCacheDao {
      * (add-hidden-games). Unhiding makes a game eligible again with no extra bookkeeping, because
      * eligibility is this query rather than a stored flag.
      *
-     * A row whose `categoriesJson` is null is eligible **regardless of `checkedAt`**
-     * (add-gap-plan-suggestions). Such a row was written before participation categories were
-     * retained, so it has never been checked for the data now required — freshness for the genres
-     * it does carry says nothing about categories it was never asked for. Without this clause an
-     * upgraded install would refetch nothing for up to 30 days and the multiplayer path would sit
-     * inert on exactly the libraries with the most data. Null-category rows sort with the missing
-     * rows rather than behind the stale ones, so an upgrade backfills them first.
+     * A row whose `categoriesJson` is null is eligible **regardless of `checkedAt`**, unless the
+     * Store recently refused that category lookup (add-gap-plan-suggestions). A null payload with
+     * no refusal marker is either an upgraded row that has never been checked for the new data or a
+     * refusal whose cooldown has expired. The marker keeps a permanently refused app from consuming
+     * every continuation while preserving null as the honest unknown category value.
      */
     @Query(
         "SELECT games.appId FROM games " +
             "LEFT JOIN game_genre_cache ON games.appId = game_genre_cache.appId " +
             "WHERE games.appId NOT IN (SELECT appId FROM hidden_games) " +
-            "AND (game_genre_cache.appId IS NULL OR game_genre_cache.checkedAt < :staleBefore " +
-            "OR game_genre_cache.categoriesJson IS NULL) " +
+             "AND (game_genre_cache.appId IS NULL " +
+             "OR (game_genre_cache.categoriesJson IS NULL " +
+             "AND (game_genre_cache.categoriesDeclinedAt IS NULL " +
+             "OR game_genre_cache.categoriesDeclinedAt < :staleBefore)) " +
+             "OR (game_genre_cache.categoriesJson IS NOT NULL " +
+             "AND game_genre_cache.checkedAt < :staleBefore)) " +
             "ORDER BY CASE WHEN game_genre_cache.appId IS NULL " +
             "OR game_genre_cache.categoriesJson IS NULL THEN 0 ELSE 1 END, " +
             "game_genre_cache.checkedAt ASC LIMIT :limit",
@@ -48,8 +50,12 @@ interface GameGenreCacheDao {
         "SELECT COUNT(*) FROM games " +
             "LEFT JOIN game_genre_cache ON games.appId = game_genre_cache.appId " +
             "WHERE games.appId NOT IN (SELECT appId FROM hidden_games) " +
-            "AND (game_genre_cache.appId IS NULL OR game_genre_cache.checkedAt < :staleBefore " +
-            "OR game_genre_cache.categoriesJson IS NULL)",
+             "AND (game_genre_cache.appId IS NULL " +
+             "OR (game_genre_cache.categoriesJson IS NULL " +
+             "AND (game_genre_cache.categoriesDeclinedAt IS NULL " +
+             "OR game_genre_cache.categoriesDeclinedAt < :staleBefore)) " +
+             "OR (game_genre_cache.categoriesJson IS NOT NULL " +
+             "AND game_genre_cache.checkedAt < :staleBefore))",
     )
     suspend fun eligibleCount(staleBefore: Long): Int
 

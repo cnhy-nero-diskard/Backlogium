@@ -81,6 +81,22 @@ class GameGenreCacheDaoTest {
         assertEquals(1, cacheDao.eligibleCount(staleBefore = 50))
     }
 
+    @Test fun aRecentlyRefusedCategoryLookup_isHeldOutUntilItsCooldownExpires() = runBlocking {
+        gameDao.upsert(game(1))
+        cacheDao.upsert(
+            GameGenreCache(
+                appId = 1,
+                genresJson = "[]",
+                checkedAt = 10,
+                categoriesJson = null,
+                categoriesDeclinedAt = 100,
+            ),
+        )
+
+        assertEquals(emptyList<Long>(), cacheDao.eligibleAppIds(staleBefore = 50, limit = 25))
+        assertEquals(listOf(1L), cacheDao.eligibleAppIds(staleBefore = 101, limit = 25))
+    }
+
     /**
      * A hidden game is not enriched: the store request budget belongs to games the player can see
      * (add-hidden-games). Eligibility is this query rather than a stored decision, so unhiding

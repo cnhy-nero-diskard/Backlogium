@@ -100,6 +100,8 @@ data class GapPlanSaveConfirmationUi(
  */
 data class GapPlanUiState(
     val loading: Boolean = true,
+    /** Current local date used by the same request gate as the domain validator. */
+    val today: LocalDate = LocalDate.now(),
     val setup: GapPlanSetupUi = GapPlanSetupUi(),
     /** Personal Pace is learning, so a one-off total-hours budget is required. */
     val requiresManualBudget: Boolean = false,
@@ -125,10 +127,15 @@ data class GapPlanUiState(
 ) {
     /** Generation is offered only when the request would actually validate. */
     val canGenerate: Boolean
-        get() = !generating &&
-            setup.anticipatedTitle.isNotBlank() &&
-            setup.targetDate != null &&
-            (!requiresManualBudget || (setup.manualHoursValue ?: 0) > 0)
+        get() {
+            val targetDate = setup.targetDate
+            return !generating &&
+                setup.anticipatedTitle.isNotBlank() &&
+                targetDate != null &&
+                targetDate.isAfter(today) &&
+                !targetDate.isAfter(today.plusDays(GapPlanRequest.HORIZON_DAYS)) &&
+                (!requiresManualBudget || (setup.manualHoursValue ?: 0) > 0)
+        }
 }
 
 /** The setup buffer as the domain request, or null while it is still incomplete. */

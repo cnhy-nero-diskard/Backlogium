@@ -64,8 +64,8 @@ class SteamReviewRepository @Inject constructor(
      * Cached review summaries per app id, decoded once at the repository boundary. A game with no
      * cache row is absent from the map, so no consumer can mistake "never checked" for "no
      * reviews" — the distinction is carried by the map's shape rather than by a flag a caller
-     * could forget to read. A declined-attempt row is also absent: it exists only to advance the
-     * enrichment queue and is not a review fact.
+     * could forget to read. A refusal marker with no prior fact is absent; a marker over a prior
+     * fact continues to expose that last-known value during its cooldown.
      */
     val allReviews: Flow<Map<Long, GameReviewSummary>> = cacheDao.observeAll().map { rows ->
         rows.mapNotNull { row -> row.toDomain()?.let { row.appId to it } }.toMap()
@@ -112,6 +112,7 @@ class SteamReviewRepository @Inject constructor(
             available = true,
             checkedAt = time.nowMillis(),
             declinedAt = null,
+            hasFact = true,
         ),
     )
 
@@ -122,18 +123,21 @@ class SteamReviewRepository @Inject constructor(
             available = false,
             checkedAt = time.nowMillis(),
             declinedAt = null,
+            hasFact = true,
         ),
     )
 
-    /** Retains queue progress without turning a refused Store envelope into a reviewless fact. */
+    /** Retains the last fact, if any, while recording queue progress for the refused attempt. */
     private suspend fun writeDeclined(appId: Long) {
         val now = time.nowMillis()
+        val prior = cacheDao.findByAppId(appId)
         cacheDao.upsert(
-            SteamReviewCache(
+            prior?.copy(declinedAt = now) ?: SteamReviewCache(
                 appId = appId,
                 available = false,
                 checkedAt = now,
                 declinedAt = now,
+                hasFact = false,
             ),
         )
     }
@@ -147,15 +151,15 @@ class SteamReviewRepository @Inject constructor(
 }
 
 /**
- * A stored row to its domain state. A row with [SteamReviewCache.declinedAt] is queue bookkeeping,
- * not a review fact, so it is omitted. Otherwise [SteamReviewCache.available] is authoritative: a
- * row written as available always carries its counts, and a row written as unavailable never does.
- * A row that somehow claims availability without counts is read as [GameReviewSummary.Unavailable]
- * rather than being padded with zeros, because a fabricated zero is exactly the rating this cache
- * must never produce.
+ * A stored row to its domain state. A refusal marker with no prior fact is omitted; a marker that
+ * preserves a prior fact continues to serve that fact during its cooldown. [SteamReviewCache.available]
+ * is authoritative for definitive rows: a row written as available always carries its counts, and
+ * a row written as unavailable never does. A row that somehow claims availability without counts is
+ * read as [GameReviewSummary.Unavailable] rather than being padded with zeros, because a fabricated
+ * zero is exactly the rating this cache must never produce.
  */
 private fun SteamReviewCache.toDomain(): GameReviewSummary? {
-    if (declinedAt != null) return null
+    if (declinedAt != null && !hasFact) return null
     if (!available) return GameReviewSummary.Unavailable
     val description = description?.trim().orEmpty()
     val positive = positive

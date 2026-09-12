@@ -81,9 +81,9 @@ class GameGenreRepository @Inject constructor(
     ) = write(appId, genres, appType = "game", categories = categories)
 
     /**
-     * [categories] is written through verbatim, null included. A null payload leaves the row
-     * eligible for the next enrichment batch regardless of its freshness, which is precisely what
-     * should happen when the Store declined to describe the app's participation modes.
+     * [categories] is written through verbatim, null included. A refusal gets a durable cooldown
+     * marker so it does not consume the next enrichment continuation forever, while an upgraded
+     * row with no marker remains eligible immediately for its first category check.
      */
     private suspend fun write(
         appId: Long,
@@ -91,13 +91,15 @@ class GameGenreRepository @Inject constructor(
         appType: String?,
         categories: List<GameCategory>?,
     ) {
+        val now = time.nowMillis()
         cacheDao.upsert(
             GameGenreCache(
                 appId = appId,
                 genresJson = GameGenreCodec.encode(genres),
-                checkedAt = time.nowMillis(),
+                checkedAt = now,
                 appType = appType,
                 categoriesJson = categories?.let(GameCategoryCodec::encode),
+                categoriesDeclinedAt = now.takeIf { categories == null },
             ),
         )
     }

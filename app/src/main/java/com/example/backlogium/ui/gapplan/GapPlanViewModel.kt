@@ -12,6 +12,7 @@ import com.example.backlogium.domain.gapplan.GapPlanFeed
 import com.example.backlogium.domain.gapplan.GapPlanInputs
 import com.example.backlogium.domain.gapplan.GapPlanIntent
 import com.example.backlogium.domain.gapplan.GapPlanLiveCounts
+import com.example.backlogium.domain.gapplan.GapPlanPick
 import com.example.backlogium.domain.gapplan.GapPlanRequest
 import com.example.backlogium.domain.gapplan.GapPlanRequestException
 import com.example.backlogium.domain.gapplan.GapPlanSeeds
@@ -19,6 +20,7 @@ import com.example.backlogium.domain.gapplan.GapPlanSnapshot
 import com.example.backlogium.domain.gapplan.GenerationOwnership
 import com.example.backlogium.domain.gapplan.PlanIntensity
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,13 +57,28 @@ class GapPlanViewModel @Inject constructor(
     /** Icon and header art per app id, joined once so pick cards need no second read path. */
     private var artwork: Map<Long, GapPlanArtwork> = emptyMap()
 
+    /** The exact snapshot and pick that the open confirmation reviewed. */
+    private data class PendingSave(
+        val snapshot: GapPlanSnapshot,
+        val pick: GapPlanPick,
+    )
+
+    private var pendingSave: PendingSave? = null
+
+    /** Includes post-publication live-count enrichment, which must be cancelled on a reroll. */
+    private var generationJob: Job? = null
+
     init {
         viewModelScope.launch {
             // One read, only to learn whether a manual budget is required. Generation reads the
             // feed again, so picks are never drawn from a stale snapshot.
             val seed = feed.snapshots.first()
             _uiState.update {
-                it.copy(loading = false, requiresManualBudget = !seed.inputs.paceProfile.isReliable)
+                it.copy(
+                    loading = false,
+                    today = seed.inputs.today,
+                    requiresManualBudget = !seed.inputs.paceProfile.isReliable,
+                )
             }
         }
     }
@@ -98,6 +115,7 @@ class GapPlanViewModel @Inject constructor(
         val state = _uiState.value
         if (!state.canGenerate) return
         val request = state.setup.toRequest(state.requiresManualBudget) ?: return
+        generationJob?.cancel()
         val id = ownership.claim()
 
         _uiState.update {
@@ -109,7 +127,7 @@ class GapPlanViewModel @Inject constructor(
                 createdCollectionId = null,
             )
         }
-        viewModelScope.launch {
+        generationJob = viewModelScope.launch {
             val fresh = feed.snapshots.first()
             val previous = snapshot
             val drawn = drawDistinctFrom(previous, request, fresh.inputs)
@@ -179,7 +197,9 @@ class GapPlanViewModel @Inject constructor(
     /** Opens the confirmation, which restates what is about to be written before it is. */
     fun reviewSave(intensity: PlanIntensity) {
         val plan = snapshot ?: return
-        val game = plan.pick(intensity)?.game ?: return
+        val pick = plan.pick(intensity)?.takeIf { !it.isEmpty } ?: return
+        val game = pick.game ?: return
+        pendingSave = PendingSave(plan, pick)
         _uiState.update {
             it.copy(
                 saveError = false,
@@ -194,7 +214,10 @@ class GapPlanViewModel @Inject constructor(
         }
     }
 
-    fun dismissConfirmation() = _uiState.update { it.copy(confirmation = null) }
+    fun dismissConfirmation() {
+        pendingSave = null
+        _uiState.update { it.copy(confirmation = null) }
+    }
 
     /**
      * Commits the reviewed pick.
@@ -204,13 +227,13 @@ class GapPlanViewModel @Inject constructor(
      * rebuilding genuinely rerolls, would not even return the same game.
      */
     fun confirmSave() {
-        val plan = snapshot ?: return
-        val intensity = _uiState.value.confirmation?.intensity ?: return
-        val pick = plan.pick(intensity)?.takeIf { !it.isEmpty } ?: return
+        val pending = pendingSave ?: return
+        val pick = pending.pick.takeIf { !it.isEmpty } ?: return
         _uiState.update { it.copy(saving = true, saveError = false) }
         viewModelScope.launch {
-            collectionCreator.create(plan, pick)
+            collectionCreator.create(pending.snapshot, pick)
                 .onSuccess { id ->
+                    pendingSave = null
                     _uiState.update {
                         it.copy(saving = false, confirmation = null, createdCollectionId = id)
                     }
@@ -232,6 +255,7 @@ class GapPlanViewModel @Inject constructor(
      * cancellation alone would not stop it.
      */
     override fun onCleared() {
+        generationJob?.cancel()
         ownership.abandon()
         super.onCleared()
     }

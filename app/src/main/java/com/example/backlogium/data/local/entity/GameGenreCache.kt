@@ -37,4 +37,6 @@ data class GameGenreCache(
     val checkedAt: Long,
     val appType: String? = null,
     val categoriesJson: String? = null,
+    /** When non-null, the Store refused the category part of this check and it is cooling down. */
+    val categoriesDeclinedAt: Long? = null,
 )
