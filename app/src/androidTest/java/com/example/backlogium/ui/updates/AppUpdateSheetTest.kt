@@ -2,6 +2,7 @@ package com.example.backlogium.ui.updates
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -58,77 +59,117 @@ class AppUpdateSheetTest {
     }
 
     @Test
-    fun legacyBodyIsSanitizedAndLongStructuredContentRemainsScrollable() {
-        composeRule.setContent {
-            BacklogiumTheme {
-                AppUpdateSheet(
-                    state = AppUpdateUiState(
-                        available = update(
-                            releaseNotes = "## Changed\n* fix: Keep offline progress by @user\nhttps://example.test",
-                        ),
-                    ),
-                    onUpdate = {},
-                    onLater = {},
-                    onCancel = {},
-                    onDismiss = {},
-                )
-            }
-        }
+    fun legacyBodyIsSanitized() {
+        // `structuredNotes = null` is what actually selects the legacy path: structured sections
+        // win whenever they are present, so leaving the helper's default in place rendered
+        // "A readable update." and this test never exercised sanitization at all.
+        setSheet(
+            AppUpdateUiState(
+                available = update(
+                    structuredNotes = null,
+                    releaseNotes = "## Changed\n* fix: Keep offline progress by @user\nhttps://example.test",
+                ),
+            ),
+        )
+
+        scrollTo(hasText("Keep offline progress", substring = true))
         composeRule.onNodeWithText("Keep offline progress").assertIsDisplayed()
         composeRule.onNodeWithText("https://example.test").assertDoesNotExist()
+    }
 
-        composeRule.setContent {
-            BacklogiumTheme {
-                AppUpdateSheet(
-                    state = AppUpdateUiState(available = update(structuredNotes = longNotes())),
-                    onUpdate = {},
-                    onLater = {},
-                    onCancel = {},
-                    onDismiss = {},
-                )
-            }
+    /**
+     * A long changelog is rendered in full and every item can be scrolled to.
+     *
+     * This is assertable only because the sheet opens fully expanded. At the default partial
+     * height its content column is measured at the sheet's full potential height, so twelve items
+     * ran about a thousand pixels past the bottom of the screen while the column reported a scroll
+     * range of zero — nothing for an inner scroll to move, and the last items reachable only by
+     * dragging the sheet up. `skipPartiallyExpanded` is what gives the column a real viewport to
+     * scroll within.
+     */
+    @Test
+    fun longStructuredContentRemainsScrollable() {
+        setSheet(AppUpdateUiState(available = update(structuredNotes = longNotes())))
+
+        // Nothing is dropped or truncated on the way in.
+        (1..12).forEach { index ->
+            composeRule.onNodeWithText("Last item $index").assertExists()
         }
-        composeRule.onNodeWithTag("app-update-sheet-content")
-            .performScrollToNode(hasText("Last item", substring = true))
+
+        scrollTo(hasText("Last item 12", substring = true))
         composeRule.onNodeWithText("Last item 12").assertIsDisplayed()
     }
 
+    /**
+     * The controls the update-review requirement calls for stay reachable even when the notes are
+     * long enough to fill the sheet — the case where a partially expanded sheet would have pushed
+     * them off screen with no way to scroll to them.
+     */
     @Test
-    fun downloadingAndFailureStatesKeepTheirExistingControls() {
-        composeRule.setContent {
-            BacklogiumTheme {
-                AppUpdateSheet(
-                    state = AppUpdateUiState(
-                        available = update(structuredNotes = structuredNotes()),
-                        operation = UpdateOperation.Downloading(10L, 100L),
-                    ),
-                    onUpdate = {},
-                    onLater = {},
-                    onCancel = {},
-                    onDismiss = {},
-                )
-            }
-        }
-        composeRule.onNodeWithText("Cancel").assertIsDisplayed()
-        composeRule.onNodeWithText("Downloading update", substring = true).assertIsDisplayed()
+    fun aLongChangelogStillLeavesTheUpdateControlsReachable() {
+        setSheet(AppUpdateUiState(available = update(structuredNotes = longNotes())))
 
-        composeRule.setContent {
-            BacklogiumTheme {
-                AppUpdateSheet(
-                    state = AppUpdateUiState(
-                        available = update(structuredNotes = structuredNotes()),
-                        operation = UpdateOperation.Failed("The update failed."),
-                    ),
-                    onUpdate = {},
-                    onLater = {},
-                    onCancel = {},
-                    onDismiss = {},
-                )
-            }
-        }
-        composeRule.onNodeWithText("The update failed.").assertIsDisplayed()
+        scrollTo(hasText("Update"))
         composeRule.onNodeWithText("Update").assertIsDisplayed()
     }
+
+    @Test
+    fun downloadingStateKeepsItsCancelControl() {
+        setSheet(
+            AppUpdateUiState(
+                available = update(structuredNotes = structuredNotes()),
+                operation = UpdateOperation.Downloading(10L, 100L),
+            ),
+        )
+
+        scrollTo(hasText("Downloading update", substring = true))
+        composeRule.onNodeWithText("Downloading update", substring = true).assertIsDisplayed()
+        scrollTo(hasText("Cancel"))
+        composeRule.onNodeWithText("Cancel").assertIsDisplayed()
+    }
+
+    @Test
+    fun failureStateSurfacesTheErrorAndKeepsTheUpdateAction() {
+        setSheet(
+            AppUpdateUiState(
+                available = update(structuredNotes = structuredNotes()),
+                operation = UpdateOperation.Failed("The update failed."),
+            ),
+        )
+
+        scrollTo(hasText("The update failed."))
+        composeRule.onNodeWithText("The update failed.").assertIsDisplayed()
+        scrollTo(hasText("Update"))
+        composeRule.onNodeWithText("Update").assertIsDisplayed()
+    }
+
+    /**
+     * One state per test.
+     *
+     * `createComposeRule` permits a single `setContent` per test, so a test that rendered two
+     * states in sequence threw `Cannot call setContent twice per test!` before reaching its second
+     * set of assertions — which also meant those assertions had never actually run.
+     */
+    private fun setSheet(state: AppUpdateUiState) = composeRule.setContent {
+        BacklogiumTheme {
+            AppUpdateSheet(
+                state = state,
+                onUpdate = {},
+                onLater = {},
+                onCancel = {},
+                onDismiss = {},
+            )
+        }
+    }
+
+    /**
+     * The whole sheet — notes, progress, and the action row alike — sits in one vertically
+     * scrolling column, so on a short enough screen any of it can be present but off view.
+     * `assertIsDisplayed` distinguishes those two, so reaching the node first is what makes these
+     * assertions about content rather than about the height of the test device.
+     */
+    private fun scrollTo(matcher: SemanticsMatcher) =
+        composeRule.onNodeWithTag(SHEET_CONTENT).performScrollToNode(matcher)
 
     private fun update(
         structuredNotes: ReleaseNotesPresentation? = structuredNotes(),
@@ -165,3 +206,6 @@ class AppUpdateSheetTest {
         ),
     )
 }
+
+/** The sheet’s scrolling container, shared by every assertion that has to reach into it. */
+private const val SHEET_CONTENT = "app-update-sheet-content"

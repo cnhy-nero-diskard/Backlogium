@@ -17,6 +17,7 @@ fun HomeRoute(
     onOpenCollection: (Long) -> Unit = {},
     onCreateCollection: () -> Unit = {},
     onOpenCollections: () -> Unit = {},
+    onPlanGap: () -> Unit = {},
     onOpenSmartCollection: (SmartCollectionId) -> Unit = {},
     onOpenLibrary: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
@@ -29,6 +30,7 @@ fun HomeRoute(
             onOpenCollection = onOpenCollection,
             onCreateCollection = onCreateCollection,
             onOpenCollections = onOpenCollections,
+            onPlanGap = onPlanGap,
             onOpenSmartCollection = onOpenSmartCollection,
             viewModel = viewModel,
         )

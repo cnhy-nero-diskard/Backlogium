@@ -1,3 +1,10 @@
+## Purpose
+
+Defines how the app looks up a game's current Steam concurrent-player count: an unauthenticated
+lookup that is never persisted. The game detail screen polls it every 30 seconds while open; other
+callers — a finalized gap plan's multiplayer members — issue one bounded, one-shot lookup under
+their own lifecycle. Polling is a property of the detail screen, not of every lookup.
+
 ## MODIFIED Requirements
 
 ### Requirement: Current player count lookup
@@ -38,30 +45,30 @@ NOT inherit the polling obligation.
 
 ## ADDED Requirements
 
-### Requirement: Gap-plan member player-count lookup
+### Requirement: Gap-plan pick player-count lookup
 The system SHALL permit one on-demand current-player lookup per distinct eligible multiplayer game
-already present in a finalized gap plan, up to fifteen games per generation — three variants of at
-most five games cannot contain more. The lookups SHALL require no API key, SHALL be
+already present in a finalized gap-plan result, up to three games per generation — the result offers
+one pick per intensity tier and cannot contain more. The lookups SHALL require no API key, SHALL be
 concurrency-bounded and time-bounded rather than sent as an unthrottled burst, SHALL stop when the
 result is abandoned or superseded, and SHALL NOT be persisted or polled repeatedly. They SHALL NOT
-influence which games the plan contains. The existing game-detail polling lifecycle SHALL remain
+influence which games the result offers. The existing game-detail polling lifecycle SHALL remain
 unchanged.
 
-#### Scenario: Bounded by plan membership
-- **WHEN** a generation's three variants are finalized
-- **THEN** only the distinct multiplayer games those variants already contain receive a current-player lookup, and never more than fifteen app ids
+#### Scenario: Bounded by the picks
+- **WHEN** a generation's three picks are finalized
+- **THEN** only the multiplayer games among them receive a current-player lookup, and never more than three app ids
 
-#### Scenario: Member appears in several variants
-- **WHEN** one multiplayer game appears in more than one plan variant
-- **THEN** it receives at most one current-player lookup for that generation
+#### Scenario: Only multiplayer picks are looked up
+- **WHEN** a generation's picks include single-player games
+- **THEN** no lookup is issued for those, so a wholly single-player result issues none at all
 
 #### Scenario: Generation is superseded
-- **WHEN** the player regenerates or leaves while lookups remain in flight
+- **WHEN** the player rerolls or leaves while lookups remain in flight
 - **THEN** the abandoned lookups publish no result into the replacement or closed suggestion state
 
 #### Scenario: Enrichment window elapses
 - **WHEN** the bounded enrichment window ends before every lookup has answered
-- **THEN** the plan is already complete and usable, and late results are discarded rather than applied
+- **THEN** the picks are already complete and usable, and late results are discarded rather than applied
 
 #### Scenario: Count is not persisted
 - **WHEN** a lookup succeeds

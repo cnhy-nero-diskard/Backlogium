@@ -96,6 +96,46 @@ class UiFormatTest {
         assertEquals("0s", UiFormat.liveElapsed(-5_000L))
     }
 
+    @Test
+    fun compactCount_leavesSmallNumbersAlone() {
+        // "842" is already as short as it gets; abbreviating it would only lose precision.
+        assertEquals("0", UiFormat.compactCount(0))
+        assertEquals("842", UiFormat.compactCount(842))
+        assertEquals("999", UiFormat.compactCount(999))
+    }
+
+    @Test
+    fun compactCount_usesOneDecimalOnlyBelowTenOfAUnit() {
+        assertEquals("1K", UiFormat.compactCount(1_000))
+        assertEquals("1.5K", UiFormat.compactCount(1_500))
+        // Past ten of a unit the second digit stops being easier to read than the number it
+        // replaced, so it is dropped.
+        assertEquals("23K", UiFormat.compactCount(22_788))
+        assertEquals("677K", UiFormat.compactCount(676_762))
+        assertEquals("1.1M", UiFormat.compactCount(1_130_216))
+        assertEquals("9.9M", UiFormat.compactCount(9_850_631))
+        assertEquals("12M", UiFormat.compactCount(12_400_000))
+    }
+
+    @Test
+    fun compactCount_choosesTheUnitAfterRounding() {
+        // The trap: 999,950 divided by a raw 1,000,000 threshold stays in thousands and renders
+        // "1000K", which is longer than the figure it was meant to shorten.
+        assertEquals("1M", UiFormat.compactCount(999_950))
+        assertEquals("1M", UiFormat.compactCount(1_000_000))
+        // And just below the rounding point it stays in thousands.
+        assertEquals("999K", UiFormat.compactCount(999_400))
+        // The opposite trap: comparing rounded *millions* instead would switch here and turn a
+        // perfectly good "950K" into a less precise, no-shorter "1M".
+        assertEquals("950K", UiFormat.compactCount(950_000))
+    }
+
+    @Test
+    fun compactCount_clampsNegativesRatherThanRenderingThem() {
+        // A count is never negative; if one arrives, "-1.2K players" is worse than "0".
+        assertEquals("0", UiFormat.compactCount(-1_200))
+    }
+
     private fun at(year: Int, month: Int, day: Int, hour: Int, minute: Int): Long =
         ZonedDateTime.of(year, month, day, hour, minute, 0, 0, zone).toInstant().toEpochMilli()
 

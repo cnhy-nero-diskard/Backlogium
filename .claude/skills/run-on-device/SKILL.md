@@ -38,27 +38,33 @@ release build at that id.
 - If no argument, use the current working directory.
 - Report which directory and branch you are building from.
 
-### 2. Build + Install (handle the 30s timeout)
+### 2. Build + Install (single blocking call — no background process)
 
-Gradle builds can exceed the shell's 30s limit, so run it in the background and poll:
+Run the build in the foreground with an extended tool timeout. Do NOT use
+`Start-Process` + log polling: that two-step pattern is the recurring hang source —
+the run starts the build, ends the turn, and the install result never gets checked.
+One blocking call reaches a terminal state in the same tool result, so there is no
+second half to drop.
 
 ```powershell
-cd <path>
-Remove-Item -ErrorAction SilentlyContinue build_install.log, build_install_err.log
-Start-Process -FilePath ".\gradlew.bat" -ArgumentList ":app:installDebug" `
-  -RedirectStandardOutput build_install.log -RedirectStandardError build_install_err.log -NoNewWindow -PassThru
+.\gradlew.bat :app:installDebug
 ```
 
-**Do not end your turn after starting the process.** Stay in the same turn and poll
-(`Start-Sleep` + read the logs) in a loop until the build reaches a terminal state —
-a run that starts the build and then stops to await a nudge looks like a hang.
-Continue polling even if it takes several minutes; Gradle routinely takes 50s+.
+Pass an explicit long timeout to the shell tool (at least 600000ms / 10 minutes;
+observed builds range from ~10s warm to ~95s cold, and a cold Gradle daemon plus
+`packageDebug` can exceed the default). Wait for the single result:
 
-- Poll for the success terminal state: `> Task :app:installDebug` … `Installed on 1 device.` and `BUILD SUCCESSFUL`.
-- Poll for the failure terminal state: `BUILD FAILED`.
+- Success terminal state: `> Task :app:installDebug` … `Installed on 1 device.` and `BUILD SUCCESSFUL`.
+- Failure terminal state: `BUILD FAILED`.
 
-Only proceed once one of those two states appears. If `BUILD FAILED`, read
-`build_install_err.log` and report the failure — do not proceed to launch.
+Only proceed once one of those two states appears in the result. If `BUILD FAILED`,
+report the error output — do not proceed to launch.
+
+Fallback, only if the foreground call itself times out at the tool level: rerun the
+build writing to `build_install.log` / `build_install_err.log` and poll that file
+with `Start-Sleep` in a loop *without ending your turn* until one of the two
+terminal states above appears. An ended turn with a build still running looks like
+a hang to the user.
 
 ### 3. Launch on device
 

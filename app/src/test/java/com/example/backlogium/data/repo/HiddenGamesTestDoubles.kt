@@ -23,6 +23,7 @@ import com.example.backlogium.data.remote.dto.StoreAppDetails
 import com.example.backlogium.data.remote.dto.StoreItemsResponse
 import com.example.backlogium.data.remote.dto.StorePriceEnvelope
 import com.example.backlogium.data.remote.dto.WishlistResponse
+import com.example.backlogium.data.remote.dto.StoreReviewsResponse
 import com.example.backlogium.domain.FakeGameDao
 import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.TimeProvider
@@ -52,6 +53,7 @@ internal class FakeStoreCacheDao(
     override suspend fun upsert(cache: GameGenreCache) = Unit
     override suspend fun deleteAll() = Unit
     override fun observeAll(): Flow<List<GameGenreCache>> = flowOf(emptyList())
+    override suspend fun findByAppId(appId: Long): GameGenreCache? = null
     override suspend fun eligibleAppIds(staleBefore: Long, limit: Int): List<Long> = emptyList()
     override suspend fun eligibleCount(staleBefore: Long): Int = 0
     override fun observeNonGameCandidates(): Flow<List<NonGameCandidateRow>> = flowOf(candidates)
@@ -84,6 +86,15 @@ internal object OfflineStoreApi : SteamStoreApi {
         countryCode: String?,
         filters: String,
     ): Response<Map<String, StorePriceEnvelope>> = error("exclusion must not reach the Steam Store")
+
+    /** Review summaries are a separate chain; this double must never be asked for one. */
+    override suspend fun appReviews(
+        appId: Long,
+        json: Int,
+        language: String,
+        purchaseType: String,
+        pageSize: Int,
+    ): Response<StoreReviewsResponse> = error("reviews are not part of this test")
 }
 
 internal object OfflineSteamApiDouble : SteamApi {

@@ -326,7 +326,7 @@ class FamilySharedGameRepository @Inject constructor(
         // not reached for one at all — a game observed again is rejected before any of this runs.
         // Best-effort: a genre-cache write failure must not undo an otherwise-valid admission,
         // and background enrichment would resolve them later anyway.
-        runCatching { genres.storeGenres(appId, info.genres) }
+        runCatching { genres.storeGenres(appId, info.genres, info.categories) }
         clearCandidateIfCurrent(appId)
         if (announce && !notifier.notifyAdmitted(appId, info.name)) {
             settings.setSharedGameAnnouncement(appId, info.name, time.nowMillis())

@@ -40,6 +40,7 @@ import com.example.backlogium.ui.collections.SmartCollectionDetailScreen
 import com.example.backlogium.ui.components.ProfileHeader
 import com.example.backlogium.ui.diagnostics.DiagnosticsScreen
 import com.example.backlogium.ui.gamedetail.GameDetailScreen
+import com.example.backlogium.ui.gapplan.GapPlanScreen
 import com.example.backlogium.ui.history.HistoryScreen
 import com.example.backlogium.ui.home.HomeRoute
 import com.example.backlogium.ui.library.LibraryScreen
@@ -93,6 +94,13 @@ private fun collectionRoute(collectionId: Long) = "collection/$collectionId"
 /** Route for the custom-and-derived Collections index. */
 private const val ROUTE_COLLECTIONS = "collections"
 
+/**
+ * Route for the gap-plan builder. A pushed sub-destination reachable from **both** Home and
+ * Collections, deliberately not a sixth tab: the bottom-navigation contract is unchanged, and one
+ * route means a plan built from either entry point is the same plan.
+ */
+private const val ROUTE_GAP_PLAN = "gap_plan"
+
 /** Route for a read-only derived collection detail surface. */
 private const val ROUTE_SMART_COLLECTION = "smart_collection/{collectionId}"
 private fun smartCollectionRoute(collectionId: SmartCollectionId) =
@@ -120,7 +128,8 @@ fun BacklogiumAppRoot(
     val fullDestinationGameDetailPresented = currentDestination?.route == ROUTE_GAME_DETAIL
     val onCollectionScreen = currentDestination?.route == ROUTE_COLLECTION ||
         currentDestination?.route == ROUTE_COLLECTIONS ||
-        currentDestination?.route == ROUTE_SMART_COLLECTION
+        currentDestination?.route == ROUTE_SMART_COLLECTION ||
+        currentDestination?.route == ROUTE_GAP_PLAN
 
     // Hoisted above the Scaffold so a screen-reported wash can paint behind the top bar too, not
     // just its own content area — the game detail screen's header-art wash, and Home's now-playing
@@ -206,6 +215,7 @@ fun BacklogiumAppRoot(
                         onOpenCollection = { id -> navController.navigate(collectionRoute(id)) },
                         onCreateCollection = { navController.navigate(collectionRoute(0L)) },
                         onOpenCollections = { navController.navigate(ROUTE_COLLECTIONS) },
+                        onPlanGap = { navController.navigate(ROUTE_GAP_PLAN) },
                         onOpenSmartCollection = { id ->
                             navController.navigate(smartCollectionRoute(id))
                         },
@@ -274,6 +284,20 @@ fun BacklogiumAppRoot(
                         },
                         onOpenSmartCollection = { id ->
                             navController.navigate(smartCollectionRoute(id))
+                        },
+                        onPlanGap = { navController.navigate(ROUTE_GAP_PLAN) },
+                    )
+                }
+                composable(ROUTE_GAP_PLAN) {
+                    GapPlanScreen(
+                        onDone = { navController.popBackStack() },
+                        // Replaces the builder in the back stack: once the collection exists, the
+                        // plan that produced it is spent, and returning to a stale preview of an
+                        // already-created collection would invite a second identical save.
+                        onOpenCollection = { id ->
+                            navController.navigate(collectionRoute(id)) {
+                                popUpTo(ROUTE_GAP_PLAN) { inclusive = true }
+                            }
                         },
                     )
                 }

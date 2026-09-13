@@ -1,6 +1,7 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.remote.SteamStoreApi
+import com.example.backlogium.data.remote.dto.StoreCategoryDto
 import com.example.backlogium.data.remote.dto.StoreGenreDto
 import retrofit2.HttpException
 import java.io.IOException
@@ -20,8 +21,18 @@ sealed interface StoreGenreResult {
      * @param appType the store's own `type` for this app — `game`, `application`, `tool`, `demo`,
      *   … — normalized to lower case, or null when the response did not carry one. Null means
      *   *unknown*: it is never treated as either a game or a non-game (add-hidden-games).
+     * @param categories participation categories, or **null when the store refused to describe
+     *   the app at all** — a missing entry or a `success = false` envelope, as a delisted or
+     *   region-locked game produces. Null is *unknown*; an empty list is the definitive "this app
+     *   advertises none". Collapsing the two would classify every delisted multiplayer game as
+     *   single-player on the strength of an answer that was never given
+     *   (add-gap-plan-suggestions).
      */
-    data class Details(val genres: List<GameGenre>, val appType: String?) : StoreGenreResult
+    data class Details(
+        val genres: List<GameGenre>,
+        val appType: String?,
+        val categories: List<GameCategory>? = null,
+    ) : StoreGenreResult
 
     data class TransientFailure(val cause: Throwable) : StoreGenreResult
 }
@@ -41,14 +52,23 @@ class SteamStoreGenreDataSource @Inject constructor(
             if (!response.isSuccessful) {
                 return StoreGenreResult.TransientFailure(HttpException(response))
             }
+            // Both of the next two returns keep `categories` null. The genres and app type stay
+            // as they were — a checked negative, thirty days' worth — but a refused envelope has
+            // said nothing about participation, and recording "none" here is exactly the mistake
+            // that would mark every delisted multiplayer game single-player.
             val envelope = response.body()?.get(appId.toString())
-                ?: return StoreGenreResult.Details(emptyList(), appType = null)
-            if (!envelope.success) return StoreGenreResult.Details(emptyList(), appType = null)
+                ?: return StoreGenreResult.Details(emptyList(), appType = null, categories = null)
+            if (!envelope.success) {
+                return StoreGenreResult.Details(emptyList(), appType = null, categories = null)
+            }
 
             val genres = envelope.data?.genres.orEmpty().toGameGenres()
             StoreGenreResult.Details(
                 genres = genres,
                 appType = envelope.data?.type?.trim()?.lowercase()?.takeIf { it.isNotEmpty() },
+                // A successful envelope with no categories array *is* an answer: this app
+                // advertises none, which is what makes it readable as single-player.
+                categories = envelope.data?.categories.orEmpty().toGameCategories(),
             )
         } catch (error: IOException) {
             StoreGenreResult.TransientFailure(error)
@@ -67,4 +87,15 @@ internal fun List<StoreGenreDto>.toGameGenres(): List<GameGenre> = mapNotNull { 
     val id = dto.id?.trim().orEmpty()
     val label = dto.description?.trim().orEmpty()
     if (id.isEmpty() || label.isEmpty()) null else GameGenre(id, label)
+}
+
+/**
+ * Store category DTOs to domain categories, dropping any entry missing an id or a label. An entry
+ * dropped here is one Steam sent unusably, not one it declined to send — the list as a whole still
+ * counts as an answer.
+ */
+internal fun List<StoreCategoryDto>.toGameCategories(): List<GameCategory> = mapNotNull { dto ->
+    val id = dto.id ?: return@mapNotNull null
+    val label = dto.description?.trim().orEmpty()
+    if (label.isEmpty()) null else GameCategory(id, label)
 }

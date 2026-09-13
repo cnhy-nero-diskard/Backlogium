@@ -17,6 +17,7 @@ import com.example.backlogium.data.remote.dto.PlayerSummariesResponse
 import com.example.backlogium.data.remote.dto.RecentlyPlayedGamesResponse
 import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
+import com.example.backlogium.data.remote.dto.StoreReviewsResponse
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.StoreAppDetails
 import com.example.backlogium.data.remote.dto.StoreItemsResponse
@@ -156,6 +157,15 @@ class GameRepositoryGenreJoinTest {
             countryCode: String?,
             filters: String,
         ): Response<Map<String, StorePriceEnvelope>> = error("prices are not part of this test")
+
+        /** Review summaries are a separate chain; this double must never be asked for one. */
+        override suspend fun appReviews(
+            appId: Long,
+            json: Int,
+            language: String,
+            purchaseType: String,
+            pageSize: Int,
+        ): Response<StoreReviewsResponse> = error("reviews are not part of this test")
 
         override suspend fun appDetails(
             appId: Long,

@@ -180,7 +180,29 @@ object PersonalPace {
     const val LOOKBACK_DAYS: Long = 56L
     private const val HALF_LIFE_DAYS = 28.0
     private const val MIN_ACTIVE_OBSERVATIONS_FOR_WEEKDAY = 4.0
-    private const val RELIABLE_COVERED_DATES = 28
+
+    /**
+     * Two weeks of observed span, not four (lower-pace-reliability-threshold).
+     *
+     * The two reliability thresholds answer different questions and both have to hold: this one
+     * asks whether enough time has been observed to describe a pattern at all, while
+     * [RELIABLE_ACTIVE_DATES] asks whether enough of it was actually spent playing. Shortening the
+     * span therefore *tightens* the density required — six active dates within 14 is a ~43% active
+     * rate against ~21% within 28 — which is why the active floor deliberately did not move with
+     * it.
+     *
+     * This gates classification only. It is not an input to any forecast, so a profile that was
+     * already reliable produces identical numbers and one that newly qualifies produces exactly
+     * the forecast it was already computing while labelled learning.
+     *
+     * A profile at this floor has two observations per weekday, and the weekday model degrades
+     * unevenly there: `typicalActiveDayMinutes` is blended toward the global figure by
+     * [MIN_ACTIVE_OBSERVATIONS_FOR_WEEKDAY], but `activeProbability` is not, so a weekday that
+     * caught no play in its two-sample contributes no expected minutes at all. That understates
+     * capacity rather than overstating it, which is the safe direction for a feasibility claim;
+     * blending frequency the same way is a separate change with a far wider blast radius.
+     */
+    private const val RELIABLE_COVERED_DATES = 14
     private const val RELIABLE_ACTIVE_DATES = 6
 
     /** Aggregate closed session rows into local-date totals and exclude the current date. */

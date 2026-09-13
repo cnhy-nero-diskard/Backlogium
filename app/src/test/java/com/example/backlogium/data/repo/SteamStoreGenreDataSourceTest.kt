@@ -3,12 +3,15 @@ package com.example.backlogium.data.repo
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.StoreAppData
 import com.example.backlogium.data.remote.dto.StoreAppDetails
+import com.example.backlogium.data.remote.dto.StoreCategoryDto
 import com.example.backlogium.data.remote.dto.StoreGenreDto
 import com.example.backlogium.data.remote.dto.StorePriceEnvelope
+import com.example.backlogium.data.remote.dto.StoreReviewsResponse
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import retrofit2.Response
@@ -25,16 +28,63 @@ class SteamStoreGenreDataSourceTest {
             StoreGenreResult.Details(
                 listOf(GameGenre("1", "Action"), GameGenre("23", "Indie")),
                 appType = null,
+                categories = emptyList(),
             ),
             result,
         )
     }
 
+    /**
+     * The genre half of the three cases is unchanged — a checked negative either way — but the
+     * category half is not, and the difference is the point: only the *successful* envelope
+     * answered anything about participation.
+     */
     @Test fun emptyUnavailableAndMissingEnvelope_areDefinitiveEmpty() = runBlocking {
-        val empty = StoreGenreResult.Details(emptyList(), appType = null)
-        assertEquals(empty, source(Response.success(details(7, false))).genresFor(7))
-        assertEquals(empty, source(Response.success(emptyMap())).genresFor(7))
-        assertEquals(empty, source(Response.success(details(7, true))).genresFor(7))
+        val refused = StoreGenreResult.Details(emptyList(), appType = null, categories = null)
+        assertEquals(refused, source(Response.success(details(7, false))).genresFor(7))
+        assertEquals(refused, source(Response.success(emptyMap())).genresFor(7))
+        assertEquals(
+            StoreGenreResult.Details(emptyList(), appType = null, categories = emptyList()),
+            source(Response.success(details(7, true))).genresFor(7),
+        )
+    }
+
+    /**
+     * A delisted or region-locked game answers `success = false`. Recording "advertises none" for
+     * it would classify every such multiplayer game single-player for the next 30 days, on the
+     * strength of an answer Steam never gave (add-gap-plan-suggestions).
+     */
+    @Test fun aRefusedEnvelope_leavesParticipationUnknownRatherThanAdvertisingNone() = runBlocking {
+        val refused = source(Response.success(details(7, false))).genresFor(7)
+        assertNull((refused as StoreGenreResult.Details).categories)
+
+        // A successful envelope that simply lists no categories *is* an answer, and is empty.
+        val answered = source(Response.success(details(7, true))).genresFor(7)
+        assertEquals(emptyList<GameCategory>(), (answered as StoreGenreResult.Details).categories)
+    }
+
+    @Test fun categoriesAreRetainedSeparatelyFromGenresAndKeepTheirNumericIds() = runBlocking {
+        val result = source(
+            Response.success(
+                details(
+                    7, true,
+                    genres = listOf(StoreGenreDto("1", "Action")),
+                    categories = listOf(
+                        StoreCategoryDto(1, "Multi-player"),
+                        StoreCategoryDto(38, "Online Co-op"),
+                        // Dropped: an entry Steam sent unusably, not one it withheld.
+                        StoreCategoryDto(null, "No id"),
+                        StoreCategoryDto(20, "  "),
+                    ),
+                ),
+            ),
+        ).genresFor(7) as StoreGenreResult.Details
+
+        assertEquals(listOf(GameGenre("1", "Action")), result.genres)
+        assertEquals(
+            listOf(GameCategory(1, "Multi-player"), GameCategory(38, "Online Co-op")),
+            result.categories,
+        )
     }
 
     /**
@@ -43,12 +93,12 @@ class SteamStoreGenreDataSourceTest {
      */
     @Test fun appType_isCarriedAndNormalized() = runBlocking {
         assertEquals(
-            StoreGenreResult.Details(emptyList(), appType = "application"),
+            StoreGenreResult.Details(emptyList(), appType = "application", categories = emptyList()),
             source(Response.success(details(7, true, type = " Application "))).genresFor(7),
         )
         // A blank or absent type stays unknown rather than becoming an empty-string classification.
         assertEquals(
-            StoreGenreResult.Details(emptyList(), appType = null),
+            StoreGenreResult.Details(emptyList(), appType = null, categories = emptyList()),
             source(Response.success(details(7, true, type = "  "))).genresFor(7),
         )
     }
@@ -66,7 +116,10 @@ class SteamStoreGenreDataSourceTest {
         success: Boolean,
         genres: List<StoreGenreDto> = emptyList(),
         type: String? = null,
-    ) = mapOf(appId.toString() to StoreAppDetails(success, StoreAppData(type, genres)))
+        categories: List<StoreCategoryDto> = emptyList(),
+    ) = mapOf(
+        appId.toString() to StoreAppDetails(success, StoreAppData(type, genres, categories = categories)),
+    )
 
     private fun source(response: Response<Map<String, StoreAppDetails>>) =
         SteamStoreGenreDataSource(object : SteamStoreApi by NoPrices {
@@ -83,5 +136,14 @@ class SteamStoreGenreDataSourceTest {
             countryCode: String?,
             filters: String,
         ): Response<Map<String, StorePriceEnvelope>> = error("the genre path must not price anything")
+
+        /** Review summaries are a separate chain; this double must never be asked for one. */
+        override suspend fun appReviews(
+            appId: Long,
+            json: Int,
+            language: String,
+            purchaseType: String,
+            pageSize: Int,
+        ): Response<StoreReviewsResponse> = error("reviews are not part of this test")
     }
 }

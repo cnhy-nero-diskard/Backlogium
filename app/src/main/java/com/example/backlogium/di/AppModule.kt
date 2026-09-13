@@ -12,11 +12,14 @@ import com.example.backlogium.data.repo.OnboardingCredentialsGateway
 import com.example.backlogium.data.repo.DataStoreProgressMarksStore
 import com.example.backlogium.data.repo.AndroidSharedGameNotifier
 import com.example.backlogium.data.repo.DataStoreSettingsRepository
+import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.PresenceObserver
 import com.example.backlogium.data.repo.PresenceSessionRecorder
 import com.example.backlogium.data.repo.SessionEndOutbox
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.SharedGameNotifier
+import com.example.backlogium.domain.gapplan.CurrentPlayerCounts
+import com.example.backlogium.domain.gapplan.GapPlanSeeds
 import com.example.backlogium.data.updates.AndroidInstalledPackageInfoProvider
 import com.example.backlogium.data.updates.AppUpdateRepository
 import com.example.backlogium.data.updates.DataStoreAppUpdateRepository
@@ -53,6 +56,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import javax.inject.Singleton
+import kotlin.random.Random
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -157,6 +161,26 @@ abstract class AppModule {
     abstract fun bindSharedGameNotifier(impl: AndroidSharedGameNotifier): SharedGameNotifier
 
     companion object {
+        /**
+         * The gap-plan enrichment's only window onto the network, wired to the same non-persisted
+         * lookup the game detail screen polls. The seam keeps that bounded request policy from
+         * being able to reach anything else in the library, and lets its bounds be tested against
+         * a stub that stalls or fails on demand (add-gap-plan-suggestions).
+         */
+        @Provides
+        @Singleton
+        fun provideCurrentPlayerCounts(repository: GameRepository): CurrentPlayerCounts =
+            CurrentPlayerCounts(repository::currentPlayerCount)
+
+        /**
+         * Seeds for gap-plan generation. Nothing is persisted: a seed lives only as long as the
+         * result it produced, which is what makes rebuilding a reroll rather than a replay
+         * (add-gap-plan-suggestions).
+         */
+        @Provides
+        @Singleton
+        fun provideGapPlanSeeds(): GapPlanSeeds = GapPlanSeeds { Random.nextLong() }
+
         /**
          * Process-lifetime scope for shared repository flows. A [SupervisorJob] keeps one failing
          * flow from tearing down the others; nothing here is ever cancelled by design.

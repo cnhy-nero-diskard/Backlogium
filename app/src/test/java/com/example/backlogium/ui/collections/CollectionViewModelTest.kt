@@ -422,7 +422,10 @@ class CollectionViewModelTest {
             hiddenGamesRepository = hiddenGames,
             achievementRepository = achievementRepository,
             sessionRepository = sessionRepository,
-            personalPaceRepository = PersonalPaceRepository(sessionRepository, time),
+            personalPaceRepository = PersonalPaceRepository(
+                sessionRepository,
+                com.example.backlogium.domain.CurrentDateProvider(time),
+            ),
             settings = settings,
             liveStatusRepository = liveStatusRepository,
             currentDate = com.example.backlogium.domain.CurrentDateProvider(time),

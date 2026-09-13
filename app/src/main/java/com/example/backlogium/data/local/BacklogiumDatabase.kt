@@ -22,6 +22,7 @@ import com.example.backlogium.data.local.dao.HltbDatasetDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.dao.SteamAssetDao
+import com.example.backlogium.data.local.dao.SteamReviewCacheDao
 import com.example.backlogium.data.local.dao.WishlistDao
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.Collection
@@ -45,6 +46,7 @@ import com.example.backlogium.data.local.entity.RequestBreakdown
 import com.example.backlogium.data.local.entity.RequestTotal
 import com.example.backlogium.data.local.entity.SteamAssetDownloadState
 import com.example.backlogium.data.local.entity.SteamAssetManifest
+import com.example.backlogium.data.local.entity.SteamReviewCache
 import com.example.backlogium.data.local.entity.SyncRun
 
 @Database(
@@ -72,8 +74,9 @@ import com.example.backlogium.data.local.entity.SyncRun
         WishlistItem::class,
         WishlistPriceObservation::class,
         HiddenGame::class,
+        SteamReviewCache::class,
     ],
-    version = 32,
+    version = 35,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -93,6 +96,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun excludedSharedGameDao(): ExcludedSharedGameDao
     abstract fun wishlistDao(): WishlistDao
     abstract fun hiddenGameDao(): HiddenGameDao
+    abstract fun steamReviewCacheDao(): SteamReviewCacheDao
 
     companion object {
         const val NAME = "backlogium.db"
@@ -766,6 +770,70 @@ abstract class BacklogiumDatabase : RoomDatabase() {
         val MIGRATION_31_32 = object : Migration(31, 32) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `game_genre_cache` ADD COLUMN `appType` TEXT")
+            }
+        }
+
+        /**
+         * v32 -> v33: additive only — `game_genre_cache` gains the same `appdetails` response's
+         * participation categories, and the independent `steam_review_cache` table is created
+         * (add-gap-plan-suggestions).
+         *
+         * Existing genre rows are deliberately **left with a null `categoriesJson` and an
+         * untouched `checkedAt`**. Null is the honest value: those rows were written by a build
+         * that never asked for categories, so they carry unknown categories rather than "this app
+         * advertises none", and only the latter may be read as single-player.
+         *
+         * Resetting `checkedAt` to force a refetch was rejected — it would discard genre freshness
+         * that is still perfectly valid. Instead `GameGenreCacheDao.eligibleAppIds` treats a null
+         * category payload as work to do regardless of freshness, so these rows are picked up by
+         * the next enrichment batch rather than waiting out as much as 30 more days with the
+         * multiplayer path inert on exactly the installs that have the most data.
+         *
+         * `steam_review_cache` starts empty, which is the correct state: no row means "never
+         * checked", never "no reviews".
+         */
+        val MIGRATION_32_33 = object : Migration(32, 33) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `game_genre_cache` ADD COLUMN `categoriesJson` TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `steam_review_cache` (" +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`description` TEXT, " +
+                        "`positive` INTEGER, " +
+                        "`negative` INTEGER, " +
+                        "`total` INTEGER, " +
+                        "`available` INTEGER NOT NULL, " +
+                        "`checkedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`), " +
+                        "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )",
+                )
+            }
+        }
+
+        /** v33 -> v34: retain refused review attempts without presenting them as unavailable. */
+        val MIGRATION_33_34 = object : Migration(33, 34) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `steam_review_cache` ADD COLUMN `declinedAt` INTEGER")
+            }
+        }
+
+        /**
+         * v34 -> v35: cool down refused category checks and distinguish review facts from markers.
+         * The default preserves every old definitive row; v34 refusal rows are identified by their
+         * non-null `declinedAt` and corrected to factless markers after the new column is added.
+         */
+        val MIGRATION_34_35 = object : Migration(34, 35) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `game_genre_cache` ADD COLUMN `categoriesDeclinedAt` INTEGER")
+                db.execSQL(
+                    "ALTER TABLE `steam_review_cache` " +
+                        "ADD COLUMN `hasFact` INTEGER NOT NULL DEFAULT 1",
+                )
+                db.execSQL(
+                    "UPDATE `steam_review_cache` SET `hasFact` = 0 " +
+                        "WHERE `declinedAt` IS NOT NULL",
+                )
             }
         }
 

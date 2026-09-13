@@ -9,8 +9,10 @@ import com.example.backlogium.data.local.entity.GameGenreCache
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.StoreAppData
 import com.example.backlogium.data.remote.dto.StoreAppDetails
+import com.example.backlogium.data.remote.dto.StoreCategoryDto
 import com.example.backlogium.data.remote.dto.StoreGenreDto
 import com.example.backlogium.data.remote.dto.StorePriceEnvelope
+import com.example.backlogium.data.remote.dto.StoreReviewsResponse
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -20,6 +22,7 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -200,6 +203,133 @@ class GameGenreRepositoryTest {
         assertEquals(listOf(1L, 2L), gameDao.observeLibrary().first().map { it.appId }.sorted())
     }
 
+    /**
+     * The upgraded-install case (add-gap-plan-suggestions). A row written before categories were
+     * retained is *fresh* by `checkedAt` and would otherwise be skipped for up to 30 more days,
+     * leaving the multiplayer path inert on exactly the libraries with the most data. It is
+     * eligible immediately instead, and sorts with the never-checked rows rather than behind them.
+     */
+    @Test
+    fun aFreshRowWithNoCategoryPayloadIsEligibleImmediately() = runTest {
+        gameDao.upsertAll(listOf(game(1), game(2), game(3)))
+        // 1 was enriched a moment ago by a build that never asked for categories.
+        cacheDao.upsert(cached(1, "[]", checkedAt = NOW - 1, categoriesJson = null))
+        // 2 was enriched a moment ago by this build and is genuinely settled.
+        cacheDao.upsert(cached(2, "[]", checkedAt = NOW - 1))
+        // 3 has no row at all.
+        val store = FakeStoreApi(categories = mapOf(1L to listOf(GameCategory(1, "Multi-player"))))
+
+        val batch = repository(store).enrichNextBatch()
+
+        assertEquals(listOf(1L, 3L), store.requested.sorted())
+        assertEquals(2, batch.attempted)
+        assertFalse(batch.hasMoreEligible)
+
+        val refreshed = cacheDao.observeAll().first().single { it.appId == 1L }
+        assertEquals(
+            listOf(GameCategory(1, "Multi-player")),
+            GameCategoryCodec.decodeOrNull(refreshed.categoriesJson),
+        )
+        // Answered once, it is not asked again.
+        store.requested.clear()
+        assertEquals(0, repository(store).enrichNextBatch().attempted)
+    }
+
+    /**
+     * A refused envelope writes a *null* payload and a cooldown marker. Null remains unknown, but
+     * the marker keeps a permanently refused app from being asked again on every continuation. The
+     * alternative — an encoded empty list — would read as "advertises none" and quietly classify a
+     * delisted multiplayer game single-player.
+     */
+    @Test
+    fun aRefusedEnvelopeLeavesTheCategoryPayloadUnknownAndEntersCooldown() = runTest {
+        gameDao.upsert(game(1))
+        val store = FakeStoreApi(refused = setOf(1L))
+
+        val first = repository(store).enrichNextBatch()
+
+        assertEquals(1, first.attempted)
+        assertFalse(first.transientFailure)
+        val row = cacheDao.observeAll().first().single()
+        assertNull(row.categoriesJson)
+        assertNull(GameCategoryCodec.decodeOrNull(row.categoriesJson))
+        assertEquals(NOW, row.categoriesDeclinedAt)
+        // The refusal is held out until its cooldown expires.
+        assertFalse(first.hasMoreEligible)
+        assertEquals(0, repository(store).enrichNextBatch().attempted)
+
+        time.now = NOW + GameGenreRepository.FRESHNESS_WINDOW_MILLIS + 1
+        assertEquals(1, repository(store).enrichNextBatch().attempted)
+    }
+
+    @Test
+    fun aRefusedCategoryRefreshPreservesFreshGenresAndAppType() = runTest {
+        gameDao.upsert(game(1))
+        val known = listOf(GameGenre("1", "Action"), GameGenre("23", "Indie"))
+        val checkedAt = NOW - 1
+        // A fresh pre-category row with facts that remain valid even when this category check is refused.
+        cacheDao.upsert(
+            GameGenreCache(
+                appId = 1,
+                genresJson = GameGenreCodec.encode(known),
+                checkedAt = checkedAt,
+                appType = "game",
+                categoriesJson = null,
+            ),
+        )
+
+        val batch = repository(FakeStoreApi(refused = setOf(1L))).enrichNextBatch()
+
+        assertEquals(1, batch.attempted)
+        val row = cacheDao.observeAll().first().single()
+        assertEquals(known, GameGenreCodec.decodeOrEmpty(row.genresJson))
+        assertEquals("game", row.appType)
+        assertEquals(checkedAt, row.checkedAt)
+        assertNull(row.categoriesJson)
+        assertEquals(NOW, row.categoriesDeclinedAt)
+    }
+
+    @Test
+    fun aRefusedStaleRefreshPreservesKnownMetadataAndEntersCooldown() = runTest {
+        gameDao.upsert(game(1))
+        val knownGenres = listOf(GameGenre("1", "Action"))
+        val knownCategories = listOf(GameCategory(1, "Multi-player"))
+        val checkedAt = NOW - GameGenreRepository.FRESHNESS_WINDOW_MILLIS - 1
+        cacheDao.upsert(
+            GameGenreCache(
+                appId = 1,
+                genresJson = GameGenreCodec.encode(knownGenres),
+                checkedAt = checkedAt,
+                appType = "game",
+                categoriesJson = GameCategoryCodec.encode(knownCategories),
+            ),
+        )
+
+        val batch = repository(FakeStoreApi(refused = setOf(1L))).enrichNextBatch()
+
+        assertEquals(1, batch.attempted)
+        assertFalse(batch.hasMoreEligible)
+        val row = cacheDao.observeAll().first().single()
+        assertEquals(knownGenres, GameGenreCodec.decodeOrEmpty(row.genresJson))
+        assertEquals("game", row.appType)
+        assertEquals(knownCategories, GameCategoryCodec.decodeOrNull(row.categoriesJson))
+        assertEquals(checkedAt, row.checkedAt)
+        assertEquals(NOW, row.categoriesDeclinedAt)
+    }
+
+    @Test
+    fun aDefinitiveAnswerWithNoCategoriesIsStoredAsAdvertisesNone() = runTest {
+        gameDao.upsert(game(1))
+        val store = FakeStoreApi(genres = mapOf(1L to listOf(GameGenre("1", "Action"))))
+
+        repository(store).enrichNextBatch()
+
+        val row = cacheDao.observeAll().first().single()
+        // Present and empty — an answer — not null, which would mean never asked.
+        assertEquals("[]", row.categoriesJson)
+        assertEquals(emptyList<GameCategory>(), GameCategoryCodec.decodeOrNull(row.categoriesJson))
+    }
+
     private fun repository(store: FakeStoreApi) = GameGenreRepository(
         cacheDao = cacheDao,
         store = SteamStoreGenreDataSource(store),
@@ -211,8 +341,22 @@ class GameGenreRepositoryTest {
         playtime2Weeks = 0, lastPlaytime = 0,
     )
 
-    private fun cached(appId: Long, json: String, checkedAt: Long) =
-        GameGenreCache(appId = appId, genresJson = json, checkedAt = checkedAt)
+    /**
+     * [categoriesJson] defaults to an encoded empty list — "checked, advertises none" — because
+     * these fixtures stand for rows this build wrote. A row with a *null* payload is the separate
+     * upgraded-install case, and the tests that mean it say so explicitly.
+     */
+    private fun cached(
+        appId: Long,
+        json: String,
+        checkedAt: Long,
+        categoriesJson: String? = "[]",
+    ) = GameGenreCache(
+        appId = appId,
+        genresJson = json,
+        checkedAt = checkedAt,
+        categoriesJson = categoriesJson,
+    )
 
     /**
      * Records every app id asked for, in order — the batch's shape is only observable from the
@@ -221,14 +365,25 @@ class GameGenreRepositoryTest {
      */
     private class FakeStoreApi(
         private val genres: Map<Long, List<GameGenre>> = emptyMap(),
+        private val categories: Map<Long, List<GameCategory>> = emptyMap(),
         private val offline: Set<Long> = emptySet(),
         private val unavailable: Set<Long> = emptySet(),
+        private val refused: Set<Long> = emptySet(),
     ) : SteamStoreApi {
         override suspend fun appDetailsPrices(
             appIds: String,
             countryCode: String?,
             filters: String,
         ): Response<Map<String, StorePriceEnvelope>> = error("prices are not part of this test")
+
+        /** Review summaries are a separate chain; this double must never be asked for one. */
+        override suspend fun appReviews(
+            appId: Long,
+            json: Int,
+            language: String,
+            purchaseType: String,
+            pageSize: Int,
+        ): Response<StoreReviewsResponse> = error("reviews are not part of this test")
 
         val requested = mutableListOf<Long>()
 
@@ -241,8 +396,19 @@ class GameGenreRepositoryTest {
             if (appId in unavailable) {
                 return Response.error(429, "slow down".toResponseBody("text/plain".toMediaType()))
             }
+            if (appId in refused) {
+                return Response.success(mapOf(appId.toString() to StoreAppDetails(success = false)))
+            }
             val dtos = genres[appId].orEmpty().map { StoreGenreDto(it.id, it.label) }
-            return Response.success(mapOf(appId.toString() to StoreAppDetails(true, StoreAppData(genres = dtos))))
+            val categoryDtos = categories[appId].orEmpty().map { StoreCategoryDto(it.id, it.label) }
+            return Response.success(
+                mapOf(
+                    appId.toString() to StoreAppDetails(
+                        true,
+                        StoreAppData(genres = dtos, categories = categoryDtos),
+                    ),
+                ),
+            )
         }
     }
 

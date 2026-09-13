@@ -54,6 +54,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
@@ -135,6 +136,7 @@ fun HomeScreen(
     onOpenCollection: (Long) -> Unit = {},
     onCreateCollection: () -> Unit = {},
     onOpenCollections: () -> Unit = {},
+    onPlanGap: () -> Unit = {},
     onOpenSmartCollection: (SmartCollectionId) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
@@ -269,6 +271,7 @@ fun HomeScreen(
             onOpenCollection = onOpenCollection,
             onCreateCollection = onCreateCollection,
             onOpenCollections = onOpenCollections,
+            onPlanGap = onPlanGap,
             onOpenSmartCollection = onOpenSmartCollection,
             scrollState = scrollState,
             scrollViewport = scrollViewport,
@@ -288,6 +291,7 @@ private fun InnerHomeContent(
     onOpenCollection: (Long) -> Unit,
     onCreateCollection: () -> Unit,
     onOpenCollections: () -> Unit,
+    onPlanGap: () -> Unit,
     onOpenSmartCollection: (SmartCollectionId) -> Unit,
     scrollState: ScrollState,
     scrollViewport: Rect?,
@@ -529,6 +533,7 @@ private fun InnerHomeContent(
             onOpenCollection = onOpenCollection,
             onCreateCollection = onCreateCollection,
             onOpenCollections = onOpenCollections,
+            onPlanGap = onPlanGap,
             scrollState = scrollState,
             scrollViewport = scrollViewport,
             onReorderCollections = onReorderCollections,
@@ -570,6 +575,7 @@ private fun CollectionsSection(
     onOpenCollection: (Long) -> Unit,
     onCreateCollection: () -> Unit,
     onOpenCollections: () -> Unit,
+    onPlanGap: () -> Unit,
     scrollState: ScrollState,
     scrollViewport: Rect?,
     onReorderCollections: (List<Long>) -> Unit,
@@ -632,6 +638,20 @@ private fun CollectionsSection(
             )
             TextButton(onClick = onOpenCollections) { Text("View all") }
             TextButton(onClick = onCreateCollection) { Text("New") }
+        }
+        // Deliberately its own row rather than a third button crowded into the header: the gap
+        // planner answers a different question from "group these games", and a tab for it would
+        // change the four-tab navigation contract.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(
+                onClick = onPlanGap,
+                modifier = Modifier.testTag(HOME_PLAN_GAP_TAG),
+            ) {
+                Text("Plan a gap before a release")
+            }
         }
         if (cards.isEmpty()) {
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -1384,3 +1404,6 @@ private fun CelebrationAnimation(
         if (play && progress >= 1f) onFinished()
     }
 }
+
+/** Stable handle for the Home gap-plan entry, so a navigation test never depends on wording. */
+internal const val HOME_PLAN_GAP_TAG = "home-plan-gap"
