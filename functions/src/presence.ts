@@ -1,6 +1,10 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import * as safeLog from "./safeLog";
-import { Observation, SCHEMA_VERSION } from "./steam";
+import {
+  CURRENT_STATE_SCHEMA_VERSION,
+  PRESENCE_TRANSITION_SCHEMA_VERSION,
+  type Observation,
+} from "./steam";
 
 /**
  * Firestore layout:
@@ -132,7 +136,7 @@ export async function recordObservation(
       // roll state backward.
       transaction.set(playerRef, {
         ...(snapshot.data() ?? {}),
-        v: SCHEMA_VERSION,
+        v: CURRENT_STATE_SCHEMA_VERSION,
         personastate: observation.personastate,
         gameid: observation.gameid,
         gameName: observation.gameName,
@@ -142,7 +146,7 @@ export async function recordObservation(
     }
 
     transaction.set(playerRef, {
-      v: SCHEMA_VERSION,
+      v: CURRENT_STATE_SCHEMA_VERSION,
       personastate: observation.personastate,
       gameid: observation.gameid,
       gameName: observation.gameName,
@@ -155,7 +159,7 @@ export async function recordObservation(
     });
 
     transaction.set(presenceRef, {
-      v: SCHEMA_VERSION,
+      v: PRESENCE_TRANSITION_SCHEMA_VERSION,
       t: observedAt,
       personastate: observation.personastate,
       gameid: observation.gameid,

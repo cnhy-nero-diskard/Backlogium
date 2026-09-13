@@ -308,7 +308,6 @@ function observation(
   personastate = 1,
 ): Observation {
   return {
-    v: 1,
     t: new Date(timestamp),
     personastate,
     gameid,

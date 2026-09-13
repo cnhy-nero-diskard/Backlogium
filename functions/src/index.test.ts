@@ -23,7 +23,6 @@ import { poll } from "./index";
 import type { Observation } from "./steam";
 
 const playing: Observation = {
-  v: 1,
   t: new Date("2026-08-14T00:00:00.000Z"),
   personastate: 1,
   gameid: "440",

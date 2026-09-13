@@ -1,14 +1,14 @@
 ## 1. Schema versions
 
-- [ ] 1.1 Split `SCHEMA_VERSION` in `functions/src/steam.ts` into one exported constant per document
+- [x] 1.1 Split `SCHEMA_VERSION` in `functions/src/steam.ts` into one exported constant per document
       shape — current-state at `1`, presence transition at `2` — each documented with the shape it
       stamps and the rule that a shape change bumps only its own version. Verify
       `npm --prefix functions run build` typechecks.
-- [ ] 1.2 Remove `v` from the in-memory `Observation` interface and from the object `steam.ts`
+- [x] 1.2 Remove `v` from the in-memory `Observation` interface and from the object `steam.ts`
       returns, since an observation is not a document and has no shape version (design.md — Drop `v`
       from the in-memory `Observation`). Verify the build typechecks and `npm --prefix functions test`
       passes with any `steam.test.ts` assertion on that field removed rather than retargeted.
-- [ ] 1.3 Update the three write sites in `functions/src/presence.ts` to stamp the constant matching
+- [x] 1.3 Update the three write sites in `functions/src/presence.ts` to stamp the constant matching
       the document each one writes. Verify `npm --prefix functions test` passes, including the
       existing assertion that the current-state document is version `1`.
 

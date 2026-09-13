@@ -1,10 +1,18 @@
 import * as safeLog from "./safeLog";
 
 /**
- * Schema version stamped onto every document this poller writes.
- * Bump only alongside a shape change, and teach readers the new branch.
+ * Schema version stamped onto current-state documents.
+ * Bump only when the current-state shape changes, and teach readers the new
+ * current-state branch.
  */
-export const SCHEMA_VERSION = 1;
+export const CURRENT_STATE_SCHEMA_VERSION = 1;
+
+/**
+ * Schema version stamped onto presence transition documents.
+ * Bump only when the presence-transition shape changes, and teach readers the
+ * new presence-transition branch.
+ */
+export const PRESENCE_TRANSITION_SCHEMA_VERSION = 2;
 
 const ENDPOINT =
   "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/";
@@ -23,7 +31,6 @@ const VISIBILITY_PUBLIC = 3;
  * round trip through a JavaScript number.
  */
 export interface Observation {
-  readonly v: number;
   readonly t: Date;
   readonly personastate: number;
   readonly gameid: string | null;
@@ -149,7 +156,6 @@ export async function fetchPresence(
   }
 
   return {
-    v: SCHEMA_VERSION,
     t: observedAt,
     personastate: player.personastate,
     gameid,
