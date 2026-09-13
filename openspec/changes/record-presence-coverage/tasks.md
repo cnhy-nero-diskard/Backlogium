@@ -64,10 +64,10 @@
       `asia-southeast1` and that no `firestore.rules` deploy was included.
 - [x] 6.2 Confirm `poll ok` heartbeats resume after the deploy (`npm --prefix functions run logs`),
       establishing the pipeline is healthy before any data is judged.
-- [ ] 6.3 Start a game, let a transition record, then stop it. Verify the appended transitions carry
+- [x] 6.3 Start a game, let a transition record, then stop it. Verify the appended transitions carry
       `v: 2` and a `prevLastObservedAt` within roughly one polling interval of their own `t`.
-- [ ] 6.4 Verify the current-state document still reads `v: 1` and is otherwise unchanged, and that a
+- [x] 6.4 Verify the current-state document still reads `v: 1` and is otherwise unchanged, and that a
       stretch of unchanged polls appended nothing.
-- [ ] 6.5 Record the deploy-window lapse if one was captured — a game running across the redeploy
+- [x] 6.5 Record the deploy-window lapse if one was captured — a game running across the redeploy
       produces a short unobserved tail, which is correct behaviour and worth noting so the first
       production coverage gap is not investigated as a bug.
