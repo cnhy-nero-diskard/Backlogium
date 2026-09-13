@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -156,6 +157,7 @@ private fun GapPlanTierRow(pick: GapPlanPickUi, canSave: Boolean, onSave: () -> 
 }
 
 /** The game, and the facts that let the player judge it — each one an icon and a value. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun GapPlanGameRow(game: GapPlanGameUi) {
     Row(
