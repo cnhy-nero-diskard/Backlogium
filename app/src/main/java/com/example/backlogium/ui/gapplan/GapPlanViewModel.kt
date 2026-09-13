@@ -20,6 +20,7 @@ import com.example.backlogium.domain.gapplan.GapPlanSnapshot
 import com.example.backlogium.domain.gapplan.GenerationOwnership
 import com.example.backlogium.domain.gapplan.PlanIntensity
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import javax.inject.Inject
 
@@ -176,7 +178,7 @@ class GapPlanViewModel @Inject constructor(
      * second draw uses the selection engine's exact alternate search instead of guessing how many
      * seeds are enough to find one.
      */
-    private fun drawDistinctFrom(
+    private suspend fun drawDistinctFrom(
         previous: GapPlanSnapshot?,
         request: GapPlanRequest,
         inputs: GapPlanInputs,
@@ -185,12 +187,15 @@ class GapPlanViewModel @Inject constructor(
         if (previous == null) return attempt
         val plan = attempt.getOrNull() ?: return attempt
         if (plan.pickedAppIds != previous.pickedAppIds) return attempt
-        return GapPlanEngine.generateDifferentFrom(
-            request = request,
-            inputs = inputs,
-            seed = seeds.next(),
-            previousPickedAppIds = previous.pickedAppIds,
-        ) ?: attempt
+        val fallbackSeed = seeds.next()
+        return withContext(Dispatchers.Default) {
+            GapPlanEngine.generateDifferentFrom(
+                request = request,
+                inputs = inputs,
+                seed = fallbackSeed,
+                previousPickedAppIds = previous.pickedAppIds,
+            )
+        } ?: attempt
     }
 
     /**

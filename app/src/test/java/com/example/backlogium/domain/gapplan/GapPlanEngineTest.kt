@@ -4,6 +4,7 @@ import com.example.backlogium.data.repo.GameReviewSummary
 import com.example.backlogium.domain.GameSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -99,6 +100,23 @@ class GapPlanEngineTest {
     /** And the seed travels with the result, so the generation can be reproduced from it. */
     @Test fun theSeedIsRetainedOnTheSnapshot() {
         assertEquals(4_242L, generate(games = listOf(gapGame(1)), seed = 4_242L).seed)
+    }
+
+    @Test fun anExactFallbackRetainsEnoughStateToReplayItsPicks() {
+        val games = (1L..20L).map { gapGame(it, mainStoryMinutes = it.toInt() * 200) }
+        val request = gapRequest()
+        val inputs = inputs(games)
+        val shown = GapPlanEngine.generate(request, inputs, seed = 1L).getOrThrow()
+        val fallback = GapPlanEngine.generateDifferentFrom(
+            request = request,
+            inputs = inputs,
+            seed = 2L,
+            previousPickedAppIds = shown.pickedAppIds,
+        )?.getOrThrow() ?: error("the fixture must have a reachable alternate")
+
+        assertNotEquals(shown.pickedAppIds, fallback.pickedAppIds)
+        assertEquals(shown.pickedAppIds, fallback.rerollExclusionAppIds)
+        assertEquals(fallback, GapPlanEngine.replay(fallback, inputs).getOrThrow())
     }
 
     /**

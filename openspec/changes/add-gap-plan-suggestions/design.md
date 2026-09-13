@@ -247,9 +247,12 @@ misleading and would contradict the current player-count lifecycle.
 ### 7. Reroll by seed, and keep adoption stable
 
 Each generation draws a seed and retains it with the result. Identical inputs and an identical seed
-produce identical picks; rebuilding draws a new seed. This is what lets a shown result hold still
-while it is being considered — the property that makes a suggestion something you can commit a month
-to — while still letting the player ask for a different one.
+produce identical picks; rebuilding draws a new seed. If that new draw repeats the visible result,
+the exact fallback samples the ordinary draw distribution conditioned on a different visible set.
+That fallback retains the excluded visible app ids with the result as replay state, because its seed
+alone cannot describe the conditioning. Replaying it uses both values. This is what lets a shown
+result hold still while it is being considered — the property that makes a suggestion something you
+can commit a month to — while still letting the player ask for a different one.
 
 It also replaces the previous design's normative claim that identical inputs produce identical
 membership. That claim was correct and testable, and it was also precisely what made the rebuild

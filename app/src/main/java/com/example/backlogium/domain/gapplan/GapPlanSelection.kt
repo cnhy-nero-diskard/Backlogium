@@ -97,12 +97,11 @@ object GapPlanSelection {
      * Finds a reachable draw whose visible app ids differ from [previousPickedAppIds], or returns
      * null when every reachable draw is the same.
      *
-     * The search visits every complete branch once and reservoir-samples the alternatives, so the
-     * fallback is uniform over reachable draws after removing the exact repeated result. Choosing
-     * an outside candidate first is not equivalent: it gives every branch containing that candidate
-     * priority and changes the distribution the ordinary draw defines. The depth is fixed at three
-     * tiers, so the search is bounded in memory and proves the no-alternate answer without random
-     * retries.
+     * The repeated result is one event in the ordinary draw distribution. Its probability can be
+     * calculated by following only choices whose app ids occur in [previousPickedAppIds]: choosing
+     * anything else makes repetition impossible. The fallback then samples the complement of that
+     * event, weighting each choice by its ordinary path probability. This is exact without visiting
+     * every complete branch, and the work is bounded by the three tiers plus scans of the pool.
      */
     internal fun drawDifferent(
         pool: List<GapPlanCandidate>,
@@ -110,63 +109,132 @@ object GapPlanSelection {
         seed: Long,
         previousPickedAppIds: List<Long>,
     ): Draw? {
+        val previousIds = previousPickedAppIds.toSet()
         val random = Random(seed)
         val orderedPool = pool.sortedBy { it.appId }
-        var alternate: Draw? = null
-        var alternateCount = 0L
 
-        fun consider(draw: Draw) {
-            if (draw.picks.mapNotNull { it.game?.appId } == previousPickedAppIds) return
-            alternateCount++
-            if (random.nextLong(alternateCount) == 0L) {
-                alternate = draw
-            }
-        }
+        fun completeDraw(drawn: Map<PlanIntensity, GapPlanPick>, canVary: Boolean): Draw =
+            Draw(
+                picks = orderByCommitment(PlanIntensity.entries.map { drawn.getValue(it) }),
+                canVary = canVary,
+            )
 
-        fun search(
+        /** Probability that the suffix ends in a result other than the previous visible result. */
+        fun nonRepeatProbability(
             tierIndex: Int,
             remaining: List<GapPlanCandidate>,
             drawn: Map<PlanIntensity, GapPlanPick>,
-            canVary: Boolean,
-        ) {
+        ): Double {
             if (tierIndex == TIER_ORDER.size) {
-                val picks = orderByCommitment(PlanIntensity.entries.map { drawn.getValue(it) })
-                consider(Draw(picks = picks, canVary = canVary))
-                return
+                val visibleIds = completeDraw(drawn, canVary = false).picks
+                    .mapNotNull { it.game?.appId }
+                return if (visibleIds == previousPickedAppIds) 0.0 else 1.0
             }
 
             val intensity = TIER_ORDER[tierIndex]
             val budget = intensity.budgetMinutes(fullCapacityMinutes)
             val near = nearest(remaining, budget)
-            val choices: List<GapPlanCandidate?> = if (near.isEmpty()) {
-                listOf(null)
-            } else {
-                near
+            if (near.isEmpty()) {
+                val pick = GapPlanPick(intensity = intensity, budgetMinutes = budget, game = null)
+                return nonRepeatProbability(
+                    tierIndex = tierIndex + 1,
+                    remaining = remaining,
+                    drawn = drawn + (intensity to pick),
+                )
             }
 
-            for (chosen in choices) {
-                val nextRemaining = chosen?.let { remaining - it } ?: remaining
-                val pick = GapPlanPick(
-                    intensity = intensity,
-                    budgetMinutes = budget,
-                    game = chosen,
-                )
-                search(
-                    tierIndex = tierIndex + 1,
-                    remaining = nextRemaining,
-                    drawn = drawn + (intensity to pick),
-                    canVary = canVary || near.size > 1,
-                )
+            // A branch outside the previous ids is already a non-repeat. Only the remaining
+            // branches need recursive traversal to determine their non-repeat probability.
+            var probability = 0.0
+            for (chosen in near) {
+                if (chosen.appId !in previousIds) {
+                    probability += 1.0
+                } else {
+                    val pick = GapPlanPick(intensity, budget, chosen)
+                    probability += nonRepeatProbability(
+                        tierIndex = tierIndex + 1,
+                        remaining = remaining - chosen,
+                        drawn = drawn + (intensity to pick),
+                    )
+                }
             }
+            return probability / near.size.toDouble()
         }
 
-        search(
+        if (nonRepeatProbability(0, orderedPool, emptyMap()) <= 0.0) return null
+
+        fun sample(
+            tierIndex: Int,
+            remaining: List<GapPlanCandidate>,
+            drawn: Map<PlanIntensity, GapPlanPick>,
+            canVary: Boolean,
+        ): Draw? {
+            if (tierIndex == TIER_ORDER.size) {
+                return completeDraw(drawn, canVary)
+            }
+
+            val intensity = TIER_ORDER[tierIndex]
+            val budget = intensity.budgetMinutes(fullCapacityMinutes)
+            val near = nearest(remaining, budget)
+            if (near.isEmpty()) {
+                val pick = GapPlanPick(intensity = intensity, budgetMinutes = budget, game = null)
+                return sample(
+                    tierIndex = tierIndex + 1,
+                    remaining = remaining,
+                    drawn = drawn + (intensity to pick),
+                    canVary = canVary,
+                )
+            }
+
+            val weights = DoubleArray(near.size)
+            var totalWeight = 0.0
+            for (index in near.indices) {
+                val chosen = near[index]
+                val nonRepeatProbability = if (chosen.appId in previousIds) {
+                    val pick = GapPlanPick(intensity, budget, chosen)
+                    nonRepeatProbability(
+                        tierIndex = tierIndex + 1,
+                        remaining = remaining - chosen,
+                        drawn = drawn + (intensity to pick),
+                    )
+                } else {
+                    1.0
+                }
+                val weight = nonRepeatProbability / near.size.toDouble()
+                weights[index] = weight
+                totalWeight += weight
+            }
+            if (totalWeight <= 0.0) return null
+
+            var ticket = random.nextDouble() * totalWeight
+            var chosen = near.last()
+            for (index in near.indices) {
+                ticket -= weights[index]
+                if (ticket < 0.0) {
+                    chosen = near[index]
+                    break
+                }
+            }
+
+            val pick = GapPlanPick(
+                intensity = intensity,
+                budgetMinutes = budget,
+                game = chosen,
+            )
+            return sample(
+                tierIndex = tierIndex + 1,
+                remaining = remaining - chosen,
+                drawn = drawn + (intensity to pick),
+                canVary = canVary || near.size > 1,
+            )
+        }
+
+        return sample(
             tierIndex = 0,
             remaining = orderedPool,
             drawn = emptyMap(),
             canVary = false,
         )
-        return alternate
     }
 
     /**

@@ -145,7 +145,10 @@ poor one, SHALL NOT make a fitting game ineligible, and SHALL NOT be rendered as
 
 ### Requirement: Rerollable picks with a stable shown result
 Each generation SHALL draw a seed. Identical request inputs, identical local state, and an identical
-seed SHALL produce identical picks. An explicit reroll SHALL draw a new seed.
+seed SHALL produce identical picks. When an exact-difference fallback is used for a reroll, the
+previous visible app-id sequence SHALL be retained as part of the snapshot's replay state, and
+replaying that snapshot SHALL use the retained sequence together with its seed. An explicit reroll
+SHALL draw a new seed.
 
 A shown result SHALL remain stable until the player rerolls or edits it, so a suggestion can be
 considered and committed to rather than changing underfoot. A reroll SHALL produce a visibly
@@ -158,6 +161,10 @@ different set of picks whenever the eligible pool is large enough to allow one.
 #### Scenario: The shown result holds still
 - **WHEN** ratings, Personal Pace, playtime, or live counts change while a result is open
 - **THEN** the displayed picks remain exactly as shown until the player rerolls
+
+#### Scenario: An exact fallback is replayable
+- **WHEN** a reroll uses the exact-difference fallback and the same request inputs are replayed
+- **THEN** the retained previous visible app-id sequence and seed reproduce the fallback's picks
 
 #### Scenario: A pool too small to vary
 - **WHEN** the eligible pool cannot produce a different set

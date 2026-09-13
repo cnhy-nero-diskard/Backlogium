@@ -391,6 +391,59 @@ class GapPlanSelectionTest {
     }
 
     /**
+     * The fallback keeps ordinary path probability when removing a repeated visible result.
+     *
+     * In this shape some first choices leave two Balanced options while others leave three, and
+     * the same visible set can have several tier assignments. Equal tickets per complete branch
+     * would make [4, 5, 6] appear in only 6 of the 16 alternatives; its ordinary probability is
+     * 1/2 after [3, 4, 5] is excluded.
+     */
+    @Test fun antiRepeatFallbackWeightsVaryingBranchWidthsByOrdinaryProbability() {
+        val pool = listOf(
+            candidate(1, 3_000),
+            candidate(2, 3_500),
+            candidate(3, 4_500),
+            candidate(4, 5_000),
+            candidate(5, 5_200),
+            candidate(6, 5_400),
+        )
+        val previous = listOf(3L, 4L, 5L)
+
+        val alternatives = (1L..20_000L).map { seed ->
+            GapPlanSelection.drawDifferent(
+                pool = pool,
+                fullCapacityMinutes = 10_000,
+                seed = seed,
+                previousPickedAppIds = previous,
+            )!!.picks.mapNotNull { it.game?.appId }
+        }
+        val frequency = alternatives.count { it == listOf(4L, 5L, 6L) } /
+            alternatives.size.toDouble()
+
+        assertTrue(
+            "ordinary path weighting should put [4, 5, 6] near one half, got $frequency",
+            frequency in 0.44..0.56,
+        )
+    }
+
+    /** A large near set must not turn the exact anti-repeat proof into a combinatorial traversal. */
+    @Test fun antiRepeatFallbackStaysBoundedForALargeHighBranchingPool() {
+        val pool = (1L..10_000L).map { candidate(it, remainingMinutes = 10_000) }
+        val previous = GapPlanSelection.draw(pool, 10_000, seed = 1L)
+            .picks.mapNotNull { it.game?.appId }
+
+        val alternate = GapPlanSelection.drawDifferent(
+            pool = pool,
+            fullCapacityMinutes = 10_000,
+            seed = 2L,
+            previousPickedAppIds = previous,
+        )
+
+        assertTrue("a large pool has an alternate", alternate != null)
+        assertNotEquals(previous, alternate!!.picks.mapNotNull { it.game?.appId })
+    }
+
+    /**
      * The band is anchored on the longest *fitting* candidate, not on the share itself.
      *
      * A short backlog and a distant release date is an ordinary case, and a band anchored on the

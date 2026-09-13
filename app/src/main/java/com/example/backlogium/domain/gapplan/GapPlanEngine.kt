@@ -90,9 +90,35 @@ object GapPlanEngine {
     }
 
     /**
+     * Replays a snapshot using the selection state it retained when it was created.
+     *
+     * Ordinary generations need only their seed. An exact fallback also needs the visible result it
+     * was conditioned not to repeat; keeping that state on the snapshot makes the fallback
+     * reproducible without relying on a ViewModel-local argument that no longer exists.
+     */
+    fun replay(
+        snapshot: GapPlanSnapshot,
+        inputs: GapPlanInputs,
+    ): Result<GapPlanSnapshot> {
+        val previousPickedAppIds = snapshot.rerollExclusionAppIds
+        if (previousPickedAppIds == null) {
+            return generate(snapshot.request, inputs, snapshot.seed)
+        }
+        return generateDifferentFrom(
+            request = snapshot.request,
+            inputs = inputs,
+            seed = snapshot.seed,
+            previousPickedAppIds = previousPickedAppIds,
+        ) ?: Result.failure(
+            IllegalStateException("A fallback snapshot no longer has a reachable alternate"),
+        )
+    }
+
+    /**
      * Generates a different reachable draw for a reroll, or null when the eligible pool cannot
-     * produce one. The selection search is exhaustive over the only choices that can preserve the
-     * previous visible set, so null is a real impossibility rather than an unlucky run of seeds.
+     * produce one. The selection sampler proves that impossibility from the only choices that can
+     * preserve the previous visible set, so null is a real impossibility rather than an unlucky run
+     * of seeds.
      */
     internal fun generateDifferentFrom(
         request: GapPlanRequest,
@@ -132,6 +158,7 @@ object GapPlanEngine {
                 picks = draw.picks,
                 coverage = eligibility.coverage,
                 canVary = draw.canVary,
+                rerollExclusionAppIds = previousPickedAppIds.toList(),
             ),
         )
     }

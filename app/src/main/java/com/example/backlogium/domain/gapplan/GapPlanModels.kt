@@ -285,8 +285,10 @@ data class GapPlanCoverage(
  *
  * [seed] is retained so the generation is reproducible: identical inputs and an identical seed
  * produce identical picks, which is what lets a shown result hold still while it is being
- * considered. Rebuilding draws a new seed, which is what makes the control a real reroll rather
- * than the guaranteed no-op it was when membership was fully determined by the inputs.
+ * considered. An exact fallback also retains its exclusion state in [rerollExclusionAppIds], since
+ * that state is part of the conditional draw. Rebuilding draws a new seed, which is what makes the
+ * control a real reroll rather than the guaranteed no-op it was when membership was fully
+ * determined by the inputs.
  *
  * [canVary] records whether any tier actually had a choice. Without it, a reroll over a pool too
  * small to produce a different set would look like a control the app had ignored.
@@ -298,6 +300,12 @@ data class GapPlanSnapshot(
     val picks: List<GapPlanPick>,
     val coverage: GapPlanCoverage,
     val canVary: Boolean,
+    /**
+     * The visible app ids an exact reroll was conditioned not to repeat, or null for an ordinary
+     * generation. A seed alone cannot replay that conditioning, so this transient state travels
+     * with the snapshot rather than being left only in the ViewModel call that created it.
+     */
+    val rerollExclusionAppIds: List<Long>? = null,
 ) {
     fun pick(intensity: PlanIntensity): GapPlanPick? =
         picks.firstOrNull { it.intensity == intensity }
