@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.gapplan
 
+import androidx.lifecycle.ViewModelStore
 import com.example.backlogium.data.repo.GameCategory
 import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.domain.GameSource
@@ -18,11 +19,11 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.TestScope
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -49,6 +50,8 @@ class GapPlanViewModelTest {
 
     private val dispatcher = StandardTestDispatcher()
     private lateinit var env: GapPlanTestEnvironment
+    private val viewModelStore = ViewModelStore()
+    private val viewModelKeys = AtomicInteger()
 
     @Before fun setUp() {
         Dispatchers.setMain(dispatcher)
@@ -64,13 +67,13 @@ class GapPlanViewModelTest {
         seedLibrary()
         env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
 
         assertFalse(viewModel.uiState.value.requiresManualBudget)
 
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null }
 
         val result = viewModel.uiState.value.result!!
         assertEquals(CapacityProvenance.PERSONAL_PACE, result.provenance)
@@ -87,10 +90,10 @@ class GapPlanViewModelTest {
         seedLibrary()
         env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         val picked = viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId }
         assertEquals(3, picked.size)
@@ -101,7 +104,7 @@ class GapPlanViewModelTest {
     @Test fun aLearningProfileRequiresManualHoursBeforeGenerationIsOffered() = runTest {
         seedLibrary()
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
 
         assertTrue(viewModel.uiState.value.requiresManualBudget)
 
@@ -121,7 +124,7 @@ class GapPlanViewModelTest {
         assertFalse("zero hours is not an answer", viewModel.uiState.value.canGenerate)
         viewModel.setManualTotalHours(20)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         val result = viewModel.uiState.value.result!!
         assertEquals(CapacityProvenance.MANUAL, result.provenance)
@@ -132,13 +135,12 @@ class GapPlanViewModelTest {
         seedLibrary()
         env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
 
         viewModel.setAnticipatedTitle("Sequel")
         viewModel.setTargetDate(TODAY.plusDays(2_000))
         assertFalse(viewModel.uiState.value.canGenerate)
         viewModel.generate()
-        advanceUntilIdle()
 
         assertNull(viewModel.uiState.value.validationError)
         assertNull(viewModel.uiState.value.result)
@@ -153,11 +155,11 @@ class GapPlanViewModelTest {
         env.addGame(PACE_GAME)
         env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
 
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         val result = viewModel.uiState.value.result!!
         assertEquals(listOf(1L), result.picks.mapNotNull { it.game?.appId })
@@ -176,11 +178,11 @@ class GapPlanViewModelTest {
         env.seedReliablePace(appId = PACE_GAME)
         // No game has an estimate, so nothing is eligible.
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
 
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         val result = viewModel.uiState.value.result!!
         assertNull(viewModel.uiState.value.validationError)
@@ -195,10 +197,10 @@ class GapPlanViewModelTest {
         seedLibrary()
         env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         val result = viewModel.uiState.value.result!!
         val relaxed = result.pick(PlanIntensity.RELAXED)!!
@@ -219,15 +221,15 @@ class GapPlanViewModelTest {
         seedLibrary()
         env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         val before = viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId }
 
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         val after = viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId }
         assertNotEquals(before, after)
@@ -239,15 +241,15 @@ class GapPlanViewModelTest {
         seedLibrary()
         env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel(seeds = repeatedSeeds(seed = 1L, count = 10))
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         val before = viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId }
 
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         val after = viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId }
         assertNotEquals(before, after)
@@ -278,7 +280,7 @@ class GapPlanViewModelTest {
                 }
             },
         )
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
         viewModel.uiState.first { it.result != null && !it.generating }
@@ -286,7 +288,7 @@ class GapPlanViewModelTest {
         assertEquals(3, calls.get())
 
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         assertEquals(
             "all three requests from the superseded pass must be cancelled",
@@ -313,14 +315,14 @@ class GapPlanViewModelTest {
         env.addGame(3)
         env.addHltb(3, mainStory = 4_700)
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
         val before = viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId }
 
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         val after = viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId }
         assertEquals(before, after)
@@ -337,10 +339,10 @@ class GapPlanViewModelTest {
         env.addGame(1)
         env.addHltb(1, mainStory = 600)
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         assertFalse(viewModel.uiState.value.rebuildDidNotVary)
         assertEquals(listOf(1L), viewModel.uiState.value.result!!.picks.mapNotNull { it.game?.appId })
@@ -351,10 +353,10 @@ class GapPlanViewModelTest {
         seedLibrary()
         env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         val before = viewModel.uiState.value.result!!.picks.map { it.game?.appId }
 
@@ -362,7 +364,7 @@ class GapPlanViewModelTest {
         env.addGame(99, name = "Newcomer")
         env.addHltb(99, mainStory = 120)
         env.addReview(99, "Overwhelmingly Positive", positive = 100_000, negative = 100)
-        advanceUntilIdle()
+        env.feed.snapshots.first { snap -> snap.inputs.games.any { it.appId == 99L } }
 
         assertEquals(before, viewModel.uiState.value.result!!.picks.map { it.game?.appId })
     }
@@ -375,10 +377,10 @@ class GapPlanViewModelTest {
         seedLibrary()
         env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         val before = viewModel.uiState.value.result!!
         val picks = before.picks.mapNotNull { it.game?.appId }
@@ -402,17 +404,17 @@ class GapPlanViewModelTest {
             env.addHltb(appId, mainStory = 600)
         }
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         val reviewed = viewModel.uiState.value.result!!.pick(PlanIntensity.FULL)!!.game!!
         viewModel.reviewSave(PlanIntensity.FULL)
         val confirmation = viewModel.uiState.value.confirmation!!
 
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         assertNotEquals(
             reviewed.appId,
@@ -430,10 +432,10 @@ class GapPlanViewModelTest {
         seedLibrary()
         env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         viewModel.reviewSave(PlanIntensity.FULL)
         val confirmation = viewModel.uiState.value.confirmation!!
@@ -446,7 +448,6 @@ class GapPlanViewModelTest {
         )
 
         viewModel.confirmSave()
-        advanceUntilIdle()
 
         // Room resumes on its own executor, so the scheduler going idle does not mean the save
         // finished. `runTest` waits in real time while the test body is suspended on the state.
@@ -467,10 +468,10 @@ class GapPlanViewModelTest {
         env.addGame(1)
         env.addHltb(1, mainStory = 600)
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         // One game, so the widest tier claims it and the other two are empty.
         assertTrue(viewModel.uiState.value.result!!.pick(PlanIntensity.RELAXED)!!.isEmpty)
@@ -492,16 +493,15 @@ class GapPlanViewModelTest {
                 liveCounts = GapPlanLiveCounts(CurrentPlayerCounts { null }),
                 collectionCreator = failing.collectionCreator,
                 seeds = sequentialSeeds(),
-            )
-            advanceUntilIdle()
+            ).trackForTest()
+            viewModel.uiState.first { !it.loading }
             fillSetup(viewModel)
             viewModel.generate()
-            advanceUntilIdle()
+            viewModel.uiState.first { it.result != null && !it.generating }
             val result = viewModel.uiState.value.result!!
 
             viewModel.reviewSave(PlanIntensity.FULL)
             viewModel.confirmSave()
-            advanceUntilIdle()
             viewModel.uiState.first { it.saveError }
 
             assertTrue(viewModel.uiState.value.saveError)
@@ -513,6 +513,8 @@ class GapPlanViewModelTest {
             viewModel.clearSaveError()
             assertFalse(viewModel.uiState.value.saveError)
         } finally {
+            // Before the database closes: the feed collector outlives the block otherwise.
+            viewModelStore.clear()
             failing.close()
         }
     }
@@ -525,10 +527,10 @@ class GapPlanViewModelTest {
         val viewModel = viewModel(
             counts = CurrentPlayerCounts { requested.incrementAndGet(); 100 },
         )
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         assertEquals(0, requested.get())
         assertTrue(
@@ -549,10 +551,15 @@ class GapPlanViewModelTest {
         env.addGame(PACE_GAME)
         env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel(counts = CurrentPlayerCounts { 4_321 })
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
+        // The live count enriches the published result in a second pass of its own.
+        viewModel.uiState.first { state ->
+            state.result?.pick(PlanIntensity.FULL)?.game?.facts.orEmpty()
+                .any { it is GapPlanFact.PlayingNow }
+        }
 
         val game = viewModel.uiState.value.result!!.pick(PlanIntensity.FULL)!!.game!!
         assertEquals(1L, game.appId)
@@ -569,10 +576,10 @@ class GapPlanViewModelTest {
         env.addGame(PACE_GAME)
         env.seedReliablePace(appId = PACE_GAME)
         val viewModel = viewModel()
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.loading }
         fillSetup(viewModel)
         viewModel.generate()
-        advanceUntilIdle()
+        viewModel.uiState.first { it.result != null && !it.generating }
 
         val game = viewModel.uiState.value.result!!.pick(PlanIntensity.FULL)!!.game!!
         assertTrue(game.isFamilyShared)
@@ -609,7 +616,7 @@ class GapPlanViewModelTest {
         liveCounts = GapPlanLiveCounts(counts),
         collectionCreator = env.collectionCreator,
         seeds = seeds,
-    )
+    ).trackForTest()
 
     /**
      * Seeds 1, 2, 3, … rather than real randomness.
@@ -629,6 +636,27 @@ class GapPlanViewModelTest {
         val next = AtomicInteger()
         return GapPlanSeeds { supplied.getOrElse(next.getAndIncrement()) { seed } }
     }
+
+    /**
+     * Hand a ViewModel to a store, so a test can end its scope the way the framework does.
+     *
+     * The init block collects the live date feed, which never completes. A ViewModel left running
+     * keeps a delayed event queued on the test scheduler, and `runTest`'s end-of-test drain then
+     * never reaches idle -- the test hangs rather than fails. [ViewModelStore.clear] is the public
+     * route to `ViewModel.clear`, which is itself internal and name-mangled.
+     */
+    private fun GapPlanViewModel.trackForTest(): GapPlanViewModel =
+        also { viewModelStore.put("gap-plan-${viewModelKeys.incrementAndGet()}", it) }
+
+    /** Use the test scheduler without advancing through the live date collector's future delays. */
+    private fun runTest(block: suspend TestScope.() -> Unit) =
+        kotlinx.coroutines.test.runTest {
+            try {
+                block()
+            } finally {
+                viewModelStore.clear()
+            }
+        }
 
     private companion object {
         /** An owned game used only to establish a pace, never to be suggested. */

@@ -24,6 +24,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -70,15 +71,16 @@ class GapPlanViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            // One read, only to learn whether a manual budget is required. Generation reads the
-            // feed again, so picks are never drawn from a stale snapshot.
-            val seed = feed.snapshots.first()
-            _uiState.update {
-                it.copy(
-                    loading = false,
-                    today = seed.inputs.today,
-                    requiresManualBudget = !seed.inputs.paceProfile.isReliable,
-                )
+            // Keep only the setup gate live. The generated result is a separate snapshot and must
+            // not move when the feed re-emits for a date boundary or a pace-confidence change.
+            feed.snapshots.collect { current ->
+                _uiState.update {
+                    it.copy(
+                        loading = false,
+                        today = current.inputs.today,
+                        requiresManualBudget = !current.inputs.paceProfile.isReliable,
+                    )
+                }
             }
         }
     }
@@ -130,7 +132,15 @@ class GapPlanViewModel @Inject constructor(
         generationJob = viewModelScope.launch {
             val fresh = feed.snapshots.first()
             val previous = snapshot
-            val drawn = drawDistinctFrom(previous, request, fresh.inputs)
+            // A changed setup is a new request, not a reroll. Only an unchanged request has the
+            // explicit SHALL-differ guarantee; edited inputs may legitimately produce the same
+            // visible games.
+            val reroll = previous != null && previous.request == request
+            val drawn = drawDistinctFrom(
+                previous = previous.takeIf { reroll },
+                request = request,
+                inputs = fresh.inputs,
+            )
             val plan = drawn.getOrElse { error ->
                 ownership.ifCurrent(id) {
                     _uiState.update {
@@ -146,7 +156,7 @@ class GapPlanViewModel @Inject constructor(
 
             // A rebuild that returned its own previous picks has to say so; a first build has no
             // previous set to differ from and never reports it.
-            val didNotVary = previous != null && plan.pickedAppIds == previous.pickedAppIds
+            val didNotVary = reroll && plan.pickedAppIds == previous?.pickedAppIds
             val published = ownership.ifCurrent(id) { publish(plan, fresh.artwork, didNotVary) }
             if (!published) return@launch
 

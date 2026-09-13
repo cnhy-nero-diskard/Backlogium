@@ -362,6 +362,35 @@ class GapPlanSelectionTest {
     }
 
     /**
+     * The anti-repeat fallback is uniform over the alternate complete draws, not biased toward a
+     * candidate absent from the previous result.
+     *
+     * Four equal-length games make every tier's near set identical. After excluding the one
+     * repeated ordered trio, each candidate must still be reachable in the Full slot; the broad
+     * frequency bounds catch a fallback that always puts the fourth game there.
+     */
+    @Test fun antiRepeatFallbackSamplesAllFourEqualCandidatesAcrossManySeeds() {
+        val pool = (1L..4L).map { candidate(it, remainingMinutes = 10_000) }
+        val previous = listOf(1L, 2L, 3L)
+
+        val fullIds = (1L..2_000L).map { seed ->
+            GapPlanSelection.drawDifferent(
+                pool = pool,
+                fullCapacityMinutes = 10_000,
+                seed = seed,
+                previousPickedAppIds = previous,
+            )!!.picks.single { it.intensity == PlanIntensity.FULL }.game!!.appId
+        }
+        val counts = fullIds.groupingBy { it }.eachCount()
+
+        assertEquals(setOf(1L, 2L, 3L, 4L), counts.keys)
+        assertTrue(
+            "uniform fallback counts were $counts",
+            counts.values.all { it in 300..700 },
+        )
+    }
+
+    /**
      * The band is anchored on the longest *fitting* candidate, not on the share itself.
      *
      * A short backlog and a distant release date is an ordinary case, and a band anchored on the

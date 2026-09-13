@@ -95,10 +95,14 @@ object GapPlanSelection {
 
     /**
      * Finds a reachable draw whose visible app ids differ from [previousPickedAppIds], or returns
-     * null when every reachable draw is the same. This is an exact search, not another series of
-     * random attempts: once a candidate outside the previous set is chosen, the completed draw is
-     * necessarily different, and if none is available a branch can contain only the at most three
-     * previous ids. That makes the no-alternate answer provable without making a reroll unbounded.
+     * null when every reachable draw is the same.
+     *
+     * The search visits every complete branch once and reservoir-samples the alternatives, so the
+     * fallback is uniform over reachable draws after removing the exact repeated result. Choosing
+     * an outside candidate first is not equivalent: it gives every branch containing that candidate
+     * priority and changes the distribution the ordinary draw defines. The depth is fixed at three
+     * tiers, so the search is bounded in memory and proves the no-alternate answer without random
+     * retries.
      */
     internal fun drawDifferent(
         pool: List<GapPlanCandidate>,
@@ -106,14 +110,17 @@ object GapPlanSelection {
         seed: Long,
         previousPickedAppIds: List<Long>,
     ): Draw? {
-        val previousIds = previousPickedAppIds.toSet()
         val random = Random(seed)
         val orderedPool = pool.sortedBy { it.appId }
+        var alternate: Draw? = null
+        var alternateCount = 0L
 
-        fun rotate(candidates: List<GapPlanCandidate>): List<GapPlanCandidate> {
-            if (candidates.isEmpty()) return candidates
-            val offset = random.nextInt(candidates.size)
-            return candidates.drop(offset) + candidates.take(offset)
+        fun consider(draw: Draw) {
+            if (draw.picks.mapNotNull { it.game?.appId } == previousPickedAppIds) return
+            alternateCount++
+            if (random.nextLong(alternateCount) == 0L) {
+                alternate = draw
+            }
         }
 
         fun search(
@@ -121,27 +128,20 @@ object GapPlanSelection {
             remaining: List<GapPlanCandidate>,
             drawn: Map<PlanIntensity, GapPlanPick>,
             canVary: Boolean,
-        ): Draw? {
+        ) {
             if (tierIndex == TIER_ORDER.size) {
                 val picks = orderByCommitment(PlanIntensity.entries.map { drawn.getValue(it) })
-                return if (picks.mapNotNull { it.game?.appId } != previousPickedAppIds) {
-                    Draw(picks = picks, canVary = canVary)
-                } else {
-                    null
-                }
+                consider(Draw(picks = picks, canVary = canVary))
+                return
             }
 
             val intensity = TIER_ORDER[tierIndex]
             val budget = intensity.budgetMinutes(fullCapacityMinutes)
             val near = nearest(remaining, budget)
-            val (outsidePrevious, insidePrevious) = near.partition { it.appId !in previousIds }
             val choices: List<GapPlanCandidate?> = if (near.isEmpty()) {
                 listOf(null)
             } else {
-                // Outside candidates are tried first because selecting one proves the final set
-                // differs; the small inside branch is what establishes that no such candidate is
-                // reachable after an earlier choice changes the remaining pool.
-                rotate(outsidePrevious) + rotate(insidePrevious)
+                near
             }
 
             for (chosen in choices) {
@@ -151,23 +151,22 @@ object GapPlanSelection {
                     budgetMinutes = budget,
                     game = chosen,
                 )
-                val result = search(
+                search(
                     tierIndex = tierIndex + 1,
                     remaining = nextRemaining,
                     drawn = drawn + (intensity to pick),
                     canVary = canVary || near.size > 1,
                 )
-                if (result != null) return result
             }
-            return null
         }
 
-        return search(
+        search(
             tierIndex = 0,
             remaining = orderedPool,
             drawn = emptyMap(),
             canVary = false,
         )
+        return alternate
     }
 
     /**

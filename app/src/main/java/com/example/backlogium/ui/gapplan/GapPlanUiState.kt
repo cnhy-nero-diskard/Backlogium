@@ -129,7 +129,8 @@ data class GapPlanUiState(
     val canGenerate: Boolean
         get() {
             val targetDate = setup.targetDate
-            return !generating &&
+            return !loading &&
+                !generating &&
                 setup.anticipatedTitle.isNotBlank() &&
                 targetDate != null &&
                 targetDate.isAfter(today) &&
