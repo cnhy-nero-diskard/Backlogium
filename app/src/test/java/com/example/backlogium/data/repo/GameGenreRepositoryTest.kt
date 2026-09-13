@@ -263,6 +263,61 @@ class GameGenreRepositoryTest {
     }
 
     @Test
+    fun aRefusedCategoryRefreshPreservesFreshGenresAndAppType() = runTest {
+        gameDao.upsert(game(1))
+        val known = listOf(GameGenre("1", "Action"), GameGenre("23", "Indie"))
+        val checkedAt = NOW - 1
+        // A fresh pre-category row with facts that remain valid even when this category check is refused.
+        cacheDao.upsert(
+            GameGenreCache(
+                appId = 1,
+                genresJson = GameGenreCodec.encode(known),
+                checkedAt = checkedAt,
+                appType = "game",
+                categoriesJson = null,
+            ),
+        )
+
+        val batch = repository(FakeStoreApi(refused = setOf(1L))).enrichNextBatch()
+
+        assertEquals(1, batch.attempted)
+        val row = cacheDao.observeAll().first().single()
+        assertEquals(known, GameGenreCodec.decodeOrEmpty(row.genresJson))
+        assertEquals("game", row.appType)
+        assertEquals(checkedAt, row.checkedAt)
+        assertNull(row.categoriesJson)
+        assertEquals(NOW, row.categoriesDeclinedAt)
+    }
+
+    @Test
+    fun aRefusedStaleRefreshPreservesKnownMetadataAndEntersCooldown() = runTest {
+        gameDao.upsert(game(1))
+        val knownGenres = listOf(GameGenre("1", "Action"))
+        val knownCategories = listOf(GameCategory(1, "Multi-player"))
+        val checkedAt = NOW - GameGenreRepository.FRESHNESS_WINDOW_MILLIS - 1
+        cacheDao.upsert(
+            GameGenreCache(
+                appId = 1,
+                genresJson = GameGenreCodec.encode(knownGenres),
+                checkedAt = checkedAt,
+                appType = "game",
+                categoriesJson = GameCategoryCodec.encode(knownCategories),
+            ),
+        )
+
+        val batch = repository(FakeStoreApi(refused = setOf(1L))).enrichNextBatch()
+
+        assertEquals(1, batch.attempted)
+        assertFalse(batch.hasMoreEligible)
+        val row = cacheDao.observeAll().first().single()
+        assertEquals(knownGenres, GameGenreCodec.decodeOrEmpty(row.genresJson))
+        assertEquals("game", row.appType)
+        assertEquals(knownCategories, GameCategoryCodec.decodeOrNull(row.categoriesJson))
+        assertEquals(checkedAt, row.checkedAt)
+        assertEquals(NOW, row.categoriesDeclinedAt)
+    }
+
+    @Test
     fun aDefinitiveAnswerWithNoCategoriesIsStoredAsAdvertisesNone() = runTest {
         gameDao.upsert(game(1))
         val store = FakeStoreApi(genres = mapOf(1L to listOf(GameGenre("1", "Action"))))

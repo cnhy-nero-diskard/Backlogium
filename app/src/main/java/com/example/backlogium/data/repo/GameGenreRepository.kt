@@ -81,9 +81,9 @@ class GameGenreRepository @Inject constructor(
     ) = write(appId, genres, appType = "game", categories = categories)
 
     /**
-     * [categories] is written through verbatim, null included. A refusal gets a durable cooldown
-     * marker so it does not consume the next enrichment continuation forever, while an upgraded
-     * row with no marker remains eligible immediately for its first category check.
+     * A refused category lookup carries no new genre, type, or category facts. Preserve the prior
+     * cache in that case and change only the category cooldown marker, while an upgraded row with
+     * no marker remains eligible immediately for its first category check.
      */
     private suspend fun write(
         appId: Long,
@@ -92,13 +92,15 @@ class GameGenreRepository @Inject constructor(
         categories: List<GameCategory>?,
     ) {
         val now = time.nowMillis()
+        val previous = if (categories == null) cacheDao.findByAppId(appId) else null
+        val categoryPayload = categories?.let(GameCategoryCodec::encode) ?: previous?.categoriesJson
         cacheDao.upsert(
             GameGenreCache(
                 appId = appId,
-                genresJson = GameGenreCodec.encode(genres),
-                checkedAt = now,
-                appType = appType,
-                categoriesJson = categories?.let(GameCategoryCodec::encode),
+                genresJson = previous?.genresJson ?: GameGenreCodec.encode(genres),
+                checkedAt = previous?.checkedAt ?: now,
+                appType = previous?.appType ?: appType,
+                categoriesJson = categoryPayload,
                 categoriesDeclinedAt = now.takeIf { categories == null },
             ),
         )

@@ -18,6 +18,9 @@ interface GameGenreCacheDao {
     @Query("SELECT * FROM game_genre_cache")
     fun observeAll(): Flow<List<GameGenreCache>>
 
+    @Query("SELECT * FROM game_genre_cache WHERE appId = :appId LIMIT 1")
+    suspend fun findByAppId(appId: Long): GameGenreCache?
+
     /**
      * Missing rows come first, then the oldest stale rows, so a new library backfills promptly.
      * Hidden games are excluded: enrichment is a request budget spent on games the player can see
@@ -29,6 +32,8 @@ interface GameGenreCacheDao {
      * no refusal marker is either an upgraded row that has never been checked for the new data or a
      * refusal whose cooldown has expired. The marker keeps a permanently refused app from consuming
      * every continuation while preserving null as the honest unknown category value.
+     * A stale row with a known category payload is held out by the same marker after a refused
+     * refresh, so preserving its last-known facts does not cause an immediate retry loop.
      */
     @Query(
         "SELECT games.appId FROM games " +
@@ -39,7 +44,9 @@ interface GameGenreCacheDao {
              "AND (game_genre_cache.categoriesDeclinedAt IS NULL " +
              "OR game_genre_cache.categoriesDeclinedAt < :staleBefore)) " +
              "OR (game_genre_cache.categoriesJson IS NOT NULL " +
-             "AND game_genre_cache.checkedAt < :staleBefore)) " +
+             "AND game_genre_cache.checkedAt < :staleBefore " +
+             "AND (game_genre_cache.categoriesDeclinedAt IS NULL " +
+             "OR game_genre_cache.categoriesDeclinedAt < :staleBefore))) " +
             "ORDER BY CASE WHEN game_genre_cache.appId IS NULL " +
             "OR game_genre_cache.categoriesJson IS NULL THEN 0 ELSE 1 END, " +
             "game_genre_cache.checkedAt ASC LIMIT :limit",
@@ -55,7 +62,9 @@ interface GameGenreCacheDao {
              "AND (game_genre_cache.categoriesDeclinedAt IS NULL " +
              "OR game_genre_cache.categoriesDeclinedAt < :staleBefore)) " +
              "OR (game_genre_cache.categoriesJson IS NOT NULL " +
-             "AND game_genre_cache.checkedAt < :staleBefore))",
+             "AND game_genre_cache.checkedAt < :staleBefore " +
+             "AND (game_genre_cache.categoriesDeclinedAt IS NULL " +
+             "OR game_genre_cache.categoriesDeclinedAt < :staleBefore)))",
     )
     suspend fun eligibleCount(staleBefore: Long): Int
 

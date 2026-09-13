@@ -102,7 +102,7 @@ internal class GapPlanTestEnvironment(
             time = time,
         ),
         sessionRepository = sessions,
-        paceRepository = PersonalPaceRepository(sessions, time),
+        paceRepository = PersonalPaceRepository(sessions, CurrentDateProvider(time)),
         genreRepository = genreRepository,
         reviewRepository = SteamReviewRepository(
             cacheDao = db.steamReviewCacheDao(),

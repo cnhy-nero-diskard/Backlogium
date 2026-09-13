@@ -53,6 +53,7 @@ internal class FakeStoreCacheDao(
     override suspend fun upsert(cache: GameGenreCache) = Unit
     override suspend fun deleteAll() = Unit
     override fun observeAll(): Flow<List<GameGenreCache>> = flowOf(emptyList())
+    override suspend fun findByAppId(appId: Long): GameGenreCache? = null
     override suspend fun eligibleAppIds(staleBefore: Long, limit: Int): List<Long> = emptyList()
     override suspend fun eligibleCount(staleBefore: Long): Int = 0
     override fun observeNonGameCandidates(): Flow<List<NonGameCandidateRow>> = flowOf(candidates)
