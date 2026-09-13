@@ -328,6 +328,29 @@ class GapPlanSelectionTest {
         assertEquals(3, draw.picks.count { !it.isEmpty })
     }
 
+    /** Global eligibility does not make a candidate reachable by the tier-nearness draw. */
+    @Test fun aGloballyEligibleButUnreachableCandidateDoesNotMakeRerollPossible() {
+        val pool = listOf(
+            candidate(1, 10_000),
+            candidate(2, 8_500),
+            candidate(3, 7_000),
+            // Fits Full, but is outside every tier's near set before that tier is drawn.
+            candidate(4, 100),
+        )
+        val previous = GapPlanSelection.draw(pool, 10_000, seed = 1L)
+            .picks.mapNotNull { it.game?.appId }
+
+        assertEquals(listOf(3L, 2L, 1L), previous)
+        assertNull(
+            GapPlanSelection.drawDifferent(
+                pool = pool,
+                fullCapacityMinutes = 10_000,
+                seed = 2L,
+                previousPickedAppIds = previous,
+            ),
+        )
+    }
+
     @Test fun aPoolWithAlternativesReportsThatItCanVary() {
         val pool = (1L..40L).map { candidate(it, it.toInt() * 250) }
 

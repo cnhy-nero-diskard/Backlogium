@@ -120,9 +120,13 @@ games whose remaining time cannot fit even the Full share. Remaining work SHALL 
 - **THEN** the game is excluded as already complete for this request
 
 ### Requirement: Unweighted selection among eligible candidates
-Within the candidates eligible for a tier, the system SHALL select uniformly at random. It SHALL NOT
-rank or weight candidates by Steam review quality, genre affinity, completion momentum, or any
-composite of them, and SHALL NOT present a selection score to the player.
+During an ordinary generation, the system SHALL select uniformly at random within the candidates
+eligible for a tier. It SHALL NOT rank or weight candidates by Steam review quality, genre affinity,
+completion momentum, or any composite of them, and SHALL NOT present a selection score to the player.
+
+An exact-difference reroll fallback SHALL sample that ordinary draw distribution conditioned on a
+different visible result. Its per-tier choices therefore MAY be weighted by the probability that the
+remaining tiers do not reproduce the previous result, and need not be uniform within a tier.
 
 Those signals SHALL instead be presented as facts about a pick, so the player decides whether a
 suggestion is worth their time. A missing rating or genre signal SHALL remain distinguishable from a
@@ -144,18 +148,19 @@ poor one, SHALL NOT make a fitting game ineligible, and SHALL NOT be rendered as
   stated on a pick that matches it
 
 ### Requirement: Rerollable picks with a stable shown result
-Each generation SHALL draw a seed. Identical request inputs, identical local state, and an identical
-seed SHALL produce identical picks. When an exact-difference fallback is used for a reroll, the
-previous visible app-id sequence SHALL be retained as part of the snapshot's replay state, and
-replaying that snapshot SHALL use the retained sequence together with its seed. An explicit reroll
-SHALL draw a new seed.
+Each generation SHALL draw a seed. An ordinary generation with identical request inputs, identical
+local state, and an identical seed SHALL produce identical picks. When an exact-difference fallback
+is used for a reroll, the previous visible app-id sequence SHALL be retained as part of the snapshot's
+replay state, and replaying that snapshot with identical request inputs, identical local state, seed,
+and retained sequence SHALL reproduce its picks. An explicit reroll SHALL draw a new seed.
 
 A shown result SHALL remain stable until the player rerolls or edits it, so a suggestion can be
 considered and committed to rather than changing underfoot. A reroll SHALL produce a visibly
 different set of picks whenever the eligible pool is large enough to allow one.
 
 #### Scenario: Reroll changes the picks
-- **WHEN** the player rerolls and more eligible candidates exist than the three already shown
+- **WHEN** the player rerolls and another visible draw is reachable under the tier-nearness and
+  cross-tier distinctness rules
 - **THEN** the picks change, rather than repeating the previous set
 
 #### Scenario: The shown result holds still
@@ -163,8 +168,16 @@ different set of picks whenever the eligible pool is large enough to allow one.
 - **THEN** the displayed picks remain exactly as shown until the player rerolls
 
 #### Scenario: An exact fallback is replayable
-- **WHEN** a reroll uses the exact-difference fallback and the same request inputs are replayed
+- **WHEN** a reroll uses the exact-difference fallback and the same request inputs, local state, seed,
+  and retained previous visible app-id sequence are replayed
 - **THEN** the retained previous visible app-id sequence and seed reproduce the fallback's picks
+
+#### Scenario: Global eligibility does not imply a reachable alternate
+- **WHEN** the eligible pool has remaining work of 10,000, 8,500, 7,000, and 100 minutes at full
+  capacity of 10,000 minutes, and the first three are the only games reachable by the tier-nearness
+  and cross-tier distinctness rules
+- **THEN** the globally eligible 100-minute game does not make a different visible draw reachable,
+  so reroll reports no alternate
 
 #### Scenario: A pool too small to vary
 - **WHEN** the eligible pool cannot produce a different set
