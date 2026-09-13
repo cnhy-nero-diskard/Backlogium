@@ -59,6 +59,7 @@ interface CommitBarrier {
 export class FakeFirestore {
   readonly committedWrites: RecordedWrite[] = [];
   transactionAttempts = 0;
+  readCount = 0;
 
   private readonly documents = new Map<string, VersionedDocument>();
   private readBarrier: ReadBarrier | undefined;
@@ -169,6 +170,7 @@ export class FakeFirestore {
   }
 
   async read(path: string): Promise<DocumentSnapshot> {
+    this.readCount += 1;
     const stored = this.documents.get(path);
     const snapshot: DocumentSnapshot = {
       exists: stored !== undefined,

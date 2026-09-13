@@ -14,32 +14,32 @@
 
 ## 2. Coverage recording
 
-- [ ] 2.1 On a material change, write `prevLastObservedAt` onto the appended transition from the
+- [x] 2.1 On a material change, write `prevLastObservedAt` onto the appended transition from the
       `previous` snapshot the transaction has already read, omitting the field entirely when no
       prior state exists. Verify by unit test that a transition following a stored state carries the
       stored watermark, and that the first transition for a player omits the field rather than
       writing `null` or `0`.
-- [ ] 2.2 Confirm the value is read inside the existing transaction and that no second read is
+- [x] 2.2 Confirm the value is read inside the existing transaction and that no second read is
       introduced. Verify against `FakeFirestore` that one invocation performs the same number of
       reads as before this change.
-- [ ] 2.3 Confirm the unchanged-poll path is untouched — no transition appended, `since` and
+- [x] 2.3 Confirm the unchanged-poll path is untouched — no transition appended, `since` and
       `updatedAt` retained, `lastObservedAt` advanced. Verify the existing unchanged-poll tests still
       pass without modification.
 
 ## 3. Spec coverage in tests
 
-- [ ] 3.1 Add a test for continuous observation: successive same-game polls followed by a
+- [x] 3.1 Add a test for continuous observation: successive same-game polls followed by a
       different-game poll produce a transition whose `prevLastObservedAt` is no earlier than the
       preceding poll.
-- [ ] 3.2 Add a test for a lapse: a stored state whose watermark is well before the next successful
+- [x] 3.2 Add a test for a lapse: a stored state whose watermark is well before the next successful
       observation produces a transition recording that earlier watermark, so the unobserved tail is
       identifiable.
-- [ ] 3.3 Add a test asserting the transition document contains no duration, elapsed time, gap
+- [x] 3.3 Add a test asserting the transition document contains no duration, elapsed time, gap
       length, or coverage proportion — only observation timestamps — so the *Coverage is recorded,
       never derived* scenario fails a build rather than a review.
-- [ ] 3.4 Add a test asserting the current-state document's version is unaffected by the transition
+- [x] 3.4 Add a test asserting the current-state document's version is unaffected by the transition
       shape change, covering the *An unaltered shape keeps its version* scenario.
-- [ ] 3.5 Run `npm --prefix functions test` and confirm every scenario in
+- [x] 3.5 Run `npm --prefix functions test` and confirm every scenario in
       `specs/cloud-presence-poller/spec.md` has a corresponding passing test.
 
 ## 4. Log hygiene

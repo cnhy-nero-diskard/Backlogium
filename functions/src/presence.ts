@@ -123,6 +123,7 @@ export async function recordObservation(
     const previous = snapshot.exists
       ? (snapshot.data() as StoredState)
       : undefined;
+    const previousLastObservedAt = previous?.lastObservedAt;
 
     if (isStaleOrEqualObservation(previous, observation)) {
       // Never let an older or equal observation overwrite the newest state.
@@ -161,6 +162,10 @@ export async function recordObservation(
     transaction.set(presenceRef, {
       v: PRESENCE_TRANSITION_SCHEMA_VERSION,
       t: observedAt,
+      // The first transition has no predecessor to provide coverage for.
+      ...(previousLastObservedAt === undefined
+        ? {}
+        : { prevLastObservedAt: previousLastObservedAt }),
       personastate: observation.personastate,
       gameid: observation.gameid,
       gameName: observation.gameName,

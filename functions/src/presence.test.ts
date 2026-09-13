@@ -66,6 +66,63 @@ describe("presence poller", () => {
     expect(firestore.committedWrites[0].data.gameName).toBe("Game 440");
   });
 
+  it("same-game poll retains since and updatedAt while advancing the watermark", async () => {
+    const since = { date: new Date("2026-08-12T00:00:00.000Z") };
+    const updatedAt = { date: new Date("2026-08-13T00:00:00.000Z") };
+    const next = observation("440", "2026-08-14T00:00:00.000Z");
+    firestore.seed("players/test-steam-id", {
+      gameid: "440",
+      personastate: 1,
+      since,
+      updatedAt,
+      lastObservedAt: { date: new Date("2026-08-13T00:00:00.000Z") },
+    });
+
+    await expect(recordObservation("test-steam-id", next)).resolves.toBe("unchanged");
+
+    expect(firestore.committedWrites).toHaveLength(1);
+    expect(firestore.committedWrites[0].data.since).toBe(since);
+    expect(firestore.committedWrites[0].data.updatedAt).toBe(updatedAt);
+    expect(
+      (firestore.committedWrites[0].data.lastObservedAt as { date: Date }).date,
+    ).toEqual(next.t);
+    expect(
+      firestore.committedWrites.filter((write) =>
+        write.path.startsWith("players/test-steam-id/presence/"),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("omits predecessor coverage on the first transition", async () => {
+    const next = observation("440", "2026-08-14T00:00:00.000Z");
+
+    await expect(recordObservation("test-steam-id", next)).resolves.toBe("written");
+
+    const presenceWrite = firestore.committedWrites.find((write) =>
+      write.path.startsWith("players/test-steam-id/presence/"),
+    );
+    expect(presenceWrite?.data).not.toHaveProperty("prevLastObservedAt");
+    expect(presenceWrite?.data.v).toBe(2);
+  });
+
+  it("uses the existing transaction read for predecessor coverage", async () => {
+    const previousWatermark = { date: new Date("2026-08-13T00:00:00.000Z") };
+    firestore.seed("players/test-steam-id", {
+      gameid: "440",
+      lastObservedAt: previousWatermark,
+    });
+
+    await expect(
+      recordObservation("test-steam-id", observation("570")),
+    ).resolves.toBe("written");
+
+    expect(firestore.readCount).toBe(1);
+    const presenceWrite = firestore.committedWrites.find((write) =>
+      write.path.startsWith("players/test-steam-id/presence/"),
+    );
+    expect(presenceWrite?.data.prevLastObservedAt).toBe(previousWatermark);
+  });
+
   it.each([
     ["stale", "2026-08-14T00:59:59.000Z"],
     ["equal", "2026-08-14T01:00:00.000Z"],
@@ -148,6 +205,101 @@ describe("presence poller", () => {
     expect((playerWrite?.data.since as { date: Date }).date).toEqual(next.t);
     expect(presenceWrite?.data.gameid).toBe("570");
     expect((presenceWrite?.data.t as { date: Date }).date).toEqual(next.t);
+  });
+
+  it("records the preceding same-game poll as continuous coverage", async () => {
+    firestore.seed("players/test-steam-id", {
+      gameid: "440",
+      personastate: 1,
+      lastObservedAt: { date: new Date("2026-08-14T00:00:00.000Z") },
+    });
+    const precedingPoll = observation("440", "2026-08-14T00:01:00.000Z");
+    const latestSameGamePoll = observation("440", "2026-08-14T00:02:00.000Z");
+    const transitionPoll = observation("570", "2026-08-14T00:03:00.000Z");
+
+    await recordObservation("test-steam-id", precedingPoll);
+    await recordObservation("test-steam-id", latestSameGamePoll);
+    await expect(
+      recordObservation("test-steam-id", transitionPoll),
+    ).resolves.toBe("written");
+
+    const presenceWrite = firestore.committedWrites.find((write) =>
+      write.path.startsWith("players/test-steam-id/presence/"),
+    );
+    const previousWatermark = (
+      presenceWrite?.data.prevLastObservedAt as { date: Date }
+    ).date;
+    expect(previousWatermark).toEqual(latestSameGamePoll.t);
+    expect(previousWatermark.getTime()).toBeGreaterThanOrEqual(
+      precedingPoll.t.getTime(),
+    );
+  });
+
+  it("records an earlier watermark when observation lapsed before a change", async () => {
+    const previousWatermark = { date: new Date("2026-08-13T00:00:00.000Z") };
+    const transitionPoll = observation("570", "2026-08-14T03:00:00.000Z");
+    firestore.seed("players/test-steam-id", {
+      gameid: "440",
+      personastate: 1,
+      lastObservedAt: previousWatermark,
+    });
+
+    await expect(
+      recordObservation("test-steam-id", transitionPoll),
+    ).resolves.toBe("written");
+
+    const presenceWrite = firestore.committedWrites.find((write) =>
+      write.path.startsWith("players/test-steam-id/presence/"),
+    );
+    const recordedWatermark = (
+      presenceWrite?.data.prevLastObservedAt as { date: Date }
+    ).date;
+    expect(recordedWatermark).toEqual(previousWatermark.date);
+    expect(recordedWatermark.getTime()).toBeLessThan(transitionPoll.t.getTime());
+  });
+
+  it("records only observation timestamps on a transition", async () => {
+    const previousWatermark = { date: new Date("2026-08-13T00:00:00.000Z") };
+    const next = observation("570", "2026-08-14T01:02:03.000Z");
+    firestore.seed("players/test-steam-id", {
+      gameid: "440",
+      personastate: 1,
+      lastObservedAt: previousWatermark,
+    });
+
+    await recordObservation("test-steam-id", next);
+
+    const presenceWrite = firestore.committedWrites.find((write) =>
+      write.path.startsWith("players/test-steam-id/presence/"),
+    );
+    expect(presenceWrite?.data).toEqual({
+      v: 2,
+      t: { date: next.t },
+      prevLastObservedAt: previousWatermark,
+      personastate: next.personastate,
+      gameid: next.gameid,
+      gameName: next.gameName,
+    });
+  });
+
+  it("keeps the current-state version at one when the transition version advances", async () => {
+    const next = observation("570", "2026-08-14T01:02:03.000Z");
+    firestore.seed("players/test-steam-id", {
+      gameid: "440",
+      personastate: 1,
+      lastObservedAt: { date: new Date("2026-08-14T01:00:00.000Z") },
+    });
+
+    await recordObservation("test-steam-id", next);
+
+    const playerWrite = firestore.committedWrites.find(
+      (write) => write.path === "players/test-steam-id",
+    );
+    const presenceWrite = firestore.committedWrites.find((write) =>
+      write.path.startsWith("players/test-steam-id/presence/"),
+    );
+    expect(playerWrite?.data.v).toBe(1);
+    expect(presenceWrite?.data.v).toBe(2);
   });
 
   it("game-to-offline records a transition", async () => {
