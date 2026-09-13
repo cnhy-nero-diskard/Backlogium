@@ -44,6 +44,36 @@ class GapPlanSelectionTest {
         )
     }
 
+    /** Final ordering is allowed to move a game outside the receiving tier's original near set. */
+    @Test fun finalAssignmentCanCrossTheReceivingTiersNearnessBand() {
+        val pool = listOf(
+            candidate(1, remainingMinutes = 8_500),
+            candidate(2, remainingMinutes = 7_550),
+            candidate(3, remainingMinutes = 7_000),
+        )
+
+        // Balanced's near set contains only 8,500. Seed 2 draws 7,550 for Full first, after which
+        // Balanced draws 8,500; the finalized results are then sorted by commitment.
+        assertEquals(
+            listOf(1L),
+            GapPlanSelection.nearest(pool, budgetMinutes = 8_500).map { it.appId },
+        )
+        val picks = GapPlanSelection.draw(
+            pool = pool,
+            fullCapacityMinutes = 10_000,
+            seed = 2L,
+        ).picks
+
+        assertEquals(
+            listOf(7_000, 7_550, 8_500),
+            picks.map { it.game!!.remainingMinutes },
+        )
+        assertEquals(
+            7_550,
+            picks.single { it.intensity == PlanIntensity.BALANCED }.game!!.remainingMinutes,
+        )
+    }
+
     /**
      * The case targeting alone does not cover, and the reason ordering is imposed separately.
      *

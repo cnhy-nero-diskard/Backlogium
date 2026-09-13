@@ -50,28 +50,46 @@ forecasts.
 - **THEN** that duration becomes the full capacity and the suggestions are labeled as manually budgeted
 
 ### Requirement: One pick per planning intensity
-Each successful request SHALL produce exactly three picks — Relaxed, Balanced, and Full — each
-containing exactly one game, whose selected-basis remaining time SHALL NOT exceed that tier's share
-of the request's full capacity: respectively 70%, 85%, and 100%.
+Each successful request SHALL produce exactly three tier results — Relaxed, Balanced, and Full — with
+at most one game in each result. When a tier has a game, its selected-basis remaining time SHALL NOT
+exceed that tier's share of the request's full capacity: respectively 70%, 85%, and 100%.
 
-A tier SHALL **target** its share rather than merely cap it: the pick SHALL be drawn from the
-eligible candidates nearest that tier's share, so the three represent three meaningfully different
-lengths of commitment. Treating a share only as a ceiling is insufficient, because every tier could
-then return the same very short game and the choice between tiers would carry no information.
+For an ordinary generation, selection SHALL occur in two stages. First, the engine SHALL visit the
+tiers from widest share to narrowest — Full, Balanced, then Relaxed — and draw at most one
+provisional game for each tier uniformly at random from the eligible candidates nearest that tier's
+share, after excluding games already provisionally drawn for a wider tier. A tier with no fitting
+eligible candidate has no provisional game. Second, after all three provisional draws, the engine
+SHALL assign the non-empty provisional games to the three tier results in ascending remaining time,
+retaining empty tier results in their original positions. Thus the nearest-candidate rule targets
+provisional draw membership; a final tier result need not contain a game from that result's own
+nearest-candidate set, while the final assignment preserves the tier ceilings and ascending
+commitment order.
 
-The three picks SHALL be distinct games.
+Targeting a share rather than merely capping it makes the three represent three meaningfully
+different lengths of commitment. Treating a share only as a ceiling is insufficient, because every
+tier could then return the same very short game and the choice between tiers would carry no
+information.
 
-The three picks SHALL also be ordered by commitment: the Relaxed pick's remaining time SHALL NOT
-exceed the Balanced pick's, which SHALL NOT exceed the Full pick's. This holds unconditionally, not
-only when the pool spans the request's capacity. A lower intensity offering a longer game than a
-higher one contradicts what the tier labels promise, and a pool whose eligible games cluster well
-below every share — ordinary for a library with few resolved lengths — otherwise produces exactly
-that.
+Any games selected for the three tier results SHALL be distinct games.
+
+The non-empty tier results SHALL also be ordered by commitment when read in Relaxed, Balanced, Full
+order: a non-empty result's remaining time SHALL NOT exceed the next non-empty result's. This holds
+unconditionally, not only when the pool spans the request's capacity. A lower intensity offering a
+longer game than a higher one contradicts what the tier labels promise, and a pool whose eligible
+games cluster well below every share — ordinary for a library with few resolved lengths — otherwise
+produces exactly that.
 
 #### Scenario: Tiers differ in length
 - **WHEN** the eligible pool contains games spanning the full range of the request's capacity
 - **THEN** each pick approaches its own share of capacity rather than sitting arbitrarily far below
   it, so the three represent three meaningfully different lengths of commitment
+
+#### Scenario: Final assignment can cross a tier's targeting band
+- **WHEN** the full capacity is 10,000 minutes, the eligible remaining times are 8,500, 7,550, and
+  7,000 minutes, and the Full provisional draw takes the 7,550-minute game
+- **THEN** Balanced provisionally takes the 8,500-minute game and the final results are assigned
+  shortest-to-longest as Relaxed 7,000, Balanced 7,550, and Full 8,500, even though 7,550 minutes
+  is outside Balanced's nearest-candidate set
 
 #### Scenario: A clustered pool still orders its tiers
 - **WHEN** every eligible candidate sits well below all three shares, so several are equally near
