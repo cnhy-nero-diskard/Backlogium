@@ -44,16 +44,16 @@
 
 ## 4. Log hygiene
 
-- [ ] 4.1 Confirm no log line was added or changed by this work, and that the new field never reaches
+- [x] 4.1 Confirm no log line was added or changed by this work, and that the new field never reaches
       log output. Verify the boundary grep from `functions/README.md` is silent:
       `grep -rnE "firebase-functions/logger|console\." functions/src/ --exclude=safeLog.ts --exclude="*.test.ts"`
 
 ## 5. Documentation
 
-- [ ] 5.1 Update the recorded-shape block in `functions/README.md` to show `prevLastObservedAt` on
+- [x] 5.1 Update the recorded-shape block in `functions/README.md` to show `prevLastObservedAt` on
       the transition document and the two independent version numbers. Verify the documented shape
       matches what the tests assert is written.
-- [ ] 5.2 State in `functions/README.md` what the field means to a reader — including that an absent
+- [x] 5.2 State in `functions/README.md` what the field means to a reader — including that an absent
       value means unknown coverage, covering both pre-existing `v: 1` documents and a first
       transition. Verify the text names the mechanism rather than only the field.
 

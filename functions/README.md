@@ -19,10 +19,10 @@ not an app backend yet: the Android client has no reader for this data and
 
 ```
 players/{steamId}                 current state — the document's own fields
-  { v, personastate, gameid, gameName, since, updatedAt, lastObservedAt }
+  { v: 1, personastate, gameid, gameName, since, updatedAt, lastObservedAt }
 
 players/{steamId}/presence/{ISO}  append-only transition log
-  { v, t, personastate, gameid, gameName }
+  { v: 2, t, prevLastObservedAt, personastate, gameid, gameName }
 ```
 
 Two things worth understanding before changing anything here:
@@ -40,6 +40,13 @@ also advances `lastObservedAt` on the current-state document; an unchanged poll
 refreshes the raw persona/game-name fields but does not append a presence entry or
 reset the transition timestamps. This keeps the log a record of transitions rather
 than 43,200 rows a month of "still playing Hades".
+
+On a transition, `prevLastObservedAt` is the raw `lastObservedAt` timestamp copied
+from the current-state document that the transition replaces. Comparing it with
+the transition's `t` lets a reader identify an unobserved tail without the poller
+deriving a duration or gap. If the field is absent, coverage is unknown: that is
+true for existing `v: 1` transitions and for the first transition for a player.
+Absence is not a zero timestamp and must not be treated as continuous observation.
 
 ## Setup
 
