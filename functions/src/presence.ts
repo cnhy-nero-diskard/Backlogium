@@ -1,6 +1,10 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import * as safeLog from "./safeLog";
-import { Observation, SCHEMA_VERSION } from "./steam";
+import {
+  CURRENT_STATE_SCHEMA_VERSION,
+  PRESENCE_TRANSITION_SCHEMA_VERSION,
+  type Observation,
+} from "./steam";
 
 /**
  * Firestore layout:
@@ -21,6 +25,8 @@ export type WriteOutcome = "unchanged" | "written";
 export interface StoredState {
   gameid?: unknown;
   lastObservedAt?: unknown;
+  coverageLapseFrom?: unknown;
+  coverageLapseRecoveredAt?: unknown;
   updatedAt?: unknown;
 }
 
@@ -119,6 +125,9 @@ export async function recordObservation(
     const previous = snapshot.exists
       ? (snapshot.data() as StoredState)
       : undefined;
+    const previousLastObservedAt = previous?.lastObservedAt;
+    const previousLapseFrom = previous?.coverageLapseFrom;
+    const previousLapseRecoveredAt = previous?.coverageLapseRecoveredAt;
 
     if (isStaleOrEqualObservation(previous, observation)) {
       // Never let an older or equal observation overwrite the newest state.
@@ -130,19 +139,78 @@ export async function recordObservation(
       // `updatedAt` keep their stored values. `lastObservedAt` records the
       // newest successful observation so a stalled older transaction cannot
       // roll state backward.
+      //
+      // A same-game observation must not erase the step that led to it by
+      // advancing the watermark alone: the stored watermark and this
+      // observation's time stay on the document as `coverageLapseFrom` and
+      // `coverageLapseRecoveredAt`, so the later transition that closes this
+      // state can report the span instead of passing the state off as
+      // continuously observed. Both are raw observation timestamps, never a
+      // computed gap, and no tolerance is applied here — whether a span of a
+      // minute or an hour counts as a lapse is the reader's decision. The
+      // retained pair is the largest consecutive-observation step seen within
+      // this state: a later step replaces it only when strictly longer, and
+      // ties keep the earlier pair. Keeping the first step would hide a later
+      // outage behind a harmless on-cadence pair; widening across steps would
+      // synthesise a span no two consecutive observations bound, and always
+      // keeping the latest would hide the earlier evidence. Comparing spans
+      // selects which raw pair to keep but writes no duration, so a reader
+      // applying any tolerance to the retained pair reaches the same verdict
+      // as if it had seen every step — max(gaps) preserves the verdict, not
+      // the locations. A consumer that must exclude unconfirmed time therefore
+      // discards the whole interval once the retained span exceeds its
+      // tolerance, rather than excluding only the retained span. The tail
+      // watermark still bounds the change itself.
+      const previousWatermarkDate = asDate(previousLastObservedAt);
+      const retainedFromDate = asDate(previousLapseFrom);
+      const retainedRecoveredDate = asDate(previousLapseRecoveredAt);
+      let carriedLapseFrom: unknown = previousLapseFrom;
+      let carriedLapseRecoveredAt: unknown = previousLapseRecoveredAt;
+      if (previousWatermarkDate === undefined) {
+        // No new step to bound: keep a complete retained pair, else record
+        // nothing rather than synthesising endpoints from different steps.
+        if (
+          retainedFromDate === undefined ||
+          retainedRecoveredDate === undefined
+        ) {
+          carriedLapseFrom = undefined;
+          carriedLapseRecoveredAt = undefined;
+        }
+      } else if (
+        retainedFromDate === undefined ||
+        retainedRecoveredDate === undefined
+      ) {
+        carriedLapseFrom = previousLastObservedAt;
+        carriedLapseRecoveredAt = observedAt;
+      } else {
+        const retainedSpan =
+          retainedRecoveredDate.getTime() - retainedFromDate.getTime();
+        const currentSpan =
+          observation.t.getTime() - previousWatermarkDate.getTime();
+        if (currentSpan > retainedSpan) {
+          carriedLapseFrom = previousLastObservedAt;
+          carriedLapseRecoveredAt = observedAt;
+        }
+      }
       transaction.set(playerRef, {
         ...(snapshot.data() ?? {}),
-        v: SCHEMA_VERSION,
+        v: CURRENT_STATE_SCHEMA_VERSION,
         personastate: observation.personastate,
         gameid: observation.gameid,
         gameName: observation.gameName,
         lastObservedAt: observedAt,
+        ...(carriedLapseFrom === undefined
+          ? {}
+          : {
+              coverageLapseFrom: carriedLapseFrom,
+              coverageLapseRecoveredAt: carriedLapseRecoveredAt,
+            }),
       });
       return { outcome: "unchanged" as const, first: false };
     }
 
     transaction.set(playerRef, {
-      v: SCHEMA_VERSION,
+      v: CURRENT_STATE_SCHEMA_VERSION,
       personastate: observation.personastate,
       gameid: observation.gameid,
       gameName: observation.gameName,
@@ -152,11 +220,29 @@ export async function recordObservation(
       // from a one-minute one.
       since: observedAt,
       updatedAt: observedAt,
+      // No spread: the new state starts with no retained lapse. Whatever the
+      // replaced state rode out was just copied onto the transition above.
     });
 
     transaction.set(presenceRef, {
-      v: SCHEMA_VERSION,
+      v: PRESENCE_TRANSITION_SCHEMA_VERSION,
       t: observedAt,
+      // The first transition has no predecessor to provide coverage for.
+      ...(previousLastObservedAt === undefined
+        ? {}
+        : { prevLastObservedAt: previousLastObservedAt }),
+      // The largest step the replaced state retained stays with the transition
+      // that closes it: the state was last confirmed at the first timestamp
+      // and next observed at the second, so a reader can tell an interior
+      // span from a merely stale tail by its own tolerance. Absent when no
+      // same-game poll ever advanced the replaced state — a direct
+      // transition — exactly like the watermark.
+      ...(previousLapseFrom === undefined
+        ? {}
+        : { prevCoverageLapseFrom: previousLapseFrom }),
+      ...(previousLapseRecoveredAt === undefined
+        ? {}
+        : { prevCoverageLapseRecoveredAt: previousLapseRecoveredAt }),
       personastate: observation.personastate,
       gameid: observation.gameid,
       gameName: observation.gameName,

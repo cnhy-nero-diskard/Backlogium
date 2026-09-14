@@ -19,10 +19,12 @@ not an app backend yet: the Android client has no reader for this data and
 
 ```
 players/{steamId}                 current state — the document's own fields
-  { v, personastate, gameid, gameName, since, updatedAt, lastObservedAt }
+  { v: 2, personastate, gameid, gameName, since, updatedAt, lastObservedAt,
+    coverageLapseFrom?, coverageLapseRecoveredAt? }
 
 players/{steamId}/presence/{ISO}  append-only transition log
-  { v, t, personastate, gameid, gameName }
+  { v: 3, t, prevLastObservedAt, prevCoverageLapseFrom?,
+    prevCoverageLapseRecoveredAt?, personastate, gameid, gameName }
 ```
 
 Two things worth understanding before changing anything here:
@@ -40,6 +42,31 @@ also advances `lastObservedAt` on the current-state document; an unchanged poll
 refreshes the raw persona/game-name fields but does not append a presence entry or
 reset the transition timestamps. This keeps the log a record of transitions rather
 than 43,200 rows a month of "still playing Hades".
+
+On a transition, `prevLastObservedAt` is the raw `lastObservedAt` timestamp copied
+from the current-state document that the transition replaces. Comparing it with
+the transition's `t` lets a reader identify an unobserved tail without the poller
+deriving a duration or gap. If the field is absent, coverage is unknown: that is
+true for existing `v: 1` transitions and for the first transition for a player.
+Absence is not a zero timestamp and must not be treated as continuous observation.
+
+A same-game poll advances `lastObservedAt`, which would otherwise erase the step that led to
+it. It therefore also retains the largest consecutive-observation step seen within the
+state — the stored watermark as `coverageLapseFrom` and the winning step's time as
+`coverageLapseRecoveredAt`. A later step replaces the retained pair only when strictly
+longer, with ties keeping the earlier pair; both ride the current-state document until
+the next transition copies them across as `prevCoverageLapseFrom` and
+`prevCoverageLapseRecoveredAt`, then the new state starts clean. No tolerance is applied: a one-minute step is retained exactly like an
+hour-long one, and the reader decides what counts as a lapse by comparing the pair — just as it
+does the tail (`prevLastObservedAt` against `t`). Comparing spans selects which raw pair to
+keep but writes no duration. The retained pair preserves the verdict, not the
+locations: once it exceeds a reader's tolerance the reader knows some interior
+span was unobserved, but not where every such span was, so a consumer that must
+exclude unconfirmed time treats the whole interval as unconfirmed rather than
+excluding only the retained span. All of these fields are raw observation
+timestamps; none is a duration, gap length, or verdict. The pair is absent when no same-game poll
+ever advanced the replaced state, and every coverage field is absent on pre-`v: 2` / `v: 3`
+documents and first transitions.
 
 ## Setup
 
