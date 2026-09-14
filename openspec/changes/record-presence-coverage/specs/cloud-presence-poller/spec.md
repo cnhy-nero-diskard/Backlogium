@@ -7,13 +7,24 @@ the state it replaces, as `prevLastObservedAt`. A reader comparing that value ag
 transition's own timestamp SHALL therefore be able to distinguish a state observed continuously
 up to the moment it changed from one whose final stretch went unobserved.
 
-A same-game observation that resumes after a lapse SHALL NOT erase the lapse by advancing the
-watermark alone. The poller SHALL retain the pre-lapse watermark as `coverageLapseFrom` and the
-resuming observation's time as `coverageLapseRecoveredAt` on the current-state document, carry
-both forward across later same-game observations, and copy them onto the next transition as
-`prevCoverageLapseFrom` and `prevCoverageLapseRecoveredAt`. A reader comparing that pair SHALL
-therefore be able to distinguish an unobserved span inside the replaced state from a merely
-stale tail, even though polls confirming the same game arrived between the lapse and the change.
+A same-game observation that advances the watermark SHALL retain that step's
+endpoints as `coverageLapseFrom` (the stored watermark it replaces) and
+`coverageLapseRecoveredAt` (its own observation time) on the current-state
+document, carry both forward unchanged across later same-game observations,
+and copy them onto the next transition as `prevCoverageLapseFrom` and
+`prevCoverageLapseRecoveredAt`. The poller SHALL apply no tolerance cutoff to
+decide whether a step is worth retaining: every forward step is retained
+verbatim, and whether a span of a minute or an hour counts as a lapse is the
+reader's decision. A reader comparing that pair SHALL therefore be able to
+distinguish an unobserved span inside the replaced state from a merely stale
+tail, even though polls confirming the same game arrived between the lapse
+and the change.
+
+The retained pair is the first step observed within the state; later steps
+within the same state are not separately recorded, so a second unobserved
+span in one state does not alter the pair. The tail watermark still bounds
+the change itself, and the new state after a transition starts with no
+retained pair.
 
 The log is otherwise a record of transitions with no account of the intervals between them.
 Continuous observation and a poller that stopped running produce an identical transition log, so
@@ -47,6 +58,15 @@ facts, and a reader must not have to distinguish them by guessing.
   observation's time alongside the last-confirmed time
 - **AND** the unobserved span between the first two is identifiable as such rather than the
   state reading as continuously observed up to the change
+
+#### Scenario: A short lapse is retained for a stricter reader
+
+- **WHEN** the poller records no successful observation for two minutes while a game is in
+  progress, then observes the same game again, and a later poll observes a different game
+- **THEN** the appended transition records the pre-lapse confirmed time and the resuming
+  observation's time alongside the last-confirmed time
+- **AND** a reader with a tolerance below two minutes identifies the span as unobserved
+  rather than reading the state as continuously observed up to the change
 
 #### Scenario: One record bounds both sides of a lapse
 
@@ -103,10 +123,13 @@ change it is not affected by.
 - **WHEN** a document is appended to the `presence` subcollection
 - **THEN** it contains a schema version field set to `3`
 
-#### Scenario: An unaltered shape keeps its version
+#### Scenario: Each altered shape advances its own version
 
-- **WHEN** the presence transition shape gains a field and the current-state shape gains none
-- **THEN** the presence transition version advances and the current-state version does not
+- **WHEN** the current-state shape gains the retained-step pair and the presence transition
+  shape gains the copied pair
+- **THEN** the current-state version advances from `1` to `2` and the presence transition
+  version advances from `2` to `3`
+- **AND** a future change to one shape advances only its own version
 
 #### Scenario: A reader identifies a shape without sniffing fields
 

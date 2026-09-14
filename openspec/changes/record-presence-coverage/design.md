@@ -69,18 +69,45 @@ for free.
 a different value than the one the change decision was made against, producing a transition whose
 coverage claim describes a state it did not actually replace. That is worse than no claim at all.
 
+### Retain the first same-game step, with no tolerance cutoff
+
+A same-game observation that advances the watermark retains that step's endpoints —
+the stored watermark as `coverageLapseFrom`, its own time as `coverageLapseRecoveredAt` —
+and later same-game observations leave the retained pair untouched until the transition
+that closes the state copies it across. The poller applies no minimum span before
+retaining: a one-minute step is kept exactly like an hour-long one, and whether either
+counts as a lapse is the reader's decision.
+
+*Alternatives considered:* a fixed cutoff (retain only spans beyond N minutes); widening
+the pair across steps (earliest start, latest recovery); replacing it at each step. The
+cutoff is rejected as the threshold this design exists to avoid — the decision to omit a
+two-minute span from permanent history is a materiality judgement, identical in kind to
+writing a gap length, and it would bind every future reader to today's tolerance.
+Widening is rejected because it synthesises a span no two consecutive observations bound:
+a long, perfectly observed session would report its whole length as one unobserved span.
+Replacing is rejected because each on-cadence poll would overwrite the evidence of the
+lapse that preceded it, re-opening the hole the retention exists to close.
+
+The accepted rule has a known limitation, stated here so it is not discovered later: two
+fields cannot record every span, so a second unobserved span within one state is not
+separately recorded. The retained pair is always a genuine consecutive-observation step,
+never a synthesis — and the tail watermark still bounds the change itself, so no state
+can read as continuously observed when its closing stretch went unseen.
+
 ### Version per document shape, not per system
 
-`SCHEMA_VERSION` splits into one constant per shape: the current-state document stays `1`, presence
-transitions become `2`.
+`SCHEMA_VERSION` splits into one constant per shape: the current-state document becomes `2`
+(it gains `coverageLapseFrom` / `coverageLapseRecoveredAt`), presence transitions become `3`
+(they gain `prevLastObservedAt` plus the copied `prevCoverageLapseFrom` /
+`prevCoverageLapseRecoveredAt`).
 
-*Alternative considered — bump both to `2`.* Simpler: one constant, one number, nothing to keep
-straight. Rejected because it tells a reader the current-state shape changed when it did not. A
-reader branching on that document's version would add a `case 2` identical to its `case 1`, and with
-indefinite retention and an unknown number of future shape changes, a single shared version
-punctuates every shape's history with versions that mean nothing to it. The cost of the split is
-that a reader must know which version namespace applies to which collection — but the collections
-are already distinct paths holding distinct shapes, so the version now matches a boundary that was
+The current-state version advances here precisely because its shape changed — that is the
+rule working as intended, not an exception to it. A reader branching on that document's
+version learns a new field exists; with indefinite retention and an unknown number of
+future shape changes, a single shared version would instead punctuate every shape's history
+with versions that mean nothing to it. The cost of the split is that a reader must know
+which version namespace applies to which collection — but the collections are already
+distinct paths holding distinct shapes, so the version now matches a boundary that was
 always there.
 
 *Alternative considered — leave both at `1` and let readers detect the field's presence.* Rejected
@@ -104,6 +131,13 @@ here" rather than two that have to be kept in agreement. It is the same distinct
 `SessionRepository` already draws on-device — "never had a first session" and "first session at the
 epoch" are different answers.
 
+The same rule governs the retained pair: a transition whose replaced state never saw a
+same-game poll advance its watermark — a direct transition with no recovery step in between —
+omits `prevCoverageLapseFrom` / `prevCoverageLapseRecoveredAt`, and a current-state document
+that has never advanced past its opening observation omits `coverageLapseFrom` /
+`coverageLapseRecoveredAt`. Absence of the pair alongside a present watermark is therefore
+positive evidence of a clean handoff, not a gap in the record.
+
 ### Drop `v` from the in-memory `Observation`
 
 `steam.ts` stamps `v: SCHEMA_VERSION` onto the `Observation` it builds, but `presence.ts` never
@@ -117,7 +151,9 @@ can only ever be wrong.
 
 ### No backfill of existing documents
 
-The five weeks of `v: 1` transitions are left exactly as they are.
+The five weeks of `v: 1` transitions are left exactly as they are, as are the `v: 2`
+transitions and `v: 1` current-state documents written by the earlier revision of this
+change: no retained pair is synthesised for any of them.
 
 There is no honest value to write. The current-state document holds one watermark — the latest — so
 the watermarks those transitions would have recorded are gone. Synthesising a plausible value would
@@ -165,15 +201,18 @@ The function stays in `asia-southeast1`; the Firestore location is permanent and
 
 1. Confirm `poll ok` heartbeats resume after the deploy — the pipeline is healthy before anything
    else is judged.
-2. Start a game, wait for a transition, stop it. The appended transition carries `v: 2` and a
-   `prevLastObservedAt` within roughly one polling interval of its own `t`.
-3. Confirm the current-state document still reads `v: 1` and is otherwise unchanged.
+2. Start a game, wait for a transition, stop it. The appended transition carries `v: 3`, a
+   `prevLastObservedAt` within roughly one polling interval of its own `t`, and — once a
+   same-game poll has advanced the replaced state — the retained pair alongside it.
+3. Confirm the current-state document reads `v: 2`, carrying the retained pair once a
+   same-game poll has advanced it, and that `since` / `updatedAt` are otherwise unchanged.
 4. Confirm an unchanged poll still appends nothing.
 
-**Rollback:** redeploy the previous revision. New transitions revert to `v: 1` with no coverage
-field, which the reader contract already defines as unknown coverage. A rollback therefore costs
-resolution from that point forward and breaks nothing — including for documents written while the
-new revision was live, which stay valid.
+**Rollback:** redeploy the previous revision. New transitions revert to `v: 2` with
+`prevLastObservedAt` but no retained pair, and current-state documents revert to `v: 1` —
+both shapes the reader contract already defines. A rollback therefore costs the interior-span
+resolution from that point forward and breaks nothing — including for documents written while
+the new revision was live, which stay valid.
 
 ## Open Questions
 

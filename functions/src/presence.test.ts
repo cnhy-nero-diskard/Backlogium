@@ -319,11 +319,51 @@ describe("presence poller", () => {
     expect(playerWrite?.data).not.toHaveProperty("coverageLapseRecoveredAt");
   });
 
-  it("records no lapse fields when same-game polls stay on cadence", async () => {
+  it("retains a sub-three-minute lapse across same-game recovery", async () => {
+    // Regression: a fixed poller-side cutoff silently discarded spans below
+    // it, leaving a stricter reader unable to identify them. Every forward
+    // step is retained verbatim, so a two-minute span reaches the transition.
+    const preLapseWatermark = { date: new Date("2026-08-14T00:00:00.000Z") };
     firestore.seed("players/test-steam-id", {
       gameid: "440",
       personastate: 1,
-      lastObservedAt: { date: new Date("2026-08-14T00:00:00.000Z") },
+      since: { date: new Date("2026-08-14T00:00:00.000Z") },
+      updatedAt: { date: new Date("2026-08-14T00:00:00.000Z") },
+      lastObservedAt: preLapseWatermark,
+    });
+    const recoveryPoll = observation("440", "2026-08-14T00:02:00.000Z");
+    const transitionPoll = observation("570", "2026-08-14T00:03:00.000Z");
+
+    await expect(
+      recordObservation("test-steam-id", recoveryPoll),
+    ).resolves.toBe("unchanged");
+    await expect(
+      recordObservation("test-steam-id", transitionPoll),
+    ).resolves.toBe("written");
+
+    const presenceWrite = firestore.committedWrites.find((write) =>
+      write.path.startsWith("players/test-steam-id/presence/"),
+    );
+    expect(presenceWrite?.data).toEqual({
+      v: 3,
+      t: { date: transitionPoll.t },
+      prevLastObservedAt: { date: recoveryPoll.t },
+      prevCoverageLapseFrom: preLapseWatermark,
+      prevCoverageLapseRecoveredAt: { date: recoveryPoll.t },
+      personastate: transitionPoll.personastate,
+      gameid: transitionPoll.gameid,
+      gameName: transitionPoll.gameName,
+    });
+  });
+
+  it("retains the first same-game step as raw evidence on cadence", async () => {
+    // No poller-side tolerance: even a one-minute step is retained verbatim,
+    // and the reader decides whether the span counts as a lapse.
+    const firstStep = { date: new Date("2026-08-14T00:00:00.000Z") };
+    firestore.seed("players/test-steam-id", {
+      gameid: "440",
+      personastate: 1,
+      lastObservedAt: firstStep,
     });
 
     await recordObservation(
@@ -338,12 +378,16 @@ describe("presence poller", () => {
       recordObservation("test-steam-id", observation("570", "2026-08-14T00:03:00.000Z")),
     ).resolves.toBe("written");
 
-    for (const write of firestore.committedWrites) {
-      expect(write.data).not.toHaveProperty("coverageLapseFrom");
-      expect(write.data).not.toHaveProperty("coverageLapseRecoveredAt");
-      expect(write.data).not.toHaveProperty("prevCoverageLapseFrom");
-      expect(write.data).not.toHaveProperty("prevCoverageLapseRecoveredAt");
-    }
+    const presenceWrite = firestore.committedWrites.find((write) =>
+      write.path.startsWith("players/test-steam-id/presence/"),
+    );
+    expect(presenceWrite?.data.prevCoverageLapseFrom).toBe(firstStep);
+    expect(
+      (presenceWrite?.data.prevCoverageLapseRecoveredAt as { date: Date }).date,
+    ).toEqual(new Date("2026-08-14T00:01:00.000Z"));
+    expect(
+      (presenceWrite?.data.prevLastObservedAt as { date: Date }).date,
+    ).toEqual(new Date("2026-08-14T00:02:00.000Z"));
   });
 
   it("keeps the earliest lapse across later on-cadence polls", async () => {
@@ -376,7 +420,11 @@ describe("presence poller", () => {
     ).toEqual(new Date("2026-08-14T00:11:00.000Z"));
   });
 
-  it("widens rather than replaces the retained span on a second lapse", async () => {
+  it("keeps the first retained span on a second lapse", async () => {
+    // Two fields cannot record every span, so the first retained step wins:
+    // widening would synthesise a span no two consecutive observations bound,
+    // and replacing it would hide the earlier evidence. The tail watermark
+    // still bounds the change itself.
     const firstLapseWatermark = { date: new Date("2026-08-14T00:00:00.000Z") };
     firestore.seed("players/test-steam-id", {
       gameid: "440",
@@ -384,16 +432,16 @@ describe("presence poller", () => {
       lastObservedAt: firstLapseWatermark,
     });
 
-    await recordObservation(
-      "test-steam-id",
-      observation("440", "2026-08-14T00:10:00.000Z"),
-    );
+    const firstRecovery = observation("440", "2026-08-14T00:10:00.000Z");
+    await recordObservation("test-steam-id", firstRecovery);
     await recordObservation(
       "test-steam-id",
       observation("440", "2026-08-14T00:11:00.000Z"),
     );
-    const secondRecovery = observation("440", "2026-08-14T00:30:00.000Z");
-    await recordObservation("test-steam-id", secondRecovery);
+    await recordObservation(
+      "test-steam-id",
+      observation("440", "2026-08-14T00:30:00.000Z"),
+    );
     await expect(
       recordObservation("test-steam-id", observation("570", "2026-08-14T00:31:00.000Z")),
     ).resolves.toBe("written");
@@ -404,7 +452,7 @@ describe("presence poller", () => {
     expect(presenceWrite?.data.prevCoverageLapseFrom).toBe(firstLapseWatermark);
     expect(
       (presenceWrite?.data.prevCoverageLapseRecoveredAt as { date: Date }).date,
-    ).toEqual(secondRecovery.t);
+    ).toEqual(firstRecovery.t);
   });
 
   it("records only observation timestamps on a transition", async () => {

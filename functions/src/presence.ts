@@ -30,20 +30,6 @@ export interface StoredState {
   updatedAt?: unknown;
 }
 
-/**
- * How far apart two successful observations may be before the poller treats
- * the span between them as a lapse worth retaining.
- *
- * The schedule fires every minute, so a gap beyond three minutes means
- * several polls in a row produced nothing usable — a deploy window, a Steam
- * outage, a revoked key — rather than scheduler jitter or one slow poll
- * delaying its queued successor behind concurrency 1. Staying well below any
- * reader tolerance keeps a false positive harmless: the retained timestamps
- * still describe point observations, and the reader bridges them or not by
- * its own rule.
- */
-const COVERAGE_LAPSE_THRESHOLD_MILLIS = 3 * 60 * 1000;
-
 function asDate(value: unknown): Date | undefined {
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? undefined : value;
@@ -154,19 +140,24 @@ export async function recordObservation(
       // newest successful observation so a stalled older transaction cannot
       // roll state backward.
       //
-      // A same-game observation that resumes after a lapse must not erase the
-      // lapse by advancing the watermark alone: the pre-lapse watermark and
-      // this recovery time stay on the document, so the later transition that
-      // closes this state can report the unobserved span instead of passing
-      // the state off as continuously observed. Both are raw observation
-      // timestamps, never a computed gap. An earlier retained lapse wins over
-      // a later one, and a later recovery supersedes an earlier one, so
-      // repeated lapses widen the reported span rather than hiding any of it.
-      const previousLastObservedDate = asDate(previousLastObservedAt);
-      const lapsed =
-        previousLastObservedDate !== undefined &&
-        observation.t.getTime() - previousLastObservedDate.getTime() >
-          COVERAGE_LAPSE_THRESHOLD_MILLIS;
+      // A same-game observation must not erase the step that led to it by
+      // advancing the watermark alone: the stored watermark and this
+      // observation's time stay on the document as `coverageLapseFrom` and
+      // `coverageLapseRecoveredAt`, so the later transition that closes this
+      // state can report the span instead of passing the state off as
+      // continuously observed. Both are raw observation timestamps, never a
+      // computed gap, and no tolerance is applied here — whether a span of a
+      // minute or an hour counts as a lapse is the reader's decision, so
+      // every forward step is retained verbatim. The first retained step wins
+      // and later steps leave it untouched: widening across steps would
+      // synthesise a span no two consecutive observations bound, and
+      // replacing it would hide the earlier evidence. A later unobserved span
+      // within the same state is therefore not separately recorded; the tail
+      // watermark still bounds the change itself.
+      const carriedLapseFrom =
+        previous?.coverageLapseFrom ?? previousLastObservedAt;
+      const carriedLapseRecoveredAt =
+        previous?.coverageLapseRecoveredAt ?? observedAt;
       transaction.set(playerRef, {
         ...(snapshot.data() ?? {}),
         v: CURRENT_STATE_SCHEMA_VERSION,
@@ -174,12 +165,12 @@ export async function recordObservation(
         gameid: observation.gameid,
         gameName: observation.gameName,
         lastObservedAt: observedAt,
-        ...(lapsed
-          ? {
-              coverageLapseFrom: previousLapseFrom ?? previousLastObservedAt,
-              coverageLapseRecoveredAt: observedAt,
-            }
-          : {}),
+        ...(carriedLapseFrom === undefined
+          ? {}
+          : {
+              coverageLapseFrom: carriedLapseFrom,
+              coverageLapseRecoveredAt: carriedLapseRecoveredAt,
+            }),
       });
       return { outcome: "unchanged" as const, first: false };
     }
@@ -206,10 +197,12 @@ export async function recordObservation(
       ...(previousLastObservedAt === undefined
         ? {}
         : { prevLastObservedAt: previousLastObservedAt }),
-      // A lapse the replaced state rode out stays with the transition that
-      // closes it: the state went unobserved from the first timestamp until
-      // the second, so a reader can tell an interior gap from a merely stale
-      // tail. Absent when the state never lapsed, exactly like the watermark.
+      // The first step the replaced state retained stays with the transition
+      // that closes it: the state was last confirmed at the first timestamp
+      // and next observed at the second, so a reader can tell an interior
+      // span from a merely stale tail by its own tolerance. Absent when no
+      // same-game poll ever advanced the replaced state — a direct
+      // transition — exactly like the watermark.
       ...(previousLapseFrom === undefined
         ? {}
         : { prevCoverageLapseFrom: previousLapseFrom }),
