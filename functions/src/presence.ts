@@ -147,17 +147,48 @@ export async function recordObservation(
       // state can report the span instead of passing the state off as
       // continuously observed. Both are raw observation timestamps, never a
       // computed gap, and no tolerance is applied here — whether a span of a
-      // minute or an hour counts as a lapse is the reader's decision, so
-      // every forward step is retained verbatim. The first retained step wins
-      // and later steps leave it untouched: widening across steps would
-      // synthesise a span no two consecutive observations bound, and
-      // replacing it would hide the earlier evidence. A later unobserved span
-      // within the same state is therefore not separately recorded; the tail
-      // watermark still bounds the change itself.
-      const carriedLapseFrom =
-        previous?.coverageLapseFrom ?? previousLastObservedAt;
-      const carriedLapseRecoveredAt =
-        previous?.coverageLapseRecoveredAt ?? observedAt;
+      // minute or an hour counts as a lapse is the reader's decision. The
+      // retained pair is the largest consecutive-observation step seen within
+      // this state: a later step replaces it only when strictly longer, and
+      // ties keep the earlier pair. Keeping the first step would hide a later
+      // outage behind a harmless on-cadence pair; widening across steps would
+      // synthesise a span no two consecutive observations bound, and always
+      // keeping the latest would hide the earlier evidence. Comparing spans
+      // selects which raw pair to keep but writes no duration, so a reader
+      // applying any tolerance to the retained pair reaches the same verdict
+      // as if it had seen every step. The tail watermark still bounds the
+      // change itself.
+      const previousWatermarkDate = asDate(previousLastObservedAt);
+      const retainedFromDate = asDate(previousLapseFrom);
+      const retainedRecoveredDate = asDate(previousLapseRecoveredAt);
+      let carriedLapseFrom: unknown = previousLapseFrom;
+      let carriedLapseRecoveredAt: unknown = previousLapseRecoveredAt;
+      if (previousWatermarkDate === undefined) {
+        // No new step to bound: keep a complete retained pair, else record
+        // nothing rather than synthesising endpoints from different steps.
+        if (
+          retainedFromDate === undefined ||
+          retainedRecoveredDate === undefined
+        ) {
+          carriedLapseFrom = undefined;
+          carriedLapseRecoveredAt = undefined;
+        }
+      } else if (
+        retainedFromDate === undefined ||
+        retainedRecoveredDate === undefined
+      ) {
+        carriedLapseFrom = previousLastObservedAt;
+        carriedLapseRecoveredAt = observedAt;
+      } else {
+        const retainedSpan =
+          retainedRecoveredDate.getTime() - retainedFromDate.getTime();
+        const currentSpan =
+          observation.t.getTime() - previousWatermarkDate.getTime();
+        if (currentSpan > retainedSpan) {
+          carriedLapseFrom = previousLastObservedAt;
+          carriedLapseRecoveredAt = observedAt;
+        }
+      }
       transaction.set(playerRef, {
         ...(snapshot.data() ?? {}),
         v: CURRENT_STATE_SCHEMA_VERSION,
@@ -197,7 +228,7 @@ export async function recordObservation(
       ...(previousLastObservedAt === undefined
         ? {}
         : { prevLastObservedAt: previousLastObservedAt }),
-      // The first step the replaced state retained stays with the transition
+      // The largest step the replaced state retained stays with the transition
       // that closes it: the state was last confirmed at the first timestamp
       // and next observed at the second, so a reader can tell an interior
       // span from a merely stale tail by its own tolerance. Absent when no

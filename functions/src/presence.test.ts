@@ -420,11 +420,54 @@ describe("presence poller", () => {
     ).toEqual(new Date("2026-08-14T00:11:00.000Z"));
   });
 
-  it("keeps the first retained span on a second lapse", async () => {
-    // Two fields cannot record every span, so the first retained step wins:
-    // widening would synthesise a span no two consecutive observations bound,
-    // and replacing it would hide the earlier evidence. The tail watermark
-    // still bounds the change itself.
+  it("preserves a later outage behind an earlier on-cadence step", async () => {
+    // Regression for first-step-wins: state A at t0, a normal same-game poll
+    // at t1, an outage until t10, same-game recovery at t10, then a
+    // transition at t11. Retaining the first pair (t0..t1) discards the
+    // t1..t10 unobserved span and reads as continuously observed; the
+    // retained pair must be the largest consecutive step (t1..t10).
+    firestore.seed("players/test-steam-id", {
+      gameid: "440",
+      personastate: 1,
+      since: { date: new Date("2026-08-14T00:00:00.000Z") },
+      updatedAt: { date: new Date("2026-08-14T00:00:00.000Z") },
+      lastObservedAt: { date: new Date("2026-08-14T00:00:00.000Z") },
+    });
+
+    await recordObservation(
+      "test-steam-id",
+      observation("440", "2026-08-14T00:01:00.000Z"),
+    );
+    await recordObservation(
+      "test-steam-id",
+      observation("440", "2026-08-14T00:10:00.000Z"),
+    );
+    await expect(
+      recordObservation("test-steam-id", observation("570", "2026-08-14T00:11:00.000Z")),
+    ).resolves.toBe("written");
+
+    const presenceWrite = firestore.committedWrites.find((write) =>
+      write.path.startsWith("players/test-steam-id/presence/"),
+    );
+    expect(
+      (presenceWrite?.data.prevCoverageLapseFrom as { date: Date }).date,
+    ).toEqual(new Date("2026-08-14T00:01:00.000Z"));
+    expect(
+      (presenceWrite?.data.prevCoverageLapseRecoveredAt as { date: Date }).date,
+    ).toEqual(new Date("2026-08-14T00:10:00.000Z"));
+    expect(
+      (presenceWrite?.data.prevLastObservedAt as { date: Date }).date,
+    ).toEqual(new Date("2026-08-14T00:10:00.000Z"));
+  });
+
+  it("keeps the largest span across lapses within one state", async () => {
+    // Two fields cannot record every span, so the largest consecutive step
+    // wins: widening would synthesise a span no two consecutive observations
+    // bound, always keeping the latest would hide the earlier evidence, and
+    // keeping the first would hide a later, larger outage behind a harmless
+    // on-cadence pair. A reader applying any tolerance to the retained pair
+    // reaches the same verdict as if it had seen every step. The tail
+    // watermark still bounds the change itself.
     const firstLapseWatermark = { date: new Date("2026-08-14T00:00:00.000Z") };
     firestore.seed("players/test-steam-id", {
       gameid: "440",
@@ -449,10 +492,12 @@ describe("presence poller", () => {
     const presenceWrite = firestore.committedWrites.find((write) =>
       write.path.startsWith("players/test-steam-id/presence/"),
     );
-    expect(presenceWrite?.data.prevCoverageLapseFrom).toBe(firstLapseWatermark);
+    expect(
+      (presenceWrite?.data.prevCoverageLapseFrom as { date: Date }).date,
+    ).toEqual(new Date("2026-08-14T00:11:00.000Z"));
     expect(
       (presenceWrite?.data.prevCoverageLapseRecoveredAt as { date: Date }).date,
-    ).toEqual(firstRecovery.t);
+    ).toEqual(new Date("2026-08-14T00:30:00.000Z"));
   });
 
   it("records only observation timestamps on a transition", async () => {

@@ -69,30 +69,43 @@ for free.
 a different value than the one the change decision was made against, producing a transition whose
 coverage claim describes a state it did not actually replace. That is worse than no claim at all.
 
-### Retain the first same-game step, with no tolerance cutoff
+### Retain the largest same-game step, with no tolerance cutoff
 
-A same-game observation that advances the watermark retains that step's endpoints —
-the stored watermark as `coverageLapseFrom`, its own time as `coverageLapseRecoveredAt` —
-and later same-game observations leave the retained pair untouched until the transition
-that closes the state copies it across. The poller applies no minimum span before
-retaining: a one-minute step is kept exactly like an hour-long one, and whether either
+A same-game observation that advances the watermark retains the largest
+consecutive-observation step seen within the state — the stored watermark as
+`coverageLapseFrom`, its own time as `coverageLapseRecoveredAt` — and a later
+step replaces the retained pair only when strictly longer, with ties keeping
+the earlier pair. The transition that closes the state copies the retained
+pair across. The poller applies no minimum span before retaining: a
+one-minute step is kept exactly like an hour-long one, and whether either
 counts as a lapse is the reader's decision.
 
-*Alternatives considered:* a fixed cutoff (retain only spans beyond N minutes); widening
-the pair across steps (earliest start, latest recovery); replacing it at each step. The
-cutoff is rejected as the threshold this design exists to avoid — the decision to omit a
-two-minute span from permanent history is a materiality judgement, identical in kind to
-writing a gap length, and it would bind every future reader to today's tolerance.
-Widening is rejected because it synthesises a span no two consecutive observations bound:
-a long, perfectly observed session would report its whole length as one unobserved span.
-Replacing is rejected because each on-cadence poll would overwrite the evidence of the
-lapse that preceded it, re-opening the hole the retention exists to close.
+*Alternatives considered:* a fixed cutoff (retain only spans beyond N minutes); retaining
+the first step; widening the pair across steps (earliest start, latest recovery);
+always keeping the latest step. The cutoff is rejected as the threshold this design
+exists to avoid — the decision to omit a two-minute span from permanent history is a
+materiality judgement, identical in kind to writing a gap length, and it would bind
+every future reader to today's tolerance. First-wins is rejected because in normal
+minute-cadence operation the first retained pair is usually a harmless ~1-minute step,
+which would freeze the record and make a later real outage invisible: the closing tail
+watermark only proves the final stretch was fresh, so the history would read as
+continuously observed. Widening is rejected because it synthesises a span no two
+consecutive observations bound: a long, perfectly observed session would report its
+whole length as one unobserved span. Latest-wins is rejected because each on-cadence
+poll would overwrite the evidence of the lapse that preceded it, re-opening the hole
+the retention exists to close.
 
-The accepted rule has a known limitation, stated here so it is not discovered later: two
-fields cannot record every span, so a second unobserved span within one state is not
-separately recorded. The retained pair is always a genuine consecutive-observation step,
-never a synthesis — and the tail watermark still bounds the change itself, so no state
-can read as continuously observed when its closing stretch went unseen.
+Comparing spans to select which raw pair to keep writes no duration, gap length, or
+verdict — the stored values stay raw observation timestamps, so the selection is not
+a derived value under *The poller does not derive sessions*.
+
+The accepted rule has a known limitation, stated here so it is not discovered later:
+two fields cannot record every span, so smaller steps within one state are not
+separately recorded. The retained pair is always a genuine consecutive-observation
+step, never a synthesis — and because it is the largest such step, a reader applying
+any tolerance to it reaches the same lapse verdict as if it had seen every step. The
+tail watermark still bounds the change itself, so no state can read as continuously
+observed when its closing stretch went unseen.
 
 ### Version per document shape, not per system
 

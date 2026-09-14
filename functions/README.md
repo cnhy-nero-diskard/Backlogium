@@ -51,13 +51,15 @@ true for existing `v: 1` transitions and for the first transition for a player.
 Absence is not a zero timestamp and must not be treated as continuous observation.
 
 A same-game poll advances `lastObservedAt`, which would otherwise erase the step that led to
-it. It therefore also retains that step's endpoints — the stored watermark as `coverageLapseFrom`
-and its own time as `coverageLapseRecoveredAt`. The first step retained within a state wins and
-later steps leave it untouched; both ride the current-state document until the next transition
-copies them across as `prevCoverageLapseFrom` and `prevCoverageLapseRecoveredAt`, then the new
-state starts clean. No tolerance is applied: a one-minute step is retained exactly like an
+it. It therefore also retains the largest consecutive-observation step seen within the
+state — the stored watermark as `coverageLapseFrom` and the winning step's time as
+`coverageLapseRecoveredAt`. A later step replaces the retained pair only when strictly
+longer, with ties keeping the earlier pair; both ride the current-state document until
+the next transition copies them across as `prevCoverageLapseFrom` and
+`prevCoverageLapseRecoveredAt`, then the new state starts clean. No tolerance is applied: a one-minute step is retained exactly like an
 hour-long one, and the reader decides what counts as a lapse by comparing the pair — just as it
-does the tail (`prevLastObservedAt` against `t`). All of these fields are raw observation
+does the tail (`prevLastObservedAt` against `t`). Comparing spans selects which raw pair to
+keep but writes no duration. All of these fields are raw observation
 timestamps; none is a duration, gap length, or verdict. The pair is absent when no same-game poll
 ever advanced the replaced state, and every coverage field is absent on pre-`v: 2` / `v: 3`
 documents and first transitions.

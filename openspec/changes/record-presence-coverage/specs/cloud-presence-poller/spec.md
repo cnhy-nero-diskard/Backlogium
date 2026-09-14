@@ -7,23 +7,26 @@ the state it replaces, as `prevLastObservedAt`. A reader comparing that value ag
 transition's own timestamp SHALL therefore be able to distinguish a state observed continuously
 up to the moment it changed from one whose final stretch went unobserved.
 
-A same-game observation that advances the watermark SHALL retain that step's
-endpoints as `coverageLapseFrom` (the stored watermark it replaces) and
-`coverageLapseRecoveredAt` (its own observation time) on the current-state
-document, carry both forward unchanged across later same-game observations,
-and copy them onto the next transition as `prevCoverageLapseFrom` and
-`prevCoverageLapseRecoveredAt`. The poller SHALL apply no tolerance cutoff to
-decide whether a step is worth retaining: every forward step is retained
-verbatim, and whether a span of a minute or an hour counts as a lapse is the
-reader's decision. A reader comparing that pair SHALL therefore be able to
-distinguish an unobserved span inside the replaced state from a merely stale
-tail, even though polls confirming the same game arrived between the lapse
-and the change.
+A same-game observation that advances the watermark SHALL retain the largest
+consecutive-observation step seen within the state as `coverageLapseFrom`
+(the stored watermark the winning step replaces) and
+`coverageLapseRecoveredAt` (that step's observation time) on the current-state
+document, and copy them onto the next transition as `prevCoverageLapseFrom`
+and `prevCoverageLapseRecoveredAt`. A later step replaces the retained pair
+only when strictly longer; ties keep the earlier pair. The poller SHALL apply
+no tolerance cutoff to decide whether a step is worth retaining, and comparing
+spans selects which raw pair to keep but writes no duration: every retained
+value stays a raw observation timestamp, and whether a span of a minute or an
+hour counts as a lapse is the reader's decision. A reader comparing that pair
+SHALL therefore be able to distinguish an unobserved span inside the replaced
+state from a merely stale tail, even though polls confirming the same game
+arrived between the lapse and the change.
 
-The retained pair is the first step observed within the state; later steps
-within the same state are not separately recorded, so a second unobserved
-span in one state does not alter the pair. The tail watermark still bounds
-the change itself, and the new state after a transition starts with no
+Smaller steps within the same state are not separately recorded, but a reader
+applying any tolerance to the retained pair reaches the same verdict as if it
+had seen every step: any interior step exceeding the tolerance implies the
+retained largest step exceeds it, and vice versa. The tail watermark still
+bounds the change itself, and the new state after a transition starts with no
 retained pair.
 
 The log is otherwise a record of transitions with no account of the intervals between them.
@@ -67,6 +70,16 @@ facts, and a reader must not have to distinguish them by guessing.
   observation's time alongside the last-confirmed time
 - **AND** a reader with a tolerance below two minutes identifies the span as unobserved
   rather than reading the state as continuously observed up to the change
+
+#### Scenario: A later lapse is retained behind an earlier on-cadence step
+
+- **WHEN** successive same-game polls confirm a game on cadence, the poller then records
+  no successful observation for a period, observes the same game again, and a later poll
+  observes a different game
+- **THEN** the appended transition records the pre-lapse confirmed time of the later
+  span and its resuming observation's time alongside the last-confirmed time
+- **AND** a reader identifies the later span as unobserved rather than reading the state
+  as continuously observed because the first retained step was short
 
 #### Scenario: One record bounds both sides of a lapse
 
