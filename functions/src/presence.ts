@@ -25,8 +25,24 @@ export type WriteOutcome = "unchanged" | "written";
 export interface StoredState {
   gameid?: unknown;
   lastObservedAt?: unknown;
+  coverageLapseFrom?: unknown;
+  coverageLapseRecoveredAt?: unknown;
   updatedAt?: unknown;
 }
+
+/**
+ * How far apart two successful observations may be before the poller treats
+ * the span between them as a lapse worth retaining.
+ *
+ * The schedule fires every minute, so a gap beyond three minutes means
+ * several polls in a row produced nothing usable — a deploy window, a Steam
+ * outage, a revoked key — rather than scheduler jitter or one slow poll
+ * delaying its queued successor behind concurrency 1. Staying well below any
+ * reader tolerance keeps a false positive harmless: the retained timestamps
+ * still describe point observations, and the reader bridges them or not by
+ * its own rule.
+ */
+const COVERAGE_LAPSE_THRESHOLD_MILLIS = 3 * 60 * 1000;
 
 function asDate(value: unknown): Date | undefined {
   if (value instanceof Date) {
@@ -124,6 +140,8 @@ export async function recordObservation(
       ? (snapshot.data() as StoredState)
       : undefined;
     const previousLastObservedAt = previous?.lastObservedAt;
+    const previousLapseFrom = previous?.coverageLapseFrom;
+    const previousLapseRecoveredAt = previous?.coverageLapseRecoveredAt;
 
     if (isStaleOrEqualObservation(previous, observation)) {
       // Never let an older or equal observation overwrite the newest state.
@@ -135,6 +153,20 @@ export async function recordObservation(
       // `updatedAt` keep their stored values. `lastObservedAt` records the
       // newest successful observation so a stalled older transaction cannot
       // roll state backward.
+      //
+      // A same-game observation that resumes after a lapse must not erase the
+      // lapse by advancing the watermark alone: the pre-lapse watermark and
+      // this recovery time stay on the document, so the later transition that
+      // closes this state can report the unobserved span instead of passing
+      // the state off as continuously observed. Both are raw observation
+      // timestamps, never a computed gap. An earlier retained lapse wins over
+      // a later one, and a later recovery supersedes an earlier one, so
+      // repeated lapses widen the reported span rather than hiding any of it.
+      const previousLastObservedDate = asDate(previousLastObservedAt);
+      const lapsed =
+        previousLastObservedDate !== undefined &&
+        observation.t.getTime() - previousLastObservedDate.getTime() >
+          COVERAGE_LAPSE_THRESHOLD_MILLIS;
       transaction.set(playerRef, {
         ...(snapshot.data() ?? {}),
         v: CURRENT_STATE_SCHEMA_VERSION,
@@ -142,6 +174,12 @@ export async function recordObservation(
         gameid: observation.gameid,
         gameName: observation.gameName,
         lastObservedAt: observedAt,
+        ...(lapsed
+          ? {
+              coverageLapseFrom: previousLapseFrom ?? previousLastObservedAt,
+              coverageLapseRecoveredAt: observedAt,
+            }
+          : {}),
       });
       return { outcome: "unchanged" as const, first: false };
     }
@@ -157,6 +195,8 @@ export async function recordObservation(
       // from a one-minute one.
       since: observedAt,
       updatedAt: observedAt,
+      // No spread: the new state starts with no retained lapse. Whatever the
+      // replaced state rode out was just copied onto the transition above.
     });
 
     transaction.set(presenceRef, {
@@ -166,6 +206,16 @@ export async function recordObservation(
       ...(previousLastObservedAt === undefined
         ? {}
         : { prevLastObservedAt: previousLastObservedAt }),
+      // A lapse the replaced state rode out stays with the transition that
+      // closes it: the state went unobserved from the first timestamp until
+      // the second, so a reader can tell an interior gap from a merely stale
+      // tail. Absent when the state never lapsed, exactly like the watermark.
+      ...(previousLapseFrom === undefined
+        ? {}
+        : { prevCoverageLapseFrom: previousLapseFrom }),
+      ...(previousLapseRecoveredAt === undefined
+        ? {}
+        : { prevCoverageLapseRecoveredAt: previousLapseRecoveredAt }),
       personastate: observation.personastate,
       gameid: observation.gameid,
       gameName: observation.gameName,

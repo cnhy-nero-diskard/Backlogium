@@ -5,14 +5,14 @@ import * as safeLog from "./safeLog";
  * Bump only when the current-state shape changes, and teach readers the new
  * current-state branch.
  */
-export const CURRENT_STATE_SCHEMA_VERSION = 1;
+export const CURRENT_STATE_SCHEMA_VERSION = 2;
 
 /**
  * Schema version stamped onto presence transition documents.
  * Bump only when the presence-transition shape changes, and teach readers the
  * new presence-transition branch.
  */
-export const PRESENCE_TRANSITION_SCHEMA_VERSION = 2;
+export const PRESENCE_TRANSITION_SCHEMA_VERSION = 3;
 
 const ENDPOINT =
   "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/";

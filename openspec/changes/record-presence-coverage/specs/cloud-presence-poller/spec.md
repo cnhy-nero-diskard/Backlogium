@@ -7,6 +7,14 @@ the state it replaces, as `prevLastObservedAt`. A reader comparing that value ag
 transition's own timestamp SHALL therefore be able to distinguish a state observed continuously
 up to the moment it changed from one whose final stretch went unobserved.
 
+A same-game observation that resumes after a lapse SHALL NOT erase the lapse by advancing the
+watermark alone. The poller SHALL retain the pre-lapse watermark as `coverageLapseFrom` and the
+resuming observation's time as `coverageLapseRecoveredAt` on the current-state document, carry
+both forward across later same-game observations, and copy them onto the next transition as
+`prevCoverageLapseFrom` and `prevCoverageLapseRecoveredAt`. A reader comparing that pair SHALL
+therefore be able to distinguish an unobserved span inside the replaced state from a merely
+stale tail, even though polls confirming the same game arrived between the lapse and the change.
+
 The log is otherwise a record of transitions with no account of the intervals between them.
 Continuous observation and a poller that stopped running produce an identical transition log, so
 an interval's duration cannot be trusted as played time without this value. Because Steam exposes
@@ -30,6 +38,15 @@ facts, and a reader must not have to distinguish them by guessing.
   and its next successful observation reports a different game
 - **THEN** the appended transition records the last confirmed time from before the lapse
 - **AND** the unobserved stretch between that time and the transition is identifiable as such
+
+#### Scenario: Observation resumes after a lapse before a change
+
+- **WHEN** the poller records no successful observation for a period while a game is in progress,
+  then observes the same game again, and a later poll observes a different game
+- **THEN** the appended transition records the pre-lapse confirmed time and the resuming
+  observation's time alongside the last-confirmed time
+- **AND** the unobserved span between the first two is identifiable as such rather than the
+  state reading as continuously observed up to the change
 
 #### Scenario: One record bounds both sides of a lapse
 
@@ -70,7 +87,7 @@ facts, and a reader must not have to distinguish them by guessing.
 The system SHALL stamp every document it writes with a schema version field identifying that
 document's shape, so that a reader can identify the shape without inferring it from which fields
 are present. The version SHALL identify one shape rather than the system as a whole: the
-current-state document is version `1`, and a presence transition document is version `2`.
+current-state document is version `2`, and a presence transition document is version `3`.
 
 Versions SHALL advance independently. A change to one document's shape SHALL NOT bump the version
 of a shape it did not alter, so that a reader's branch on one version is not invalidated by a
@@ -79,12 +96,12 @@ change it is not affected by.
 #### Scenario: Current document is versioned
 
 - **WHEN** the `current` document is written
-- **THEN** it contains a schema version field set to `1`
+- **THEN** it contains a schema version field set to `2`
 
 #### Scenario: Presence documents are versioned
 
 - **WHEN** a document is appended to the `presence` subcollection
-- **THEN** it contains a schema version field set to `2`
+- **THEN** it contains a schema version field set to `3`
 
 #### Scenario: An unaltered shape keeps its version
 

@@ -19,10 +19,12 @@ not an app backend yet: the Android client has no reader for this data and
 
 ```
 players/{steamId}                 current state — the document's own fields
-  { v: 1, personastate, gameid, gameName, since, updatedAt, lastObservedAt }
+  { v: 2, personastate, gameid, gameName, since, updatedAt, lastObservedAt,
+    coverageLapseFrom?, coverageLapseRecoveredAt? }
 
 players/{steamId}/presence/{ISO}  append-only transition log
-  { v: 2, t, prevLastObservedAt, personastate, gameid, gameName }
+  { v: 3, t, prevLastObservedAt, prevCoverageLapseFrom?,
+    prevCoverageLapseRecoveredAt?, personastate, gameid, gameName }
 ```
 
 Two things worth understanding before changing anything here:
@@ -47,6 +49,17 @@ the transition's `t` lets a reader identify an unobserved tail without the polle
 deriving a duration or gap. If the field is absent, coverage is unknown: that is
 true for existing `v: 1` transitions and for the first transition for a player.
 Absence is not a zero timestamp and must not be treated as continuous observation.
+
+A same-game poll that resumes after a lapse of several minutes would otherwise
+erase the lapse by advancing `lastObservedAt` alone, so it also retains the
+pre-lapse watermark as `coverageLapseFrom` and its own time as
+`coverageLapseRecoveredAt`. Both ride the current-state document until the next
+transition copies them across as `prevCoverageLapseFrom` and
+`prevCoverageLapseRecoveredAt`, then the new state starts clean. A reader
+comparing that pair sees the unobserved span inside the replaced state rather
+than a merely stale tail. All four fields are raw observation timestamps; none
+is a duration, gap length, or verdict, and all are absent when the state never
+lapsed.
 
 ## Setup
 
