@@ -94,9 +94,12 @@ time, not two.
 Where a cloud interval's coverage is partial or unknown, the system SHALL credit only the span
 that was confirmed by observation, and SHALL NOT credit the unobserved remainder. Where an
 interval carries the raw interior-gap pair phase 2 preserves (`prevCoverageLapseFrom` /
-`prevCoverageLapseRecoveredAt`), the system SHALL treat the span between that pair as unconfirmed
-and exclude it from derivation exactly as it excludes an unconfirmed tail, applying its own
-tolerance to the raw pair rather than a verdict computed upstream.
+`prevCoverageLapseRecoveredAt`), the system SHALL apply its own tolerance to the raw pair
+rather than a verdict computed upstream, and SHALL treat the whole interval as unconfirmed —
+crediting none of it — once that retained span exceeds its tolerance. Phase 1 retains only
+the largest consecutive-observation step, so the retained span preserves the verdict but not
+the locations: a second interior step above the same tolerance may have been discarded, and
+excluding only the retained span would still credit that hidden outage.
 
 A shared game has no Steam-reported total, so nothing external bounds an over-credit — an interval
 mistakenly credited in full becomes that game's tracked time with no correction available from any
@@ -112,13 +115,23 @@ source. An owned game's equivalent error is caught by its lifetime total; this o
 - **WHEN** an interval was confirmed only until a time before the transition that closed it
 - **THEN** derivation uses the confirmed portion and the remainder is not credited
 
-#### Scenario: Interval with an interior gap excludes that span
+#### Scenario: Interval with an interior gap exceeding tolerance is discarded
 
 - **WHEN** an interval carries an interior-gap pair alongside a fresh tail (for example a v3
   transition carrying `prevLastObservedAt=t10` with `prevCoverageLapseFrom=t1` /
-  `prevCoverageLapseRecoveredAt=t10`)
-- **THEN** derivation uses the confirmed portions and the `t1..t10` span is not credited
+  `prevCoverageLapseRecoveredAt=t10`) and the span between that pair exceeds the ingest's
+  own tolerance
+- **THEN** no span of the interval is credited, rather than only the `t1..t10` span being
+  excluded while the remainder is kept
 - **AND** the interval is not treated as continuous on the strength of its fresh tail
+
+#### Scenario: Interval with two interior outages credits no unobserved span
+
+- **WHEN** one state observed `A@t0 → A@t1 → outage → A@t10 → A@t11 → outage → A@t18 → B@t19`
+  and the retained pair records only the largest step, with both interior outages above the
+  ingest's tolerance
+- **THEN** no span of the interval is credited, so the outage the retained pair does not
+  locate is not credited either
 
 #### Scenario: Interval of unknown coverage
 

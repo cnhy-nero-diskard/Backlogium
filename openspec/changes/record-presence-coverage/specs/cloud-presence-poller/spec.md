@@ -22,10 +22,15 @@ SHALL therefore be able to distinguish an unobserved span inside the replaced
 state from a merely stale tail, even though polls confirming the same game
 arrived between the lapse and the change.
 
-Smaller steps within the same state are not separately recorded, but a reader
-applying any tolerance to the retained pair reaches the same verdict as if it
-had seen every step: any interior step exceeding the tolerance implies the
-retained largest step exceeds it, and vice versa. The tail watermark still
+Smaller steps within the same state are not separately recorded. The retained
+pair preserves the verdict, not the locations: a reader applying any tolerance
+to the retained pair reaches the same "does any interior step exceed my
+tolerance?" verdict as if it had seen every step — any interior step exceeding
+the tolerance implies the retained largest step exceeds it, and vice versa —
+but it cannot recover where every exceeding step was. A reader that must
+exclude unconfirmed spans SHALL therefore treat the whole replaced state's
+interval as unconfirmed once the retained span exceeds its tolerance, rather
+than excluding only the retained span. The tail watermark still
 bounds the change itself, and the new state after a transition starts with no
 retained pair.
 
@@ -80,6 +85,17 @@ facts, and a reader must not have to distinguish them by guessing.
   span and its resuming observation's time alongside the last-confirmed time
 - **AND** a reader identifies the later span as unobserved rather than reading the state
   as continuously observed because the first retained step was short
+
+#### Scenario: Two lapses in one state preserve the verdict but not both locations
+
+- **WHEN** one state observes `A@t0 → A@t1 → outage → A@t10 → A@t11 → outage → A@t18`
+  and then transitions to another game, with both interior steps above a reader's
+  tolerance
+- **THEN** the appended transition retains only the largest of the two steps, and that
+  retained span still exceeds the reader's tolerance
+- **AND** the reader treats the whole replaced state's interval as unconfirmed rather
+  than excluding only the retained span, because the smaller step's location is not
+  recoverable from the retained pair
 
 #### Scenario: One record bounds both sides of a lapse
 

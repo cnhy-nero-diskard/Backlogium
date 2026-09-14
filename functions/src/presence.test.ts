@@ -500,6 +500,73 @@ describe("presence poller", () => {
     ).toEqual(new Date("2026-08-14T00:30:00.000Z"));
   });
 
+  it("preserves the verdict but not both locations across two interior outages", async () => {
+    // Regression for the phase-3 safety contract: A@t0 -> A@t1 -> outage ->
+    // A@t10 -> A@t11 -> outage -> A@t18 -> B@t19 with a two-minute consumer
+    // tolerance. Both interior steps exceed the tolerance, but only the
+    // largest pair is retained. max(gaps) preserves the verdict (the retained
+    // span still exceeds the tolerance, so a conservative reader discarding
+    // the whole interval credits no unobserved span), not the locations:
+    // excluding only the retained span would still credit the second outage.
+    const consumerToleranceMillis = 2 * 60 * 1000;
+    firestore.seed("players/test-steam-id", {
+      gameid: "440",
+      personastate: 1,
+      since: { date: new Date("2026-08-14T00:00:00.000Z") },
+      updatedAt: { date: new Date("2026-08-14T00:00:00.000Z") },
+      lastObservedAt: { date: new Date("2026-08-14T00:00:00.000Z") },
+    });
+
+    await recordObservation(
+      "test-steam-id",
+      observation("440", "2026-08-14T00:01:00.000Z"),
+    );
+    await recordObservation(
+      "test-steam-id",
+      observation("440", "2026-08-14T00:10:00.000Z"),
+    );
+    await recordObservation(
+      "test-steam-id",
+      observation("440", "2026-08-14T00:11:00.000Z"),
+    );
+    await recordObservation(
+      "test-steam-id",
+      observation("440", "2026-08-14T00:18:00.000Z"),
+    );
+    await expect(
+      recordObservation("test-steam-id", observation("570", "2026-08-14T00:19:00.000Z")),
+    ).resolves.toBe("written");
+
+    const presenceWrite = firestore.committedWrites.find((write) =>
+      write.path.startsWith("players/test-steam-id/presence/"),
+    );
+    const retainedFrom = (presenceWrite?.data.prevCoverageLapseFrom as { date: Date })
+      .date;
+    const retainedRecovered = (
+      presenceWrite?.data.prevCoverageLapseRecoveredAt as { date: Date }
+    ).date;
+    // The retained pair is the largest step (t1..t10, nine minutes).
+    expect(retainedFrom).toEqual(new Date("2026-08-14T00:01:00.000Z"));
+    expect(retainedRecovered).toEqual(new Date("2026-08-14T00:10:00.000Z"));
+    // Verdict preserved: the retained span exceeds the consumer tolerance, so
+    // a reader discarding the whole interval on that signal credits nothing
+    // unobserved.
+    expect(
+      retainedRecovered.getTime() - retainedFrom.getTime(),
+    ).toBeGreaterThan(consumerToleranceMillis);
+    // Locations lost: the second outage (t11..t18, seven minutes) also exceeds
+    // the same tolerance but appears nowhere in the retained pair.
+    const discardedSpanMillis =
+      new Date("2026-08-14T00:18:00.000Z").getTime() -
+      new Date("2026-08-14T00:11:00.000Z").getTime();
+    expect(discardedSpanMillis).toBeGreaterThan(consumerToleranceMillis);
+    expect(
+      retainedFrom.getTime() === new Date("2026-08-14T00:11:00.000Z").getTime() &&
+        retainedRecovered.getTime() ===
+          new Date("2026-08-14T00:18:00.000Z").getTime(),
+    ).toBe(false);
+  });
+
   it("records only observation timestamps on a transition", async () => {
     const previousWatermark = { date: new Date("2026-08-13T00:00:00.000Z") };
     const next = observation("570", "2026-08-14T01:02:03.000Z");

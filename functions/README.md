@@ -59,7 +59,11 @@ the next transition copies them across as `prevCoverageLapseFrom` and
 `prevCoverageLapseRecoveredAt`, then the new state starts clean. No tolerance is applied: a one-minute step is retained exactly like an
 hour-long one, and the reader decides what counts as a lapse by comparing the pair — just as it
 does the tail (`prevLastObservedAt` against `t`). Comparing spans selects which raw pair to
-keep but writes no duration. All of these fields are raw observation
+keep but writes no duration. The retained pair preserves the verdict, not the
+locations: once it exceeds a reader's tolerance the reader knows some interior
+span was unobserved, but not where every such span was, so a consumer that must
+exclude unconfirmed time treats the whole interval as unconfirmed rather than
+excluding only the retained span. All of these fields are raw observation
 timestamps; none is a duration, gap length, or verdict. The pair is absent when no same-game poll
 ever advanced the replaced state, and every coverage field is absent on pre-`v: 2` / `v: 3`
 documents and first transitions.

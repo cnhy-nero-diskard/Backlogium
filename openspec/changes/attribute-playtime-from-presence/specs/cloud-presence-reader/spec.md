@@ -89,13 +89,25 @@ distributing was not derived from it.
 - **WHEN** an interval was confirmed only until a time before it ended
 - **THEN** minutes are placed only against the confirmed portion
 
-#### Scenario: An interior gap receives no minutes
+#### Scenario: An interior gap exceeding tolerance removes the interval from placement
 
 - **WHEN** an interval carries an interior-gap pair alongside a fresh tail (for example a v3
   transition carrying `prevLastObservedAt=t10` with `prevCoverageLapseFrom=t1` /
-  `prevCoverageLapseRecoveredAt=t10`)
-- **THEN** minutes are placed only against the confirmed portions excluding the `t1..t10` span
-- **AND** the interval's fresh tail does not cause minutes to be placed into the interior span
+  `prevCoverageLapseRecoveredAt=t10`) and the span between that pair exceeds the placement
+  rule's own tolerance
+- **THEN** the interval contributes no confirmed span, rather than contributing its portions
+  outside the `t1..t10` span
+- **AND** the interval's fresh tail does not cause minutes to be placed into any part of it,
+  because phase 1 retains only the largest step and a second outage above the same tolerance
+  may have been discarded
+
+#### Scenario: Two interior outages place no minutes into either span
+
+- **WHEN** one state observed `A@t0 → A@t1 → outage → A@t10 → A@t11 → outage → A@t18 → B@t19`
+  and the retained pair records only the largest step, with both interior outages above the
+  placement tolerance
+- **THEN** the interval contributes no confirmed span, so no minutes are placed into the
+  outage the retained pair does not locate
 
 ### Requirement: Placement never degrades the estimate it replaces
 

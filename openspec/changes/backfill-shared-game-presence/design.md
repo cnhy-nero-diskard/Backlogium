@@ -54,8 +54,11 @@ history that the live observer would have merged.
 ### Clamp to confirmed observation, and let the deriver see the clamp
 
 An interval observed only until a stated time is fed as observations up to that time and no
-further. An interval carrying the raw interior-gap pair excludes that interior span the same way,
-by the ingest's own tolerance applied to the raw pair. An interval of unknown coverage is treated
+further. An interval carrying the raw interior-gap pair is discarded in full once that
+retained span exceeds the ingest's own tolerance: phase 1 retains only the largest
+consecutive-observation step, so the pair preserves the verdict but not the locations,
+and excluding only the retained span would still credit a second outage above the same
+tolerance that the pair does not locate. An interval of unknown coverage is treated
 conservatively rather than as continuous.
 
 *Why:* nothing bounds the error here. This is the same reasoning phase 1 used to record coverage in

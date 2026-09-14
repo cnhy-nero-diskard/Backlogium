@@ -54,9 +54,12 @@ logic that silently double-counts.
 ### Distribute proportionally to confirmed span, with an exact total
 
 Each interval receives minutes in proportion to its confirmed span, with the rounding remainder
-allocated so the written minutes sum to the diffed increase exactly. Confirmed span excludes both
-an unconfirmed tail and the interior span of an interval carrying phase 2's raw interior-gap pair,
-by the placement rule's own tolerance applied to the raw pair.
+allocated so the written minutes sum to the diffed increase exactly. Confirmed span excludes
+an unconfirmed tail, and is zero for an interval whose raw interior-gap pair exceeds the
+placement rule's own tolerance: phase 1 retains only the largest step, so the pair preserves
+the verdict but not the locations, and placing minutes against the portions outside the
+retained span would still place them into a second outage above the same tolerance that the
+pair does not locate.
 
 *Why proportional:* it is the allocation that assumes least. The intervals say play happened in
 these windows and roughly in these proportions; the total says how much. Proportional distribution

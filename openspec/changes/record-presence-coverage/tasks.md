@@ -102,3 +102,10 @@
       repeat the section 6 verification against the new shapes: transitions carry `v: 3` with the
       retained pair once a same-game poll has advanced the state, and the current-state document reads
       `v: 2`.
+- [x] 7.4 Record that the retained pair preserves the verdict, not the locations: keep the
+      largest-wins rule, state in the delta spec, `design.md` and `functions/README.md` that a
+      downstream consumer discards the whole interval once the retained span exceeds its
+      tolerance, and add the two-interior-outage regression (`A@t0 → A@t1 → outage → A@t10 →
+      A@t11 → outage → A@t18 → B@t19`, both outages above a two-minute tolerance) proving the
+      retained span still trips the tolerance while the second location is unrecoverable.
+      Verify `npm --prefix functions test` and `npm --prefix functions run build` pass.

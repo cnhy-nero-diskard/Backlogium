@@ -103,7 +103,14 @@ The accepted rule has a known limitation, stated here so it is not discovered la
 two fields cannot record every span, so smaller steps within one state are not
 separately recorded. The retained pair is always a genuine consecutive-observation
 step, never a synthesis — and because it is the largest such step, a reader applying
-any tolerance to it reaches the same lapse verdict as if it had seen every step. The
+any tolerance to it reaches the same lapse verdict as if it had seen every step:
+`max(gaps)` preserves the verdict, not the locations. A downstream consumer that
+must exclude unconfirmed spans therefore cannot surgically exclude only the
+retained span: once the retained span exceeds its tolerance it must treat the
+whole replaced state's interval as unconfirmed, because a second span above the
+same tolerance may have been discarded (for example `A@t0 → A@t1 → outage →
+A@t10 → A@t11 → outage → A@t18 → B@t19` retains only the largest pair while both
+interior outages exceed a two-minute tolerance). The
 tail watermark still bounds the change itself, so no state can read as continuously
 observed when its closing stretch went unseen.
 

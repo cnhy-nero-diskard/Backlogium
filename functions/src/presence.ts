@@ -156,8 +156,11 @@ export async function recordObservation(
       // keeping the latest would hide the earlier evidence. Comparing spans
       // selects which raw pair to keep but writes no duration, so a reader
       // applying any tolerance to the retained pair reaches the same verdict
-      // as if it had seen every step. The tail watermark still bounds the
-      // change itself.
+      // as if it had seen every step — max(gaps) preserves the verdict, not
+      // the locations. A consumer that must exclude unconfirmed time therefore
+      // discards the whole interval once the retained span exceeds its
+      // tolerance, rather than excluding only the retained span. The tail
+      // watermark still bounds the change itself.
       const previousWatermarkDate = asDate(previousLastObservedAt);
       const retainedFromDate = asDate(previousLapseFrom);
       const retainedRecoveredDate = asDate(previousLapseRecoveredAt);

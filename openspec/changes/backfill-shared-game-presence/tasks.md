@@ -16,11 +16,13 @@
       clock dependency.
 - [ ] 2.2 Admit an interval only where the named game's stored source is presence-derived. Verify by
       test that an owned-game interval and an unknown-game interval each produce no action at all.
-- [ ] 2.3 Clamp a partially covered interval to its confirmed portion, exclude the interior
-      span of an interval carrying the raw interior-gap pair, and treat an unknown-coverage
-      interval conservatively. Verify by test for continuous, observed-until, unknown, and
-      fresh-tail-with-interior-gap coverage, where the interior span is not credited despite the
-      fresh tail.
+- [ ] 2.3 Clamp a partially covered interval to its confirmed portion, discard in full an
+      interval whose raw interior-gap pair exceeds the ingest tolerance, and treat an
+      unknown-coverage interval conservatively. Verify by test for continuous, observed-until,
+      unknown, and fresh-tail-with-interior-gap coverage, where the gapped interval credits
+      nothing despite the fresh tail, and by test over a two-interior-outage fixture
+      (`A@t0 → A@t1 → outage → A@t10 → A@t11 → outage → A@t18 → B@t19`, both outages above
+      tolerance) that no unobserved span is credited.
 - [ ] 2.4 Verify by test that play falling entirely inside a poller gap produces no session and no
       span inferred from surrounding intervals.
 - [ ] 2.5 Verify by test that two intervals closer together than the gap tolerance fold into one
