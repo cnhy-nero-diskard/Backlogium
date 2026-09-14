@@ -54,7 +54,9 @@ history that the live observer would have merged.
 ### Clamp to confirmed observation, and let the deriver see the clamp
 
 An interval observed only until a stated time is fed as observations up to that time and no
-further. An interval of unknown coverage is treated conservatively rather than as continuous.
+further. An interval carrying the raw interior-gap pair excludes that interior span the same way,
+by the ingest's own tolerance applied to the raw pair. An interval of unknown coverage is treated
+conservatively rather than as continuous.
 
 *Why:* nothing bounds the error here. This is the same reasoning phase 1 used to record coverage in
 the first place, arriving at the point where it finally has to be acted on. Crediting an

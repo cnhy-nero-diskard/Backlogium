@@ -38,7 +38,9 @@ the local session ledger holds for that same window, so the two accounts can be 
 rather than inferred from separate screens.
 
 Each presented interval SHALL state its coverage, and an interval of unknown coverage SHALL be
-distinguishable at a glance from one observed continuously.
+distinguishable at a glance from one observed continuously. An interval carrying the raw
+interior-gap pair SHALL state that span alongside its tail coverage, so a fresh tail with an
+interior gap is not presented as continuous.
 
 This comparison is the evidence a later phase's design depends on. Presenting only the cloud
 timeline would show what the cloud believes without showing whether it disagrees with anything,
@@ -61,6 +63,8 @@ which is the entire question.
 - **WHEN** intervals are presented
 - **THEN** each states whether it was observed continuously, observed only until a stated time, or
   is of unknown coverage
+- **AND** each carrying an interior-gap pair states that span, so a fresh tail with an interior
+  gap is not presented as continuous
 
 #### Scenario: Attribution disagreement is visible by date
 

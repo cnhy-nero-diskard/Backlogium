@@ -6,8 +6,11 @@
 - [ ] 1.2 Distribute minutes proportionally to confirmed span with largest-remainder rounding.
       Verify by test that the written minutes sum to the diffed increase exactly, across spans that
       total more than, less than, and equal to it.
-- [ ] 1.3 Place minutes only against confirmed portions of an interval. Verify by test that a
-      partially covered interval receives minutes for its confirmed span only.
+- [ ] 1.3 Place minutes only against confirmed portions of an interval, excluding the interior
+      span of an interval carrying the raw interior-gap pair. Verify by test that a partially
+      covered interval receives minutes for its confirmed span only, and that a
+      fresh-tail-with-interior-gap interval receives none for the interior span despite its fresh
+      tail.
 - [ ] 1.4 Return no placement when no interval covers the period, when spans total zero, or when the
       increase is zero. Verify by test for each, and that each falls back rather than erroring.
 - [ ] 1.5 Keep the final session open when its interval is still ongoing. Verify by test that a

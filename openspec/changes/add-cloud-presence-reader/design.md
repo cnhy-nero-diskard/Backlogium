@@ -75,7 +75,12 @@ progression-shaped, and `domain/` already holds exactly this kind of pure Steam-
 ### Coverage is carried, never resolved
 
 The reconstruction reports coverage as it was recorded — observed continuously, observed until a
-stated time, or unknown — and does not decide whether a given gap is tolerable.
+stated time, or unknown — and preserves the raw interior-gap pair
+(`prevCoverageLapseFrom` / `prevCoverageLapseRecoveredAt`) verbatim alongside that tail value
+whenever the closing transition carries one. It does not decide whether a given gap is tolerable,
+and it does not reduce the pair to a duration or fold it into the three-state value: a fresh tail
+with an interior gap (`prevLastObservedAt` adjacent to the transition, pair spanning the earlier
+outage) still carries the pair, so it can never reconstruct as fully continuous.
 
 *Why:* that threshold belongs to the consumer, and the consumers differ. Phase 4 can afford a loose
 tolerance because Steam's totals bound the error; phase 3 cannot, because nothing bounds it there.

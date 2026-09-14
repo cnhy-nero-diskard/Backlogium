@@ -92,7 +92,11 @@ time, not two.
 ### Requirement: Unconfirmed time is not credited to a shared game
 
 Where a cloud interval's coverage is partial or unknown, the system SHALL credit only the span
-that was confirmed by observation, and SHALL NOT credit the unobserved remainder.
+that was confirmed by observation, and SHALL NOT credit the unobserved remainder. Where an
+interval carries the raw interior-gap pair phase 2 preserves (`prevCoverageLapseFrom` /
+`prevCoverageLapseRecoveredAt`), the system SHALL treat the span between that pair as unconfirmed
+and exclude it from derivation exactly as it excludes an unconfirmed tail, applying its own
+tolerance to the raw pair rather than a verdict computed upstream.
 
 A shared game has no Steam-reported total, so nothing external bounds an over-credit — an interval
 mistakenly credited in full becomes that game's tracked time with no correction available from any
@@ -107,6 +111,14 @@ source. An owned game's equivalent error is caught by its lifetime total; this o
 
 - **WHEN** an interval was confirmed only until a time before the transition that closed it
 - **THEN** derivation uses the confirmed portion and the remainder is not credited
+
+#### Scenario: Interval with an interior gap excludes that span
+
+- **WHEN** an interval carries an interior-gap pair alongside a fresh tail (for example a v3
+  transition carrying `prevLastObservedAt=t10` with `prevCoverageLapseFrom=t1` /
+  `prevCoverageLapseRecoveredAt=t10`)
+- **THEN** derivation uses the confirmed portions and the `t1..t10` span is not credited
+- **AND** the interval is not treated as continuous on the strength of its fresh tail
 
 #### Scenario: Interval of unknown coverage
 

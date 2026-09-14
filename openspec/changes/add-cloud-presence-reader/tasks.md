@@ -10,9 +10,11 @@
       rejected request performs zero datastore reads and that a missing secret rejects rather than
       admits.
 - [ ] 1.4 Serve a windowed slice: accept a position, return transitions after it, the current
-      state, the account the poller is configured for, and a position to continue from. Verify
-      against `FakeFirestore` that a position bounds the query and that a full response reports
-      whether more remain.
+      state, the account the poller is configured for, and a position to continue from, carrying
+      each transition's coverage record — `prevLastObservedAt` and, where present,
+      `prevCoverageLapseFrom` / `prevCoverageLapseRecoveredAt` — verbatim. Verify against
+      `FakeFirestore` that a position bounds the query, that a full response reports whether more
+      remain, and that a stored interior-gap pair round-trips without reduction to a verdict.
 - [ ] 1.5 Route every log call through `safeLog`. Verify the README boundary grep stays silent:
       `grep -rnE "firebase-functions/logger|console\." functions/src/ --exclude=safeLog.ts --exclude="*.test.ts"`
 - [ ] 1.6 Confirm `firestore.rules` is unchanged and still denies all client access. Verify no rules
@@ -29,12 +31,19 @@
       transition's game, bounded by the latest successful observation. Verify by unit test that no
       end is fabricated.
 - [ ] 2.4 Carry coverage onto each interval — continuous, observed-until, or unknown — from the
-      transition that closed it. Verify by unit test for each of the three, including a transition
-      carrying no coverage record, which must yield unknown and never continuous.
-- [ ] 2.5 Propagate uncertainty forward: an interval closed by a transition with an earlier
+      transition that closed it, and preserve the raw interior-gap pair (`prevCoverageLapseFrom` /
+      `prevCoverageLapseRecoveredAt`) verbatim alongside that tail value whenever the transition
+      carries one. Verify by unit test for each of the three tail values, including a transition
+      carrying no coverage record, which must yield unknown and never continuous, and verify the
+      pair is not dropped, normalised to a duration, or folded into the three-state value.
+- [ ] 2.5 Verify by unit test over a fresh-tail-with-interior-gap fixture (`A@t0 → A@t1 → outage
+      → A@t10 → B@t11`, closing as a v3 transition carrying `prevLastObservedAt=t10` with
+      `prevCoverageLapseFrom=t1` / `prevCoverageLapseRecoveredAt=t10`) that the reconstructed
+      interval is not marked continuous and still carries the `t1..t10` pair for its consumers.
+- [ ] 2.6 Propagate uncertainty forward: an interval closed by a transition with an earlier
       last-confirmed time marks the following interval as possibly having begun earlier. Verify by
       unit test over an adjacent pair.
-- [ ] 2.6 Verify by unit test that the reconstruction produces no session, playtime, experience,
+- [ ] 2.7 Verify by unit test that the reconstruction produces no session, playtime, experience,
       streak or daily progress value.
 
 ## 3. Transport and credentials
@@ -74,9 +83,10 @@
       under the existing bounded retention. Verify each cause is recorded distinctly.
 - [ ] 5.2 Present the reconstructed cloud timeline against the locally recorded sessions for the
       same window. Verify the surface renders both for a window covered by a read.
-- [ ] 5.3 State coverage per interval, with unknown visually distinct from continuous. Verify an
-      interval from a pre-phase-1 transition is not presented as confidently as one carrying
-      coverage.
+- [ ] 5.3 State coverage per interval, with unknown visually distinct from continuous, and state
+      the interior-gap span where the interval carries one. Verify an interval from a pre-phase-1
+      transition is not presented as confidently as one carrying coverage, and that a fresh tail
+      with an interior gap is not presented as continuous.
 - [ ] 5.4 Show date-level attribution disagreement, where the cloud places play on a different date
       than the local ledger credits. Verify with a fixture reproducing the phone-was-off case.
 - [ ] 5.5 Verify the surface offers no action to apply, import or reconcile anything it presents.

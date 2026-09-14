@@ -89,6 +89,14 @@ distributing was not derived from it.
 - **WHEN** an interval was confirmed only until a time before it ended
 - **THEN** minutes are placed only against the confirmed portion
 
+#### Scenario: An interior gap receives no minutes
+
+- **WHEN** an interval carries an interior-gap pair alongside a fresh tail (for example a v3
+  transition carrying `prevLastObservedAt=t10` with `prevCoverageLapseFrom=t1` /
+  `prevCoverageLapseRecoveredAt=t10`)
+- **THEN** minutes are placed only against the confirmed portions excluding the `t1..t10` span
+- **AND** the interval's fresh tail does not cause minutes to be placed into the interior span
+
 ### Requirement: Placement never degrades the estimate it replaces
 
 The system SHALL fall back to attributing minutes as it would without any presence record whenever

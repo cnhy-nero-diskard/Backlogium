@@ -95,7 +95,10 @@ account change for the same reason; a cloud read is the same hazard arriving by 
 
 A read SHALL accept a position and return only observations after it, together with a position for
 the next read. The system SHALL persist the position it has consumed. A read SHALL NOT return the
-whole retained history by default.
+whole retained history by default. Each returned transition SHALL carry the coverage record phase
+1 wrote for it — `prevLastObservedAt` and, where present, the interior-gap pair
+`prevCoverageLapseFrom` / `prevCoverageLapseRecoveredAt` — verbatim, without reduction to a
+derived verdict.
 
 Retention is indefinite by design, so an unwindowed read grows without bound for the life of the
 project. The stored position is also what makes repeated reads idempotent: re-reading the same
@@ -121,13 +124,27 @@ window is harmless because it yields what has already been consumed.
 - **WHEN** the same window is read twice
 - **THEN** the second read produces the same reconstruction and no additional stored effect
 
+#### Scenario: Coverage fields survive the read
+
+- **WHEN** a stored transition carries a last-confirmed time and an interior-gap pair
+- **THEN** the response carries the same `prevLastObservedAt` and the same
+  `prevCoverageLapseFrom` / `prevCoverageLapseRecoveredAt` verbatim
+- **AND** the pair is not dropped, normalised to a duration, or folded into a derived verdict
+
 ### Requirement: Transitions reconstruct into intervals with stated coverage
 
 The system SHALL turn a sequence of transitions, together with the current state, into ordered
 intervals of what was being played. Every interval SHALL carry what is known about whether it was
-observed throughout: observed continuously, observed only until a stated time, or unknown.
+observed throughout: observed continuously, observed only until a stated time, or unknown. Every
+interval SHALL additionally preserve the raw interior-gap pair (`prevCoverageLapseFrom` /
+`prevCoverageLapseRecoveredAt`) from the transition that closed it, verbatim and alongside that
+tail coverage, whenever the transition carries one. The three-state value summarises the tail; it
+SHALL NOT replace or absorb the interior pair, and the reconstruction SHALL apply no tolerance to
+decide whether the retained span counts as a lapse — that verdict belongs to the consumer.
 
 An interval whose coverage is unknown SHALL NOT be presented or treated as observed continuously.
+An interval carrying an interior-gap pair SHALL NOT be presented or treated as observed
+continuously across that span, even when its tail is fresh.
 
 Coverage is what phase 1 records. Reconstruction that discards it produces a timeline that looks
 authoritative and is not, which is worse than one that states its own limits.
@@ -148,6 +165,23 @@ authoritative and is not, which is worse than one that states its own limits.
 - **WHEN** a transition records that the state it replaced was last confirmed before the transition
   occurred
 - **THEN** the interval it closes is marked as observed only until that confirmed time
+
+#### Scenario: Interior-gap evidence is preserved
+
+- **WHEN** a transition carries an interior-gap pair alongside its last-confirmed time
+- **THEN** the interval it closes carries that same `prevCoverageLapseFrom` /
+  `prevCoverageLapseRecoveredAt` pair verbatim, alongside its tail coverage
+- **AND** the pair is not dropped, normalised to a duration, or folded into the three-state value
+
+#### Scenario: A fresh tail with an interior gap is not continuous
+
+- **WHEN** a v3 transition closing an interval that began at `t0` carries a last-confirmed time
+  adjacent to its own timestamp together with an interior-gap pair for an earlier span (for
+  example `prevLastObservedAt=t10` with `prevCoverageLapseFrom=t1` /
+  `prevCoverageLapseRecoveredAt=t10` on a transition at `t11`)
+- **THEN** the interval is NOT marked as observed continuously
+- **AND** it carries the interior pair through to its consumers, so a downstream reader still
+  sees the `t1..t10` span as unobserved rather than reading `t10` against `t11` as continuous
 
 #### Scenario: A transition carrying no coverage
 
