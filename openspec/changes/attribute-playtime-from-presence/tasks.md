@@ -10,9 +10,10 @@
       confirmed span for an interval whose raw interior-gap pair exceeds the placement
       tolerance. Verify by test that a partially covered interval receives minutes for its
       confirmed span only, that a fresh-tail-with-interior-gap interval exceeding tolerance
-      receives none for any part of it despite its fresh tail, and that a two-interior-outage
-      fixture (`A@t0 → A@t1 → outage → A@t10 → A@t11 → outage → A@t18 → B@t19`, both outages
-      above tolerance) places no minutes into either unobserved span.
+      contributes no confirmed span for any part of it despite its fresh tail, and that a
+      two-interior-outage fixture (`A@t0 → A@t1 → outage → A@t10 → A@t11 → outage → A@t18 →
+      B@t19`, both outages above tolerance) contributes no confirmed span, so placement
+      allocates nothing from it.
 - [ ] 1.4 Return no placement when no interval covers the period, when spans total zero, or when the
       increase is zero. Verify by test for each, and that each falls back rather than erroring.
 - [ ] 1.5 Keep the final session open when its interval is still ongoing. Verify by test that a
@@ -33,6 +34,11 @@
       exactly-once crediting property is unchanged by threading placement through.
 - [ ] 2.5 Verify by test that a full sync completes normally, crediting every minute, while the
       reader fails on every call.
+- [ ] 2.6 Verify by test that when every covering interval is rejected by the gap tolerance,
+      the commit still credits the full diffed increase through the unaided single-session
+      attribution — byte-identical to the no-record path — rather than crediting zero or
+      placing minutes on rejected evidence. Verify both the total minutes and the resulting
+      session's date attribution.
 
 ## 3. Attribution and recompute
 
@@ -51,8 +57,9 @@
 - [ ] 4.1 Add the one-time re-filing action, re-placing already-recorded sessions covered by the
       presence record. Verify by test that each game's total recorded minutes are unchanged.
 - [ ] 4.2 Record that it has run and make repeated invocation a no-op. Verify by test.
-- [ ] 4.3 Leave sessions outside the record's coverage exactly as they are. Verify by test that they
-      are not rewritten on an assumption.
+- [ ] 4.3 Leave sessions outside the record's coverage, and sessions covered only by
+      intervals the placement tolerance rejects, exactly as they are. Verify by test that they
+      are not rewritten on an assumption or on rejected evidence.
 - [ ] 4.4 Implement the reversal, returning attribution to its prior state and re-offering the
       action. Verify by test that a sweep followed by its reversal restores the prior daily progress
       exactly.

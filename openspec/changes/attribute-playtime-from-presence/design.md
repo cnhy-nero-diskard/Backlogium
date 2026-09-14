@@ -61,6 +61,15 @@ the verdict but not the locations, and placing minutes against the portions outs
 retained span would still place them into a second outage above the same tolerance that the
 pair does not locate.
 
+When that leaves no confirmed span — no covering interval, or every covering interval
+rejected — the rule returns no placement and the caller retains the unaided single-session
+estimate. That fallback is the safe behaviour for owned games precisely because Steam remains
+the quantity authority: the total is still credited in full, while the rejected record is
+treated as unusable for placement. The fallback is therefore not claimed to avoid the
+unobserved spans; it only preserves the total the placement path refused to distribute. The
+historical sweep follows the same contract, leaving a recorded session unchanged when the
+record cannot safely place it.
+
 *Why proportional:* it is the allocation that assumes least. The intervals say play happened in
 these windows and roughly in these proportions; the total says how much. Proportional distribution
 is the only rule consistent with both that requires no further evidence.

@@ -97,24 +97,35 @@ distributing was not derived from it.
   rule's own tolerance
 - **THEN** the interval contributes no confirmed span, rather than contributing its portions
   outside the `t1..t10` span
-- **AND** the interval's fresh tail does not cause minutes to be placed into any part of it,
+- **AND** placement allocates nothing from that interval, including from its fresh tail,
   because phase 1 retains only the largest step and a second outage above the same tolerance
   may have been discarded
+- **AND** where that leaves no confirmed span to distribute across, no placement is returned
+  and the increase is credited by the unaided attribution instead; that fallback retains the
+  old estimate and is not claimed to avoid the unobserved span
 
-#### Scenario: Two interior outages place no minutes into either span
+#### Scenario: Two interior outages make the interval unusable for placement
 
 - **WHEN** one state observed `A@t0 → A@t1 → outage → A@t10 → A@t11 → outage → A@t18 → B@t19`
   and the retained pair records only the largest step, with both interior outages above the
   placement tolerance
-- **THEN** the interval contributes no confirmed span, so no minutes are placed into the
-  outage the retained pair does not locate
+- **THEN** the interval contributes no confirmed span, so placement allocates nothing from it,
+  including nothing located by the retained pair
+- **AND** where it is the only covering interval, no placement is returned and the increase is
+  still credited in full by the unaided attribution; that fallback is not claimed to avoid
+  either outage span
 
 ### Requirement: Placement never degrades the estimate it replaces
 
 The system SHALL fall back to attributing minutes as it would without any presence record whenever
 the record cannot improve on it — including when no record covers the period, when the record
-is unavailable, when coverage is unknown, and when the period is short enough that the existing
-estimate is already within the record's own resolution.
+is unavailable, when coverage is unknown, when every covering interval is rejected by the gap
+tolerance and therefore contributes no confirmed span, and when the period is short enough that
+the existing estimate is already within the record's own resolution.
+
+A rejected or gapped presence interval makes the record unusable for placement: the old estimate
+is retained rather than placing minutes on evidence deliberately rejected. That fallback preserves
+Steam's total but is not claimed to avoid the unobserved spans.
 
 No configuration of the presence record SHALL cause a game's minutes to go uncredited.
 
@@ -138,6 +149,15 @@ No configuration of the presence record SHALL cause a game's minutes to go uncre
 
 - **WHEN** placement is attempted and cannot be completed for any reason
 - **THEN** the observed increase is still credited in full by the unaided attribution
+
+#### Scenario: Every covering interval rejected retains the old estimate
+
+- **WHEN** a playtime increase is observed and every presence interval covering its period is
+  rejected by the gap tolerance, so the confirmed span totals zero
+- **THEN** no placement is returned and the increase is credited in full as a single session
+  exactly as it would be without any presence record
+- **AND** no claim is made that the resulting session avoids the unobserved spans; the record
+  was unusable for placement, so the old estimate is retained with its total intact
 
 ### Requirement: History can be re-filed once, and reversed
 
@@ -169,6 +189,13 @@ and streaks — and that it does not change experience, levels, or any game's to
 
 - **WHEN** recorded sessions fall outside what the presence record covers
 - **THEN** they are left exactly as they are rather than rewritten on an assumption
+
+#### Scenario: Sessions the record cannot safely place are left unchanged
+
+- **WHEN** a recorded session is covered only by intervals the placement tolerance rejects,
+  so no confirmed span remains to place it onto
+- **THEN** it is left exactly as it is rather than re-filed on rejected evidence
+- **AND** each game's total recorded minutes are unchanged by leaving it
 
 #### Scenario: The disclosure is accurate
 
