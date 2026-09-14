@@ -26,12 +26,15 @@
 - [x] 2.3 Confirm the unchanged-poll path is untouched — no transition appended, `since` and
       `updatedAt` retained, `lastObservedAt` advanced. Verify the existing unchanged-poll tests still
       pass without modification.
-- [x] 2.4 On a same-game poll that advances the watermark, retain that step's endpoints as
-      `coverageLapseFrom` / `coverageLapseRecoveredAt` on the current-state document with no
-      tolerance cutoff, keep the first retained pair across later same-game polls, and copy it onto
-      the next transition as `prevCoverageLapseFrom` / `prevCoverageLapseRecoveredAt`, starting the
-      new state clean. Verify by unit test that a recovery poll followed by a transition carries the
-      pair, and that a direct transition omits it.
+- [x] 2.4 On a same-game poll that advances the watermark, retain the largest consecutive-observation
+      step seen within the state as `coverageLapseFrom` / `coverageLapseRecoveredAt` on the
+      current-state document with no tolerance cutoff — a later step replaces the retained pair only
+      when strictly longer, ties keep the earlier pair — and copy it onto the next transition as
+      `prevCoverageLapseFrom` / `prevCoverageLapseRecoveredAt`, starting the new state clean. Verify
+      by unit test that a recovery poll followed by a transition carries the pair, that a direct
+      transition omits it, and that the largest step wins (a later larger outage replaces an earlier
+      on-cadence pair, equal steps keep the earlier pair, and the two-interior-outage regression
+      preserves the verdict while the second location is unrecoverable).
 
 ## 3. Spec coverage in tests
 
@@ -88,20 +91,23 @@
 
 ## 7. Review follow-up: no poller-side cutoff
 
-- [x] 7.1 Remove the lapse-retention tolerance cutoff so every forward same-game step is retained
-      verbatim with first-wins carry-forward, and add the sub-three-minute regression alongside
-      updated cadence and second-lapse tests. Verify `npm --prefix functions test` and
-      `npm --prefix functions run build` pass.
+- [x] 7.1 Remove the lapse-retention tolerance cutoff so every forward same-game step is considered
+      with largest-wins carry-forward (a later step replaces the retained pair only when strictly
+      longer, ties keep the earlier pair), and keep the sub-three-minute regression alongside the
+      cadence-tie, later-outage-replaces-earlier, and largest-span tests. Verify `npm --prefix
+      functions test` and `npm --prefix functions run build` pass.
 - [x] 7.2 Reconcile the change artifacts with the implementation: delta spec (retention rule, short-lapse
       scenario, per-shape versions), `design.md` (no-cutoff decision with rejected alternatives,
       current-state `v: 2` / transition `v: 3`, pair-absence meaning, verify and rollback steps), and
       `functions/README.md` (retention wording). Verify the documented shapes match what the tests
       assert is written.
-- [ ] 7.3 Build and deploy the `v: 2` / `v: 3` revision (`npm --prefix functions run build` then
-      `firebase deploy --only functions`, still `asia-southeast1`, no `firestore.rules` change), then
-      repeat the section 6 verification against the new shapes: transitions carry `v: 3` with the
-      retained pair once a same-game poll has advanced the state, and the current-state document reads
-      `v: 2`.
+- [ ] 7.3 (Deferred post-merge — not a merge gate.) Build and deploy the `v: 2` / `v: 3` revision
+      (`npm --prefix functions run build` then `firebase deploy --only functions`, still
+      `asia-southeast1`, no `firestore.rules` change), then repeat the section 6 verification against
+      the new shapes: transitions carry `v: 3` with the retained pair once a same-game poll has
+      advanced the state, and the current-state document reads `v: 2`. Not yet performed: the final
+      shapes are unit-covered only, sections 6.3–6.4 record the earlier revision, and merging without
+      this item does not certify final-shape production verification.
 - [x] 7.4 Record that the retained pair preserves the verdict, not the locations: keep the
       largest-wins rule, state in the delta spec, `design.md` and `functions/README.md` that a
       downstream consumer discards the whole interval once the retained span exceeds its
