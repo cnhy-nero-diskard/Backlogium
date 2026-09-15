@@ -72,6 +72,20 @@ interface SessionDao {
     )
     fun observeBetween(startInclusive: Long, endExclusive: Long): Flow<List<Session>>
 
+    /**
+     * Sessions overlapping a half-open window: started before it ends and ended after it
+     * begins (or still open with no end recorded). Backs the cloud-presence diagnostics
+     * comparison, where a local session can be wider than the cloud window that motivated
+     * looking at it — after an offline stretch every game touched inherits the whole
+     * stretch as its recorded span, so a start-inside-window filter drops the very
+     * sessions the comparison must show.
+     */
+    @Query(
+        "SELECT * FROM sessions WHERE startAt < :endExclusive " +
+            "AND (endAt IS NULL OR endAt > :startInclusive) ORDER BY startAt DESC",
+    )
+    fun observeOverlapping(startInclusive: Long, endExclusive: Long): Flow<List<Session>>
+
     /** Closed synthesized sessions starting at or after [cutoff], for Personal Pace training. */
     @Query(
         "SELECT * FROM sessions WHERE startAt >= :cutoff AND open = 0 ORDER BY startAt DESC",

@@ -54,7 +54,7 @@ class CloudPresenceDiagnosticsViewModel @Inject constructor(
                 !configured -> flowOf(CloudDiagnosticsUiState())
                 snapshot == null -> flowOf(CloudDiagnosticsUiState(configured = true))
                 else -> combine(
-                    sessions.sessionsBetween(snapshot.windowStart, snapshot.windowEnd),
+                    sessions.sessionsOverlapping(snapshot.windowStart, snapshot.windowEnd),
                     hiddenGames.hiddenAppIds,
                 ) { localSessions, hiddenAppIds ->
                     projectCloudDiagnostics(snapshot, localSessions, hiddenAppIds, time.zone())

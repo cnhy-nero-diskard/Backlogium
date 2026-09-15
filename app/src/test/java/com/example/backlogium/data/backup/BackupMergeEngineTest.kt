@@ -1171,6 +1171,9 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     override fun observeBetween(startInclusive: Long, endExclusive: Long): Flow<List<Session>> =
         flowOf(store.filter { it.startAt >= startInclusive && it.startAt < endExclusive })
 
+    override fun observeOverlapping(startInclusive: Long, endExclusive: Long): Flow<List<Session>> =
+        flowOf(store.filter { it.startAt < endExclusive && (it.endAt == null || it.endAt > startInclusive) })
+
     override fun observeClosedSince(cutoff: Long): Flow<List<Session>> =
         flowOf(store.filter { it.startAt >= cutoff && !it.open })
     override suspend fun getAll(): List<Session> = store.sortedBy { it.startAt }

@@ -160,11 +160,12 @@ class CloudPresenceReconstructionTest {
         schemaVersion = 3,
     )
 
-    private fun current(at: Long, appId: Long?) = CloudPresenceCurrentState(
+    private fun current(at: Long, appId: Long?, since: Long? = null) = CloudPresenceCurrentState(
         observedAt = at,
         appId = appId,
         gameName = null,
         personastate = 1,
+        since = since,
         coverageLapseFrom = null,
         coverageLapseRecoveredAt = null,
         schemaVersion = 3,

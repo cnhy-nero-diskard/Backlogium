@@ -46,6 +46,15 @@ class SessionRepository @Inject constructor(
         sessionDao.observeBetween(startInclusiveMillis, endExclusiveMillis).visibleSessions()
 
     /**
+     * Sessions overlapping an explicit start-inclusive/end-exclusive window: started before
+     * it ends and ended after it begins (or still open). For the cloud-presence diagnostics
+     * comparison only — Analytics and History attribute by session start and keep
+     * [sessionsBetween].
+     */
+    fun sessionsOverlapping(startInclusiveMillis: Long, endExclusiveMillis: Long): Flow<List<PlaySession>> =
+        sessionDao.observeOverlapping(startInclusiveMillis, endExclusiveMillis).visibleSessions()
+
+    /**
      * Earliest visible session start, or null before the first session is recorded. Hidden games
      * are excluded, so an Analytics window can never stretch back over history it cannot show.
      */

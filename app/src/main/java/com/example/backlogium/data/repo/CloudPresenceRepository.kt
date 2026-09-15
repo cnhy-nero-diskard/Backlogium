@@ -372,6 +372,7 @@ private fun CloudPresenceCurrentDto.toDomainCurrent() = CloudPresenceCurrentStat
     appId = parseAppId(gameid),
     gameName = gameName,
     personastate = personastate,
+    since = optionalInstant(since),
     coverageLapseFrom = optionalInstant(coverageLapseFrom),
     coverageLapseRecoveredAt = optionalInstant(coverageLapseRecoveredAt),
     schemaVersion = v,
