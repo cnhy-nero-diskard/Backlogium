@@ -90,6 +90,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_32_33,
         BacklogiumDatabase.MIGRATION_33_34,
         BacklogiumDatabase.MIGRATION_34_35,
+        BacklogiumDatabase.MIGRATION_35_36,
     )
 
     @Test
@@ -125,6 +126,51 @@ class MigrationTest {
         } finally {
             context.deleteDatabase(databaseName)
         }
+    @Test
+    fun v35ToV36_createsBoundedCloudReadAuditTable() {
+        val databaseName = "migration-v35-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 35)
+        database.close()
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                36,
+                true,
+                BacklogiumDatabase.MIGRATION_35_36,
+            )
+            try {
+                migrated.query("PRAGMA table_info(`cloud_read_records`)").use { cursor ->
+                    val columns = buildList {
+                        val nameIndex = cursor.getColumnIndex("name")
+                        while (cursor.moveToNext()) add(cursor.getString(nameIndex))
+                    }
+                    assertEquals(
+                        listOf(
+                            "id",
+                            "at",
+                            "trigger",
+                            "outcome",
+                            "windowStart",
+                            "windowEnd",
+                            "observationCount",
+                            "nextPosition",
+                        ),
+                        columns,
+                    )
+                }
+                migrated.query("SELECT COUNT(*) FROM cloud_read_records").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     }
 
     @Test

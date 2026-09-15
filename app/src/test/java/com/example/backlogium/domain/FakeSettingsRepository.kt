@@ -64,6 +64,15 @@ internal class FakeSettingsRepository : SettingsRepository {
         autoSnapshot.value = autoSnapshot.value.copy(intervalHours = hours)
     }
 
+    private val cloudPosition = MutableStateFlow<String?>(null)
+    override val cloudReadPosition: Flow<String?> = cloudPosition
+    override suspend fun setCloudReadPosition(position: String) {
+        cloudPosition.value = position
+    }
+    override suspend fun clearCloudReadPosition() {
+        cloudPosition.value = null
+    }
+
     // Live now-playing session (enhance-now-playing) is irrelevant to a rule change.
     private val session = MutableStateFlow(LiveSessionState())
     override val liveSession: Flow<LiveSessionState> = session

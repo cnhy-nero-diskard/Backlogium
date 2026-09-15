@@ -94,6 +94,7 @@ class SettingsDataStore @Inject constructor(
             booleanPreferencesKey("notification_permission_requested")
         val LIVE_MONITOR_ENABLED = booleanPreferencesKey("live_monitor_enabled")
         val LIVE_MONITORING_AVAILABILITY = stringPreferencesKey("live_monitoring_availability")
+        val CLOUD_READ_POSITION = stringPreferencesKey("cloud_read_position")
         val RULE_CONFIG_VERSION = longPreferencesKey("rule_config_version")
 
         /**
@@ -440,6 +441,23 @@ class SettingsDataStore @Inject constructor(
         context.dataStore.edit { prefs ->
             writeLiveSession(prefs, LiveSessionState())
         }
+
+    }
+
+    /** Durable cloud-reader watermark; account changes clear it before the new account is used. */
+    val cloudReadPositionFlow: Flow<String?> =
+        context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_READ_POSITION] }
+
+    suspend fun setCloudReadPosition(position: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CLOUD_READ_POSITION] = position
+        }
+    }
+
+    suspend fun clearCloudReadPosition() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.CLOUD_READ_POSITION)
+        }
     }
 
     /**
@@ -616,6 +634,7 @@ class SettingsDataStore @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs.remove(Keys.LIVE_SESSION_APP_ID)
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
+            prefs.remove(Keys.CLOUD_READ_POSITION)
             prefs.remove(Keys.PENDING_SESSION_ENDS)
             prefs.remove(Keys.SHARED_CANDIDATE_APP_ID)
             prefs.remove(Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT)

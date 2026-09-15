@@ -1,5 +1,7 @@
 package com.example.backlogium.di
 
+import com.example.backlogium.data.credentials.CloudCredentialsStore
+import com.example.backlogium.data.credentials.EncryptedCredentialStore
 import com.example.backlogium.data.backup.BackupExportGateway
 import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.backup.DatabaseTransactionScope
@@ -69,6 +71,10 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindSettingsRepository(impl: DataStoreSettingsRepository): SettingsRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindCloudCredentialsStore(impl: EncryptedCredentialStore): CloudCredentialsStore
 
     @Binds
     @Singleton

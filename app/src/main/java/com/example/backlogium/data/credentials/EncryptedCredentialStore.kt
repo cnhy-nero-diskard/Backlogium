@@ -19,6 +19,12 @@ import javax.inject.Singleton
 
 private val Context.credentialsDataStore by preferencesDataStore(name = "credentials")
 
+interface CloudCredentialsStore {
+    suspend fun readCloudCredentials(): CloudCredentials?
+    suspend fun writeCloudCredentials(endpoint: String, token: String)
+    suspend fun clearCloudCredentials()
+}
+
 /**
  * At-rest store for the Steam credentials (API key + SteamID64). Each value is encrypted with an
  * `AES/GCM/NoPadding` key held in the [AndroidKeyStore][ANDROID_KEYSTORE] and persisted to a
@@ -32,10 +38,12 @@ private val Context.credentialsDataStore by preferencesDataStore(name = "credent
 @Singleton
 class EncryptedCredentialStore @Inject constructor(
     @ApplicationContext private val context: Context,
-) {
+) : CloudCredentialsStore {
     private object Keys {
         val API_KEY = stringPreferencesKey("api_key")
         val STEAM_ID = stringPreferencesKey("steam_id")
+        val CLOUD_ENDPOINT = stringPreferencesKey("cloud_endpoint")
+        val CLOUD_TOKEN = stringPreferencesKey("cloud_token")
         val PENDING_API_KEY = stringPreferencesKey("pending_api_key")
         val PENDING_STEAM_ID = stringPreferencesKey("pending_steam_id")
     }
@@ -43,6 +51,32 @@ class EncryptedCredentialStore @Inject constructor(
     suspend fun readApiKey(): String? = read(Keys.API_KEY)
 
     suspend fun readSteamId(): String? = read(Keys.STEAM_ID)
+
+    override suspend fun readCloudCredentials(): CloudCredentials? {
+        val endpoint = read(Keys.CLOUD_ENDPOINT)?.trim()
+        val token = read(Keys.CLOUD_TOKEN)?.trim()
+        return if (!endpoint.isNullOrBlank() && !token.isNullOrBlank()) {
+            CloudCredentials(endpoint, token)
+        } else {
+            null
+        }
+    }
+
+    override suspend fun writeCloudCredentials(endpoint: String, token: String) {
+        val encryptedEndpoint = encrypt(endpoint.trim())
+        val encryptedToken = encrypt(token.trim())
+        context.credentialsDataStore.edit { prefs ->
+            prefs[Keys.CLOUD_ENDPOINT] = encryptedEndpoint
+            prefs[Keys.CLOUD_TOKEN] = encryptedToken
+        }
+    }
+
+    override suspend fun clearCloudCredentials() {
+        context.credentialsDataStore.edit { prefs ->
+            prefs.remove(Keys.CLOUD_ENDPOINT)
+            prefs.remove(Keys.CLOUD_TOKEN)
+        }
+    }
 
     /** True when both credential values decrypt to non-blank strings. */
     suspend fun hasCredentials(): Boolean =
@@ -166,4 +200,10 @@ class EncryptedCredentialStore @Inject constructor(
 data class PendingCredentials(
     val apiKey: String,
     val steamId: String,
+)
+
+/** Encrypted endpoint/token pair returned only inside the data layer. */
+data class CloudCredentials(
+    val endpoint: String,
+    val token: String,
 )

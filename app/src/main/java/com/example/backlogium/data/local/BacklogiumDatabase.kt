@@ -12,6 +12,7 @@ import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.DiagnosticsDao
+import com.example.backlogium.data.local.dao.CloudReadDao
 import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GameDao
@@ -42,6 +43,7 @@ import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.WishlistItem
 import com.example.backlogium.data.local.entity.WishlistPriceObservation
 import com.example.backlogium.data.local.entity.PresenceDecision
+import com.example.backlogium.data.local.entity.CloudReadRecord
 import com.example.backlogium.data.local.entity.RequestBreakdown
 import com.example.backlogium.data.local.entity.RequestTotal
 import com.example.backlogium.data.local.entity.SteamAssetDownloadState
@@ -64,6 +66,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         RequestBreakdown::class,
         RequestTotal::class,
         PresenceDecision::class,
+        CloudReadRecord::class,
         Collection::class,
         CollectionMember::class,
         GameGenreCache::class,
@@ -76,7 +79,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         HiddenGame::class,
         SteamReviewCache::class,
     ],
-    version = 35,
+    version = 36,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -88,6 +91,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun hltbDataDao(): HltbDataDao
     abstract fun hltbDatasetDao(): HltbDatasetDao
     abstract fun achievementDao(): AchievementDao
+    abstract fun cloudReadDao(): CloudReadDao
     abstract fun diagnosticsDao(): DiagnosticsDao
     abstract fun collectionDao(): CollectionDao
     abstract fun gameGenreCacheDao(): GameGenreCacheDao
@@ -835,8 +839,29 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "WHERE `declinedAt` IS NOT NULL",
                 )
             }
+
         }
 
+        /** v35 -> v36: bounded cloud-reader audit records. */
+        val MIGRATION_35_36 = object : Migration(35, 36) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `cloud_read_records` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`at` INTEGER NOT NULL, " +
+                        "`trigger` TEXT NOT NULL, " +
+                        "`outcome` TEXT NOT NULL, " +
+                        "`windowStart` INTEGER, " +
+                        "`windowEnd` INTEGER, " +
+                        "`observationCount` INTEGER NOT NULL, " +
+                        "`nextPosition` TEXT)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_cloud_read_records_at` " +
+                        "ON `cloud_read_records` (`at`)",
+                )
+            }
+        }
         private fun SupportSQLiteDatabase.hasColumn(table: String, column: String): Boolean {
             query("PRAGMA table_info(`$table`)").use { cursor ->
                 val nameIndex = cursor.getColumnIndex("name")
