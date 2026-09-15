@@ -193,6 +193,13 @@ describe("servePresenceRead", () => {
         gameName: "Team Fortress 2",
       });
     }
+    firestore.seed("players/" + steamId, {
+      v: 2,
+      lastObservedAt: new Date(base.getTime() + (MAX_RESPONSE_TRANSITIONS + 60) * 1_000),
+      personastate: 1,
+      gameid: "440",
+      gameName: "Team Fortress 2",
+    });
     const captured = response();
 
     await servePresenceRead(request("Bearer secret"), captured, "secret", steamId, firestore);
@@ -201,10 +208,14 @@ describe("servePresenceRead", () => {
       transitions: Array<{ t: string }>;
       hasMore: boolean;
       nextPosition: string;
+      windowEnd: string;
     };
     expect(body.transitions).toHaveLength(MAX_RESPONSE_TRANSITIONS);
     expect(body.hasMore).toBe(true);
     expect(body.nextPosition).toBe(body.transitions.at(-1)?.t);
+    // An incomplete page ends at its last returned transition, not at the latest
+    // observation, so it cannot masquerade as full-window evidence.
+    expect(body.windowEnd).toBe(body.transitions.at(-1)?.t);
   });
 
   it("returns an unusable response error when stored data cannot be serialized", async () => {

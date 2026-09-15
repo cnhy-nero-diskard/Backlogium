@@ -276,16 +276,29 @@ class CloudPresenceRepository @Inject constructor(
         val nextPosition: String?,
         val hasMore: Boolean,
     ) {
-        fun toSnapshot(): CloudPresenceSnapshot = CloudPresenceSnapshot(
-            windowStart = windowStart,
-            windowEnd = windowEnd,
-            readAt = readAt,
-            intervals = CloudPresenceReconstruction.reconstruct(transitions, current),
-            current = current,
-            observationCount = transitions.size,
-            nextPosition = nextPosition,
-            hasMore = hasMore,
-        )
+        fun toSnapshot(): CloudPresenceSnapshot {
+            // An incomplete page covers only its returned transitions: combining the page's
+            // prefix with the latest current state would fabricate a tail interval across
+            // the omitted transitions, and presenting the server's full-window end would
+            // claim complete evidence. Bound the snapshot to the page and label it via hasMore.
+            val pageEnd = transitions.maxOfOrNull { it.at }
+            val effectiveCurrent = if (hasMore) null else current
+            val effectiveWindowEnd = if (hasMore && pageEnd != null) {
+                minOf(windowEnd, pageEnd)
+            } else {
+                windowEnd
+            }
+            return CloudPresenceSnapshot(
+                windowStart = windowStart,
+                windowEnd = effectiveWindowEnd,
+                readAt = readAt,
+                intervals = CloudPresenceReconstruction.reconstruct(transitions, effectiveCurrent),
+                current = current,
+                observationCount = transitions.size,
+                nextPosition = nextPosition,
+                hasMore = hasMore,
+            )
+        }
     }
 
     private fun CloudCredentials.toConfiguration() = CloudPresenceConfiguration(

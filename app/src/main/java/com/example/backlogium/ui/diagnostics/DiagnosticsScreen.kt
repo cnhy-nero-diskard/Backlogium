@@ -215,6 +215,14 @@ private fun CloudPresenceComparisonCard(state: CloudDiagnosticsUiState) {
                     UiFormat.dateTime(snapshot.windowEnd),
                 style = MaterialTheme.typography.bodySmall,
             )
+            if (snapshot.hasMore) {
+                Text(
+                    "Partial window: more observations remain beyond this page. " +
+                        "Read again to continue; the comparison below covers this page only.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+            }
             Text(
                 "${snapshot.observationCount} observations; ${state.intervals.size} visible intervals",
                 style = MaterialTheme.typography.bodySmall,
@@ -275,8 +283,10 @@ private fun CloudPresenceComparisonCard(state: CloudDiagnosticsUiState) {
             } else {
                 state.localSessions.forEach { session ->
                     Text(
-                        "App ${session.appId}: ${UiFormat.dateTime(session.startAt)} " +
-                            "(${session.minutes} min${if (session.open) ", open" else ""})",
+                        "App ${session.appId}: ${UiFormat.dateTime(session.startAt)} - " +
+                            (session.endAt?.let { UiFormat.dateTime(it) }
+                                ?: if (session.open) "ongoing" else "unknown end") +
+                            " (${session.minutes} min${if (session.open) ", open" else ""})",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

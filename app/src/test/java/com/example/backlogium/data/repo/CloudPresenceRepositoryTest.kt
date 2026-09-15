@@ -79,7 +79,10 @@ class CloudPresenceRepositoryTest {
         assertEquals(null, api.requests[0].position)
         assertEquals(CloudCredentials("https://reader.example.com/read", "reader-secret"), store.credentials)
         assertEquals("2026-09-15T00:20:00Z", settings.cloudReadPosition.first())
-        assertEquals(1, repository.snapshot.first()!!.intervals.size)
+        // An incomplete page carries no trailing interval: the latest current state sits
+        // beyond omitted transitions, so combining them would fabricate a tail across the gap.
+        assertEquals(0, repository.snapshot.first()!!.intervals.size)
+        assertEquals(true, repository.snapshot.first()!!.hasMore)
 
         api.answer = sampleResponse(nextPosition = "2026-09-15T00:30:00Z")
         assertTrue(repository.read() is CloudReadResult.Success)
@@ -118,6 +121,67 @@ class CloudPresenceRepositoryTest {
         )
         assertNull(store.credentials)
         assertEquals(CloudReadFailure.UNUSABLE_RESPONSE.name, records.records.value.single().outcome)
+    }
+
+    @Test
+    fun incompletePageIsBoundedAndDoesNotFabricateTailAcrossOmittedTransitions() = runBlocking {
+        val pageEnd = "2026-09-15T00:10:00Z"
+        val api = FakeCloudPresenceApi(
+            answer = CloudPresenceResponseDto(
+                account = ACCOUNT,
+                transitions = listOf(
+                    CloudPresenceTransitionDto(
+                        v = 3,
+                        t = "2026-09-15T00:00:00Z",
+                        gameid = "10",
+                        gameName = "Portal",
+                        personastate = 1,
+                    ),
+                    CloudPresenceTransitionDto(
+                        v = 3,
+                        t = pageEnd,
+                        prevLastObservedAt = "2026-09-15T00:09:00Z",
+                        gameid = "20",
+                        gameName = "Other",
+                        personastate = 1,
+                    ),
+                ),
+                current = CloudPresenceCurrentDto(
+                    v = 2,
+                    lastObservedAt = "2026-09-15T01:00:00Z",
+                    gameid = "20",
+                    gameName = "Other",
+                    personastate = 1,
+                ),
+                nextPosition = pageEnd,
+                hasMore = true,
+                windowStart = "2026-09-15T00:00:00Z",
+                windowEnd = "2026-09-15T01:00:00Z",
+                readAt = "2026-09-15T01:01:00Z",
+            ),
+        )
+        val store = FakeCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+        )
+        val records = FakeCloudReadDao()
+        val repository = repository(api, store, records, steamId = ACCOUNT)
+
+        val result = repository.read()
+        assertTrue(result is CloudReadResult.Success)
+        val snapshot = (result as CloudReadResult.Success).snapshot
+
+        assertTrue(snapshot.hasMore)
+        // The page ends at its last returned transition, not at the latest observation:
+        // an incomplete page must not masquerade as full-window evidence.
+        assertEquals(
+            java.time.Instant.parse(pageEnd).toEpochMilli(),
+            snapshot.windowEnd,
+        )
+        // The latest current state sits beyond omitted transitions, so no trailing
+        // interval may be fabricated across them: only the closed page interval survives.
+        assertEquals(1, snapshot.intervals.size)
+        assertEquals(10L, snapshot.intervals.single().appId)
+        assertTrue(snapshot.intervals.none { it.ongoing })
     }
 
     private fun repository(

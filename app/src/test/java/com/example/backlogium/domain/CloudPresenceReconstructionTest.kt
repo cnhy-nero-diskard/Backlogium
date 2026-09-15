@@ -122,6 +122,22 @@ class CloudPresenceReconstructionTest {
         assertFalse(interval.ongoing)
     }
 
+    @Test
+    fun shortRetainedInteriorPairBelowOldToleranceIsStillNotContinuous() {
+        // Regression: the reader applies no tolerance to the retained interior-gap pair.
+        // A 90-second retained span with a fresh tail must not reconstruct as CONTINUOUS.
+        val interval = closedInterval(
+            previousLastObservedAt = 10L * MINUTE,
+            closingAt = 10L * MINUTE + 30_000L,
+            previousCoverageLapseFrom = 0L,
+            previousCoverageLapseRecoveredAt = 90_000L,
+        )
+
+        assertEquals(CloudCoverageState.OBSERVED_UNTIL, interval.coverage)
+        assertEquals(0L, interval.coverageLapseFrom)
+        assertEquals(90_000L, interval.coverageLapseRecoveredAt)
+    }
+
     private fun closedInterval(
         previousLastObservedAt: Long?,
         closingAt: Long,

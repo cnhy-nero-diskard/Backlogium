@@ -161,17 +161,16 @@ object CloudPresenceReconstruction {
     ): CoverageDecision {
         if (coverageLapseFrom != null && coverageLapseRecoveredAt != null) {
             // The writer retains the largest consecutive-observation step seen within the
-            // state, including normal on-cadence polls, and applies no tolerance itself:
-            // whether a span of a minute or an hour counts as a lapse is this reader's
-            // decision. Only a retained span exceeding the tolerance marks the whole
-            // interval unconfirmed; a short step falls through to the tail verdict below.
-            val retainedSpan = coverageLapseRecoveredAt - coverageLapseFrom
-            if (retainedSpan < 0 || retainedSpan > tailToleranceMillis) {
-                return CoverageDecision(
-                    state = CloudCoverageState.OBSERVED_UNTIL,
-                    observedUntil = observedAt,
-                )
-            }
+            // state, including normal on-cadence polls, and applies no tolerance itself.
+            // Reconstruction applies no tolerance either: any retained pair means the
+            // interval cannot be vouched for across that span, even with a fresh tail.
+            // Whether a short span counts as a lapse is the consumer's decision, so the
+            // pair survives verbatim on the interval and the tail verdict never reports
+            // CONTINUOUS while it is present.
+            return CoverageDecision(
+                state = CloudCoverageState.OBSERVED_UNTIL,
+                observedUntil = observedAt,
+            )
         }
         if (observedAt == null || observedAt > closingAt) {
             return CoverageDecision(CloudCoverageState.UNKNOWN, observedAt)

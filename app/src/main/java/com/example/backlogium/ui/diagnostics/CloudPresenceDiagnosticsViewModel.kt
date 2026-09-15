@@ -75,7 +75,7 @@ internal fun projectCloudDiagnostics(
     val disagreements = visibleIntervals.flatMap { interval ->
         val cloudDate = Instant.ofEpochMilli(interval.startAt).atZone(zone).toLocalDate().toString()
         localSessions.asSequence()
-            .filter { it.appId == interval.appId }
+            .filter { it.appId == interval.appId && overlapsSamePlay(interval, it) }
             .map { Instant.ofEpochMilli(it.startAt).atZone(zone).toLocalDate().toString() }
             .distinct()
             .filter { it != cloudDate }
@@ -91,4 +91,14 @@ internal fun projectCloudDiagnostics(
         localSessions = localSessions,
         dateDisagreements = disagreements,
     )
+}
+
+private fun overlapsSamePlay(interval: CloudPresenceInterval, session: PlaySession): Boolean {
+    // The comparison is for the local session and cloud interval covering the same play:
+    // sessionsOverlapping() returns every local session in the whole snapshot window, so an
+    // unrelated session for the same game on another day must not generate a disagreement.
+    // A null end means still open/ongoing and overlaps anything after its start.
+    if (interval.endAt != null && session.startAt >= interval.endAt) return false
+    if (session.endAt != null && interval.startAt >= session.endAt) return false
+    return true
 }

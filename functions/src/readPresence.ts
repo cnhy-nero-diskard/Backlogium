@@ -254,7 +254,12 @@ export async function servePresenceRead(
     const currentState = current(
       currentSnapshot.exists ? currentSnapshot.data() : undefined,
     );
-    const windowEnd = currentState?.lastObservedAt ?? lastTransition ?? readAt.toISOString();
+    // An incomplete page must not claim the full window: when more transitions remain,
+    // the window ends at the last returned transition so the page cannot masquerade as
+    // complete evidence. The client resumes from nextPosition for the remainder.
+    const windowEnd = hasMore
+      ? (lastTransition ?? readAt.toISOString())
+      : (currentState?.lastObservedAt ?? lastTransition ?? readAt.toISOString());
     const result: PresenceReadResponse = {
       account: steamId,
       transitions,
