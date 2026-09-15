@@ -587,6 +587,12 @@ private fun genreStatusLabel(status: GenreEnrichmentStatus): String = when (stat
     GenreEnrichmentStatus.RETRYING -> "Genres: retrying…"
 }
 
+internal const val CLOUD_PRESENCE_DISCLOSURE =
+    "Compare a bounded cloud presence window with this phone's local ledger. " +
+        "Cloud presence adds a record of when play happened. " +
+        "Backlogium functions fully without it. " +
+        "It never imports playtime or changes progress."
+
 @Composable
 private fun CloudPresenceCard(
     state: SettingsUiState,
@@ -602,8 +608,7 @@ private fun CloudPresenceCard(
         ) {
             Text("Optional cloud reader", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Compare a bounded cloud presence window with this phone's local ledger. " +
-                    "It never imports playtime or changes progress.",
+                CLOUD_PRESENCE_DISCLOSURE,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

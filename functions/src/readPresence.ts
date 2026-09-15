@@ -235,10 +235,12 @@ export async function servePresenceRead(
     const db = firestore ?? (getFirestore() as unknown as FirestoreLike);
     const player = db.collection(PLAYERS).doc(steamId);
     const position = parsedPosition;
+    // A single cutoff drives both the Firestore lower bound and the reported window
+    // start: computing them from separate Date.now() calls would let the two drift,
+    // and a stale current document must not reintroduce evidence from outside it.
+    const windowStartDate = position ?? new Date(Date.now() - FIRST_READ_WINDOW_MILLIS);
     const query = player.collection(PRESENCE)
-      .where("t", position ? ">" : ">=", Timestamp.fromDate(
-        position ?? new Date(Date.now() - FIRST_READ_WINDOW_MILLIS),
-      ))
+      .where("t", position ? ">" : ">=", Timestamp.fromDate(windowStartDate))
       .orderBy("t", "asc");
     const resumedQuery = position ? query.startAfter(Timestamp.fromDate(position)) : query;
     const [currentSnapshot, transitionsSnapshot] = await Promise.all([
@@ -249,24 +251,36 @@ export async function servePresenceRead(
     const hasMore = all.length > MAX_RESPONSE_TRANSITIONS;
     const transitions = all.slice(0, MAX_RESPONSE_TRANSITIONS);
     const readAt = new Date();
-    const firstWindow = position ?? new Date(Date.now() - FIRST_READ_WINDOW_MILLIS);
     const lastTransition = transitions.at(-1)?.t;
-    const currentState = current(
+    const storedCurrent = current(
       currentSnapshot.exists ? currentSnapshot.data() : undefined,
     );
+    // A current observation older than the window boundary carries no evidence inside
+    // the bounded window: presenting it would leak a stale current-only interval and
+    // could invert windowEnd < windowStart. Omit it so the response stays coherent.
+    const currentObservedAt = storedCurrent?.lastObservedAt
+      ? new Date(storedCurrent.lastObservedAt).getTime()
+      : Number.NaN;
+    const currentState = Number.isNaN(currentObservedAt) || currentObservedAt >= windowStartDate.getTime()
+      ? storedCurrent
+      : null;
     // An incomplete page must not claim the full window: when more transitions remain,
     // the window ends at the last returned transition so the page cannot masquerade as
     // complete evidence. The client resumes from nextPosition for the remainder.
-    const windowEnd = hasMore
+    const candidateWindowEnd = hasMore
       ? (lastTransition ?? readAt.toISOString())
       : (currentState?.lastObservedAt ?? lastTransition ?? readAt.toISOString());
+    const windowStart = windowStartDate.toISOString();
+    // Belt and braces: the reported window never runs backward, even if the caller
+    // resumes from a future position.
+    const windowEnd = candidateWindowEnd < windowStart ? windowStart : candidateWindowEnd;
     const result: PresenceReadResponse = {
       account: steamId,
       transitions,
       current: currentState,
       nextPosition: lastTransition ?? position?.toISOString() ?? null,
       hasMore,
-      windowStart: firstWindow.toISOString(),
+      windowStart,
       windowEnd,
       readAt: readAt.toISOString(),
     };

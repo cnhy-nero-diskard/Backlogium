@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeFirestore } from "./testSupport/FakeFirestore";
 import {
+  FIRST_READ_WINDOW_MILLIS,
   MAX_RESPONSE_TRANSITIONS,
   servePresenceRead,
 } from "./readPresence";
@@ -173,6 +174,50 @@ describe("servePresenceRead", () => {
     expect(new Date(body.windowStart).getTime()).toBeGreaterThan(
       new Date("2025-01-01T00:00:00.000Z").getTime(),
     );
+  });
+
+  it("omits a stale current state older than the first-read window", async () => {
+    // Regression: when polling has stalled for longer than the bounded window, the
+    // transition query correctly returns nothing recent, but the stale current document
+    // must not drive the window backward or leak a current-only interval outside it.
+    const firestore = new FakeFirestore();
+    const staleObservedAt = new Date(Date.now() - FIRST_READ_WINDOW_MILLIS - 24 * 60 * 60 * 1_000);
+    const staleSince = new Date(staleObservedAt.getTime() - 60 * 1_000);
+    firestore.seed("players/" + steamId, {
+      v: 3,
+      lastObservedAt: staleObservedAt,
+      since: staleSince,
+      personastate: 0,
+      gameid: "440",
+      gameName: "Team Fortress 2",
+    });
+    firestore.seed("players/" + steamId + "/presence/ancient", {
+      t: new Date(staleObservedAt.getTime() - 24 * 60 * 60 * 1_000),
+      v: 2,
+      personastate: 0,
+      gameid: null,
+      gameName: null,
+    });
+    const captured = response();
+
+    await servePresenceRead(request("Bearer secret"), captured, "secret", steamId, firestore);
+
+    expect(captured.statusCode).toBe(200);
+    const body = captured.body as {
+      transitions: unknown[];
+      current: unknown;
+      windowStart: string;
+      windowEnd: string;
+      hasMore: boolean;
+      nextPosition: string | null;
+    };
+    expect(body.transitions).toHaveLength(0);
+    expect(body.current).toBeNull();
+    expect(new Date(body.windowEnd).getTime()).toBeGreaterThanOrEqual(
+      new Date(body.windowStart).getTime(),
+    );
+    expect(body.hasMore).toBe(false);
+    expect(body.nextPosition).toBeNull();
   });
 
   it("resumes strictly after the supplied position", async () => {
