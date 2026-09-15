@@ -126,6 +126,8 @@ class MigrationTest {
         } finally {
             context.deleteDatabase(databaseName)
         }
+    }
+
     @Test
     fun v35ToV36_createsBoundedCloudReadAuditTable() {
         val databaseName = "migration-v35-${System.nanoTime()}"
@@ -169,8 +171,6 @@ class MigrationTest {
         } finally {
             context.deleteDatabase(databaseName)
         }
-    }
-
     }
 
     @Test
