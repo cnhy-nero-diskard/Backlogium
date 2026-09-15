@@ -9,11 +9,11 @@ This directory is invisible to Gradle. It is not part of the Android build.
 
 ## Status
 
-The cloud writer is implemented in this repository as a Node 22 / TypeScript
-Firebase scheduled function. The repository proves the source and deployment
-configuration, not the health of a particular live deployment. It is intentionally
-not an app backend yet: the Android client has no reader for this data and
-`firestore.rules` denies client access until a narrowly scoped consumer is ready.
+The cloud writer and an authenticated, bounded raw-history reader are implemented
+in this repository as Node 22 / TypeScript Firebase functions. The repository
+proves the source and deployment configuration, not the health of a particular
+live deployment. The Android client reaches the data through `readPresence`;
+`firestore.rules` still denies direct client access.
 
 ## What it records
 
@@ -75,6 +75,12 @@ The Steam API key lives in Secret Manager, never in this directory:
 ```bash
 firebase functions:secrets:set STEAM_API_KEY --project <project-id>
 ```
+The reader has a separate bearer token. Set it without placing the value in
+source, `.env`, logs, or the Android APK:
+
+~~~
+firebase functions:secrets:set CLOUD_PRESENCE_READ_TOKEN --project <project-id>
+~~~
 
 The Steam ID is configuration, not a secret:
 
@@ -91,6 +97,30 @@ firebase deploy --only functions
 
 The function must stay in `asia-southeast1` to match the Firestore database,
 whose location is permanent.
+
+## Cloud reader
+
+`readPresence` is an HTTPS function in `asia-southeast1` with one active
+instance and request concurrency of one. Call it with:
+
+~~~
+Authorization: Bearer <reader-token>
+GET https://<region>-<project>.cloudfunctions.net/readPresence
+GET .../readPresence?position=<previous-nextPosition>
+~~~
+
+The first request reads only the recent bounded window (31 days) and returns at
+most 250 transitions. Later requests resume strictly after `position`; the
+response's `nextPosition` is the only read watermark. The response contains the
+raw transition coverage timestamps, the current state, the account assertion,
+the returned window, and a `hasMore` flag. It does not contain sessions,
+playtime, XP, streaks, or daily progress.
+
+Missing, malformed, or mismatched bearer credentials are rejected before any
+Firestore read. If the server-side reader secret is absent, every request is
+rejected. The endpoint emits only count/outcome metadata; it never logs the
+Steam account, app ID, or game title. Firestore rules remain unchanged and
+deny-all.
 
 ## Logs
 

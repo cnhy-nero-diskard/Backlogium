@@ -3,21 +3,21 @@
 - [ ] 1.1 Add a bearer credential to Secret Manager and wire it into the functions deployment
       alongside `STEAM_API_KEY`. Verify the secret is referenced by the function and appears in no
       source file or environment config.
-- [ ] 1.2 Add the read function beside `pollPresence`, in `asia-southeast1`, with `maxInstances`
+- [x] 1.2 Add the read function beside `pollPresence`, in `asia-southeast1`, with `maxInstances`
       bounded. Verify `npm --prefix functions run build` typechecks and the function is registered.
-- [ ] 1.3 Reject absent, malformed and non-matching credentials before any Firestore read, and
+- [x] 1.3 Reject absent, malformed and non-matching credentials before any Firestore read, and
       reject every request when the server credential is absent. Verify by unit test that a
       rejected request performs zero datastore reads and that a missing secret rejects rather than
       admits.
-- [ ] 1.4 Serve a windowed slice: accept a position, return transitions after it, the current
+- [x] 1.4 Serve a windowed slice: accept a position, return transitions after it, the current
       state, the account the poller is configured for, and a position to continue from, carrying
       each transition's coverage record — `prevLastObservedAt` and, where present,
       `prevCoverageLapseFrom` / `prevCoverageLapseRecoveredAt` — verbatim. Verify against
       `FakeFirestore` that a position bounds the query, that a full response reports whether more
       remain, and that a stored interior-gap pair round-trips without reduction to a verdict.
-- [ ] 1.5 Route every log call through `safeLog`. Verify the README boundary grep stays silent:
+- [x] 1.5 Route every log call through `safeLog`. Verify the README boundary grep stays silent:
       `grep -rnE "firebase-functions/logger|console\." functions/src/ --exclude=safeLog.ts --exclude="*.test.ts"`
-- [ ] 1.6 Confirm `firestore.rules` is unchanged and still denies all client access. Verify no rules
+- [x] 1.6 Confirm `firestore.rules` is unchanged and still denies all client access. Verify no rules
       deploy is part of this change.
 
 ## 2. Interval reconstruction
