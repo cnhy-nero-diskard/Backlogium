@@ -105,7 +105,7 @@
 
 ## 7. Deploy and verify
 
-- [ ] 7.1 Deploy the endpoint before shipping the app. Verify it is in `asia-southeast1`, rejects an
+- [x] 7.1 Deploy the endpoint before shipping the app. Verify it is in `asia-southeast1`, rejects an
       unauthenticated request, and that no `firestore.rules` deploy was included.
 - [ ] 7.2 Configure the app against the live endpoint and confirm a read succeeds, the account
       assertion passes, and the position advances on a second read.
