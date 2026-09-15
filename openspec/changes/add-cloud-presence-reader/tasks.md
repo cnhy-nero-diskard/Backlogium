@@ -100,7 +100,7 @@
       derived gamification values unchanged, and produces no progress event.
 - [ ] 6.2 Verify by test that an unconfigured app makes no cloud request on any path, including
       during a sync, and that an unreachable endpoint does not fail, delay or alter a sync.
-- [ ] 6.3 Run `./gradlew :gamification:test :app:testDebugUnitTest` and
+- [x] 6.3 Run `./gradlew :gamification:test :app:testDebugUnitTest` and
       `npm --prefix functions test` and confirm both suites pass.
 
 ## 7. Deploy and verify
