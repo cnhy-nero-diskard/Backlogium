@@ -26,6 +26,7 @@ class AccountChangeCoordinator @Inject constructor(
     private val derivedStateWrites: DerivedStateWriteCoordinator,
     private val progressTransitions: ProgressTransitionCoordinator,
     private val cloudPresence: CloudPresenceRepository,
+    private val credentials: OnboardingCredentialsGateway,
 ) : AccountChangeGateway {
     /** Start a confirmed account change and finish it, or leave the marker for recovery on error. */
     override suspend fun apply(apiKey: String, steamId: String) {
@@ -92,21 +93,27 @@ class AccountChangeCoordinator @Inject constructor(
         syncCoordinator.withLock {
             derivedStateWrites.withLock {
                 progressTransitions.withTransition {
-                    roomReset.resetForAccountChange(markerSteamId)
-                    // Rules and UI preferences survive. Progress-event marks and the live
-                    // now-playing session belong to the discarded account and do not.
-                    settings.clearAccountDerivedState()
-                    // Bumps the cloud generation and drops cloud state under the same mutex
-                    // that guards post-fetch persistence, so an in-flight A response is
-                    // discarded instead of repopulating state under B.
-                    cloudPresence.invalidateForAccountChange()
+                    // Fence the whole identity transition under the cloud mutex: the entry bump
+                    // discards captures from before the reset, the exit bump discards captures of
+                    // old account A made after the reset but before promotion, and no capture or
+                    // persistence can interleave between the durable clears and the promotion.
+                    // DataStore and Room cannot share a transaction. The marker is still present
+                    // until the promotion below succeeds, so a crash in the preceding window
+                    // repeats the idempotent reset.
+                    cloudPresence.runAccountChangeTransition {
+                        roomReset.resetForAccountChange(markerSteamId)
+                        // Rules and UI preferences survive. Progress-event marks and the live
+                        // now-playing session belong to the discarded account and do not.
+                        settings.clearAccountDerivedState()
+                        credentialStore.commitPending()
+                        // Make the new identity visible to the cloud reader before the
+                        // definitive exit invalidation, so a post-switch capture sees B.
+                        credentials.refresh()
+                    }
                 }
             }
         }
 
-        // DataStore and Room cannot share a transaction. The marker is still present until this
-        // promotion succeeds, so a crash in the preceding window repeats the idempotent reset.
-        credentialStore.commitPending()
         markerStore.clear()
     }
 }

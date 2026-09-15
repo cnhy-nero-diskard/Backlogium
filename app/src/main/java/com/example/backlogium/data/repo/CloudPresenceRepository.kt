@@ -106,9 +106,11 @@ class CloudPresenceRepository @Inject constructor(
 ) {
     private val configurationState = MutableStateFlow<CloudPresenceConfiguration?>(null)
     private val snapshotState = MutableStateFlow<CloudPresenceSnapshot?>(null)
-    // Account-change generation: captured before the network fetch, incremented by
-    // invalidation/removal. A result whose generation changed is discarded before any
-    // persistence, so a late A response cannot repopulate state under account B.
+    // Account-change generation: captured atomically with the account-bound inputs under
+    // cloudStateMutex, incremented by invalidation/removal and by the account-change fence
+    // before and after promotion. A result whose generation changed, or whose current account
+    // no longer matches the captured account, is discarded before any persistence, so a late
+    // A response cannot repopulate state under account B.
     private val accountGeneration = AtomicLong(0)
     // Serializes post-fetch persistence against invalidation/removal. The fetch itself
     // stays outside the lock so an account switch never blocks on the network.
@@ -146,18 +148,31 @@ class CloudPresenceRepository @Inject constructor(
         val normalizedEndpoint = normalizeEndpoint(endpoint) ?: return CloudConfigurationResult.InvalidEndpoint
         val normalizedToken = token.trim().takeIf { it.isNotBlank() }
             ?: return CloudConfigurationResult.RejectedCredential
-        val account = credentialsProvider.currentCredentials()?.steamId
-            ?: return CloudConfigurationResult.NoSteamAccount
-        val generationAtStart = accountGeneration.get()
+        // Capture the Steam account and the generation atomically under the same mutex that
+        // invalidation owns: sampling them separately would let an A->B bump land between the
+        // two reads, capturing old account A with B's new generation so A's late response
+        // later sees an unchanged generation and is accepted.
+        val capture = cloudStateMutex.withLock {
+            VerifyStart(
+                account = credentialsProvider.currentCredentials()?.steamId,
+                generation = accountGeneration.get(),
+            )
+        }
+        val account = capture.account ?: return CloudConfigurationResult.NoSteamAccount
+        val generationAtStart = capture.generation
 
         return when (val result = fetch(normalizedEndpoint, normalizedToken, account, null)) {
             is RemoteReadResult.Success -> cloudStateMutex.withLock {
-                if (generationAtStart != accountGeneration.get()) {
+                val current = credentialsProvider.currentCredentials()?.steamId
+                if (generationAtStart != accountGeneration.get() || current != account) {
                     // The account changed while verifying: A's endpoint must not become B's
                     // configuration, and B's watermark must not be cleared. Report against the
-                    // current account without persisting anything.
-                    val current = credentialsProvider.currentCredentials()?.steamId
-                        ?: return@withLock CloudConfigurationResult.NoSteamAccount
+                    // current account without persisting anything. The identity check covers a
+                    // read that started after invalidation but before the new Steam identity
+                    // was committed/visible, where the generation alone still matches.
+                    if (current == null) {
+                        return@withLock CloudConfigurationResult.NoSteamAccount
+                    }
                     return@withLock CloudConfigurationResult.AccountMismatch(current, result.parsed.account)
                 }
                 settings.clearCloudReadPosition()
@@ -169,8 +184,8 @@ class CloudPresenceRepository @Inject constructor(
                 CloudConfigurationResult.Saved
             }
             is RemoteReadResult.AccountMismatch -> cloudStateMutex.withLock {
-                if (generationAtStart != accountGeneration.get()) {
-                    val current = credentialsProvider.currentCredentials()?.steamId
+                val current = credentialsProvider.currentCredentials()?.steamId
+                if (generationAtStart != accountGeneration.get() || current != account) {
                     return@withLock if (current == null) {
                         CloudConfigurationResult.NoSteamAccount
                     } else {
@@ -185,7 +200,8 @@ class CloudPresenceRepository @Inject constructor(
                 CloudConfigurationResult.AccountMismatch(account, result.actualAccount)
             }
             is RemoteReadResult.Failure -> cloudStateMutex.withLock {
-                if (generationAtStart != accountGeneration.get()) {
+                val current = credentialsProvider.currentCredentials()?.steamId
+                if (generationAtStart != accountGeneration.get() || current != account) {
                     return@withLock result.failure.toConfigurationResult()
                 }
                 record(
@@ -199,31 +215,49 @@ class CloudPresenceRepository @Inject constructor(
     }
 
     suspend fun read(trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL): CloudReadResult {
-        val credentials = credentialsStore.readCloudCredentials()
-            ?: return CloudReadResult.Unconfigured
-        val account = credentialsProvider.currentCredentials()?.steamId
-            ?: return CloudReadResult.NoSteamAccount
-        val position = settings.cloudReadPosition.first()
-        val generationAtStart = accountGeneration.get()
+        // Capture every account-bound input (stored endpoint/token, Steam account, resumable
+        // watermark) together with the generation under the invalidation mutex, so a bump
+        // cannot land mid-capture and leave e.g. A's account paired with B's generation or
+        // B's cleared watermark.
+        val start = cloudStateMutex.withLock {
+            ReadStart(
+                credentials = credentialsStore.readCloudCredentials(),
+                account = credentialsProvider.currentCredentials()?.steamId,
+                position = settings.cloudReadPosition.first(),
+                generation = accountGeneration.get(),
+            )
+        }
+        val credentials = start.credentials ?: return CloudReadResult.Unconfigured
+        val account = start.account ?: return CloudReadResult.NoSteamAccount
+        val position = start.position
+        val generationAtStart = start.generation
         return when (val result = fetch(credentials.endpoint, credentials.token, account, position)) {
             is RemoteReadResult.Success -> cloudStateMutex.withLock {
-                if (generationAtStart != accountGeneration.get()) {
+                if (generationAtStart != accountGeneration.get() ||
+                    credentialsProvider.currentCredentials()?.steamId != account
+                ) {
                     // A success carries A's timeline: returning it would leak A's data to B's
                     // caller, and persisting it would repopulate watermark/audit/snapshot.
+                    // The identity check covers a read started after invalidation but before
+                    // the new Steam identity was committed/visible.
                     return@withLock CloudReadResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
                 }
                 persistSuccessfulRead(trigger, result.parsed, credentials)
                 CloudReadResult.Success(result.parsed.toSnapshot())
             }
             is RemoteReadResult.AccountMismatch -> cloudStateMutex.withLock {
-                if (generationAtStart != accountGeneration.get()) {
+                if (generationAtStart != accountGeneration.get() ||
+                    credentialsProvider.currentCredentials()?.steamId != account
+                ) {
                     return@withLock CloudReadResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
                 }
                 record(trigger, CloudReadOutcome.ACCOUNT_MISMATCH, null)
                 CloudReadResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
             }
             is RemoteReadResult.Failure -> cloudStateMutex.withLock {
-                if (generationAtStart != accountGeneration.get()) {
+                if (generationAtStart != accountGeneration.get() ||
+                    credentialsProvider.currentCredentials()?.steamId != account
+                ) {
                     return@withLock CloudReadResult.Failed(result.failure)
                 }
                 record(trigger, result.failure.toOutcome(), null)
@@ -246,10 +280,14 @@ class CloudPresenceRepository @Inject constructor(
     /**
      * Drops cloud state when the Steam account changes. The durable position is cleared by
      * `SettingsDataStore.clearAccountDerivedState` and the audit rows by `AccountRoomReset`;
-     * those clears are repeated here under the same mutex that guards post-fetch persistence,
-     * so a response landing between the coordinator's clears and this increment cannot
-     * repopulate watermark/audit/snapshot under the new account. The increment also discards
-     * any in-flight verification before it can persist an A-bound configuration.
+     * those clears are repeated here under the same mutex that guards capture and post-fetch
+     * persistence, so a response landing between the coordinator's clears and this increment
+     * cannot repopulate watermark/audit/snapshot under the new account. The increment also
+     * discards any in-flight verification before it can persist an A-bound configuration.
+     *
+     * Prefer [runAccountChangeTransition] for the coordinated switch: it holds this mutex
+     * across promotion so no capture or persistence can interleave between the pre- and
+     * post-promotion invalidations.
      */
     suspend fun invalidateForAccountChange() {
         cloudStateMutex.withLock {
@@ -260,12 +298,51 @@ class CloudPresenceRepository @Inject constructor(
         }
     }
 
+    /**
+     * Fences the whole identity transition rather than one instant. Holds the capture and
+     * persistence mutex across [block] (durable reset plus credential promotion plus identity
+     * refresh), bumping the generation and re-clearing cloud state on entry and on exit. A
+     * capture of old account A with the entry generation is discarded by the exit bump, and
+     * no new capture or persistence can start mid-transition to capture A with the exit
+     * generation or persist A's timeline/configuration just before promotion. The exit
+     * invalidation is the definitive one: [block] must leave the new Steam identity
+     * committed and visible (refreshed provider) before it returns.
+     */
+    suspend fun runAccountChangeTransition(block: suspend () -> Unit) {
+        cloudStateMutex.withLock {
+            accountGeneration.incrementAndGet()
+            snapshotState.value = null
+            settings.clearCloudReadPosition()
+            cloudReadDao.deleteAll()
+            try {
+                block()
+            } finally {
+                accountGeneration.incrementAndGet()
+                snapshotState.value = null
+                settings.clearCloudReadPosition()
+                cloudReadDao.deleteAll()
+            }
+        }
+    }
+
+    private data class VerifyStart(
+        val account: String?,
+        val generation: Long,
+    )
+
+    private data class ReadStart(
+        val credentials: CloudCredentials?,
+        val account: String?,
+        val position: String?,
+        val generation: Long,
+    )
+
     private suspend fun persistVerifiedConfiguration(
         credentials: CloudCredentials,
         trigger: CloudReadTrigger,
         parsed: ParsedCloudRead,
     ) {
-        // Caller holds cloudStateMutex and has already checked the generation.
+        // Caller holds cloudStateMutex and has already checked generation + identity.
         credentialsStore.writeCloudCredentials(credentials.endpoint, credentials.token)
         persistSuccessfulRead(trigger, parsed, credentials)
     }
@@ -275,7 +352,7 @@ class CloudPresenceRepository @Inject constructor(
         parsed: ParsedCloudRead,
         credentials: CloudCredentials,
     ) {
-        // Caller holds cloudStateMutex and has already checked the generation.
+        // Caller holds cloudStateMutex and has already checked generation + identity.
         parsed.nextPosition?.let { settings.setCloudReadPosition(it) }
         // In-memory only: a normal read's durable effects are the watermark above and its
         // diagnostic record below. Rewriting the encrypted credentials here would turn a

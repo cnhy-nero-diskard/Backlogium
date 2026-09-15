@@ -464,6 +464,180 @@ class CloudPresenceRepositoryTest {
         assertTrue(records.records.value.isEmpty())
     }
 
+    @Test
+    fun verificationDoesNotPersistWhenInvalidationLandsBetweenAccountAndGenerationReads() = runTest {
+        val accountEntered = CompletableDeferred<Unit>()
+        val accountGate = CompletableDeferred<Unit>()
+        val apiEntered = CompletableDeferred<Unit>()
+        val apiGate = CompletableDeferred<CloudPresenceResponseDto>()
+        val api = DeferredCloudPresenceApi(apiEntered, apiGate)
+        val store = FakeCloudCredentialsStore(credentials = null)
+        val records = FakeCloudReadDao()
+        val settings = FakeSettingsRepository()
+        val credentials = GatingCredentialsProvider(ACCOUNT, accountEntered, accountGate)
+        val repository = CloudPresenceRepository(
+            api = api,
+            credentialsStore = store,
+            credentialsProvider = credentials,
+            settings = settings,
+            cloudReadDao = records,
+            time = FixedTimeProvider(),
+        )
+
+        val pending = async {
+            repository.verifyAndSave("https://reader.example.com/read", "reader-secret")
+        }
+        accountEntered.await()
+
+        // A->B invalidation landing between the account read and the generation sampling.
+        // Sampling them separately would capture old account A with B's new generation, so
+        // A's late response would later see an unchanged generation and be accepted.
+        val invalidation = async {
+            settings.clearCloudReadPosition()
+            records.deleteAll()
+            repository.invalidateForAccountChange()
+        }
+        accountGate.complete(Unit)
+        apiEntered.await()
+        invalidation.await()
+        credentials.steamId = OTHER_ACCOUNT
+        apiGate.complete(sampleResponse(nextPosition = "2026-09-15T00:20:00Z"))
+
+        assertEquals(
+            CloudConfigurationResult.AccountMismatch(OTHER_ACCOUNT, ACCOUNT),
+            pending.await(),
+        )
+        assertNull(store.credentials)
+        assertNull(repository.snapshot.first())
+        assertNull(settings.cloudReadPosition.first())
+        assertTrue(records.records.value.isEmpty())
+    }
+
+    @Test
+    fun readDoesNotPersistWhenInvalidationLandsBetweenAccountAndGenerationReads() = runTest {
+        val accountEntered = CompletableDeferred<Unit>()
+        val accountGate = CompletableDeferred<Unit>()
+        val apiEntered = CompletableDeferred<Unit>()
+        val apiGate = CompletableDeferred<CloudPresenceResponseDto>()
+        val api = DeferredCloudPresenceApi(apiEntered, apiGate)
+        val store = FakeCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+        )
+        val records = FakeCloudReadDao()
+        val settings = FakeSettingsRepository()
+        settings.setCloudReadPosition("2026-09-15T00:05:00Z")
+        val credentials = GatingCredentialsProvider(ACCOUNT, accountEntered, accountGate)
+        val repository = CloudPresenceRepository(
+            api = api,
+            credentialsStore = store,
+            credentialsProvider = credentials,
+            settings = settings,
+            cloudReadDao = records,
+            time = FixedTimeProvider(),
+        )
+
+        val pending = async { repository.read() }
+        accountEntered.await()
+
+        // Same boundary across the watermark read: the stored endpoint, the Steam account,
+        // and the resumable position must be captured atomically with the generation.
+        val invalidation = async {
+            settings.clearCloudReadPosition()
+            records.deleteAll()
+            repository.invalidateForAccountChange()
+        }
+        accountGate.complete(Unit)
+        apiEntered.await()
+        invalidation.await()
+        credentials.steamId = OTHER_ACCOUNT
+        apiGate.complete(sampleResponse(nextPosition = "2026-09-15T00:20:00Z"))
+
+        assertEquals(CloudReadResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH), pending.await())
+        assertNull(repository.snapshot.first())
+        assertNull(settings.cloudReadPosition.first())
+        assertTrue(records.records.value.isEmpty())
+        assertEquals(0, store.writeCount)
+    }
+
+    @Test
+    fun readStartedAfterInvalidationButBeforePromotionDoesNotLeak() = runTest {
+        val apiEntered = CompletableDeferred<Unit>()
+        val apiGate = CompletableDeferred<CloudPresenceResponseDto>()
+        val api = DeferredCloudPresenceApi(apiEntered, apiGate)
+        val store = FakeCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+        )
+        val records = FakeCloudReadDao()
+        val settings = FakeSettingsRepository()
+        val credentials = MutableFakeCredentials(ACCOUNT)
+        val repository = CloudPresenceRepository(
+            api = api,
+            credentialsStore = store,
+            credentialsProvider = credentials,
+            settings = settings,
+            cloudReadDao = records,
+            time = FixedTimeProvider(),
+        )
+
+        // Coordinator's reset runs while the old Steam identity is still committed: durable
+        // state is cleared and the generation bumped, but the provider still reports A.
+        settings.clearCloudReadPosition()
+        records.deleteAll()
+        repository.invalidateForAccountChange()
+
+        // A cloud read starting in that window captures old account A with the new
+        // generation, so the generation alone still matches after promotion to B.
+        val pending = async { repository.read() }
+        apiEntered.await()
+        credentials.steamId = OTHER_ACCOUNT
+        apiGate.complete(sampleResponse(nextPosition = "2026-09-15T00:20:00Z"))
+
+        assertEquals(CloudReadResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH), pending.await())
+        assertNull(repository.snapshot.first())
+        assertNull(settings.cloudReadPosition.first())
+        assertTrue(records.records.value.isEmpty())
+        assertEquals(0, store.writeCount)
+    }
+
+    @Test
+    fun verificationStartedAfterInvalidationButBeforePromotionDoesNotLeak() = runTest {
+        val apiEntered = CompletableDeferred<Unit>()
+        val apiGate = CompletableDeferred<CloudPresenceResponseDto>()
+        val api = DeferredCloudPresenceApi(apiEntered, apiGate)
+        val store = FakeCloudCredentialsStore(credentials = null)
+        val records = FakeCloudReadDao()
+        val settings = FakeSettingsRepository()
+        val credentials = MutableFakeCredentials(ACCOUNT)
+        val repository = CloudPresenceRepository(
+            api = api,
+            credentialsStore = store,
+            credentialsProvider = credentials,
+            settings = settings,
+            cloudReadDao = records,
+            time = FixedTimeProvider(),
+        )
+
+        settings.clearCloudReadPosition()
+        records.deleteAll()
+        repository.invalidateForAccountChange()
+
+        val pending = async {
+            repository.verifyAndSave("https://reader.example.com/read", "reader-secret")
+        }
+        apiEntered.await()
+        credentials.steamId = OTHER_ACCOUNT
+        apiGate.complete(sampleResponse(nextPosition = "2026-09-15T00:20:00Z"))
+
+        assertEquals(
+            CloudConfigurationResult.AccountMismatch(OTHER_ACCOUNT, ACCOUNT),
+            pending.await(),
+        )
+        assertNull(store.credentials)
+        assertNull(repository.snapshot.first())
+        assertNull(settings.cloudReadPosition.first())
+        assertTrue(records.records.value.isEmpty())
+    }
+
     private fun repository(
         api: CloudPresenceApi,
         store: CloudCredentialsStore,
@@ -518,6 +692,23 @@ class CloudPresenceRepositoryTest {
     private class MutableFakeCredentials(var steamId: String?) : CredentialsProvider {
         override suspend fun currentCredentials(): CredentialsState.Configured? =
             steamId?.let { CredentialsState.Configured(apiKey = "key", steamId = it) }
+    }
+
+    private class GatingCredentialsProvider(
+        var steamId: String?,
+        private val entered: CompletableDeferred<Unit>,
+        private val gate: CompletableDeferred<Unit>,
+    ) : CredentialsProvider {
+        private var first = true
+
+        override suspend fun currentCredentials(): CredentialsState.Configured? {
+            if (first) {
+                first = false
+                entered.complete(Unit)
+                gate.await()
+            }
+            return steamId?.let { CredentialsState.Configured(apiKey = "key", steamId = it) }
+        }
     }
 
     private class FakeCloudCredentialsStore(
