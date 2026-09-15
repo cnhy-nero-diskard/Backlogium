@@ -214,6 +214,10 @@ class CloudPresenceReadOnlyGuaranteeTest {
         override suspend fun prune(limit: Int) {
             records.value = records.value.take(limit)
         }
+
+        override suspend fun deleteAll() {
+            records.value = emptyList()
+        }
     }
 
     private class FixedTimeProvider : TimeProvider {

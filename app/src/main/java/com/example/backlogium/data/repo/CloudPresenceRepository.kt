@@ -140,7 +140,7 @@ class CloudPresenceRepository @Inject constructor(
         return when (val result = fetch(normalizedEndpoint, normalizedToken, account, null)) {
             is RemoteReadResult.Success -> {
                 settings.clearCloudReadPosition()
-                persistSuccessfulRead(
+                persistVerifiedConfiguration(
                     credentials = CloudCredentials(normalizedEndpoint, normalizedToken),
                     trigger = CloudReadTrigger.SETTINGS_VERIFICATION,
                     parsed = result.parsed,
@@ -174,7 +174,7 @@ class CloudPresenceRepository @Inject constructor(
         val position = settings.cloudReadPosition.first()
         return when (val result = fetch(credentials.endpoint, credentials.token, account, position)) {
             is RemoteReadResult.Success -> {
-                persistSuccessfulRead(credentials, trigger, result.parsed)
+                persistSuccessfulRead(trigger, result.parsed, credentials)
                 CloudReadResult.Success(result.parsed.toSnapshot())
             }
             is RemoteReadResult.AccountMismatch -> {
@@ -195,13 +195,34 @@ class CloudPresenceRepository @Inject constructor(
         snapshotState.value = null
     }
 
-    private suspend fun persistSuccessfulRead(
+    /**
+     * Drops the in-memory comparison snapshot when the Steam account changes. The durable
+     * position is cleared by `SettingsDataStore.clearAccountDerivedState` and the audit rows by
+     * `AccountRoomReset`; without this the previous account's timeline would remain visible in
+     * the same process until the next cloud read.
+     */
+    fun invalidateForAccountChange() {
+        snapshotState.value = null
+    }
+
+    private suspend fun persistVerifiedConfiguration(
         credentials: CloudCredentials,
         trigger: CloudReadTrigger,
         parsed: ParsedCloudRead,
     ) {
         credentialsStore.writeCloudCredentials(credentials.endpoint, credentials.token)
+        persistSuccessfulRead(trigger, parsed, credentials)
+    }
+
+    private suspend fun persistSuccessfulRead(
+        trigger: CloudReadTrigger,
+        parsed: ParsedCloudRead,
+        credentials: CloudCredentials,
+    ) {
         parsed.nextPosition?.let { settings.setCloudReadPosition(it) }
+        // In-memory only: a normal read's durable effects are the watermark above and its
+        // diagnostic record below. Rewriting the encrypted credentials here would turn a
+        // Keystore/DataStore failure into a failed read and produce fresh ciphertext per fetch.
         configurationState.value = credentials.toConfiguration()
         snapshotState.value = parsed.toSnapshot()
         record(trigger, CloudReadOutcome.SUCCESS, parsed)

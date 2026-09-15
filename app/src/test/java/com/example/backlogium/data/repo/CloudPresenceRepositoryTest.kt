@@ -325,6 +325,63 @@ class CloudPresenceRepositoryTest {
         assertEquals(CloudReadFailure.UNREACHABLE.name, records.records.value.single().outcome)
     }
 
+    @Test
+    fun successfulReadNeverRewritesEncryptedCredentials() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse(nextPosition = "2026-09-15T00:20:00Z"))
+        val store = FakeCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+        )
+        val records = FakeCloudReadDao()
+        val settings = FakeSettingsRepository()
+        val repository = repository(api, store, records, settings, ACCOUNT)
+
+        assertTrue(repository.read() is CloudReadResult.Success)
+
+        // A normal read's only durable effects are the watermark and its audit record:
+        // rewriting the encrypted credentials would produce fresh AES-GCM ciphertext per
+        // fetch and turn a Keystore/DataStore failure into a failed network read.
+        assertEquals(0, store.writeCount)
+        assertEquals(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+            store.credentials,
+        )
+        assertEquals("2026-09-15T00:20:00Z", settings.cloudReadPosition.first())
+        assertEquals(1, records.records.value.size)
+    }
+
+    @Test
+    fun accountChangeInvalidationDropsSnapshotAndHealth() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse(nextPosition = "2026-09-15T00:20:00Z"))
+        val store = FakeCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+        )
+        val records = FakeCloudReadDao()
+        val settings = FakeSettingsRepository()
+        val repository = repository(api, store, records, settings, ACCOUNT)
+
+        assertTrue(repository.read() is CloudReadResult.Success)
+        // Prime the in-memory configuration the same way a Settings collector would, so the
+        // post-switch assertions distinguish "old health" from "never configured".
+        repository.refreshConfiguration()
+        assertTrue(repository.snapshot.first() != null)
+        assertEquals(true, repository.status.first().healthy)
+
+        // Account-change effects: the durable position and audit rows are cleared by
+        // SettingsDataStore.clearAccountDerivedState and AccountRoomReset, and the
+        // same-process snapshot is dropped by invalidateForAccountChange.
+        settings.clearCloudReadPosition()
+        records.deleteAll()
+        repository.invalidateForAccountChange()
+
+        assertNull(repository.snapshot.first())
+        val status = repository.status.first()
+        assertEquals(true, status.configured)
+        assertNull(status.healthy)
+        assertNull(status.lastSuccessAt)
+        assertNull(status.lastAttemptAt)
+        assertNull(settings.cloudReadPosition.first())
+    }
+
     private fun repository(
         api: CloudPresenceApi,
         store: CloudCredentialsStore,
@@ -362,9 +419,12 @@ class CloudPresenceRepositoryTest {
     private class FakeCloudCredentialsStore(
         var credentials: CloudCredentials? = null,
     ) : CloudCredentialsStore {
+        var writeCount = 0
+
         override suspend fun readCloudCredentials(): CloudCredentials? = credentials
 
         override suspend fun writeCloudCredentials(endpoint: String, token: String) {
+            writeCount++
             credentials = CloudCredentials(endpoint, token)
         }
 
@@ -387,6 +447,10 @@ class CloudPresenceRepositoryTest {
 
         override suspend fun prune(limit: Int) {
             records.value = records.value.take(limit)
+        }
+
+        override suspend fun deleteAll() {
+            records.value = emptyList()
         }
     }
 

@@ -25,6 +25,7 @@ class AccountChangeCoordinator @Inject constructor(
     private val syncCoordinator: SteamSyncCoordinator,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
     private val progressTransitions: ProgressTransitionCoordinator,
+    private val cloudPresence: CloudPresenceRepository,
 ) : AccountChangeGateway {
     /** Start a confirmed account change and finish it, or leave the marker for recovery on error. */
     override suspend fun apply(apiKey: String, steamId: String) {
@@ -95,6 +96,9 @@ class AccountChangeCoordinator @Inject constructor(
                     // Rules and UI preferences survive. Progress-event marks and the live
                     // now-playing session belong to the discarded account and do not.
                     settings.clearAccountDerivedState()
+                    // The durable cloud position and audit rows are cleared above; drop the
+                    // same-process snapshot so the old account's timeline is not visible.
+                    cloudPresence.invalidateForAccountChange()
                 }
             }
         }

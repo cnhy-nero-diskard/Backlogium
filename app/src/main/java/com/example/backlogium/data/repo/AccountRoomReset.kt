@@ -26,6 +26,10 @@ class AccountRoomReset @Inject constructor(
             database.collectionDao().deleteAll()
             database.dailyProgressDao().deleteAll()
             database.diagnosticsDao().deleteAll()
+            // Cloud read audit rows describe one account's accepted timeline. Keeping them
+            // would leave the previous account's success visible as Healthy in Settings and
+            // its intervals visible in Diagnostics until the new account reads.
+            database.cloudReadDao().deleteAll()
             database.gameDao().deleteAll()
             // Which shared games were removed is a decision about one person's borrowed library;
             // carrying it to another account would silently refuse to admit their games.

@@ -19,4 +19,7 @@ interface CloudReadDao {
             "WHERE id NOT IN (SELECT id FROM cloud_read_records ORDER BY at DESC LIMIT :limit)",
     )
     suspend fun prune(limit: Int)
+
+    @Query("DELETE FROM cloud_read_records")
+    suspend fun deleteAll()
 }

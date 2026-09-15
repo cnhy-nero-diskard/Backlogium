@@ -3,6 +3,7 @@ package com.example.backlogium.data.local
 import androidx.room.Room
 import androidx.room.withTransaction
 import com.example.backlogium.data.local.entity.Achievement
+import com.example.backlogium.data.local.entity.CloudReadRecord
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
@@ -481,6 +482,17 @@ class WriteIntegrityDaoTest {
         database.wishlistDao().insertObservations(
             listOf(WishlistPriceObservation(appId = 999L, observedAt = 20L)),
         )
+        database.cloudReadDao().insert(
+            CloudReadRecord(
+                at = 10L,
+                trigger = "SETTINGS_MANUAL",
+                outcome = "SUCCESS",
+                windowStart = 1L,
+                windowEnd = 2L,
+                observationCount = 1,
+                nextPosition = "2026-09-15T00:20:00Z",
+            ),
+        )
 
         val reset = AccountRoomReset(database)
         reset.resetForAccountChange("new-account")
@@ -496,6 +508,8 @@ class WriteIntegrityDaoTest {
         assertTrue(database.gameAchievementSyncDao().observeAll().first().isEmpty())
         assertTrue(database.diagnosticsDao().observeRuns().first().isEmpty())
         assertTrue(database.diagnosticsDao().observePresenceDecisions().first().isEmpty())
+        // The previous account's accepted cloud timeline must not survive as Healthy.
+        assertTrue(database.cloudReadDao().observeRecords().first().isEmpty())
         assertEquals(1, database.hltbDataDao().getAll().size)
         assertEquals(123L, database.hltbDataDao().getByAppId(appId)?.hltbId)
 
