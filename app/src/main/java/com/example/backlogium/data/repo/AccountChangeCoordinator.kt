@@ -96,8 +96,9 @@ class AccountChangeCoordinator @Inject constructor(
                     // Rules and UI preferences survive. Progress-event marks and the live
                     // now-playing session belong to the discarded account and do not.
                     settings.clearAccountDerivedState()
-                    // The durable cloud position and audit rows are cleared above; drop the
-                    // same-process snapshot so the old account's timeline is not visible.
+                    // Bumps the cloud generation and drops cloud state under the same mutex
+                    // that guards post-fetch persistence, so an in-flight A response is
+                    // discarded instead of repopulating state under B.
                     cloudPresence.invalidateForAccountChange()
                 }
             }

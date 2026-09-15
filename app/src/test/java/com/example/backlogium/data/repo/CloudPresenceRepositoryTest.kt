@@ -10,10 +10,13 @@ import com.example.backlogium.data.remote.dto.CloudPresenceResponseDto
 import com.example.backlogium.data.remote.dto.CloudPresenceTransitionDto
 import com.example.backlogium.domain.FakeSettingsRepository
 import com.example.backlogium.domain.TimeProvider
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
@@ -382,6 +385,85 @@ class CloudPresenceRepositoryTest {
         assertNull(settings.cloudReadPosition.first())
     }
 
+    @Test
+    fun inFlightReadIsDiscardedWhenAccountChanges() = runTest {
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<CloudPresenceResponseDto>()
+        val api = DeferredCloudPresenceApi(entered, gate)
+        val store = FakeCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+        )
+        val records = FakeCloudReadDao()
+        val settings = FakeSettingsRepository()
+        val credentials = MutableFakeCredentials(ACCOUNT)
+        val repository = CloudPresenceRepository(
+            api = api,
+            credentialsStore = store,
+            credentialsProvider = credentials,
+            settings = settings,
+            cloudReadDao = records,
+            time = FixedTimeProvider(),
+        )
+
+        val pending = async { repository.read() }
+        entered.await()
+
+        // A->B switch while A's response is still in flight: durable state is cleared and
+        // the generation is bumped before A's response is released.
+        settings.clearCloudReadPosition()
+        records.deleteAll()
+        repository.invalidateForAccountChange()
+        credentials.steamId = OTHER_ACCOUNT
+        gate.complete(sampleResponse(nextPosition = "2026-09-15T00:20:00Z"))
+
+        assertEquals(CloudReadResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH), pending.await())
+        assertNull(repository.snapshot.first())
+        assertNull(settings.cloudReadPosition.first())
+        assertTrue(records.records.value.isEmpty())
+        assertEquals(0, store.writeCount)
+    }
+
+    @Test
+    fun inFlightVerificationIsDiscardedWhenAccountChanges() = runTest {
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<CloudPresenceResponseDto>()
+        val api = DeferredCloudPresenceApi(entered, gate)
+        val store = FakeCloudCredentialsStore(credentials = null)
+        val records = FakeCloudReadDao()
+        val settings = FakeSettingsRepository()
+        val credentials = MutableFakeCredentials(ACCOUNT)
+        val repository = CloudPresenceRepository(
+            api = api,
+            credentialsStore = store,
+            credentialsProvider = credentials,
+            settings = settings,
+            cloudReadDao = records,
+            time = FixedTimeProvider(),
+        )
+
+        val pending = async {
+            repository.verifyAndSave("https://reader.example.com/read", "reader-secret")
+        }
+        entered.await()
+
+        // A->B switch while A's verification is still in flight.
+        settings.clearCloudReadPosition()
+        records.deleteAll()
+        repository.invalidateForAccountChange()
+        credentials.steamId = OTHER_ACCOUNT
+        gate.complete(sampleResponse(nextPosition = "2026-09-15T00:20:00Z"))
+
+        val result = pending.await()
+        assertEquals(
+            CloudConfigurationResult.AccountMismatch(OTHER_ACCOUNT, ACCOUNT),
+            result,
+        )
+        assertNull(store.credentials)
+        assertNull(repository.snapshot.first())
+        assertNull(settings.cloudReadPosition.first())
+        assertTrue(records.records.value.isEmpty())
+    }
+
     private fun repository(
         api: CloudPresenceApi,
         store: CloudCredentialsStore,
@@ -414,6 +496,28 @@ class CloudPresenceRepositoryTest {
             failure?.let { throw it }
             return answer
         }
+    }
+
+    private class DeferredCloudPresenceApi(
+        private val entered: CompletableDeferred<Unit>,
+        private val gate: CompletableDeferred<CloudPresenceResponseDto>,
+    ) : CloudPresenceApi {
+        val requests = mutableListOf<FakeCloudPresenceApi.Request>()
+
+        override suspend fun read(
+            endpoint: String,
+            authorization: String,
+            position: String?,
+        ): CloudPresenceResponseDto {
+            requests += FakeCloudPresenceApi.Request(endpoint, authorization, position)
+            entered.complete(Unit)
+            return gate.await()
+        }
+    }
+
+    private class MutableFakeCredentials(var steamId: String?) : CredentialsProvider {
+        override suspend fun currentCredentials(): CredentialsState.Configured? =
+            steamId?.let { CredentialsState.Configured(apiKey = "key", steamId = it) }
     }
 
     private class FakeCloudCredentialsStore(
