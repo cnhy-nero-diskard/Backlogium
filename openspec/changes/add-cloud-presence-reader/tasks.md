@@ -107,7 +107,7 @@
 
 - [x] 7.1 Deploy the endpoint before shipping the app. Verify it is in `asia-southeast1`, rejects an
       unauthenticated request, and that no `firestore.rules` deploy was included.
-- [ ] 7.2 Configure the app against the live endpoint and confirm a read succeeds, the account
+- [x] 7.2 Configure the app against the live endpoint and confirm a read succeeds, the account
       assertion passes, and the position advances on a second read.
 - [ ] 7.3 Review the diagnostics comparison against a real window where the phone was off, and
       record what the disagreement actually looks like — this is the evidence phase 4's design
