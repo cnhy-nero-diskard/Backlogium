@@ -30,6 +30,18 @@ lands on the remote hands-free.
 
 This skill exists to remove manual oversight. Follow these rules strictly:
 
+An invocation of `$openspec-autoship` is explicit user authorization to
+commit and push the change to the checked-out branch's configured upstream.
+Do not ask for a second confirmation merely because the upstream is hosted
+externally or is not locally verified. Resolve the destination from the
+current branch and its upstream; never substitute a different remote or
+destination.
+
+This workflow authorization does not override a higher-priority platform
+security control. If the execution platform rejects the exact authorized
+push for an egress or safety policy, report that policy refusal precisely and
+do not attempt a workaround.
+
 1. **Never pause to ask permission to commit.** If the safety gate passes, commit.
 2. **Never pause to ask permission to push.** If the safety gate passes, push.
 3. **Never pause to ask which branch to use.** Ship to whatever non-detached
@@ -232,6 +244,9 @@ Pause ONLY for:
 - Secrets detected in a task's diff.
 - Pre-existing user changes inseparably overlapping a task's files.
 - Merge conflicts after a push rejection that cannot auto-resolve.
+- A higher-priority platform safety control rejects the exact configured
+  upstream push. Do not substitute another destination or use a workaround;
+  report the refusal and stop unless the platform-required approval is supplied.
 - openspec CLI reports `blocked` and the missing artifact is not part of this run.
 - User interrupts.
 
