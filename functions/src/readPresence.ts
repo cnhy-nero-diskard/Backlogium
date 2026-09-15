@@ -230,7 +230,7 @@ export async function servePresenceRead(
     return;
   }
 
-  safeLog.registerSensitive(expectedToken);
+  safeLog.registerSensitive(expectedToken, steamId);
   try {
     const db = firestore ?? (getFirestore() as unknown as FirestoreLike);
     const player = db.collection(PLAYERS).doc(steamId);

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeFirestore } from "./testSupport/FakeFirestore";
 import {
   MAX_RESPONSE_TRANSITIONS,
@@ -10,6 +10,9 @@ vi.mock("firebase-functions/logger", () => ({
   warn: vi.fn(),
   error: vi.fn(),
 }));
+
+import * as logger from "firebase-functions/logger";
+import * as safeLog from "./safeLog";
 
 interface CapturedResponse {
   readonly statusCode: number | undefined;
@@ -88,6 +91,15 @@ function seedPresence(firestore: FakeFirestore): void {
 }
 
 describe("servePresenceRead", () => {
+  beforeEach(() => {
+    safeLog.clearSensitiveValues();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    safeLog.clearSensitiveValues();
+  });
+
   it.each([
     ["missing", undefined],
     ["malformed", "Basic secret"],
@@ -233,5 +245,34 @@ describe("servePresenceRead", () => {
 
     expect(captured.statusCode).toBe(500);
     expect(captured.body).toEqual({ error: "unusable_response" });
+  });
+
+  it("scrubs the Steam ID when Firestore fails", async () => {
+    // Regression: the reader runs as a separate service instance from the
+    // poller, so it cannot rely on the poller's process-wide registration.
+    // The store is cleared above; this handler must register the Steam ID
+    // itself before any datastore failure can be logged.
+    safeLog.clearSensitiveValues();
+    const failingFirestore = {
+      collection: () => {
+        throw new Error(`lookup failed for ${steamId}`);
+      },
+    };
+    const captured = response();
+
+    await servePresenceRead(
+      request("Bearer secret"),
+      captured,
+      "secret",
+      steamId,
+      failingFirestore as unknown as FakeFirestore,
+    );
+
+    expect(captured.statusCode).toBe(500);
+    expect(captured.body).toEqual({ error: "unusable_response" });
+    expect(logger.error).toHaveBeenCalled();
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(
+      steamId,
+    );
   });
 });
