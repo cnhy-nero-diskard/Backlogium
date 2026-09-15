@@ -14,10 +14,14 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import retrofit2.HttpException
+import retrofit2.Response
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -184,6 +188,143 @@ class CloudPresenceRepositoryTest {
         assertTrue(snapshot.intervals.none { it.ongoing })
     }
 
+    @Test
+    fun paginatedReadsPreserveBoundaryIntervalViaOverlap() = runBlocking {
+        val first = "2026-09-15T00:00:00Z"
+        val boundary = "2026-09-15T00:10:00Z"
+        val last = "2026-09-15T00:20:00Z"
+        val api = FakeCloudPresenceApi(
+            answer = CloudPresenceResponseDto(
+                account = ACCOUNT,
+                transitions = listOf(
+                    CloudPresenceTransitionDto(
+                        v = 3,
+                        t = first,
+                        gameid = "10",
+                        gameName = "Portal",
+                        personastate = 1,
+                    ),
+                    CloudPresenceTransitionDto(
+                        v = 3,
+                        t = boundary,
+                        prevLastObservedAt = "2026-09-15T00:09:00Z",
+                        gameid = "20",
+                        gameName = "Other",
+                        personastate = 1,
+                    ),
+                ),
+                current = CloudPresenceCurrentDto(
+                    v = 2,
+                    lastObservedAt = "2026-09-15T01:00:00Z",
+                    gameid = "20",
+                    gameName = "Other",
+                    personastate = 1,
+                ),
+                nextPosition = boundary,
+                hasMore = true,
+                windowStart = first,
+                windowEnd = boundary,
+                readAt = "2026-09-15T00:11:00Z",
+            ),
+        )
+        val store = FakeCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+        )
+        val records = FakeCloudReadDao()
+        val settings = FakeSettingsRepository()
+        val repository = repository(api, store, records, settings, ACCOUNT)
+
+        val firstResult = repository.read()
+        assertTrue(firstResult is CloudReadResult.Success)
+        // The resume watermark backs up one transition so the boundary transition is
+        // returned again: without overlap the t250 -> t251 interval would be lost.
+        assertEquals(first, settings.cloudReadPosition.first())
+        assertEquals(first, (firstResult as CloudReadResult.Success).snapshot.nextPosition)
+        assertEquals(1, firstResult.snapshot.intervals.size)
+
+        api.answer = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = boundary,
+                    prevLastObservedAt = "2026-09-15T00:09:00Z",
+                    gameid = "20",
+                    gameName = "Other",
+                    personastate = 1,
+                ),
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = last,
+                    prevLastObservedAt = "2026-09-15T00:19:00Z",
+                    gameid = "30",
+                    gameName = "Third",
+                    personastate = 1,
+                ),
+            ),
+            current = null,
+            nextPosition = last,
+            hasMore = false,
+            windowStart = first,
+            windowEnd = last,
+            readAt = "2026-09-15T00:21:00Z",
+        )
+
+        val secondResult = repository.read()
+        assertTrue(secondResult is CloudReadResult.Success)
+        assertEquals(first, api.requests[1].position)
+        val second = (secondResult as CloudReadResult.Success).snapshot
+        val boundaryInterval = second.intervals.singleOrNull {
+            it.startAt == java.time.Instant.parse(boundary).toEpochMilli()
+        }
+        assertTrue(boundaryInterval != null)
+        assertEquals(20L, boundaryInterval!!.appId)
+        assertEquals(java.time.Instant.parse(last).toEpochMilli(), boundaryInterval.endAt)
+        assertEquals(last, settings.cloudReadPosition.first())
+    }
+
+    @Test
+    fun httpUnusableResponseIsMappedToUnusableResponse() = runBlocking {
+        val api = FakeCloudPresenceApi()
+        api.failure = HttpException(
+            Response.error<CloudPresenceResponseDto>(
+                500,
+                "{\"error\":\"unusable_response\"}".toResponseBody("application/json".toMediaType()),
+            ),
+        )
+        val store = FakeCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+        )
+        val records = FakeCloudReadDao()
+        val repository = repository(api, store, records, steamId = ACCOUNT)
+
+        val result = repository.read()
+
+        assertEquals(CloudReadResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE), result)
+        assertEquals(CloudReadFailure.UNUSABLE_RESPONSE.name, records.records.value.single().outcome)
+    }
+
+    @Test
+    fun httpServerErrorWithoutControlledBodyRemainsUnreachable() = runBlocking {
+        val api = FakeCloudPresenceApi()
+        api.failure = HttpException(
+            Response.error<CloudPresenceResponseDto>(
+                500,
+                "boom".toResponseBody("text/plain".toMediaType()),
+            ),
+        )
+        val store = FakeCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+        )
+        val records = FakeCloudReadDao()
+        val repository = repository(api, store, records, steamId = ACCOUNT)
+
+        val result = repository.read()
+
+        assertEquals(CloudReadResult.Failed(CloudReadFailure.UNREACHABLE), result)
+        assertEquals(CloudReadFailure.UNREACHABLE.name, records.records.value.single().outcome)
+    }
+
     private fun repository(
         api: CloudPresenceApi,
         store: CloudCredentialsStore,
@@ -201,6 +342,7 @@ class CloudPresenceRepositoryTest {
 
     private class FakeCloudPresenceApi(
         var answer: CloudPresenceResponseDto = sampleResponse(),
+        var failure: Throwable? = null,
     ) : CloudPresenceApi {
         data class Request(val endpoint: String, val authorization: String, val position: String?)
 
@@ -212,6 +354,7 @@ class CloudPresenceRepositoryTest {
             position: String?,
         ): CloudPresenceResponseDto {
             requests += Request(endpoint, authorization, position)
+            failure?.let { throw it }
             return answer
         }
     }

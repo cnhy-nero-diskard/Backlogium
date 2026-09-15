@@ -22,7 +22,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onStart
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import retrofit2.HttpException
 import javax.inject.Inject
@@ -217,10 +219,10 @@ class CloudPresenceRepository @Inject constructor(
             throw cancelled
         } catch (http: HttpException) {
             return RemoteReadResult.Failure(
-                if (http.code() == 401 || http.code() == 403) {
-                    CloudReadFailure.REJECTED_CREDENTIAL
-                } else {
-                    CloudReadFailure.UNREACHABLE
+                when {
+                    http.code() == 401 || http.code() == 403 -> CloudReadFailure.REJECTED_CREDENTIAL
+                    http.isUnusableResponse() -> CloudReadFailure.UNUSABLE_RESPONSE
+                    else -> CloudReadFailure.UNREACHABLE
                 },
             )
         } catch (_: SerializationException) {
@@ -355,8 +357,20 @@ private fun CloudPresenceResponseDto.toParsedRead(expectedAccount: String): Clou
     val windowEnd = requiredInstant(windowEnd)
     val readAt = requiredInstant(readAt)
     val parsedTransitions = transitions.map { it.toDomainTransition() }
-    val next = nextPosition?.trim()?.takeIf { it.isNotBlank() }?.also { requiredInstant(it) }
-    if (hasMore && next == null) error("Cloud reader returned more data without a position")
+    val serverPosition = nextPosition?.trim()?.takeIf { it.isNotBlank() }?.also { requiredInstant(it) }
+    if (hasMore && serverPosition == null) error("Cloud reader returned more data without a position")
+    // Preserve one transition of overlap across pages: resuming strictly after the last
+    // transition would drop the interval it opens (t250 -> t251), since page 1 reconstructs
+    // only through t249 -> t250 and page 2 only from t251 onward. Persisting the second-last
+    // transition causes the last to be returned again, so every adjacent pair still exists
+    // in some page's reconstruction. Document keys are unique ISO timestamps, so the
+    // second-last instant is strictly before the last and re-fetches exactly one transition.
+    val resumePosition = if (hasMore && parsedTransitions.size >= 2) {
+        val ordered = parsedTransitions.sortedBy { it.at }
+        Instant.ofEpochMilli(ordered[ordered.size - 2].at).toString()
+    } else {
+        serverPosition
+    }
     return CloudPresenceRepository.ParsedCloudRead(
         account = expectedAccount,
         transitions = parsedTransitions,
@@ -364,7 +378,7 @@ private fun CloudPresenceResponseDto.toParsedRead(expectedAccount: String): Clou
         windowStart = windowStart,
         windowEnd = windowEnd,
         readAt = readAt,
-        nextPosition = next,
+        nextPosition = resumePosition,
         hasMore = hasMore,
     )
 }
@@ -405,4 +419,19 @@ private fun parseAppId(raw: String?): Long? {
     if (raw.isNullOrBlank()) return null
     return raw.trim().toLongOrNull()?.takeIf { it >= 0L }
         ?: error("Cloud reader returned a non-numeric app id")
+}
+
+@Serializable
+private data class CloudErrorBody(val error: String? = null)
+
+private val cloudErrorJson = Json { ignoreUnknownKeys = true }
+
+private fun HttpException.isUnusableResponse(): Boolean {
+    return try {
+        val raw = response()?.errorBody()?.string()?.takeIf { it.isNotBlank() } ?: return false
+        runCatching { cloudErrorJson.decodeFromString<CloudErrorBody>(raw).error == "unusable_response" }
+            .getOrDefault(false)
+    } catch (_: Exception) {
+        false
+    }
 }
