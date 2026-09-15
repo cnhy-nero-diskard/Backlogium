@@ -4,9 +4,22 @@ export interface RecordedWrite {
 }
 
 interface DocumentSnapshot {
+  readonly id: string;
   readonly exists: boolean;
   data(): Record<string, unknown> | undefined;
   readonly version: number;
+}
+
+interface QuerySnapshot {
+  readonly docs: readonly DocumentSnapshot[];
+}
+
+interface Query {
+  where(field: string, operator: ">" | ">=", value: unknown): Query;
+  orderBy(field: string, direction: "asc" | "desc"): Query;
+  startAfter(value: unknown): Query;
+  limit(value: number): Query;
+  get(): Promise<QuerySnapshot>;
 }
 
 interface DocumentReference {
@@ -17,6 +30,8 @@ interface DocumentReference {
 
 interface CollectionReference {
   doc(id: string): DocumentReference;
+  where(field: string, operator: ">" | ">=", value: unknown): Query;
+  orderBy(field: string, direction: "asc" | "desc"): Query;
 }
 
 interface PendingWrite {
@@ -67,6 +82,10 @@ export class FakeFirestore {
 
   collection(name: string): CollectionReference {
     return new FakeCollectionReference(this, name);
+  }
+
+  documentsForTests(): ReadonlyMap<string, VersionedDocument> {
+    return this.documents;
   }
 
   batch(): {
@@ -173,6 +192,7 @@ export class FakeFirestore {
     this.readCount += 1;
     const stored = this.documents.get(path);
     const snapshot: DocumentSnapshot = {
+      id: path.split("/").at(-1) ?? path,
       exists: stored !== undefined,
       data: () => stored?.data,
       version: stored?.version ?? 0,
@@ -254,6 +274,14 @@ class FakeCollectionReference implements CollectionReference {
   doc(id: string): DocumentReference {
     return new FakeDocumentReference(this.firestore, `${this.path}/${id}`);
   }
+
+  where(field: string, operator: ">" | ">=", value: unknown): Query {
+    return new FakeQuery(this.firestore, this.path).where(field, operator, value);
+  }
+
+  orderBy(field: string, direction: "asc" | "desc"): Query {
+    return new FakeQuery(this.firestore, this.path).orderBy(field, direction);
+  }
 }
 
 class FakeDocumentReference implements DocumentReference {
@@ -269,4 +297,147 @@ class FakeDocumentReference implements DocumentReference {
   collection(name: string): CollectionReference {
     return new FakeCollectionReference(this.firestore, `${this.path}/${name}`);
   }
+}
+class FakeQuery implements Query {
+  private readonly filter?: {
+    readonly field: string;
+    readonly operator: ">" | ">=";
+    readonly value: unknown;
+  };
+  private readonly ordering?: {
+    readonly field: string;
+    readonly direction: "asc" | "desc";
+  };
+  private readonly after?: unknown;
+  private readonly maxResults?: number;
+
+  constructor(
+    private readonly firestore: FakeFirestore,
+    private readonly path: string,
+    filter?: {
+      readonly field: string;
+      readonly operator: ">" | ">=";
+      readonly value: unknown;
+    },
+    ordering?: {
+      readonly field: string;
+      readonly direction: "asc" | "desc";
+    },
+    after?: unknown,
+    maxResults?: number,
+  ) {
+    this.filter = filter;
+    this.ordering = ordering;
+    this.after = after;
+    this.maxResults = maxResults;
+  }
+
+  where(field: string, operator: ">" | ">=", value: unknown): Query {
+    return new FakeQuery(
+      this.firestore,
+      this.path,
+      { field, operator, value },
+      this.ordering,
+      this.after,
+      this.maxResults,
+    );
+  }
+
+  orderBy(field: string, direction: "asc" | "desc"): Query {
+    return new FakeQuery(
+      this.firestore,
+      this.path,
+      this.filter,
+      { field, direction },
+      this.after,
+      this.maxResults,
+    );
+  }
+
+  startAfter(value: unknown): Query {
+    return new FakeQuery(
+      this.firestore,
+      this.path,
+      this.filter,
+      this.ordering,
+      value,
+      this.maxResults,
+    );
+  }
+
+  limit(value: number): Query {
+    return new FakeQuery(
+      this.firestore,
+      this.path,
+      this.filter,
+      this.ordering,
+      this.after,
+      value,
+    );
+  }
+
+  async get(): Promise<QuerySnapshot> {
+    this.firestore.readCount += 1;
+    const prefix = this.path + "/";
+    const candidates = [...this.firestore.documentsForTests().entries()]
+      .filter(([path]) => {
+        const remainder = path.slice(prefix.length);
+        return path.startsWith(prefix) && !remainder.includes("/");
+      })
+      .map(([path, stored]) => ({
+        id: path.split("/").at(-1) ?? path,
+        data: stored.data,
+        version: stored.version,
+      }))
+      .filter((document) => this.matchesFilter(document.data))
+      .filter((document) => this.matchesAfter(document.data));
+
+    const ordering = this.ordering;
+    if (ordering) {
+      candidates.sort((left, right) => {
+        const difference =
+          valueMillis(left.data[ordering.field]) - valueMillis(right.data[ordering.field]);
+        return ordering.direction === "asc" ? difference : -difference;
+      });
+    }
+    const limited = this.maxResults === undefined
+      ? candidates
+      : candidates.slice(0, this.maxResults);
+    return {
+      docs: limited.map((document) => ({
+        id: document.id,
+        exists: true,
+        data: () => document.data,
+        version: document.version,
+      })),
+    };
+  }
+
+  private matchesFilter(data: Record<string, unknown>): boolean {
+    if (!this.filter) return true;
+    const actual = valueMillis(data[this.filter.field]);
+    const expected = valueMillis(this.filter.value);
+    return this.filter.operator === ">" ? actual > expected : actual >= expected;
+  }
+
+  private matchesAfter(data: Record<string, unknown>): boolean {
+    if (this.after === undefined || !this.ordering) return true;
+    const actual = valueMillis(data[this.ordering.field]);
+    const after = valueMillis(this.after);
+    return this.ordering.direction === "asc" ? actual > after : actual < after;
+  }
+}
+
+function valueMillis(value: unknown): number {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "number") return value;
+  if (value && typeof value === "object") {
+    const candidate = value as { toDate?: unknown; date?: unknown };
+    if (typeof candidate.toDate === "function") {
+      const date = candidate.toDate();
+      if (date instanceof Date) return date.getTime();
+    }
+    if (candidate.date instanceof Date) return candidate.date.getTime();
+  }
+  return Number.NEGATIVE_INFINITY;
 }

@@ -3,6 +3,7 @@ package com.example.backlogium.di
 import com.example.backlogium.BuildConfig
 import com.example.backlogium.data.diagnostics.RedactingTimingInterceptor
 import com.example.backlogium.data.hltb.HltbHttpClient
+import com.example.backlogium.data.remote.CloudPresenceApi
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamStoreApi
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -59,11 +60,13 @@ object NetworkModule {
 
     @Provides
     @Singleton
+
     fun provideSteamApi(retrofit: Retrofit): SteamApi = retrofit.create(SteamApi::class.java)
 
     @Provides
     @Singleton
     fun provideSteamStoreApi(json: Json, client: OkHttpClient): SteamStoreApi = Retrofit.Builder()
+
         .baseUrl(STEAM_STORE_BASE_URL)
         .client(client)
         .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
@@ -73,6 +76,7 @@ object NetworkModule {
     @Provides
     @Singleton
     @Named("githubRetrofit")
+
     fun provideGitHubRetrofit(json: Json, client: OkHttpClient): Retrofit = Retrofit.Builder()
         .baseUrl(GITHUB_BASE_URL)
         .client(client)
@@ -83,6 +87,11 @@ object NetworkModule {
     @Singleton
     fun provideGitHubReleaseApi(@Named("githubRetrofit") retrofit: Retrofit): GitHubReleaseApi =
         retrofit.create(GitHubReleaseApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideCloudPresenceApi(retrofit: Retrofit): CloudPresenceApi =
+        retrofit.create(CloudPresenceApi::class.java)
 
     /**
      * A separate OkHttp client for HowLongToBeat: the scraper drives raw GET/POST calls with

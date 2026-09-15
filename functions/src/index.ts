@@ -1,6 +1,8 @@
 import { initializeApp } from "firebase-admin/app";
 import { defineSecret, defineString } from "firebase-functions/params";
+import { onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { servePresenceRead } from "./readPresence";
 import { fetchPresence } from "./steam";
 import { recordObservation } from "./presence";
 import * as safeLog from "./safeLog";
@@ -79,3 +81,21 @@ export async function poll(apiKey: string, steamId: string): Promise<void> {
   // app ID: what was played is Firestore's to hold, not Cloud Logging's.
   safeLog.info("poll ok", { outcome });
 }
+/** The only credential admitted by the read endpoint; the value lives in Secret Manager. */
+const CLOUD_PRESENCE_READ_TOKEN = defineSecret("CLOUD_PRESENCE_READ_TOKEN");
+/**
+ * Authenticated, bounded reader for the raw transition log. Firestore rules remain deny-all: the
+ * Admin SDK is the only datastore boundary, and the bearer check runs before it is opened.
+ */
+export const readPresence = onRequest(
+  {
+    region: "asia-southeast1",
+    secrets: [CLOUD_PRESENCE_READ_TOKEN],
+    memory: "256MiB",
+    maxInstances: 1,
+    concurrency: 1,
+    timeoutSeconds: 45,
+  },
+  (request, response) =>
+    servePresenceRead(request, response, CLOUD_PRESENCE_READ_TOKEN.value(), STEAM_ID.value()),
+);

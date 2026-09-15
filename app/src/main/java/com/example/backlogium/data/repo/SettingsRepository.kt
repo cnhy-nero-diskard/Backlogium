@@ -155,6 +155,14 @@ interface SettingsRepository : SessionEndOutbox {
 
     suspend fun setLiveMonitorEnabled(enabled: Boolean)
 
+    /** The resumable cloud presence watermark; old test doubles default to no position. */
+    val cloudReadPosition: Flow<String?>
+        get() = flowOf(null)
+
+    suspend fun setCloudReadPosition(position: String) = Unit
+
+    suspend fun clearCloudReadPosition() = Unit
+
     /** Durable availability state for the opt-in monitor; old test doubles default to available. */
     /**
      * The newly-acquired-games announcement written by the most recent acquiring poll. Read-only
@@ -283,6 +291,13 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun clearSharedGameAnnouncement(appId: Long) =
         settings.clearSharedGameAnnouncement(appId)
+
+    override val cloudReadPosition: Flow<String?> = settings.cloudReadPositionFlow
+
+    override suspend fun setCloudReadPosition(position: String) =
+        settings.setCloudReadPosition(position)
+
+    override suspend fun clearCloudReadPosition() = settings.clearCloudReadPosition()
 
     override val liveMonitoringAvailability: Flow<PresenceMonitoringAvailability> =
         settings.liveMonitoringAvailabilityFlow

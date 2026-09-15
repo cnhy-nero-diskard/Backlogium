@@ -11,3 +11,11 @@ fun maskApiKey(apiKey: String, visible: Int = 4): String {
     if (key.length <= visible) return "•".repeat(key.length)
     return "•".repeat(key.length - visible) + key.takeLast(visible)
 }
+
+/** Mask any secret while preserving only a small, non-sensitive suffix for confirmation. */
+fun maskCredential(value: String, visible: Int = 4): String {
+    val secret = value.trim()
+    if (secret.isEmpty()) return ""
+    if (secret.length <= visible) return "\u2022".repeat(secret.length)
+    return "\u2022".repeat(secret.length - visible) + secret.takeLast(visible)
+}

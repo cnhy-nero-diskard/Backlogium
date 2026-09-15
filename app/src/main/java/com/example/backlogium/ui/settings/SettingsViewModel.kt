@@ -14,6 +14,10 @@ import com.example.backlogium.data.hltb.HltbContributionExporter
 import com.example.backlogium.data.hltb.HltbContributionPreparation
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.HiddenGamesRepository
+import com.example.backlogium.data.repo.CloudConfigurationResult
+import com.example.backlogium.data.repo.CloudPresenceRepository
+import com.example.backlogium.data.repo.CloudReadFailure
+import com.example.backlogium.data.repo.CloudReadResult
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.data.steamassets.SteamAssetRepository
 import com.example.backlogium.data.steamassets.SteamAssetRunSummary
@@ -81,6 +85,15 @@ data class SettingsUiState(
     val steamId: String = "",
     /** Masked form of the API key; the raw key never reaches the UI. */
     val apiKeyMasked: String = "",
+    /** Cloud reader endpoint; the credential itself is exposed only in masked form. */
+    val cloudEndpoint: String = "",
+    val cloudTokenMasked: String = "",
+    val cloudLastSuccessAt: Long? = null,
+    val cloudLastFailureAt: Long? = null,
+    val cloudLastFailure: CloudReadFailure? = null,
+    val cloudHealthy: Boolean? = null,
+    val cloudBusy: Boolean = false,
+    val cloudMessage: String? = null,
     val lastSyncAt: Long = 0L,
     val lastSyncError: String? = null,
     val isSyncing: Boolean = false,
@@ -179,6 +192,7 @@ class SettingsViewModel @Inject constructor(
     private val hltbDatasetRepository: HltbDatasetRepository,
     private val hltbContributionExporter: HltbContributionExporter,
     hiddenGames: HiddenGamesRepository,
+    private val cloudPresence: CloudPresenceRepository,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -205,6 +219,8 @@ class SettingsViewModel @Inject constructor(
     private val hltbContributionDisclosurePending = MutableStateFlow(false)
     private val hltbContributionBusy = MutableStateFlow(false)
     private val hltbContributionMessage = MutableStateFlow<String?>(null)
+    private val cloudBusy = MutableStateFlow(false)
+    private val cloudMessage = MutableStateFlow<String?>(null)
     /** Held only between a successful [prepareContributionExport] and the SAF destination pick. */
     private var preparedContribution: HltbContributionPreparation.Ready? = null
     private val _hapticIntents = MutableSharedFlow<HapticIntent>(extraBufferCapacity = 4)
@@ -217,6 +233,7 @@ class SettingsViewModel @Inject constructor(
 
     init {
         refreshSnapshots()
+        viewModelScope.launch { cloudPresence.refreshConfiguration() }
     }
 
     private val assetWorkState = combine(syncScheduler.steamAssetDownloadStatus, syncScheduler.steamAssetDownloadProgress) { status, progress ->
@@ -228,6 +245,20 @@ class SettingsViewModel @Inject constructor(
         hiddenGames.hiddenGames,
         hiddenGames.nonGameCandidates,
     ) { hidden, candidates -> hidden.size to candidates.size }
+
+    private val cloudState = combine(
+        cloudPresence.configuration,
+        cloudPresence.status,
+    ) { configuration, status ->
+        CloudLocal(
+            endpoint = configuration?.endpoint.orEmpty(),
+            tokenMasked = configuration?.maskedToken.orEmpty(),
+            lastSuccessAt = status.lastSuccessAt,
+            lastFailureAt = status.lastFailureAt,
+            lastFailure = status.lastFailure,
+            healthy = status.healthy,
+        )
+    }
 
     private val storedState = combine(
         profileRepository.profile,
@@ -364,6 +395,19 @@ class SettingsViewModel @Inject constructor(
             hltbContributionBusy = hltb.contribution.busy,
             hltbContributionMessage = hltb.contribution.message,
         )
+    }.combine(cloudState) { state, cloud ->
+        state.copy(
+            cloudEndpoint = cloud.endpoint,
+            cloudTokenMasked = cloud.tokenMasked,
+            cloudLastSuccessAt = cloud.lastSuccessAt,
+            cloudLastFailureAt = cloud.lastFailureAt,
+            cloudLastFailure = cloud.lastFailure,
+            cloudHealthy = cloud.healthy,
+            cloudBusy = cloudBusy.value,
+            cloudMessage = cloudMessage.value,
+        )
+    }.combine(combine(cloudBusy, cloudMessage) { busy, message -> busy to message }) { state, local ->
+        state.copy(cloudBusy = local.first, cloudMessage = local.second)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -371,6 +415,87 @@ class SettingsViewModel @Inject constructor(
     )
 
     fun syncNow() = profileRepository.syncNow()
+
+    fun verifyCloudPresence(endpoint: String, token: String) {
+        if (cloudBusy.value) return
+        viewModelScope.launch {
+            cloudBusy.value = true
+            cloudMessage.value = null
+            try {
+                cloudMessage.value = when (val result = cloudPresence.verifyAndSave(endpoint, token)) {
+                    CloudConfigurationResult.Saved -> "Cloud presence connected."
+                    CloudConfigurationResult.NoSteamAccount ->
+                        "Connect a Steam account before verifying the reader."
+                    CloudConfigurationResult.InvalidEndpoint ->
+                        "Use an HTTPS Cloud reader URL."
+                    CloudConfigurationResult.RejectedCredential ->
+                        "The reader credential was rejected."
+                    CloudConfigurationResult.Unreachable ->
+                        "The reader could not be reached."
+                    CloudConfigurationResult.UnusableResponse ->
+                        "The reader returned unusable data."
+                    is CloudConfigurationResult.AccountMismatch ->
+                        "Endpoint account ${result.endpointAccount} does not match expected " +
+                            "Steam account ${result.expectedAccount}."
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                cloudMessage.value = "The cloud reader could not be verified. Try again."
+            } finally {
+                cloudBusy.value = false
+            }
+        }
+    }
+
+    fun readCloudPresence() {
+        if (cloudBusy.value) return
+        viewModelScope.launch {
+            cloudBusy.value = true
+            cloudMessage.value = null
+            try {
+                cloudMessage.value = when (val result = cloudPresence.read()) {
+                    CloudReadResult.Unconfigured -> "Configure the cloud reader first."
+                    CloudReadResult.NoSteamAccount -> "Connect a Steam account first."
+                    is CloudReadResult.Success ->
+                        "Cloud presence updated (${result.snapshot.observationCount} observations)."
+                    is CloudReadResult.Failed -> result.failure.cloudMessage()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                cloudMessage.value = "The cloud reader could not be read. Try again."
+            } finally {
+                cloudBusy.value = false
+            }
+        }
+    }
+
+    fun removeCloudPresence() {
+        if (cloudBusy.value) return
+        viewModelScope.launch {
+            cloudBusy.value = true
+            cloudMessage.value = null
+            try {
+                cloudPresence.removeConfiguration()
+                cloudMessage.value = "Cloud presence removed."
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                cloudMessage.value = "The cloud reader could not be removed."
+            } finally {
+                cloudBusy.value = false
+            }
+        }
+    }
+
+    private fun CloudReadFailure.cloudMessage(): String = when (this) {
+        CloudReadFailure.UNREACHABLE -> "The cloud reader could not be reached."
+        CloudReadFailure.REJECTED_CREDENTIAL -> "The reader credential was rejected."
+        CloudReadFailure.ACCOUNT_MISMATCH ->
+            "The endpoint account does not match this Steam account."
+        CloudReadFailure.UNUSABLE_RESPONSE -> "The reader returned unusable data."
+    }
 
     fun onManualSharedGameInputChanged(value: String) {
         manualSharedGameInput.value = value
@@ -807,6 +932,15 @@ class SettingsViewModel @Inject constructor(
     )
 
     private data class HltbLocal(val dataset: HltbDatasetLocal, val contribution: HltbContributionLocal)
+
+    private data class CloudLocal(
+        val endpoint: String,
+        val tokenMasked: String,
+        val lastSuccessAt: Long?,
+        val lastFailureAt: Long?,
+        val lastFailure: CloudReadFailure?,
+        val healthy: Boolean?,
+    )
 }
 
 

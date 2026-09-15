@@ -8,6 +8,9 @@ vi.mock("firebase-functions/params", () => ({
 vi.mock("firebase-functions/v2/scheduler", () => ({
   onSchedule: vi.fn((_config: unknown, handler: () => unknown) => handler),
 }));
+vi.mock("firebase-functions/v2/https", () => ({
+  onRequest: vi.fn((_config: unknown, handler: (...args: unknown[]) => unknown) => handler),
+}));
 vi.mock("firebase-functions/logger", () => ({
   info: vi.fn(),
   warn: vi.fn(),
@@ -15,6 +18,7 @@ vi.mock("firebase-functions/logger", () => ({
 }));
 vi.mock("./steam", () => ({ fetchPresence: vi.fn() }));
 vi.mock("./presence", () => ({ recordObservation: vi.fn() }));
+vi.mock("./readPresence", () => ({ servePresenceRead: vi.fn() }));
 
 import * as logger from "firebase-functions/logger";
 import { fetchPresence } from "./steam";

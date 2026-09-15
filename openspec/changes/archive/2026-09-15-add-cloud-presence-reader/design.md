@@ -157,3 +157,39 @@ configure it. Neither leaves anything behind, because nothing derived was writte
 - Whether the diagnostics comparison is most legible per-interval or per-date. Both are
   implementable from the same reconstruction and the choice can be made while building the surface;
   it changes no requirement and no task.
+
+## Evidence from a real phone-off window (task 7.3)
+
+Captured 2026-09-15: the phone was offline from about 18:24 to 19:13 local time (UTC+8) while
+Steam, running uninterrupted on the PC throughout, was played first briefly in Pikuniku and then
+in Wuthering Waves (app 3513350).
+
+**The cloud read** (continuous coverage — the poller never lost visibility) reconstructed one
+interval: Wuthering Waves, 18:30:01–19:09:01, 39 minutes, matching the window the poller actually
+observed play in progress.
+
+**The local ledger** recorded two sessions, both stamped with the *entire* outage span
+(18:24:56.786–19:13:25.711 — the two syncs bracketing the outage) rather than each game's own
+boundaries: Pikuniku credited 5 minutes and Wuthering Waves credited 39 minutes, both inside that
+same ~48-minute span. `SessionDiffer` only sees the totals before and after an outage; it has no
+way to place the boundary between two games played inside it, so every game touched during an
+offline stretch inherits the whole stretch as its recorded start/end, even though only a fraction
+of it was actually spent on that game.
+
+**Consequence for phase 4:** the two systems don't just disagree about coverage confidence — after
+any outage, the local ledger's session boundaries for every game touched during that outage are
+provably wider than reality (stretched to the full outage span), while the cloud's boundaries for
+the same stretch are exact. An allocation rule that reapportions minutes needs to treat the local
+session's recorded start/end as a bound on when play *could* have happened, not as fact, whenever
+a cloud interval it overlaps carries continuous coverage.
+
+**A separate, surface-level finding, not a phase-4 concern:** `CloudPresenceDiagnosticsViewModel`'s
+"local ledger in this window" panel (`SessionRepository.sessionsBetween`, which filters on session
+*start* falling inside `[windowStart, windowEnd)`) reported "No visible local sessions in this
+window" for this exact case — even though the Wuthering Waves session's span fully contains the
+cloud's window (session start precedes `windowStart` by ~4.5s; session end follows `windowEnd` by
+~24s). A start-inside-window filter is the wrong predicate once a local session can be wider than
+the cloud window that motivated looking at it, which is systematically what happens after an
+outage, since the local session absorbs the pre-outage tail too. Noted here rather than fixed:
+task 7.3 asks only to record the evidence, and the comparison surface's exact filtering rule is a
+decision its own spec should make deliberately, not a byproduct of this write-up.

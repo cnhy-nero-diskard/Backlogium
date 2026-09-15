@@ -18,6 +18,7 @@ data class PlaySession(
     val startAt: Long,
     val minutes: Int,
     val open: Boolean,
+    val endAt: Long? = null,
 )
 
 /**
@@ -44,6 +45,15 @@ class SessionRepository @Inject constructor(
     /** Sessions whose start timestamps fall inside an explicit start-inclusive/end-exclusive window. */
     fun sessionsBetween(startInclusiveMillis: Long, endExclusiveMillis: Long): Flow<List<PlaySession>> =
         sessionDao.observeBetween(startInclusiveMillis, endExclusiveMillis).visibleSessions()
+
+    /**
+     * Sessions overlapping an explicit start-inclusive/end-exclusive window: started before
+     * it ends and ended after it begins (or still open). For the cloud-presence diagnostics
+     * comparison only — Analytics and History attribute by session start and keep
+     * [sessionsBetween].
+     */
+    fun sessionsOverlapping(startInclusiveMillis: Long, endExclusiveMillis: Long): Flow<List<PlaySession>> =
+        sessionDao.observeOverlapping(startInclusiveMillis, endExclusiveMillis).visibleSessions()
 
     /**
      * Earliest visible session start, or null before the first session is recorded. Hidden games
@@ -116,4 +126,5 @@ private fun Session.toDomain() = PlaySession(
     startAt = startAt,
     minutes = minutes,
     open = open,
+    endAt = endAt,
 )

@@ -51,6 +51,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.data.backup.SnapshotMeta
 import com.example.backlogium.data.repo.RemovedSharedGame
+import com.example.backlogium.data.repo.CloudReadFailure
 import com.example.backlogium.data.updates.AppUpdateState
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
@@ -164,6 +165,9 @@ fun SettingsScreen(
                 onRequestContributionExport = viewModel::onRequestContributionExport,
                 onDismissContributionDisclosure = viewModel::onDismissContributionDisclosure,
                 onConfirmContributionDisclosure = viewModel::onConfirmContributionDisclosure,
+                onVerifyCloudPresence = viewModel::verifyCloudPresence,
+                onReadCloudPresence = viewModel::readCloudPresence,
+                onRemoveCloudPresence = viewModel::removeCloudPresence,
             )
         },
     )
@@ -204,6 +208,9 @@ data class SettingsActions(
     val onRequestContributionExport: () -> Unit = {},
     val onDismissContributionDisclosure: () -> Unit = {},
     val onConfirmContributionDisclosure: () -> Unit = {},
+    val onVerifyCloudPresence: (String, String) -> Unit = { _, _ -> },
+    val onReadCloudPresence: () -> Unit = {},
+    val onRemoveCloudPresence: () -> Unit = {},
 )
 
 /** The stateless half: renders [state] and raises [actions]. */
@@ -264,6 +271,9 @@ fun SettingsScreen(
             },
             onReconcileNow = actions.onReconcileNow,
         )
+
+        SectionHeader("Cloud presence")
+        CloudPresenceCard(state = state, actions = actions)
 
         SectionHeader("Completion times")
         CompletionTimesCard(
@@ -577,6 +587,130 @@ private fun genreStatusLabel(status: GenreEnrichmentStatus): String = when (stat
     GenreEnrichmentStatus.RETRYING -> "Genres: retrying…"
 }
 
+internal const val CLOUD_PRESENCE_DISCLOSURE =
+    "Compare a bounded cloud presence window with this phone's local ledger. " +
+        "Cloud presence adds a record of when play happened. " +
+        "Backlogium functions fully without it. " +
+        "It never imports playtime or changes progress."
+
+@Composable
+private fun CloudPresenceCard(
+    state: SettingsUiState,
+    actions: SettingsActions,
+) {
+    var endpoint by remember(state.cloudEndpoint) { mutableStateOf(state.cloudEndpoint) }
+    var token by remember { mutableStateOf("") }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Optional cloud reader", style = MaterialTheme.typography.titleMedium)
+            Text(
+                CLOUD_PRESENCE_DISCLOSURE,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (state.cloudEndpoint.isNotBlank()) {
+                Text(
+                    "Connected to ${state.cloudEndpoint}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                val healthText = when {
+                    state.cloudHealthy == true ->
+                        "Healthy${state.cloudLastSuccessAt?.let { " - last read ${UiFormat.dateTime(it)}" }.orEmpty()}"
+                    state.cloudHealthy == false ->
+                        "Last read failed: ${cloudFailureLabel(state.cloudLastFailure)}" +
+                            state.cloudLastSuccessAt?.let { " - last success ${UiFormat.dateTime(it)}" }.orEmpty()
+                    else -> "Configured; no successful read yet."
+                }
+                Text(
+                    text = healthText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (state.cloudHealthy == false) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+                Text(
+                    "Credential ${state.cloudTokenMasked}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedTextField(
+                value = endpoint,
+                onValueChange = { endpoint = it },
+                label = { Text("HTTPS reader URL") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = token,
+                onValueChange = { token = it },
+                label = { Text(if (state.cloudEndpoint.isBlank()) "Reader credential" else "Replace credential") },
+                placeholder = {
+                    if (state.cloudEndpoint.isNotBlank()) Text(state.cloudTokenMasked)
+                },
+                singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        actions.onVerifyCloudPresence(endpoint, token)
+                        token = ""
+                    },
+                    enabled = !state.cloudBusy && endpoint.isNotBlank() && token.isNotBlank(),
+                ) {
+                    Text(if (state.cloudEndpoint.isBlank()) "Verify and save" else "Verify replacement")
+                }
+                if (state.cloudEndpoint.isNotBlank()) {
+                    OutlinedButton(
+                        onClick = actions.onReadCloudPresence,
+                        enabled = !state.cloudBusy,
+                    ) {
+                        Text(if (state.cloudBusy) "Reading..." else "Read now")
+                    }
+                }
+            }
+            if (state.cloudEndpoint.isNotBlank()) {
+                TextButton(
+                    onClick = actions.onRemoveCloudPresence,
+                    enabled = !state.cloudBusy,
+                ) {
+                    Text("Remove reader")
+                }
+            }
+            state.cloudMessage?.let { message ->
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (
+                        state.cloudHealthy == false ||
+                        message.contains("rejected", ignoreCase = true) ||
+                        message.contains("match", ignoreCase = true)
+                    ) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun cloudFailureLabel(failure: CloudReadFailure?): String = when (failure) {
+    CloudReadFailure.UNREACHABLE -> "unreachable endpoint"
+    CloudReadFailure.REJECTED_CREDENTIAL -> "rejected credential"
+    CloudReadFailure.ACCOUNT_MISMATCH -> "account mismatch"
+    CloudReadFailure.UNUSABLE_RESPONSE -> "unusable response"
+    null -> "unknown failure"
+}
 @Composable
 private fun UpdateCard(
     state: AppUpdateState,

@@ -47,6 +47,9 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
     override fun observeBetween(startInclusive: Long, endExclusive: Long): Flow<List<Session>> =
         flowOf(sessions.filter { it.startAt >= startInclusive && it.startAt < endExclusive })
 
+    override fun observeOverlapping(startInclusive: Long, endExclusive: Long): Flow<List<Session>> =
+        flowOf(sessions.filter { it.startAt < endExclusive && (it.endAt == null || it.endAt > startInclusive) })
+
     override fun observeClosedSince(cutoff: Long): Flow<List<Session>> =
         flowOf(sessions.filter { it.startAt >= cutoff && !it.open })
     override suspend fun getAll(): List<Session> = sessions

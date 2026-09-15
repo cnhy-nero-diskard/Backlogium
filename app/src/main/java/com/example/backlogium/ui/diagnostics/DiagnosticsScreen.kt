@@ -32,6 +32,7 @@ import com.example.backlogium.data.local.entity.RequestCounterTotals
 import com.example.backlogium.data.local.entity.RequestBreakdown
 import com.example.backlogium.data.local.entity.RequestRouteTotals
 import com.example.backlogium.data.local.entity.SyncRun
+import com.example.backlogium.domain.CloudCoverageState
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.ui.util.UiFormat
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -116,6 +117,8 @@ class DiagnosticsViewModel @Inject constructor(
 @Composable
 fun DiagnosticsScreen(viewModel: DiagnosticsViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val cloudViewModel: CloudPresenceDiagnosticsViewModel = hiltViewModel()
+    val cloudState by cloudViewModel.state.collectAsStateWithLifecycle()
     val totals24h by viewModel.totals24h.collectAsStateWithLifecycle()
     val totals30d by viewModel.totals30d.collectAsStateWithLifecycle()
     val totals365d by viewModel.totals365d.collectAsStateWithLifecycle()
@@ -127,6 +130,7 @@ fun DiagnosticsScreen(viewModel: DiagnosticsViewModel = hiltViewModel()) {
         DiagnosticsDetail(run, breakdowns) { selected = null }
     } ?: DiagnosticsList(
         state = state,
+            cloudState = cloudState,
         totals24h = totals24h,
         totals30d = totals30d,
         totals365d = totals365d,
@@ -140,6 +144,7 @@ fun DiagnosticsScreen(viewModel: DiagnosticsViewModel = hiltViewModel()) {
 @Composable
 private fun DiagnosticsList(
     state: DiagnosticsUiState,
+    cloudState: CloudDiagnosticsUiState,
     totals24h: RequestCounterTotals,
     totals30d: RequestCounterTotals,
     totals365d: RequestCounterTotals,
@@ -150,6 +155,7 @@ private fun DiagnosticsList(
 ) {
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item(key = "diagnostics-title") { Text("Diagnostics", style = MaterialTheme.typography.headlineSmall) }
+        item(key = "cloud-presence-comparison") { CloudPresenceComparisonCard(cloudState) }
         item(key = "request-counters") {
             RequestCountersSection(
                 totals = listOf(
@@ -180,6 +186,135 @@ private fun DiagnosticsList(
     }
 }
 
+@Composable
+private fun CloudPresenceComparisonCard(state: CloudDiagnosticsUiState) {
+    if (!state.configured) return
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("Cloud timeline comparison", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Read-only view: cloud observations are compared with the local ledger. " +
+                    "Nothing is imported or reconciled here.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            val snapshot = state.snapshot
+            if (snapshot == null) {
+                Text(
+                    "Reader configured, but no window has been read yet. Use Read now in Settings.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                return@Column
+            }
+            Text(
+                "Window ${UiFormat.dateTime(snapshot.windowStart)} to " +
+                    UiFormat.dateTime(snapshot.windowEnd),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (snapshot.hasMore) {
+                Text(
+                    "Partial window: more observations remain beyond this page. " +
+                        "Read again to continue; the comparison below covers this page only.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+            }
+            Text(
+                "${snapshot.observationCount} observations; ${state.intervals.size} visible intervals",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (state.intervals.isEmpty()) {
+                Text(
+                    "No visible game intervals in this window.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                state.intervals.forEach { interval ->
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            "${interval.gameName ?: "Unknown game"} (App ${interval.appId})",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            "${UiFormat.dateTime(interval.startAt)} - " +
+                                (interval.endAt?.let { UiFormat.dateTime(it) } ?: "ongoing"),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            "Coverage: ${interval.coverage.cloudLabel()}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = when (interval.coverage) {
+                                CloudCoverageState.CONTINUOUS -> MaterialTheme.colorScheme.primary
+                                CloudCoverageState.OBSERVED_UNTIL ->
+                                    MaterialTheme.colorScheme.tertiary
+                                CloudCoverageState.UNKNOWN -> MaterialTheme.colorScheme.error
+                            },
+                        )
+                        if (interval.coverageLapseFrom != null && interval.coverageLapseRecoveredAt != null) {
+                            Text(
+                                "Interior coverage gap: " +
+                                    "${UiFormat.dateTime(interval.coverageLapseFrom)} - " +
+                                    UiFormat.dateTime(interval.coverageLapseRecoveredAt),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        }
+                        if (interval.mayHaveStartedBefore) {
+                            Text(
+                                "Start may predate the returned window.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+            HorizontalDivider()
+            Text("Local ledger in the same window", style = MaterialTheme.typography.titleSmall)
+            if (state.localSessions.isEmpty()) {
+                Text(
+                    "No visible local sessions in this window.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                state.localSessions.forEach { session ->
+                    Text(
+                        "App ${session.appId}: ${UiFormat.dateTime(session.startAt)} - " +
+                            (session.endAt?.let { UiFormat.dateTime(it) }
+                                ?: if (session.open) "ongoing" else "unknown end") +
+                            " (${session.minutes} min${if (session.open) ", open" else ""})",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            if (state.dateDisagreements.isNotEmpty()) {
+                HorizontalDivider()
+                Text(
+                    "Date attribution differences",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+                state.dateDisagreements.forEach { disagreement ->
+                    Text(
+                        "${disagreement.gameName ?: "App ${disagreement.appId}"}: " +
+                            "cloud ${disagreement.cloudDate}, local ${disagreement.localDate}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun CloudCoverageState.cloudLabel(): String = when (this) {
+    CloudCoverageState.CONTINUOUS -> "continuous"
+    CloudCoverageState.OBSERVED_UNTIL -> "observed until last confirmation"
+    CloudCoverageState.UNKNOWN -> "unknown"
+}
 @Composable
 private fun RequestCountersSection(
     totals: List<Pair<String, RequestCounterTotals>>,
