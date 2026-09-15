@@ -96,9 +96,9 @@
 
 ## 6. Read-only guarantee
 
-- [ ] 6.1 Verify by test that a completed read leaves the session ledger, daily progress and all
+- [x] 6.1 Verify by test that a completed read leaves the session ledger, daily progress and all
       derived gamification values unchanged, and produces no progress event.
-- [ ] 6.2 Verify by test that an unconfigured app makes no cloud request on any path, including
+- [x] 6.2 Verify by test that an unconfigured app makes no cloud request on any path, including
       during a sync, and that an unreachable endpoint does not fail, delay or alter a sync.
 - [x] 6.3 Run `./gradlew :gamification:test :app:testDebugUnitTest` and
       `npm --prefix functions test` and confirm both suites pass.
