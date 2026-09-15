@@ -1,6 +1,6 @@
 ## 1. Read endpoint
 
-- [ ] 1.1 Add a bearer credential to Secret Manager and wire it into the functions deployment
+- [x] 1.1 Add a bearer credential to Secret Manager and wire it into the functions deployment
       alongside `STEAM_API_KEY`. Verify the secret is referenced by the function and appears in no
       source file or environment config.
 - [x] 1.2 Add the read function beside `pollPresence`, in `asia-southeast1`, with `maxInstances`
