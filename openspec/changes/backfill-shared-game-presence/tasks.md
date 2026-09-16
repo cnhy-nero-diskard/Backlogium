@@ -66,8 +66,8 @@
       ingest, and that `SessionDiffer` and the sync path are untouched.
 - [x] 6.2 Verify by test that a recovered session participates identically in XP, quests, streaks,
       history and analytics.
-- [ ] 6.3 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm the suite passes.
-- [ ] 6.4 Verify the boundary grep in `CLAUDE.md` reports no new `data.local.entity` or DAO import
+- [x] 6.3 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm the suite passes.
+- [x] 6.4 Verify the boundary grep in `CLAUDE.md` reports no new `data.local.entity` or DAO import
       under `ui/`.
 
 ## 7. Verify on real data
