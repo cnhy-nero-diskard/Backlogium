@@ -72,9 +72,16 @@
 
 ## 7. Verify on real data
 
-- [ ] 7.1 With a family-shared game in the library, play it while the app is fully closed, then
+- [x] 7.1 With a family-shared game in the library, play it while the app is fully closed, then
       ingest. Verify a session is recovered that the app would previously have missed entirely.
-- [ ] 7.2 Verify the recovered session appears in History on the day it happened, and that no
+      Device evidence (Sep 16, 2026): Read now returned 2 observations; Diagnostics showed the
+      Zynga Poker cloud interval at 9:36-9:39 PM and the matching 2-minute local ledger session.
+- [x] 7.2 Verify the recovered session appears in History on the day it happened, and that no
       celebration fired for it.
+      History showed Sep 16 with Zynga Poker at 1m plus 2m, and Home remained at 18m of 30m
+      with the quest still in progress and no celebration visible.
 - [ ] 7.3 Confirm the pre-phase-1 era of unknown-coverage intervals contributes conservatively
-      rather than crediting full spans, and record what it actually contributed.
+      rather than crediting full spans, and record what it actually contributed. The live device
+      window exposed continuous coverage rather than an unknown-coverage interval: the 3-minute
+      cloud span contributed 2 minutes locally. Unknown-coverage behavior remains covered by the
+      focused CloudPresenceSessionIngest regression tests.
