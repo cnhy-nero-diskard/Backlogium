@@ -16,6 +16,7 @@ import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.HiddenGamesRepository
 import com.example.backlogium.data.repo.CloudConfigurationResult
 import com.example.backlogium.data.repo.CloudPresenceRepository
+import com.example.backlogium.data.repo.CloudPresenceSessionIngestor
 import com.example.backlogium.data.repo.CloudReadFailure
 import com.example.backlogium.data.repo.CloudReadResult
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
@@ -193,6 +194,7 @@ class SettingsViewModel @Inject constructor(
     private val hltbContributionExporter: HltbContributionExporter,
     hiddenGames: HiddenGamesRepository,
     private val cloudPresence: CloudPresenceRepository,
+    private val cloudPresenceIngestor: CloudPresenceSessionIngestor,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -422,7 +424,11 @@ class SettingsViewModel @Inject constructor(
             cloudBusy.value = true
             cloudMessage.value = null
             try {
-                cloudMessage.value = when (val result = cloudPresence.verifyAndSave(endpoint, token)) {
+                cloudMessage.value = when (val result = cloudPresence.verifyAndSave(
+                    endpoint,
+                    token,
+                    consume = cloudPresenceIngestor::ingest,
+                )) {
                     CloudConfigurationResult.Saved -> "Cloud presence connected."
                     CloudConfigurationResult.NoSteamAccount ->
                         "Connect a Steam account before verifying the reader."
@@ -454,7 +460,9 @@ class SettingsViewModel @Inject constructor(
             cloudBusy.value = true
             cloudMessage.value = null
             try {
-                cloudMessage.value = when (val result = cloudPresence.read()) {
+                cloudMessage.value = when (val result = cloudPresence.read(
+                    consume = cloudPresenceIngestor::ingest,
+                )) {
                     CloudReadResult.Unconfigured -> "Configure the cloud reader first."
                     CloudReadResult.NoSteamAccount -> "Connect a Steam account first."
                     is CloudReadResult.Success ->

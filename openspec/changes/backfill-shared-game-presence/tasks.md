@@ -30,41 +30,41 @@
 
 ## 3. Position and idempotency
 
-- [ ] 3.1 Persist an ingest position recording how far cloud observations have been folded in.
+- [x] 3.1 Persist an ingest position recording how far cloud observations have been folded in.
       Verify by test that re-running the same window credits no additional minutes and creates no
       additional session.
-- [ ] 3.2 Verify by test that an ingest interrupted partway resumes without re-crediting what was
+- [x] 3.2 Verify by test that an ingest interrupted partway resumes without re-crediting what was
       already written.
-- [ ] 3.3 Clear the ingest position on a configured account change, alongside the read position.
+- [x] 3.3 Clear the ingest position on a configured account change, alongside the read position.
       Verify by test that an account change discards both.
-- [ ] 3.4 Verify by test over an overlap fixture that play recorded by the on-device observer and
+- [x] 3.4 Verify by test over an overlap fixture that play recorded by the on-device observer and
       also present in the cloud record is credited once.
 
 ## 4. Writing and recompute
 
-- [ ] 4.1 Persist actions through the existing `SessionActionWriter`, not a parallel path. Verify by
+- [x] 4.1 Persist actions through the existing `SessionActionWriter`, not a parallel path. Verify by
       test that a recovered session's stored shape is identical to an on-device-derived one.
-- [ ] 4.2 Recompute under the new provenance after an ingest that wrote anything, and not at all
+- [x] 4.2 Recompute under the new provenance after an ingest that wrote anything, and not at all
       when it wrote nothing. Verify by test for both.
-- [ ] 4.3 Re-evaluate dates the ingest credited, including past dates whose quest was already
+- [x] 4.3 Re-evaluate dates the ingest credited, including past dates whose quest was already
       evaluated, through the existing daily-progress correction path. Verify by test that a past
       date's quest flips to met and that no quest event is produced.
-- [ ] 4.4 Verify by test that a streak broken only by an unobserved day is recomputed as unbroken
+- [x] 4.4 Verify by test that a streak broken only by an unobserved day is recomputed as unbroken
       and that no streak event fires.
 
 ## 5. Disclosure
 
-- [ ] 5.1 Widen the shared-game "observed, not total" remedy to point at cloud presence as well as
+- [x] 5.1 Widen the shared-game "observed, not total" remedy to point at cloud presence as well as
       the live monitor, where it is not configured. Verify the disclosure still refuses to claim the
       figure is a Steam-verified total.
-- [ ] 5.2 Verify by test that a shared game whose play was recovered entirely from cloud presence
+- [x] 5.2 Verify by test that a shared game whose play was recovered entirely from cloud presence
       presents its time as observed, with the disclosure intact.
 
 ## 6. Partition and regression
 
-- [ ] 6.1 Verify by test that no owned game gains, loses or alters a session as a result of any
+- [x] 6.1 Verify by test that no owned game gains, loses or alters a session as a result of any
       ingest, and that `SessionDiffer` and the sync path are untouched.
-- [ ] 6.2 Verify by test that a recovered session participates identically in XP, quests, streaks,
+- [x] 6.2 Verify by test that a recovered session participates identically in XP, quests, streaks,
       history and analytics.
 - [ ] 6.3 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm the suite passes.
 - [ ] 6.4 Verify the boundary grep in `CLAUDE.md` reports no new `data.local.entity` or DAO import

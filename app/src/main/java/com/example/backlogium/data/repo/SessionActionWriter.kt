@@ -39,7 +39,8 @@ class SessionActionWriter @Inject constructor(
      * both route their actions here — which is what makes the [SessionDao.tryOpenSession] guard
      * below hold "regardless of which caller reaches it" (auditfix-session-ledger-integrity, #116).
      */
-    suspend fun applySessionActions(actions: List<SessionDiffer.SessionAction>) {
+    suspend fun applySessionActions(actions: List<SessionDiffer.SessionAction>): Boolean {
+        var wrote = false
         for (action in actions) {
             when (action) {
                 is SessionDiffer.SessionAction.Open -> {
@@ -49,6 +50,7 @@ class SessionActionWriter @Inject constructor(
                         endAt = action.endAt,
                         minutes = action.minutes,
                     )
+                    if (opened != -1L) wrote = true
                     // Lost the race: a concurrent caller already opened this game's session. That
                     // observation is not wrong, only late — fold it into the session that won
                     // rather than dropping it, which is what the second observation actually meant.
@@ -68,21 +70,38 @@ class SessionActionWriter @Inject constructor(
                                     endAt = maxOf(it.endAt ?: it.startAt, action.endAt),
                                 ),
                             )
+                            wrote = true
                         }
                     }
                 }
 
                 is SessionDiffer.SessionAction.Extend ->
-                    sessionDao.getOpenSession(action.appId)?.let {
-                        sessionDao.update(it.copy(minutes = action.minutes, endAt = action.endAt))
+                    (sessionDao.getOpenSession(action.appId)
+                        ?: sessionDao.getAll().asSequence()
+                            .filter { it.appId == action.appId && it.startAt == action.startAt }
+                            .maxByOrNull { it.id })?.let {
+                        val endAt = maxOf(it.endAt ?: it.startAt, action.endAt)
+                        val minutes = maxOf(it.minutes, action.minutes)
+                        if (endAt != it.endAt || minutes != it.minutes || !it.open) {
+                            sessionDao.update(
+                                it.copy(
+                                    minutes = minutes,
+                                    endAt = endAt,
+                                    open = true,
+                                ),
+                            )
+                            wrote = true
+                        }
                     }
 
                 is SessionDiffer.SessionAction.Close ->
                     sessionDao.getOpenSession(action.appId)?.let {
                         sessionDao.update(it.copy(open = false, endAt = action.endAt))
+                        wrote = true
                     }
             }
         }
+        return wrote
     }
 
     /** Credit each action's newly observed minutes to the local date its session started on. */
@@ -98,11 +117,12 @@ class SessionActionWriter @Inject constructor(
     }
 
     /** Both halves together — the presence path's whole write. */
-    suspend fun apply(actions: List<SessionDiffer.SessionAction>, goalAppIds: Set<Long>) {
-        if (actions.isEmpty()) return
-        transaction.run {
-            applySessionActions(actions)
-            creditDailyProgress(actions, goalAppIds)
+    suspend fun apply(actions: List<SessionDiffer.SessionAction>, goalAppIds: Set<Long>): Boolean {
+        if (actions.isEmpty()) return false
+        return transaction.run {
+            val wrote = applySessionActions(actions)
+            if (wrote) creditDailyProgress(actions, goalAppIds)
+            wrote
         }
     }
 }

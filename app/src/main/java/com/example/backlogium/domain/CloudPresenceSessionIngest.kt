@@ -12,6 +12,7 @@ object CloudPresenceSessionIngest {
         intervals: List<CloudPresenceInterval>,
         gameSources: Map<Long, GameSource>,
         gapToleranceMillis: Long = DEFAULT_GAP_TOLERANCE_MILLIS,
+        alreadyObservedThrough: Map<Long, Long> = emptyMap(),
     ): List<PresenceSessionDeriver.Observation> {
         require(gapToleranceMillis >= 0L)
         val ordered = intervals.sortedWith(
@@ -24,17 +25,33 @@ object CloudPresenceSessionIngest {
         val output = mutableListOf<PresenceSessionDeriver.Observation>()
         ordered.forEach { interval ->
             val admitted = gameSources[interval.appId] == GameSource.FAMILY_SHARED
+            if (!admitted) {
+                output += PresenceSessionDeriver.Observation(appId = null, at = interval.startAt)
+                return@forEach
+            }
             val confirmedEnd = interval.confirmedEnd(gapToleranceMillis)
                 ?.takeIf { it >= interval.startAt }
-                ?.takeIf { admitted }
             if (confirmedEnd == null) {
                 output += PresenceSessionDeriver.Observation(appId = null, at = interval.startAt)
                 return@forEach
             }
 
-            output += PresenceSessionDeriver.Observation(interval.appId, interval.startAt)
-            if (confirmedEnd > interval.startAt) {
-                output += PresenceSessionDeriver.Observation(interval.appId, confirmedEnd)
+            val previous = alreadyObservedThrough[interval.appId]
+            if (previous == null) {
+                output.addContinuousObservations(
+                    appId = interval.appId,
+                    startAt = interval.startAt,
+                    endAt = confirmedEnd,
+                    gapToleranceMillis = gapToleranceMillis,
+                )
+            } else if (confirmedEnd > previous) {
+                val resumedAt = maxOf(interval.startAt, previous)
+                output.addContinuousObservations(
+                    appId = interval.appId,
+                    startAt = resumedAt,
+                    endAt = confirmedEnd,
+                    gapToleranceMillis = gapToleranceMillis,
+                )
             }
         }
 
@@ -43,10 +60,29 @@ object CloudPresenceSessionIngest {
             val closeAt = last.confirmedEnd(gapToleranceMillis)
                 ?.takeIf { it >= last.startAt }
                 ?: last.startAt
-            output += PresenceSessionDeriver.Observation(appId = null, at = closeAt)
+            val previous = alreadyObservedThrough[last.appId]
+            if (previous == null || closeAt >= previous) {
+                output += PresenceSessionDeriver.Observation(appId = null, at = closeAt)
+            }
         }
 
         return output.distinct()
+    }
+
+    /** Keep a cloud-proven continuous span within the deriver's silence tolerance. */
+    private fun MutableList<PresenceSessionDeriver.Observation>.addContinuousObservations(
+        appId: Long,
+        startAt: Long,
+        endAt: Long,
+        gapToleranceMillis: Long,
+    ) {
+        add(PresenceSessionDeriver.Observation(appId, startAt))
+        var at = startAt
+        while (gapToleranceMillis > 0L && endAt - at > gapToleranceMillis) {
+            at += gapToleranceMillis
+            add(PresenceSessionDeriver.Observation(appId, at))
+        }
+        if (endAt > at) add(PresenceSessionDeriver.Observation(appId, endAt))
     }
 
     private fun CloudPresenceInterval.confirmedEnd(gapToleranceMillis: Long): Long? {

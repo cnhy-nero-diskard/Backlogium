@@ -163,6 +163,14 @@ interface SettingsRepository : SessionEndOutbox {
 
     suspend fun clearCloudReadPosition() = Unit
 
+    /** Durable watermark for cloud intervals already folded into presence sessions. */
+    val cloudIngestPosition: Flow<String?>
+        get() = flowOf(null)
+
+    suspend fun setCloudIngestPosition(position: String) = Unit
+
+    suspend fun clearCloudIngestPosition() = Unit
+
     /** Durable availability state for the opt-in monitor; old test doubles default to available. */
     /**
      * The newly-acquired-games announcement written by the most recent acquiring poll. Read-only
@@ -298,6 +306,13 @@ class DataStoreSettingsRepository @Inject constructor(
         settings.setCloudReadPosition(position)
 
     override suspend fun clearCloudReadPosition() = settings.clearCloudReadPosition()
+
+    override val cloudIngestPosition: Flow<String?> = settings.cloudIngestPositionFlow
+
+    override suspend fun setCloudIngestPosition(position: String) =
+        settings.setCloudIngestPosition(position)
+
+    override suspend fun clearCloudIngestPosition() = settings.clearCloudIngestPosition()
 
     override val liveMonitoringAvailability: Flow<PresenceMonitoringAvailability> =
         settings.liveMonitoringAvailabilityFlow

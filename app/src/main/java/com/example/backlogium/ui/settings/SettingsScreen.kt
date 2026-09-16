@@ -589,9 +589,10 @@ private fun genreStatusLabel(status: GenreEnrichmentStatus): String = when (stat
 
 internal const val CLOUD_PRESENCE_DISCLOSURE =
     "Compare a bounded cloud presence window with this phone's local ledger. " +
-        "Cloud presence adds a record of when play happened. " +
+        "Cloud presence adds a record of when play happened, even while Backlogium is closed. " +
+        "Recovered shared-game sessions update observed time and progress without retroactive celebrations. " +
         "Backlogium functions fully without it. " +
-        "It never imports playtime or changes progress."
+        "It never imports Steam lifetime playtime or invents unobserved time."
 
 @Composable
 private fun CloudPresenceCard(

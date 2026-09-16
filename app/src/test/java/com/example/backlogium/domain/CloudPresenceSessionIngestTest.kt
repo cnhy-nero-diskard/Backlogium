@@ -38,6 +38,22 @@ class CloudPresenceSessionIngestTest {
 
         val result = fold(observations)
         assertTrue(result.actions.none { action -> action.appId == owned || action.appId == unknown })
+        assertTrue(
+            fold(
+                CloudPresenceSessionIngest.observations(
+                    intervals = listOf(interval(owned)),
+                    gameSources = mapOf(owned to GameSource.STEAM_OWNED),
+                ),
+            ).actions.isEmpty(),
+        )
+        assertTrue(
+            fold(
+                CloudPresenceSessionIngest.observations(
+                    intervals = listOf(interval(unknown)),
+                    gameSources = emptyMap(),
+                ),
+            ).actions.isEmpty(),
+        )
     }
 
     @Test
@@ -92,6 +108,52 @@ class CloudPresenceSessionIngestTest {
     }
 
     @Test
+    fun freshTailAfterInteriorGapIsDiscardedInFull() {
+        val observations = CloudPresenceSessionIngest.observations(
+            intervals = listOf(
+                interval(
+                    shared,
+                    startAt = 0L,
+                    endAt = 40L,
+                    coverage = CloudCoverageState.OBSERVED_UNTIL,
+                    observedUntil = 40L,
+                    coverageLapseFrom = 10L,
+                    coverageLapseRecoveredAt = 25L,
+                ),
+            ),
+            gameSources = mapOf(shared to GameSource.FAMILY_SHARED),
+            gapToleranceMillis = 10L,
+        )
+
+        assertTrue(observations.all { it.appId == null })
+        assertTrue(fold(observations).actions.isEmpty())
+    }
+
+    @Test
+    fun twoInteriorOutagesDoNotCreditTheUnlocatedSpan() {
+        // The phase-1 pair retains the largest outage from
+        // A@t0 -> A@t1 -> outage -> A@t10 -> A@t11 -> outage -> A@t18 -> B@t19.
+        val observations = CloudPresenceSessionIngest.observations(
+            intervals = listOf(
+                interval(
+                    shared,
+                    startAt = 0L,
+                    endAt = 19L,
+                    coverage = CloudCoverageState.OBSERVED_UNTIL,
+                    observedUntil = 19L,
+                    coverageLapseFrom = 1L,
+                    coverageLapseRecoveredAt = 10L,
+                ),
+            ),
+            gameSources = mapOf(shared to GameSource.FAMILY_SHARED),
+            gapToleranceMillis = 5L,
+        )
+
+        assertTrue(observations.all { it.appId == null })
+        assertTrue(fold(observations).actions.isEmpty())
+    }
+
+    @Test
     fun playEntirelyInsideAnUnobservedGapDoesNotOpenASession() {
         val observations = CloudPresenceSessionIngest.observations(
             intervals = listOf(
@@ -117,6 +179,19 @@ class CloudPresenceSessionIngestTest {
         assertEquals(1, actions.count { it is SessionAction.Open })
         assertEquals(0, actions.count { it is SessionAction.Close })
         assertTrue(actions.any { it is SessionAction.Extend })
+    }
+
+    @Test
+    fun longContinuousIntervalStaysOnePresenceSession() {
+        val observations = CloudPresenceSessionIngest.observations(
+            intervals = listOf(interval(shared, endAt = 30L * MINUTE)),
+            gameSources = mapOf(shared to GameSource.FAMILY_SHARED),
+        )
+
+        val actions = fold(observations).actions
+        assertEquals(1, actions.count { it is SessionAction.Open })
+        assertEquals(1, actions.count { it is SessionAction.Close })
+        assertEquals(30, actions.sumOf { it.addedMinutes })
     }
 
     private fun fold(
