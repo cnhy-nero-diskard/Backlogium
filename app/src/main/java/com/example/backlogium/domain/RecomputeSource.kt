@@ -40,4 +40,11 @@ enum class RecomputeSource {
      * swallow the next genuine level-up.
      */
     VISIBILITY_CHANGE,
+    /**
+     * Play observed after it happened, such as a family-shared session recovered from cloud
+     * presence. The play is genuine, but the recompute is corrective rather than a live earned
+     * transition, so it emits no progress events and reseeds the delivery baseline. It is distinct
+     * from [BACKFILL], which imports a historical Steam total that was never observed accumulating.
+     */
+    RETROACTIVE_PLAY,
 }

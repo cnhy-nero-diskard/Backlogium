@@ -1,12 +1,12 @@
 ## 1. Provenance
 
-- [ ] 1.1 Add a `RecomputeSource` value for play observed retroactively, documented with why it is
+- [x] 1.1 Add a `RecomputeSource` value for play observed retroactively, documented with why it is
       non-earned despite being earned play, and why it is distinct from `BACKFILL`. Verify
       `./gradlew :app:testDebugUnitTest` passes with the new value handled everywhere the enum is
       exhaustively matched.
-- [ ] 1.2 Verify by test that a recompute under the new source produces no progress event and sets
+- [x] 1.2 Verify by test that a recompute under the new source produces no progress event and sets
       the delivery baseline to the values written, in both the raising and lowering direction.
-- [ ] 1.3 Verify by test that the new source does not cancel an unacknowledged event owed by an
+- [x] 1.3 Verify by test that the new source does not cancel an unacknowledged event owed by an
       earlier sync, and that a later sync still produces events measured from the reseeded baseline.
 
 ## 2. Ingest rule

@@ -61,6 +61,45 @@ class GamificationProgressEventsTest {
     }
 
     @Test
+    fun retroactivePlayReseedsLevelBaselineInBothDirections() = runTest {
+        val marksStore = InMemoryProgressMarksStore(
+            ProgressMarks(lastCelebratedLevel = 4, initialized = true),
+        )
+        val profileDao = FakePlayerProfileDao(PlayerProfile(level = 4))
+        val updater = updater(profileDao = profileDao, marksStore = marksStore)
+
+        updater.persist(result(level = 24), RecomputeSource.RETROACTIVE_PLAY)
+
+        assertEquals(24, profileDao.get()!!.level)
+        assertEquals(24, marksStore.read().lastCelebratedLevel)
+
+        updater.persist(result(level = 4), RecomputeSource.RETROACTIVE_PLAY)
+
+        assertEquals(4, profileDao.get()!!.level)
+        assertEquals(4, marksStore.read().lastCelebratedLevel)
+    }
+
+    @Test
+    fun retroactivePlayPreservesOwedEventAndLaterSyncMeasuresFromReseededBaseline() = runTest {
+        val marksStore = InMemoryProgressMarksStore(
+            ProgressMarks(lastCelebratedLevel = 4, initialized = true),
+        )
+        val profileDao = FakePlayerProfileDao(PlayerProfile(level = 4))
+        val updater = updater(profileDao = profileDao, marksStore = marksStore)
+
+        updater.persist(result(level = 7), RecomputeSource.SYNC)
+        assertEquals(4, marksStore.read().lastCelebratedLevel)
+
+        updater.persist(result(level = 24), RecomputeSource.RETROACTIVE_PLAY)
+        assertEquals(24, marksStore.read().lastCelebratedLevel)
+
+        updater.persist(result(level = 25), RecomputeSource.SYNC)
+
+        assertEquals(25, profileDao.get()!!.level)
+        assertEquals(24, marksStore.read().lastCelebratedLevel)
+    }
+
+    @Test
     fun nonEarnedDropLowersBaselineForNextEarnedRise() = runTest {
         val marksStore = InMemoryProgressMarksStore(
             ProgressMarks(lastCelebratedLevel = 24, initialized = true),
