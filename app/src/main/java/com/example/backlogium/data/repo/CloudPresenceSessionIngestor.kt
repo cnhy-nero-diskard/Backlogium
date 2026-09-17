@@ -110,14 +110,21 @@ class CloudPresenceSessionIngestor @Inject constructor(
             .filter { it.isGoal }
             .map { it.appId }
             .toSet()
-        val effective = sessionActionWriter.apply(actions, goalIds)
+        val allActions = actions + reconcileCurrentState(
+            snapshot = snapshot,
+            sources = sources,
+            sessions = sessions,
+            sharedIds = sharedIds,
+            actions = actions,
+        )
+        val effective = sessionActionWriter.apply(allActions, goalIds)
         val wrote = effective.isNotEmpty()
         if (wrote) recompute()
         settings.setCloudIngestPosition(position.raw)
         CloudPresenceIngestResult(
             processed = true,
             wrote = wrote,
-            actionCount = actions.size,
+            actionCount = allActions.size,
             creditedMinutes = effective.sumOf { it.addedMinutes },
         )
     }
@@ -146,6 +153,80 @@ class CloudPresenceSessionIngestor @Inject constructor(
             openSession = result.openSession
         }
         return actions
+    }
+
+    /**
+     * Reconcile live state around a fully stored ongoing interval.
+     *
+     * A fully covered ongoing app emits no game observation — there is no new play — but while
+     * it names a different game than a stored open it still proves that open stale, and while
+     * the cloud reports it running the stored row for it must itself read open. The fold tracks
+     * only the single seeded open, so without this a seeded A->B switch closes A and leaves B
+     * closed with no live session, and when stale A and current B are both already open the
+     * outcome depends on which single open row happened to seed the fold. Closing every other
+     * open proven older than the cloud evidence and reopening the stored current row through
+     * the normal writer path keeps both halves independent of that pick, with no extra minutes
+     * and no duplicate row: the reopen is an Extend of the existing row, which the writer trims
+     * to zero added minutes.
+     */
+    private fun reconcileCurrentState(
+        snapshot: CloudPresenceSnapshot,
+        sources: Map<Long, GameSource>,
+        sessions: List<Session>,
+        sharedIds: Set<Long>,
+        actions: List<SessionDiffer.SessionAction>,
+    ): List<SessionDiffer.SessionAction> {
+        val ongoing = snapshot.intervals.asSequence()
+            .filter { it.ongoing }
+            .maxByOrNull { it.startAt }
+            ?.takeIf { sources[it.appId] == GameSource.FAMILY_SHARED }
+            ?: return emptyList()
+        val confirmedEnd = CloudPresenceSessionIngest.confirmedEndAt(ongoing)
+            ?: return emptyList()
+        val openRows = sessions.filter { it.open && it.appId in sharedIds }
+        val maxOpenObserved = openRows.maxOfOrNull { it.endAt ?: it.startAt }
+        val extra = mutableListOf<SessionDiffer.SessionAction>()
+        for (row in openRows) {
+            if (row.appId == ongoing.appId) continue
+            val lastObserved = row.endAt ?: row.startAt
+            // Older cloud evidence must not out-of-order close a newer live session.
+            if (lastObserved > confirmedEnd) continue
+            if (actions.none {
+                    it is SessionDiffer.SessionAction.Close &&
+                        it.appId == row.appId && it.startAt == row.startAt
+                }
+            ) {
+                extra += SessionDiffer.SessionAction.Close(
+                    appId = row.appId,
+                    startAt = row.startAt,
+                    endAt = lastObserved,
+                )
+            }
+        }
+        val hasOngoingWrite = actions.any {
+            it.appId == ongoing.appId &&
+                (it is SessionDiffer.SessionAction.Open || it is SessionDiffer.SessionAction.Extend)
+        }
+        if (!hasOngoingWrite && openRows.none { it.appId == ongoing.appId }) {
+            val candidate = sessions.asSequence()
+                .filter { it.appId == ongoing.appId }
+                .maxByOrNull { it.endAt ?: it.startAt }
+            if (candidate != null) {
+                val candidateEnd = candidate.endAt ?: candidate.startAt
+                if (confirmedEnd >= candidateEnd &&
+                    (maxOpenObserved == null || confirmedEnd >= maxOpenObserved)
+                ) {
+                    extra += SessionDiffer.SessionAction.Extend(
+                        appId = candidate.appId,
+                        startAt = candidate.startAt,
+                        minutes = candidate.minutes,
+                        endAt = maxOf(candidateEnd, confirmedEnd),
+                        addedMinutes = 0,
+                    )
+                }
+            }
+        }
+        return extra
     }
 
     private fun closedOverlapSeed(

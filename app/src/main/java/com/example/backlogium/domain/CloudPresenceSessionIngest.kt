@@ -194,6 +194,19 @@ object CloudPresenceSessionIngest {
         if (endAt > at) add(PresenceSessionDeriver.Observation(appId, endAt))
     }
 
+    /**
+     * Confirmed end of one interval for current-state reconciliation.
+     *
+     * Same verdict the fold uses: an interval with no confirmable end proves nothing about
+     * what is running now, so a caller reconciling live state must ignore it rather than
+     * closing or reopening sessions on its strength.
+     */
+    fun confirmedEndAt(
+        interval: CloudPresenceInterval,
+        gapToleranceMillis: Long = DEFAULT_GAP_TOLERANCE_MILLIS,
+    ): Long? = interval.confirmedEnd(gapToleranceMillis)
+        ?.takeIf { it >= interval.startAt }
+
     private fun CloudPresenceInterval.confirmedEnd(gapToleranceMillis: Long): Long? {
         val lapseFrom = coverageLapseFrom
         val lapseRecoveredAt = coverageLapseRecoveredAt

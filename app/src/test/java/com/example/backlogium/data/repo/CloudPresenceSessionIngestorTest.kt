@@ -354,7 +354,9 @@ class CloudPresenceSessionIngestorTest {
         // Room says A is live, but the cloud snapshot starts with fully covered ongoing B:
         // with no preceding admitted fragment the batch alone proves no switch, yet the
         // seeded Room open is also preceding state. The ongoing B still proves A is stale,
-        // so ingest must close A without duplicating or losing the stored B span.
+        // so ingest must close A without duplicating or losing the stored B span, and the
+        // fully covered ongoing app must itself read open afterwards: the cloud still
+        // reports B running, so leaving both rows closed would leave no live session.
         val snapshot = CloudPresenceSnapshot(
             windowStart = 10L * MINUTE,
             windowEnd = 12L * MINUTE,
@@ -396,6 +398,73 @@ class CloudPresenceSessionIngestorTest {
         assertEquals(10L * MINUTE, current.single().startAt)
         assertEquals(12L * MINUTE, current.single().endAt)
         assertEquals(2, current.single().minutes)
+        assertTrue(current.single().open)
+    }
+
+    @Test
+    fun bothOpenStaleAndCurrentReconcilesToCurrent() = runTest {
+        database.gameDao().upsert(sharedGame())
+        database.gameDao().upsert(sharedGame().copy(appId = 441L, name = "Shared B"))
+        database.sessionDao().insert(
+            Session(
+                appId = 440L,
+                startAt = 10L * MINUTE,
+                endAt = 12L * MINUTE,
+                minutes = 2,
+                open = true,
+            ),
+        )
+        database.sessionDao().insert(
+            Session(
+                appId = 441L,
+                startAt = 10L * MINUTE,
+                endAt = 12L * MINUTE,
+                minutes = 2,
+                open = true,
+            ),
+        )
+        // Both A (stale) and B (current) are already open, so the fold seeds only one of
+        // them: whichever single open row happened to be selected, the other would survive
+        // without current-state reconciliation. The ongoing B proves A stale, so ingest must
+        // close A and keep B open without duplicating either span.
+        val snapshot = CloudPresenceSnapshot(
+            windowStart = 10L * MINUTE,
+            windowEnd = 12L * MINUTE,
+            readAt = 12L * MINUTE + 1L,
+            intervals = listOf(
+                CloudPresenceInterval(
+                    appId = 441L,
+                    gameName = "Shared B",
+                    startAt = 10L * MINUTE,
+                    endAt = 12L * MINUTE,
+                    ongoing = true,
+                    coverage = CloudCoverageState.CONTINUOUS,
+                    observedUntil = null,
+                    coverageLapseFrom = null,
+                    coverageLapseRecoveredAt = null,
+                    mayHaveStartedBefore = false,
+                ),
+            ),
+            current = null,
+            observationCount = 2,
+            nextPosition = null,
+            hasMore = false,
+        )
+
+        val result = ingestor(FakeSettingsRepository()).ingest(snapshot)
+
+        assertTrue(result.processed)
+        assertTrue(result.wrote)
+        assertEquals(0, result.creditedMinutes)
+        val stored = database.sessionDao().getAll()
+        assertEquals(2, stored.size)
+        val stale = stored.single { it.appId == 440L }
+        assertFalse(stale.open)
+        val current = stored.single { it.appId == 441L }
+        assertEquals(10L * MINUTE, current.startAt)
+        assertEquals(12L * MINUTE, current.endAt)
+        assertEquals(2, current.minutes)
+        assertTrue(current.open)
     }
 
     @Test
