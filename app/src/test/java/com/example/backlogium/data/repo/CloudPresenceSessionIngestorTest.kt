@@ -180,6 +180,77 @@ class CloudPresenceSessionIngestorTest {
     }
 
     @Test
+    fun uncoveredHistoryFollowedByFullyCoveredOngoingStillClosesPredecessor() = runTest {
+        database.gameDao().upsert(sharedGame())
+        database.gameDao().upsert(sharedGame().copy(appId = 441L, name = "Shared B"))
+        database.sessionDao().insert(
+            Session(
+                appId = 441L,
+                startAt = 4L * MINUTE,
+                endAt = 8L * MINUTE,
+                minutes = 4,
+                open = true,
+            ),
+        )
+        // Cloud A [0, 4m] is new play, B [4m, 8m ongoing] is already stored as the live
+        // session. The ongoing interval still proves the A->B switch, so ingest must
+        // close A rather than leaving it open alongside B.
+        val snapshot = CloudPresenceSnapshot(
+            windowStart = 0L,
+            windowEnd = 8L * MINUTE,
+            readAt = 8L * MINUTE + 1L,
+            intervals = listOf(
+                CloudPresenceInterval(
+                    appId = 440L,
+                    gameName = "Shared",
+                    startAt = 0L,
+                    endAt = 4L * MINUTE,
+                    ongoing = false,
+                    coverage = CloudCoverageState.CONTINUOUS,
+                    observedUntil = null,
+                    coverageLapseFrom = null,
+                    coverageLapseRecoveredAt = null,
+                    mayHaveStartedBefore = false,
+                ),
+                CloudPresenceInterval(
+                    appId = 441L,
+                    gameName = "Shared B",
+                    startAt = 4L * MINUTE,
+                    endAt = 8L * MINUTE,
+                    ongoing = true,
+                    coverage = CloudCoverageState.CONTINUOUS,
+                    observedUntil = null,
+                    coverageLapseFrom = null,
+                    coverageLapseRecoveredAt = null,
+                    mayHaveStartedBefore = false,
+                ),
+            ),
+            current = null,
+            observationCount = 3,
+            nextPosition = null,
+            hasMore = false,
+        )
+
+        val result = ingestor(FakeSettingsRepository()).ingest(snapshot)
+
+        assertTrue(result.processed)
+        assertTrue(result.wrote)
+        val stored = database.sessionDao().getAll()
+        assertEquals(2, stored.size)
+        val recovered = stored.single { it.appId == 440L }
+        assertEquals(0L, recovered.startAt)
+        assertEquals(4L * MINUTE, recovered.endAt)
+        assertEquals(4, recovered.minutes)
+        assertFalse(recovered.open)
+        val live = stored.filter { it.appId == 441L }
+        assertEquals(1, live.size)
+        assertEquals(4L * MINUTE, live.single().startAt)
+        assertEquals(8L * MINUTE, live.single().endAt)
+        assertEquals(4, live.single().minutes)
+        assertTrue(live.single().open)
+    }
+
+    @Test
     fun retryAfterSessionWriteBeforeCursorAdvanceDoesNotRecredit() = runTest {
         database.gameDao().upsert(sharedGame())
         val settings = FakeSettingsRepository()

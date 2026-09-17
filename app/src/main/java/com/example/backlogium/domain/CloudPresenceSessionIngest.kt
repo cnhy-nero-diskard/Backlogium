@@ -48,10 +48,15 @@ object CloudPresenceSessionIngest {
                 // different game was running here. Without a null boundary the deriver
                 // bridges the surrounding same-app fragments whenever they are within
                 // its gap tolerance and re-credits this stored span on top of itself.
-                // An ongoing interval never proves such a switch: the cloud reports the
-                // same game still running, so a null here would close the live session
-                // a verification read was meant to confirm.
-                if (!interval.ongoing) {
+                // A fully stored ongoing interval suppresses that boundary only while it
+                // continues the app the fold is already carrying: the cloud still reports
+                // that game running, so a null here would close the live session a
+                // verification read was meant to confirm. With no preceding admitted
+                // fragment there is no switch to prove. When the preceding admitted
+                // fragment named a different game, the ongoing interval still proves the
+                // switch to it, so the boundary must close that predecessor.
+                val continuesSameApp = previousAppId == null || previousAppId == interval.appId
+                if (!interval.ongoing || !continuesSameApp) {
                     output += PresenceSessionDeriver.Observation(
                         appId = null,
                         at = interval.startAt,
