@@ -168,6 +168,8 @@ fun SettingsScreen(
                 onVerifyCloudPresence = viewModel::verifyCloudPresence,
                 onReadCloudPresence = viewModel::readCloudPresence,
                 onRemoveCloudPresence = viewModel::removeCloudPresence,
+                onRefileCloudPresence = viewModel::refileCloudPresence,
+                onReverseCloudPresenceRefiling = viewModel::reverseCloudPresenceRefiling,
             )
         },
     )
@@ -211,6 +213,8 @@ data class SettingsActions(
     val onVerifyCloudPresence: (String, String) -> Unit = { _, _ -> },
     val onReadCloudPresence: () -> Unit = {},
     val onRemoveCloudPresence: () -> Unit = {},
+    val onRefileCloudPresence: () -> Unit = {},
+    val onReverseCloudPresenceRefiling: () -> Unit = {},
 )
 
 /** The stateless half: renders [state] and raises [actions]. */
@@ -594,6 +598,9 @@ internal const val CLOUD_PRESENCE_DISCLOSURE =
         "Backlogium functions fully without it. " +
         "It never imports Steam lifetime playtime or invents unobserved time."
 
+internal const val CLOUD_PRESENCE_REFILING_DISCLOSURE =
+    "Dates, quests, and streaks may change. Experience, levels, and total playtime will not."
+
 @Composable
 private fun CloudPresenceCard(
     state: SettingsUiState,
@@ -640,6 +647,33 @@ private fun CloudPresenceCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text(
+                    CLOUD_PRESENCE_REFILING_DISCLOSURE,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (state.cloudPresenceRefilingApplied) {
+                    OutlinedButton(
+                        onClick = actions.onReverseCloudPresenceRefiling,
+                        enabled = !state.cloudBusy && !state.cloudPresenceRefilingBusy,
+                    ) {
+                        Text(if (state.cloudPresenceRefilingBusy) "Restoring..." else "Undo re-filing")
+                    }
+                } else {
+                    Button(
+                        onClick = actions.onRefileCloudPresence,
+                        enabled = !state.cloudBusy && !state.cloudPresenceRefilingBusy,
+                    ) {
+                        Text(if (state.cloudPresenceRefilingBusy) "Re-filing..." else "Re-file recorded play")
+                    }
+                }
+                state.cloudPresenceRefilingMessage?.let { message ->
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             OutlinedTextField(
                 value = endpoint,

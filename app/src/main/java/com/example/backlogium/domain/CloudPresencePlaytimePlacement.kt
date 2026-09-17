@@ -14,6 +14,42 @@ object CloudPresencePlaytimePlacement {
     const val DEFAULT_GAP_TOLERANCE_MILLIS =
         CloudPresenceSessionIngest.DEFAULT_GAP_TOLERANCE_MILLIS
 
+    const val MINIMUM_PLACEMENT_PERIOD_MILLIS = 30L * 60 * 1_000
+
+    data class Input(
+        val intervals: List<CloudPresenceInterval>,
+    )
+
+    /** Whether a stale playtime estimate is long enough to justify an optional cloud read. */
+    fun shouldConsult(periodStartAt: Long, periodEndAt: Long): Boolean =
+        periodStartAt > 0L &&
+            periodEndAt > periodStartAt &&
+            periodEndAt - periodStartAt >= MINIMUM_PLACEMENT_PERIOD_MILLIS
+
+    /** Replace only positive diff actions; zero-delta close actions remain unchanged. */
+    fun replacePositiveActions(
+        actions: List<SessionDiffer.SessionAction>,
+        input: Input,
+        periodStartAt: Long,
+        periodEndAt: Long,
+        priorOpenSessionsByAppId: Map<Long, SessionDiffer.OpenSession>,
+    ): List<SessionDiffer.SessionAction> = actions.flatMap { action ->
+        if (action.addedMinutes <= 0) {
+            listOf(action)
+        } else {
+            place(
+                Request(
+                    appId = action.appId,
+                    diffedMinutes = action.addedMinutes,
+                    periodStartAt = periodStartAt,
+                    periodEndAt = periodEndAt,
+                    intervals = input.intervals,
+                    priorOpenSession = priorOpenSessionsByAppId[action.appId],
+                ),
+            ) ?: listOf(action)
+        }
+    }
+
     data class Request(
         val appId: Long,
         val diffedMinutes: Int,
@@ -52,7 +88,13 @@ object CloudPresencePlaytimePlacement {
         if (totalSpan.signum() <= 0) return null
 
         val allocations = allocate(request.diffedMinutes, candidates, totalSpan)
-        return buildActions(request, candidates, allocations)
+        val positiveCandidates = candidates.zip(allocations)
+            .filter { (_, minutes) -> minutes > 0 }
+        return buildActions(
+            request,
+            positiveCandidates.map { it.first },
+            positiveCandidates.map { it.second },
+        )
     }
 
     private fun allocate(

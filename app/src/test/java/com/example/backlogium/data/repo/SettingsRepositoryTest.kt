@@ -2,6 +2,7 @@ package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.SettingsDataStore
+import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.domain.SmartCollectionVisibility
@@ -99,6 +100,34 @@ class SettingsRepositoryTest {
         repository.acknowledgeSessionEnd(sessionEnd)
 
         assertTrue(repository.pendingSessionEnds.first().isEmpty())
+    }
+
+    @Test
+    fun cloudPresenceRefilingBackup_roundTripsAndGuardPersists() = runTest {
+        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val repository = DataStoreSettingsRepository(dataStore)
+        val original = Session(
+            id = 7L,
+            appId = 10L,
+            startAt = 1_000L,
+            endAt = 2_000L,
+            minutes = 12,
+            open = false,
+        )
+        try {
+            repository.setCloudPresenceRefilingBackup(
+                CloudPresenceRefilingBackup(listOf(original), setOf(8L, 9L)),
+            )
+            repository.setCloudPresenceRefilingApplied(true)
+
+            assertTrue(repository.cloudPresenceRefilingApplied.first())
+            assertEquals(
+                CloudPresenceRefilingBackup(listOf(original), setOf(8L, 9L)),
+                repository.cloudPresenceRefilingBackup(),
+            )
+        } finally {
+            repository.clearCloudPresenceRefiling()
+        }
     }
 
     @Test

@@ -17,12 +17,16 @@ import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.repo.AchievementLibraryFetch
+import com.example.backlogium.data.repo.CloudPresencePlacementReader
+import com.example.backlogium.data.repo.CloudPresenceSnapshot
+import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.remote.dto.lastPlayedAtMillis
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.CloudPresencePlaytimePlacement
 import com.example.backlogium.domain.LibraryRecency
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.PlaytimeObservationCommitter
@@ -171,8 +175,14 @@ class SteamSyncWorker @AssistedInject constructor(
     private val accountChangeMarker: AccountChangeMarkerStore,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
     private val committer: PlaytimeObservationCommitter,
+    private val cloudPresencePlacementReader: CloudPresencePlacementReader,
     private val sharedGameConverter: SharedGameConverter,
 ) : CoroutineWorker(appContext, params) {
+
+    private data class DiffPreview(
+        val lastSyncAt: Long,
+        val diff: SessionDiffer.DiffResult,
+    )
 
     override suspend fun doWork(): Result {
         // The account-change marker is the durable barrier between old credentials and old
@@ -304,12 +314,21 @@ class SteamSyncWorker @AssistedInject constructor(
         val today = time.today()
         val polls = games.map { SessionDiffer.PollGame(it.appid, it.playtimeForever) }
         val configAtCompute = settings.ruleConfigWithVersionFlow.first()
-        val (provisionalDiff, trackedByAppId, sharedGames) = syncCoordinator.withLock {
+        val (preview, trackedByAppId, sharedGames) = syncCoordinator.withLock {
             Triple(
                 readAndComputeDiff(polls, now),
                 sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes },
                 gameDao.sharedGames(),
             )
+        }
+        val provisionalDiff = preview.diff
+        val placementSnapshot = if (
+            provisionalDiff.playedDeltaByAppId.isNotEmpty() &&
+            CloudPresencePlaytimePlacement.shouldConsult(preview.lastSyncAt, now)
+        ) {
+            cloudPresencePlacementReader.read(CloudReadTrigger.SYNC)
+        } else {
+            null
         }
 
         // Achievement requests are part of fetch, never the Room commit. Their payload is merged
@@ -365,6 +384,7 @@ class SteamSyncWorker @AssistedInject constructor(
                             steamLevel = steamLevel,
                             summary = summary,
                             now = now,
+                            placementSnapshot = placementSnapshot,
                             achievementFetch = achievementFetch,
                             scope = scope,
                         )
@@ -434,16 +454,19 @@ class SteamSyncWorker @AssistedInject constructor(
     private suspend fun readAndComputeDiff(
         polls: List<SessionDiffer.PollGame>,
         now: Long,
-    ): SessionDiffer.DiffResult {
+    ): DiffPreview {
         val profile = profileDao.get()
         val existingGames = gameDao.ownedGamesForDiffing().associateBy { it.appId }
         val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
-        return diffAgainst(
-            polls = polls,
-            existingGames = existingGames,
-            openSessionsByAppId = openSessionsByAppId,
+        return DiffPreview(
             lastSyncAt = profile?.lastSyncAt ?: 0L,
-            now = now,
+            diff = diffAgainst(
+                polls = polls,
+                existingGames = existingGames,
+                openSessionsByAppId = openSessionsByAppId,
+                lastSyncAt = profile?.lastSyncAt ?: 0L,
+                now = now,
+            ),
         )
     }
 
@@ -459,6 +482,7 @@ class SteamSyncWorker @AssistedInject constructor(
         steamLevel: Int,
         summary: com.example.backlogium.data.remote.dto.PlayerSummaryDto?,
         now: Long,
+        placementSnapshot: CloudPresenceSnapshot?,
         achievementFetch: AchievementLibraryFetch,
         scope: SyncRunRecorder.RunScope,
     ): Set<Long> {
@@ -502,6 +526,7 @@ class SteamSyncWorker @AssistedInject constructor(
             },
             observedPlayAt = now,
             syncedAt = now,
+            placement = placementSnapshot?.let { CloudPresencePlaytimePlacement.Input(it.intervals) },
         )
         committed.clockRollbacks.forEach { scope.recordClockRollback() }
 

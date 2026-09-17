@@ -1,6 +1,7 @@
 package com.example.backlogium.domain
 
 import com.example.backlogium.domain.SessionDiffer.SessionAction
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -205,6 +206,14 @@ class CloudPresencePlaytimePlacementTest {
         )
 
         assertEquals(listOf(10), openMinutes(actions))
+    }
+
+    @Test
+    fun placementReadThresholdSkipsShortPeriodsAndIncludesTheBoundary() {
+        val threshold = CloudPresencePlaytimePlacement.MINIMUM_PLACEMENT_PERIOD_MILLIS
+
+        assertFalse(CloudPresencePlaytimePlacement.shouldConsult(1L, threshold))
+        assertTrue(CloudPresencePlaytimePlacement.shouldConsult(1L, threshold + 1L))
     }
 
     private fun place(

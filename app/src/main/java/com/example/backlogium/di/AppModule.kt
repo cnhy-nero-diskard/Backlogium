@@ -20,6 +20,8 @@ import com.example.backlogium.data.repo.PresenceSessionRecorder
 import com.example.backlogium.data.repo.SessionEndOutbox
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.SharedGameNotifier
+import com.example.backlogium.data.repo.CloudPresencePlacementReader
+import com.example.backlogium.data.repo.RepositoryCloudPresencePlacementReader
 import com.example.backlogium.domain.gapplan.CurrentPlayerCounts
 import com.example.backlogium.domain.gapplan.GapPlanSeeds
 import com.example.backlogium.data.updates.AndroidInstalledPackageInfoProvider
@@ -71,6 +73,12 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindSettingsRepository(impl: DataStoreSettingsRepository): SettingsRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindCloudPresencePlacementReader(
+        impl: RepositoryCloudPresencePlacementReader,
+    ): CloudPresencePlacementReader
 
     @Binds
     @Singleton

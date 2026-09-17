@@ -1159,6 +1159,10 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
         if (index >= 0) store[index] = session
     }
 
+    override suspend fun deleteById(id: Long) {
+        store.removeAll { it.id == id }
+    }
+
     override suspend fun getOpenSession(appId: Long): Session? =
         store.firstOrNull { it.appId == appId && it.open }
 

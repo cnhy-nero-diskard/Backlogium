@@ -33,6 +33,7 @@ import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.dto.StoreItemsResponse
 import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.data.repo.CredentialsProvider
+import com.example.backlogium.data.repo.CloudPresencePlacementReader
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.PlaySessionEnd
 import com.example.backlogium.data.repo.PlaySessionEndPublisher
@@ -440,6 +441,7 @@ class PostPlaySyncWorkerTest {
                 syncCoordinator = SteamSyncCoordinator(),
                 credentials = credentials,
                 accountChangeMarker = accountChangeMarker,
+                cloudPresencePlacementReader = CloudPresencePlacementReader { null },
             )
         }
         return TestListenableWorkerBuilder<PostPlaySyncWorker>(

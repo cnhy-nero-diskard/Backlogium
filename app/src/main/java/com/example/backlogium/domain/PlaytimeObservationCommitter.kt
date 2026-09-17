@@ -75,11 +75,20 @@ class PlaytimeObservationCommitter @Inject constructor(
         observed: List<ObservedGame>,
         observedPlayAt: Long,
         syncedAt: Long,
+        placement: CloudPresencePlaytimePlacement.Input? = null,
     ): Commit {
         val lastSyncAt = profileDao.get()?.lastSyncAt ?: 0L
         val polls = observed.map { SessionDiffer.PollGame(it.appId, it.playtimeForever) }
         val existingGames = gameDao.ownedGamesForDiffing().associateBy { it.appId }
         val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
+
+        val priorOpenSessions = openSessionsByAppId.mapValues { (_, session) ->
+            SessionDiffer.OpenSession(
+                startAt = session.startAt,
+                minutes = session.minutes,
+                lastIncreaseAt = session.endAt ?: session.startAt,
+            )
+        }
 
         val diff = if (lastSyncAt == 0L) {
             // Nothing has ever been polled: record totals, synthesize no sessions. Only deltas
@@ -110,10 +119,22 @@ class PlaytimeObservationCommitter @Inject constructor(
             )
         }
 
+        val actions = if (placement == null) {
+            diff.actions
+        } else {
+            CloudPresencePlaytimePlacement.replacePositiveActions(
+                actions = diff.actions,
+                input = placement,
+                periodStartAt = lastSyncAt.coerceAtMost(observedPlayAt),
+                periodEndAt = observedPlayAt,
+                priorOpenSessionsByAppId = priorOpenSessions,
+            )
+        }
+
         // Routed through the shared writer, not a local copy, so the single-open-session guard
         // (auditfix-session-ledger-integrity, #116) holds here exactly as it does for the
         // presence path — "regardless of which caller reaches it."
-        sessionActionWriter.applySessionActions(diff.actions)
+        sessionActionWriter.applySessionActions(actions)
 
         observed.forEach { game ->
             val existing = existingGames[game.appId]
@@ -148,13 +169,13 @@ class PlaytimeObservationCommitter @Inject constructor(
 
         val goalIds = existingGames.values.filter { it.isGoal }.mapTo(mutableSetOf()) { it.appId }
         val hiddenIds = hiddenGameDao.hiddenAppIds().toSet()
-        attributeDailyProgress(diff.actions, goalIds, time.zone(), hiddenIds).forEach { (date, credit) ->
+        attributeDailyProgress(actions, goalIds, time.zone(), hiddenIds).forEach { (date, credit) ->
             dailyProgressDao.ensureDate(date)
             dailyProgressDao.addMinutes(date, credit.minutesPlayed, credit.goalMinutesPlayed)
         }
 
         return Commit(
-            actions = diff.actions,
+            actions = actions,
             playedDeltaByAppId = diff.playedDeltaByAppId,
             clockRollbacks = diff.clockRollbacks,
         )

@@ -37,6 +37,8 @@ enum class CloudReadTrigger {
     SETTINGS_VERIFICATION,
     SETTINGS_MANUAL,
     DIAGNOSTICS,
+    SYNC,
+    POST_PLAY,
 }
 
 enum class CloudReadFailure {
