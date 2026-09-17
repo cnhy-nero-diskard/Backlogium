@@ -4,6 +4,7 @@ import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.SessionDiffer
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.attributeDailyProgress
@@ -38,9 +39,15 @@ class SessionActionWriter @Inject constructor(
      * [com.example.backlogium.domain.PlaytimeObservationCommitter] and [PresenceSessionRecorder]
      * both route their actions here — which is what makes the [SessionDao.tryOpenSession] guard
      * below hold "regardless of which caller reaches it" (auditfix-session-ledger-integrity, #116).
+     *
+     * @return the actions that actually changed persisted state, with [SessionDiffer.SessionAction.Extend]
+     *   minute deltas trimmed to what was newly stored. A stale Extend already fully persisted
+     *   contributes nothing here, so crediting this list cannot double-count it even when a later
+     *   action in the same batch still writes.
      */
-    suspend fun applySessionActions(actions: List<SessionDiffer.SessionAction>) {
-        for (action in actions) {
+    suspend fun applySessionActions(actions: List<SessionDiffer.SessionAction>): List<SessionDiffer.SessionAction> {
+        val effective = mutableListOf<SessionDiffer.SessionAction>()
+        for ((index, action) in actions.withIndex()) {
             when (action) {
                 is SessionDiffer.SessionAction.Open -> {
                     val opened = sessionDao.tryOpenSession(
@@ -49,10 +56,25 @@ class SessionActionWriter @Inject constructor(
                         endAt = action.endAt,
                         minutes = action.minutes,
                     )
-                    // Lost the race: a concurrent caller already opened this game's session. That
-                    // observation is not wrong, only late — fold it into the session that won
-                    // rather than dropping it, which is what the second observation actually meant.
-                    if (opened == -1L) {
+                    if (opened != -1L) {
+                        effective += action
+                    } else if (isHistoricalBackfill(actions, index, action)) {
+                        // Historical backfill while a newer session is still open: a separate
+                        // closed-to-be row, not a merge into the live one.
+                        sessionDao.insert(
+                            Session(
+                                appId = action.appId,
+                                startAt = action.startAt,
+                                endAt = action.endAt,
+                                minutes = action.minutes,
+                                open = true,
+                            ),
+                        )
+                        effective += action
+                    } else {
+                        // Lost the race: a concurrent caller already opened this game's session. That
+                        // observation is not wrong, only late — fold it into the session that won
+                        // rather than dropping it, which is what the second observation actually meant.
                         sessionDao.getOpenSession(action.appId)?.let {
                             sessionDao.update(
                                 it.copy(
@@ -68,21 +90,49 @@ class SessionActionWriter @Inject constructor(
                                     endAt = maxOf(it.endAt ?: it.startAt, action.endAt),
                                 ),
                             )
+                            effective += action
                         }
                     }
                 }
 
-                is SessionDiffer.SessionAction.Extend ->
-                    sessionDao.getOpenSession(action.appId)?.let {
-                        sessionDao.update(it.copy(minutes = action.minutes, endAt = action.endAt))
+                is SessionDiffer.SessionAction.Extend -> {
+                    // Match by start: the session this action was derived from. Touching any open
+                    // regardless of start would fold a stale or historical Extend into an unrelated
+                    // live session.
+                    sessionDao.getAll().asSequence()
+                        .filter { it.appId == action.appId && it.startAt == action.startAt }
+                        .maxByOrNull { it.id }?.let {
+                        val endAt = maxOf(it.endAt ?: it.startAt, action.endAt)
+                        val minutes = maxOf(it.minutes, action.minutes)
+                        if (endAt != it.endAt || minutes != it.minutes || !it.open) {
+                            sessionDao.update(
+                                it.copy(
+                                    minutes = minutes,
+                                    endAt = endAt,
+                                    open = true,
+                                ),
+                            )
+                            effective += action.copy(
+                                minutes = minutes,
+                                endAt = endAt,
+                                addedMinutes = minutes - it.minutes,
+                            )
+                        }
                     }
+                }
 
                 is SessionDiffer.SessionAction.Close ->
-                    sessionDao.getOpenSession(action.appId)?.let {
+                    // Match by start so a stale Close cannot close an unrelated live session, and a
+                    // historical backfill closes the row it opened rather than the live one.
+                    sessionDao.getAll()
+                        .firstOrNull { it.appId == action.appId && it.open && it.startAt == action.startAt }
+                        ?.let {
                         sessionDao.update(it.copy(open = false, endAt = action.endAt))
+                        effective += action
                     }
             }
         }
+        return effective
     }
 
     /** Credit each action's newly observed minutes to the local date its session started on. */
@@ -98,11 +148,36 @@ class SessionActionWriter @Inject constructor(
     }
 
     /** Both halves together — the presence path's whole write. */
-    suspend fun apply(actions: List<SessionDiffer.SessionAction>, goalAppIds: Set<Long>) {
-        if (actions.isEmpty()) return
-        transaction.run {
-            applySessionActions(actions)
-            creditDailyProgress(actions, goalAppIds)
+    suspend fun apply(
+        actions: List<SessionDiffer.SessionAction>,
+        goalAppIds: Set<Long>,
+    ): List<SessionDiffer.SessionAction> {
+        if (actions.isEmpty()) return emptyList()
+        return transaction.run {
+            val effective = applySessionActions(actions)
+            if (effective.isNotEmpty()) creditDailyProgress(effective, goalAppIds)
+            effective
+        }
+    }
+
+    private suspend fun isHistoricalBackfill(
+        actions: List<SessionDiffer.SessionAction>,
+        index: Int,
+        action: SessionDiffer.SessionAction.Open,
+    ): Boolean {
+        val earliestOpenStart = sessionDao.getAll()
+            .asSequence()
+            .filter { it.appId == action.appId && it.open }
+            .minOfOrNull { it.startAt }
+            ?: return false
+        if (action.endAt >= earliestOpenStart) return false
+        // Only a closed-to-be row takes the separate path. A live Open with no following Close
+        // is the concurrent-observation race (#116), which must still merge even when it happens
+        // to sort earlier.
+        return actions.subList(index + 1, actions.size).any {
+            it is SessionDiffer.SessionAction.Close &&
+                it.appId == action.appId &&
+                it.startAt == action.startAt
         }
     }
 }

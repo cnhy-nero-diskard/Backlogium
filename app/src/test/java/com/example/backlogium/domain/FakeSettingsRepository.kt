@@ -73,6 +73,15 @@ internal class FakeSettingsRepository : SettingsRepository {
         cloudPosition.value = null
     }
 
+    private val cloudIngestCursor = MutableStateFlow<String?>(null)
+    override val cloudIngestPosition: Flow<String?> = cloudIngestCursor
+    override suspend fun setCloudIngestPosition(position: String) {
+        cloudIngestCursor.value = position
+    }
+    override suspend fun clearCloudIngestPosition() {
+        cloudIngestCursor.value = null
+    }
+
     // Live now-playing session (enhance-now-playing) is irrelevant to a rule change.
     private val session = MutableStateFlow(LiveSessionState())
     override val liveSession: Flow<LiveSessionState> = session

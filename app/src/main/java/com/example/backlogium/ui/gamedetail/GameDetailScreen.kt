@@ -541,25 +541,37 @@ private fun FamilySharedBadge() {
 /**
  * States what a shared game's tracked time actually is. Steam reports no lifetime playtime for a
  * borrowed game, so this total is what the app saw — and it can only see presence while it is in
- * the foreground or the background monitor is running. Presenting it as complete when it
+ * the foreground, the background monitor, or a configured cloud reader. Presenting it as complete when it
  * structurally cannot be would be the app's first false claim about the player's own history.
  *
- * When the monitor is off, the notice names it: the remedy is actionable, so the disclosure points
- * at it rather than merely apologising.
+ * The notice names whichever observer is not configured: the remedy is actionable, so the
+ * disclosure points at it rather than merely apologising.
  */
 @Composable
 private fun ObservedCoverageNotice(summary: GameSummaryUi) {
-    val remedy = if (summary.liveMonitorEnabled) {
-        ""
-    } else {
-        " Turn on background presence monitoring in Settings to catch more of it."
-    }
+    val remedy = observedCoverageRemedy(
+        liveMonitorEnabled = summary.liveMonitorEnabled,
+        cloudPresenceConfigured = summary.cloudPresenceConfigured,
+    )
     Text(
         text = "Tracked time is what Backlogium observed, not your total time in this game." + remedy,
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 10.dp),
     )
+}
+
+internal fun observedCoverageRemedy(
+    liveMonitorEnabled: Boolean,
+    cloudPresenceConfigured: Boolean,
+): String = when {
+    liveMonitorEnabled && cloudPresenceConfigured -> ""
+    liveMonitorEnabled ->
+        " Configure cloud presence in Settings to recover play while Backlogium is closed."
+    cloudPresenceConfigured ->
+        " Turn on background presence monitoring in Settings to catch more live play."
+    else ->
+        " Turn on background monitoring or configure cloud presence in Settings to catch more of it."
 }
 
 /**

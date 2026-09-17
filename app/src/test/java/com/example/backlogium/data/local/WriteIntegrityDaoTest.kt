@@ -639,6 +639,41 @@ class WriteIntegrityDaoTest {
     }
 
     @Test
+    fun partiallyNoOpBatchCreditsOnlyWhatActuallyWrote() = runBlocking {
+        database.gameDao().upsert(sharedGame(appId = 730L))
+        database.sessionDao().insert(
+            Session(appId = 730L, startAt = 0L, endAt = 1_200_000L, minutes = 20, open = true),
+        )
+        database.dailyProgressDao().upsert(DailyProgress(DATE, 20, 0, false))
+
+        // A stale batch: the Extend is already fully persisted (no-op) while the Close still
+        // mutates. Crediting the whole batch would count the Extend's minutes a second time.
+        val effective = writer().apply(
+            listOf(
+                SessionDiffer.SessionAction.Extend(
+                    appId = 730L,
+                    startAt = 0L,
+                    minutes = 20,
+                    endAt = 1_200_000L,
+                    addedMinutes = 10,
+                ),
+                SessionDiffer.SessionAction.Close(
+                    appId = 730L,
+                    startAt = 0L,
+                    endAt = 1_200_000L,
+                ),
+            ),
+            goalAppIds = emptySet(),
+        )
+
+        assertEquals(1, effective.size)
+        assertTrue(effective.single() is SessionDiffer.SessionAction.Close)
+        assertFalse(database.sessionDao().getAll().single().open)
+        assertEquals(20, database.sessionDao().getAll().single().minutes)
+        assertEquals(20, database.dailyProgressDao().getByDate(DATE)!!.minutesPlayed)
+    }
+
+    @Test
     fun twoOverlappingPresenceObservationsForSameGameProduceOneOpenSession() = runBlocking {
         database.gameDao().upsert(sharedGame(appId = 730L))
 

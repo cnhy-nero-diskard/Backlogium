@@ -92,8 +92,9 @@ sealed interface CloudReadResult {
 }
 
 /**
- * Cloud presence is a read-only side channel. It owns encrypted configuration, the resumable
- * watermark, and the current in-memory comparison snapshot, but never writes sessions or progress.
+ * Cloud presence owns encrypted configuration, the resumable read watermark, and the current
+ * in-memory comparison snapshot. Session/progress writes remain delegated to the explicit ingest
+ * callback supplied by the caller of [read].
  */
 @Singleton
 class CloudPresenceRepository @Inject constructor(
@@ -144,7 +145,11 @@ class CloudPresenceRepository @Inject constructor(
         }
     }
 
-    suspend fun verifyAndSave(endpoint: String, token: String): CloudConfigurationResult {
+    suspend fun verifyAndSave(
+        endpoint: String,
+        token: String,
+        consume: suspend (CloudPresenceSnapshot) -> Unit = {},
+    ): CloudConfigurationResult {
         val normalizedEndpoint = normalizeEndpoint(endpoint) ?: return CloudConfigurationResult.InvalidEndpoint
         val normalizedToken = token.trim().takeIf { it.isNotBlank() }
             ?: return CloudConfigurationResult.RejectedCredential
@@ -176,6 +181,8 @@ class CloudPresenceRepository @Inject constructor(
                     return@withLock CloudConfigurationResult.AccountMismatch(current, result.parsed.account)
                 }
                 settings.clearCloudReadPosition()
+                settings.clearCloudIngestPosition()
+                consume(result.parsed.toSnapshot())
                 persistVerifiedConfiguration(
                     credentials = CloudCredentials(normalizedEndpoint, normalizedToken),
                     trigger = CloudReadTrigger.SETTINGS_VERIFICATION,
@@ -214,7 +221,10 @@ class CloudPresenceRepository @Inject constructor(
         }
     }
 
-    suspend fun read(trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL): CloudReadResult {
+    suspend fun read(
+        trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
+        consume: suspend (CloudPresenceSnapshot) -> Unit = {},
+    ): CloudReadResult {
         // Capture every account-bound input (stored endpoint/token, Steam account, resumable
         // watermark) together with the generation under the invalidation mutex, so a bump
         // cannot land mid-capture and leave e.g. A's account paired with B's generation or
@@ -242,8 +252,13 @@ class CloudPresenceRepository @Inject constructor(
                     // the new Steam identity was committed/visible.
                     return@withLock CloudReadResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
                 }
+                val snapshot = result.parsed.toSnapshot()
+                // The consumer runs under the same account-state mutex and before the read
+                // watermark advances. A failed ingest therefore leaves the cloud window retryable
+                // instead of moving the acquisition cursor past uncommitted derived state.
+                consume(snapshot)
                 persistSuccessfulRead(trigger, result.parsed, credentials)
-                CloudReadResult.Success(result.parsed.toSnapshot())
+                CloudReadResult.Success(snapshot)
             }
             is RemoteReadResult.AccountMismatch -> cloudStateMutex.withLock {
                 if (generationAtStart != accountGeneration.get() ||
@@ -272,6 +287,7 @@ class CloudPresenceRepository @Inject constructor(
             accountGeneration.incrementAndGet()
             credentialsStore.clearCloudCredentials()
             settings.clearCloudReadPosition()
+            settings.clearCloudIngestPosition()
             configurationState.value = null
             snapshotState.value = null
         }
@@ -294,6 +310,7 @@ class CloudPresenceRepository @Inject constructor(
             accountGeneration.incrementAndGet()
             snapshotState.value = null
             settings.clearCloudReadPosition()
+            settings.clearCloudIngestPosition()
             cloudReadDao.deleteAll()
         }
     }
@@ -313,6 +330,7 @@ class CloudPresenceRepository @Inject constructor(
             accountGeneration.incrementAndGet()
             snapshotState.value = null
             settings.clearCloudReadPosition()
+            settings.clearCloudIngestPosition()
             cloudReadDao.deleteAll()
             try {
                 block()
@@ -320,6 +338,7 @@ class CloudPresenceRepository @Inject constructor(
                 accountGeneration.incrementAndGet()
                 snapshotState.value = null
                 settings.clearCloudReadPosition()
+                settings.clearCloudIngestPosition()
                 cloudReadDao.deleteAll()
             }
         }

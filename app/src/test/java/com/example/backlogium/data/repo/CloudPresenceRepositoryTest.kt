@@ -373,6 +373,7 @@ class CloudPresenceRepositoryTest {
         // SettingsDataStore.clearAccountDerivedState and AccountRoomReset, and the
         // same-process snapshot is dropped by invalidateForAccountChange.
         settings.clearCloudReadPosition()
+        settings.setCloudIngestPosition(1000L.toString())
         records.deleteAll()
         repository.invalidateForAccountChange()
 
@@ -383,6 +384,7 @@ class CloudPresenceRepositoryTest {
         assertNull(status.lastSuccessAt)
         assertNull(status.lastAttemptAt)
         assertNull(settings.cloudReadPosition.first())
+        assertNull(settings.cloudIngestPosition.first())
     }
 
     @Test

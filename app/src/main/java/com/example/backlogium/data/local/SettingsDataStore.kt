@@ -109,6 +109,8 @@ class SettingsDataStore @Inject constructor(
         val DIAGNOSTIC_IDENTIFIERS_NORMALIZED =
             booleanPreferencesKey("diagnostic_identifiers_normalized")
 
+        val CLOUD_INGEST_POSITION = stringPreferencesKey("cloud_ingest_position")
+
         // Progress-event presentation state, not user-editable settings. These marks are the
         // durable acknowledgement baseline and intentionally live in DataStore, not Room.
         val LAST_CELEBRATED_LEVEL = intPreferencesKey("last_celebrated_level")
@@ -460,6 +462,22 @@ class SettingsDataStore @Inject constructor(
         }
     }
 
+    /** Durable cloud-session ingest watermark; account changes clear it with the read watermark. */
+    val cloudIngestPositionFlow: Flow<String?> =
+        context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_INGEST_POSITION] }
+
+    suspend fun setCloudIngestPosition(position: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CLOUD_INGEST_POSITION] = position
+        }
+    }
+
+    suspend fun clearCloudIngestPosition() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.CLOUD_INGEST_POSITION)
+        }
+    }
+
     /**
      * Record the session end and advance the live-session state in the same DataStore edit. A
      * process death cannot leave the caller with a cleared session and no handoff to WorkManager.
@@ -635,6 +653,7 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.LIVE_SESSION_APP_ID)
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
             prefs.remove(Keys.CLOUD_READ_POSITION)
+            prefs.remove(Keys.CLOUD_INGEST_POSITION)
             prefs.remove(Keys.PENDING_SESSION_ENDS)
             prefs.remove(Keys.SHARED_CANDIDATE_APP_ID)
             prefs.remove(Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT)

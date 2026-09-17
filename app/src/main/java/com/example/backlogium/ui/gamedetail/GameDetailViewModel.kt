@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.repo.AchievementRepository
+import com.example.backlogium.data.repo.CloudPresenceRepository
 import com.example.backlogium.data.repo.FamilySharedGameRepository
 import com.example.backlogium.data.repo.GameAchievement
 import com.example.backlogium.data.repo.GameRepository
@@ -126,6 +127,8 @@ data class GameSummaryUi(
      * merely apologising.
      */
     val liveMonitorEnabled: Boolean = false,
+    /** Whether the optional cloud presence reader is configured as a second observer. */
+    val cloudPresenceConfigured: Boolean = false,
 ) {
     /** True when any HLTB length resolved. Gates the whole block: no zeros, no placeholders. */
     val hasHltb: Boolean
@@ -208,6 +211,7 @@ class GameDetailViewModel @Inject constructor(
     private val setSharedGamePlaytime: SetSharedGamePlaytimeUseCase,
     sessionRepository: SessionRepository,
     settings: SettingsRepository,
+    cloudPresence: CloudPresenceRepository,
     private val hiddenGamesRepository: HiddenGamesRepository,
     private val gameVisibility: GameVisibilityUseCase,
 ) : ViewModel() {
@@ -252,7 +256,8 @@ class GameDetailViewModel @Inject constructor(
                 settings.ruleConfig,
                 settings.liveMonitorEnabled,
                 hiddenGamesRepository.hiddenAppIds,
-            ) { inputs, config, liveMonitorEnabled, hidden ->
+                cloudPresence.configuration,
+            ) { inputs, config, liveMonitorEnabled, hidden, cloudConfiguration ->
                 Content(
                     inputs.games.firstOrNull { it.appId == appId },
                     inputs.achievements,
@@ -260,6 +265,7 @@ class GameDetailViewModel @Inject constructor(
                     inputs.latestByGame[appId],
                     config,
                     liveMonitorEnabled,
+                    cloudPresenceConfigured = cloudConfiguration != null,
                     appId in hidden,
                 )
             }
@@ -476,6 +482,8 @@ internal data class Content(
     val config: RuleConfig,
     /** Only consulted for a family-shared game, as the remedy its disclosure points at. */
     val liveMonitorEnabled: Boolean = false,
+    /** Whether the optional cloud presence reader is configured as a second observer. */
+    val cloudPresenceConfigured: Boolean = false,
     /** True while this game is hidden — the surface showing it closes rather than emptying out. */
     val hidden: Boolean = false,
 )
@@ -536,6 +544,7 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
             GameSource.STEAM_OWNED -> false
         },
         liveMonitorEnabled = liveMonitorEnabled,
+        cloudPresenceConfigured = cloudPresenceConfigured,
     )
 }
 

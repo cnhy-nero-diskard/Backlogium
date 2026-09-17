@@ -19,7 +19,14 @@ import org.junit.Test
  */
 class FamilySharedSummaryMappingTest {
 
-    private fun content(source: GameSource, playtimeForever: Int, tracked: Int, monitor: Boolean = false, latestTrackedAt: Long? = null) =
+    private fun content(
+        source: GameSource,
+        playtimeForever: Int,
+        tracked: Int,
+        monitor: Boolean = false,
+        cloud: Boolean = false,
+        latestTrackedAt: Long? = null,
+    ) =
         Content(
             game = LibraryGame(
                 appId = 620L,
@@ -33,6 +40,7 @@ class FamilySharedSummaryMappingTest {
             latestTrackedAt = latestTrackedAt,
             config = RuleConfig(),
             liveMonitorEnabled = monitor,
+            cloudPresenceConfigured = cloud,
         )
 
     @Test
@@ -44,6 +52,20 @@ class FamilySharedSummaryMappingTest {
 
         assertTrue(summary.isFamilyShared)
         assertEquals(95, summary.headlineMinutes)
+    }
+
+    @Test
+    fun cloudRecoveredSharedPlay_isStillPresentedAsObservedTime() {
+        val summary = content(
+            GameSource.FAMILY_SHARED,
+            playtimeForever = 0,
+            tracked = 30,
+            cloud = true,
+        ).toSummary(rows = emptyList(), activePlayers = null)
+
+        assertTrue(summary.isFamilyShared)
+        assertTrue(summary.cloudPresenceConfigured)
+        assertEquals(30, summary.headlineMinutes)
     }
     @Test
     fun sharedPlaytimeWithoutLatestSession_isUnknownNotNever() {
