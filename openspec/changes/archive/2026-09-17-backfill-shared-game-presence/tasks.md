@@ -80,7 +80,7 @@
       celebration fired for it.
       History showed Sep 16 with Zynga Poker at 1m plus 2m, and Home remained at 18m of 30m
       with the quest still in progress and no celebration visible.
-- [ ] 7.3 Confirm the pre-phase-1 era of unknown-coverage intervals contributes conservatively
+- [x] 7.3 Confirm the pre-phase-1 era of unknown-coverage intervals contributes conservatively
       rather than crediting full spans, and record what it actually contributed. The live device
       window exposed continuous coverage rather than an unknown-coverage interval: the 3-minute
       cloud span contributed 2 minutes locally. Unknown-coverage behavior remains covered by the
