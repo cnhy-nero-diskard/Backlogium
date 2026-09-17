@@ -65,33 +65,49 @@ class CloudPresenceSessionIngestor @Inject constructor(
             .map { it.appId }
             .toSet()
         val sessions = sessionDao.getAll()
-        val alreadyObservedThrough = sessions.asSequence()
+        val storedSessions = sessions.asSequence()
             .filter { it.appId in sharedIds }
             .groupBy { it.appId }
             .mapValues { (_, rows) ->
-                rows.maxOf { it.endAt ?: it.startAt }
+                rows.map { row ->
+                    CloudPresenceSessionIngest.StoredSessionSpan(
+                        startAt = row.startAt,
+                        endAt = row.endAt ?: row.startAt,
+                    )
+                }
             }
         val observations = CloudPresenceSessionIngest.observations(
             intervals = snapshot.intervals,
             gameSources = sources,
-            alreadyObservedThrough = alreadyObservedThrough,
+            storedSessions = storedSessions,
         )
-        val openSession = sessions.firstOrNull { it.open && it.appId in sharedIds }
+        val storedOpen = sessions.firstOrNull { it.open && it.appId in sharedIds }
             ?.toOpenSession()
-            ?: closedOverlapSeed(observations, sessions, sharedIds)
+        // An older cloud-only gap must not fold through a newer live open: deriving it from that
+        // open would out-of-order close the live session and merge the gap into it. Seed from the
+        // open only when the first cloud observation is not older than what it already observed.
+        val firstGameAt = observations.firstOrNull { it.appId != null }?.at
+        val openSession = if (storedOpen != null && firstGameAt != null &&
+            firstGameAt < storedOpen.lastObservedAt
+        ) {
+            null
+        } else {
+            storedOpen ?: closedOverlapSeed(observations, sessions, sharedIds)
+        }
         val actions = fold(observations, openSession)
         val goalIds = games.asSequence()
             .filter { it.isGoal }
             .map { it.appId }
             .toSet()
-        val wrote = sessionActionWriter.apply(actions, goalIds)
+        val effective = sessionActionWriter.apply(actions, goalIds)
+        val wrote = effective.isNotEmpty()
         if (wrote) recompute()
         settings.setCloudIngestPosition(position.raw)
         CloudPresenceIngestResult(
             processed = true,
             wrote = wrote,
             actionCount = actions.size,
-            creditedMinutes = if (wrote) actions.sumOf { it.addedMinutes } else 0,
+            creditedMinutes = effective.sumOf { it.addedMinutes },
         )
     }
 

@@ -194,6 +194,48 @@ class CloudPresenceSessionIngestTest {
         assertEquals(30, actions.sumOf { it.addedMinutes })
     }
 
+    @Test
+    fun olderGapIsRetainedDespiteNewerStoredSession() {
+        val observations = CloudPresenceSessionIngest.observations(
+            intervals = listOf(interval(shared, startAt = 0L, endAt = 2L * MINUTE)),
+            gameSources = mapOf(shared to GameSource.FAMILY_SHARED),
+            storedSessions = mapOf(
+                shared to listOf(
+                    CloudPresenceSessionIngest.StoredSessionSpan(
+                        startAt = 10L * MINUTE,
+                        endAt = 12L * MINUTE,
+                    ),
+                ),
+            ),
+        )
+
+        val actions = fold(observations).actions
+        assertEquals(1, actions.count { it is SessionAction.Open })
+        assertEquals(1, actions.count { it is SessionAction.Close })
+        assertEquals(2, actions.sumOf { it.addedMinutes })
+    }
+
+    @Test
+    fun overlappingPortionIsTrimmedButUncoveredTailRemains() {
+        val observations = CloudPresenceSessionIngest.observations(
+            intervals = listOf(interval(shared, startAt = 0L, endAt = 4L * MINUTE)),
+            gameSources = mapOf(shared to GameSource.FAMILY_SHARED),
+            storedSessions = mapOf(
+                shared to listOf(
+                    CloudPresenceSessionIngest.StoredSessionSpan(
+                        startAt = 0L,
+                        endAt = 2L * MINUTE,
+                    ),
+                ),
+            ),
+        )
+
+        // The covered [0, 2min] head contributes nothing new; the [2min, 4min] tail still folds.
+        assertTrue(observations.none { it.appId == shared && it.at < 2L * MINUTE })
+        assertTrue(observations.any { it.appId == shared && it.at == 2L * MINUTE })
+        assertTrue(observations.any { it.appId == shared && it.at == 4L * MINUTE })
+    }
+
     private fun fold(
         observations: List<PresenceSessionDeriver.Observation>,
     ): PresenceSessionDeriver.DerivationResult {

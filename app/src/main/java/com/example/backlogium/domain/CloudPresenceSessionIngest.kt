@@ -7,12 +7,15 @@ package com.example.backlogium.domain
  * writer or detector.
  */
 object CloudPresenceSessionIngest {
+    /** One stored session's covered span, for overlap-aware dedup. */
+    data class StoredSessionSpan(val startAt: Long, val endAt: Long)
+
     /** Expand cloud intervals into observations for the existing presence deriver. */
     fun observations(
         intervals: List<CloudPresenceInterval>,
         gameSources: Map<Long, GameSource>,
         gapToleranceMillis: Long = DEFAULT_GAP_TOLERANCE_MILLIS,
-        alreadyObservedThrough: Map<Long, Long> = emptyMap(),
+        storedSessions: Map<Long, List<StoredSessionSpan>> = emptyMap(),
     ): List<PresenceSessionDeriver.Observation> {
         require(gapToleranceMillis >= 0L)
         val ordered = intervals.sortedWith(
@@ -36,20 +39,13 @@ object CloudPresenceSessionIngest {
                 return@forEach
             }
 
-            val previous = alreadyObservedThrough[interval.appId]
-            if (previous == null) {
+            val coverages = storedSessions[interval.appId].orEmpty()
+            val uncovered = uncoveredSegments(interval.startAt, confirmedEnd, coverages)
+            uncovered.forEach { (startAt, endAt) ->
                 output.addContinuousObservations(
                     appId = interval.appId,
-                    startAt = interval.startAt,
-                    endAt = confirmedEnd,
-                    gapToleranceMillis = gapToleranceMillis,
-                )
-            } else if (confirmedEnd > previous) {
-                val resumedAt = maxOf(interval.startAt, previous)
-                output.addContinuousObservations(
-                    appId = interval.appId,
-                    startAt = resumedAt,
-                    endAt = confirmedEnd,
+                    startAt = startAt,
+                    endAt = endAt,
                     gapToleranceMillis = gapToleranceMillis,
                 )
             }
@@ -60,13 +56,48 @@ object CloudPresenceSessionIngest {
             val closeAt = last.confirmedEnd(gapToleranceMillis)
                 ?.takeIf { it >= last.startAt }
                 ?: last.startAt
-            val previous = alreadyObservedThrough[last.appId]
-            if (previous == null || closeAt >= previous) {
+            val maxStoredEnd = storedSessions[last.appId]?.maxOfOrNull { it.endAt }
+            val hasUncoveredGameObservation = output.any { it.appId != null }
+            if (hasUncoveredGameObservation || maxStoredEnd == null || closeAt >= maxStoredEnd) {
                 output += PresenceSessionDeriver.Observation(appId = null, at = closeAt)
             }
         }
 
         return output.distinct()
+    }
+
+    /**
+     * Trim only the portions actually covered by stored sessions, keeping older cloud-only gaps
+     * even when a newer local session exists. A high-water `max(endAt)` per game would discard a
+     * missed interval whose end is before that newer session despite no stored session overlapping
+     * it, defeating recovery on the first bounded-history read.
+     */
+    private fun uncoveredSegments(
+        startAt: Long,
+        endAt: Long,
+        coverages: List<StoredSessionSpan>,
+    ): List<Pair<Long, Long>> {
+        if (coverages.isEmpty()) return listOf(startAt to endAt)
+        val sorted = coverages.sortedBy { it.startAt }
+        val result = mutableListOf<Pair<Long, Long>>()
+        var cursor = startAt
+        var overlapped = false
+        for (coverage in sorted) {
+            if (coverage.endAt < cursor || coverage.startAt > endAt) continue
+            overlapped = true
+            if (coverage.startAt > cursor) {
+                val gapEnd = minOf(coverage.startAt, endAt)
+                if (cursor < gapEnd) result += cursor to gapEnd
+            }
+            if (coverage.endAt >= cursor) cursor = coverage.endAt
+            if (cursor >= endAt) break
+        }
+        if (cursor < endAt) {
+            result += cursor to endAt
+        } else if (cursor == endAt && startAt == endAt && !overlapped) {
+            result += startAt to endAt
+        }
+        return result
     }
 
     /** Keep a cloud-proven continuous span within the deriver's silence tolerance. */

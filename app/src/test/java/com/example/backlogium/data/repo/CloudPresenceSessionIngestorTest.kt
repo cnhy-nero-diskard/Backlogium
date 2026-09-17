@@ -170,6 +170,36 @@ class CloudPresenceSessionIngestorTest {
     }
 
     @Test
+    fun olderCloudGapIsRecoveredDespiteNewerLocalSession() = runTest {
+        database.gameDao().upsert(sharedGame())
+        database.sessionDao().insert(
+            Session(
+                appId = 440L,
+                startAt = 600_000L,
+                endAt = 720_000L,
+                minutes = 2,
+                open = false,
+            ),
+        )
+        database.dailyProgressDao().upsert(DailyProgress(LocalDate.of(1970, 1, 1).toString(), 2, 0, false))
+
+        val result = ingestor(FakeSettingsRepository()).ingest(snapshot(startAt = 0L, endAt = 120_000L))
+
+        assertTrue(result.processed)
+        assertTrue(result.wrote)
+        assertEquals(2, result.creditedMinutes)
+        assertEquals(2, database.sessionDao().getAll().size)
+        val recovered = database.sessionDao().getAll().first { it.startAt == 0L }
+        assertEquals(120_000L, recovered.endAt)
+        assertEquals(2, recovered.minutes)
+        assertFalse(recovered.open)
+        val newer = database.sessionDao().getAll().first { it.startAt == 600_000L }
+        assertEquals(720_000L, newer.endAt)
+        assertEquals(2, newer.minutes)
+        assertEquals(4, database.dailyProgressDao().getByDate(LocalDate.of(1970, 1, 1).toString())!!.minutesPlayed)
+    }
+
+    @Test
     fun ownedGameSessionIsUntouchedByCloudIngest() = runTest {
         val owned = sharedGame().copy(appId = 620L, source = GameSource.STEAM_OWNED)
         database.gameDao().upsert(owned)
