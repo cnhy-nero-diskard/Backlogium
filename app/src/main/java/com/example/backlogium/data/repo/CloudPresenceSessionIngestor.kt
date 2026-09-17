@@ -180,7 +180,14 @@ class CloudPresenceSessionIngestor @Inject constructor(
             .filter { it.ongoing }
             .maxByOrNull { it.startAt }
             ?.takeIf { sources[it.appId] == GameSource.FAMILY_SHARED }
-            ?: return emptyList()
+        if (ongoing == null) {
+            return reconcileNoGameCurrent(
+                snapshot = snapshot,
+                sessions = sessions,
+                sharedIds = sharedIds,
+                actions = actions,
+            )
+        }
         val confirmedEnd = CloudPresenceSessionIngest.confirmedEndAt(ongoing)
             ?: return emptyList()
         val openRows = sessions.filter { it.open && it.appId in sharedIds }
@@ -224,6 +231,48 @@ class CloudPresenceSessionIngestor @Inject constructor(
                         addedMinutes = 0,
                     )
                 }
+            }
+        }
+        return extra
+    }
+
+    /**
+     * Reconcile the authoritative "no game running" current state.
+     *
+     * A terminal read with no new transitions and a null-app current reconstructs zero
+     * intervals, so the fold emits nothing and any still-open shared session would remain
+     * open forever even though the current document proves the user is not in a game at
+     * its observation time. Close every shared open proven older than that evidence at its
+     * last observation, adding no minutes. Incomplete pages suppress current-state
+     * reconstruction by design, so only a terminal snapshot drives this; older evidence
+     * never out-of-order closes a newer live session.
+     */
+    private fun reconcileNoGameCurrent(
+        snapshot: CloudPresenceSnapshot,
+        sessions: List<Session>,
+        sharedIds: Set<Long>,
+        actions: List<SessionDiffer.SessionAction>,
+    ): List<SessionDiffer.SessionAction> {
+        if (snapshot.hasMore) return emptyList()
+        val current = snapshot.current ?: return emptyList()
+        if (current.appId != null) return emptyList()
+        val observedAt = current.observedAt ?: return emptyList()
+        val extra = mutableListOf<SessionDiffer.SessionAction>()
+        for (row in sessions) {
+            if (!row.open || row.appId !in sharedIds) continue
+            val lastObserved = row.endAt ?: row.startAt
+            // Older cloud evidence must not out-of-order close a newer live session.
+            if (lastObserved > observedAt) continue
+            if (actions.none {
+                    it is SessionDiffer.SessionAction.Close &&
+                        it.appId == row.appId && it.startAt == row.startAt
+                }
+            ) {
+                extra += SessionDiffer.SessionAction.Close(
+                    appId = row.appId,
+                    startAt = row.startAt,
+                    endAt = lastObserved,
+                )
             }
         }
         return extra

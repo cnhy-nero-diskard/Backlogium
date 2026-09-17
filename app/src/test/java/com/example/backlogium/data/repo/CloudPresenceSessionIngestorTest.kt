@@ -8,6 +8,7 @@ import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.CloudCoverageState
+import com.example.backlogium.domain.CloudPresenceCurrentState
 import com.example.backlogium.domain.CloudPresenceInterval
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.FakeHiddenGameDao
@@ -465,6 +466,53 @@ class CloudPresenceSessionIngestorTest {
         assertEquals(12L * MINUTE, current.endAt)
         assertEquals(2, current.minutes)
         assertTrue(current.open)
+    }
+
+    @Test
+    fun terminalNoGameCurrentClosesStaleSharedSession() = runTest {
+        database.gameDao().upsert(sharedGame())
+        database.sessionDao().insert(
+            Session(
+                appId = 440L,
+                startAt = 0L,
+                endAt = 2L * MINUTE,
+                minutes = 2,
+                open = true,
+            ),
+        )
+        // A terminal read with no new transitions reconstructs zero intervals, but its
+        // null-app current still proves the user is not in a game at its observation time,
+        // so the still-open shared session must close without adding minutes.
+        val snapshot = CloudPresenceSnapshot(
+            windowStart = 0L,
+            windowEnd = 5L * MINUTE,
+            readAt = 5L * MINUTE + 1L,
+            intervals = emptyList(),
+            current = CloudPresenceCurrentState(
+                observedAt = 5L * MINUTE,
+                appId = null,
+                gameName = null,
+                personastate = null,
+                since = null,
+                coverageLapseFrom = null,
+                coverageLapseRecoveredAt = null,
+                schemaVersion = null,
+            ),
+            observationCount = 0,
+            nextPosition = null,
+            hasMore = false,
+        )
+
+        val result = ingestor(FakeSettingsRepository()).ingest(snapshot)
+
+        assertTrue(result.processed)
+        assertTrue(result.wrote)
+        assertEquals(0, result.creditedMinutes)
+        val stored = database.sessionDao().getAll().single()
+        assertEquals(0L, stored.startAt)
+        assertEquals(2L * MINUTE, stored.endAt)
+        assertEquals(2, stored.minutes)
+        assertFalse(stored.open)
     }
 
     @Test
