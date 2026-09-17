@@ -94,7 +94,17 @@ class CloudPresenceSessionIngestor @Inject constructor(
         } else {
             storedOpen ?: closedOverlapSeed(observations, sessions, sharedIds)
         }
-        val actions = fold(observations, openSession)
+        // A fully stored historical interval emits only a synthetic null boundary, so a snapshot
+        // with no new game observation still seeds the newer live open. Folding that earlier
+        // boundary from the open out-of-order closes the live session it was meant to leave
+        // alone. Drop observations the seed already observed; newer boundaries that prove a
+        // switch are kept.
+        val foldObservations = if (openSession != null) {
+            observations.filter { it.at >= openSession.lastObservedAt }
+        } else {
+            observations
+        }
+        val actions = fold(foldObservations, openSession)
         val goalIds = games.asSequence()
             .filter { it.isGoal }
             .map { it.appId }

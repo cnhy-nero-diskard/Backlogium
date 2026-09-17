@@ -180,6 +180,85 @@ class CloudPresenceSessionIngestorTest {
     }
 
     @Test
+    fun fullyStoredHistoryDoesNotCloseNewerLiveSession() = runTest {
+        database.gameDao().upsert(sharedGame())
+        database.sessionDao().insert(
+            Session(
+                appId = 440L,
+                startAt = 0L,
+                endAt = 2L * MINUTE,
+                minutes = 2,
+                open = false,
+            ),
+        )
+        database.sessionDao().insert(
+            Session(
+                appId = 440L,
+                startAt = 10L * MINUTE,
+                endAt = 12L * MINUTE,
+                minutes = 2,
+                open = true,
+            ),
+        )
+        // An older interval already stored emits only a synthetic null boundary and no game
+        // observation, so the ingest still seeds the newer live open. Folding that earlier
+        // boundary from the open would out-of-order close the live session. The later fully
+        // stored ongoing interval emits nothing and cannot repair it, so the earlier
+        // boundary must be dropped: the live session stays open and nothing is written.
+        val snapshot = CloudPresenceSnapshot(
+            windowStart = 0L,
+            windowEnd = 12L * MINUTE,
+            readAt = 12L * MINUTE + 1L,
+            intervals = listOf(
+                CloudPresenceInterval(
+                    appId = 440L,
+                    gameName = "Shared",
+                    startAt = 0L,
+                    endAt = 2L * MINUTE,
+                    ongoing = false,
+                    coverage = CloudCoverageState.CONTINUOUS,
+                    observedUntil = null,
+                    coverageLapseFrom = null,
+                    coverageLapseRecoveredAt = null,
+                    mayHaveStartedBefore = false,
+                ),
+                CloudPresenceInterval(
+                    appId = 440L,
+                    gameName = "Shared",
+                    startAt = 10L * MINUTE,
+                    endAt = 12L * MINUTE,
+                    ongoing = true,
+                    coverage = CloudCoverageState.CONTINUOUS,
+                    observedUntil = null,
+                    coverageLapseFrom = null,
+                    coverageLapseRecoveredAt = null,
+                    mayHaveStartedBefore = false,
+                ),
+            ),
+            current = null,
+            observationCount = 3,
+            nextPosition = null,
+            hasMore = false,
+        )
+
+        val result = ingestor(FakeSettingsRepository()).ingest(snapshot)
+
+        assertTrue(result.processed)
+        assertFalse(result.wrote)
+        val stored = database.sessionDao().getAll()
+        assertEquals(2, stored.size)
+        val history = stored.single { !it.open }
+        assertEquals(0L, history.startAt)
+        assertEquals(2L * MINUTE, history.endAt)
+        assertEquals(2, history.minutes)
+        val live = stored.single { it.open }
+        assertEquals(10L * MINUTE, live.startAt)
+        assertEquals(12L * MINUTE, live.endAt)
+        assertEquals(2, live.minutes)
+        assertTrue(live.open)
+    }
+
+    @Test
     fun uncoveredHistoryFollowedByFullyCoveredOngoingStillClosesPredecessor() = runTest {
         database.gameDao().upsert(sharedGame())
         database.gameDao().upsert(sharedGame().copy(appId = 441L, name = "Shared B"))
