@@ -41,7 +41,16 @@ object CloudPresenceSessionIngest {
 
             val coverages = storedSessions[interval.appId].orEmpty()
             val uncovered = uncoveredSegments(interval.startAt, confirmedEnd, coverages)
-            uncovered.forEach { (startAt, endAt) ->
+            uncovered.forEachIndexed { index, (startAt, endAt) ->
+                if (index > 0 && uncovered[index - 1].second < startAt) {
+                    // A stored span removed between these fragments must break the derived
+                    // session: without a null boundary the deriver bridges the covered hole
+                    // whenever it is within its gap tolerance and re-credits stored time.
+                    output += PresenceSessionDeriver.Observation(
+                        appId = null,
+                        at = uncovered[index - 1].second,
+                    )
+                }
                 output.addContinuousObservations(
                     appId = interval.appId,
                     startAt = startAt,
