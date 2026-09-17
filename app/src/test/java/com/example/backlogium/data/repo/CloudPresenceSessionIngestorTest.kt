@@ -516,6 +516,134 @@ class CloudPresenceSessionIngestorTest {
     }
 
     @Test
+    fun terminalOwnedCurrentClosesStaleSharedSessionWithoutTouchingOwned() = runTest {
+        database.gameDao().upsert(sharedGame())
+        database.gameDao().upsert(sharedGame().copy(appId = 620L, name = "Owned", source = GameSource.STEAM_OWNED))
+        database.sessionDao().insert(
+            Session(
+                appId = 440L,
+                startAt = 10L * MINUTE,
+                endAt = 12L * MINUTE,
+                minutes = 2,
+                open = true,
+            ),
+        )
+        // Room holds open shared A last-observed at 12m while the terminal current proves
+        // owned B has been running since 10m as observed at 15m. The owned interval expands
+        // to a null boundary at 10m that the pre-seed filter drops as older than the seed,
+        // so only the terminal current evidence can close A — without writing B itself.
+        val snapshot = CloudPresenceSnapshot(
+            windowStart = 10L * MINUTE,
+            windowEnd = 15L * MINUTE,
+            readAt = 15L * MINUTE + 1L,
+            intervals = listOf(
+                CloudPresenceInterval(
+                    appId = 620L,
+                    gameName = "Owned",
+                    startAt = 10L * MINUTE,
+                    endAt = 15L * MINUTE,
+                    ongoing = true,
+                    coverage = CloudCoverageState.CONTINUOUS,
+                    observedUntil = null,
+                    coverageLapseFrom = null,
+                    coverageLapseRecoveredAt = null,
+                    mayHaveStartedBefore = true,
+                ),
+            ),
+            current = CloudPresenceCurrentState(
+                observedAt = 15L * MINUTE,
+                appId = 620L,
+                gameName = "Owned",
+                personastate = null,
+                since = 10L * MINUTE,
+                coverageLapseFrom = null,
+                coverageLapseRecoveredAt = null,
+                schemaVersion = null,
+            ),
+            observationCount = 0,
+            nextPosition = null,
+            hasMore = false,
+        )
+
+        val result = ingestor(FakeSettingsRepository()).ingest(snapshot)
+
+        assertTrue(result.processed)
+        assertTrue(result.wrote)
+        assertEquals(0, result.creditedMinutes)
+        val stored = database.sessionDao().getAll()
+        assertEquals(1, stored.size)
+        val stale = stored.single()
+        assertEquals(440L, stale.appId)
+        assertEquals(10L * MINUTE, stale.startAt)
+        assertEquals(12L * MINUTE, stale.endAt)
+        assertEquals(2, stale.minutes)
+        assertFalse(stale.open)
+    }
+
+    @Test
+    fun terminalUnknownCurrentClosesStaleSharedSessionWithoutWritingUnknown() = runTest {
+        database.gameDao().upsert(sharedGame())
+        database.sessionDao().insert(
+            Session(
+                appId = 440L,
+                startAt = 10L * MINUTE,
+                endAt = 12L * MINUTE,
+                minutes = 2,
+                open = true,
+            ),
+        )
+        // Same stale-open proof as the owned case, but the current game is unknown to the
+        // library: it still acts as switch evidence for the shared open and still gains
+        // no session of its own.
+        val snapshot = CloudPresenceSnapshot(
+            windowStart = 10L * MINUTE,
+            windowEnd = 15L * MINUTE,
+            readAt = 15L * MINUTE + 1L,
+            intervals = listOf(
+                CloudPresenceInterval(
+                    appId = 730L,
+                    gameName = "Unknown",
+                    startAt = 10L * MINUTE,
+                    endAt = 15L * MINUTE,
+                    ongoing = true,
+                    coverage = CloudCoverageState.CONTINUOUS,
+                    observedUntil = null,
+                    coverageLapseFrom = null,
+                    coverageLapseRecoveredAt = null,
+                    mayHaveStartedBefore = true,
+                ),
+            ),
+            current = CloudPresenceCurrentState(
+                observedAt = 15L * MINUTE,
+                appId = 730L,
+                gameName = "Unknown",
+                personastate = null,
+                since = 10L * MINUTE,
+                coverageLapseFrom = null,
+                coverageLapseRecoveredAt = null,
+                schemaVersion = null,
+            ),
+            observationCount = 0,
+            nextPosition = null,
+            hasMore = false,
+        )
+
+        val result = ingestor(FakeSettingsRepository()).ingest(snapshot)
+
+        assertTrue(result.processed)
+        assertTrue(result.wrote)
+        assertEquals(0, result.creditedMinutes)
+        val stored = database.sessionDao().getAll()
+        assertEquals(1, stored.size)
+        val stale = stored.single()
+        assertEquals(440L, stale.appId)
+        assertEquals(10L * MINUTE, stale.startAt)
+        assertEquals(12L * MINUTE, stale.endAt)
+        assertEquals(2, stale.minutes)
+        assertFalse(stale.open)
+    }
+
+    @Test
     fun retryAfterSessionWriteBeforeCursorAdvanceDoesNotRecredit() = runTest {
         database.gameDao().upsert(sharedGame())
         val settings = FakeSettingsRepository()

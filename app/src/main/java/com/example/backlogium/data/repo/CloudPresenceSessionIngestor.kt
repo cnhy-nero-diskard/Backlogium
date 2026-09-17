@@ -181,8 +181,9 @@ class CloudPresenceSessionIngestor @Inject constructor(
             .maxByOrNull { it.startAt }
             ?.takeIf { sources[it.appId] == GameSource.FAMILY_SHARED }
         if (ongoing == null) {
-            return reconcileNoGameCurrent(
+            return reconcileTerminalCurrent(
                 snapshot = snapshot,
+                sources = sources,
                 sessions = sessions,
                 sharedIds = sharedIds,
                 actions = actions,
@@ -237,25 +238,32 @@ class CloudPresenceSessionIngestor @Inject constructor(
     }
 
     /**
-     * Reconcile the authoritative "no game running" current state.
+     * Reconcile the authoritative terminal current state.
      *
      * A terminal read with no new transitions and a null-app current reconstructs zero
      * intervals, so the fold emits nothing and any still-open shared session would remain
      * open forever even though the current document proves the user is not in a game at
-     * its observation time. Close every shared open proven older than that evidence at its
-     * last observation, adding no minutes. Incomplete pages suppress current-state
-     * reconstruction by design, so only a terminal snapshot drives this; older evidence
-     * never out-of-order closes a newer live session.
+     * its observation time. A terminal current naming an owned or unknown game behaves the
+     * same way for shared sessions: its interval expands to a non-admitted null boundary
+     * at its start, which the pre-seed filter can drop as older than a stale open even
+     * though the current observation itself proves that open is no longer current. Close
+     * every shared open proven older than that evidence at its last observation, adding
+     * no minutes, and never write the non-shared game itself. A family-shared current is
+     * reconciled through its ongoing interval above — which also reopens its row — so
+     * without that interval there is no confirmed live row to restore. Incomplete pages
+     * suppress current-state reconstruction by design, so only a terminal snapshot drives
+     * this; older evidence never out-of-order closes a newer live session.
      */
-    private fun reconcileNoGameCurrent(
+    private fun reconcileTerminalCurrent(
         snapshot: CloudPresenceSnapshot,
+        sources: Map<Long, GameSource>,
         sessions: List<Session>,
         sharedIds: Set<Long>,
         actions: List<SessionDiffer.SessionAction>,
     ): List<SessionDiffer.SessionAction> {
         if (snapshot.hasMore) return emptyList()
         val current = snapshot.current ?: return emptyList()
-        if (current.appId != null) return emptyList()
+        if (current.appId != null && sources[current.appId] == GameSource.FAMILY_SHARED) return emptyList()
         val observedAt = current.observedAt ?: return emptyList()
         val extra = mutableListOf<SessionDiffer.SessionAction>()
         for (row in sessions) {
