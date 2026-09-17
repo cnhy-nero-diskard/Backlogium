@@ -10,12 +10,19 @@ object CloudPresenceSessionIngest {
     /** One stored session's covered span, for overlap-aware dedup. */
     data class StoredSessionSpan(val startAt: Long, val endAt: Long)
 
-    /** Expand cloud intervals into observations for the existing presence deriver. */
+    /**
+     * Expand cloud intervals into observations for the existing presence deriver.
+     *
+     * @param seededAppId the Room open the ingestor will seed the fold from, if any. A fully
+     *   stored ongoing interval with no preceding admitted fragment still proves a switch when
+     *   it names a different game than this seed.
+     */
     fun observations(
         intervals: List<CloudPresenceInterval>,
         gameSources: Map<Long, GameSource>,
         gapToleranceMillis: Long = DEFAULT_GAP_TOLERANCE_MILLIS,
         storedSessions: Map<Long, List<StoredSessionSpan>> = emptyMap(),
+        seededAppId: Long? = null,
     ): List<PresenceSessionDeriver.Observation> {
         require(gapToleranceMillis >= 0L)
         val ordered = intervals.sortedWith(
@@ -52,14 +59,32 @@ object CloudPresenceSessionIngest {
                 // continues the app the fold is already carrying: the cloud still reports
                 // that game running, so a null here would close the live session a
                 // verification read was meant to confirm. With no preceding admitted
-                // fragment there is no switch to prove. When the preceding admitted
-                // fragment named a different game, the ongoing interval still proves the
-                // switch to it, so the boundary must close that predecessor.
-                val continuesSameApp = previousAppId == null || previousAppId == interval.appId
+                // fragment there is no switch to prove inside the batch, but the seeded
+                // Room open is also preceding state: when it names a different game, the
+                // ongoing interval still proves the switch away from it. When the preceding
+                // admitted fragment named a different game, the ongoing interval still
+                // proves the switch to it, so the boundary must close that predecessor.
+                val continuesSameApp = when {
+                    previousAppId != null -> previousAppId == interval.appId
+                    seededAppId != null -> seededAppId == interval.appId
+                    else -> true
+                }
                 if (!interval.ongoing || !continuesSameApp) {
+                    // A seeded switch must survive the ingestor's pre-seed filter, which drops
+                    // boundaries older than what the seed already observed: emitting at the
+                    // confirmed end keeps a proof that the live session is stale while still
+                    // letting an older proof drop as history.
+                    val boundaryAt =
+                        if (interval.ongoing && previousAppId == null && seededAppId != null &&
+                            seededAppId != interval.appId
+                        ) {
+                            confirmedEnd
+                        } else {
+                            interval.startAt
+                        }
                     output += PresenceSessionDeriver.Observation(
                         appId = null,
-                        at = interval.startAt,
+                        at = boundaryAt,
                     )
                 }
                 previousAppId = interval.appId

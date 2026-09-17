@@ -76,13 +76,14 @@ class CloudPresenceSessionIngestor @Inject constructor(
                     )
                 }
             }
+        val storedOpen = sessions.firstOrNull { it.open && it.appId in sharedIds }
+            ?.toOpenSession()
         val observations = CloudPresenceSessionIngest.observations(
             intervals = snapshot.intervals,
             gameSources = sources,
             storedSessions = storedSessions,
+            seededAppId = storedOpen?.appId,
         )
-        val storedOpen = sessions.firstOrNull { it.open && it.appId in sharedIds }
-            ?.toOpenSession()
         // An older cloud-only gap must not fold through a newer live open: deriving it from that
         // open would out-of-order close the live session and merge the gap into it. Seed from the
         // open only when the first cloud observation is not older than what it already observed.

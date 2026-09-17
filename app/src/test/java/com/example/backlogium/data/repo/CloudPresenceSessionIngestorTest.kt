@@ -330,6 +330,75 @@ class CloudPresenceSessionIngestorTest {
     }
 
     @Test
+    fun fullyCoveredOngoingDifferentAppClosesSeededOpen() = runTest {
+        database.gameDao().upsert(sharedGame())
+        database.gameDao().upsert(sharedGame().copy(appId = 441L, name = "Shared B"))
+        database.sessionDao().insert(
+            Session(
+                appId = 440L,
+                startAt = 10L * MINUTE,
+                endAt = 12L * MINUTE,
+                minutes = 2,
+                open = true,
+            ),
+        )
+        database.sessionDao().insert(
+            Session(
+                appId = 441L,
+                startAt = 10L * MINUTE,
+                endAt = 12L * MINUTE,
+                minutes = 2,
+                open = false,
+            ),
+        )
+        // Room says A is live, but the cloud snapshot starts with fully covered ongoing B:
+        // with no preceding admitted fragment the batch alone proves no switch, yet the
+        // seeded Room open is also preceding state. The ongoing B still proves A is stale,
+        // so ingest must close A without duplicating or losing the stored B span.
+        val snapshot = CloudPresenceSnapshot(
+            windowStart = 10L * MINUTE,
+            windowEnd = 12L * MINUTE,
+            readAt = 12L * MINUTE + 1L,
+            intervals = listOf(
+                CloudPresenceInterval(
+                    appId = 441L,
+                    gameName = "Shared B",
+                    startAt = 10L * MINUTE,
+                    endAt = 12L * MINUTE,
+                    ongoing = true,
+                    coverage = CloudCoverageState.CONTINUOUS,
+                    observedUntil = null,
+                    coverageLapseFrom = null,
+                    coverageLapseRecoveredAt = null,
+                    mayHaveStartedBefore = false,
+                ),
+            ),
+            current = null,
+            observationCount = 2,
+            nextPosition = null,
+            hasMore = false,
+        )
+
+        val result = ingestor(FakeSettingsRepository()).ingest(snapshot)
+
+        assertTrue(result.processed)
+        assertTrue(result.wrote)
+        assertEquals(0, result.creditedMinutes)
+        val stored = database.sessionDao().getAll()
+        assertEquals(2, stored.size)
+        val seeded = stored.single { it.appId == 440L }
+        assertEquals(10L * MINUTE, seeded.startAt)
+        assertEquals(12L * MINUTE, seeded.endAt)
+        assertEquals(2, seeded.minutes)
+        assertFalse(seeded.open)
+        val current = stored.filter { it.appId == 441L }
+        assertEquals(1, current.size)
+        assertEquals(10L * MINUTE, current.single().startAt)
+        assertEquals(12L * MINUTE, current.single().endAt)
+        assertEquals(2, current.single().minutes)
+    }
+
+    @Test
     fun retryAfterSessionWriteBeforeCursorAdvanceDoesNotRecredit() = runTest {
         database.gameDao().upsert(sharedGame())
         val settings = FakeSettingsRepository()
