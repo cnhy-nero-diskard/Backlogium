@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.settings.hidden
 
+import androidx.lifecycle.ViewModelStore
 import androidx.room.Room
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.entity.Game
@@ -52,6 +53,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The non-game bulk action proposes; it never acts (add-hidden-games design decision 7).
@@ -66,6 +68,8 @@ import java.time.ZoneId
 class NonGameBulkHideTest {
 
     private lateinit var db: BacklogiumDatabase
+    private val viewModelStore = ViewModelStore()
+    private val viewModelKeys = AtomicInteger()
 
     @Before fun setUp() = runBlocking {
         db = Room.inMemoryDatabaseBuilder(
@@ -109,6 +113,11 @@ class NonGameBulkHideTest {
             )
             collector.cancel()
         } finally {
+            // End the ViewModel's scope the way the framework does: its stateIn sharing
+            // keeps collecting Room flows on Room's own threads past the last collector,
+            // and a stale collection racing the next test's setMain trips the TestMain
+            // dispatcher's concurrent-use guard.
+            viewModelStore.clear()
             Dispatchers.resetMain()
         }
     }
@@ -143,6 +152,11 @@ class NonGameBulkHideTest {
             assertTrue("declining hides nothing", db.hiddenGameDao().hiddenAppIds().isEmpty())
             collector.cancel()
         } finally {
+            // End the ViewModel's scope the way the framework does: its stateIn sharing
+            // keeps collecting Room flows on Room's own threads past the last collector,
+            // and a stale collection racing the next test's setMain trips the TestMain
+            // dispatcher's concurrent-use guard.
+            viewModelStore.clear()
             Dispatchers.resetMain()
         }
     }
@@ -182,6 +196,11 @@ class NonGameBulkHideTest {
             assertEquals(listOf(APPLICATION), db.hiddenGameDao().hiddenAppIds())
             collector.cancel()
         } finally {
+            // End the ViewModel's scope the way the framework does: its stateIn sharing
+            // keeps collecting Room flows on Room's own threads past the last collector,
+            // and a stale collection racing the next test's setMain trips the TestMain
+            // dispatcher's concurrent-use guard.
+            viewModelStore.clear()
             Dispatchers.resetMain()
         }
     }
@@ -209,6 +228,11 @@ class NonGameBulkHideTest {
             assertEquals(listOf(APPLICATION), db.hiddenGameDao().hiddenAppIds())
             collector.cancel()
         } finally {
+            // End the ViewModel's scope the way the framework does: its stateIn sharing
+            // keeps collecting Room flows on Room's own threads past the last collector,
+            // and a stale collection racing the next test's setMain trips the TestMain
+            // dispatcher's concurrent-use guard.
+            viewModelStore.clear()
             Dispatchers.resetMain()
         }
     }
@@ -251,7 +275,7 @@ class NonGameBulkHideTest {
                     scope = kotlinx.coroutines.GlobalScope,
                 ),
             ),
-        )
+        ).also { viewModelStore.put("hidden-${viewModelKeys.incrementAndGet()}", it) }
     }
 
     private object NoOpSteamApi : SteamApi {

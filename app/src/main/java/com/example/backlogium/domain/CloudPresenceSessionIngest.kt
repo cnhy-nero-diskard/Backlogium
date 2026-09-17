@@ -44,14 +44,19 @@ object CloudPresenceSessionIngest {
             val coverages = storedSessions[interval.appId].orEmpty()
             val uncovered = uncoveredSegments(interval.startAt, confirmedEnd, coverages)
             if (uncovered.isEmpty()) {
-                // Fully stored: no new play, but the interval still proves a different game
-                // was running here. Without a null boundary the deriver bridges the
-                // surrounding same-app fragments whenever they are within its gap tolerance
-                // and re-credits this stored span on top of itself.
-                output += PresenceSessionDeriver.Observation(
-                    appId = null,
-                    at = interval.startAt,
-                )
+                // Fully stored: no new play, but a historical interval still proves a
+                // different game was running here. Without a null boundary the deriver
+                // bridges the surrounding same-app fragments whenever they are within
+                // its gap tolerance and re-credits this stored span on top of itself.
+                // An ongoing interval never proves such a switch: the cloud reports the
+                // same game still running, so a null here would close the live session
+                // a verification read was meant to confirm.
+                if (!interval.ongoing) {
+                    output += PresenceSessionDeriver.Observation(
+                        appId = null,
+                        at = interval.startAt,
+                    )
+                }
                 previousAppId = interval.appId
                 previousEnd = confirmedEnd
                 return@forEach

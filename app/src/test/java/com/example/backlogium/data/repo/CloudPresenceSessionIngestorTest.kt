@@ -129,6 +129,57 @@ class CloudPresenceSessionIngestorTest {
     }
 
     @Test
+    fun fullyCoveredOngoingCloudIntervalDoesNotCloseLiveSession() = runTest {
+        database.gameDao().upsert(sharedGame())
+        database.sessionDao().insert(
+            Session(
+                appId = 440L,
+                startAt = 0L,
+                endAt = 600_000L,
+                minutes = 10,
+                open = true,
+            ),
+        )
+        // A verification read while the same game is still running reconstructs the live
+        // state as an ongoing interval fully covered by the open session. It proves no
+        // switch, so ingesting it must leave the live session alone rather than folding
+        // a synthetic null boundary into it and closing it out of order.
+        val snapshot = CloudPresenceSnapshot(
+            windowStart = 0L,
+            windowEnd = 600_000L,
+            readAt = 600_001L,
+            intervals = listOf(
+                CloudPresenceInterval(
+                    appId = 440L,
+                    gameName = "Shared",
+                    startAt = 0L,
+                    endAt = 600_000L,
+                    ongoing = true,
+                    coverage = CloudCoverageState.CONTINUOUS,
+                    observedUntil = null,
+                    coverageLapseFrom = null,
+                    coverageLapseRecoveredAt = null,
+                    mayHaveStartedBefore = false,
+                ),
+            ),
+            current = null,
+            observationCount = 2,
+            nextPosition = null,
+            hasMore = false,
+        )
+
+        val result = ingestor(FakeSettingsRepository()).ingest(snapshot)
+
+        assertTrue(result.processed)
+        assertFalse(result.wrote)
+        val stored = database.sessionDao().getAll().single()
+        assertEquals(0L, stored.startAt)
+        assertEquals(600_000L, stored.endAt)
+        assertEquals(10, stored.minutes)
+        assertTrue(stored.open)
+    }
+
+    @Test
     fun retryAfterSessionWriteBeforeCursorAdvanceDoesNotRecredit() = runTest {
         database.gameDao().upsert(sharedGame())
         val settings = FakeSettingsRepository()
