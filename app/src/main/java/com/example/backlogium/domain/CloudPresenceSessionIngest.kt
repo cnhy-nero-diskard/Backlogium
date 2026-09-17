@@ -26,6 +26,8 @@ object CloudPresenceSessionIngest {
         if (ordered.isEmpty()) return emptyList()
 
         val output = mutableListOf<PresenceSessionDeriver.Observation>()
+        var previousAppId: Long? = null
+        var previousEnd: Long? = null
         ordered.forEach { interval ->
             val admitted = gameSources[interval.appId] == GameSource.FAMILY_SHARED
             if (!admitted) {
@@ -41,6 +43,21 @@ object CloudPresenceSessionIngest {
 
             val coverages = storedSessions[interval.appId].orEmpty()
             val uncovered = uncoveredSegments(interval.startAt, confirmedEnd, coverages)
+            val firstStart = uncovered.firstOrNull()?.first
+            val prevEnd = previousEnd
+            if (firstStart != null && prevEnd != null && previousAppId == interval.appId &&
+                firstStart > prevEnd &&
+                coverages.any { maxOf(it.startAt, prevEnd) < minOf(it.endAt, firstStart) }
+            ) {
+                // Same break as within one interval, but across intervals: the gap between
+                // consecutive same-app fragments is already stored, so without a null boundary
+                // the deriver bridges it whenever it is within its gap tolerance and re-credits
+                // stored time. Gaps with no stored overlap keep the intentional nearby-merge.
+                output += PresenceSessionDeriver.Observation(
+                    appId = null,
+                    at = prevEnd,
+                )
+            }
             uncovered.forEachIndexed { index, (startAt, endAt) ->
                 if (index > 0 && uncovered[index - 1].second < startAt) {
                     // A stored span removed between these fragments must break the derived
@@ -57,6 +74,10 @@ object CloudPresenceSessionIngest {
                     endAt = endAt,
                     gapToleranceMillis = gapToleranceMillis,
                 )
+            }
+            if (uncovered.isNotEmpty()) {
+                previousAppId = interval.appId
+                previousEnd = uncovered.last().second
             }
         }
 

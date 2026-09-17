@@ -266,6 +266,39 @@ class CloudPresenceSessionIngestTest {
         assertEquals(8, actions.sumOf { it.addedMinutes })
     }
 
+    @Test
+    fun storedSpanBetweenCloudIntervalsBreaksDerivedSession() {
+        val gapTolerance = CloudPresenceSessionIngest.DEFAULT_GAP_TOLERANCE_MILLIS
+        // Same double-count as a stored span inside one interval, but the covered 2-minute
+        // hole sits between two same-game cloud intervals, so each interval yields a single
+        // uncovered fragment and only a cross-interval boundary can break the derived session.
+        assertTrue(2L * MINUTE < gapTolerance)
+        val observations = CloudPresenceSessionIngest.observations(
+            intervals = listOf(
+                interval(shared, startAt = 0L, endAt = 4L * MINUTE),
+                interval(shared, startAt = 6L * MINUTE, endAt = 10L * MINUTE),
+            ),
+            gameSources = mapOf(shared to GameSource.FAMILY_SHARED),
+            gapToleranceMillis = gapTolerance,
+            storedSessions = mapOf(
+                shared to listOf(
+                    CloudPresenceSessionIngest.StoredSessionSpan(
+                        startAt = 4L * MINUTE,
+                        endAt = 6L * MINUTE,
+                    ),
+                ),
+            ),
+        )
+
+        assertTrue(observations.none { it.appId == shared && it.at > 4L * MINUTE && it.at < 6L * MINUTE })
+        assertTrue(observations.any { it.appId == null && it.at == 4L * MINUTE })
+
+        val actions = fold(observations).actions
+        assertEquals(2, actions.count { it is SessionAction.Open })
+        assertEquals(2, actions.count { it is SessionAction.Close })
+        assertEquals(8, actions.sumOf { it.addedMinutes })
+    }
+
     private fun fold(
         observations: List<PresenceSessionDeriver.Observation>,
     ): PresenceSessionDeriver.DerivationResult {
