@@ -299,6 +299,46 @@ class CloudPresenceSessionIngestTest {
         assertEquals(8, actions.sumOf { it.addedMinutes })
     }
 
+    @Test
+    fun fullyStoredMiddleGamePreservesSwitchBoundary() {
+        val gapTolerance = CloudPresenceSessionIngest.DEFAULT_GAP_TOLERANCE_MILLIS
+        val otherShared = 441L
+        // A [0, 4min], B [4min, 6min] fully stored, A [6min, 10min]: the middle interval
+        // emits no game observation, but without a null boundary the deriver sees
+        // A@0, A@4min, A@6min, A@10min and bridges A across the two minutes where B was
+        // known to be running, crediting a 10-minute A session on top of stored B.
+        assertTrue(2L * MINUTE < gapTolerance)
+        val observations = CloudPresenceSessionIngest.observations(
+            intervals = listOf(
+                interval(shared, startAt = 0L, endAt = 4L * MINUTE),
+                interval(otherShared, startAt = 4L * MINUTE, endAt = 6L * MINUTE),
+                interval(shared, startAt = 6L * MINUTE, endAt = 10L * MINUTE),
+            ),
+            gameSources = mapOf(
+                shared to GameSource.FAMILY_SHARED,
+                otherShared to GameSource.FAMILY_SHARED,
+            ),
+            gapToleranceMillis = gapTolerance,
+            storedSessions = mapOf(
+                otherShared to listOf(
+                    CloudPresenceSessionIngest.StoredSessionSpan(
+                        startAt = 4L * MINUTE,
+                        endAt = 6L * MINUTE,
+                    ),
+                ),
+            ),
+        )
+
+        assertTrue(observations.none { it.appId == otherShared })
+        assertTrue(observations.any { it.appId == null && it.at == 4L * MINUTE })
+
+        val actions = fold(observations).actions
+        assertEquals(2, actions.count { it is SessionAction.Open })
+        assertEquals(2, actions.count { it is SessionAction.Close })
+        assertEquals(8, actions.sumOf { it.addedMinutes })
+        assertTrue(actions.none { it.appId == otherShared })
+    }
+
     private fun fold(
         observations: List<PresenceSessionDeriver.Observation>,
     ): PresenceSessionDeriver.DerivationResult {
