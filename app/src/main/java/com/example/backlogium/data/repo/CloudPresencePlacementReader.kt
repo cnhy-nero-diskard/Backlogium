@@ -9,6 +9,17 @@ fun interface CloudPresencePlacementReader {
     suspend fun read(trigger: CloudReadTrigger): CloudPresenceSnapshot?
 }
 
+/** Optional placement evidence never turns a Steam sync failure into a failed sync. */
+suspend fun CloudPresencePlacementReader.readOrNull(
+    trigger: CloudReadTrigger,
+): CloudPresenceSnapshot? = try {
+    read(trigger)
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: Exception) {
+    null
+}
+
 /** Adapts the optional cloud repository to callers that must continue when it is unavailable. */
 @Singleton
 class RepositoryCloudPresencePlacementReader @Inject constructor(

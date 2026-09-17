@@ -306,6 +306,7 @@ internal class FakeDailyProgressDao(
     }
 
     override suspend fun deleteAll() = store.clear()
+    override suspend fun deleteByDate(date: String) { store.remove(date) }
 }
 
 /**

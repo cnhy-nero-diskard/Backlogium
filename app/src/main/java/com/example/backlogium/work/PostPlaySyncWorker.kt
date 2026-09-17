@@ -15,6 +15,7 @@ import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.PlaytimeObservation
 import com.example.backlogium.data.repo.RecentPlaytimeRepository
 import com.example.backlogium.data.repo.CloudPresencePlacementReader
+import com.example.backlogium.data.repo.readOrNull
 import com.example.backlogium.data.repo.CloudPresenceSnapshot
 import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.domain.CloudPresencePlaytimePlacement
@@ -152,7 +153,7 @@ class PostPlaySyncWorker @AssistedInject constructor(
                 val placementSnapshot = if (
                     CloudPresencePlaytimePlacement.shouldConsult(previousPollAt, sessionEndAt)
                 ) {
-                    cloudPresencePlacementReader.read(CloudReadTrigger.POST_PLAY)
+                    cloudPresencePlacementReader.readOrNull(CloudReadTrigger.POST_PLAY)
                 } else {
                     null
                 }

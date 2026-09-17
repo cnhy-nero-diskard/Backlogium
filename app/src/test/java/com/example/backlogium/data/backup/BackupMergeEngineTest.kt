@@ -1252,6 +1252,7 @@ private class FakeDailyProgressDao(private val store: MutableMap<String, DailyPr
     override fun observeAll(): Flow<List<DailyProgress>> = flowOf(store.values.toList())
     override suspend fun getAllOrdered(): List<DailyProgress> = store.values.sortedBy { it.date }
     override suspend fun deleteAll() = store.clear()
+    override suspend fun deleteByDate(date: String) { store.remove(date) }
 }
 
 private class FakeHltbDataDao(private val store: MutableMap<Long, HltbData>) : HltbDataDao {

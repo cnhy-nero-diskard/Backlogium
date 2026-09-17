@@ -96,8 +96,12 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
             derivedStateWrites.withLock {
                 val changes = findChanges(intervals)
                 val originals = changes.map { it.original }
+                val dailyBefore = if (changes.isEmpty()) emptyList() else dailyProgressDao.getAllOrdered()
                 settings.setCloudPresenceRefilingBackup(
-                    CloudPresenceRefilingBackup(sessions = originals),
+                    CloudPresenceRefilingBackup(
+                        sessions = originals,
+                        dailyProgress = dailyBefore,
+                    ),
                 )
 
                 if (changes.isEmpty()) {
@@ -119,16 +123,29 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                     CloudPresenceRefilingBackup(
                         sessions = originals,
                         createdSessionIds = createdIds,
+                        dailyProgress = dailyBefore,
+                        createdDailyProgressDates = emptySet(),
                     ),
                 )
-                recompute()
+                val recomputedDates = recompute()
+                val createdDailyDates = dailyProgressDao.getAllOrdered()
+                    .map { it.date }
+                    .toSet() - dailyBefore.map { it.date }.toSet()
+                settings.setCloudPresenceRefilingBackup(
+                    CloudPresenceRefilingBackup(
+                        sessions = originals,
+                        createdSessionIds = createdIds,
+                        dailyProgress = dailyBefore,
+                        createdDailyProgressDates = createdDailyDates,
+                    ),
+                )
                 settings.setCloudPresenceRefilingApplied(true)
                 CloudPresenceRefilingResult(
                     operation = CloudPresenceRefilingOperation.APPLIED,
                     sessionsRefiled = changes.size,
-                    datesAffected = changes.flatMap { change ->
+                    datesAffected = (changes.flatMap { change ->
                         (listOf(change.original) + change.replacement).map(::dateOf)
-                    }.toSet(),
+                    } + recomputedDates).toSet(),
                 )
             }
         }
@@ -141,15 +158,21 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
         derivedStateWrites.withLock {
             val backup = settings.cloudPresenceRefilingBackup() ?: CloudPresenceRefilingBackup(emptyList())
             val current = sessionDao.getAll()
-            val affectedDates = (backup.sessions + current.filter { it.id in backup.createdSessionIds })
-                .map(::dateOf)
-                .toSet()
+            val affectedDates = backup.sessions.map(::dateOf).toMutableSet().apply {
+                addAll(current.filter { it.id in backup.createdSessionIds }.map(::dateOf))
+                addAll(backup.dailyProgress.map { it.date })
+                addAll(backup.createdDailyProgressDates)
+            }
             transaction.run {
                 backup.createdSessionIds.forEach { id -> sessionDao.deleteById(id) }
                 backup.sessions.forEach { session -> sessionDao.update(session) }
+                backup.createdDailyProgressDates.forEach { date -> dailyProgressDao.deleteByDate(date) }
+                backup.dailyProgress.forEach { day -> dailyProgressDao.upsert(day) }
             }
-            if (backup.sessions.isNotEmpty() || backup.createdSessionIds.isNotEmpty()) {
-                recompute()
+            if (backup.sessions.isNotEmpty() || backup.createdSessionIds.isNotEmpty() ||
+                backup.dailyProgress.isNotEmpty() || backup.createdDailyProgressDates.isNotEmpty()
+            ) {
+                recomputeGamification()
             }
             settings.clearCloudPresenceRefiling()
             CloudPresenceRefilingResult(
@@ -170,7 +193,7 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
             .map { change -> Change(change.original, change.replacement) }
     }
 
-    private suspend fun recompute() {
+    private suspend fun recompute(): Set<String> {
         val corrections = dailyProgressCorrections(
             sessions = sessionDao.getAll(),
             goalAppIds = gameDao.getAll().asSequence()
@@ -188,6 +211,11 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                 goalMinutesPlayed = correction.correctedGoalMinutes,
             )
         }
+        recomputeGamification()
+        return corrections.map { it.date }.toSet()
+    }
+
+    private suspend fun recomputeGamification() {
         val rules = settings.ruleConfigWithVersion.first()
         gamificationUpdater.recompute(
             today = time.today(),

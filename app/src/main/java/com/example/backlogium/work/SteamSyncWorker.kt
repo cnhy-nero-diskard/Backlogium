@@ -18,6 +18,7 @@ import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.repo.AchievementLibraryFetch
 import com.example.backlogium.data.repo.CloudPresencePlacementReader
+import com.example.backlogium.data.repo.readOrNull
 import com.example.backlogium.data.repo.CloudPresenceSnapshot
 import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.data.remote.SteamApi
@@ -326,7 +327,7 @@ class SteamSyncWorker @AssistedInject constructor(
             provisionalDiff.playedDeltaByAppId.isNotEmpty() &&
             CloudPresencePlaytimePlacement.shouldConsult(preview.lastSyncAt, now)
         ) {
-            cloudPresencePlacementReader.read(CloudReadTrigger.SYNC)
+            cloudPresencePlacementReader.readOrNull(CloudReadTrigger.SYNC)
         } else {
             null
         }

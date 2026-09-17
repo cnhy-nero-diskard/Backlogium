@@ -7,6 +7,7 @@ import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.data.local.AcquiredGamesAnnouncement
 import com.example.backlogium.data.local.SharedGameAnnouncement
 import com.example.backlogium.data.local.SettingsDataStore
+import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
@@ -215,6 +216,8 @@ interface SettingsRepository : SessionEndOutbox {
 data class CloudPresenceRefilingBackup(
     val sessions: List<Session>,
     val createdSessionIds: Set<Long> = emptySet(),
+    val dailyProgress: List<DailyProgress> = emptyList(),
+    val createdDailyProgressDates: Set<String> = emptySet(),
 )
 
 /** The only production implementation: a thin pass-through to Preferences DataStore. */
