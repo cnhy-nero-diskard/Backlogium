@@ -227,6 +227,64 @@ class PostPlaySyncWorkerTest {
     }
 
     @Test
+    fun `short targeted fetch does not consult the optional placement reader`() = runTest {
+        val shortGapStart = sessionEndAt - 5L * 60 * 1_000
+        seedLibrary(playtime = 100, syncAt = shortGapStart)
+        generations.set(APP_ID, 1L)
+        steamApi.answer = observation(playtimeForever = 110)
+        var reads = 0
+        val reader = CloudPresencePlacementReader {
+            reads++
+            null
+        }
+
+        runAttempt(attempt = 0, placementReader = reader)
+
+        assertEquals(0, reads)
+        assertEquals(shortGapStart, db.sessionDao().getAll().single().startAt)
+    }
+
+    @Test
+    fun `rejected placement evidence falls back to the full delta and its original date`() = runTest {
+        val oldStart = Instant.parse("2026-07-26T23:50:00Z").toEpochMilli()
+        seedLibrary(playtime = 100, syncAt = oldStart)
+        generations.set(APP_ID, 1L)
+        steamApi.answer = observation(playtimeForever = 130)
+        val reader = CloudPresencePlacementReader {
+            CloudPresenceSnapshot(
+                windowStart = oldStart,
+                windowEnd = sessionEndAt,
+                readAt = sessionEndAt,
+                intervals = listOf(
+                    CloudPresenceInterval(
+                        appId = APP_ID,
+                        gameName = "Portal",
+                        startAt = oldStart,
+                        endAt = sessionEndAt,
+                        ongoing = false,
+                        coverage = CloudCoverageState.OBSERVED_UNTIL,
+                        observedUntil = sessionEndAt,
+                        coverageLapseFrom = oldStart,
+                        coverageLapseRecoveredAt = oldStart + 11L * 60 * 1_000,
+                        mayHaveStartedBefore = false,
+                    ),
+                ),
+                current = null,
+                observationCount = 1,
+                nextPosition = null,
+                hasMore = false,
+            )
+        }
+
+        runAttempt(attempt = 0, placementReader = reader)
+
+        val session = db.sessionDao().getAll().single()
+        assertEquals(30, session.minutes)
+        assertEquals(oldStart, session.startAt)
+        assertEquals(30, db.dailyProgressDao().getByDate("2026-07-26")?.minutesPlayed)
+    }
+
+    @Test
     fun `an increase seen by a late attempt still reports the same session end`() = runTest {
         seedLibrary(playtime = 100)
         generations.set(APP_ID, 1L)
