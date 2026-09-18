@@ -10,6 +10,9 @@ import com.example.backlogium.data.remote.CloudPresenceApi
 import com.example.backlogium.data.remote.dto.CloudPresenceCurrentDto
 import com.example.backlogium.data.remote.dto.CloudPresenceResponseDto
 import com.example.backlogium.data.remote.dto.CloudPresenceTransitionDto
+import com.example.backlogium.domain.CloudCoverageState
+import com.example.backlogium.domain.CloudPresenceInterval
+import com.example.backlogium.domain.CloudPresencePlaytimePlacement
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.FakeSettingsRepository
 import com.example.backlogium.domain.GamificationUpdater
@@ -103,6 +106,88 @@ class CloudPresencePlacementReaderTest {
 
         // The suffix alone would place the whole Monday->Friday delta across Wednesday->Friday.
         assertNull(result)
+    }
+
+    @Test
+    fun staleTerminalWindowEndBeforePeriodEndRefusesPlacement() = runBlocking {
+        val periodStart = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
+        val periodEnd = Instant.parse("2026-09-18T00:00:00Z").toEpochMilli()
+        // Steam's diff window is Monday->Friday, but the poller stopped Wednesday: the terminal
+        // drain starts Monday yet its latest observation is Wednesday, with one confirmed Tuesday
+        // interval. Accepting it would proportionally assign the whole Monday->Friday Steam delta
+        // to Tuesday; the unobserved Wednesday->Friday tail carries no rejected interval for the
+        // placement rule to refuse, so the gate must refuse and leave the sync on its unaided path.
+        val stale = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = "2026-09-15T00:00:00Z",
+                    gameid = "10",
+                    gameName = "Portal",
+                    personastate = 1,
+                ),
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = "2026-09-15T02:00:00Z",
+                    prevLastObservedAt = "2026-09-15T01:59:00Z",
+                    gameid = "20",
+                    gameName = "Other",
+                    personastate = 1,
+                ),
+            ),
+            current = CloudPresenceCurrentDto(
+                v = 2,
+                lastObservedAt = "2026-09-16T00:00:00Z",
+                gameid = "20",
+                gameName = "Other",
+                personastate = 1,
+            ),
+            nextPosition = "2026-09-15T02:00:00Z",
+            hasMore = false,
+            windowStart = "2026-09-14T00:00:00Z",
+            windowEnd = "2026-09-16T00:00:00Z",
+            readAt = "2026-09-18T00:01:00Z",
+        )
+        val api = FakeCloudPresenceApi { position ->
+            assertNull(position)
+            stale
+        }
+        val settings = FakeSettingsRepository()
+        val placement = placementReader(api, settings)
+
+        val result = placement.read(CloudReadTrigger.SYNC, periodStart, periodEnd)
+
+        // Null keeps the sync on its ordinary unaided attribution; the Wednesday->Friday tail
+        // must not be placed onto Tuesday.
+        assertNull(result)
+
+        // The gate is what prevents the misplacement: the Tuesday span alone would have placed
+        // the full Monday->Friday delta.
+        val hazard = CloudPresencePlaytimePlacement.place(
+            CloudPresencePlaytimePlacement.Request(
+                appId = 10L,
+                diffedMinutes = 60,
+                periodStartAt = periodStart,
+                periodEndAt = periodEnd,
+                intervals = listOf(
+                    CloudPresenceInterval(
+                        appId = 10L,
+                        gameName = "Portal",
+                        startAt = Instant.parse("2026-09-15T00:00:00Z").toEpochMilli(),
+                        endAt = Instant.parse("2026-09-15T02:00:00Z").toEpochMilli(),
+                        ongoing = false,
+                        coverage = CloudCoverageState.CONTINUOUS,
+                        observedUntil = null,
+                        coverageLapseFrom = null,
+                        coverageLapseRecoveredAt = null,
+                        mayHaveStartedBefore = false,
+                    ),
+                ),
+            ),
+        )
+        assertTrue(hazard != null)
+        assertEquals(60, hazard!!.sumOf { it.addedMinutes })
     }
 
     @Test

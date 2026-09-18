@@ -43,17 +43,21 @@ class RepositoryCloudPresencePlacementReader @Inject constructor(
             // placement snapshot: the cursor is also advanced by Settings/manual reads, so a single
             // page may be only the suffix of the Steam diff window, and discarding a `hasMore` page
             // after `read` already persisted its cursor would lose it once the Steam baseline
-            // advances past the delta. Refuse unless the drained window starts at or before the
-            // diff window, proving the evidence is complete for it; a superset is safe because
-            // placement clips intervals to the period. A missing tail needs no gate: draining to
-            // the terminal page observes it, and any unobserved span inside arrives as coverage the
-            // placement rule already rejects.
+            // advances past the delta. Refuse unless the drained window covers the diff window on
+            // both edges, proving the evidence is complete for it; a superset is safe because
+            // placement clips intervals to the period. A terminal drain alone proves nothing about
+            // the right edge: the service bounds `windowEnd` by the latest current observation or
+            // transition, which stays stale when the poller stops, while an unobserved tail carries
+            // no rejected interval for the placement rule to refuse — it would proportionally
+            // assign the whole Steam delta to the earlier confirmed span.
             return when (val result = repository.readRemainingHistory(trigger, consume = ingestor::ingest)) {
                 is CloudReadResult.Success -> {
                     val snapshot = result.snapshot
                     if (snapshot.hasMore) {
                         null
                     } else if (snapshot.windowStart > periodStartAt) {
+                        null
+                    } else if (snapshot.windowEnd < periodEndAt) {
                         null
                     } else {
                         snapshot
