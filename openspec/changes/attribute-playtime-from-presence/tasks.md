@@ -92,7 +92,7 @@
       of the last sync.
 - [ ] 7.2 Verify a daily quest for that day evaluates as met and the streak is unbroken, with no
       celebration shown.
-- [ ] 7.3 Run the historical sweep against real history, then reverse it. Verify totals are
+- [x] 7.3 Run the historical sweep against real history, then reverse it. Verify totals are
       unchanged by both, and that daily progress after the reversal matches what it was before.
 - [ ] 7.4 Compare the result against phase 2's diagnostics surface and confirm the placement matches
       the disagreement that surface predicted.
