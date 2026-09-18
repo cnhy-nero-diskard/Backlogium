@@ -8,7 +8,7 @@ Home SHALL present one concise next-action surface ahead of the level, quest, an
 - **THEN** Home leads with a next-action surface for the most recently played eligible Focus game
 
 #### Scenario: Continue a collection mission
-- **WHEN** no eligible Focus game exists and the first player-ordered collection has an incomplete next game
+- **WHEN** no eligible Focus game exists and the first ordered-queue collection in the player's collection display order has an incomplete next game (skipping basic, completion-goal, deadline-goal, empty, and completed-queue collections, which expose no `nextUp`)
 - **THEN** Home leads with a next-action surface that opens that collection or its next game
 
 #### Scenario: No next action is derivable
