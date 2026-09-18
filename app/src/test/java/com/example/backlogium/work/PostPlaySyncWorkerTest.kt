@@ -172,8 +172,12 @@ class PostPlaySyncWorkerTest {
         generations.set(APP_ID, 1L)
         steamApi.answer = observation(playtimeForever = 130)
         var trigger: CloudReadTrigger? = null
-        val reader = CloudPresencePlacementReader { received ->
+        var periodStart: Long? = null
+        var periodEnd: Long? = null
+        val reader = CloudPresencePlacementReader { received, startAt, endAt ->
             trigger = received
+            periodStart = startAt
+            periodEnd = endAt
             CloudPresenceSnapshot(
                 windowStart = longGapStart,
                 windowEnd = sessionEndAt,
@@ -203,6 +207,8 @@ class PostPlaySyncWorkerTest {
 
         val session = db.sessionDao().getAll().single()
         assertEquals(CloudReadTrigger.POST_PLAY, trigger)
+        assertEquals(longGapStart, periodStart)
+        assertEquals(sessionEndAt, periodEnd)
         assertEquals(longGapStart, session.startAt)
         assertEquals("the target fetch's supplied instant remains authoritative", sessionEndAt, session.endAt)
     }
@@ -214,7 +220,7 @@ class PostPlaySyncWorkerTest {
         generations.set(APP_ID, 1L)
         steamApi.answer = observation(playtimeForever = 130)
         var reads = 0
-        val reader = CloudPresencePlacementReader {
+        val reader = CloudPresencePlacementReader { _, _, _ ->
             reads++
             error("simulated unavailable reader")
         }
@@ -233,7 +239,7 @@ class PostPlaySyncWorkerTest {
         generations.set(APP_ID, 1L)
         steamApi.answer = observation(playtimeForever = 110)
         var reads = 0
-        val reader = CloudPresencePlacementReader {
+        val reader = CloudPresencePlacementReader { _, _, _ ->
             reads++
             null
         }
@@ -250,7 +256,7 @@ class PostPlaySyncWorkerTest {
         seedLibrary(playtime = 100, syncAt = oldStart)
         generations.set(APP_ID, 1L)
         steamApi.answer = observation(playtimeForever = 130)
-        val reader = CloudPresencePlacementReader {
+        val reader = CloudPresencePlacementReader { _, _, _ ->
             CloudPresenceSnapshot(
                 windowStart = oldStart,
                 windowEnd = sessionEndAt,
@@ -531,7 +537,7 @@ class PostPlaySyncWorkerTest {
     private suspend fun runAttempt(
         attempt: Int,
         generation: Long = 1L,
-        placementReader: CloudPresencePlacementReader = CloudPresencePlacementReader { null },
+        placementReader: CloudPresencePlacementReader = CloudPresencePlacementReader { _, _, _ -> null },
     ): ListenableWorker.Result = buildWorker(
         attempt = attempt,
         generation = generation,
@@ -541,7 +547,7 @@ class PostPlaySyncWorkerTest {
     private fun buildWorker(
         attempt: Int,
         generation: Long,
-        placementReader: CloudPresencePlacementReader = CloudPresencePlacementReader { null },
+        placementReader: CloudPresencePlacementReader = CloudPresencePlacementReader { _, _, _ -> null },
     ): PostPlaySyncWorker {
         val factory = object : WorkerFactory() {
             override fun createWorker(

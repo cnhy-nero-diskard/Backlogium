@@ -327,7 +327,7 @@ class SteamSyncWorker @AssistedInject constructor(
             provisionalDiff.playedDeltaByAppId.isNotEmpty() &&
             CloudPresencePlaytimePlacement.shouldConsult(preview.lastSyncAt, now)
         ) {
-            cloudPresencePlacementReader.readOrNull(CloudReadTrigger.SYNC)
+            cloudPresencePlacementReader.readOrNull(CloudReadTrigger.SYNC, preview.lastSyncAt, now)
         } else {
             null
         }

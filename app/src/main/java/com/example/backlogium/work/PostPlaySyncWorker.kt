@@ -153,7 +153,7 @@ class PostPlaySyncWorker @AssistedInject constructor(
                 val placementSnapshot = if (
                     CloudPresencePlaytimePlacement.shouldConsult(previousPollAt, sessionEndAt)
                 ) {
-                    cloudPresencePlacementReader.readOrNull(CloudReadTrigger.POST_PLAY)
+                    cloudPresencePlacementReader.readOrNull(CloudReadTrigger.POST_PLAY, previousPollAt, sessionEndAt)
                 } else {
                     null
                 }

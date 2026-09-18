@@ -240,8 +240,8 @@ class CloudPresenceRepository @Inject constructor(
 
     /**
      * Single-page read without acquiring [cloudReadSequenceMutex]: the caller must hold it.
-     * Ordinary [read] holds it for one page; [readCompleteHistory] holds it across the
-     * reset plus every page so no ordinary read can advance the shared watermark mid-drain.
+     * Ordinary [read] holds it for one page; [readCompleteHistory] and [readRemainingHistory]
+     * hold it across every page so no other read can advance the shared watermark mid-drain.
      */
     private suspend fun readPage(
         trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
@@ -332,6 +332,67 @@ class CloudPresenceRepository @Inject constructor(
             return@withLock CloudReadResult.NoSteamAccount
         }
         settings.clearCloudReadPosition()
+        val allIntervals = mutableListOf<CloudPresenceInterval>()
+        var totalObservations = 0
+        var firstWindowStart: Long? = null
+        repeat(MAX_REFILE_PAGES) {
+            when (val result = readPage(trigger, consume)) {
+                is CloudReadResult.Unconfigured,
+                is CloudReadResult.NoSteamAccount,
+                is CloudReadResult.Failed,
+                -> return@withLock result
+                is CloudReadResult.Success -> {
+                    val snapshot = result.snapshot
+                    if (firstWindowStart == null) firstWindowStart = snapshot.windowStart
+                    allIntervals += snapshot.intervals
+                    totalObservations += snapshot.observationCount
+                    if (!snapshot.hasMore) {
+                        val combined = snapshot.copy(
+                            windowStart = firstWindowStart ?: snapshot.windowStart,
+                            intervals = allIntervals.sortedWith(
+                                compareBy(
+                                    { interval -> interval.startAt },
+                                    { interval -> interval.endAt ?: Long.MAX_VALUE },
+                                ),
+                            ),
+                            observationCount = totalObservations,
+                            hasMore = false,
+                        )
+                        return@withLock CloudReadResult.Success(combined)
+                    }
+                }
+            }
+        }
+        return@withLock CloudReadResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+    }
+
+    /**
+     * Drains the still-unread cloud history forward from the current watermark without resetting
+     * it, for callers that must place a diff earned over a window they did not observe.
+     *
+     * A single [read] returns one page: returning that page as placement evidence would
+     * distribute the whole Steam delta across a suffix when the cursor was already advanced
+     * inside the diff window, and discarding a page with `hasMore` after [read] already
+     * persisted its cursor would lose it once the Steam baseline advances past the delta.
+     * Accumulating every unread page recovers the suffix without losing earlier pages of this
+     * drain; the caller still refuses placement unless the first page starts at or before its
+     * diff window. Shared-game ingest runs per page through [consume], so no page is lost to
+     * that mechanism either.
+     *
+     * Holds [cloudReadSequenceMutex] across every page, so the historical re-file drain cannot
+     * reset the watermark between these pages and steal one this drain then skips, and vice
+     * versa.
+     */
+    suspend fun readRemainingHistory(
+        trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
+        consume: suspend (CloudPresenceSnapshot) -> Unit = {},
+    ): CloudReadResult = cloudReadSequenceMutex.withLock {
+        if (credentialsStore.readCloudCredentials() == null) {
+            return@withLock CloudReadResult.Unconfigured
+        }
+        if (credentialsProvider.currentCredentials()?.steamId == null) {
+            return@withLock CloudReadResult.NoSteamAccount
+        }
         val allIntervals = mutableListOf<CloudPresenceInterval>()
         var totalObservations = 0
         var firstWindowStart: Long? = null
