@@ -20,7 +20,7 @@
 
 - [ ] 4.1 Separate first-load from refresh-with-cached-content presentation, and verify tests cover onboarding takeover, first-load placeholders, retained cached content, updating status, and error recovery.
 - [ ] 4.2 Gate level-up and streak Lottie playback through reduced-motion state while preserving one-shot haptic/event acknowledgement, and verify reduced-motion and ordinary-motion event tests.
-- [ ] 4.3 Move Home labels, plurals, and formatted values to Android resources, and verify a non-default-locale test renders localized quantity/date output without changing selection logic.
+- [ ] 4.3 Move Home labels, plurals, and formatted values to default Android resources (no locale-qualified resources or translations), and verify a non-default-locale test asserts fallback default English copy with locale-aware quantity/date formatting without changing selection logic.
 
 ## 5. Verification
 

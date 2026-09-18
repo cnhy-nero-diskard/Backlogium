@@ -56,9 +56,9 @@ Level-up and streak-milestone presentations SHALL preserve the earned-event mess
 - **WHEN** a level-up or streak milestone is pending and reduced motion is not requested
 - **THEN** the existing inline celebration behavior remains available
 
-### Requirement: Home copy follows Android locale resources
-User-visible Home labels, quantities, and formatted dates SHALL come from Android resources and locale-aware formatting rather than fixed English composition in the screen.
+### Requirement: Home copy is externalized with locale-aware formatting
+User-visible Home labels, quantities, and formatted dates SHALL come from default Android string/plural resources and locale-aware formatting rather than fixed English composition in the screen. This change adds no locale-qualified resources or translations; under a non-default locale labels SHALL fall back to the default English copy while dates and quantities follow the device locale.
 
-#### Scenario: Localized Home
-- **WHEN** the device uses a supported non-default locale
-- **THEN** Home resolves its labels and pluralized day/minute copy from that locale without changing stored values or navigation behavior
+#### Scenario: Non-default locale falls back to English copy with locale-aware formatting
+- **WHEN** the device uses a non-default locale with non-US date order
+- **THEN** Home shows the default English labels and pluralized day/minute copy with locale-aware date/quantity formatting, without changing stored values or navigation behavior

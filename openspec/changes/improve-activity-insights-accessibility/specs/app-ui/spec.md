@@ -63,12 +63,12 @@ Analytics SHALL provide earlier, later, and return-to-current controls, enabling
 - **WHEN** the selected window already ends in the current period
 - **THEN** later and return-to-current actions are disabled or omitted without disturbing the earlier action
 
-### Requirement: Activity screens follow the device locale
-History and Analytics SHALL resolve user-visible strings, dates, casing, quantities, and durations through Android locale resources while preserving the stored local-date boundaries used for attribution.
+### Requirement: Activity screens externalize copy with locale-aware formatting
+History and Analytics SHALL resolve user-visible strings, dates, casing, quantities, and durations through default Android string/plural resources and locale-aware formatting while preserving the stored local-date boundaries used for attribution. This change adds no locale-qualified resources or translations; under a non-default locale labels SHALL fall back to the default English copy while dates, casing, and quantities follow the device locale.
 
 #### Scenario: Non-US locale
-- **WHEN** the device locale does not use US date order or English casing rules
-- **THEN** History and Analytics format labels for that locale without changing which local day, month, year, or rolling window the data belongs to
+- **WHEN** the device locale does not use US date order
+- **THEN** History and Analytics show the default English labels with locale-aware date/quantity formatting for that locale without changing which local day, month, year, or rolling window the data belongs to
 
 ### Requirement: Activity loading states preserve orientation
 History and Analytics SHALL show explicit bounded loading states and SHALL keep already available local summaries visible during recomputation.

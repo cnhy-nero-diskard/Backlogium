@@ -52,13 +52,13 @@ Settings SHALL show its four-group structure while locally stored state is loadi
 - **WHEN** Settings has not yet resolved its local state
 - **THEN** the four group rows remain identifiable with bounded placeholder summaries and no actionable control falsely claims a resolved state
 
-### Requirement: Settings copy follows Android locale resources
-Settings overview and detail destinations SHALL use Android resources for labels, descriptions, quantities, and formatted dates. First-level summaries SHALL use player-facing language; necessary technical identifiers SHALL appear only in the relevant detail context.
+### Requirement: Settings copy is externalized with locale-aware formatting
+Settings overview and detail destinations SHALL use default Android string/plural resources for labels, descriptions, quantities, and formatted dates. This change adds no locale-qualified resources or translations; under a non-default locale copy SHALL fall back to the default English text while dates and quantities follow the device locale. First-level summaries SHALL use player-facing language; necessary technical identifiers SHALL appear only in the relevant detail context.
 
 #### Scenario: Technical cloud configuration
 - **WHEN** the player opens Data & privacy and proceeds into cloud-history configuration
 - **THEN** endpoint and credential details remain available there, while the Settings overview describes the feature in plain language
 
-#### Scenario: Supported non-default locale
-- **WHEN** Settings is shown under a supported non-default locale
-- **THEN** overview and detail copy resolve from that locale without changing persisted settings or validation behavior
+#### Scenario: Non-default locale falls back to English copy
+- **WHEN** Settings is shown under a non-default locale
+- **THEN** overview and detail copy show the default English text with locale-aware date/quantity formatting without changing persisted settings or validation behavior

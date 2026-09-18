@@ -19,8 +19,8 @@
 
 ## 4. Locale and copy
 
-- [ ] 4.1 Replace `Locale.US`, fixed English casing, and History/Analytics literal labels with Android resources and locale-aware formatters, and verify non-US date-order tests preserve the same local-date attribution and window bounds.
-- [ ] 4.2 Verify windowed versus all-time labels remain explicit in populated, empty, and loading states under both default and non-default locales.
+- [ ] 4.1 Replace `Locale.US`, fixed English casing, and History/Analytics literal labels with default Android resources and locale-aware formatters (no locale-qualified resources or translations), and verify non-US date-order tests assert fallback default English copy with locale-aware formatting while preserving the same local-date attribution and window bounds.
+- [ ] 4.2 Verify windowed versus all-time labels remain explicit in populated, empty, and loading states under both default and non-default locales, with non-default-locale checks asserting fallback English text.
 
 ## 5. Verification
 

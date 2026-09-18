@@ -60,9 +60,9 @@ Library SHALL retain long-press selection as an accelerator and SHALL also provi
 - **WHEN** the player clears selection or leaves Library
 - **THEN** selection mode ends and ordinary game-opening behavior is restored
 
-### Requirement: Library copy follows Android locale resources
-User-visible Library labels, counts, plurals, and formatted values SHALL resolve through Android resources and locale-aware formatting.
+### Requirement: Library copy is externalized with locale-aware formatting
+User-visible Library labels, counts, plurals, and formatted values SHALL resolve through default Android string/plural resources and locale-aware formatting. This change adds no locale-qualified resources or translations; under a non-default locale labels SHALL fall back to the default English copy while counts and dates follow the device locale.
 
-#### Scenario: Localized selection count
-- **WHEN** Library is shown under a supported locale with one or multiple selected games
-- **THEN** the selection count and associated actions use the correct localized quantity forms
+#### Scenario: Non-default locale selection count
+- **WHEN** Library is shown under a non-default locale with one or multiple selected games
+- **THEN** the selection count shows the default English copy with the correct quantity form and locale-aware formatting, without changing filtering or selection behavior
