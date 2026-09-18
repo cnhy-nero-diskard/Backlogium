@@ -21,7 +21,7 @@ Home currently composes an optional full-bleed now-playing panel followed by err
 
 ### 1. Derive a sealed next-action presentation in the ViewModel
 
-Add a `HomeNextAction` presentation model with variants for continuing a Focus game, continuing a collection mission, and choosing a game. Resolve it from existing local flows using a stable priority: most recently played incomplete Focus game; otherwise the first incomplete next game from the first player-ordered collection; otherwise the choose-game fallback. Exclude the currently running game to avoid duplicating now-playing.
+Add a `HomeNextAction` presentation model with variants for continuing a Focus game, continuing a collection mission, and choosing a game. Resolve it from existing local flows using a stable priority: most recently played incomplete Focus game; otherwise the first incomplete next game from the first ordered-queue collection in the player's collection display order (skipping basic, completion-goal, deadline-goal, empty, and completed-queue collections, which expose no `nextUp`); otherwise the choose-game fallback. Exclude the currently running game to avoid duplicating now-playing.
 
 This keeps selection deterministic and testable. A scoring/recommendation engine was rejected because no critique finding justifies new persistence, ranking inputs, or opaque behavior.
 

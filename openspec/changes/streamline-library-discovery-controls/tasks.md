@@ -18,7 +18,7 @@
 
 ## 4. Localized presentation
 
-- [ ] 4.1 Move Library controls, statuses, filter recovery, selection quantities, and dialogs to Android resources, and verify single/plural selection plus combined-filter copy under a non-default locale.
+- [ ] 4.1 Move Library controls, statuses, filter recovery, selection quantities, and dialogs to default Android resources (no locale-qualified resources or translations), and verify single/plural selection plus combined-filter copy assert fallback default English text with locale-aware formatting under a non-default locale.
 - [ ] 4.2 Verify no resource migration changes HLTB candidate identity, Focus membership copy, Family Sharing provenance, or accessibility-expanded XP wording.
 
 ## 5. Verification

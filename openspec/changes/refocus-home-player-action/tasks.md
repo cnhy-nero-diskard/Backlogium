@@ -1,6 +1,6 @@
 ## 1. Next-action presentation model
 
-- [ ] 1.1 Add the sealed Home next-action model and deterministic Focus/collection/fallback selector, and verify unit tests cover priority, incomplete filtering, current-game suppression, and empty inputs.
+- [ ] 1.1 Add the sealed Home next-action model and deterministic Focus/collection/fallback selector, and verify unit tests cover priority, incomplete filtering, ordered-queue-only collection fallback (skipping non-queue, empty, and completed-queue collections without `nextUp`), current-game suppression, and empty inputs.
 - [ ] 1.2 Combine the selector into `HomeUiState` using existing local flows only, and verify a ViewModel test observes updates when Focus, collection order, completion, or live status changes.
 - [ ] 1.3 Add navigation callbacks for next-game, collection, and Library fallback actions, and verify navigation tests resolve each destination without adding a new route type.
 
@@ -20,7 +20,7 @@
 
 - [ ] 4.1 Separate first-load from refresh-with-cached-content presentation, and verify tests cover onboarding takeover, first-load placeholders, retained cached content, updating status, and error recovery.
 - [ ] 4.2 Gate level-up and streak Lottie playback through reduced-motion state while preserving one-shot haptic/event acknowledgement, and verify reduced-motion and ordinary-motion event tests.
-- [ ] 4.3 Move Home labels, plurals, and formatted values to Android resources, and verify a non-default-locale test renders localized quantity/date output without changing selection logic.
+- [ ] 4.3 Move Home labels, plurals, and formatted values to default Android resources (no locale-qualified resources or translations), and verify a non-default-locale test asserts fallback default English copy with locale-aware quantity/date formatting without changing selection logic.
 
 ## 5. Verification
 

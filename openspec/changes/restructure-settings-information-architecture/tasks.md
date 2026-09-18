@@ -20,7 +20,7 @@
 ## 4. Player-facing copy and resources
 
 - [ ] 4.1 Replace first-level technical labels with player-task summaries while retaining exact endpoint/token/dataset/re-file terminology only inside the appropriate detail context, and verify content tests reject sensitive identifiers in overview summaries.
-- [ ] 4.2 Move Settings overview/detail labels, quantities, statuses, and dates to Android resources, and verify a non-default-locale test preserves validation and stored values.
+- [ ] 4.2 Move Settings overview/detail labels, quantities, statuses, and dates to default Android resources (no locale-qualified resources or translations), and verify a non-default-locale test asserts fallback default English copy with locale-aware formatting while preserving validation and stored values.
 
 ## 5. Verification
 
