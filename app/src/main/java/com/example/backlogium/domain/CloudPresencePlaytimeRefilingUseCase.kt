@@ -5,6 +5,7 @@ import com.example.backlogium.data.backup.PassThroughTransactionScope
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.repo.CloudPresenceRefilingBackup
 import com.example.backlogium.data.repo.SettingsRepository
@@ -94,59 +95,186 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
             }
 
             derivedStateWrites.withLock {
-                val changes = findChanges(intervals)
-                val originals = changes.map { it.original }
-                val dailyBefore = if (changes.isEmpty()) emptyList() else dailyProgressDao.getAllOrdered()
-                settings.setCloudPresenceRefilingBackup(
-                    CloudPresenceRefilingBackup(
-                        sessions = originals,
-                        dailyProgress = dailyBefore,
-                    ),
-                )
+                val inProgress = settings.cloudPresenceRefilingBackup()
+                if (inProgress == null) {
+                    val changes = findChanges(intervals)
+                    val originals = changes.map { it.original }
+                    val dailyBefore =
+                        if (changes.isEmpty()) emptyList() else dailyProgressDao.getAllOrdered()
+                    settings.setCloudPresenceRefilingBackup(
+                        CloudPresenceRefilingBackup(
+                            sessions = originals,
+                            dailyProgress = dailyBefore,
+                        ),
+                    )
 
-                if (changes.isEmpty()) {
-                    settings.setCloudPresenceRefilingApplied(true)
-                    return@withLock CloudPresenceRefilingResult(
-                        operation = CloudPresenceRefilingOperation.APPLIED,
+                    if (changes.isEmpty()) {
+                        settings.setCloudPresenceRefilingApplied(true)
+                        return@withLock CloudPresenceRefilingResult(
+                            operation = CloudPresenceRefilingOperation.APPLIED,
+                        )
+                    }
+
+                    val createdIds = commitSessionRefiles(changes)
+                    settings.setCloudPresenceRefilingBackup(
+                        CloudPresenceRefilingBackup(
+                            sessions = originals,
+                            createdSessionIds = createdIds,
+                            dailyProgress = dailyBefore,
+                            createdDailyProgressDates = emptySet(),
+                        ),
+                    )
+                    return@withLock finishApply(originals, createdIds, dailyBefore, changes)
+                }
+
+                if (inProgress.sessions.isEmpty()) {
+                    // No prior mutation could have happened without originals: re-evaluate fresh
+                    // rather than preserving an empty backup that would hide new evidence.
+                    val changes = findChanges(intervals)
+                    val originals = changes.map { it.original }
+                    val dailyBefore =
+                        if (changes.isEmpty()) emptyList() else dailyProgressDao.getAllOrdered()
+                    settings.setCloudPresenceRefilingBackup(
+                        CloudPresenceRefilingBackup(
+                            sessions = originals,
+                            dailyProgress = dailyBefore,
+                        ),
+                    )
+                    if (changes.isEmpty()) {
+                        settings.setCloudPresenceRefilingApplied(true)
+                        return@withLock CloudPresenceRefilingResult(
+                            operation = CloudPresenceRefilingOperation.APPLIED,
+                        )
+                    }
+                    val createdIds = commitSessionRefiles(changes)
+                    settings.setCloudPresenceRefilingBackup(
+                        CloudPresenceRefilingBackup(
+                            sessions = originals,
+                            createdSessionIds = createdIds,
+                            dailyProgress = dailyBefore,
+                            createdDailyProgressDates = emptySet(),
+                        ),
+                    )
+                    return@withLock finishApply(originals, createdIds, dailyBefore, changes)
+                }
+
+                // A previous attempt wrote originals but never marked applied. Never recompute
+                // changes from the current ledger here: after the Room commit it already holds
+                // the re-filed rows, so a fresh diff finds nothing and would overwrite the
+                // useful backup with an empty one, making an exact reversal impossible.
+                val currentById = sessionDao.getAll().associateBy { it.id }
+                val intact = inProgress.sessions.all { original ->
+                    currentById[original.id] == original
+                }
+                if (intact) {
+                    // The Room commit never landed (or rolled back): no mutation to preserve,
+                    // so discarding the stale backup for a fresh diff is safe and also picks
+                    // up any intervals that arrived between attempts.
+                    val changes = findChanges(intervals)
+                    val originals = changes.map { it.original }
+                    val dailyBefore =
+                        if (changes.isEmpty()) emptyList() else dailyProgressDao.getAllOrdered()
+                    settings.setCloudPresenceRefilingBackup(
+                        CloudPresenceRefilingBackup(
+                            sessions = originals,
+                            dailyProgress = dailyBefore,
+                        ),
+                    )
+                    if (changes.isEmpty()) {
+                        settings.setCloudPresenceRefilingApplied(true)
+                        return@withLock CloudPresenceRefilingResult(
+                            operation = CloudPresenceRefilingOperation.APPLIED,
+                        )
+                    }
+                    val createdIds = commitSessionRefiles(changes)
+                    settings.setCloudPresenceRefilingBackup(
+                        CloudPresenceRefilingBackup(
+                            sessions = originals,
+                            createdSessionIds = createdIds,
+                            dailyProgress = dailyBefore,
+                            createdDailyProgressDates = emptySet(),
+                        ),
+                    )
+                    return@withLock finishApply(originals, createdIds, dailyBefore, changes)
+                }
+
+                // The session commit landed atomically; the crash came after. Recover the
+                // created ids from the expected splits rather than trusting a backup that may
+                // predate them, then re-run the idempotent recompute to completion.
+                // Assumes no other ledger writer interleaved between attempts: retries are
+                // user-initiated and prompt, and the locks exclude syncs during each attempt.
+                val ownedIds = gameDao.getAll()
+                    .asSequence()
+                    .filter { it.source == GameSource.STEAM_OWNED }
+                    .map { it.appId }
+                    .toSet()
+                val expectedByOriginal = cloudPresenceSessionRefiles(
+                    inProgress.sessions,
+                    ownedIds,
+                    intervals,
+                ).associateBy { it.original.id }
+                val originalIds = inProgress.sessions.map { it.id }.toSet()
+                val currentSessions = sessionDao.getAll()
+                val usedIds = mutableSetOf<Long>()
+                val recoveredIds = mutableSetOf<Long>()
+                for (original in inProgress.sessions) {
+                    val current = currentById[original.id]
+                        ?: throw IllegalStateException(
+                            "Cloud re-filing resume found no session for backup id ${original.id}",
+                        )
+                    if (current == original) {
+                        throw IllegalStateException(
+                            "Cloud re-filing resume found a partially applied ledger",
+                        )
+                    }
+                    val expected = expectedByOriginal[original.id]
+                        ?: throw IllegalStateException(
+                            "Cloud re-filing resume no longer places backup id ${original.id}",
+                        )
+                    val first = expected.replacement.first()
+                    if (current.appId != first.appId || current.startAt != first.startAt ||
+                        current.endAt != first.endAt || current.minutes != first.minutes ||
+                        current.open
+                    ) {
+                        throw IllegalStateException(
+                            "Cloud re-filing resume found unexpected content for id ${original.id}",
+                        )
+                    }
+                    for (split in expected.replacement.drop(1)) {
+                        val match = currentSessions.firstOrNull { candidate ->
+                            candidate.id !in originalIds && candidate.id !in usedIds &&
+                                candidate.appId == split.appId &&
+                                candidate.startAt == split.startAt &&
+                                candidate.endAt == split.endAt &&
+                                candidate.minutes == split.minutes && !candidate.open
+                        } ?: throw IllegalStateException(
+                            "Cloud re-filing resume found no split for backup id ${original.id}",
+                        )
+                        recoveredIds += match.id
+                        usedIds += match.id
+                    }
+                }
+                if (inProgress.createdSessionIds.isNotEmpty() &&
+                    recoveredIds != inProgress.createdSessionIds
+                ) {
+                    throw IllegalStateException(
+                        "Cloud re-filing resume disagrees with the stored created ids",
                     )
                 }
-
-                val createdIds = transaction.run {
-                    changes.flatMap { change ->
-                        sessionDao.update(change.replacement.first().copy(id = change.original.id))
-                        change.replacement.drop(1).map { replacement ->
-                            sessionDao.insert(replacement.copy(id = 0L))
-                        }
-                    }.toSet()
+                val originals = inProgress.sessions
+                val dailyBefore = inProgress.dailyProgress
+                settings.setCloudPresenceRefilingBackup(
+                    CloudPresenceRefilingBackup(
+                        sessions = originals,
+                        createdSessionIds = recoveredIds,
+                        dailyProgress = dailyBefore,
+                        createdDailyProgressDates = inProgress.createdDailyProgressDates,
+                    ),
+                )
+                val changes = expectedByOriginal.values.map { refile ->
+                    Change(refile.original, refile.replacement)
                 }
-                settings.setCloudPresenceRefilingBackup(
-                    CloudPresenceRefilingBackup(
-                        sessions = originals,
-                        createdSessionIds = createdIds,
-                        dailyProgress = dailyBefore,
-                        createdDailyProgressDates = emptySet(),
-                    ),
-                )
-                val recomputedDates = recompute()
-                val createdDailyDates = dailyProgressDao.getAllOrdered()
-                    .map { it.date }
-                    .toSet() - dailyBefore.map { it.date }.toSet()
-                settings.setCloudPresenceRefilingBackup(
-                    CloudPresenceRefilingBackup(
-                        sessions = originals,
-                        createdSessionIds = createdIds,
-                        dailyProgress = dailyBefore,
-                        createdDailyProgressDates = createdDailyDates,
-                    ),
-                )
-                settings.setCloudPresenceRefilingApplied(true)
-                CloudPresenceRefilingResult(
-                    operation = CloudPresenceRefilingOperation.APPLIED,
-                    sessionsRefiled = changes.size,
-                    datesAffected = (changes.flatMap { change ->
-                        (listOf(change.original) + change.replacement).map(::dateOf)
-                    } + recomputedDates).toSet(),
-                )
+                return@withLock finishApply(originals, recoveredIds, dailyBefore, changes)
             }
         }
 
@@ -181,6 +309,44 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                 datesAffected = affectedDates,
             )
         }
+    }
+
+    private suspend fun commitSessionRefiles(changes: List<Change>): Set<Long> =
+        transaction.run {
+            changes.flatMap { change ->
+                sessionDao.update(change.replacement.first().copy(id = change.original.id))
+                change.replacement.drop(1).map { replacement ->
+                    sessionDao.insert(replacement.copy(id = 0L))
+                }
+            }.toSet()
+        }
+
+    private suspend fun finishApply(
+        originals: List<Session>,
+        createdIds: Set<Long>,
+        dailyBefore: List<DailyProgress>,
+        changes: List<Change>,
+    ): CloudPresenceRefilingResult {
+        val recomputedDates = recompute()
+        val createdDailyDates = dailyProgressDao.getAllOrdered()
+            .map { it.date }
+            .toSet() - dailyBefore.map { it.date }.toSet()
+        settings.setCloudPresenceRefilingBackup(
+            CloudPresenceRefilingBackup(
+                sessions = originals,
+                createdSessionIds = createdIds,
+                dailyProgress = dailyBefore,
+                createdDailyProgressDates = createdDailyDates,
+            ),
+        )
+        settings.setCloudPresenceRefilingApplied(true)
+        return CloudPresenceRefilingResult(
+            operation = CloudPresenceRefilingOperation.APPLIED,
+            sessionsRefiled = changes.size,
+            datesAffected = (changes.flatMap { change ->
+                (listOf(change.original) + change.replacement).map(::dateOf)
+            } + recomputedDates).toSet(),
+        )
     }
 
     private suspend fun findChanges(intervals: List<CloudPresenceInterval>): List<Change> {

@@ -519,7 +519,7 @@ class SettingsViewModel @Inject constructor(
             cloudMessage.value = null
             cloudRefilingMessage.value = null
             try {
-                when (val read = cloudPresence.read(
+                when (val read = cloudPresence.readCompleteHistory(
                     trigger = CloudReadTrigger.SETTINGS_MANUAL,
                     consume = cloudPresenceIngestor::ingest,
                 )) {
@@ -533,15 +533,10 @@ class SettingsViewModel @Inject constructor(
                         cloudRefilingMessage.value = read.failure.cloudMessage()
                     }
                     is CloudReadResult.Success -> {
-                        if (read.snapshot.hasMore) {
-                            cloudRefilingMessage.value =
-                                "Read again to complete cloud history before re-filing."
-                        } else {
-                            val result = cloudPresenceRefiling.apply(read.snapshot.intervals)
-                            cloudRefilingMessage.value = result.describe()
-                            if (result.operation == CloudPresenceRefilingOperation.APPLIED) {
-                                _hapticIntents.tryEmit(HapticIntent.Confirm)
-                            }
+                        val result = cloudPresenceRefiling.apply(read.snapshot.intervals)
+                        cloudRefilingMessage.value = result.describe()
+                        if (result.operation == CloudPresenceRefilingOperation.APPLIED) {
+                            _hapticIntents.tryEmit(HapticIntent.Confirm)
                         }
                     }
                 }

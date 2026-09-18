@@ -20,6 +20,7 @@ import kotlinx.coroutines.test.runTest
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -283,6 +284,109 @@ class CloudPresenceRepositoryTest {
         assertTrue(boundaryInterval != null)
         assertEquals(20L, boundaryInterval!!.appId)
         assertEquals(java.time.Instant.parse(last).toEpochMilli(), boundaryInterval.endAt)
+        assertEquals(last, settings.cloudReadPosition.first())
+    }
+
+    @Test
+    fun readCompleteHistoryAccumulatesOwnedIntervalsAcrossPages() = runBlocking {
+        val first = "2026-09-15T00:00:00Z"
+        val boundary = "2026-09-15T00:10:00Z"
+        val last = "2026-09-15T00:20:00Z"
+        val page1 = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = first,
+                    gameid = "10",
+                    gameName = "Portal",
+                    personastate = 1,
+                ),
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = boundary,
+                    prevLastObservedAt = "2026-09-15T00:09:00Z",
+                    gameid = "20",
+                    gameName = "Other",
+                    personastate = 1,
+                ),
+            ),
+            current = CloudPresenceCurrentDto(
+                v = 2,
+                lastObservedAt = "2026-09-15T01:00:00Z",
+                gameid = "20",
+                gameName = "Other",
+                personastate = 1,
+            ),
+            nextPosition = boundary,
+            hasMore = true,
+            windowStart = first,
+            windowEnd = boundary,
+            readAt = "2026-09-15T00:11:00Z",
+        )
+        val page2 = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = boundary,
+                    prevLastObservedAt = "2026-09-15T00:09:00Z",
+                    gameid = "20",
+                    gameName = "Other",
+                    personastate = 1,
+                ),
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = last,
+                    prevLastObservedAt = "2026-09-15T00:19:00Z",
+                    gameid = "30",
+                    gameName = "Third",
+                    personastate = 1,
+                ),
+            ),
+            current = null,
+            nextPosition = last,
+            hasMore = false,
+            windowStart = first,
+            windowEnd = last,
+            readAt = "2026-09-15T00:21:00Z",
+        )
+        val requests = mutableListOf<String?>()
+        val api = object : CloudPresenceApi {
+            override suspend fun read(
+                endpoint: String,
+                authorization: String,
+                position: String?,
+            ): CloudPresenceResponseDto {
+                requests += position
+                return if (position == null) page1 else page2
+            }
+        }
+        val store = FakeCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+        )
+        val records = FakeCloudReadDao()
+        val settings = FakeSettingsRepository()
+        // Simulate prior single-page reads that advanced the cursor past the first page:
+        // its owned intervals were discarded by the per-page consumer, and only the final
+        // page would remain for a one-shot apply. The drain must restart from the
+        // beginning so the complete history reaches the re-file.
+        settings.setCloudReadPosition(first)
+        val repository = repository(api, store, records, settings, ACCOUNT)
+
+        val consumed = mutableListOf<CloudPresenceSnapshot>()
+        val result = repository.readCompleteHistory(consume = { consumed += it })
+
+        assertTrue(result is CloudReadResult.Success)
+        val combined = (result as CloudReadResult.Success).snapshot
+        assertFalse(combined.hasMore)
+        // Both pages' intervals survive: a terminal-page-only apply would hold just the
+        // boundary interval and mark the sweep applied with the first page's rows missing.
+        assertEquals(listOf(10L, 20L), combined.intervals.map { it.appId })
+        assertEquals(4, combined.observationCount)
+        assertEquals(2, consumed.size)
+        assertEquals(2, requests.size)
+        assertNull(requests[0])
         assertEquals(last, settings.cloudReadPosition.first())
     }
 

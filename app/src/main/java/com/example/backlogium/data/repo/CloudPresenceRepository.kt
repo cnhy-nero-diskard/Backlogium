@@ -283,6 +283,63 @@ class CloudPresenceRepository @Inject constructor(
         }
     }
 
+    /**
+     * Drains the pending cloud history for the one-time historical re-file.
+     *
+     * A single [read] returns one page and advances the watermark, so earlier pages would be
+     * consumed by the per-page ingest (family-shared sessions) while the owned-game intervals
+     * the re-file needs are discarded. Starting from the beginning and accumulating every
+     * page's intervals recovers that evidence, including pages a prior single-page read
+     * already consumed: the ingest watermark is kept, so re-read pages are skipped for
+     * family-shared derivation rather than double-credited. A mid-drain failure returns the
+     * failure without applying anything partial; the next attempt restarts from the beginning,
+     * so no page is lost to a partially advanced watermark.
+     */
+    suspend fun readCompleteHistory(
+        trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
+        consume: suspend (CloudPresenceSnapshot) -> Unit = {},
+    ): CloudReadResult {
+        // Peek before the destructive reset so an unconfigured app or a missing Steam account
+        // does not discard the watermark it never needed to move.
+        if (credentialsStore.readCloudCredentials() == null) return CloudReadResult.Unconfigured
+        if (credentialsProvider.currentCredentials()?.steamId == null) {
+            return CloudReadResult.NoSteamAccount
+        }
+        settings.clearCloudReadPosition()
+        val allIntervals = mutableListOf<CloudPresenceInterval>()
+        var totalObservations = 0
+        var firstWindowStart: Long? = null
+        repeat(MAX_REFILE_PAGES) {
+            when (val result = read(trigger, consume)) {
+                is CloudReadResult.Unconfigured,
+                is CloudReadResult.NoSteamAccount,
+                is CloudReadResult.Failed,
+                -> return result
+                is CloudReadResult.Success -> {
+                    val snapshot = result.snapshot
+                    if (firstWindowStart == null) firstWindowStart = snapshot.windowStart
+                    allIntervals += snapshot.intervals
+                    totalObservations += snapshot.observationCount
+                    if (!snapshot.hasMore) {
+                        val combined = snapshot.copy(
+                            windowStart = firstWindowStart ?: snapshot.windowStart,
+                            intervals = allIntervals.sortedWith(
+                                compareBy(
+                                    { interval -> interval.startAt },
+                                    { interval -> interval.endAt ?: Long.MAX_VALUE },
+                                ),
+                            ),
+                            observationCount = totalObservations,
+                            hasMore = false,
+                        )
+                        return CloudReadResult.Success(combined)
+                    }
+                }
+            }
+        }
+        return CloudReadResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+    }
+
     suspend fun removeConfiguration() {
         cloudStateMutex.withLock {
             // Invalidate in-flight reads so a late response cannot repopulate after removal.
@@ -508,6 +565,9 @@ class CloudPresenceRepository @Inject constructor(
 
     companion object {
         private const val MAX_DIAGNOSTIC_RECORDS = 200
+        // Bounds a re-file drain so a server that keeps reporting more never hangs the caller:
+        // exceeding it surfaces as a failure rather than applying a partial history.
+        private const val MAX_REFILE_PAGES = 50
 
         fun normalizeEndpoint(raw: String): String? {
             val endpoint = raw.trim()
