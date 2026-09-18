@@ -24,4 +24,9 @@ class CloudPresenceDisclosureTest {
         assertTrue(observedCoverageRemedy(false, true).contains("background presence"))
         assertTrue(observedCoverageRemedy(true, true).isEmpty())
     }
+
+    @Test fun refileDisclosureLimitsItsImpactToAttribution() {
+        assertTrue(CLOUD_PRESENCE_REFILING_DISCLOSURE.contains("Dates, quests, and streaks may change"))
+        assertTrue(CLOUD_PRESENCE_REFILING_DISCLOSURE.contains("Experience, levels, and total playtime will not"))
+    }
 }

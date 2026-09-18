@@ -37,6 +37,8 @@ enum class CloudReadTrigger {
     SETTINGS_VERIFICATION,
     SETTINGS_MANUAL,
     DIAGNOSTICS,
+    SYNC,
+    POST_PLAY,
 }
 
 enum class CloudReadFailure {
@@ -116,6 +118,19 @@ class CloudPresenceRepository @Inject constructor(
     // Serializes post-fetch persistence against invalidation/removal. The fetch itself
     // stays outside the lock so an account switch never blocks on the network.
     private val cloudStateMutex = Mutex()
+    // Serializes every read sharing the durable cloudReadPosition: a single page read
+    // against the historical drain's reset plus paginated drain, and against a successful
+    // verification's promotion. The drain resets the watermark and then advances it page
+    // by page, so an ordinary placement read (Steam sync/post-play) interleaving between
+    // pages would consume a page the drain then skips, permanently losing it when a later
+    // terminal page completes the drain. A verification interleaving between drain pages
+    // is worse: it clears both positions and persists its own nextPosition, so the
+    // drain's next page resumes from the new sequence while its accumulator still holds
+    // the old sequence's pages, duplicating/skipping history under the original
+    // firstWindowStart. Held across the whole drain, including network fetches, and
+    // across verification promotion, so the concurrent party waits instead of mixing
+    // generations. Outer to cloudStateMutex everywhere.
+    private val cloudReadSequenceMutex = Mutex()
 
     val configuration: Flow<CloudPresenceConfiguration?> =
         configurationState.onStart {
@@ -167,28 +182,39 @@ class CloudPresenceRepository @Inject constructor(
         val generationAtStart = capture.generation
 
         return when (val result = fetch(normalizedEndpoint, normalizedToken, account, null)) {
-            is RemoteReadResult.Success -> cloudStateMutex.withLock {
-                val current = credentialsProvider.currentCredentials()?.steamId
-                if (generationAtStart != accountGeneration.get() || current != account) {
-                    // The account changed while verifying: A's endpoint must not become B's
-                    // configuration, and B's watermark must not be cleared. Report against the
-                    // current account without persisting anything. The identity check covers a
-                    // read that started after invalidation but before the new Steam identity
-                    // was committed/visible, where the generation alone still matches.
-                    if (current == null) {
-                        return@withLock CloudConfigurationResult.NoSteamAccount
+            // Promotion holds the read-sequence mutex outer to the account-state mutex, like
+            // every drain page: it clears both positions and persists the verification
+            // response's nextPosition, so completing between drain pages would otherwise let
+            // the drain's next page resume from the new sequence while its accumulator still
+            // holds the old sequence's pages. The fetch stays outside both locks so a drain
+            // never blocks verification's network; only promotion waits for the terminal
+            // watermark, and drains wait for promotion.
+            is RemoteReadResult.Success -> cloudReadSequenceMutex.withLock {
+                cloudStateMutex.withLock {
+                    val current = credentialsProvider.currentCredentials()?.steamId
+                    if (generationAtStart != accountGeneration.get() || current != account) {
+                        // The account changed while verifying: A's endpoint must not become B's
+                        // configuration, and B's watermark must not be cleared. Report against the
+                        // current account without persisting anything. The identity check covers a
+                        // read that started after invalidation but before the new Steam identity
+                        // was committed/visible, where the generation alone still matches.
+                        if (current == null) {
+                            CloudConfigurationResult.NoSteamAccount
+                        } else {
+                            CloudConfigurationResult.AccountMismatch(current, result.parsed.account)
+                        }
+                    } else {
+                        settings.clearCloudReadPosition()
+                        settings.clearCloudIngestPosition()
+                        consume(result.parsed.toSnapshot())
+                        persistVerifiedConfiguration(
+                            credentials = CloudCredentials(normalizedEndpoint, normalizedToken),
+                            trigger = CloudReadTrigger.SETTINGS_VERIFICATION,
+                            parsed = result.parsed,
+                        )
+                        CloudConfigurationResult.Saved
                     }
-                    return@withLock CloudConfigurationResult.AccountMismatch(current, result.parsed.account)
                 }
-                settings.clearCloudReadPosition()
-                settings.clearCloudIngestPosition()
-                consume(result.parsed.toSnapshot())
-                persistVerifiedConfiguration(
-                    credentials = CloudCredentials(normalizedEndpoint, normalizedToken),
-                    trigger = CloudReadTrigger.SETTINGS_VERIFICATION,
-                    parsed = result.parsed,
-                )
-                CloudConfigurationResult.Saved
             }
             is RemoteReadResult.AccountMismatch -> cloudStateMutex.withLock {
                 val current = credentialsProvider.currentCredentials()?.steamId
@@ -222,6 +248,18 @@ class CloudPresenceRepository @Inject constructor(
     }
 
     suspend fun read(
+        trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
+        consume: suspend (CloudPresenceSnapshot) -> Unit = {},
+    ): CloudReadResult = cloudReadSequenceMutex.withLock {
+        readPage(trigger, consume)
+    }
+
+    /**
+     * Single-page read without acquiring [cloudReadSequenceMutex]: the caller must hold it.
+     * Ordinary [read] holds it for one page; [readCompleteHistory] and [readRemainingHistory]
+     * hold it across every page so no other read can advance the shared watermark mid-drain.
+     */
+    private suspend fun readPage(
         trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
         consume: suspend (CloudPresenceSnapshot) -> Unit = {},
     ): CloudReadResult {
@@ -279,6 +317,132 @@ class CloudPresenceRepository @Inject constructor(
                 CloudReadResult.Failed(result.failure)
             }
         }
+    }
+
+    /**
+     * Drains the pending cloud history for the one-time historical re-file.
+     *
+     * A single [read] returns one page and advances the watermark, so earlier pages would be
+     * consumed by the per-page ingest (family-shared sessions) while the owned-game intervals
+     * the re-file needs are discarded. Starting from the beginning and accumulating every
+     * page's intervals recovers that evidence, including pages a prior single-page read
+     * already consumed: the ingest watermark is kept, so re-read pages are skipped for
+     * family-shared derivation rather than double-credited. A mid-drain failure returns the
+     * failure without applying anything partial; the next attempt restarts from the beginning,
+     * so no page is lost to a partially advanced watermark.
+     *
+     * Holds [cloudReadSequenceMutex] across the reset plus every page, so an ordinary
+     * placement read cannot advance the shared watermark between drain pages and steal a
+     * page the drain then skips, and so a successful verification cannot clear the
+     * watermark and persist its own nextPosition between drain pages and mix generations.
+     */
+    suspend fun readCompleteHistory(
+        trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
+        consume: suspend (CloudPresenceSnapshot) -> Unit = {},
+    ): CloudReadResult = cloudReadSequenceMutex.withLock {
+        // Peek before the destructive reset so an unconfigured app or a missing Steam account
+        // does not discard the watermark it never needed to move.
+        if (credentialsStore.readCloudCredentials() == null) {
+            return@withLock CloudReadResult.Unconfigured
+        }
+        if (credentialsProvider.currentCredentials()?.steamId == null) {
+            return@withLock CloudReadResult.NoSteamAccount
+        }
+        settings.clearCloudReadPosition()
+        val allIntervals = mutableListOf<CloudPresenceInterval>()
+        var totalObservations = 0
+        var firstWindowStart: Long? = null
+        repeat(MAX_REFILE_PAGES) {
+            when (val result = readPage(trigger, consume)) {
+                is CloudReadResult.Unconfigured,
+                is CloudReadResult.NoSteamAccount,
+                is CloudReadResult.Failed,
+                -> return@withLock result
+                is CloudReadResult.Success -> {
+                    val snapshot = result.snapshot
+                    if (firstWindowStart == null) firstWindowStart = snapshot.windowStart
+                    allIntervals += snapshot.intervals
+                    totalObservations += snapshot.observationCount
+                    if (!snapshot.hasMore) {
+                        val combined = snapshot.copy(
+                            windowStart = firstWindowStart ?: snapshot.windowStart,
+                            intervals = allIntervals.sortedWith(
+                                compareBy(
+                                    { interval -> interval.startAt },
+                                    { interval -> interval.endAt ?: Long.MAX_VALUE },
+                                ),
+                            ),
+                            observationCount = totalObservations,
+                            hasMore = false,
+                        )
+                        return@withLock CloudReadResult.Success(combined)
+                    }
+                }
+            }
+        }
+        return@withLock CloudReadResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+    }
+
+    /**
+     * Drains the still-unread cloud history forward from the current watermark without resetting
+     * it, for callers that must place a diff earned over a window they did not observe.
+     *
+     * A single [read] returns one page: returning that page as placement evidence would
+     * distribute the whole Steam delta across a suffix when the cursor was already advanced
+     * inside the diff window, and discarding a page with `hasMore` after [read] already
+     * persisted its cursor would lose it once the Steam baseline advances past the delta.
+     * Accumulating every unread page recovers the suffix without losing earlier pages of this
+     * drain; the caller still refuses placement unless the first page starts at or before its
+     * diff window. Shared-game ingest runs per page through [consume], so no page is lost to
+     * that mechanism either.
+     *
+     * Holds [cloudReadSequenceMutex] across every page, so the historical re-file drain cannot
+     * reset the watermark between these pages and steal one this drain then skips, and vice
+     * versa, and so a successful verification cannot clear the watermark and persist its
+     * own nextPosition between these pages and mix generations.
+     */
+    suspend fun readRemainingHistory(
+        trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
+        consume: suspend (CloudPresenceSnapshot) -> Unit = {},
+    ): CloudReadResult = cloudReadSequenceMutex.withLock {
+        if (credentialsStore.readCloudCredentials() == null) {
+            return@withLock CloudReadResult.Unconfigured
+        }
+        if (credentialsProvider.currentCredentials()?.steamId == null) {
+            return@withLock CloudReadResult.NoSteamAccount
+        }
+        val allIntervals = mutableListOf<CloudPresenceInterval>()
+        var totalObservations = 0
+        var firstWindowStart: Long? = null
+        repeat(MAX_REFILE_PAGES) {
+            when (val result = readPage(trigger, consume)) {
+                is CloudReadResult.Unconfigured,
+                is CloudReadResult.NoSteamAccount,
+                is CloudReadResult.Failed,
+                -> return@withLock result
+                is CloudReadResult.Success -> {
+                    val snapshot = result.snapshot
+                    if (firstWindowStart == null) firstWindowStart = snapshot.windowStart
+                    allIntervals += snapshot.intervals
+                    totalObservations += snapshot.observationCount
+                    if (!snapshot.hasMore) {
+                        val combined = snapshot.copy(
+                            windowStart = firstWindowStart ?: snapshot.windowStart,
+                            intervals = allIntervals.sortedWith(
+                                compareBy(
+                                    { interval -> interval.startAt },
+                                    { interval -> interval.endAt ?: Long.MAX_VALUE },
+                                ),
+                            ),
+                            observationCount = totalObservations,
+                            hasMore = false,
+                        )
+                        return@withLock CloudReadResult.Success(combined)
+                    }
+                }
+            }
+        }
+        return@withLock CloudReadResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
     }
 
     suspend fun removeConfiguration() {
@@ -506,6 +670,9 @@ class CloudPresenceRepository @Inject constructor(
 
     companion object {
         private const val MAX_DIAGNOSTIC_RECORDS = 200
+        // Bounds a re-file drain so a server that keeps reporting more never hangs the caller:
+        // exceeding it surfaces as a failure rather than applying a partial history.
+        private const val MAX_REFILE_PAGES = 50
 
         fun normalizeEndpoint(raw: String): String? {
             val endpoint = raw.trim()

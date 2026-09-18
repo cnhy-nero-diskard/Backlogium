@@ -55,4 +55,7 @@ interface DailyProgressDao {
 
     @Query("DELETE FROM daily_progress")
     suspend fun deleteAll()
+
+    @Query("DELETE FROM daily_progress WHERE date = :date")
+    suspend fun deleteByDate(date: String)
 }

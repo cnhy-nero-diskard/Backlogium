@@ -33,6 +33,9 @@ import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.dto.StoreItemsResponse
 import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.data.repo.CredentialsProvider
+import com.example.backlogium.data.repo.CloudPresencePlacementReader
+import com.example.backlogium.data.repo.CloudPresenceSnapshot
+import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.PlaySessionEnd
 import com.example.backlogium.data.repo.PlaySessionEndPublisher
@@ -41,6 +44,9 @@ import com.example.backlogium.data.repo.SessionActionWriter
 import com.example.backlogium.data.repo.SessionEndOutbox
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.CloudCoverageState
+import com.example.backlogium.domain.CloudPresenceInterval
+import com.example.backlogium.domain.CloudPresencePlaytimePlacement
 import com.example.backlogium.domain.PlaytimeObservationCommitter
 import com.example.backlogium.domain.PostPlayGenerations
 import com.example.backlogium.domain.SessionDiffer
@@ -157,6 +163,131 @@ class PostPlaySyncWorkerTest {
 
         // Terminating the chain is the absence of an action: nothing to cancel, nothing appended.
         assertEquals(0, pendingAttempts())
+    }
+
+    @Test
+    fun `long-gap targeted fetch uses cloud placement without moving supplied play instant`() = runTest {
+        val longGapStart = sessionEndAt - CloudPresencePlaytimePlacement.MINIMUM_PLACEMENT_PERIOD_MILLIS
+        seedLibrary(playtime = 100, syncAt = longGapStart)
+        generations.set(APP_ID, 1L)
+        steamApi.answer = observation(playtimeForever = 130)
+        var trigger: CloudReadTrigger? = null
+        var periodStart: Long? = null
+        var periodEnd: Long? = null
+        val reader = CloudPresencePlacementReader { received, startAt, endAt ->
+            trigger = received
+            periodStart = startAt
+            periodEnd = endAt
+            CloudPresenceSnapshot(
+                windowStart = longGapStart,
+                windowEnd = sessionEndAt,
+                readAt = sessionEndAt,
+                intervals = listOf(
+                    CloudPresenceInterval(
+                        appId = APP_ID,
+                        gameName = "Portal",
+                        startAt = longGapStart,
+                        endAt = sessionEndAt,
+                        ongoing = false,
+                        coverage = CloudCoverageState.CONTINUOUS,
+                        observedUntil = null,
+                        coverageLapseFrom = null,
+                        coverageLapseRecoveredAt = null,
+                        mayHaveStartedBefore = false,
+                    ),
+                ),
+                current = null,
+                observationCount = 1,
+                nextPosition = null,
+                hasMore = false,
+            )
+        }
+
+        runAttempt(attempt = 0, placementReader = reader)
+
+        val session = db.sessionDao().getAll().single()
+        assertEquals(CloudReadTrigger.POST_PLAY, trigger)
+        assertEquals(longGapStart, periodStart)
+        assertEquals(sessionEndAt, periodEnd)
+        assertEquals(longGapStart, session.startAt)
+        assertEquals("the target fetch's supplied instant remains authoritative", sessionEndAt, session.endAt)
+    }
+
+    @Test
+    fun `long-gap targeted fetch still succeeds when optional reader fails`() = runTest {
+        val longGapStart = sessionEndAt - CloudPresencePlaytimePlacement.MINIMUM_PLACEMENT_PERIOD_MILLIS
+        seedLibrary(playtime = 100, syncAt = longGapStart)
+        generations.set(APP_ID, 1L)
+        steamApi.answer = observation(playtimeForever = 130)
+        var reads = 0
+        val reader = CloudPresencePlacementReader { _, _, _ ->
+            reads++
+            error("simulated unavailable reader")
+        }
+
+        val result = runAttempt(attempt = 0, placementReader = reader)
+
+        assertTrue(result is ListenableWorker.Result.Success)
+        assertEquals(1, reads)
+        assertEquals(30, db.sessionDao().getAll().single().minutes)
+    }
+
+    @Test
+    fun `short targeted fetch does not consult the optional placement reader`() = runTest {
+        val shortGapStart = sessionEndAt - 5L * 60 * 1_000
+        seedLibrary(playtime = 100, syncAt = shortGapStart)
+        generations.set(APP_ID, 1L)
+        steamApi.answer = observation(playtimeForever = 110)
+        var reads = 0
+        val reader = CloudPresencePlacementReader { _, _, _ ->
+            reads++
+            null
+        }
+
+        runAttempt(attempt = 0, placementReader = reader)
+
+        assertEquals(0, reads)
+        assertEquals(shortGapStart, db.sessionDao().getAll().single().startAt)
+    }
+
+    @Test
+    fun `rejected placement evidence falls back to the full delta and its original date`() = runTest {
+        val oldStart = Instant.parse("2026-07-26T23:50:00Z").toEpochMilli()
+        seedLibrary(playtime = 100, syncAt = oldStart)
+        generations.set(APP_ID, 1L)
+        steamApi.answer = observation(playtimeForever = 130)
+        val reader = CloudPresencePlacementReader { _, _, _ ->
+            CloudPresenceSnapshot(
+                windowStart = oldStart,
+                windowEnd = sessionEndAt,
+                readAt = sessionEndAt,
+                intervals = listOf(
+                    CloudPresenceInterval(
+                        appId = APP_ID,
+                        gameName = "Portal",
+                        startAt = oldStart,
+                        endAt = sessionEndAt,
+                        ongoing = false,
+                        coverage = CloudCoverageState.OBSERVED_UNTIL,
+                        observedUntil = sessionEndAt,
+                        coverageLapseFrom = oldStart,
+                        coverageLapseRecoveredAt = oldStart + 11L * 60 * 1_000,
+                        mayHaveStartedBefore = false,
+                    ),
+                ),
+                current = null,
+                observationCount = 1,
+                nextPosition = null,
+                hasMore = false,
+            )
+        }
+
+        runAttempt(attempt = 0, placementReader = reader)
+
+        val session = db.sessionDao().getAll().single()
+        assertEquals(30, session.minutes)
+        assertEquals(oldStart, session.startAt)
+        assertEquals(30, db.dailyProgressDao().getByDate("2026-07-26")?.minutesPlayed)
     }
 
     @Test
@@ -403,10 +534,21 @@ class PostPlaySyncWorkerTest {
         )
     }
 
-    private suspend fun runAttempt(attempt: Int, generation: Long = 1L): ListenableWorker.Result =
-        buildWorker(attempt = attempt, generation = generation).doWork()
+    private suspend fun runAttempt(
+        attempt: Int,
+        generation: Long = 1L,
+        placementReader: CloudPresencePlacementReader = CloudPresencePlacementReader { _, _, _ -> null },
+    ): ListenableWorker.Result = buildWorker(
+        attempt = attempt,
+        generation = generation,
+        placementReader = placementReader,
+    ).doWork()
 
-    private fun buildWorker(attempt: Int, generation: Long): PostPlaySyncWorker {
+    private fun buildWorker(
+        attempt: Int,
+        generation: Long,
+        placementReader: CloudPresencePlacementReader = CloudPresencePlacementReader { _, _, _ -> null },
+    ): PostPlaySyncWorker {
         val factory = object : WorkerFactory() {
             override fun createWorker(
                 appContext: Context,
@@ -440,6 +582,7 @@ class PostPlaySyncWorkerTest {
                 syncCoordinator = SteamSyncCoordinator(),
                 credentials = credentials,
                 accountChangeMarker = accountChangeMarker,
+                cloudPresencePlacementReader = placementReader,
             )
         }
         return TestListenableWorkerBuilder<PostPlaySyncWorker>(
@@ -471,7 +614,7 @@ class PostPlaySyncWorkerTest {
     )
 
     /** A library with one game already baselined, and a poll history to diff against. */
-    private suspend fun seedLibrary(playtime: Int) {
+    private suspend fun seedLibrary(playtime: Int, syncAt: Long = lastSyncAt) {
         db.gameDao().upsert(
             Game(
                 appId = APP_ID,
@@ -483,7 +626,7 @@ class PostPlaySyncWorkerTest {
             ),
         )
         db.playerProfileDao().insertIfMissing()
-        db.playerProfileDao().updateSyncStatus(lastSyncAt = lastSyncAt, lastSyncError = null)
+        db.playerProfileDao().updateSyncStatus(lastSyncAt = syncAt, lastSyncError = null)
     }
 
     /** Attempts sitting in WorkManager for this game — successors that were actually appended. */

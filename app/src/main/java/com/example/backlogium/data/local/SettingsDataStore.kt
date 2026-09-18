@@ -21,8 +21,11 @@ import com.example.backlogium.domain.PendingTransition
 import com.example.backlogium.domain.ProgressMarks
 import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.VersionedRuleConfig
+import com.example.backlogium.data.local.entity.DailyProgress
+import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.librarySortDirectionOrNull
 import com.example.backlogium.domain.librarySortKeyOrNull
+import com.example.backlogium.data.repo.CloudPresenceRefilingBackup
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -110,6 +113,11 @@ class SettingsDataStore @Inject constructor(
             booleanPreferencesKey("diagnostic_identifiers_normalized")
 
         val CLOUD_INGEST_POSITION = stringPreferencesKey("cloud_ingest_position")
+        val CLOUD_REFILE_APPLIED = booleanPreferencesKey("cloud_presence_refiling_applied")
+        val CLOUD_REFILE_BACKUP = stringSetPreferencesKey("cloud_presence_refiling_backup")
+        val CLOUD_REFILE_CREATED_IDS = stringSetPreferencesKey("cloud_presence_refiling_created_ids")
+        val CLOUD_REFILE_DAILY_BACKUP = stringSetPreferencesKey("cloud_presence_refiling_daily_backup")
+        val CLOUD_REFILE_DAILY_CREATED_DATES = stringSetPreferencesKey("cloud_presence_refiling_daily_created_dates")
 
         // Progress-event presentation state, not user-editable settings. These marks are the
         // durable acknowledgement baseline and intentionally live in DataStore, not Room.
@@ -478,6 +486,74 @@ class SettingsDataStore @Inject constructor(
         }
     }
 
+    /** Whether the one-time cloud-presence historical refile has completed. */
+    val cloudPresenceRefilingAppliedFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.CLOUD_REFILE_APPLIED] ?: false
+    }
+
+    suspend fun setCloudPresenceRefilingApplied(applied: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CLOUD_REFILE_APPLIED] = applied
+        }
+    }
+
+    suspend fun cloudPresenceRefilingBackup(): CloudPresenceRefilingBackup? {
+        val prefs = context.dataStore.data.first()
+        val encoded = prefs[Keys.CLOUD_REFILE_BACKUP].orEmpty()
+        val createdIds = prefs[Keys.CLOUD_REFILE_CREATED_IDS].orEmpty()
+            .mapNotNull(String::toLongOrNull)
+            .toSet()
+        val dailyEncoded = prefs[Keys.CLOUD_REFILE_DAILY_BACKUP].orEmpty()
+        val createdDates = prefs[Keys.CLOUD_REFILE_DAILY_CREATED_DATES].orEmpty()
+        if (encoded.isEmpty() && createdIds.isEmpty() && dailyEncoded.isEmpty() && createdDates.isEmpty()) {
+            return null
+        }
+        return CloudPresenceRefilingBackup(
+            sessions = encoded.mapNotNull(::decodeCloudPresenceRefilingSession),
+            createdSessionIds = createdIds,
+            dailyProgress = dailyEncoded.mapNotNull(::decodeCloudPresenceRefilingDailyProgress),
+            createdDailyProgressDates = createdDates,
+        )
+    }
+
+    suspend fun setCloudPresenceRefilingBackup(backup: CloudPresenceRefilingBackup) {
+        context.dataStore.edit { prefs ->
+            if (backup.sessions.isEmpty()) {
+                prefs.remove(Keys.CLOUD_REFILE_BACKUP)
+            } else {
+                prefs[Keys.CLOUD_REFILE_BACKUP] =
+                    backup.sessions.mapTo(mutableSetOf(), ::encodeCloudPresenceRefilingSession)
+            }
+            if (backup.createdSessionIds.isEmpty()) {
+                prefs.remove(Keys.CLOUD_REFILE_CREATED_IDS)
+            } else {
+                prefs[Keys.CLOUD_REFILE_CREATED_IDS] =
+                    backup.createdSessionIds.mapTo(mutableSetOf(), Long::toString)
+            }
+            if (backup.dailyProgress.isEmpty()) {
+                prefs.remove(Keys.CLOUD_REFILE_DAILY_BACKUP)
+            } else {
+                prefs[Keys.CLOUD_REFILE_DAILY_BACKUP] =
+                    backup.dailyProgress.mapTo(mutableSetOf(), ::encodeCloudPresenceRefilingDailyProgress)
+            }
+            if (backup.createdDailyProgressDates.isEmpty()) {
+                prefs.remove(Keys.CLOUD_REFILE_DAILY_CREATED_DATES)
+            } else {
+                prefs[Keys.CLOUD_REFILE_DAILY_CREATED_DATES] = backup.createdDailyProgressDates
+            }
+        }
+    }
+
+    suspend fun clearCloudPresenceRefiling() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.CLOUD_REFILE_APPLIED)
+            prefs.remove(Keys.CLOUD_REFILE_BACKUP)
+            prefs.remove(Keys.CLOUD_REFILE_CREATED_IDS)
+            prefs.remove(Keys.CLOUD_REFILE_DAILY_BACKUP)
+            prefs.remove(Keys.CLOUD_REFILE_DAILY_CREATED_DATES)
+        }
+    }
+
     /**
      * Record the session end and advance the live-session state in the same DataStore edit. A
      * process death cannot leave the caller with a cleared session and no handoff to WorkManager.
@@ -654,6 +730,11 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
             prefs.remove(Keys.CLOUD_READ_POSITION)
             prefs.remove(Keys.CLOUD_INGEST_POSITION)
+            prefs.remove(Keys.CLOUD_REFILE_APPLIED)
+            prefs.remove(Keys.CLOUD_REFILE_BACKUP)
+            prefs.remove(Keys.CLOUD_REFILE_CREATED_IDS)
+            prefs.remove(Keys.CLOUD_REFILE_DAILY_BACKUP)
+            prefs.remove(Keys.CLOUD_REFILE_DAILY_CREATED_DATES)
             prefs.remove(Keys.PENDING_SESSION_ENDS)
             prefs.remove(Keys.SHARED_CANDIDATE_APP_ID)
             prefs.remove(Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT)
@@ -830,6 +911,49 @@ data class PendingSessionEnd(
     val endedAt: Long,
     val steamId: String,
 )
+
+/** `id|appId|startAt|endAt-or-dash|minutes|open` for an exact refile reversal. */
+private fun encodeCloudPresenceRefilingSession(session: Session): String = listOf(
+    session.id.toString(),
+    session.appId.toString(),
+    session.startAt.toString(),
+    session.endAt?.toString() ?: "-",
+    session.minutes.toString(),
+    session.open.toString(),
+).joinToString("|")
+
+private fun decodeCloudPresenceRefilingSession(raw: String): Session? {
+    val parts = raw.split('|', limit = 6)
+    if (parts.size != 6) return null
+    val id = parts[0].toLongOrNull() ?: return null
+    val appId = parts[1].toLongOrNull() ?: return null
+    val startAt = parts[2].toLongOrNull() ?: return null
+    val endAt = if (parts[3] == "-") null else parts[3].toLongOrNull() ?: return null
+    val minutes = parts[4].toIntOrNull() ?: return null
+    val open = when (parts[5]) {
+        "true" -> true
+        "false" -> false
+        else -> return null
+    }
+    return Session(id, appId, startAt, endAt, minutes, open)
+}
+
+/** `date|minutesPlayed|goalMinutesPlayed|questMet` for exact daily-progress reversal. */
+private fun encodeCloudPresenceRefilingDailyProgress(day: DailyProgress): String =
+    listOf(day.date, day.minutesPlayed, day.goalMinutesPlayed, day.questMet).joinToString("|")
+
+private fun decodeCloudPresenceRefilingDailyProgress(raw: String): DailyProgress? {
+    val parts = raw.split('|', limit = 4)
+    if (parts.size != 4) return null
+    val minutesPlayed = parts[1].toIntOrNull() ?: return null
+    val goalMinutesPlayed = parts[2].toIntOrNull() ?: return null
+    val questMet = when (parts[3]) {
+        "true" -> true
+        "false" -> false
+        else -> return null
+    }
+    return DailyProgress(parts[0], minutesPlayed, goalMinutesPlayed, questMet)
+}
 
 /** appId|endedAt|urlEncodedSteamId - one durable session-end handoff. */
 private fun encodePendingSessionEnd(sessionEnd: PendingSessionEnd): String {

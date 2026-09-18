@@ -7,6 +7,8 @@ import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.data.local.AcquiredGamesAnnouncement
 import com.example.backlogium.data.local.SharedGameAnnouncement
 import com.example.backlogium.data.local.SettingsDataStore
+import com.example.backlogium.data.local.entity.DailyProgress
+import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.LibrarySortDirection
@@ -171,6 +173,19 @@ interface SettingsRepository : SessionEndOutbox {
 
     suspend fun clearCloudIngestPosition() = Unit
 
+    /** Whether the one-time cloud-presence historical refile has been applied. */
+    val cloudPresenceRefilingApplied: Flow<Boolean>
+        get() = flowOf(false)
+
+    /** Durable originals and rows created by the refile, used for an exact reversal. */
+    suspend fun cloudPresenceRefilingBackup(): CloudPresenceRefilingBackup? = null
+
+    suspend fun setCloudPresenceRefilingBackup(backup: CloudPresenceRefilingBackup) = Unit
+
+    suspend fun setCloudPresenceRefilingApplied(applied: Boolean) = Unit
+
+    suspend fun clearCloudPresenceRefiling() = Unit
+
     /** Durable availability state for the opt-in monitor; old test doubles default to available. */
     /**
      * The newly-acquired-games announcement written by the most recent acquiring poll. Read-only
@@ -197,6 +212,13 @@ interface SettingsRepository : SessionEndOutbox {
 
     suspend fun setLiveMonitoringAvailability(availability: PresenceMonitoringAvailability) = Unit
 }
+
+data class CloudPresenceRefilingBackup(
+    val sessions: List<Session>,
+    val createdSessionIds: Set<Long> = emptySet(),
+    val dailyProgress: List<DailyProgress> = emptyList(),
+    val createdDailyProgressDates: Set<String> = emptySet(),
+)
 
 /** The only production implementation: a thin pass-through to Preferences DataStore. */
 @Singleton
@@ -313,6 +335,20 @@ class DataStoreSettingsRepository @Inject constructor(
         settings.setCloudIngestPosition(position)
 
     override suspend fun clearCloudIngestPosition() = settings.clearCloudIngestPosition()
+
+    override val cloudPresenceRefilingApplied: Flow<Boolean> =
+        settings.cloudPresenceRefilingAppliedFlow
+
+    override suspend fun cloudPresenceRefilingBackup(): CloudPresenceRefilingBackup? =
+        settings.cloudPresenceRefilingBackup()
+
+    override suspend fun setCloudPresenceRefilingBackup(backup: CloudPresenceRefilingBackup) =
+        settings.setCloudPresenceRefilingBackup(backup)
+
+    override suspend fun setCloudPresenceRefilingApplied(applied: Boolean) =
+        settings.setCloudPresenceRefilingApplied(applied)
+
+    override suspend fun clearCloudPresenceRefiling() = settings.clearCloudPresenceRefiling()
 
     override val liveMonitoringAvailability: Flow<PresenceMonitoringAvailability> =
         settings.liveMonitoringAvailabilityFlow

@@ -14,6 +14,11 @@ import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.PlaytimeObservation
 import com.example.backlogium.data.repo.RecentPlaytimeRepository
+import com.example.backlogium.data.repo.CloudPresencePlacementReader
+import com.example.backlogium.data.repo.readOrNull
+import com.example.backlogium.data.repo.CloudPresenceSnapshot
+import com.example.backlogium.data.repo.CloudReadTrigger
+import com.example.backlogium.domain.CloudPresencePlaytimePlacement
 import com.example.backlogium.domain.PlaytimeObservationCommitter
 import com.example.backlogium.domain.SyncDerivedStateWriter
 import com.example.backlogium.domain.TimeProvider
@@ -57,6 +62,7 @@ class PostPlaySyncWorker @AssistedInject constructor(
     private val syncCoordinator: SteamSyncCoordinator,
     private val credentials: CredentialsProvider,
     private val accountChangeMarker: AccountChangeMarkerStore,
+    private val cloudPresencePlacementReader: CloudPresencePlacementReader,
 ) : CoroutineWorker(appContext, params) {
 
     /** What one attempt's request turned out to be, before it is compared to the baseline. */
@@ -99,6 +105,7 @@ class PostPlaySyncWorker @AssistedInject constructor(
             // "increase" means an increase over *that* value rather than over the raw stored
             // playtime, or the two could disagree about whether there is anything to record.
             val baseline = gameDao.getById(appId)?.lastPlaytime
+            val previousPollAt = profileDao.get()?.lastSyncAt ?: 0L
 
             val result = syncCoordinator.withLock {
                 // Opportunistic: this only avoids two concurrent Steam conversations in one
@@ -143,6 +150,13 @@ class PostPlaySyncWorker @AssistedInject constructor(
                 observation.playtimeForever > baseline
 
             if (increased) {
+                val placementSnapshot = if (
+                    CloudPresencePlaytimePlacement.shouldConsult(previousPollAt, sessionEndAt)
+                ) {
+                    cloudPresencePlacementReader.readOrNull(CloudReadTrigger.POST_PLAY, previousPollAt, sessionEndAt)
+                } else {
+                    null
+                }
                 val recorded = commitIfStillActive(
                     appId = appId,
                     generation = generation,
@@ -150,6 +164,7 @@ class PostPlaySyncWorker @AssistedInject constructor(
                     steamId = steamId,
                     observed = observation,
                     scope = scope,
+                    placementSnapshot = placementSnapshot,
                 )
                 outcome = if (recorded == null) {
                     // Refused: a newer session end took this game over while the fetch was in
@@ -241,6 +256,7 @@ class PostPlaySyncWorker @AssistedInject constructor(
         steamId: String,
         observed: PlaytimeObservation,
         scope: SyncRunRecorder.RunScope,
+        placementSnapshot: CloudPresenceSnapshot?,
     ): Boolean? {
         val recordedPlay = syncCoordinator.withLock {
             if (!isAccountActive(steamId)) {
@@ -267,6 +283,7 @@ class PostPlaySyncWorker @AssistedInject constructor(
                                 // depending on which attempt happened to see the increase.
                                 observedPlayAt = sessionEndAt,
                                 syncedAt = time.nowMillis(),
+                                placement = placementSnapshot?.let { CloudPresencePlaytimePlacement.Input(it.intervals) },
                             )
                             commit.clockRollbacks.forEach { scope.recordClockRollback() }
                             commit.recordedPlay

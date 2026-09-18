@@ -17,6 +17,7 @@ import com.example.backlogium.data.repo.HiddenGamesRepository
 import com.example.backlogium.data.repo.CloudConfigurationResult
 import com.example.backlogium.data.repo.CloudPresenceRepository
 import com.example.backlogium.data.repo.CloudPresenceSessionIngestor
+import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.data.repo.CloudReadFailure
 import com.example.backlogium.data.repo.CloudReadResult
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
@@ -36,6 +37,9 @@ import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.updates.AppUpdateRepository
 import com.example.backlogium.data.updates.AppUpdateState
 import com.example.backlogium.data.updates.UpdateCheckResult
+import com.example.backlogium.domain.CloudPresencePlaytimeRefilingUseCase
+import com.example.backlogium.domain.CloudPresenceRefilingOperation
+import com.example.backlogium.domain.CloudPresenceRefilingResult
 import com.example.backlogium.domain.UpdateRuleConfigUseCase
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
@@ -95,6 +99,9 @@ data class SettingsUiState(
     val cloudHealthy: Boolean? = null,
     val cloudBusy: Boolean = false,
     val cloudMessage: String? = null,
+    val cloudPresenceRefilingApplied: Boolean = false,
+    val cloudPresenceRefilingBusy: Boolean = false,
+    val cloudPresenceRefilingMessage: String? = null,
     val lastSyncAt: Long = 0L,
     val lastSyncError: String? = null,
     val isSyncing: Boolean = false,
@@ -195,6 +202,7 @@ class SettingsViewModel @Inject constructor(
     hiddenGames: HiddenGamesRepository,
     private val cloudPresence: CloudPresenceRepository,
     private val cloudPresenceIngestor: CloudPresenceSessionIngestor,
+    private val cloudPresenceRefiling: CloudPresencePlaytimeRefilingUseCase,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -223,6 +231,8 @@ class SettingsViewModel @Inject constructor(
     private val hltbContributionMessage = MutableStateFlow<String?>(null)
     private val cloudBusy = MutableStateFlow(false)
     private val cloudMessage = MutableStateFlow<String?>(null)
+    private val cloudRefilingBusy = MutableStateFlow(false)
+    private val cloudRefilingMessage = MutableStateFlow<String?>(null)
     /** Held only between a successful [prepareContributionExport] and the SAF destination pick. */
     private var preparedContribution: HltbContributionPreparation.Ready? = null
     private val _hapticIntents = MutableSharedFlow<HapticIntent>(extraBufferCapacity = 4)
@@ -287,6 +297,8 @@ class SettingsViewModel @Inject constructor(
         )
     }.combine(settings.liveMonitorEnabled) { state, monitorEnabled ->
         state.copy(liveMonitorEnabled = monitorEnabled)
+    }.combine(settings.cloudPresenceRefilingApplied) { state, applied ->
+        state.copy(cloudPresenceRefilingApplied = applied)
     }.combine(syncScheduler.genreEnrichmentStatus) { state, genreStatus ->
         state.copy(genreEnrichmentStatus = genreStatus)
     }.combine(profileRepository.reconciliationInProgress) { state, reconciling ->
@@ -410,6 +422,8 @@ class SettingsViewModel @Inject constructor(
         )
     }.combine(combine(cloudBusy, cloudMessage) { busy, message -> busy to message }) { state, local ->
         state.copy(cloudBusy = local.first, cloudMessage = local.second)
+    }.combine(combine(cloudRefilingBusy, cloudRefilingMessage) { busy, message -> busy to message }) { state, local ->
+        state.copy(cloudPresenceRefilingBusy = local.first, cloudPresenceRefilingMessage = local.second)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -419,7 +433,7 @@ class SettingsViewModel @Inject constructor(
     fun syncNow() = profileRepository.syncNow()
 
     fun verifyCloudPresence(endpoint: String, token: String) {
-        if (cloudBusy.value) return
+        if (cloudBusy.value || cloudRefilingBusy.value) return
         viewModelScope.launch {
             cloudBusy.value = true
             cloudMessage.value = null
@@ -455,7 +469,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun readCloudPresence() {
-        if (cloudBusy.value) return
+        if (cloudBusy.value || cloudRefilingBusy.value) return
         viewModelScope.launch {
             cloudBusy.value = true
             cloudMessage.value = null
@@ -480,7 +494,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun removeCloudPresence() {
-        if (cloudBusy.value) return
+        if (cloudBusy.value || cloudRefilingBusy.value) return
         viewModelScope.launch {
             cloudBusy.value = true
             cloudMessage.value = null
@@ -495,6 +509,75 @@ class SettingsViewModel @Inject constructor(
                 cloudBusy.value = false
             }
         }
+    }
+
+    fun refileCloudPresence() {
+        if (cloudBusy.value || cloudRefilingBusy.value) return
+        viewModelScope.launch {
+            cloudBusy.value = true
+            cloudRefilingBusy.value = true
+            cloudMessage.value = null
+            cloudRefilingMessage.value = null
+            try {
+                when (val read = cloudPresence.readCompleteHistory(
+                    trigger = CloudReadTrigger.SETTINGS_MANUAL,
+                    consume = cloudPresenceIngestor::ingest,
+                )) {
+                    CloudReadResult.Unconfigured -> {
+                        cloudRefilingMessage.value = "Configure the cloud reader first."
+                    }
+                    CloudReadResult.NoSteamAccount -> {
+                        cloudRefilingMessage.value = "Connect a Steam account first."
+                    }
+                    is CloudReadResult.Failed -> {
+                        cloudRefilingMessage.value = read.failure.cloudMessage()
+                    }
+                    is CloudReadResult.Success -> {
+                        val result = cloudPresenceRefiling.apply(read.snapshot.intervals)
+                        cloudRefilingMessage.value = result.describe()
+                        if (result.operation == CloudPresenceRefilingOperation.APPLIED) {
+                            _hapticIntents.tryEmit(HapticIntent.Confirm)
+                        }
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                cloudRefilingMessage.value = "Cloud playtime could not be re-filed. Try again."
+            } finally {
+                cloudBusy.value = false
+                cloudRefilingBusy.value = false
+            }
+        }
+    }
+
+    fun reverseCloudPresenceRefiling() {
+        if (cloudBusy.value || cloudRefilingBusy.value) return
+        viewModelScope.launch {
+            cloudRefilingBusy.value = true
+            cloudRefilingMessage.value = null
+            try {
+                val result = cloudPresenceRefiling.reverse()
+                cloudRefilingMessage.value = result.describe()
+                if (result.operation == CloudPresenceRefilingOperation.REVERSED) {
+                    _hapticIntents.tryEmit(HapticIntent.Confirm)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                cloudRefilingMessage.value = "Cloud playtime could not be restored. Try again."
+            } finally {
+                cloudRefilingBusy.value = false
+            }
+        }
+    }
+
+    private fun CloudPresenceRefilingResult.describe(): String = when (operation) {
+        CloudPresenceRefilingOperation.APPLIED ->
+            "Re-filed $sessionsRefiled sessions across ${datesAffected.size} dates."
+        CloudPresenceRefilingOperation.REVERSED ->
+            "Re-filing undone; restored $sessionsRefiled sessions across ${datesAffected.size} dates."
+        CloudPresenceRefilingOperation.NO_OP -> "No cloud playtime re-filing was needed."
     }
 
     private fun CloudReadFailure.cloudMessage(): String = when (this) {
