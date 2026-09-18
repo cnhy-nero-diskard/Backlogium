@@ -1,5 +1,6 @@
 package com.example.backlogium.data.repo
 
+import com.example.backlogium.domain.CloudPresencePlaytimePlacement
 import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -49,7 +50,12 @@ class RepositoryCloudPresencePlacementReader @Inject constructor(
             // the right edge: the service bounds `windowEnd` by the latest current observation or
             // transition, which stays stale when the poller stops, while an unobserved tail carries
             // no rejected interval for the placement rule to refuse — it would proportionally
-            // assign the whole Steam delta to the earlier confirmed span.
+            // assign the whole Steam delta to the earlier confirmed span. The right edge is
+            // therefore cadence-aware rather than exact: `SteamSyncWorker` captures `periodEndAt`
+            // before this read while the poller observes once per minute, so a healthy terminal
+            // snapshot normally lags `periodEndAt` by up to one polling interval. Accept a tail
+            // within the placement tolerance and refuse only a tail beyond it, so ordinary
+            // periodic placement is admitted while a stale (e.g. multi-day) tail is still refused.
             return when (val result = repository.readRemainingHistory(trigger, consume = ingestor::ingest)) {
                 is CloudReadResult.Success -> {
                     val snapshot = result.snapshot
@@ -57,7 +63,7 @@ class RepositoryCloudPresencePlacementReader @Inject constructor(
                         null
                     } else if (snapshot.windowStart > periodStartAt) {
                         null
-                    } else if (snapshot.windowEnd < periodEndAt) {
+                    } else if (periodEndAt - snapshot.windowEnd > CloudPresencePlaytimePlacement.DEFAULT_GAP_TOLERANCE_MILLIS) {
                         null
                     } else {
                         snapshot

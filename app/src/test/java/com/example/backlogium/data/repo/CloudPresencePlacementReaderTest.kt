@@ -191,6 +191,115 @@ class CloudPresencePlacementReaderTest {
     }
 
     @Test
+    fun healthyTerminalSnapshotOnePollIntervalBeforePeriodEndAdmitsPlacement() = runBlocking {
+        val periodStart = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
+        val periodEnd = Instant.parse("2026-09-18T00:00:00Z").toEpochMilli()
+        // The periodic worker captures `periodEndAt = now` before this read while the cloud
+        // poller observes once per minute (cloud-presence-poller spec), so a healthy terminal
+        // snapshot normally lags `periodEndAt` by up to one polling interval. The right-edge
+        // gate must tolerate that lag: an exact gate would admit placement only when a poll
+        // happened to land between the worker's `now` capture and this read.
+        val windowEnd = Instant.ofEpochMilli(periodEnd - 60_000L).toString()
+        val healthy = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = "2026-09-14T00:00:00Z",
+                    gameid = "10",
+                    gameName = "Portal",
+                    personastate = 1,
+                ),
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = windowEnd,
+                    prevLastObservedAt = Instant.ofEpochMilli(periodEnd - 120_000L).toString(),
+                    gameid = "20",
+                    gameName = "Other",
+                    personastate = 1,
+                ),
+            ),
+            current = CloudPresenceCurrentDto(
+                v = 2,
+                lastObservedAt = windowEnd,
+                gameid = "20",
+                gameName = "Other",
+                personastate = 1,
+            ),
+            nextPosition = windowEnd,
+            hasMore = false,
+            windowStart = "2026-09-14T00:00:00Z",
+            windowEnd = windowEnd,
+            readAt = "2026-09-18T00:01:00Z",
+        )
+        val api = FakeCloudPresenceApi { position ->
+            assertNull(position)
+            healthy
+        }
+        val settings = FakeSettingsRepository()
+        val placement = placementReader(api, settings)
+
+        val result = placement.read(CloudReadTrigger.SYNC, periodStart, periodEnd)
+
+        assertTrue(result != null)
+        assertFalse(result!!.hasMore)
+        assertEquals(periodEnd - 60_000L, result.windowEnd)
+    }
+
+    @Test
+    fun tailBeyondPlacementToleranceRefusesPlacement() = runBlocking {
+        val periodStart = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
+        val periodEnd = Instant.parse("2026-09-18T00:00:00Z").toEpochMilli()
+        // Same healthy shape as above, but the unobserved tail exceeds the placement tolerance:
+        // the gate must still refuse rather than proportionally assigning the whole Steam delta
+        // to the earlier confirmed span.
+        val lag = CloudPresencePlaytimePlacement.DEFAULT_GAP_TOLERANCE_MILLIS + 60_000L
+        val windowEnd = Instant.ofEpochMilli(periodEnd - lag).toString()
+        val staleTail = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = "2026-09-14T00:00:00Z",
+                    gameid = "10",
+                    gameName = "Portal",
+                    personastate = 1,
+                ),
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = windowEnd,
+                    prevLastObservedAt = "2026-09-14T00:01:00Z",
+                    gameid = "20",
+                    gameName = "Other",
+                    personastate = 1,
+                ),
+            ),
+            current = CloudPresenceCurrentDto(
+                v = 2,
+                lastObservedAt = windowEnd,
+                gameid = "20",
+                gameName = "Other",
+                personastate = 1,
+            ),
+            nextPosition = windowEnd,
+            hasMore = false,
+            windowStart = "2026-09-14T00:00:00Z",
+            windowEnd = windowEnd,
+            readAt = "2026-09-18T00:01:00Z",
+        )
+        val api = FakeCloudPresenceApi { position ->
+            assertNull(position)
+            staleTail
+        }
+        val settings = FakeSettingsRepository()
+        val placement = placementReader(api, settings)
+
+        val result = placement.read(CloudReadTrigger.SYNC, periodStart, periodEnd)
+
+        assertNull(result)
+    }
+
+    @Test
     fun multiPageUnreadHistoryAccumulatesWithoutLosingEarlierPages() = runBlocking {
         val first = "2026-09-14T00:00:00Z"
         val boundary = "2026-09-16T00:00:00Z"
