@@ -77,8 +77,14 @@ number of games owned and cannot approach the platform's background execution li
 The system SHALL synthesize play sessions by comparing each game's `playtime_forever`
 against the previously stored value, since the Steam Web API does not expose session
 or "currently playing" data. This mechanism SHALL apply only to games for which Steam reports
-playtime ? those in the player's own library ? so that a game whose sessions are derived from
+playtime — those in the player's own library — so that a game whose sessions are derived from
 observed presence is never also diffed.
+
+The diffed increase SHALL be the sole authority on how many minutes were played. Where a record of
+observed presence covers the period the increase was earned in, that record MAY determine the
+boundaries of the sessions the increase is written into — including producing more than one session
+from a single increase. The record SHALL NOT change the number of minutes synthesized, and its
+absence SHALL leave this mechanism behaving exactly as specified without it.
 
 #### Scenario: Playtime increases
 - **WHEN** a game's `playtime_forever` is greater than its stored value
@@ -91,6 +97,19 @@ observed presence is never also diffed.
 #### Scenario: Playtime decreases
 - **WHEN** a game's `playtime_forever` is less than its stored value (e.g. family sharing or refund)
 - **THEN** no session is emitted and the decrease does not produce negative playtime
+
+#### Scenario: An increase placed against observed presence
+- **WHEN** a playtime increase is observed and a record of observed presence covers the period
+- **THEN** the increase may be written as one or more sessions bounded by the observed intervals
+- **AND** the minutes across them sum to the observed increase
+
+#### Scenario: No presence record available
+- **WHEN** a playtime increase is observed and no record of observed presence covers the period
+- **THEN** the increase is written as a single session exactly as it is without the record
+
+#### Scenario: The record cannot change the total
+- **WHEN** the observed intervals span more or less time than the diffed increase
+- **THEN** the minutes written still equal the diffed increase
 
 ### Requirement: Play deltas available to dependent work
 The sync SHALL make the per-game playtime deltas it computes available to work that depends on
@@ -445,6 +464,10 @@ not to the date of the poll that observed it. A single poll SHALL be able to cre
 than one date when the sessions it observed began on different dates. A session's minutes
 SHALL NOT be divided across dates.
 
+Where several sessions are synthesized from one observed increase, each SHALL be attributed
+independently by its own start date. This rule is unchanged by that: more sessions means more start
+dates, not divided minutes.
+
 #### Scenario: Session crossing midnight
 - **WHEN** a session begins before local midnight and continues after it
 - **THEN** all of its minutes are credited to the date on which it began
@@ -459,6 +482,11 @@ SHALL NOT be divided across dates.
 - **WHEN** a single poll observes minutes for one session that began yesterday and another
   that began today
 - **THEN** both dates receive their respective minutes
+
+#### Scenario: One increase credited to several dates
+- **WHEN** one observed increase is written as several sessions that began on different dates
+- **THEN** each date receives the minutes of the sessions that began on it
+- **AND** no session's minutes are divided between them
 
 #### Scenario: Crediting a past date reopens its evaluation
 - **WHEN** minutes are credited to a date whose quest was previously evaluated
