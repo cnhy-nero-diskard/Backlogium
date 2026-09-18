@@ -119,12 +119,17 @@ class CloudPresenceRepository @Inject constructor(
     // stays outside the lock so an account switch never blocks on the network.
     private val cloudStateMutex = Mutex()
     // Serializes every read sharing the durable cloudReadPosition: a single page read
-    // against the historical drain's reset plus paginated drain. The drain resets the
-    // watermark and then advances it page by page, so an ordinary placement read
-    // (Steam sync/post-play) interleaving between pages would consume a page the drain
-    // then skips, permanently losing it when a later terminal page completes the drain.
-    // Held across the whole drain, including network fetches, so the concurrent read
-    // waits for the terminal watermark instead. Outer to cloudStateMutex everywhere.
+    // against the historical drain's reset plus paginated drain, and against a successful
+    // verification's promotion. The drain resets the watermark and then advances it page
+    // by page, so an ordinary placement read (Steam sync/post-play) interleaving between
+    // pages would consume a page the drain then skips, permanently losing it when a later
+    // terminal page completes the drain. A verification interleaving between drain pages
+    // is worse: it clears both positions and persists its own nextPosition, so the
+    // drain's next page resumes from the new sequence while its accumulator still holds
+    // the old sequence's pages, duplicating/skipping history under the original
+    // firstWindowStart. Held across the whole drain, including network fetches, and
+    // across verification promotion, so the concurrent party waits instead of mixing
+    // generations. Outer to cloudStateMutex everywhere.
     private val cloudReadSequenceMutex = Mutex()
 
     val configuration: Flow<CloudPresenceConfiguration?> =
@@ -177,28 +182,39 @@ class CloudPresenceRepository @Inject constructor(
         val generationAtStart = capture.generation
 
         return when (val result = fetch(normalizedEndpoint, normalizedToken, account, null)) {
-            is RemoteReadResult.Success -> cloudStateMutex.withLock {
-                val current = credentialsProvider.currentCredentials()?.steamId
-                if (generationAtStart != accountGeneration.get() || current != account) {
-                    // The account changed while verifying: A's endpoint must not become B's
-                    // configuration, and B's watermark must not be cleared. Report against the
-                    // current account without persisting anything. The identity check covers a
-                    // read that started after invalidation but before the new Steam identity
-                    // was committed/visible, where the generation alone still matches.
-                    if (current == null) {
-                        return@withLock CloudConfigurationResult.NoSteamAccount
+            // Promotion holds the read-sequence mutex outer to the account-state mutex, like
+            // every drain page: it clears both positions and persists the verification
+            // response's nextPosition, so completing between drain pages would otherwise let
+            // the drain's next page resume from the new sequence while its accumulator still
+            // holds the old sequence's pages. The fetch stays outside both locks so a drain
+            // never blocks verification's network; only promotion waits for the terminal
+            // watermark, and drains wait for promotion.
+            is RemoteReadResult.Success -> cloudReadSequenceMutex.withLock {
+                cloudStateMutex.withLock {
+                    val current = credentialsProvider.currentCredentials()?.steamId
+                    if (generationAtStart != accountGeneration.get() || current != account) {
+                        // The account changed while verifying: A's endpoint must not become B's
+                        // configuration, and B's watermark must not be cleared. Report against the
+                        // current account without persisting anything. The identity check covers a
+                        // read that started after invalidation but before the new Steam identity
+                        // was committed/visible, where the generation alone still matches.
+                        if (current == null) {
+                            CloudConfigurationResult.NoSteamAccount
+                        } else {
+                            CloudConfigurationResult.AccountMismatch(current, result.parsed.account)
+                        }
+                    } else {
+                        settings.clearCloudReadPosition()
+                        settings.clearCloudIngestPosition()
+                        consume(result.parsed.toSnapshot())
+                        persistVerifiedConfiguration(
+                            credentials = CloudCredentials(normalizedEndpoint, normalizedToken),
+                            trigger = CloudReadTrigger.SETTINGS_VERIFICATION,
+                            parsed = result.parsed,
+                        )
+                        CloudConfigurationResult.Saved
                     }
-                    return@withLock CloudConfigurationResult.AccountMismatch(current, result.parsed.account)
                 }
-                settings.clearCloudReadPosition()
-                settings.clearCloudIngestPosition()
-                consume(result.parsed.toSnapshot())
-                persistVerifiedConfiguration(
-                    credentials = CloudCredentials(normalizedEndpoint, normalizedToken),
-                    trigger = CloudReadTrigger.SETTINGS_VERIFICATION,
-                    parsed = result.parsed,
-                )
-                CloudConfigurationResult.Saved
             }
             is RemoteReadResult.AccountMismatch -> cloudStateMutex.withLock {
                 val current = credentialsProvider.currentCredentials()?.steamId
@@ -317,7 +333,8 @@ class CloudPresenceRepository @Inject constructor(
      *
      * Holds [cloudReadSequenceMutex] across the reset plus every page, so an ordinary
      * placement read cannot advance the shared watermark between drain pages and steal a
-     * page the drain then skips.
+     * page the drain then skips, and so a successful verification cannot clear the
+     * watermark and persist its own nextPosition between drain pages and mix generations.
      */
     suspend fun readCompleteHistory(
         trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
@@ -381,7 +398,8 @@ class CloudPresenceRepository @Inject constructor(
      *
      * Holds [cloudReadSequenceMutex] across every page, so the historical re-file drain cannot
      * reset the watermark between these pages and steal one this drain then skips, and vice
-     * versa.
+     * versa, and so a successful verification cannot clear the watermark and persist its
+     * own nextPosition between these pages and mix generations.
      */
     suspend fun readRemainingHistory(
         trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
