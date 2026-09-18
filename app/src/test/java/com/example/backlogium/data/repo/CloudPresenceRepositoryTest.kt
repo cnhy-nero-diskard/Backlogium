@@ -11,11 +11,13 @@ import com.example.backlogium.data.remote.dto.CloudPresenceTransitionDto
 import com.example.backlogium.domain.FakeSettingsRepository
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
@@ -387,6 +389,141 @@ class CloudPresenceRepositoryTest {
         assertEquals(2, consumed.size)
         assertEquals(2, requests.size)
         assertNull(requests[0])
+        assertEquals(last, settings.cloudReadPosition.first())
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun drainHoldsWatermarkAgainstConcurrentPlacementRead() = runTest {
+        val first = "2026-09-15T00:00:00Z"
+        val boundary = "2026-09-15T00:10:00Z"
+        val last = "2026-09-15T00:20:00Z"
+        val page1 = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = first,
+                    gameid = "10",
+                    gameName = "Portal",
+                    personastate = 1,
+                ),
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = boundary,
+                    prevLastObservedAt = "2026-09-15T00:09:00Z",
+                    gameid = "20",
+                    gameName = "Other",
+                    personastate = 1,
+                ),
+            ),
+            current = CloudPresenceCurrentDto(
+                v = 2,
+                lastObservedAt = "2026-09-15T01:00:00Z",
+                gameid = "20",
+                gameName = "Other",
+                personastate = 1,
+            ),
+            nextPosition = boundary,
+            hasMore = true,
+            windowStart = first,
+            windowEnd = boundary,
+            readAt = "2026-09-15T00:11:00Z",
+        )
+        val page2 = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = boundary,
+                    prevLastObservedAt = "2026-09-15T00:09:00Z",
+                    gameid = "20",
+                    gameName = "Other",
+                    personastate = 1,
+                ),
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = last,
+                    prevLastObservedAt = "2026-09-15T00:19:00Z",
+                    gameid = "30",
+                    gameName = "Third",
+                    personastate = 1,
+                ),
+            ),
+            current = null,
+            nextPosition = last,
+            hasMore = false,
+            windowStart = first,
+            windowEnd = last,
+            readAt = "2026-09-15T00:21:00Z",
+        )
+        // Terminal window after the drain: no new transitions, so a post-drain placement
+        // read advances nothing and consumes nothing.
+        val terminal = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = emptyList(),
+            current = null,
+            nextPosition = last,
+            hasMore = false,
+            windowStart = first,
+            windowEnd = last,
+            readAt = "2026-09-15T00:22:00Z",
+        )
+        val requests = mutableListOf<String?>()
+        val enteredSecondPage = CompletableDeferred<Unit>()
+        val releaseSecondPage = CompletableDeferred<Unit>()
+        val api = object : CloudPresenceApi {
+            override suspend fun read(
+                endpoint: String,
+                authorization: String,
+                position: String?,
+            ): CloudPresenceResponseDto {
+                requests += position
+                return when (position) {
+                    null -> page1
+                    first -> {
+                        enteredSecondPage.complete(Unit)
+                        releaseSecondPage.await()
+                        page2
+                    }
+                    last -> terminal
+                    else -> error("Unexpected cloud position $position")
+                }
+            }
+        }
+        val store = FakeCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+        )
+        val records = FakeCloudReadDao()
+        val settings = FakeSettingsRepository()
+        settings.setCloudReadPosition(first)
+        val repository = repository(api, store, records, settings, ACCOUNT)
+
+        val drain = async { repository.readCompleteHistory() }
+        enteredSecondPage.await()
+
+        // A worker placement read (Steam sync/post-play) attempting between drain pages
+        // must wait for the drain's terminal watermark rather than consuming page 2 and
+        // advancing the shared cursor past a page the drain then skips.
+        val placement = async { repository.read(trigger = CloudReadTrigger.SYNC) }
+        runCurrent()
+        assertEquals(listOf(null, first), requests)
+
+        releaseSecondPage.complete(Unit)
+        val drainResult = drain.await()
+        val placementResult = placement.await()
+
+        assertTrue(drainResult is CloudReadResult.Success)
+        val combined = (drainResult as CloudReadResult.Success).snapshot
+        assertFalse(combined.hasMore)
+        assertEquals(listOf(10L, 20L), combined.intervals.map { it.appId })
+        assertEquals(4, combined.observationCount)
+        // The placement read ran after the drain and observed only the terminal window:
+        // a single request for the second page exists (the drain's), never a stolen copy.
+        assertEquals(listOf(null, first, last), requests)
+        assertEquals(1, requests.count { it == first })
+        assertTrue(placementResult is CloudReadResult.Success)
+        assertEquals(0, (placementResult as CloudReadResult.Success).snapshot.observationCount)
         assertEquals(last, settings.cloudReadPosition.first())
     }
 

@@ -118,6 +118,14 @@ class CloudPresenceRepository @Inject constructor(
     // Serializes post-fetch persistence against invalidation/removal. The fetch itself
     // stays outside the lock so an account switch never blocks on the network.
     private val cloudStateMutex = Mutex()
+    // Serializes every read sharing the durable cloudReadPosition: a single page read
+    // against the historical drain's reset plus paginated drain. The drain resets the
+    // watermark and then advances it page by page, so an ordinary placement read
+    // (Steam sync/post-play) interleaving between pages would consume a page the drain
+    // then skips, permanently losing it when a later terminal page completes the drain.
+    // Held across the whole drain, including network fetches, so the concurrent read
+    // waits for the terminal watermark instead. Outer to cloudStateMutex everywhere.
+    private val cloudReadSequenceMutex = Mutex()
 
     val configuration: Flow<CloudPresenceConfiguration?> =
         configurationState.onStart {
@@ -226,6 +234,18 @@ class CloudPresenceRepository @Inject constructor(
     suspend fun read(
         trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
         consume: suspend (CloudPresenceSnapshot) -> Unit = {},
+    ): CloudReadResult = cloudReadSequenceMutex.withLock {
+        readPage(trigger, consume)
+    }
+
+    /**
+     * Single-page read without acquiring [cloudReadSequenceMutex]: the caller must hold it.
+     * Ordinary [read] holds it for one page; [readCompleteHistory] holds it across the
+     * reset plus every page so no ordinary read can advance the shared watermark mid-drain.
+     */
+    private suspend fun readPage(
+        trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
+        consume: suspend (CloudPresenceSnapshot) -> Unit = {},
     ): CloudReadResult {
         // Capture every account-bound input (stored endpoint/token, Steam account, resumable
         // watermark) together with the generation under the invalidation mutex, so a bump
@@ -294,27 +314,33 @@ class CloudPresenceRepository @Inject constructor(
      * family-shared derivation rather than double-credited. A mid-drain failure returns the
      * failure without applying anything partial; the next attempt restarts from the beginning,
      * so no page is lost to a partially advanced watermark.
+     *
+     * Holds [cloudReadSequenceMutex] across the reset plus every page, so an ordinary
+     * placement read cannot advance the shared watermark between drain pages and steal a
+     * page the drain then skips.
      */
     suspend fun readCompleteHistory(
         trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
         consume: suspend (CloudPresenceSnapshot) -> Unit = {},
-    ): CloudReadResult {
+    ): CloudReadResult = cloudReadSequenceMutex.withLock {
         // Peek before the destructive reset so an unconfigured app or a missing Steam account
         // does not discard the watermark it never needed to move.
-        if (credentialsStore.readCloudCredentials() == null) return CloudReadResult.Unconfigured
+        if (credentialsStore.readCloudCredentials() == null) {
+            return@withLock CloudReadResult.Unconfigured
+        }
         if (credentialsProvider.currentCredentials()?.steamId == null) {
-            return CloudReadResult.NoSteamAccount
+            return@withLock CloudReadResult.NoSteamAccount
         }
         settings.clearCloudReadPosition()
         val allIntervals = mutableListOf<CloudPresenceInterval>()
         var totalObservations = 0
         var firstWindowStart: Long? = null
         repeat(MAX_REFILE_PAGES) {
-            when (val result = read(trigger, consume)) {
+            when (val result = readPage(trigger, consume)) {
                 is CloudReadResult.Unconfigured,
                 is CloudReadResult.NoSteamAccount,
                 is CloudReadResult.Failed,
-                -> return result
+                -> return@withLock result
                 is CloudReadResult.Success -> {
                     val snapshot = result.snapshot
                     if (firstWindowStart == null) firstWindowStart = snapshot.windowStart
@@ -332,12 +358,12 @@ class CloudPresenceRepository @Inject constructor(
                             observationCount = totalObservations,
                             hasMore = false,
                         )
-                        return CloudReadResult.Success(combined)
+                        return@withLock CloudReadResult.Success(combined)
                     }
                 }
             }
         }
-        return CloudReadResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+        return@withLock CloudReadResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
     }
 
     suspend fun removeConfiguration() {
