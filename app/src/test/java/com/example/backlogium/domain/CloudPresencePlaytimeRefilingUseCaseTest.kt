@@ -81,6 +81,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
                     playtimeForever = 130,
                     playtime2Weeks = 0,
                     lastPlaytime = 130,
+                    isGoal = true,
                     source = GameSource.STEAM_OWNED,
                 ),
             )
@@ -211,6 +212,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
                     playtimeForever = 130,
                     playtime2Weeks = 0,
                     lastPlaytime = 130,
+                    isGoal = true,
                     source = GameSource.STEAM_OWNED,
                 ),
             )
@@ -300,6 +302,155 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             assertFalse(realSettings.cloudPresenceRefilingApplied.first())
         } finally {
             realSettings.clearCloudPresenceRefiling()
+            database.close()
+        }
+    }
+
+    @Test
+    fun reversePreservesPlayRecordedAfterApply() = runTest {
+        val database = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(),
+            BacklogiumDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        val settings = DataStoreSettingsRepository(
+            SettingsDataStore(RuntimeEnvironment.getApplication()),
+        )
+        val marks = InMemoryProgressMarksStore(
+            ProgressMarks(
+                lastCelebratedLevel = 1,
+                initialized = true,
+                pendingQuestDates = setOf(LocalDate.of(2026, 7, 24)),
+            ),
+        )
+        val updater = GamificationUpdater(
+            sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(),
+            playerProfileDao = database.playerProfileDao(),
+            hltbDataDao = database.hltbDataDao(),
+            achievementDao = database.achievementDao(),
+            gameDao = database.gameDao(),
+            hiddenGameDao = database.hiddenGameDao(),
+            progressMarksStore = marks,
+        )
+        val useCase = CloudPresencePlaytimeRefilingUseCase(
+            gameDao = database.gameDao(),
+            sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(),
+            settings = settings,
+            gamificationUpdater = updater,
+            time = FixedTime,
+            syncCoordinator = com.example.backlogium.work.SteamSyncCoordinator(),
+            derivedStateWrites = DerivedStateWriteCoordinator(),
+            transaction = RoomDatabaseTransactionScope(database),
+        )
+        val originalStart = utc("2026-07-25T23:50:00Z")
+        val originalEnd = utc("2026-07-26T00:10:00Z")
+        val presenceStart = utc("2026-07-26T00:00:00Z")
+        val presenceEnd = originalEnd
+
+        try {
+            settings.clearCloudPresenceRefiling()
+            database.gameDao().upsert(
+                Game(
+                    appId = GAME,
+                    name = "Portal",
+                    iconUrl = "",
+                    playtimeForever = 130,
+                    playtime2Weeks = 0,
+                    lastPlaytime = 130,
+                    isGoal = true,
+                    source = GameSource.STEAM_OWNED,
+                ),
+            )
+            database.sessionDao().insert(
+                Session(
+                    appId = GAME,
+                    startAt = originalStart,
+                    endAt = originalEnd,
+                    minutes = 30,
+                    open = false,
+                ),
+            )
+            database.playerProfileDao().upsert(PlayerProfile(longestStreak = 7))
+            database.dailyProgressDao().upsert(
+                DailyProgress("2026-07-24", minutesPlayed = 99, goalMinutesPlayed = 40, questMet = true),
+            )
+            database.dailyProgressDao().upsert(
+                DailyProgress("2026-07-25", minutesPlayed = 30, goalMinutesPlayed = 30, questMet = true),
+            )
+
+            val intervals = listOf(
+                CloudPresenceInterval(
+                    appId = GAME,
+                    gameName = "Portal",
+                    startAt = presenceStart,
+                    endAt = presenceEnd,
+                    ongoing = false,
+                    coverage = CloudCoverageState.CONTINUOUS,
+                    observedUntil = null,
+                    coverageLapseFrom = null,
+                    coverageLapseRecoveredAt = null,
+                    mayHaveStartedBefore = false,
+                ),
+            )
+
+            val applied = useCase.apply(intervals)
+            assertEquals(CloudPresenceRefilingOperation.APPLIED, applied.operation)
+            assertTrue(database.dailyProgressDao().getByDate("2026-07-26") != null)
+
+            // Play recorded after the apply, on both an existing date and the date the
+            // re-file created — written the way a sync writes it.
+            val laterOnExistingStart = utc("2026-07-25T10:00:00Z")
+            val laterOnCreatedStart = utc("2026-07-26T10:00:00Z")
+            database.sessionDao().insert(
+                Session(
+                    appId = GAME,
+                    startAt = laterOnExistingStart,
+                    endAt = utc("2026-07-25T10:20:00Z"),
+                    minutes = 20,
+                    open = false,
+                ),
+            )
+            database.dailyProgressDao().ensureDate("2026-07-25")
+            database.dailyProgressDao().addMinutes("2026-07-25", 20, 20)
+            database.sessionDao().insert(
+                Session(
+                    appId = GAME,
+                    startAt = laterOnCreatedStart,
+                    endAt = utc("2026-07-26T10:15:00Z"),
+                    minutes = 15,
+                    open = false,
+                ),
+            )
+            database.dailyProgressDao().ensureDate("2026-07-26")
+            database.dailyProgressDao().addMinutes("2026-07-26", 15, 15)
+
+            val reversed = useCase.reverse()
+
+            assertEquals(CloudPresenceRefilingOperation.REVERSED, reversed.operation)
+            val sessions = database.sessionDao().getAll()
+            assertEquals(30 + 20 + 15, sessions.sumOf { it.minutes })
+            assertTrue(
+                sessions.any { it.startAt == originalStart && it.endAt == originalEnd && it.minutes == 30 },
+            )
+            assertTrue(
+                sessions.any { it.startAt == laterOnExistingStart && it.minutes == 20 },
+            )
+            assertTrue(
+                sessions.any { it.startAt == laterOnCreatedStart && it.minutes == 15 },
+            )
+            // The existing date keeps the restored attribution plus the later play,
+            // rather than being overwritten with the pre-apply snapshot.
+            assertEquals(50, database.dailyProgressDao().getByDate("2026-07-25")!!.minutesPlayed)
+            assertEquals(50, database.dailyProgressDao().getByDate("2026-07-25")!!.goalMinutesPlayed)
+            // The created date keeps the later play instead of being deleted outright.
+            val createdDay = database.dailyProgressDao().getByDate("2026-07-26")
+            assertTrue(createdDay != null)
+            assertEquals(15, createdDay!!.minutesPlayed)
+            assertEquals(15, createdDay.goalMinutesPlayed)
+            assertEquals(99, database.dailyProgressDao().getByDate("2026-07-24")!!.minutesPlayed)
+        } finally {
+            settings.clearCloudPresenceRefiling()
             database.close()
         }
     }

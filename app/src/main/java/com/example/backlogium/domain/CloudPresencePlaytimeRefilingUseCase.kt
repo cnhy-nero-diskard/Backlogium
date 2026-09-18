@@ -294,19 +294,29 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
             transaction.run {
                 backup.createdSessionIds.forEach { id -> sessionDao.deleteById(id) }
                 backup.sessions.forEach { session -> sessionDao.update(session) }
-                backup.createdDailyProgressDates.forEach { date -> dailyProgressDao.deleteByDate(date) }
-                backup.dailyProgress.forEach { day -> dailyProgressDao.upsert(day) }
             }
-            if (backup.sessions.isNotEmpty() || backup.createdSessionIds.isNotEmpty() ||
+            // Daily progress is rebuilt from the restored ledger rather than from the
+            // pre-apply snapshot: restoring whole rows verbatim would erase play recorded
+            // after the apply, and deleting created dates outright would do the same for
+            // a date the re-file created that has since gained its own sessions. The
+            // snapshot in the backup is intentionally not read here.
+            val hasWork = backup.sessions.isNotEmpty() || backup.createdSessionIds.isNotEmpty() ||
                 backup.dailyProgress.isNotEmpty() || backup.createdDailyProgressDates.isNotEmpty()
-            ) {
-                recomputeGamification()
+            val recomputedDates = if (hasWork) recompute() else emptySet()
+            // Drop only the rows the apply introduced that the restored ledger no longer
+            // supports. A created date that has gained sessions since the apply keeps its
+            // row, with the recompute above having corrected it to the ledger total.
+            if (hasWork && backup.createdDailyProgressDates.isNotEmpty()) {
+                val datesWithSessions = sessionDao.getAll().map(::dateOf).toSet()
+                backup.createdDailyProgressDates
+                    .filter { it !in datesWithSessions }
+                    .forEach { date -> dailyProgressDao.deleteByDate(date) }
             }
             settings.clearCloudPresenceRefiling()
             CloudPresenceRefilingResult(
                 operation = CloudPresenceRefilingOperation.REVERSED,
                 sessionsRefiled = backup.sessions.size,
-                datesAffected = affectedDates,
+                datesAffected = affectedDates + recomputedDates,
             )
         }
     }
