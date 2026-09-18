@@ -13,6 +13,7 @@ import com.example.backlogium.data.remote.dto.CloudPresenceTransitionDto
 import com.example.backlogium.domain.CloudCoverageState
 import com.example.backlogium.domain.CloudPresenceInterval
 import com.example.backlogium.domain.CloudPresencePlaytimePlacement
+import com.example.backlogium.domain.CloudPresenceReconstruction
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.FakeSettingsRepository
 import com.example.backlogium.domain.GamificationUpdater
@@ -247,13 +248,14 @@ class CloudPresencePlacementReaderTest {
     }
 
     @Test
-    fun tailBeyondPlacementToleranceRefusesPlacement() = runBlocking {
+    fun tailBeyondCloudTailToleranceRefusesPlacement() = runBlocking {
         val periodStart = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
         val periodEnd = Instant.parse("2026-09-18T00:00:00Z").toEpochMilli()
-        // Same healthy shape as above, but the unobserved tail exceeds the placement tolerance:
+        // Same healthy shape as above, but the unobserved tail exceeds the cloud tail tolerance
+        // (one-minute schedule plus execution jitter, not the 10-minute session-gap tolerance):
         // the gate must still refuse rather than proportionally assigning the whole Steam delta
         // to the earlier confirmed span.
-        val lag = CloudPresencePlaytimePlacement.DEFAULT_GAP_TOLERANCE_MILLIS + 60_000L
+        val lag = CloudPresenceReconstruction.DEFAULT_TAIL_TOLERANCE_MILLIS + 60_000L
         val windowEnd = Instant.ofEpochMilli(periodEnd - lag).toString()
         val staleTail = CloudPresenceResponseDto(
             account = ACCOUNT,
@@ -297,6 +299,132 @@ class CloudPresencePlacementReaderTest {
         val result = placement.read(CloudReadTrigger.SYNC, periodStart, periodEnd)
 
         assertNull(result)
+    }
+
+    @Test
+    fun missedPollTailCrossingMidnightRefusesWhileHealthyLagAdmits() = runBlocking {
+        val periodStart = Instant.parse("2026-09-17T00:00:00Z").toEpochMilli()
+        val periodEnd = Instant.parse("2026-09-18T00:05:00Z").toEpochMilli()
+        // Boundary around the cloud tail tolerance: a healthy ~1-minute lag is ordinary
+        // scheduler skew and must admit placement, while a 10-minute missed-poll tail crossing
+        // midnight must fall back. Ten minutes equals the old 10-minute session-gap tolerance,
+        // so the stale case below passed before the fix: a Steam delta possibly earned after
+        // midnight would be allocated entirely onto the pre-midnight interval.
+        val staleWindowEnd = "2026-09-17T23:55:00Z"
+        val stale = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = "2026-09-17T23:00:00Z",
+                    gameid = "10",
+                    gameName = "Portal",
+                    personastate = 1,
+                ),
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = "2026-09-17T23:30:00Z",
+                    prevLastObservedAt = "2026-09-17T23:29:00Z",
+                    gameid = "20",
+                    gameName = "Other",
+                    personastate = 1,
+                ),
+            ),
+            current = CloudPresenceCurrentDto(
+                v = 2,
+                lastObservedAt = staleWindowEnd,
+                gameid = "20",
+                gameName = "Other",
+                personastate = 1,
+            ),
+            nextPosition = staleWindowEnd,
+            hasMore = false,
+            windowStart = "2026-09-17T00:00:00Z",
+            windowEnd = staleWindowEnd,
+            readAt = "2026-09-18T00:06:00Z",
+        )
+        val staleResult = placementReader(
+            FakeCloudPresenceApi { position ->
+                assertNull(position)
+                stale
+            },
+            FakeSettingsRepository(),
+        ).read(CloudReadTrigger.SYNC, periodStart, periodEnd)
+
+        assertNull(staleResult)
+
+        // The gate is what prevents the misattribution: the pre-midnight span alone would have
+        // placed the full delta spanning midnight.
+        val hazard = CloudPresencePlaytimePlacement.place(
+            CloudPresencePlaytimePlacement.Request(
+                appId = 10L,
+                diffedMinutes = 60,
+                periodStartAt = periodStart,
+                periodEndAt = periodEnd,
+                intervals = listOf(
+                    CloudPresenceInterval(
+                        appId = 10L,
+                        gameName = "Portal",
+                        startAt = Instant.parse("2026-09-17T23:00:00Z").toEpochMilli(),
+                        endAt = Instant.parse("2026-09-17T23:30:00Z").toEpochMilli(),
+                        ongoing = false,
+                        coverage = CloudCoverageState.CONTINUOUS,
+                        observedUntil = null,
+                        coverageLapseFrom = null,
+                        coverageLapseRecoveredAt = null,
+                        mayHaveStartedBefore = false,
+                    ),
+                ),
+            ),
+        )
+        assertTrue(hazard != null)
+        assertEquals(60, hazard!!.sumOf { it.addedMinutes })
+
+        // Same window with a healthy one-poll-interval lag admits placement.
+        val healthyWindowEnd = Instant.ofEpochMilli(periodEnd - 60_000L).toString()
+        val healthy = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = "2026-09-17T23:00:00Z",
+                    gameid = "10",
+                    gameName = "Portal",
+                    personastate = 1,
+                ),
+                CloudPresenceTransitionDto(
+                    v = 3,
+                    t = "2026-09-17T23:30:00Z",
+                    prevLastObservedAt = "2026-09-17T23:29:00Z",
+                    gameid = "20",
+                    gameName = "Other",
+                    personastate = 1,
+                ),
+            ),
+            current = CloudPresenceCurrentDto(
+                v = 2,
+                lastObservedAt = healthyWindowEnd,
+                gameid = "20",
+                gameName = "Other",
+                personastate = 1,
+            ),
+            nextPosition = healthyWindowEnd,
+            hasMore = false,
+            windowStart = "2026-09-17T00:00:00Z",
+            windowEnd = healthyWindowEnd,
+            readAt = "2026-09-18T00:06:00Z",
+        )
+        val healthyResult = placementReader(
+            FakeCloudPresenceApi { position ->
+                assertNull(position)
+                healthy
+            },
+            FakeSettingsRepository(),
+        ).read(CloudReadTrigger.SYNC, periodStart, periodEnd)
+
+        assertTrue(healthyResult != null)
+        assertFalse(healthyResult!!.hasMore)
+        assertEquals(periodEnd - 60_000L, healthyResult.windowEnd)
     }
 
     @Test

@@ -1,6 +1,6 @@
 package com.example.backlogium.data.repo
 
-import com.example.backlogium.domain.CloudPresencePlaytimePlacement
+import com.example.backlogium.domain.CloudPresenceReconstruction
 import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -52,10 +52,13 @@ class RepositoryCloudPresencePlacementReader @Inject constructor(
             // no rejected interval for the placement rule to refuse — it would proportionally
             // assign the whole Steam delta to the earlier confirmed span. The right edge is
             // therefore cadence-aware rather than exact: `SteamSyncWorker` captures `periodEndAt`
-            // before this read while the poller observes once per minute, so a healthy terminal
-            // snapshot normally lags `periodEndAt` by up to one polling interval. Accept a tail
-            // within the placement tolerance and refuse only a tail beyond it, so ordinary
-            // periodic placement is admitted while a stale (e.g. multi-day) tail is still refused.
+            // before this read while the poller observes once per minute with a 45-second execution
+            // ceiling, so a healthy terminal snapshot normally lags `periodEndAt` by up to one polling
+            // interval. Accept a tail within the cloud tail tolerance (two minutes: one interval plus
+            // execution jitter) and refuse only a tail beyond it, so ordinary periodic placement is
+            // admitted while a stale tail is still refused. This must not reuse the 10-minute
+            // session-gap tolerance: that bridges missed polls for session continuity, while an
+            // unobserved placement tail carries no evidence for the period it would place.
             return when (val result = repository.readRemainingHistory(trigger, consume = ingestor::ingest)) {
                 is CloudReadResult.Success -> {
                     val snapshot = result.snapshot
@@ -63,7 +66,7 @@ class RepositoryCloudPresencePlacementReader @Inject constructor(
                         null
                     } else if (snapshot.windowStart > periodStartAt) {
                         null
-                    } else if (periodEndAt - snapshot.windowEnd > CloudPresencePlaytimePlacement.DEFAULT_GAP_TOLERANCE_MILLIS) {
+                    } else if (periodEndAt - snapshot.windowEnd > CloudPresenceReconstruction.DEFAULT_TAIL_TOLERANCE_MILLIS) {
                         null
                     } else {
                         snapshot
