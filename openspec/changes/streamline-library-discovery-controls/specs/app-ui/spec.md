@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Library presents discovery before enrichment tools
-Library SHALL keep search and active filters in its primary control area. Display density, per-list sorting, and HowLongToBeat enrichment SHALL remain reachable through labeled secondary controls without competing with the search field for first attention. Pending review and active refresh states SHALL remain visible without opening those controls.
+Library SHALL keep search and active filters in its primary control area. Display density and HowLongToBeat enrichment SHALL remain reachable through labeled secondary controls without competing with the search field for first attention. Independent Focus/Your games sorting SHALL remain beside its section heading. Pending review and active refresh states SHALL remain visible without opening those controls.
 
 #### Scenario: Routine Library entry
 - **WHEN** Library opens with no active batch operation or review queue
@@ -11,9 +11,13 @@ Library SHALL keep search and active filters in its primary control area. Displa
 - **WHEN** a refresh is running or one or more matches need review
 - **THEN** Library surfaces the progress or review count in the primary flow while preserving search and active-filter access
 
-#### Scenario: Density and sorting preserved
+#### Scenario: Density preserved
 - **WHEN** the player opens the secondary Library controls
-- **THEN** every existing density and independent Focus/Your games sort option remains available and retains its current persistence behavior
+- **THEN** every existing density option remains available and retains its current persistence behavior
+
+#### Scenario: Section-local sorting preserved
+- **WHEN** the player views the Focus and Your games sections
+- **THEN** each section exposes its independent sort options beside its heading and retains its current persistence behavior
 
 ### Requirement: Library filter state has complete recovery
 Library SHALL model the text query, selected genres, coverage-only state, and Family Shared-only state as one visible active-filter set. Each active filter SHALL be removable individually, and a clear-all action SHALL restore the unfiltered library.
