@@ -37,3 +37,6 @@ logs/
 # OpenSpec CLI agent tooling (machine-local, auto-generated)
 .agents/
 .opencode/
+
+# Python bytecode from running the release-note tooling tests
+__pycache__/

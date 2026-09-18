@@ -25,6 +25,9 @@ MAX_ITEM_LENGTH = 180
 MAX_TECHNICAL_ENTRIES = 100
 MAX_TECHNICAL_TITLE_LENGTH = 180
 MAX_JSON_BYTES = 64 * 1024
+# Appended when an entry has to be shortened to fit MAX_ITEM_LENGTH. Its presence is the only
+# signal that the author's text was cut, which the release-note check reports as an error.
+TRUNCATION_MARKER = "…"
 
 SECTION_ORDER = (
     ("features", "Features"),
@@ -57,6 +60,9 @@ _CATEGORY_BY_PREFIX = {
     "perf": "performance",
     "performance": "performance",
 }
+# The sections a release-note entry must land in to be user-facing; anything else is either
+# technical only or the maintenance bucket.
+_USER_FACING_CATEGORIES = frozenset({"features", "fixes", "performance"})
 
 
 @dataclass(frozen=True)
@@ -115,14 +121,19 @@ def clean_plain_text(value: Any, max_length: int = MAX_ITEM_LENGTH) -> str:
     )
     text = re.sub(r"\s+", " ", text).strip(" -")
     if len(text) > max_length:
-        text = text[: max_length - 1].rstrip() + "…"
+        text = text[: max_length - 1].rstrip() + TRUNCATION_MARKER
     return text
 
 
 def parse_release_note_metadata(body: str | None) -> ReleaseNoteMetadata:
     """Read the dedicated PR-template section without treating the rest of the body as notes."""
 
-    source = body or ""
+    # Normalize line endings before matching. The heading pattern is line-anchored, so a body
+    # saved with CRLF endings — which is what an editor on Windows produces — leaves a stray
+    # carriage return before the line end and makes a perfectly good release note invisible. The
+    # composer then silently falls back to the pull-request title, which is how v1.13.0 shipped
+    # raw titles to users.
+    source = (body or "").replace("\r\n", "\n").replace("\r", "\n")
     heading = _HEADING_RE.search(source)
     if not heading:
         return ReleaseNoteMetadata(entries=(), explicit_none=False, present=False)
@@ -167,6 +178,61 @@ def classify_title(title: str | None) -> tuple[str | None, str]:
     prefix = match.group("prefix").casefold()
     cleaned = clean_plain_text(match.group("title"), max_length=MAX_ITEM_LENGTH)
     return _CATEGORY_BY_PREFIX.get(prefix), cleaned
+
+
+def check_release_note(
+    *, body: str | None, title: str | None = None
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Audit one pull request's release-note metadata before it merges.
+
+    Returns ``(errors, warnings)``. An error means the release would ship without a usable
+    user-facing entry, or an entry would be cut short on the way in. A warning means an entry
+    exists but will be categorized or rendered differently from what the author probably intends,
+    which is worth saying out loud without blocking the pull request.
+    """
+
+    metadata = parse_release_note_metadata(body)
+    category, _ = classify_title(title)
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not metadata.present:
+        errors.append(
+            "No '## Release note' section was found. Add one with 1-2 short bullets describing "
+            "the user-visible result, or write exactly 'None' when nothing users see changes."
+        )
+        return tuple(errors), tuple(warnings)
+
+    if metadata.explicit_none:
+        if category in _USER_FACING_CATEGORIES:
+            warnings.append(
+                f"The release note is 'None' while the title is classified as {category}, so this "
+                "pull request will appear in the technical details only. That is correct for "
+                "internal work; give it a real user-facing entry when it is not."
+            )
+        return (), tuple(warnings)
+
+    if not metadata.entries:
+        errors.append(
+            "The '## Release note' section carries no usable entry. Write 1-2 short bullets, or "
+            "write exactly 'None' when nothing users see changes."
+        )
+        return tuple(errors), tuple(warnings)
+
+    for entry in metadata.entries:
+        if entry.endswith(TRUNCATION_MARKER):
+            errors.append(
+                f"A release-note entry is longer than {MAX_ITEM_LENGTH} characters and would be "
+                f"truncated mid-sentence to '{entry}'. Rewrite it to fit."
+            )
+
+    if category is None:
+        warnings.append(
+            "The title carries no conventional prefix, so these entries will be filed under "
+            "Maintenance. Use 'feat:', 'fix:' or 'perf:' when the change is user-visible."
+        )
+
+    return tuple(errors), tuple(warnings)
 
 
 def _pr_number(raw: dict[str, Any]) -> int | None:
@@ -257,7 +323,7 @@ def compose_release_model(
                 items_by_section[user_category].extend(metadata.entries)
             elif metadata.explicit_none:
                 continue
-            elif category in {"features", "fixes", "performance"} and cleaned_title:
+            elif category in _USER_FACING_CATEGORIES and cleaned_title:
                 items_by_section[category].append(cleaned_title)
                 warnings.append(
                     f"PR #{technical_entry.number if technical_entry else '?'} used its cleaned title "
@@ -268,7 +334,7 @@ def compose_release_model(
             items_by_section[key] = list(_dedupe(items_by_section[key]))
 
         has_user_facing_items = any(
-            items_by_section[key] for key in ("features", "fixes", "performance")
+            items_by_section[key] for key in _USER_FACING_CATEGORIES
         )
         if not has_user_facing_items:
             items_by_section["maintenance"].append(
@@ -460,6 +526,19 @@ def _validate_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _check_command(args: argparse.Namespace) -> int:
+    body = Path(args.body_file).read_text(encoding="utf-8")
+    errors, warnings = check_release_note(body=body, title=args.title or None)
+    for warning in warnings:
+        print(f"WARNING: {warning}", file=sys.stderr)
+    for error in errors:
+        print(f"ERROR: {error}", file=sys.stderr)
+    if errors:
+        return 1
+    print("pull request carries a usable release note")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -480,6 +559,13 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--markdown-input", default="")
     validate.add_argument("--expected-tag", required=True)
     validate.set_defaults(handler=_validate_command)
+
+    check = subparsers.add_parser(
+        "check", help="audit one pull request's release-note metadata before it merges"
+    )
+    check.add_argument("--body-file", required=True)
+    check.add_argument("--title", default="")
+    check.set_defaults(handler=_check_command)
     return parser
 
 

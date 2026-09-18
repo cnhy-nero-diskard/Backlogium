@@ -93,6 +93,24 @@ jobs:
           disable-animations: true
           script: ./gradlew :app:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=com.example.backlogium.data.local.MigrationTest'
 
+  # The release-note composer is not part of the Android build: no Gradle task exercises it, so
+  # nothing above would catch a regression in it. It decides what users read in the update sheet,
+  # and release_notes.py's check subcommand now gates pull requests, so its unit tests need a job
+  # of their own.
+  scripts:
+    name: Release-note tooling tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run script unit tests
+        run: python -m unittest discover -v
+        working-directory: scripts
+
   # functions/ is a fully independent build system — invisible to Gradle, so the
   # Android job above never typechecks it. Without this job a breaking change to
   # functions/src/*.ts merges green. Separate job, not a step: the two toolchains

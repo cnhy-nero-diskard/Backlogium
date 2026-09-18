@@ -5,6 +5,7 @@ from pathlib import Path
 from release_notes import (
     MAX_ITEM_LENGTH,
     REPOSITORY_URL,
+    check_release_note,
     compose_release_model,
     model_to_dict,
     parse_release_note_metadata,
@@ -109,6 +110,77 @@ class ReleaseNotesTest(unittest.TestCase):
         self.assertLess(markdown.index("## Features"), markdown.index("Technical details"))
         self.assertIn("<details>", markdown)
         self.assertIn("[View full changelog]", markdown)
+
+    def test_crlf_body_still_supplies_metadata(self):
+        # A body saved with CRLF endings — what an editor on Windows produces — must not hide its
+        # release note. When it did, the composer fell back to the raw pull-request title without
+        # any warning, and that title is what v1.13.0 published to users.
+        body = (
+            "## Summary\r\n\r\n- implementation detail\r\n\r\n"
+            "## Release note\r\n\r\n- A readable result.\r\n"
+        )
+        self.assertEqual(("A readable result.",), parse_release_note_metadata(body).entries)
+
+        model, warnings = compose_release_model(
+            current_tag="v1.8.0",
+            previous_tag="v1.7.0",
+            pull_requests=[{"number": 12, "title": "feat: crlf", "body": body}],
+        )
+        self.assertEqual((), warnings)
+        self.assertEqual(("A readable result.",), model.sections[0].items)
+
+    def test_crlf_body_honours_explicit_none(self):
+        body = "## Summary\r\n\r\n- detail\r\n\r\n## Release note\r\n\r\nNone\r\n"
+        metadata = parse_release_note_metadata(body)
+        self.assertTrue(metadata.explicit_none)
+        self.assertEqual((), metadata.entries)
+
+
+class ReleaseNoteCheckTest(unittest.TestCase):
+    def test_missing_section_is_an_error(self):
+        errors, warnings = check_release_note(
+            body="## Summary\n\n- implementation detail\n", title="feat: a thing"
+        )
+        self.assertEqual(1, len(errors))
+        self.assertEqual((), warnings)
+
+    def test_bullets_and_explicit_none_are_accepted(self):
+        self.assertEqual(
+            ((), ()), check_release_note(body="## Release note\n\n- A result.\n", title="feat: x")
+        )
+        self.assertEqual(
+            ((), ()), check_release_note(body="## Release note\n\nNone\n", title="chore: x")
+        )
+
+    def test_crlf_body_passes_the_check(self):
+        body = "## Summary\r\n\r\n- detail\r\n\r\n## Release note\r\n\r\n- A result.\r\n"
+        self.assertEqual(((), ()), check_release_note(body=body, title="feat: x"))
+
+    def test_empty_section_is_an_error(self):
+        errors, _ = check_release_note(
+            body="## Release note\n\n<!-- fill this in -->\n", title="feat: x"
+        )
+        self.assertEqual(1, len(errors))
+
+    def test_entry_that_would_be_truncated_is_an_error(self):
+        long_note = "x" * (MAX_ITEM_LENGTH + 40)
+        errors, _ = check_release_note(
+            body=f"## Release note\n\n- {long_note}\n", title="feat: x"
+        )
+        self.assertEqual(1, len(errors))
+
+    def test_unprefixed_title_with_entries_warns_about_maintenance(self):
+        errors, warnings = check_release_note(
+            body="## Release note\n\n- A result.\n", title="Add a thing"
+        )
+        self.assertEqual((), errors)
+        self.assertEqual(1, len(warnings))
+        self.assertIn("Maintenance", warnings[0])
+
+    def test_declared_none_on_a_feature_annotated_title_warns(self):
+        errors, warnings = check_release_note(body="## Release note\n\nNone\n", title="feat: x")
+        self.assertEqual((), errors)
+        self.assertEqual(1, len(warnings))
 
 
 if __name__ == "__main__":

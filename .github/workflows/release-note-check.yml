@@ -1,0 +1,38 @@
+name: Release note check
+
+# A pull request carries the only user-facing description a release will ever have: the composer
+# reads the `## Release note` section from the merged body, and silently falls back to the raw
+# pull-request title when it is missing. v1.13.0 shipped that fallback to users because three of
+# its four pull requests left the section out. This check runs before merge, when the author still
+# has the context to fix it — the release workflow itself stays non-blocking for legacy pull
+# requests, exactly as designed.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Pull request carries a usable release note
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # The body reaches the script through the environment and a file rather than through the
+      # command text, so pull-request prose can never be interpreted as shell syntax.
+      - name: Audit the release note section
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          python scripts/release_notes.py check \
+            --body-file "$RUNNER_TEMP/pr-body.md" \
+            --title "$PR_TITLE"
