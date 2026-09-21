@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -62,6 +63,7 @@ import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.CircleMinus
 
 internal const val TAG_HISTORY_MEASUREMENT_HELP = "history-measurement-help"
+internal const val TAG_HISTORY_LOADING = "history-loading"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -82,6 +84,18 @@ internal fun HistoryContent(
             title = stringResource(R.string.history_steam_not_configured),
             message = stringResource(R.string.history_steam_not_configured_message),
         )
+        return
+    }
+
+    if (state.loading) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag(TAG_HISTORY_LOADING),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularProgressIndicator()
+        }
         return
     }
 

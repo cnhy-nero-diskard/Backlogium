@@ -43,6 +43,20 @@ class HistoryScreenTest {
     }
 
     @Test
+    fun loadingWithNoDaysShowsProgressInsteadOfEmptyState() {
+        setContent(
+            HistoryUiState(
+                loading = true,
+                configured = true,
+                days = emptyList(),
+            ),
+        )
+
+        composeRule.onNodeWithTag(TAG_HISTORY_LOADING).assertIsDisplayed()
+        composeRule.onNodeWithText("No history yet").assertDoesNotExist()
+    }
+
+    @Test
     fun todayExpandsAndGameSemanticsExposeTimeAndExpandedSession() {
         setContent(
             HistoryUiState(
