@@ -54,6 +54,21 @@ data class HistoryDayGroup(
     val achievements: HistoryAchievements,
 )
 
+/** The two presentation groups used to frame the History timeline. */
+data class HistorySections(
+    val today: HistoryDayGroup?,
+    val earlier: List<HistoryDayGroup>,
+)
+
+/**
+ * Splits the already date-ordered timeline without changing its contents or order. A missing
+ * current day is meaningful: the remaining rows are still explicitly framed as earlier history.
+ */
+fun historySections(days: List<HistoryDayGroup>, today: String): HistorySections = HistorySections(
+    today = days.firstOrNull { it.date == today },
+    earlier = days.filterNot { it.date == today },
+)
+
 /** Local-day epoch bounds shared by History and Analytics; the end is exclusive. */
 data class HistoryWindowBounds(
     val startInclusiveMillis: Long,

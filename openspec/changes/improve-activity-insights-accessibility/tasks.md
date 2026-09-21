@@ -1,8 +1,8 @@
 ## 1. History clarity and semantics
 
-- [ ] 1.1 Replace the generic History divider with explicit current/earlier grouping while preserving today auto-expansion and day ordering, and verify presentation tests cover today present, today absent, and progress-without-sessions states.
-- [ ] 1.2 Merge day and game row semantics with expanded state and named expand/collapse actions, and verify Compose tests announce date/name, tracked time, quest state where applicable, and action state.
-- [ ] 1.3 Add the session-measurement explanation surface using the existing approximate-start/tracked-minutes contract, and verify it is reachable without expanding a particular session.
+- [x] 1.1 Replace the generic History divider with explicit current/earlier grouping while preserving today auto-expansion and day ordering, and verify presentation tests cover today present, today absent, and progress-without-sessions states.
+- [x] 1.2 Merge day and game row semantics with expanded state and named expand/collapse actions, and verify Compose tests announce date/name, tracked time, quest state where applicable, and action state.
+- [x] 1.3 Add the session-measurement explanation surface using the existing approximate-start/tracked-minutes contract, and verify it is reachable without expanding a particular session.
 
 ## 2. Analytics insight hierarchy
 

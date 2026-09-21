@@ -17,11 +17,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,12 +39,18 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.SubcomposeAsyncImage
+import androidx.compose.ui.res.stringResource
+import com.example.backlogium.R
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.util.UiFormat
@@ -51,22 +60,23 @@ import compose.icons.tablericons.ChevronUp
 import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.CircleMinus
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     if (!state.configured) {
         EmptyState(
-            title = "Steam not configured",
-            message = "Connect your Steam account from Settings to track sessions.",
+            title = stringResource(R.string.history_steam_not_configured),
+            message = stringResource(R.string.history_steam_not_configured_message),
         )
         return
     }
 
     if (state.days.isEmpty()) {
         EmptyState(
-            title = "No history yet",
-            message = "Play a game and, after the next sync, your sessions and daily stats will appear here.",
+            title = stringResource(R.string.history_empty_title),
+            message = stringResource(R.string.history_empty_message),
         )
         return
     }
@@ -76,6 +86,7 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
     var expandedDays by remember { mutableStateOf<Set<String>>(emptySet()) }
     var expandedGames by remember { mutableStateOf<Set<Pair<String, Long>>>(emptySet()) }
     var autoExpandedDate by remember { mutableStateOf<String?>(null) }
+    var showMeasurementHelp by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.today) {
         // Request identity is checked at publish time: only the current input, job, or date may publish.
@@ -94,27 +105,79 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
         expandedGames = if (key in expandedGames) expandedGames - key else expandedGames + key
     }
 
-    val todayGroup = state.days.firstOrNull { it.date == state.today }
-    val pastGroups = state.days.filterNot { it.date == state.today }
+    val sections = historySections(state.days, state.today)
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
-        todayGroup?.let { day ->
+        item(key = "history-heading") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.history_title),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { showMeasurementHelp = true }) {
+                    Text(stringResource(R.string.history_measurement_help_action))
+                }
+            }
+        }
+
+        sections.today?.let { day ->
+            item(key = "today-heading") {
+                SectionHeader(stringResource(R.string.history_today_section))
+            }
             dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame)
         }
 
-        item(key = "daily-stats-divider") { SectionHeader("Daily stats") }
-
-        pastGroups.forEach { day ->
+        if (sections.earlier.isNotEmpty()) {
+            item(key = "earlier-history-heading") {
+                SectionHeader(stringResource(R.string.history_earlier_section))
+            }
+        }
+        sections.earlier.forEach { day ->
             dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame)
         }
 
         item(key = "load-older") {
             TextButton(onClick = viewModel::loadOlder, modifier = Modifier.fillMaxWidth()) {
-                Text("Load older")
+                Text(stringResource(R.string.history_load_older))
+            }
+        }
+    }
+
+    if (showMeasurementHelp) {
+        ModalBottomSheet(
+            onDismissRequest = { showMeasurementHelp = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.history_measurement_help_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = stringResource(R.string.history_measurement_help_body),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                TextButton(
+                    onClick = { showMeasurementHelp = false },
+                    modifier = Modifier.align(Alignment.End),
+                ) {
+                    Text(stringResource(R.string.history_measurement_help_close))
+                }
             }
         }
     }
@@ -174,12 +237,60 @@ private fun DayHeaderRow(
     onClick: () -> Unit,
 ) {
     val connected = expanded && expandable
+    val actionLabel = stringResource(
+        if (expanded) R.string.history_collapse_day else R.string.history_expand_day,
+    )
+    val dayDescription = stringResource(
+        R.string.history_day_accessibility,
+        formatHistoryDate(day.date),
+        daySummary(day),
+        if (day.questMet) {
+            stringResource(R.string.history_quest_met)
+        } else {
+            stringResource(R.string.history_quest_not_met)
+        },
+        if (expandable) {
+            if (expanded) {
+                stringResource(R.string.history_expanded)
+            } else {
+                stringResource(R.string.history_collapsed)
+            }
+        } else {
+            stringResource(R.string.history_no_games_to_expand)
+        },
+    )
+    val dayStateDescription = if (expandable) {
+        if (expanded) {
+            stringResource(R.string.history_expanded)
+        } else {
+            stringResource(R.string.history_collapsed)
+        }
+    } else {
+        stringResource(R.string.history_no_games_to_expand)
+    }
     Card(
         shape = dayCardShape(topOnly = connected),
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 4.dp, bottom = if (connected) 0.dp else 4.dp)
-            .let { if (expandable) it.clickable(onClick = onClick) else it },
+            .let { modifier ->
+                modifier
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = dayDescription
+                        stateDescription = dayStateDescription
+                    }
+                    .let {
+                        if (expandable) {
+                            it.clickable(
+                                role = Role.Button,
+                                onClickLabel = actionLabel,
+                                onClick = onClick,
+                            )
+                        } else {
+                            it
+                        }
+                    }
+            },
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
             Row(
@@ -189,18 +300,13 @@ private fun DayHeaderRow(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        day.date,
+                        formatHistoryDate(day.date),
                         style = MaterialTheme.typography.bodyLarge,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "${UiFormat.minutes(day.minutesPlayed)} played" +
-                            if (day.goalMinutesPlayed > 0) {
-                                " · ${UiFormat.minutes(day.goalMinutesPlayed)} on Focus games"
-                            } else {
-                                ""
-                            },
+                        text = daySummary(day),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -208,12 +314,12 @@ private fun DayHeaderRow(
                     if (expandable) {
                         Icon(
                             imageVector = if (expanded) TablerIcons.ChevronUp else TablerIcons.ChevronDown,
-                            contentDescription = if (expanded) "Collapse" else "Expand",
+                            contentDescription = null,
                         )
                     }
                     Icon(
                         imageVector = if (day.questMet) TablerIcons.CircleCheck else TablerIcons.CircleMinus,
-                        contentDescription = if (day.questMet) "Quest met" else "Quest not met",
+                        contentDescription = null,
                         tint = if (day.questMet) {
                             MaterialTheme.colorScheme.primary
                         } else {
@@ -407,10 +513,31 @@ private fun GameRow(
     onClick: () -> Unit,
     onDotPositioned: ((LayoutCoordinates) -> Unit)? = null,
 ) {
+    val actionLabel = stringResource(
+        if (expanded) R.string.history_collapse_game else R.string.history_expand_game,
+    )
+    val gameDescription = stringResource(
+        R.string.history_game_accessibility,
+        game.name,
+        UiFormat.minutes(game.minutesPlayed),
+    )
+    val gameStateDescription = if (expanded) {
+        stringResource(R.string.history_expanded)
+    } else {
+        stringResource(R.string.history_collapsed)
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                contentDescription = gameDescription
+                stateDescription = gameStateDescription
+            }
+            .clickable(
+                role = Role.Button,
+                onClickLabel = actionLabel,
+                onClick = onClick,
+            )
             .padding(top = 10.dp, bottom = 10.dp, end = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
@@ -449,7 +576,7 @@ private fun GameRow(
             )
             Icon(
                 imageVector = if (expanded) TablerIcons.ChevronUp else TablerIcons.ChevronDown,
-                contentDescription = if (expanded) "Collapse" else "Expand",
+                contentDescription = null,
             )
         }
     }
@@ -461,8 +588,38 @@ private fun GameRow(
  * legitimately disagree with the tracked minutes once Steam's own counter lags, which reads as an
  * arithmetic error rather than two honest, different measurements (see `SessionDiffer`).
  */
+@Composable
 private fun sessionLabel(session: HistorySessionUi): String {
     val start = UiFormat.approxTime(session.startAt)
-    val minutes = "${UiFormat.minutes(session.minutes)} played"
-    return if (session.open) "$start · $minutes · live" else "$start · $minutes"
+    return if (session.open) {
+        stringResource(
+            R.string.history_session_live,
+            start,
+            UiFormat.minutes(session.minutes),
+        )
+    } else {
+        stringResource(
+            R.string.history_session,
+            start,
+            UiFormat.minutes(session.minutes),
+        )
+    }
 }
+
+@Composable
+private fun daySummary(day: HistoryDayGroup): String =
+    if (day.goalMinutesPlayed > 0) {
+        stringResource(
+            R.string.history_day_summary_with_focus,
+            UiFormat.minutes(day.minutesPlayed),
+            UiFormat.minutes(day.goalMinutesPlayed),
+        )
+    } else {
+        stringResource(R.string.history_day_summary, UiFormat.minutes(day.minutesPlayed))
+    }
+
+private fun formatHistoryDate(date: String): String = runCatching {
+    java.time.LocalDate.parse(date).format(
+        java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.MEDIUM),
+    )
+}.getOrDefault(date)
