@@ -344,7 +344,10 @@ private fun DayHeaderRow(
                     }
                     if (day.gameThumbnails.overflowCount > 0) {
                         Text(
-                            text = "+${day.gameThumbnails.overflowCount}",
+                            text = stringResource(
+                                R.string.history_overflow_count,
+                                UiFormat.count(day.gameThumbnails.overflowCount),
+                            ),
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
@@ -362,7 +365,10 @@ private fun DayHeaderRow(
                     }
                     if (day.achievements.overflowCount > 0) {
                         Text(
-                            text = "+${day.achievements.overflowCount}",
+                            text = stringResource(
+                                R.string.history_overflow_count,
+                                UiFormat.count(day.achievements.overflowCount),
+                            ),
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
@@ -519,7 +525,7 @@ private fun GameRow(
     val gameDescription = stringResource(
         R.string.history_game_accessibility,
         game.name,
-        UiFormat.minutes(game.minutesPlayed),
+        UiFormat.localizedMinutes(game.minutesPlayed),
     )
     val gameStateDescription = if (expanded) {
         stringResource(R.string.history_expanded)
@@ -569,7 +575,7 @@ private fun GameRow(
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = UiFormat.minutes(game.minutesPlayed),
+                text = UiFormat.localizedMinutes(game.minutesPlayed),
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 modifier = Modifier.padding(end = 8.dp),
@@ -595,13 +601,13 @@ private fun sessionLabel(session: HistorySessionUi): String {
         stringResource(
             R.string.history_session_live,
             start,
-            UiFormat.minutes(session.minutes),
+            UiFormat.localizedMinutes(session.minutes),
         )
     } else {
         stringResource(
             R.string.history_session,
             start,
-            UiFormat.minutes(session.minutes),
+            UiFormat.localizedMinutes(session.minutes),
         )
     }
 }
@@ -611,15 +617,9 @@ private fun daySummary(day: HistoryDayGroup): String =
     if (day.goalMinutesPlayed > 0) {
         stringResource(
             R.string.history_day_summary_with_focus,
-            UiFormat.minutes(day.minutesPlayed),
-            UiFormat.minutes(day.goalMinutesPlayed),
+            UiFormat.localizedMinutes(day.minutesPlayed),
+            UiFormat.localizedMinutes(day.goalMinutesPlayed),
         )
     } else {
-        stringResource(R.string.history_day_summary, UiFormat.minutes(day.minutesPlayed))
+        stringResource(R.string.history_day_summary, UiFormat.localizedMinutes(day.minutesPlayed))
     }
-
-private fun formatHistoryDate(date: String): String = runCatching {
-    java.time.LocalDate.parse(date).format(
-        java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.MEDIUM),
-    )
-}.getOrDefault(date)

@@ -3,7 +3,10 @@ package com.example.backlogium.ui.analytics
 import java.time.LocalDate
 import java.time.Year
 import java.time.YearMonth
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import java.time.temporal.ChronoUnit
+import java.util.Locale
 
 /** Whether a window length is a fixed rolling duration or a named calendar period. */
 enum class AnalyticsWindowKind {
@@ -13,15 +16,14 @@ enum class AnalyticsWindowKind {
 
 /** Window lengths offered by Analytics. */
 enum class AnalyticsWindowLength(
-    val label: String,
     val kind: AnalyticsWindowKind,
     val days: Int? = null,
 ) {
-    TWO_WEEKS("2 weeks", AnalyticsWindowKind.ROLLING, days = 14),
-    THIRTY_DAYS("30 days", AnalyticsWindowKind.ROLLING, days = 30),
-    ONE_MONTH("1 month", AnalyticsWindowKind.CALENDAR),
-    NINETY_DAYS("90 days", AnalyticsWindowKind.ROLLING, days = 90),
-    ONE_YEAR("1 year", AnalyticsWindowKind.CALENDAR),
+    TWO_WEEKS(AnalyticsWindowKind.ROLLING, days = 14),
+    THIRTY_DAYS(AnalyticsWindowKind.ROLLING, days = 30),
+    ONE_MONTH(AnalyticsWindowKind.CALENDAR),
+    NINETY_DAYS(AnalyticsWindowKind.ROLLING, days = 90),
+    ONE_YEAR(AnalyticsWindowKind.CALENDAR),
 }
 
 /** A selected Analytics window: an anchor date and the length used to resolve it. */
@@ -80,6 +82,15 @@ data class AnalyticsWindow(
     /** True when stepping earlier would still leave the earliest tracked date inside the window. */
     fun canStepEarlier(earliestTrackedDate: LocalDate?): Boolean =
         earliestTrackedDate != null && stepEarlier().resolve().endInclusive >= earliestTrackedDate
+
+    /** True when this window resolves to the period containing [today]. */
+    fun isCurrentWindow(today: LocalDate): Boolean =
+        resolve() == AnalyticsWindow(today, length).resolve()
+
+    /** True when one valid step later would not move beyond the current period. */
+    fun canStepLater(today: LocalDate): Boolean =
+        !isCurrentWindow(today) &&
+            stepLater().resolve().endInclusive <= AnalyticsWindow(today, length).resolve().endInclusive
 }
 
 /** Explicit inclusive local-date bounds for a selected Analytics window. */
@@ -97,4 +108,26 @@ data class AnalyticsWindowBounds(
         get() = ChronoUnit.DAYS.between(start, endInclusive).toInt() + 1
 
     fun dates(): List<LocalDate> = (0 until dayCount).map { start.plusDays(it.toLong()) }
+}
+
+/** Locale-aware period text; the [LocalDate] bounds themselves remain unchanged. */
+fun formatAnalyticsWindowPeriod(
+    window: AnalyticsWindow,
+    bounds: AnalyticsWindowBounds,
+    locale: Locale = Locale.getDefault(),
+): String {
+    val formatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale)
+    return when (window.length.kind) {
+        AnalyticsWindowKind.CALENDAR -> {
+            if (bounds.start.monthValue == 1 && bounds.endInclusive.monthValue == 12) {
+                DateTimeFormatter.ofPattern("yyyy", locale).format(bounds.start)
+            } else if (bounds.start.year == bounds.endInclusive.year) {
+                DateTimeFormatter.ofPattern("LLLL yyyy", locale).format(bounds.start)
+            } else {
+                "${formatter.format(bounds.start)} - ${formatter.format(bounds.endInclusive)}"
+            }
+        }
+        AnalyticsWindowKind.ROLLING ->
+            "${formatter.format(bounds.start)} - ${formatter.format(bounds.endInclusive)}"
+    }
 }

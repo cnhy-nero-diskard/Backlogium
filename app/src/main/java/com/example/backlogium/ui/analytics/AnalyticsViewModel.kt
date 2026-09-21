@@ -82,6 +82,13 @@ data class SessionInsights(
 )
 
 /** When the player tends to play, bucketed by the local hour of session start. */
+enum class TimeOfDayBucket {
+    MORNING,
+    AFTERNOON,
+    EVENING,
+    NIGHT,
+}
+
 data class TimeOfDayPattern(
     val morningMinutes: Int = 0,   // 5:00-11:59
     val afternoonMinutes: Int = 0, // 12:00-16:59
@@ -89,22 +96,91 @@ data class TimeOfDayPattern(
     val nightMinutes: Int = 0,     // 21:00-4:59
 ) {
     /** The bucket with the most minutes, or null if all are zero. */
-    val peakBucket: String?
+    val peakBucket: TimeOfDayBucket?
         get() = listOf(
-            "Morning" to morningMinutes,
-            "Afternoon" to afternoonMinutes,
-            "Evening" to eveningMinutes,
-            "Night" to nightMinutes,
+            TimeOfDayBucket.MORNING to morningMinutes,
+            TimeOfDayBucket.AFTERNOON to afternoonMinutes,
+            TimeOfDayBucket.EVENING to eveningMinutes,
+            TimeOfDayBucket.NIGHT to nightMinutes,
         ).filter { it.second > 0 }.maxByOrNull { it.second }?.first
 }
 
+/** A factual first sentence for the selected Analytics window. */
+sealed interface AnalyticsHeadline {
+    data object NoData : AnalyticsHeadline
+
+    data class Compared(
+        val currentMinutes: Int,
+        val previousMinutes: Int,
+    ) : AnalyticsHeadline {
+        val changeMinutes: Int get() = currentMinutes - previousMinutes
+    }
+
+    data class LeadingGame(
+        val gameName: String,
+        val minutes: Int,
+    ) : AnalyticsHeadline
+
+    data class ActiveDays(
+        val activeDays: Int,
+        val totalDays: Int,
+    ) : AnalyticsHeadline
+}
+
+/** Inputs kept deliberately small so headline priority can be tested without Android or Room. */
+fun deriveAnalyticsHeadline(
+    totalMinutes: Int,
+    activeDays: Int,
+    totalDays: Int,
+    leadingGame: AnalyticsGame?,
+    previousMinutes: Int? = null,
+): AnalyticsHeadline {
+    if (totalMinutes <= 0 && leadingGame == null) return AnalyticsHeadline.NoData
+    if (totalMinutes > 0 && previousMinutes != null && previousMinutes > 0) {
+        return AnalyticsHeadline.Compared(
+            currentMinutes = totalMinutes,
+            previousMinutes = previousMinutes,
+        )
+    }
+    if (leadingGame != null) {
+        return AnalyticsHeadline.LeadingGame(
+            gameName = leadingGame.name,
+            minutes = leadingGame.minutes,
+        )
+    }
+    return AnalyticsHeadline.ActiveDays(
+        activeDays = activeDays,
+        totalDays = totalDays,
+    )
+}
+
+/** Clamp every chart selection path to the same represented-day index. */
+fun analyticsDaySelectionIndex(dayCount: Int, requestedIndex: Int): Int? =
+    if (dayCount == 0) null else requestedIndex.coerceIn(0, dayCount - 1)
+
+/** Select the last active day, or the final represented day when the window has no activity. */
+fun initialAnalyticsDaySelection(days: List<AnalyticsDay>): Int? =
+    analyticsDaySelectionIndex(
+        dayCount = days.size,
+        requestedIndex = days.indexOfLast { it.minutes > 0 }.takeIf { it >= 0 } ?: days.lastIndex,
+    )
+
+/** Move a chart selection by one or more represented days, returning null for an empty chart. */
+fun stepAnalyticsDaySelection(currentIndex: Int, dayCount: Int, delta: Int): Int? =
+    analyticsDaySelectionIndex(dayCount, currentIndex + delta)
+
 data class AnalyticsUiState(
     val loading: Boolean = true,
+    /** True while the selected period is being recomputed from a new bounded query. */
+    val updating: Boolean = false,
     val configured: Boolean = true,
     val window: AnalyticsWindow = INITIAL_WINDOW,
     val windowBounds: AnalyticsWindowBounds = INITIAL_WINDOW.resolve(),
     val earliestTrackedDate: LocalDate? = null,
     val canStepEarlier: Boolean = false,
+    val canStepLater: Boolean = false,
+    val isCurrentWindow: Boolean = true,
+    val headline: AnalyticsHeadline = AnalyticsHeadline.NoData,
     /** One entry per local day in the selected window, including zero-minute days, oldest first. */
     val dailyMinutes: List<AnalyticsDay> = emptyList(),
     /** The configured daily-quest threshold, drawn as a reference line on the chart. */
@@ -138,8 +214,10 @@ data class AnalyticsUiState(
 }
 
 private data class AnalyticsInputs(
+    val window: AnalyticsWindow,
     val sessions: List<PlaySession>,
     val minutesByGame: Map<Long, Int>,
+    val previousMinutesByGame: Map<Long, Int>,
     val library: List<LibraryGame>,
     val dailyProgress: List<DayProgress>,
     val profile: PlayerStats?,
@@ -151,6 +229,8 @@ private data class ResolvedAnalyticsWindow(
     val epochBounds: HistoryWindowBounds,
     val earliestTrackedDate: LocalDate?,
     val canStepEarlier: Boolean,
+    val canStepLater: Boolean,
+    val isCurrentWindow: Boolean,
 )
 
 private val INITIAL_WINDOW = AnalyticsWindow(
@@ -200,6 +280,8 @@ class AnalyticsViewModel @Inject constructor(
             ),
             earliestTrackedDate = earliest,
             canStepEarlier = window.canStepEarlier(earliest),
+            canStepLater = window.canStepLater(time.today()),
+            isCurrentWindow = window.isCurrentWindow(time.today()),
         )
     }
 
@@ -228,23 +310,59 @@ class AnalyticsViewModel @Inject constructor(
         }
     }
 
+    /** Move the selected anchor to the immediately following period when it remains bounded by today. */
+    fun stepAnchorLater() {
+        selectedWindow.update { current ->
+            current.stepLater().takeIf { candidate ->
+                candidate.resolve().endInclusive <= AnalyticsWindow(time.today(), current.length)
+                    .resolve().endInclusive
+            } ?: current
+        }
+    }
+
+    /** Return to the current period while preserving the selected length and chart display mode. */
+    fun returnToCurrentWindow() {
+        selectedWindow.update { current -> current.copy(anchor = time.today()) }
+    }
+
     // Re-query every windowed source when the same resolved bounds change. Room keeps the reads
     // indexed in SQL; no wider history is fetched and pruned in memory.
     private val inputs: Flow<AnalyticsInputs> = resolvedWindow.flatMapLatest { resolved ->
+        val previousBounds = historyWindowBounds(
+            start = resolved.window.stepEarlier().resolve().start,
+            endInclusive = resolved.window.stepEarlier().resolve().endInclusive,
+            zone = time.zone(),
+        )
         combine(
-            sessionRepository.sessionsBetween(
-                startInclusiveMillis = resolved.epochBounds.startInclusiveMillis,
-                endExclusiveMillis = resolved.epochBounds.endExclusiveMillis,
-            ),
-            sessionRepository.minutesByGameBetween(
-                startInclusiveMillis = resolved.epochBounds.startInclusiveMillis,
-                endExclusiveMillis = resolved.epochBounds.endExclusiveMillis,
-            ),
+            combine(
+                sessionRepository.sessionsBetween(
+                    startInclusiveMillis = resolved.epochBounds.startInclusiveMillis,
+                    endExclusiveMillis = resolved.epochBounds.endExclusiveMillis,
+                ),
+                sessionRepository.minutesByGameBetween(
+                    startInclusiveMillis = resolved.epochBounds.startInclusiveMillis,
+                    endExclusiveMillis = resolved.epochBounds.endExclusiveMillis,
+                ),
+                sessionRepository.minutesByGameBetween(
+                    startInclusiveMillis = previousBounds.startInclusiveMillis,
+                    endExclusiveMillis = previousBounds.endExclusiveMillis,
+                ),
+            ) { sessions, minutesByGame, previousMinutesByGame ->
+                Triple(sessions, minutesByGame, previousMinutesByGame)
+            },
             gameRepository.library,
             profileRepository.dailyProgress,
             profileRepository.profile,
-        ) { sessions, minutesByGame, library, dailyProgress, profile ->
-            AnalyticsInputs(sessions, minutesByGame, library, dailyProgress, profile)
+        ) { current, library, dailyProgress, profile ->
+            AnalyticsInputs(
+                window = resolved.window,
+                sessions = current.first,
+                minutesByGame = current.second,
+                previousMinutesByGame = current.third,
+                library = library,
+                dailyProgress = dailyProgress,
+                profile = profile,
+            )
         }
     }
 
@@ -255,7 +373,8 @@ class AnalyticsViewModel @Inject constructor(
         credentials.credentialsStateFlow,
         achievementRepository.unlockedRarityDetails,
     ) { inputs, resolved, ruleConfig, credState, rarityDetails ->
-        val dates = resolved.bounds.dates()
+        val dataBounds = inputs.window.resolve()
+        val dates = dataBounds.dates()
         val gamesById = inputs.library.associateBy { it.appId }
         // Session start date is the canonical attribution shared with sync daily progress and
         // History, including for sessions that cross local midnight.
@@ -272,6 +391,7 @@ class AnalyticsViewModel @Inject constructor(
 
         val topGames = joinGameMinutes(inputs.minutesByGame, gamesById)
             .take(TOP_GAMES_LIMIT)
+        val totalMinutes = dailyMinutes.sumOf { it.minutes }
         // Shared games are counted in the window's totals; this is the slice of them, so the
         // contribution can be told apart rather than silently folded in.
         val familySharedMinutes = inputs.minutesByGame
@@ -327,13 +447,26 @@ class AnalyticsViewModel @Inject constructor(
             }
         }
 
+        val headline = deriveAnalyticsHeadline(
+            totalMinutes = totalMinutes,
+            activeDays = dailyMinutes.count { it.minutes > 0 },
+            totalDays = dataBounds.dayCount,
+            leadingGame = topGames.firstOrNull(),
+            previousMinutes = inputs.previousMinutesByGame.values.sum().takeIf { it > 0 },
+        )
+        val updating = inputs.window != resolved.window
+
         AnalyticsUiState(
-            loading = false,
+            loading = updating,
+            updating = updating,
             configured = credState is CredentialsState.Configured,
             window = resolved.window,
             windowBounds = resolved.bounds,
             earliestTrackedDate = resolved.earliestTrackedDate,
             canStepEarlier = resolved.canStepEarlier,
+            canStepLater = resolved.canStepLater,
+            isCurrentWindow = resolved.isCurrentWindow,
+            headline = headline,
             dailyMinutes = dailyMinutes,
             questThreshold = ruleConfig.questThresholdMin,
             currentStreak = inputs.profile?.currentStreak ?: 0,

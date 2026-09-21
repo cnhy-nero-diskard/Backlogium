@@ -39,11 +39,21 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.backlogium.R
 import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.components.GameIcon
@@ -52,13 +62,15 @@ import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
 import compose.icons.tablericons.Bolt
 import compose.icons.tablericons.ChevronDown
+import compose.icons.tablericons.ChevronLeft
+import compose.icons.tablericons.ChevronRight
 import compose.icons.tablericons.ChevronUp
 import compose.icons.tablericons.Clock
 import compose.icons.tablericons.Flame
 import compose.icons.tablericons.Trophy
+import java.text.NumberFormat
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
-import java.util.Locale
 
 @Composable
 fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
@@ -67,8 +79,8 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
 
     if (!state.configured) {
         EmptyState(
-            title = "Steam not configured",
-            message = "Connect your Steam account from Settings to see your analytics.",
+            title = stringResource(R.string.analytics_steam_not_configured),
+            message = stringResource(R.string.analytics_steam_not_configured_message),
         )
         return
     }
@@ -87,12 +99,12 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(
-            text = "Analytics",
+            text = stringResource(R.string.analytics_title),
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
         )
         Text(
-            text = "See how your play is building over time.",
+            text = stringResource(R.string.analytics_subtitle),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -101,14 +113,19 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
             days = state.dailyMinutes,
             window = state.window,
             familySharedMinutes = state.familySharedMinutes,
+            headline = state.headline,
         )
 
         AnalyticsWindowSelector(
             window = state.window,
             bounds = state.windowBounds,
             canStepEarlier = state.canStepEarlier,
+            canStepLater = state.canStepLater,
+            isCurrentWindow = state.isCurrentWindow,
             onLengthSelected = viewModel::selectWindowLength,
             onStepEarlier = viewModel::stepAnchorEarlier,
+            onStepLater = viewModel::stepAnchorLater,
+            onReturnToCurrent = viewModel::returnToCurrentWindow,
         )
 
         ChartDisplaySelector(
@@ -116,10 +133,21 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
             onOmitZeroDaysChanged = { omitZeroDays = it },
         )
 
+        if (state.updating) {
+            Text(
+                text = stringResource(R.string.analytics_updating_window),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { liveRegion = LiveRegionMode.Polite },
+            )
+        }
+
         if (!state.loading && !state.hasData) {
             EmptyState(
-                title = "No analytics in this window",
-                message = "Play a game and, after the next sync, analytics for this period will appear here.",
+                title = stringResource(R.string.analytics_empty_title),
+                message = stringResource(R.string.analytics_empty_message),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(180.dp),
@@ -178,17 +206,66 @@ private fun AnalyticsWindowSelector(
     window: AnalyticsWindow,
     bounds: AnalyticsWindowBounds,
     canStepEarlier: Boolean,
+    canStepLater: Boolean,
+    isCurrentWindow: Boolean,
     onLengthSelected: (AnalyticsWindowLength) -> Unit,
     onStepEarlier: () -> Unit,
+    onStepLater: () -> Unit,
+    onReturnToCurrent: () -> Unit,
 ) {
+    var expanded by remember { mutableStateOf(false) }
+    val expandedState = if (expanded) {
+        stringResource(R.string.analytics_expanded)
+    } else {
+        stringResource(R.string.analytics_collapsed)
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Analytics window",
+            text = stringResource(R.string.analytics_selected_period),
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
         )
         Text(
-            text = "Rolling durations",
+            text = windowPeriodLabel(window, bounds),
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Text(
+            text = windowLengthLabel(window.length),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(enabled = canStepEarlier, onClick = onStepEarlier) {
+                Text(stringResource(R.string.analytics_earlier))
+            }
+            TextButton(enabled = canStepLater, onClick = onStepLater) {
+                Text(stringResource(R.string.analytics_later))
+            }
+            TextButton(enabled = !isCurrentWindow, onClick = onReturnToCurrent) {
+                Text(stringResource(R.string.analytics_current))
+            }
+        }
+        TextButton(
+            onClick = { expanded = !expanded },
+            modifier = Modifier.semantics {
+                stateDescription = expandedState
+            },
+        ) {
+            Text(
+                if (expanded) {
+                    stringResource(R.string.analytics_hide_window_options)
+                } else {
+                    stringResource(R.string.analytics_show_window_options)
+                },
+            )
+        }
+        if (!expanded) return@Column
+        Text(
+            text = stringResource(R.string.analytics_rolling_durations),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -199,12 +276,12 @@ private fun AnalyticsWindowSelector(
                     FilterChip(
                         selected = length == window.length,
                         onClick = { onLengthSelected(length) },
-                        label = { Text(length.label) },
+                        label = { Text(windowLengthLabel(length)) },
                     )
                 }
         }
         Text(
-            text = "Calendar periods",
+            text = stringResource(R.string.analytics_calendar_periods),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -215,26 +292,9 @@ private fun AnalyticsWindowSelector(
                     FilterChip(
                         selected = length == window.length,
                         onClick = { onLengthSelected(length) },
-                        label = { Text(length.label) },
+                        label = { Text(windowLengthLabel(length)) },
                     )
                 }
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(
-                enabled = canStepEarlier,
-                onClick = onStepEarlier,
-            ) {
-                Text("Earlier")
-            }
-            Text(
-                text = windowPeriodLabel(window, bounds),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-            )
         }
     }
 }
@@ -244,9 +304,40 @@ private fun ChartDisplaySelector(
     omitZeroDays: Boolean,
     onOmitZeroDaysChanged: (Boolean) -> Unit,
 ) {
+    var expanded by remember { mutableStateOf(false) }
+    val expandedState = if (expanded) {
+        stringResource(R.string.analytics_expanded)
+    } else {
+        stringResource(R.string.analytics_collapsed)
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton(
+            onClick = { expanded = !expanded },
+            modifier = Modifier.semantics {
+                role = Role.Button
+                stateDescription = expandedState
+            },
+        ) {
+            Text(
+                if (expanded) {
+                    stringResource(R.string.analytics_hide_chart_options)
+                } else {
+                    stringResource(R.string.analytics_show_chart_options)
+                },
+            )
+        }
         Text(
-            text = "Chart display",
+            text = if (omitZeroDays) {
+                stringResource(R.string.analytics_active_days_default)
+            } else {
+                stringResource(R.string.analytics_all_days_selected)
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (!expanded) return@Column
+        Text(
+            text = stringResource(R.string.analytics_chart_display),
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
         )
@@ -254,31 +345,54 @@ private fun ChartDisplaySelector(
             FilterChip(
                 selected = omitZeroDays,
                 onClick = { onOmitZeroDaysChanged(true) },
-                label = { Text("Active days only") },
+                label = { Text(stringResource(R.string.analytics_active_days_only)) },
             )
             FilterChip(
                 selected = !omitZeroDays,
                 onClick = { onOmitZeroDaysChanged(false) },
-                label = { Text("All days") },
+                label = { Text(stringResource(R.string.analytics_all_days)) },
             )
         }
     }
 }
 
-private fun windowPeriodLabel(window: AnalyticsWindow, bounds: AnalyticsWindowBounds): String {
-    val formatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.US)
-    return when (window.length.kind) {
-        AnalyticsWindowKind.CALENDAR -> {
-            if (bounds.start.monthValue == 1 && bounds.endInclusive.monthValue == 12) {
-                bounds.start.year.toString()
-            } else if (bounds.start.year == bounds.endInclusive.year) {
-                bounds.start.format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.US))
-            } else {
-                "${bounds.start.format(formatter)} - ${bounds.endInclusive.format(formatter)}"
-            }
+@Composable
+private fun windowLengthLabel(length: AnalyticsWindowLength): String = stringResource(
+    when (length) {
+        AnalyticsWindowLength.TWO_WEEKS -> R.string.analytics_length_two_weeks
+        AnalyticsWindowLength.THIRTY_DAYS -> R.string.analytics_length_thirty_days
+        AnalyticsWindowLength.ONE_MONTH -> R.string.analytics_length_one_month
+        AnalyticsWindowLength.NINETY_DAYS -> R.string.analytics_length_ninety_days
+        AnalyticsWindowLength.ONE_YEAR -> R.string.analytics_length_one_year
+    },
+)
+
+@Composable
+private fun analyticsHeadlineText(headline: AnalyticsHeadline): String = when (headline) {
+    AnalyticsHeadline.NoData -> stringResource(R.string.analytics_headline_no_data)
+    is AnalyticsHeadline.Compared -> {
+        val current = UiFormat.localizedMinutes(headline.currentMinutes)
+        val previous = UiFormat.localizedMinutes(headline.previousMinutes)
+        when {
+            headline.changeMinutes > 0 -> stringResource(R.string.analytics_headline_up, current, previous)
+            headline.changeMinutes < 0 -> stringResource(R.string.analytics_headline_down, current, previous)
+            else -> stringResource(R.string.analytics_headline_unchanged, current)
         }
-        AnalyticsWindowKind.ROLLING -> "${bounds.start.format(formatter)} - ${bounds.endInclusive.format(formatter)}"
     }
+    is AnalyticsHeadline.LeadingGame -> stringResource(
+        R.string.analytics_headline_leading_game,
+        headline.gameName,
+        UiFormat.localizedMinutes(headline.minutes),
+    )
+    is AnalyticsHeadline.ActiveDays -> stringResource(
+        R.string.analytics_headline_active_days,
+        headline.activeDays,
+        headline.totalDays,
+    )
+}
+
+private fun windowPeriodLabel(window: AnalyticsWindow, bounds: AnalyticsWindowBounds): String {
+    return formatAnalyticsWindowPeriod(window, bounds)
 }
 
 @Composable
@@ -286,11 +400,13 @@ private fun AnalyticsOverviewCard(
     days: List<AnalyticsDay>,
     window: AnalyticsWindow,
     familySharedMinutes: Int,
+    headline: AnalyticsHeadline,
 ) {
     val activeDays = days.count { it.minutes > 0 }
     val totalMinutes = days.sumOf { it.minutes }
     val averageMinutes = if (activeDays == 0) 0 else totalMinutes / activeDays
     val contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+    val headlineDescription = analyticsHeadlineText(headline)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -305,25 +421,47 @@ private fun AnalyticsOverviewCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Play snapshot",
+                    text = stringResource(R.string.analytics_play_snapshot),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = contentColor,
                 )
                 Text(
-                    text = window.length.label.uppercase(Locale.US),
+                    text = windowLengthLabel(window.length),
                     style = MaterialTheme.typography.labelSmall,
                     color = contentColor.copy(alpha = 0.7f),
                 )
             }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = headlineDescription,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = contentColor,
+                modifier = Modifier.semantics(mergeDescendants = true) {
+                    contentDescription = headlineDescription
+                },
+            )
             Spacer(Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                SummaryStat(label = "Tracked", value = UiFormat.minutes(totalMinutes), valueColor = contentColor)
-                SummaryStat(label = "Active days", value = "$activeDays", valueColor = contentColor)
-                SummaryStat(label = "Daily avg", value = UiFormat.minutes(averageMinutes), valueColor = contentColor)
+                SummaryStat(
+                    label = stringResource(R.string.analytics_tracked),
+                    value = UiFormat.localizedMinutes(totalMinutes),
+                    valueColor = contentColor,
+                )
+                SummaryStat(
+                    label = stringResource(R.string.analytics_active_days),
+                    value = UiFormat.count(activeDays),
+                    valueColor = contentColor,
+                )
+                SummaryStat(
+                    label = stringResource(R.string.analytics_daily_average),
+                    value = UiFormat.localizedMinutes(averageMinutes),
+                    valueColor = contentColor,
+                )
             }
             // Shared games are already inside every figure above. This names their slice, so a
             // reader can tell how much of the window came from time the app observed rather than
@@ -332,8 +470,10 @@ private fun AnalyticsOverviewCard(
             if (familySharedMinutes > 0) {
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    text = "Includes ${UiFormat.minutes(familySharedMinutes)} observed " +
-                        "from Family Sharing",
+                    text = stringResource(
+                        R.string.analytics_family_shared_observed,
+                        UiFormat.localizedMinutes(familySharedMinutes),
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = contentColor.copy(alpha = 0.8f),
                 )
@@ -369,9 +509,54 @@ private fun DailyPlaytimeChart(
     val dayFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)
     val totalMinutes = days.sumOf { it.minutes }
     var selectedIndex by remember(days) {
-        mutableIntStateOf(days.indexOfLast { it.minutes > 0 }.takeIf { it >= 0 } ?: days.lastIndex)
+        mutableIntStateOf(initialAnalyticsDaySelection(days) ?: -1)
+    }
+    val selectDay: (Int) -> Unit = { requestedIndex ->
+        analyticsDaySelectionIndex(days.size, requestedIndex)?.let { selectedIndex = it }
     }
     val selectedDay = days.getOrNull(selectedIndex)
+    val previousDayLabel = stringResource(R.string.analytics_previous_day)
+    val nextDayLabel = stringResource(R.string.analytics_next_day)
+    val selectedDayLabel = selectedDay?.date?.format(dayFormatter)
+        ?: stringResource(R.string.analytics_no_day_selected)
+    val selectedDayDescription = selectedDay?.let { day ->
+        val goal = when {
+            questThreshold <= 0 -> stringResource(R.string.analytics_no_daily_goal)
+            day.minutes >= questThreshold -> stringResource(R.string.analytics_daily_goal_met)
+            else -> stringResource(
+                R.string.analytics_to_goal,
+                UiFormat.localizedMinutes(questThreshold - day.minutes),
+            )
+        }
+        val games = gamesByDate[day.date].orEmpty()
+        val breakdown = if (games.isEmpty()) {
+            stringResource(R.string.analytics_no_games_day)
+        } else {
+            var description = ""
+            for (index in games.indices) {
+                val game = games[index]
+                val item = stringResource(
+                    R.string.analytics_game_minutes,
+                    game.name,
+                    UiFormat.localizedMinutes(game.minutes),
+                )
+                if (index > 0) description += ", "
+                description += item
+            }
+            description
+        }
+        stringResource(
+            R.string.analytics_selected_day_summary,
+            day.date.format(dayFormatter),
+            UiFormat.localizedMinutes(day.minutes),
+            goal,
+            breakdown,
+        )
+    } ?: stringResource(R.string.analytics_no_day_selected)
+    val chartSummary = stringResource(
+        R.string.analytics_chart_summary,
+        selectedDayDescription,
+    )
 
     Card(modifier = modifier) {
         Column(Modifier.padding(16.dp)) {
@@ -380,9 +565,12 @@ private fun DailyPlaytimeChart(
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text("Daily playtime", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.analytics_daily_playtime), style = MaterialTheme.typography.titleSmall)
                 Text(
-                    text = "Tap a day · ${UiFormat.minutes(totalMinutes)} total",
+                    text = stringResource(
+                        R.string.analytics_chart_select_day,
+                        UiFormat.localizedMinutes(totalMinutes),
+                    ),
                     style = MaterialTheme.typography.labelSmall,
                     color = labelColor,
                 )
@@ -397,9 +585,9 @@ private fun DailyPlaytimeChart(
                     verticalArrangement = Arrangement.SpaceBetween,
                     horizontalAlignment = Alignment.End,
                 ) {
-                    Text(UiFormat.minutes(maxMinutes), style = MaterialTheme.typography.labelSmall, color = labelColor)
-                    Text(UiFormat.minutes(maxMinutes / 2), style = MaterialTheme.typography.labelSmall, color = labelColor)
-                    Text("0m", style = MaterialTheme.typography.labelSmall, color = labelColor)
+                    Text(UiFormat.localizedMinutes(maxMinutes), style = MaterialTheme.typography.labelSmall, color = labelColor)
+                    Text(UiFormat.localizedMinutes(maxMinutes / 2), style = MaterialTheme.typography.labelSmall, color = labelColor)
+                    Text(stringResource(R.string.analytics_zero_minutes), style = MaterialTheme.typography.labelSmall, color = labelColor)
                 }
                 Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
@@ -407,12 +595,13 @@ private fun DailyPlaytimeChart(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(chartHeight)
+                            .semantics {
+                                contentDescription = chartSummary
+                            }
                             .pointerInput(days, maxMinutes) {
                                 detectTapGestures { offset ->
                                     if (days.isNotEmpty()) {
-                                        selectedIndex = (offset.x / (size.width / days.size))
-                                            .toInt()
-                                            .coerceIn(0, days.lastIndex)
+                                        selectDay((offset.x / (size.width / days.size)).toInt())
                                     }
                                 }
                             },
@@ -517,10 +706,53 @@ private fun DailyPlaytimeChart(
                 }
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    text = "Daily goal · ${UiFormat.minutes(questThreshold)}",
+                    text = stringResource(
+                        R.string.analytics_daily_goal,
+                        UiFormat.localizedMinutes(questThreshold),
+                    ),
                     style = MaterialTheme.typography.labelSmall,
                     color = labelColor,
                 )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                IconButton(
+                    enabled = selectedIndex > 0,
+                    onClick = { selectDay(stepAnalyticsDaySelection(selectedIndex, days.size, -1) ?: selectedIndex) },
+                    modifier = Modifier.semantics {
+                        contentDescription = previousDayLabel
+                    },
+                ) {
+                    Icon(
+                        imageVector = TablerIcons.ChevronLeft,
+                        contentDescription = null,
+                    )
+                }
+                Text(
+                    text = selectedDayLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier
+                        .weight(1f)
+                        .semantics {
+                            liveRegion = LiveRegionMode.Polite
+                            contentDescription = selectedDayDescription
+                        },
+                )
+                IconButton(
+                    enabled = selectedIndex >= 0 && selectedIndex < days.lastIndex,
+                    onClick = { selectDay(stepAnalyticsDaySelection(selectedIndex, days.size, 1) ?: selectedIndex) },
+                    modifier = Modifier.semantics {
+                        contentDescription = nextDayLabel
+                    },
+                ) {
+                    Icon(
+                        imageVector = TablerIcons.ChevronRight,
+                        contentDescription = null,
+                    )
+                }
             }
             selectedDay?.let { day ->
                 Spacer(Modifier.height(12.dp))
@@ -537,16 +769,19 @@ private fun DailyPlaytimeChart(
                         )
                         Text(
                             text = when {
-                                questThreshold <= 0 -> "No daily goal set"
-                                day.minutes >= questThreshold -> "Daily goal met"
-                                else -> "${UiFormat.minutes(questThreshold - day.minutes)} to goal"
+                                questThreshold <= 0 -> stringResource(R.string.analytics_no_daily_goal)
+                                day.minutes >= questThreshold -> stringResource(R.string.analytics_daily_goal_met)
+                                else -> stringResource(
+                                    R.string.analytics_to_goal,
+                                    UiFormat.localizedMinutes(questThreshold - day.minutes),
+                                )
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = labelColor,
                         )
                     }
                     Text(
-                        text = UiFormat.minutes(day.minutes),
+                        text = UiFormat.localizedMinutes(day.minutes),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = if (day.minutes >= questThreshold && questThreshold > 0) {
@@ -557,10 +792,10 @@ private fun DailyPlaytimeChart(
                     )
                 }
                 val games = gamesByDate[day.date].orEmpty()
-                if (day.minutes > 0 && games.isNotEmpty()) {
+                if (games.isNotEmpty()) {
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        text = "Games played",
+                        text = stringResource(R.string.analytics_games_played),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -582,12 +817,19 @@ private fun DailyPlaytimeChart(
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                text = UiFormat.minutes(game.minutes),
+                                text = UiFormat.localizedMinutes(game.minutes),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
                             )
                         }
                     }
+                } else {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.analytics_no_games_day),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = labelColor,
+                    )
                 }
             }
         }
@@ -624,23 +866,33 @@ private fun StreakSummaryCard(
                     modifier = Modifier.size(20.dp),
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("Streak summary", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.analytics_streak_summary), style = MaterialTheme.typography.titleSmall)
             }
             Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                SummaryStat(label = "Current", value = "$currentStreak")
-                SummaryStat(label = "Longest", value = "$longestStreak")
                 SummaryStat(
-                    label = "Quest met",
-                    value = "$questMetDaysCount/$windowDays",
+                    label = stringResource(R.string.analytics_current_streak),
+                    value = UiFormat.count(currentStreak),
+                )
+                SummaryStat(
+                    label = stringResource(R.string.analytics_longest_streak),
+                    value = UiFormat.count(longestStreak),
+                )
+                SummaryStat(
+                    label = stringResource(R.string.analytics_quest_met),
+                    value = stringResource(
+                        R.string.analytics_quest_met_count,
+                        UiFormat.count(questMetDaysCount),
+                        UiFormat.count(windowDays),
+                    ),
                 )
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Current and longest are all-time counters; quest met follows this window.",
+                text = stringResource(R.string.analytics_streak_note),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -673,11 +925,11 @@ private fun SummaryStat(
 private fun MostPlayedGamesCard(games: List<AnalyticsGame>, periodLabel: String) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text("Most played", style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.analytics_most_played), style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
             if (games.isEmpty()) {
                 Text(
-                    text = "No tracked playtime in $periodLabel yet.",
+                    text = stringResource(R.string.analytics_no_tracked_playtime, periodLabel),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -703,7 +955,7 @@ private fun MostPlayedGamesCard(games: List<AnalyticsGame>, periodLabel: String)
                             // the two figures do not mean quite the same thing.
                             if (game.isFamilyShared) {
                                 Text(
-                                    text = "Family Sharing",
+                                    text = stringResource(R.string.analytics_family_sharing),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -711,7 +963,7 @@ private fun MostPlayedGamesCard(games: List<AnalyticsGame>, periodLabel: String)
                         }
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = UiFormat.minutes(game.minutes),
+                            text = UiFormat.localizedMinutes(game.minutes),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
                         )
@@ -743,16 +995,25 @@ private fun SessionInsightsCard(
                     modifier = Modifier.size(20.dp),
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("Session insights", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.analytics_session_insights), style = MaterialTheme.typography.titleSmall)
             }
             Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                SummaryStat(label = "Sessions", value = "$sessionCount")
-                SummaryStat(label = "Avg session", value = UiFormat.minutes(averageMinutes))
-                SummaryStat(label = "Longest", value = UiFormat.minutes(longestMinutes))
+                SummaryStat(
+                    label = stringResource(R.string.analytics_sessions),
+                    value = UiFormat.count(sessionCount),
+                )
+                SummaryStat(
+                    label = stringResource(R.string.analytics_average_session),
+                    value = UiFormat.localizedMinutes(averageMinutes),
+                )
+                SummaryStat(
+                    label = stringResource(R.string.analytics_longest_session),
+                    value = UiFormat.localizedMinutes(longestMinutes),
+                )
             }
         }
     }
@@ -775,14 +1036,14 @@ private fun TimeOfDayCard(pattern: TimeOfDayPattern, periodLabel: String) {
                     modifier = Modifier.size(20.dp),
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("Play time of day", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.analytics_play_time_of_day), style = MaterialTheme.typography.titleSmall)
             }
             Spacer(Modifier.height(12.dp))
             val buckets = listOf(
-                "Morning" to pattern.morningMinutes,
-                "Afternoon" to pattern.afternoonMinutes,
-                "Evening" to pattern.eveningMinutes,
-                "Night" to pattern.nightMinutes,
+                TimeOfDayBucket.MORNING to pattern.morningMinutes,
+                TimeOfDayBucket.AFTERNOON to pattern.afternoonMinutes,
+                TimeOfDayBucket.EVENING to pattern.eveningMinutes,
+                TimeOfDayBucket.NIGHT to pattern.nightMinutes,
             )
             val maxMinutes = maxOf(1, buckets.maxOf { it.second })
             Row(modifier = Modifier.fillMaxWidth()) {
@@ -798,7 +1059,9 @@ private fun TimeOfDayCard(pattern: TimeOfDayPattern, periodLabel: String) {
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                text = peak?.let { "Peak time: $it" } ?: "No tracked play in $periodLabel.",
+                text = peak?.let {
+                    stringResource(R.string.analytics_peak_time, timeOfDayLabel(it))
+                } ?: stringResource(R.string.analytics_no_tracked_play_period, periodLabel),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -808,7 +1071,7 @@ private fun TimeOfDayCard(pattern: TimeOfDayPattern, periodLabel: String) {
 
 @Composable
 private fun TimeOfDayBar(
-    label: String,
+    label: TimeOfDayBucket,
     minutes: Int,
     fraction: Float,
     highlighted: Boolean,
@@ -821,7 +1084,7 @@ private fun TimeOfDayBar(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            text = UiFormat.minutes(minutes),
+            text = UiFormat.localizedMinutes(minutes),
             style = MaterialTheme.typography.labelSmall,
             color = if (highlighted) barColor else MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -843,12 +1106,22 @@ private fun TimeOfDayBar(
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            text = label,
+            text = timeOfDayLabel(label),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
+
+@Composable
+private fun timeOfDayLabel(bucket: TimeOfDayBucket): String = stringResource(
+    when (bucket) {
+        TimeOfDayBucket.MORNING -> R.string.analytics_morning
+        TimeOfDayBucket.AFTERNOON -> R.string.analytics_afternoon
+        TimeOfDayBucket.EVENING -> R.string.analytics_evening
+        TimeOfDayBucket.NIGHT -> R.string.analytics_night
+    },
+)
 
 /**
  * The player's achievement-rarity profile — how many unlocked achievements fall in each of Steam's
@@ -879,7 +1152,7 @@ private fun RarityBreakdownCard(
                     modifier = Modifier.size(20.dp),
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("Achievement rarity", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.analytics_achievement_rarity), style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.weight(1f))
                 // A glyph rather than a word, for the same reason the display-density control is
                 // one: what is left of this row after the title and a four-digit count is about
@@ -900,9 +1173,9 @@ private fun RarityBreakdownCard(
                                 TablerIcons.ChevronDown
                             },
                             contentDescription = if (expanded) {
-                                "Hide the rarest achievements"
+                                stringResource(R.string.analytics_hide_rarest)
                             } else {
-                                "Show the rarest achievements"
+                                stringResource(R.string.analytics_show_rarest)
                             },
                             modifier = Modifier.size(18.dp),
                         )
@@ -912,7 +1185,10 @@ private fun RarityBreakdownCard(
                     // A lifetime total a player might screenshot: pinned to one line and left
                     // unabbreviated, since rounding it to fix a layout bug would smuggle a
                     // presentation change in as a fix.
-                    text = "${breakdown.total} unlocked",
+                    text = stringResource(
+                        R.string.analytics_unlocked_count,
+                        UiFormat.count(breakdown.total),
+                    ),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -920,14 +1196,14 @@ private fun RarityBreakdownCard(
                 )
             }
             Text(
-                text = "All-time profile; it does not follow the selected window.",
+                text = stringResource(R.string.analytics_all_time_profile),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
             if (breakdown.total == 0) {
                 Text(
-                    text = "No unlocked achievements yet.",
+                    text = stringResource(R.string.analytics_no_unlocked_achievements),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -966,12 +1242,16 @@ private fun RarityBreakdownCard(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = tier.name.lowercase().replaceFirstChar { it.uppercase() },
+                            text = rarityTierLabel(tier),
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.weight(1f),
                         )
                         Text(
-                            text = if (count == 1) "1 achievement" else "$count achievements",
+                            text = pluralStringResource(
+                                R.plurals.analytics_achievements_count,
+                                count,
+                                UiFormat.count(count),
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -980,7 +1260,7 @@ private fun RarityBreakdownCard(
                 if (expanded && achievements.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        text = "Rarest unlocked achievements",
+                        text = stringResource(R.string.analytics_rarest_unlocked),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -1015,8 +1295,11 @@ private fun RarityBreakdownCard(
                             }
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                text = "${formatRarityPercent(achievement.rarityPercent)} · " +
-                                    achievement.tier.name.lowercase().replaceFirstChar { it.uppercase() },
+                                text = stringResource(
+                                    R.string.analytics_rarity_detail,
+                                    formatRarityPercent(achievement.rarityPercent),
+                                    rarityTierLabel(achievement.tier),
+                                ),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -1028,5 +1311,19 @@ private fun RarityBreakdownCard(
     }
 }
 
+@Composable
+private fun rarityTierLabel(tier: RarityTier): String = stringResource(
+    when (tier) {
+        RarityTier.COMMON -> R.string.analytics_rarity_common
+        RarityTier.UNCOMMON -> R.string.analytics_rarity_uncommon
+        RarityTier.RARE -> R.string.analytics_rarity_rare
+        RarityTier.EPIC -> R.string.analytics_rarity_epic
+        RarityTier.LEGENDARY -> R.string.analytics_rarity_legendary
+    },
+)
+
 private fun formatRarityPercent(percent: Double): String =
-    String.format(Locale.US, "%.1f%%", percent)
+    NumberFormat.getPercentInstance().apply {
+        minimumFractionDigits = 1
+        maximumFractionDigits = 1
+    }.format(percent / 100.0)

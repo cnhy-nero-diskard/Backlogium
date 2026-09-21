@@ -2,7 +2,9 @@ package com.example.backlogium.ui.history
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Locale
 
 class HistorySectionsTest {
 
@@ -44,5 +46,14 @@ class HistorySectionsTest {
         val sections = historySections(listOf(progressOnly), today = "2026-09-21")
 
         assertEquals(listOf(progressOnly), sections.earlier)
+    }
+
+    @Test
+    fun nonUsLocaleFormatsTheDateWithoutChangingItsLocalDateKey() {
+        val english = formatHistoryDate("2026-09-21", Locale.US)
+        val german = formatHistoryDate("2026-09-21", Locale.GERMANY)
+
+        assertTrue(english != german)
+        assertTrue(german.contains("2026"))
     }
 }

@@ -8,6 +8,7 @@ import org.junit.Test
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.Locale
 
 class AnalyticsWindowTest {
 
@@ -77,6 +78,29 @@ class AnalyticsWindowTest {
     }
 
     @Test
+    fun earlierWindowCanStepLaterUntilItReachesTheCurrentWindow() {
+        val today = LocalDate.of(2024, 8, 10)
+        val earlier = AnalyticsWindow(today, AnalyticsWindowLength.THIRTY_DAYS).stepEarlier()
+
+        assertTrue(earlier.canStepLater(today))
+        assertTrue(earlier.stepLater().isCurrentWindow(today))
+        assertFalse(AnalyticsWindow(today, AnalyticsWindowLength.THIRTY_DAYS).canStepLater(today))
+    }
+
+    @Test
+    fun calendarNavigationUsesWholePeriodsAndStopsAtCurrentMonth() {
+        val today = LocalDate.of(2024, 8, 10)
+        val earlier = AnalyticsWindow(today, AnalyticsWindowLength.ONE_MONTH).stepEarlier()
+
+        assertTrue(earlier.canStepLater(today))
+        assertTrue(earlier.stepLater().isCurrentWindow(today))
+        assertEquals(
+            AnalyticsWindowBounds(LocalDate.of(2024, 7, 1), LocalDate.of(2024, 7, 31)),
+            earlier.resolve(),
+        )
+    }
+
+    @Test
     fun historyBoundsUseLocalMidnightAndExclusiveNextMidnight() {
         val zone = ZoneId.of("America/New_York")
         val bounds = historyWindowBounds(
@@ -93,5 +117,18 @@ class AnalyticsWindowTest {
             Instant.parse("2024-03-11T04:00:00Z").toEpochMilli(),
             bounds.endExclusiveMillis,
         )
+    }
+
+    @Test
+    fun nonUsLocaleChangesPeriodFormattingWithoutChangingWindowBounds() {
+        val window = AnalyticsWindow(anchor, AnalyticsWindowLength.THIRTY_DAYS)
+        val bounds = window.resolve()
+
+        val us = formatAnalyticsWindowPeriod(window, bounds, Locale.US)
+        val german = formatAnalyticsWindowPeriod(window, bounds, Locale.GERMANY)
+
+        assertTrue(us != german)
+        assertTrue(german.contains("2024"))
+        assertEquals(bounds, window.resolve())
     }
 }
