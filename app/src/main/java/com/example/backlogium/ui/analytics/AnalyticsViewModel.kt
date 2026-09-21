@@ -46,6 +46,10 @@ data class AnalyticsGame(
     val name: String,
     val iconUrl: String,
     val minutes: Int,
+    /** Steam header art, carried for the overview hero; blank when unknown. */
+    val headerUrl: String = "",
+    /** Steam portrait hero capsule, carried for the overview hero; blank when unknown. */
+    val heroCapsuleUrl: String = "",
     /**
      * Played through Family Sharing. Its minutes are in every total on this screen exactly like an
      * owned game's, and this is what lets the reader tell the two apart — the totals are honest
@@ -515,6 +519,8 @@ private fun joinGameMinutes(
             name = game?.name ?: "App $appId",
             iconUrl = game?.iconUrl.orEmpty(),
             minutes = minutes,
+            headerUrl = game?.headerUrl.orEmpty(),
+            heroCapsuleUrl = game?.heroCapsuleUrl.orEmpty(),
             isFamilyShared = game?.source == GameSource.FAMILY_SHARED,
         )
     }

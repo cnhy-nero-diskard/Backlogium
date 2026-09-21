@@ -55,8 +55,10 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.R
+import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.ui.components.EmptyState
+import com.example.backlogium.ui.components.GameHeroCapsule
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.theme.rarityHalo
 import com.example.backlogium.ui.util.UiFormat
@@ -162,6 +164,7 @@ internal fun AnalyticsContent(
             canStepEarlier = state.canStepEarlier,
             canStepLater = state.canStepLater,
             isCurrentWindow = state.isCurrentWindow,
+            updating = state.updating,
             onStepEarlier = actions.onStepEarlier,
             onStepLater = actions.onStepLater,
             onReturnToCurrent = actions.onReturnToCurrent,
@@ -177,6 +180,7 @@ internal fun AnalyticsContent(
         if (windowOptionsExpanded) {
             AnalyticsWindowOptions(
                 window = state.window,
+                controlsEnabled = !state.updating,
                 onLengthSelected = actions.onLengthSelected,
             )
         }
@@ -268,6 +272,7 @@ private fun AnalyticsPeriodHeader(
     canStepEarlier: Boolean,
     canStepLater: Boolean,
     isCurrentWindow: Boolean,
+    updating: Boolean,
     onStepEarlier: () -> Unit,
     onStepLater: () -> Unit,
     onReturnToCurrent: () -> Unit,
@@ -297,21 +302,21 @@ private fun AnalyticsPeriodHeader(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TextButton(
-                    enabled = canStepEarlier,
+                    enabled = canStepEarlier && !updating,
                     onClick = onStepEarlier,
                     modifier = Modifier.testTag(TAG_ANALYTICS_EARLIER),
                 ) {
                     Text(stringResource(R.string.analytics_earlier))
                 }
                 TextButton(
-                    enabled = canStepLater,
+                    enabled = canStepLater && !updating,
                     onClick = onStepLater,
                     modifier = Modifier.testTag(TAG_ANALYTICS_LATER),
                 ) {
                     Text(stringResource(R.string.analytics_later))
                 }
                 TextButton(
-                    enabled = !isCurrentWindow,
+                    enabled = !isCurrentWindow && !updating,
                     onClick = onReturnToCurrent,
                     modifier = Modifier.testTag(TAG_ANALYTICS_CURRENT),
                 ) {
@@ -390,6 +395,7 @@ private fun AnalyticsSecondaryControls(
 private fun AnalyticsWindowOptions(
     window: AnalyticsWindow,
     onLengthSelected: (AnalyticsWindowLength) -> Unit,
+    controlsEnabled: Boolean = true,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
@@ -403,6 +409,7 @@ private fun AnalyticsWindowOptions(
                 .forEach { length ->
                     FilterChip(
                         selected = length == window.length,
+                        enabled = controlsEnabled,
                         onClick = { onLengthSelected(length) },
                         label = { Text(windowLengthLabel(length)) },
                     )
@@ -419,6 +426,7 @@ private fun AnalyticsWindowOptions(
                 .forEach { length ->
                     FilterChip(
                         selected = length == window.length,
+                        enabled = controlsEnabled,
                         onClick = { onLengthSelected(length) },
                         label = { Text(windowLengthLabel(length)) },
                     )
@@ -556,10 +564,26 @@ private fun AnalyticsOverviewCard(
                             contentDescription = headlineDescription
                         },
                 ) {
-                    GameIcon(
-                        iconUrl = leadingGame?.iconUrl.orEmpty(),
-                        iconSize = 52.dp,
-                    )
+                    val heroCapsuleUrl = leadingGame?.heroCapsuleUrl.orEmpty()
+                    if (heroCapsuleUrl.isNotBlank() && leadingGame != null) {
+                        // Portrait capsule art rather than a blown-up app icon, matching the
+                        // Library grid treatment. The icon remains the final CDN fallback
+                        // before the themed placeholder, e.g. for delisted art.
+                        GameHeroCapsule(
+                            heroCapsuleUrl = heroCapsuleUrl,
+                            fallbackUrls = SteamIconMapper.gridArtworkFallbackUrls(leadingGame.appId) +
+                                listOfNotNull(
+                                    leadingGame.iconUrl.takeIf { it.isNotBlank() },
+                                ),
+                            modifier = Modifier.size(width = 52.dp, height = 72.dp),
+                            shape = RoundedCornerShape(8.dp),
+                        )
+                    } else {
+                        GameIcon(
+                            iconUrl = leadingGame?.iconUrl.orEmpty(),
+                            iconSize = 52.dp,
+                        )
+                    }
                     Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -1061,25 +1085,28 @@ private fun SummaryStat(
     modifier: Modifier = Modifier,
 ) {
     // Weighted by callers on narrow phones so each cell keeps an equal share instead of
-    // sizing itself; titleMedium plus a single ellipsized line keeps values such as
-    // "3 hrs 7 mins" from wrapping into the neighbouring label.
+    // sizing itself. Values never ellipsize: a three-column phone row is too narrow for
+    // durations such as "87 hrs 42 mins", so the value wraps to a second centered line
+    // rather than truncating an exact KPI to "87 hrs 42...". Labels may ellipsize after
+    // two lines since they repeat the card title context.
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = value,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             color = valueColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            softWrap = false,
+            maxLines = 2,
+            softWrap = true,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            softWrap = false,
+            softWrap = true,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
     }
 }
