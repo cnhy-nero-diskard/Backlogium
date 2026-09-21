@@ -15,6 +15,7 @@ import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.UnlockedAchievementRarity
+import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RarityTier
@@ -26,7 +27,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -237,8 +237,23 @@ private data class AnalyticsInputs(
     val profile: PlayerStats?,
 )
 
+/** A selected window remembers whether it should continue following the current period. */
+internal data class AnalyticsWindowSelection(
+    val window: AnalyticsWindow,
+    val followsCurrent: Boolean,
+)
+
+internal fun AnalyticsWindowSelection.forDate(today: LocalDate): AnalyticsWindow =
+    if (followsCurrent) window.copy(anchor = today) else window
+
+private data class DatedAnalyticsWindow(
+    val window: AnalyticsWindow,
+    val today: LocalDate,
+)
+
 private data class ResolvedAnalyticsWindow(
     val window: AnalyticsWindow,
+    val today: LocalDate,
     val bounds: AnalyticsWindowBounds,
     val epochBounds: HistoryWindowBounds,
     val earliestTrackedDate: LocalDate?,
@@ -261,18 +276,53 @@ class AnalyticsViewModel @Inject constructor(
     private val achievementRepository: AchievementRepository,
     private val settings: SettingsRepository,
     private val credentials: CredentialsRepository,
+    private val currentDate: CurrentDateProvider,
     private val time: TimeProvider,
 ) : ViewModel() {
 
+    private val initialToday = time.today()
     private val selectedWindow = MutableStateFlow(
-        AnalyticsWindow(
-            anchor = time.today(),
-            length = AnalyticsWindowLength.THIRTY_DAYS,
+        AnalyticsWindowSelection(
+            window = AnalyticsWindow(
+                anchor = initialToday,
+                length = AnalyticsWindowLength.THIRTY_DAYS,
+            ),
+            followsCurrent = true,
+        ),
+    )
+
+    private val today: StateFlow<LocalDate> = currentDate.currentDate
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = initialToday,
+        )
+
+    private val datedWindow: StateFlow<DatedAnalyticsWindow> = combine(
+        selectedWindow,
+        today,
+    ) { selection, today ->
+        DatedAnalyticsWindow(
+            window = selection.forDate(today),
+            today = today,
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = DatedAnalyticsWindow(
+            window = selectedWindow.value.window,
+            today = today.value,
         ),
     )
 
     /** The current selection, exposed separately for callers that need controls outside uiState. */
-    val window: StateFlow<AnalyticsWindow> = selectedWindow.asStateFlow()
+    val window: StateFlow<AnalyticsWindow> = datedWindow
+        .map { it.window }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = datedWindow.value.window,
+        )
 
     private val earliestTrackedDate: StateFlow<LocalDate?> = sessionRepository.earliestSessionStart
         .map { startAt -> startAt?.let { localDate(it, time.zone()) } }
@@ -282,10 +332,15 @@ class AnalyticsViewModel @Inject constructor(
             initialValue = null,
         )
 
-    private fun resolveWindow(window: AnalyticsWindow, earliest: LocalDate?): ResolvedAnalyticsWindow {
+    private fun resolveWindow(
+        window: AnalyticsWindow,
+        earliest: LocalDate?,
+        today: LocalDate,
+    ): ResolvedAnalyticsWindow {
         val bounds = window.resolve()
         return ResolvedAnalyticsWindow(
             window = window,
+            today = today,
             bounds = bounds,
             epochBounds = historyWindowBounds(
                 start = bounds.start,
@@ -294,49 +349,71 @@ class AnalyticsViewModel @Inject constructor(
             ),
             earliestTrackedDate = earliest,
             canStepEarlier = window.canStepEarlier(earliest),
-            canStepLater = window.canStepLater(time.today()),
-            isCurrentWindow = window.isCurrentWindow(time.today()),
+            canStepLater = window.canStepLater(today),
+            isCurrentWindow = window.isCurrentWindow(today),
         )
     }
 
     private val resolvedWindow: StateFlow<ResolvedAnalyticsWindow> = combine(
-        selectedWindow,
+        datedWindow,
         earliestTrackedDate,
-    ) { window, earliest -> resolveWindow(window, earliest) }
+    ) { dated, earliest -> resolveWindow(dated.window, earliest, dated.today) }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = resolveWindow(selectedWindow.value, null),
+            initialValue = resolveWindow(datedWindow.value.window, null, datedWindow.value.today),
         )
 
     /** Select a new length while keeping the current anchor period. */
     fun selectWindowLength(length: AnalyticsWindowLength) {
-        selectedWindow.update { it.copy(length = length) }
+        val dated = datedWindow.value
+        val window = dated.window.copy(length = length)
+        selectedWindow.update {
+            AnalyticsWindowSelection(
+                window = window,
+                followsCurrent = window.isCurrentWindow(dated.today),
+            )
+        }
     }
 
     /** Move the selected anchor to the immediately preceding reachable period. */
     fun stepAnchorEarlier() {
         val earliest = earliestTrackedDate.value ?: return
         selectedWindow.update { current ->
-            current.stepEarlier().takeIf { candidate ->
+            current.window.stepEarlier().takeIf { candidate ->
                 candidate.resolve().endInclusive >= earliest
+            }?.let { candidate ->
+                AnalyticsWindowSelection(window = candidate, followsCurrent = false)
             } ?: current
         }
     }
 
     /** Move the selected anchor to the immediately following period when it remains bounded by today. */
     fun stepAnchorLater() {
-        selectedWindow.update { current ->
+        val dated = datedWindow.value
+        selectedWindow.update { selection ->
+            val current = dated.window
             current.stepLater().takeIf { candidate ->
-                candidate.resolve().endInclusive <= AnalyticsWindow(time.today(), current.length)
+                candidate.resolve().endInclusive <= AnalyticsWindow(dated.today, current.length)
                     .resolve().endInclusive
-            } ?: current
+            }?.let { candidate ->
+                AnalyticsWindowSelection(
+                    window = candidate,
+                    followsCurrent = candidate.isCurrentWindow(dated.today),
+                )
+            } ?: selection
         }
     }
 
     /** Return to the current period while preserving the selected length and chart display mode. */
     fun returnToCurrentWindow() {
-        selectedWindow.update { current -> current.copy(anchor = time.today()) }
+        val today = today.value
+        selectedWindow.update { current ->
+            AnalyticsWindowSelection(
+                window = current.window.copy(anchor = today),
+                followsCurrent = true,
+            )
+        }
     }
 
     // Re-query every windowed source when the same resolved bounds change. Room keeps the reads
@@ -347,7 +424,7 @@ class AnalyticsViewModel @Inject constructor(
         // When the elapsed day-count does not fit in the prior period, or tracking began inside
         // either range, omit the previous-period headline and fall back.
         val comparisonBounds = resolved.window.comparablePreviousBoundsIfFullyObserved(
-            today = time.today(),
+            today = resolved.today,
             earliestTrackedDate = resolved.earliestTrackedDate,
         )
         val previousMinutesFlow: Flow<Map<Long, Int>> = if (comparisonBounds == null) {
@@ -403,7 +480,7 @@ class AnalyticsViewModel @Inject constructor(
         // The period identity stays the full calendar period for labels and navigation, while
         // activity is represented only through today so future dates never appear as empty days.
         val periodBounds = inputs.window.resolve()
-        val dataBounds = inputs.window.resolveActivityBounds(time.today())
+        val dataBounds = inputs.window.resolveActivityBounds(resolved.today)
         val dates = dataBounds.dates()
         val gamesById = inputs.library.associateBy { it.appId }
         // Session start date is the canonical attribution shared with sync daily progress and
@@ -519,8 +596,8 @@ class AnalyticsViewModel @Inject constructor(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = AnalyticsUiState(
-            window = selectedWindow.value,
-            windowBounds = selectedWindow.value.resolve(),
+            window = datedWindow.value.window,
+            windowBounds = datedWindow.value.window.resolve(),
         ),
     )
 

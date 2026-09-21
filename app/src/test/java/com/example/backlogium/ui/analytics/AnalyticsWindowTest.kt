@@ -1,6 +1,14 @@
 package com.example.backlogium.ui.analytics
 
+import com.example.backlogium.domain.CurrentDateProvider
+import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.ui.history.historyWindowBounds
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -11,6 +19,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class AnalyticsWindowTest {
 
     private val anchor = LocalDate.of(2024, 8, 10)
@@ -110,6 +119,34 @@ class AnalyticsWindowTest {
             AnalyticsWindowBounds(LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 21)),
             current.comparablePreviousBounds(today),
         )
+    }
+
+    @Test
+    fun `midnight advances current window while earlier selection stays put`() = runTest {
+        val initialDate = LocalDate.of(2026, 8, 31)
+        val nextDate = initialDate.plusDays(1)
+        val clock = virtualClock(this, millisAt(initialDate, 23, 50))
+        val currentSelection = AnalyticsWindowSelection(
+            window = AnalyticsWindow(initialDate, AnalyticsWindowLength.ONE_MONTH),
+            followsCurrent = true,
+        )
+        val earlierSelection = AnalyticsWindowSelection(
+            window = currentSelection.window.stepEarlier(),
+            followsCurrent = false,
+        )
+
+        // No repository or settings flow emits here; the date boundary is the only input change.
+        val snapshots = CurrentDateProvider(clock).currentDate
+            .take(2)
+            .map { today ->
+                currentSelection.forDate(today) to earlierSelection.forDate(today)
+            }
+            .toList()
+
+        assertEquals(nextDate, snapshots[1].first.anchor)
+        assertEquals(earlierSelection.window, snapshots[1].second)
+        assertTrue(snapshots[1].first.isCurrentWindow(nextDate))
+        assertFalse(snapshots[1].second.isCurrentWindow(nextDate))
     }
 
     @Test
@@ -285,5 +322,20 @@ class AnalyticsWindowTest {
         assertTrue(us != german)
         assertTrue(german.contains("2024"))
         assertEquals(bounds, window.resolve())
+    }
+
+    private fun millisAt(date: LocalDate, hour: Int, minute: Int): Long =
+        date.atStartOfDay(zone).plusHours(hour.toLong()).plusMinutes(minute.toLong())
+            .toInstant().toEpochMilli()
+
+    private fun virtualClock(scope: TestScope, start: Long) = object : TimeProvider {
+        override fun nowMillis(): Long = start + scope.testScheduler.currentTime
+        override fun zone(): ZoneId = zone
+        override fun today(): LocalDate =
+            java.time.Instant.ofEpochMilli(nowMillis()).atZone(zone).toLocalDate()
+    }
+
+    private companion object {
+        val zone: ZoneId = ZoneId.of("Asia/Manila")
     }
 }
