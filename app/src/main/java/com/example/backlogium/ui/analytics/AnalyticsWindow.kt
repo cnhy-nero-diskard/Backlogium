@@ -91,6 +91,32 @@ data class AnalyticsWindow(
     fun canStepLater(today: LocalDate): Boolean =
         !isCurrentWindow(today) &&
             stepLater().resolve().endInclusive <= AnalyticsWindow(today, length).resolve().endInclusive
+
+    /**
+     * Bounds of the immediately preceding comparable window.
+     *
+     * Rolling lengths always compare equal-length windows. Past calendar periods compare full
+     * periods. The current (still elapsing) calendar month/year compares only the same elapsed
+     * day-count in the prior period, so month-to-date is never presented against a full month
+     * (and likewise year-to-date against a full year). The result never extends beyond the
+     * prior period's full bounds, so a longer current month clamps to the full shorter month.
+     */
+    fun comparablePreviousBounds(today: LocalDate): AnalyticsWindowBounds {
+        val previousFull = stepEarlier().resolve()
+        if (length.kind != AnalyticsWindowKind.CALENDAR) return previousFull
+        if (!isCurrentWindow(today)) return previousFull
+        val currentBounds = resolve()
+        val elapsedEnd =
+            if (today.isBefore(currentBounds.endInclusive)) today else currentBounds.endInclusive
+        val elapsedDays =
+            ChronoUnit.DAYS.between(currentBounds.start, elapsedEnd).toInt() + 1
+        val clampedEnd = previousFull.start.plusDays((elapsedDays - 1).coerceAtLeast(0).toLong())
+            .coerceAtMost(previousFull.endInclusive)
+        return AnalyticsWindowBounds(
+            start = previousFull.start,
+            endInclusive = clampedEnd,
+        )
+    }
 }
 
 /** Explicit inclusive local-date bounds for a selected Analytics window. */

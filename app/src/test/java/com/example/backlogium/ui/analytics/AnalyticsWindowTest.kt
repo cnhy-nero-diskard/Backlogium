@@ -101,6 +101,57 @@ class AnalyticsWindowTest {
     }
 
     @Test
+    fun comparablePreviousBoundsUsesSameElapsedSubrangeForCurrentMonth() {
+        val today = LocalDate.of(2026, 9, 21)
+        val current = AnalyticsWindow(today, AnalyticsWindowLength.ONE_MONTH)
+
+        assertEquals(
+            AnalyticsWindowBounds(LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 21)),
+            current.comparablePreviousBounds(today),
+        )
+    }
+
+    @Test
+    fun comparablePreviousBoundsUsesSameElapsedSubrangeForCurrentYear() {
+        val today = LocalDate.of(2026, 9, 21)
+        val current = AnalyticsWindow(today, AnalyticsWindowLength.ONE_YEAR)
+
+        assertEquals(
+            AnalyticsWindowBounds(LocalDate.of(2025, 1, 1), LocalDate.of(2025, 9, 21)),
+            current.comparablePreviousBounds(today),
+        )
+    }
+
+    @Test
+    fun comparablePreviousBoundsFallsBackToFullPeriodsOtherwise() {
+        val today = LocalDate.of(2024, 8, 10)
+        // Rolling lengths compare equal-length windows even when current.
+        assertEquals(
+            AnalyticsWindowBounds(LocalDate.of(2024, 6, 12), LocalDate.of(2024, 7, 11)),
+            AnalyticsWindow(today, AnalyticsWindowLength.THIRTY_DAYS)
+                .comparablePreviousBounds(today),
+        )
+        // A past calendar month compares full periods.
+        assertEquals(
+            AnalyticsWindowBounds(LocalDate.of(2024, 6, 1), LocalDate.of(2024, 6, 30)),
+            AnalyticsWindow(LocalDate.of(2024, 7, 15), AnalyticsWindowLength.ONE_MONTH)
+                .comparablePreviousBounds(today),
+        )
+    }
+
+    @Test
+    fun comparablePreviousBoundsClampsToShorterPriorMonth() {
+        // March 30 elapsed is 30 days but February only holds 28 in 2023.
+        val today = LocalDate.of(2023, 3, 30)
+        val current = AnalyticsWindow(today, AnalyticsWindowLength.ONE_MONTH)
+
+        assertEquals(
+            AnalyticsWindowBounds(LocalDate.of(2023, 2, 1), LocalDate.of(2023, 2, 28)),
+            current.comparablePreviousBounds(today),
+        )
+    }
+
+    @Test
     fun historyBoundsUseLocalMidnightAndExclusiveNextMidnight() {
         val zone = ZoneId.of("America/New_York")
         val bounds = historyWindowBounds(

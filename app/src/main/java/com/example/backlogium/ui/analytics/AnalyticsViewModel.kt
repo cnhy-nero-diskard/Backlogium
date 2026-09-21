@@ -328,9 +328,12 @@ class AnalyticsViewModel @Inject constructor(
     // Re-query every windowed source when the same resolved bounds change. Room keeps the reads
     // indexed in SQL; no wider history is fetched and pruned in memory.
     private val inputs: Flow<AnalyticsInputs> = resolvedWindow.flatMapLatest { resolved ->
+        // A current calendar month/year is only elapsed-to-date, so compare the same elapsed
+        // subrange in the prior period rather than a full month/year against a partial one.
+        val comparisonBounds = resolved.window.comparablePreviousBounds(time.today())
         val previousBounds = historyWindowBounds(
-            start = resolved.window.stepEarlier().resolve().start,
-            endInclusive = resolved.window.stepEarlier().resolve().endInclusive,
+            start = comparisonBounds.start,
+            endInclusive = comparisonBounds.endInclusive,
             zone = time.zone(),
         )
         combine(
@@ -454,14 +457,19 @@ class AnalyticsViewModel @Inject constructor(
             leadingGame = topGames.firstOrNull(),
             previousMinutes = inputs.previousMinutesByGame.values.sum().takeIf { it > 0 },
         )
+        // The figures below all derive from inputs.window. Keep the visible period metadata
+        // on that same snapshot until the new bounded query lands, so old figures are never
+        // relabelled as the newly selected period. Navigation affordances still follow the
+        // selection via resolved, while loading stays false once a snapshot exists so the
+        // empty state reflects the displayed snapshot rather than a zero-value stack.
         val updating = inputs.window != resolved.window
 
         AnalyticsUiState(
-            loading = updating,
+            loading = false,
             updating = updating,
             configured = credState is CredentialsState.Configured,
-            window = resolved.window,
-            windowBounds = resolved.bounds,
+            window = inputs.window,
+            windowBounds = dataBounds,
             earliestTrackedDate = resolved.earliestTrackedDate,
             canStepEarlier = resolved.canStepEarlier,
             canStepLater = resolved.canStepLater,
