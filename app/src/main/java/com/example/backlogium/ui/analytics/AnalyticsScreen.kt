@@ -146,17 +146,29 @@ internal fun AnalyticsContent(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        // Loading has no snapshot yet: keep the period context below visible but do not
-        // present empty figures as if they described the window.
-        if (!state.loading) {
-            AnalyticsOverviewCard(
-                days = state.dailyMinutes,
-                window = state.window,
-                familySharedMinutes = state.familySharedMinutes,
-                headline = state.headline,
-                leadingGame = state.topGames.firstOrNull(),
+        // Loading has no snapshot yet: not even the period identity is real (the default
+        // is the 1970 INITIAL_WINDOW sentinel), so hide the whole period/options area until
+        // the first ViewModel emission arrives rather than flashing a Dec 1969-Jan 1970
+        // "Selected period" plus "30 days".
+        if (state.loading) {
+            Text(
+                text = stringResource(R.string.analytics_updating_window),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { liveRegion = LiveRegionMode.Polite },
             )
+            return@Column
         }
+
+        AnalyticsOverviewCard(
+            days = state.dailyMinutes,
+            window = state.window,
+            familySharedMinutes = state.familySharedMinutes,
+            headline = state.headline,
+            leadingGame = state.topGames.firstOrNull(),
+        )
 
         AnalyticsPeriodHeader(
             window = state.window,
@@ -191,7 +203,7 @@ internal fun AnalyticsContent(
             optionsExpanded = chartOptionsExpanded,
         )
 
-        if (state.loading || state.updating) {
+        if (state.updating) {
             Text(
                 text = stringResource(R.string.analytics_updating_window),
                 style = MaterialTheme.typography.bodySmall,
@@ -200,12 +212,6 @@ internal fun AnalyticsContent(
                     .fillMaxWidth()
                     .semantics { liveRegion = LiveRegionMode.Polite },
             )
-        }
-
-        if (state.loading) {
-            // Metric area stays in an explicit loading state; the period context above
-            // remains visible while the new bounded query lands.
-            return@Column
         }
 
         if (!state.hasData) {

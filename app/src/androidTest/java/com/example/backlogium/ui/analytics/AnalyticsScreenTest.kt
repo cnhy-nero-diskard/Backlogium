@@ -69,6 +69,22 @@ class AnalyticsScreenTest {
     }
 
     @Test
+    fun initialLoadingStateHidesSentinelPeriodMetadata() {
+        // The bare default carries the 1970 INITIAL_WINDOW sentinel with loading=true and no
+        // snapshot yet: no period identity, length, or option row may surface from it.
+        setContent(state = AnalyticsUiState())
+
+        composeRule.onNodeWithText("Analytics").assertIsDisplayed()
+        composeRule.onNodeWithText("Updating the selected window...").assertIsDisplayed()
+        composeRule.onNodeWithText("Selected period").assertDoesNotExist()
+        composeRule.onNodeWithText("30 days", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithText("Show window options").assertDoesNotExist()
+        composeRule.onNodeWithText("Show chart options").assertDoesNotExist()
+        composeRule.onNodeWithText("1970", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithText("1969", substring = true).assertDoesNotExist()
+    }
+
+    @Test
     fun periodNavigationUsesAccessibleEarlierLaterAndCurrentActions() {
         var earlier = 0
         var later = 0
