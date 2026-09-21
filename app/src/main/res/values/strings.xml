@@ -75,7 +75,7 @@
     <string name="analytics_play_snapshot">Play snapshot</string>
     <string name="analytics_tracked">Tracked</string>
     <string name="analytics_active_days">Active days</string>
-    <string name="analytics_daily_average">Daily average</string>
+    <string name="analytics_daily_average">Avg active day</string>
     <string name="analytics_family_shared_observed">Includes %1$s observed from Family Sharing</string>
     <string name="analytics_daily_playtime">Daily playtime</string>
     <string name="analytics_chart_select_day">Select a day - %1$s total</string>
