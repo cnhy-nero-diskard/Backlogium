@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -334,12 +335,22 @@ class AnalyticsViewModel @Inject constructor(
     private val inputs: Flow<AnalyticsInputs> = resolvedWindow.flatMapLatest { resolved ->
         // A current calendar month/year is only elapsed-to-date, so compare the same elapsed
         // subrange in the prior period rather than a full month/year against a partial one.
+        // When the elapsed day-count does not fit in the prior period there is no
+        // equal-duration comparison; omit the previous-period headline and fall back.
         val comparisonBounds = resolved.window.comparablePreviousBounds(time.today())
-        val previousBounds = historyWindowBounds(
-            start = comparisonBounds.start,
-            endInclusive = comparisonBounds.endInclusive,
-            zone = time.zone(),
-        )
+        val previousMinutesFlow: Flow<Map<Long, Int>> = if (comparisonBounds == null) {
+            flowOf(emptyMap())
+        } else {
+            val previousBounds = historyWindowBounds(
+                start = comparisonBounds.start,
+                endInclusive = comparisonBounds.endInclusive,
+                zone = time.zone(),
+            )
+            sessionRepository.minutesByGameBetween(
+                startInclusiveMillis = previousBounds.startInclusiveMillis,
+                endExclusiveMillis = previousBounds.endExclusiveMillis,
+            )
+        }
         combine(
             combine(
                 sessionRepository.sessionsBetween(
@@ -350,10 +361,7 @@ class AnalyticsViewModel @Inject constructor(
                     startInclusiveMillis = resolved.epochBounds.startInclusiveMillis,
                     endExclusiveMillis = resolved.epochBounds.endExclusiveMillis,
                 ),
-                sessionRepository.minutesByGameBetween(
-                    startInclusiveMillis = previousBounds.startInclusiveMillis,
-                    endExclusiveMillis = previousBounds.endExclusiveMillis,
-                ),
+                previousMinutesFlow,
             ) { sessions, minutesByGame, previousMinutesByGame ->
                 Triple(sessions, minutesByGame, previousMinutesByGame)
             },

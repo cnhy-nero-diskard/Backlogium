@@ -93,15 +93,18 @@ data class AnalyticsWindow(
             stepLater().resolve().endInclusive <= AnalyticsWindow(today, length).resolve().endInclusive
 
     /**
-     * Bounds of the immediately preceding comparable window.
+     * Bounds of the immediately preceding comparable window, or null when no equal-duration
+     * comparison exists.
      *
      * Rolling lengths always compare equal-length windows. Past calendar periods compare full
      * periods. The current (still elapsing) calendar month/year compares only the same elapsed
      * day-count in the prior period, so month-to-date is never presented against a full month
-     * (and likewise year-to-date against a full year). The result never extends beyond the
-     * prior period's full bounds, so a longer current month clamps to the full shorter month.
+     * (and likewise year-to-date against a full year). When the elapsed day-count does not fit
+     * inside the prior period — a longer current month than the previous month, or a leap-year
+     * Dec 31 against a 365-day prior year — there is no equal-duration subrange, so the result
+     * is null and callers omit the previous-period headline instead of comparing unequal totals.
      */
-    fun comparablePreviousBounds(today: LocalDate): AnalyticsWindowBounds {
+    fun comparablePreviousBounds(today: LocalDate): AnalyticsWindowBounds? {
         val previousFull = stepEarlier().resolve()
         if (length.kind != AnalyticsWindowKind.CALENDAR) return previousFull
         if (!isCurrentWindow(today)) return previousFull
@@ -110,11 +113,10 @@ data class AnalyticsWindow(
             if (today.isBefore(currentBounds.endInclusive)) today else currentBounds.endInclusive
         val elapsedDays =
             ChronoUnit.DAYS.between(currentBounds.start, elapsedEnd).toInt() + 1
-        val clampedEnd = previousFull.start.plusDays((elapsedDays - 1).coerceAtLeast(0).toLong())
-            .coerceAtMost(previousFull.endInclusive)
+        if (elapsedDays > previousFull.dayCount) return null
         return AnalyticsWindowBounds(
             start = previousFull.start,
-            endInclusive = clampedEnd,
+            endInclusive = previousFull.start.plusDays((elapsedDays - 1).coerceAtLeast(0).toLong()),
         )
     }
 }

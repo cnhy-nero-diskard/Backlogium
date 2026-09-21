@@ -3,6 +3,7 @@ package com.example.backlogium.ui.analytics
 import com.example.backlogium.ui.history.historyWindowBounds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
@@ -140,15 +141,23 @@ class AnalyticsWindowTest {
     }
 
     @Test
-    fun comparablePreviousBoundsClampsToShorterPriorMonth() {
-        // March 30 elapsed is 30 days but February only holds 28 in 2023.
+    fun comparablePreviousBoundsOmitsComparisonWhenElapsedExceedsPriorMonth() {
+        // March 30 elapsed is 30 days but February only holds 28 in 2023: no equal-duration
+        // subrange exists, so the previous-period headline is omitted rather than comparing
+        // 30 days against 28.
         val today = LocalDate.of(2023, 3, 30)
         val current = AnalyticsWindow(today, AnalyticsWindowLength.ONE_MONTH)
 
-        assertEquals(
-            AnalyticsWindowBounds(LocalDate.of(2023, 2, 1), LocalDate.of(2023, 2, 28)),
-            current.comparablePreviousBounds(today),
-        )
+        assertNull(current.comparablePreviousBounds(today))
+    }
+
+    @Test
+    fun comparablePreviousBoundsOmitsComparisonForLeapYearEnd() {
+        // Dec 31 in a leap year elapsed 366 days but the prior year holds 365.
+        val today = LocalDate.of(2024, 12, 31)
+        val current = AnalyticsWindow(today, AnalyticsWindowLength.ONE_YEAR)
+
+        assertNull(current.comparablePreviousBounds(today))
     }
 
     @Test
