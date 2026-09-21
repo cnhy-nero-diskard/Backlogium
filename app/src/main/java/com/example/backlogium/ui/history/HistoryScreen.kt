@@ -39,6 +39,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -60,10 +61,21 @@ import compose.icons.tablericons.ChevronUp
 import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.CircleMinus
 
+internal const val TAG_HISTORY_MEASUREMENT_HELP = "history-measurement-help"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    HistoryContent(state = state, onLoadOlder = viewModel::loadOlder)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun HistoryContent(
+    state: HistoryUiState,
+    onLoadOlder: () -> Unit = {},
+) {
 
     if (!state.configured) {
         EmptyState(
@@ -123,7 +135,10 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = { showMeasurementHelp = true }) {
+                TextButton(
+                    onClick = { showMeasurementHelp = true },
+                    modifier = Modifier.testTag(TAG_HISTORY_MEASUREMENT_HELP),
+                ) {
                     Text(stringResource(R.string.history_measurement_help_action))
                 }
             }
@@ -146,7 +161,7 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
         }
 
         item(key = "load-older") {
-            TextButton(onClick = viewModel::loadOlder, modifier = Modifier.fillMaxWidth()) {
+            TextButton(onClick = onLoadOlder, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.history_load_older))
             }
         }

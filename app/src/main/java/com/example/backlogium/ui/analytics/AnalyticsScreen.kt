@@ -39,6 +39,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -72,9 +73,41 @@ import java.text.NumberFormat
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
+internal data class AnalyticsActions(
+    val onLengthSelected: (AnalyticsWindowLength) -> Unit = {},
+    val onStepEarlier: () -> Unit = {},
+    val onStepLater: () -> Unit = {},
+    val onReturnToCurrent: () -> Unit = {},
+)
+
+internal const val TAG_ANALYTICS_EARLIER = "analytics-earlier"
+internal const val TAG_ANALYTICS_LATER = "analytics-later"
+internal const val TAG_ANALYTICS_CURRENT = "analytics-current"
+internal const val TAG_ANALYTICS_WINDOW_OPTIONS = "analytics-window-options"
+internal const val TAG_ANALYTICS_CHART_OPTIONS = "analytics-chart-options"
+internal const val TAG_ANALYTICS_CHART = "analytics-chart"
+internal const val TAG_ANALYTICS_PREVIOUS_DAY = "analytics-previous-day"
+internal const val TAG_ANALYTICS_NEXT_DAY = "analytics-next-day"
+
 @Composable
 fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    AnalyticsContent(
+        state = state,
+        actions = AnalyticsActions(
+            onLengthSelected = viewModel::selectWindowLength,
+            onStepEarlier = viewModel::stepAnchorEarlier,
+            onStepLater = viewModel::stepAnchorLater,
+            onReturnToCurrent = viewModel::returnToCurrentWindow,
+        ),
+    )
+}
+
+@Composable
+internal fun AnalyticsContent(
+    state: AnalyticsUiState,
+    actions: AnalyticsActions = AnalyticsActions(),
+) {
     var omitZeroDays by remember { mutableStateOf(true) }
 
     if (!state.configured) {
@@ -122,10 +155,10 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
             canStepEarlier = state.canStepEarlier,
             canStepLater = state.canStepLater,
             isCurrentWindow = state.isCurrentWindow,
-            onLengthSelected = viewModel::selectWindowLength,
-            onStepEarlier = viewModel::stepAnchorEarlier,
-            onStepLater = viewModel::stepAnchorLater,
-            onReturnToCurrent = viewModel::returnToCurrentWindow,
+            onLengthSelected = actions.onLengthSelected,
+            onStepEarlier = actions.onStepEarlier,
+            onStepLater = actions.onStepLater,
+            onReturnToCurrent = actions.onReturnToCurrent,
         )
 
         ChartDisplaySelector(
@@ -239,21 +272,33 @@ private fun AnalyticsWindowSelector(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(enabled = canStepEarlier, onClick = onStepEarlier) {
+            TextButton(
+                enabled = canStepEarlier,
+                onClick = onStepEarlier,
+                modifier = Modifier.testTag(TAG_ANALYTICS_EARLIER),
+            ) {
                 Text(stringResource(R.string.analytics_earlier))
             }
-            TextButton(enabled = canStepLater, onClick = onStepLater) {
+            TextButton(
+                enabled = canStepLater,
+                onClick = onStepLater,
+                modifier = Modifier.testTag(TAG_ANALYTICS_LATER),
+            ) {
                 Text(stringResource(R.string.analytics_later))
             }
-            TextButton(enabled = !isCurrentWindow, onClick = onReturnToCurrent) {
+            TextButton(
+                enabled = !isCurrentWindow,
+                onClick = onReturnToCurrent,
+                modifier = Modifier.testTag(TAG_ANALYTICS_CURRENT),
+            ) {
                 Text(stringResource(R.string.analytics_current))
             }
         }
         TextButton(
             onClick = { expanded = !expanded },
-            modifier = Modifier.semantics {
-                stateDescription = expandedState
-            },
+            modifier = Modifier
+                .testTag(TAG_ANALYTICS_WINDOW_OPTIONS)
+                .semantics { stateDescription = expandedState },
         ) {
             Text(
                 if (expanded) {
@@ -313,10 +358,12 @@ private fun ChartDisplaySelector(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         TextButton(
             onClick = { expanded = !expanded },
-            modifier = Modifier.semantics {
-                role = Role.Button
-                stateDescription = expandedState
-            },
+            modifier = Modifier
+                .testTag(TAG_ANALYTICS_CHART_OPTIONS)
+                .semantics {
+                    role = Role.Button
+                    stateDescription = expandedState
+                },
         ) {
             Text(
                 if (expanded) {
@@ -595,6 +642,7 @@ private fun DailyPlaytimeChart(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(chartHeight)
+                            .testTag(TAG_ANALYTICS_CHART)
                             .semantics {
                                 contentDescription = chartSummary
                             }
@@ -724,7 +772,7 @@ private fun DailyPlaytimeChart(
                     onClick = { selectDay(stepAnalyticsDaySelection(selectedIndex, days.size, -1) ?: selectedIndex) },
                     modifier = Modifier.semantics {
                         contentDescription = previousDayLabel
-                    },
+                    }.testTag(TAG_ANALYTICS_PREVIOUS_DAY),
                 ) {
                     Icon(
                         imageVector = TablerIcons.ChevronLeft,
@@ -746,7 +794,7 @@ private fun DailyPlaytimeChart(
                     onClick = { selectDay(stepAnalyticsDaySelection(selectedIndex, days.size, 1) ?: selectedIndex) },
                     modifier = Modifier.semantics {
                         contentDescription = nextDayLabel
-                    },
+                    }.testTag(TAG_ANALYTICS_NEXT_DAY),
                 ) {
                     Icon(
                         imageVector = TablerIcons.ChevronRight,
