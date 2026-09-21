@@ -161,6 +161,80 @@ class AnalyticsWindowTest {
     }
 
     @Test
+    fun activityBoundsExcludeFutureDaysInCurrentMonth() {
+        val today = LocalDate.of(2026, 9, 21)
+        val current = AnalyticsWindow(today, AnalyticsWindowLength.ONE_MONTH)
+
+        // Period identity stays the full calendar month for labels and navigation.
+        assertEquals(
+            AnalyticsWindowBounds(LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 30)),
+            current.resolve(),
+        )
+        // Represented activity stops at today so Sep 22-30 never appear as zero-minute days.
+        val activity = current.resolveActivityBounds(today)
+        assertEquals(
+            AnalyticsWindowBounds(LocalDate.of(2026, 9, 1), today),
+            activity,
+        )
+        assertEquals(21, activity.dayCount)
+        assertTrue(activity.dates().none { it.isAfter(today) })
+    }
+
+    @Test
+    fun activityBoundsExcludeFutureDaysInCurrentYear() {
+        val today = LocalDate.of(2026, 9, 21)
+        val current = AnalyticsWindow(today, AnalyticsWindowLength.ONE_YEAR)
+
+        assertEquals(
+            AnalyticsWindowBounds(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 12, 31)),
+            current.resolve(),
+        )
+        val activity = current.resolveActivityBounds(today)
+        assertEquals(
+            AnalyticsWindowBounds(LocalDate.of(2026, 1, 1), today),
+            activity,
+        )
+        assertEquals(264, activity.dayCount)
+        assertTrue(activity.dates().none { it.isAfter(today) })
+    }
+
+    @Test
+    fun activityBoundsKeepFullPeriodForPastCalendarsAndRolling() {
+        val today = LocalDate.of(2026, 9, 21)
+        val pastMonth = AnalyticsWindow(LocalDate.of(2026, 8, 15), AnalyticsWindowLength.ONE_MONTH)
+        assertEquals(pastMonth.resolve(), pastMonth.resolveActivityBounds(today))
+
+        val pastYear = AnalyticsWindow(LocalDate.of(2025, 6, 15), AnalyticsWindowLength.ONE_YEAR)
+        assertEquals(pastYear.resolve(), pastYear.resolveActivityBounds(today))
+
+        val rolling = AnalyticsWindow(today, AnalyticsWindowLength.THIRTY_DAYS)
+        assertEquals(rolling.resolve(), rolling.resolveActivityBounds(today))
+    }
+
+    @Test
+    fun representedDayCountUsesElapsedDaysWithFallbackToPeriod() {
+        val today = LocalDate.of(2026, 9, 21)
+        val window = AnalyticsWindow(today, AnalyticsWindowLength.ONE_MONTH)
+        val activity = window.resolveActivityBounds(today)
+        val days = activity.dates().map { AnalyticsDay(it, 0) }
+
+        val populated = AnalyticsUiState(
+            loading = false,
+            window = window,
+            windowBounds = window.resolve(),
+            dailyMinutes = days,
+        )
+        assertEquals(21, populated.representedDayCount)
+
+        val empty = AnalyticsUiState(
+            window = window,
+            windowBounds = window.resolve(),
+            dailyMinutes = emptyList(),
+        )
+        assertEquals(30, empty.representedDayCount)
+    }
+
+    @Test
     fun historyBoundsUseLocalMidnightAndExclusiveNextMidnight() {
         val zone = ZoneId.of("America/New_York")
         val bounds = historyWindowBounds(

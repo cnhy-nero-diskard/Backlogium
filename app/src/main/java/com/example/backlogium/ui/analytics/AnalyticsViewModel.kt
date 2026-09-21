@@ -180,13 +180,14 @@ data class AnalyticsUiState(
     val updating: Boolean = false,
     val configured: Boolean = true,
     val window: AnalyticsWindow = INITIAL_WINDOW,
+    /** The full calendar period identity used for the period label and navigation. */
     val windowBounds: AnalyticsWindowBounds = INITIAL_WINDOW.resolve(),
     val earliestTrackedDate: LocalDate? = null,
     val canStepEarlier: Boolean = false,
     val canStepLater: Boolean = false,
     val isCurrentWindow: Boolean = true,
     val headline: AnalyticsHeadline = AnalyticsHeadline.NoData,
-    /** One entry per local day in the selected window, including zero-minute days, oldest first. */
+    /** One entry per represented day through today, including zero-minute days, oldest first. */
     val dailyMinutes: List<AnalyticsDay> = emptyList(),
     /** The configured daily-quest threshold, drawn as a reference line on the chart. */
     val questThreshold: Int = 30,
@@ -216,6 +217,14 @@ data class AnalyticsUiState(
     /** True when there is at least one tracked minute in the selected window. */
     val hasData: Boolean
         get() = dailyMinutes.any { it.minutes > 0 } || topGames.isNotEmpty()
+
+    /**
+     * Days actually represented as activity: the elapsed day count through today for the current
+     * calendar month/year, otherwise the full period. Falls back to the period identity when no
+     * represented days are loaded yet.
+     */
+    val representedDayCount: Int
+        get() = dailyMinutes.size.takeIf { it > 0 } ?: windowBounds.dayCount
 }
 
 private data class AnalyticsInputs(
@@ -388,7 +397,10 @@ class AnalyticsViewModel @Inject constructor(
         credentials.credentialsStateFlow,
         achievementRepository.unlockedRarityDetails,
     ) { inputs, resolved, ruleConfig, credState, rarityDetails ->
-        val dataBounds = inputs.window.resolve()
+        // The period identity stays the full calendar period for labels and navigation, while
+        // activity is represented only through today so future dates never appear as empty days.
+        val periodBounds = inputs.window.resolve()
+        val dataBounds = inputs.window.resolveActivityBounds(time.today())
         val dates = dataBounds.dates()
         val gamesById = inputs.library.associateBy { it.appId }
         // Session start date is the canonical attribution shared with sync daily progress and
@@ -481,7 +493,7 @@ class AnalyticsViewModel @Inject constructor(
             updating = updating,
             configured = credState is CredentialsState.Configured,
             window = inputs.window,
-            windowBounds = dataBounds,
+            windowBounds = periodBounds,
             earliestTrackedDate = resolved.earliestTrackedDate,
             canStepEarlier = resolved.canStepEarlier,
             canStepLater = resolved.canStepLater,

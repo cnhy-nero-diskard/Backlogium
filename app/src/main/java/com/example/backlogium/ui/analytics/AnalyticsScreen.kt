@@ -220,7 +220,7 @@ internal fun AnalyticsContent(
                 currentStreak = state.currentStreak,
                 longestStreak = state.longestStreak,
                 questMetDaysCount = state.questMetDaysCount,
-                windowDays = state.windowBounds.dayCount,
+                windowDays = state.representedDayCount,
             )
             RarityBreakdownCard(
                 breakdown = state.rarityBreakdown,
@@ -238,7 +238,7 @@ internal fun AnalyticsContent(
                 currentStreak = state.currentStreak,
                 longestStreak = state.longestStreak,
                 questMetDaysCount = state.questMetDaysCount,
-                windowDays = state.windowBounds.dayCount,
+                windowDays = state.representedDayCount,
             )
 
             SessionInsightsCard(
