@@ -109,6 +109,8 @@ internal fun AnalyticsContent(
     actions: AnalyticsActions = AnalyticsActions(),
 ) {
     var omitZeroDays by remember { mutableStateOf(true) }
+    var windowOptionsExpanded by remember { mutableStateOf(false) }
+    var chartOptionsExpanded by remember { mutableStateOf(false) }
 
     if (!state.configured) {
         EmptyState(
@@ -142,31 +144,50 @@ internal fun AnalyticsContent(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        AnalyticsOverviewCard(
-            days = state.dailyMinutes,
-            window = state.window,
-            familySharedMinutes = state.familySharedMinutes,
-            headline = state.headline,
-        )
+        // Loading has no snapshot yet: keep the period context below visible but do not
+        // present empty figures as if they described the window.
+        if (!state.loading) {
+            AnalyticsOverviewCard(
+                days = state.dailyMinutes,
+                window = state.window,
+                familySharedMinutes = state.familySharedMinutes,
+                headline = state.headline,
+                leadingGame = state.topGames.firstOrNull(),
+            )
+        }
 
-        AnalyticsWindowSelector(
+        AnalyticsPeriodHeader(
             window = state.window,
             bounds = state.windowBounds,
             canStepEarlier = state.canStepEarlier,
             canStepLater = state.canStepLater,
             isCurrentWindow = state.isCurrentWindow,
-            onLengthSelected = actions.onLengthSelected,
             onStepEarlier = actions.onStepEarlier,
             onStepLater = actions.onStepLater,
             onReturnToCurrent = actions.onReturnToCurrent,
         )
 
+        AnalyticsSecondaryControls(
+            windowOptionsExpanded = windowOptionsExpanded,
+            onWindowOptionsExpandedChange = { windowOptionsExpanded = it },
+            chartOptionsExpanded = chartOptionsExpanded,
+            onChartOptionsExpandedChange = { chartOptionsExpanded = it },
+        )
+
+        if (windowOptionsExpanded) {
+            AnalyticsWindowOptions(
+                window = state.window,
+                onLengthSelected = actions.onLengthSelected,
+            )
+        }
+
         ChartDisplaySelector(
             omitZeroDays = omitZeroDays,
             onOmitZeroDaysChanged = { omitZeroDays = it },
+            optionsExpanded = chartOptionsExpanded,
         )
 
-        if (state.updating) {
+        if (state.loading || state.updating) {
             Text(
                 text = stringResource(R.string.analytics_updating_window),
                 style = MaterialTheme.typography.bodySmall,
@@ -177,7 +198,13 @@ internal fun AnalyticsContent(
             )
         }
 
-        if (!state.loading && !state.hasData) {
+        if (state.loading) {
+            // Metric area stays in an explicit loading state; the period context above
+            // remains visible while the new bounded query lands.
+            return@Column
+        }
+
+        if (!state.hasData) {
             EmptyState(
                 title = stringResource(R.string.analytics_empty_title),
                 message = stringResource(R.string.analytics_empty_message),
@@ -235,23 +262,16 @@ internal fun AnalyticsContent(
 }
 
 @Composable
-private fun AnalyticsWindowSelector(
+private fun AnalyticsPeriodHeader(
     window: AnalyticsWindow,
     bounds: AnalyticsWindowBounds,
     canStepEarlier: Boolean,
     canStepLater: Boolean,
     isCurrentWindow: Boolean,
-    onLengthSelected: (AnalyticsWindowLength) -> Unit,
     onStepEarlier: () -> Unit,
     onStepLater: () -> Unit,
     onReturnToCurrent: () -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    val expandedState = if (expanded) {
-        stringResource(R.string.analytics_expanded)
-    } else {
-        stringResource(R.string.analytics_collapsed)
-    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             text = stringResource(R.string.analytics_selected_period),
@@ -267,48 +287,111 @@ private fun AnalyticsWindowSelector(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(
-                enabled = canStepEarlier,
-                onClick = onStepEarlier,
-                modifier = Modifier.testTag(TAG_ANALYTICS_EARLIER),
+        // A dead row of three disabled buttons costs a full viewport row before the chart
+        // while communicating nothing. Omit navigation entirely when no move is valid;
+        // the spec allows disabled or omitted, and omission keeps the chart in reach.
+        if (canStepEarlier || canStepLater || !isCurrentWindow) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(stringResource(R.string.analytics_earlier))
-            }
-            TextButton(
-                enabled = canStepLater,
-                onClick = onStepLater,
-                modifier = Modifier.testTag(TAG_ANALYTICS_LATER),
-            ) {
-                Text(stringResource(R.string.analytics_later))
-            }
-            TextButton(
-                enabled = !isCurrentWindow,
-                onClick = onReturnToCurrent,
-                modifier = Modifier.testTag(TAG_ANALYTICS_CURRENT),
-            ) {
-                Text(stringResource(R.string.analytics_current))
+                TextButton(
+                    enabled = canStepEarlier,
+                    onClick = onStepEarlier,
+                    modifier = Modifier.testTag(TAG_ANALYTICS_EARLIER),
+                ) {
+                    Text(stringResource(R.string.analytics_earlier))
+                }
+                TextButton(
+                    enabled = canStepLater,
+                    onClick = onStepLater,
+                    modifier = Modifier.testTag(TAG_ANALYTICS_LATER),
+                ) {
+                    Text(stringResource(R.string.analytics_later))
+                }
+                TextButton(
+                    enabled = !isCurrentWindow,
+                    onClick = onReturnToCurrent,
+                    modifier = Modifier.testTag(TAG_ANALYTICS_CURRENT),
+                ) {
+                    Text(stringResource(R.string.analytics_current))
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun AnalyticsSecondaryControls(
+    windowOptionsExpanded: Boolean,
+    onWindowOptionsExpandedChange: (Boolean) -> Unit,
+    chartOptionsExpanded: Boolean,
+    onChartOptionsExpandedChange: (Boolean) -> Unit,
+) {
+    val windowState = if (windowOptionsExpanded) {
+        stringResource(R.string.analytics_expanded)
+    } else {
+        stringResource(R.string.analytics_collapsed)
+    }
+    val chartState = if (chartOptionsExpanded) {
+        stringResource(R.string.analytics_expanded)
+    } else {
+        stringResource(R.string.analytics_collapsed)
+    }
+    // One shared row for both disclosures keeps two stacked full-width buttons from
+    // pushing the chart below the first viewport on a narrow phone.
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         TextButton(
-            onClick = { expanded = !expanded },
+            onClick = { onWindowOptionsExpandedChange(!windowOptionsExpanded) },
             modifier = Modifier
+                .weight(1f)
                 .testTag(TAG_ANALYTICS_WINDOW_OPTIONS)
-                .semantics { stateDescription = expandedState },
+                .semantics { stateDescription = windowState },
         ) {
             Text(
-                if (expanded) {
+                text = if (windowOptionsExpanded) {
                     stringResource(R.string.analytics_hide_window_options)
                 } else {
                     stringResource(R.string.analytics_show_window_options)
                 },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
-        if (!expanded) return@Column
+        TextButton(
+            onClick = { onChartOptionsExpandedChange(!chartOptionsExpanded) },
+            modifier = Modifier
+                .weight(1f)
+                .testTag(TAG_ANALYTICS_CHART_OPTIONS)
+                .semantics {
+                    role = Role.Button
+                    stateDescription = chartState
+                },
+        ) {
+            Text(
+                text = if (chartOptionsExpanded) {
+                    stringResource(R.string.analytics_hide_chart_options)
+                } else {
+                    stringResource(R.string.analytics_show_chart_options)
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AnalyticsWindowOptions(
+    window: AnalyticsWindow,
+    onLengthSelected: (AnalyticsWindowLength) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             text = stringResource(R.string.analytics_rolling_durations),
             style = MaterialTheme.typography.labelSmall,
@@ -348,31 +431,9 @@ private fun AnalyticsWindowSelector(
 private fun ChartDisplaySelector(
     omitZeroDays: Boolean,
     onOmitZeroDaysChanged: (Boolean) -> Unit,
+    optionsExpanded: Boolean,
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    val expandedState = if (expanded) {
-        stringResource(R.string.analytics_expanded)
-    } else {
-        stringResource(R.string.analytics_collapsed)
-    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        TextButton(
-            onClick = { expanded = !expanded },
-            modifier = Modifier
-                .testTag(TAG_ANALYTICS_CHART_OPTIONS)
-                .semantics {
-                    role = Role.Button
-                    stateDescription = expandedState
-                },
-        ) {
-            Text(
-                if (expanded) {
-                    stringResource(R.string.analytics_hide_chart_options)
-                } else {
-                    stringResource(R.string.analytics_show_chart_options)
-                },
-            )
-        }
         Text(
             text = if (omitZeroDays) {
                 stringResource(R.string.analytics_active_days_default)
@@ -382,7 +443,7 @@ private fun ChartDisplaySelector(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (!expanded) return@Column
+        if (!optionsExpanded) return@Column
         Text(
             text = stringResource(R.string.analytics_chart_display),
             style = MaterialTheme.typography.labelLarge,
@@ -448,12 +509,14 @@ private fun AnalyticsOverviewCard(
     window: AnalyticsWindow,
     familySharedMinutes: Int,
     headline: AnalyticsHeadline,
+    leadingGame: AnalyticsGame?,
 ) {
     val activeDays = days.count { it.minutes > 0 }
     val totalMinutes = days.sumOf { it.minutes }
     val averageMinutes = if (activeDays == 0) 0 else totalMinutes / activeDays
     val contentColor = MaterialTheme.colorScheme.onPrimaryContainer
     val headlineDescription = analyticsHeadlineText(headline)
+    val leadingHeadline = headline as? AnalyticsHeadline.LeadingGame
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -480,34 +543,76 @@ private fun AnalyticsOverviewCard(
                 )
             }
             Spacer(Modifier.height(10.dp))
-            Text(
-                text = headlineDescription,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = contentColor,
-                modifier = Modifier.semantics(mergeDescendants = true) {
-                    contentDescription = headlineDescription
-                },
-            )
+            if (leadingHeadline != null) {
+                // A long title inside a full sentence wraps over several large lines on a
+                // narrow phone. Split the hierarchy instead: artwork plus name on one line
+                // and its time below, with the full sentence kept as the TalkBack
+                // description so assistive tech still hears the complete fact.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = headlineDescription
+                        },
+                ) {
+                    GameIcon(
+                        iconUrl = leadingGame?.iconUrl.orEmpty(),
+                        iconSize = 52.dp,
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = leadingHeadline.gameName,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = contentColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = UiFormat.localizedMinutes(leadingHeadline.minutes),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = contentColor.copy(alpha = 0.9f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    text = headlineDescription,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = contentColor,
+                    modifier = Modifier.semantics(mergeDescendants = true) {
+                        contentDescription = headlineDescription
+                    },
+                )
+            }
             Spacer(Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 SummaryStat(
                     label = stringResource(R.string.analytics_tracked),
                     value = UiFormat.localizedMinutes(totalMinutes),
                     valueColor = contentColor,
+                    modifier = Modifier.weight(1f),
                 )
                 SummaryStat(
                     label = stringResource(R.string.analytics_active_days),
                     value = UiFormat.count(activeDays),
                     valueColor = contentColor,
+                    modifier = Modifier.weight(1f),
                 )
                 SummaryStat(
                     label = stringResource(R.string.analytics_daily_average),
                     value = UiFormat.localizedMinutes(averageMinutes),
                     valueColor = contentColor,
+                    modifier = Modifier.weight(1f),
                 )
             }
             // Shared games are already inside every figure above. This names their slice, so a
@@ -953,18 +1058,28 @@ private fun SummaryStat(
     label: String,
     value: String,
     valueColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface,
+    modifier: Modifier = Modifier,
 ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    // Weighted by callers on narrow phones so each cell keeps an equal share instead of
+    // sizing itself; titleMedium plus a single ellipsized line keeps values such as
+    // "3 hrs 7 mins" from wrapping into the neighbouring label.
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = value,
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             color = valueColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            softWrap = false,
         )
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            softWrap = false,
         )
     }
 }
