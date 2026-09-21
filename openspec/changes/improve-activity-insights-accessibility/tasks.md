@@ -24,6 +24,6 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Run `./gradlew.bat :app:testDebugUnitTest --offline --no-daemon` and verify History, Analytics, DAO-fake, and window-bound regressions pass.
-- [ ] 5.2 Run `./gradlew.bat :app:compileDebugKotlin --offline --no-daemon` and focused History/Analytics connected Compose tests when a device is available; do not claim unavailable checks.
-- [ ] 5.3 Run `openspec validate improve-activity-insights-accessibility --strict` and `git diff --check`, and verify session attribution, solid chart baseline, and active-days default remain unchanged.
+- [x] 5.1 Run `./gradlew.bat :app:testDebugUnitTest --offline --no-daemon` and verify History, Analytics, DAO-fake, and window-bound regressions pass.
+- [x] 5.2 Run `./gradlew.bat :app:compileDebugKotlin --offline --no-daemon` and focused History/Analytics connected Compose tests when a device is available; do not claim unavailable checks.
+- [x] 5.3 Run `openspec validate improve-activity-insights-accessibility --strict` and `git diff --check`, and verify session attribution, solid chart baseline, and active-days default remain unchanged.
