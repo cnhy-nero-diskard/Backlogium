@@ -121,6 +121,23 @@ data class AnalyticsWindow(
     }
 
     /**
+     * Return the comparable previous bounds only when both sides are fully observed since tracking
+     * began. A partial first window must not be presented as a period comparison.
+     */
+    fun comparablePreviousBoundsIfFullyObserved(
+        today: LocalDate,
+        earliestTrackedDate: LocalDate?,
+    ): AnalyticsWindowBounds? {
+        val previous = comparablePreviousBounds(today) ?: return null
+        val current = resolveActivityBounds(today)
+        return previous.takeIf { bounds ->
+            earliestTrackedDate != null &&
+                !earliestTrackedDate.isAfter(current.start) &&
+                !earliestTrackedDate.isAfter(bounds.start)
+        }
+    }
+
+    /**
      * The local-date bounds actually represented as activity: the full calendar period for past
      * windows, but only the elapsed subrange through [today] for the current calendar month/year.
      * Rolling lengths already end on their anchor, so clamping is a no-op for them; past calendar

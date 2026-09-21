@@ -344,9 +344,12 @@ class AnalyticsViewModel @Inject constructor(
     private val inputs: Flow<AnalyticsInputs> = resolvedWindow.flatMapLatest { resolved ->
         // A current calendar month/year is only elapsed-to-date, so compare the same elapsed
         // subrange in the prior period rather than a full month/year against a partial one.
-        // When the elapsed day-count does not fit in the prior period there is no
-        // equal-duration comparison; omit the previous-period headline and fall back.
-        val comparisonBounds = resolved.window.comparablePreviousBounds(time.today())
+        // When the elapsed day-count does not fit in the prior period, or tracking began inside
+        // either range, omit the previous-period headline and fall back.
+        val comparisonBounds = resolved.window.comparablePreviousBoundsIfFullyObserved(
+            today = time.today(),
+            earliestTrackedDate = resolved.earliestTrackedDate,
+        )
         val previousMinutesFlow: Flow<Map<Long, Int>> = if (comparisonBounds == null) {
             flowOf(emptyMap())
         } else {

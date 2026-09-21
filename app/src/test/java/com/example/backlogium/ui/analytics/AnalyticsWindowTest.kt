@@ -113,6 +113,27 @@ class AnalyticsWindowTest {
     }
 
     @Test
+    fun comparablePreviousBoundsOmitsComparisonWhenTrackingStartsInsideEitherRange() {
+        val today = LocalDate.of(2026, 9, 22)
+        val current = AnalyticsWindow(today, AnalyticsWindowLength.ONE_MONTH)
+
+        // Aug 15 start leaves the Aug 1-22 previous comparison only partially observed.
+        assertNull(
+            current.comparablePreviousBoundsIfFullyObserved(
+                today = today,
+                earliestTrackedDate = LocalDate.of(2026, 8, 15),
+            ),
+        )
+        // A current range that predates tracking is also not comparable.
+        assertNull(
+            current.comparablePreviousBoundsIfFullyObserved(
+                today = today,
+                earliestTrackedDate = LocalDate.of(2026, 9, 15),
+            ),
+        )
+    }
+
+    @Test
     fun comparablePreviousBoundsUsesSameElapsedSubrangeForCurrentYear() {
         val today = LocalDate.of(2026, 9, 21)
         val current = AnalyticsWindow(today, AnalyticsWindowLength.ONE_YEAR)
