@@ -23,6 +23,6 @@
 
 ## 5. CI and documentation
 
-- [ ] 5.1 Add screenshot verification to CI after unit compilation, and verify a controlled failing branch uploads expected, actual, and diff images as a named artifact.
-- [ ] 5.2 Document prerequisites plus separate record and verify commands, baseline-review rules, and the requirement that CI never records; verify a fresh checkout can follow the documented verify path.
-- [ ] 5.3 Run `./gradlew.bat :app:testDebugUnitTest --offline --no-daemon`, the screenshot verify task, `openspec validate add-main-screen-visual-regression-coverage --strict`, and `git diff --check`, and verify no production UI behavior changed in this test-only change.
+- [x] 5.1 Add screenshot verification to CI after unit compilation, and verify a controlled failing branch uploads expected, actual, and diff images as a named artifact.
+- [x] 5.2 Document prerequisites plus separate record and verify commands, baseline-review rules, and the requirement that CI never records; verify a fresh checkout can follow the documented verify path.
+- [x] 5.3 Run `./gradlew.bat :app:testDebugUnitTest --offline --no-daemon`, the screenshot verify task, `openspec validate add-main-screen-visual-regression-coverage --strict`, and `git diff --check`, and verify no production UI behavior changed in this test-only change.

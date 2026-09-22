@@ -17,8 +17,6 @@ import org.junit.Rule
 
 internal const val NARROW_SCREEN_QUALIFIERS = "en-rUS-w320dp-h720dp-mdpi"
 internal const val STANDARD_SCREEN_QUALIFIERS = "en-rUS-w412dp-h915dp-mdpi"
-internal const val NARROW_SCREEN_NAME = "narrow"
-internal const val STANDARD_SCREEN_NAME = "standard"
 internal const val FIXED_SCREEN_TIME_MILLIS = 1_768_464_000_000L
 
 internal data class MainScreenshotFixture(
