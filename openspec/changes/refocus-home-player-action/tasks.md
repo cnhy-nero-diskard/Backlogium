@@ -1,6 +1,6 @@
 ## 1. Next-action presentation model
 
-- [ ] 1.1 Add the sealed Home next-action model and deterministic Focus/collection/fallback selector, and verify unit tests cover priority, incomplete filtering, ordered-queue-only collection fallback (skipping non-queue, empty, and completed-queue collections without `nextUp`), current-game suppression, and empty inputs.
+- [x] 1.1 Add the sealed Home next-action model and deterministic Focus/collection/fallback selector, and verify unit tests cover priority, incomplete filtering, ordered-queue-only collection fallback (skipping non-queue, empty, and completed-queue collections without `nextUp`), current-game suppression, and empty inputs.
 - [ ] 1.2 Combine the selector into `HomeUiState` using existing local flows only, and verify a ViewModel test observes updates when Focus, collection order, completion, or live status changes.
 - [ ] 1.3 Add navigation callbacks for next-game, collection, and Library fallback actions, and verify navigation tests resolve each destination without adding a new route type.
 
