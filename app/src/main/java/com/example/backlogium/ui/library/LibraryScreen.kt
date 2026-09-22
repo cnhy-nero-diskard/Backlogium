@@ -1,5 +1,8 @@
 package com.example.backlogium.ui.library
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -61,6 +64,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -167,6 +171,21 @@ internal fun shouldShowWishlistSection(
         (libraryState.filters.query.isBlank() && selectedGenreSet.isEmpty() &&
             !libraryState.filters.notCoveredOnly && !libraryState.filters.familySharedOnly))
 
+/**
+ * Whether Library's transient ViewModel state (selection and filters) resets when the screen's
+ * composition disposes. Disposal fires both on an actual navigation-away and on a
+ * configuration/activity recreation (rotation, locale/theme change) where the Hilt ViewModel
+ * survives — so only a navigation-away clears, and a recreation keeps the active filters.
+ */
+internal fun shouldClearLibraryTransientState(isChangingConfigurations: Boolean): Boolean =
+    !isChangingConfigurations
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 @Composable
 private fun LibraryEmptyNotice() {
     Column(
@@ -199,6 +218,7 @@ fun LibraryScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val wishlistState by wishlistViewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val haptics = rememberHaptics()
     var dialogTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
@@ -246,12 +266,18 @@ fun LibraryScreen(
         }
     }
 
-    // Selection is transient: leaving the Library drops it, so it can never outlive the screen
-    // that shows the count.
+    // Selection and filters are transient: leaving the Library drops them, so they can never
+    // outlive the screen that shows them. Composition disposal alone is not "leaving", though:
+    // a configuration/activity recreation (rotation, locale/theme change) also disposes the
+    // composition while the Hilt ViewModel survives, so an unconditional clear would wipe active
+    // filters the user never left. Only reset ViewModel state on an actual navigation-away.
     DisposableEffect(Unit) {
         onDispose {
-            viewModel.clearSelection()
-            viewModel.clearFilters()
+            val recreation = context.findActivity()?.isChangingConfigurations == true
+            if (shouldClearLibraryTransientState(recreation)) {
+                viewModel.clearSelection()
+                viewModel.clearFilters()
+            }
             showFilterSheet = false
             showToolsSheet = false
             genreSearchQuery = ""
