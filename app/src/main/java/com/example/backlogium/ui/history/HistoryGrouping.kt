@@ -7,6 +7,9 @@ import com.example.backlogium.data.repo.PlaySession
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import java.util.Locale
 
 /** Achievement thumbnails cap per day header before collapsing into a "+N" badge. */
 const val HISTORY_ACHIEVEMENT_CAP = 5
@@ -53,6 +56,28 @@ data class HistoryDayGroup(
     val gameThumbnails: HistoryGameThumbnails = HistoryGameThumbnails(),
     val achievements: HistoryAchievements,
 )
+
+/** The two presentation groups used to frame the History timeline. */
+data class HistorySections(
+    val today: HistoryDayGroup?,
+    val earlier: List<HistoryDayGroup>,
+)
+
+/**
+ * Splits the already date-ordered timeline without changing its contents or order. A missing
+ * current day is meaningful: the remaining rows are still explicitly framed as earlier history.
+ */
+fun historySections(days: List<HistoryDayGroup>, today: String): HistorySections = HistorySections(
+    today = days.firstOrNull { it.date == today },
+    earlier = days.filterNot { it.date == today },
+)
+
+/** Render an ISO local-date key without changing the date used for attribution or grouping. */
+fun formatHistoryDate(date: String, locale: Locale = Locale.getDefault()): String = runCatching {
+    DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
+        .withLocale(locale)
+        .format(LocalDate.parse(date))
+}.getOrDefault(date)
 
 /** Local-day epoch bounds shared by History and Analytics; the end is exclusive. */
 data class HistoryWindowBounds(

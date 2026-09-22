@@ -22,6 +22,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.espresso.Espresso
 import com.example.backlogium.domain.gapplan.CapacityProvenance
@@ -158,19 +159,19 @@ class GapPlanScreenBehaviorTest {
     // --- One screen ---------------------------------------------------------------------------
 
     /**
-     * All three, at once, without a scroll.
+     * All three recommendations are composed in the scrollable result region.
      *
-     * Asserted with no `performScrollToNode` anywhere on purpose: the whole reason the result
-     * container is a plain Column rather than a lazy list is that the third card must already be
-     * composed and on screen, and a test that scrolled to it would pass either way.
+     * The result container is a plain Column rather than a lazy list, so every card is composed
+     * even when a device viewport cannot display the full set at once. Each assertion scrolls its
+     * target into view before checking the visible presentation.
      */
     @Test
     fun allThreeRecommendationsAreOnScreenAtOnce() {
         setContent(state = { GapPlanUiState(loading = false, result = result()) })
 
         PlanIntensity.entries.forEach { intensity ->
-            composeRule.onNodeWithTag(pickTag(intensity)).assertIsDisplayed()
-            composeRule.onNodeWithTag(hookTag(intensity)).assertIsDisplayed()
+            composeRule.onNodeWithTag(pickTag(intensity)).performScrollTo().assertIsDisplayed()
+            composeRule.onNodeWithTag(hookTag(intensity)).performScrollTo().assertIsDisplayed()
         }
     }
 
@@ -215,10 +216,10 @@ class GapPlanScreenBehaviorTest {
         setContent(state = { GapPlanUiState(loading = false, result = result()) })
 
         PlanIntensity.entries.forEach { intensity ->
-            composeRule.onNodeWithTag(shareTag(intensity)).assertIsDisplayed()
+            composeRule.onNodeWithTag(shareTag(intensity)).performScrollTo().assertIsDisplayed()
             composeRule.onNode(
                 inPick(intensity, hasText(GapPlanPresentation.pickAgainstShare(result().pick(intensity)!!))),
-            ).assertIsDisplayed()
+            ).performScrollTo().assertIsDisplayed()
         }
         composeRule.onNodeWithText("Holding back 30h of your forecast.").assertDoesNotExistNow()
         composeRule.onNodeWithText("Planning around 70h of it").assertDoesNotExistNow()
@@ -239,16 +240,16 @@ class GapPlanScreenBehaviorTest {
         )
         setContent(state = { GapPlanUiState(loading = false, result = result(game = enriched)) })
 
-        composeRule.onNodeWithTag(genreTag(2L)).assertIsDisplayed()
-        composeRule.onNodeWithTag(reviewTag(2L)).assertIsDisplayed()
-        composeRule.onNodeWithTag(playersTag(2L)).assertIsDisplayed()
-        composeRule.onNodeWithTag(affinityTag(2L)).assertIsDisplayed()
+        composeRule.onNodeWithTag(genreTag(2L)).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag(reviewTag(2L)).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag(playersTag(2L)).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag(affinityTag(2L)).performScrollTo().assertIsDisplayed()
         // Abbreviated, because four indicators share one row.
         composeRule.onNode(inPick(PlanIntensity.RELAXED, hasText("Action, Metroidvania")))
-            .assertIsDisplayed()
+            .performScrollTo().assertIsDisplayed()
         composeRule.onNode(inPick(PlanIntensity.RELAXED, hasText("Overwhelmingly Positive · 260K")))
             .assertIsDisplayed()
-        composeRule.onNode(inPick(PlanIntensity.RELAXED, hasText("4.3K"))).assertIsDisplayed()
+        composeRule.onNode(inPick(PlanIntensity.RELAXED, hasText("4.3K"))).performScrollTo().assertIsDisplayed()
     }
 
     /** A started game's progress is a bar, not a sentence. */
@@ -257,7 +258,7 @@ class GapPlanScreenBehaviorTest {
         val started = game(2, facts = listOf(GapPlanFact.Progress(1_312, 6_827)))
         setContent(state = { GapPlanUiState(loading = false, result = result(game = started)) })
 
-        composeRule.onNodeWithTag(progressTag(2L)).assertIsDisplayed()
+        composeRule.onNodeWithTag(progressTag(2L)).performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("21h 52m of 113h 47m played").assertDoesNotExistNow()
     }
 
@@ -281,7 +282,7 @@ class GapPlanScreenBehaviorTest {
             composeRule.onNodeWithText(disclosure).assertIsDisplayed()
         }
         // The remaining time is still there; the facts that were never cached simply are not.
-        composeRule.onNode(inPick(PlanIntensity.RELAXED, hasText("10h"))).assertIsDisplayed()
+        composeRule.onNode(inPick(PlanIntensity.RELAXED, hasText("10h"))).performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag(genreTag(1L)).assertDoesNotExistNow()
         composeRule.onNodeWithTag(reviewTag(1L)).assertDoesNotExistNow()
         composeRule.onNodeWithTag(playersTag(1L)).assertDoesNotExistNow()
@@ -327,7 +328,7 @@ class GapPlanScreenBehaviorTest {
             },
         )
 
-        composeRule.onNodeWithTag(familySharedTag(1L)).assertIsDisplayed()
+        composeRule.onNodeWithTag(familySharedTag(1L)).performScrollTo().assertIsDisplayed()
     }
 
     // --- Inspection in place -----------------------------------------------------------------

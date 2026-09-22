@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -29,7 +30,8 @@ class EncryptedCredentialStoreTest {
         store.writeCloudCredentials(endpoint, token)
 
         assertEquals(CloudCredentials(endpoint, token), store.readCloudCredentials())
-        val file = context.dataDir.resolve("datastore/credentials.preferences_pb")
+        val file = context.filesDir.resolve("datastore/credentials.preferences_pb")
+        assertTrue("DataStore should create its file under filesDir", file.exists())
         assertFalse(String(file.readBytes(), Charsets.UTF_8).contains(token))
         assertEquals("".repeat(token.length - 4) + token.takeLast(4), maskCredential(token))
     }

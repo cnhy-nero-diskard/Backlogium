@@ -1,22 +1,45 @@
 package com.example.backlogium.ui.util
 
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import com.example.backlogium.R
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import java.util.Locale
 
 /** Small presentation helpers shared across screens. */
 object UiFormat {
 
-    private val dateTimeFormatter: DateTimeFormatter =
+    /** Locale-aware duration text for user-visible activity summaries. */
+    @Composable
+    fun localizedMinutes(minutes: Int): String {
+        val safe = minutes.coerceAtLeast(0)
+        val hours = safe / 60
+        val remainder = safe % 60
+        if (hours == 0) {
+            return pluralStringResource(R.plurals.duration_minutes, safe, safe)
+        }
+        val hourText = pluralStringResource(R.plurals.duration_hours, hours, hours)
+        if (remainder == 0) return hourText
+        val minuteText = pluralStringResource(R.plurals.duration_minutes, remainder, remainder)
+        return stringResource(R.string.duration_hours_and_minutes, hourText, minuteText)
+    }
+
+    private fun dateTimeFormatter(): DateTimeFormatter =
         DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
+            .withLocale(Locale.getDefault())
 
-    private val timeOfDayFormatter: DateTimeFormatter =
+    private fun timeOfDayFormatter(): DateTimeFormatter =
         DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
+            .withLocale(Locale.getDefault())
 
-    private val dateFormatter: DateTimeFormatter =
+    private fun dateFormatter(): DateTimeFormatter =
         DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
+            .withLocale(Locale.getDefault())
 
     /** "1h 20m", "45m", or "0m". */
     fun minutes(minutes: Int): String {
@@ -55,7 +78,7 @@ object UiFormat {
         if (epochMillis <= 0L) return "—"
         return Instant.ofEpochMilli(epochMillis)
             .atZone(zone)
-            .format(dateTimeFormatter)
+            .format(dateTimeFormatter())
     }
 
     /**
@@ -63,11 +86,11 @@ object UiFormat {
      * matters and whose hour would only imply a precision it does not have.
      */
     fun date(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
-        Instant.ofEpochMilli(epochMillis).atZone(zone).format(dateFormatter)
+        Instant.ofEpochMilli(epochMillis).atZone(zone).format(dateFormatter())
 
     /** Locale-aware time of day with no date part, e.g. "3:00 PM". */
     fun timeOfDay(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
-        Instant.ofEpochMilli(epochMillis).atZone(zone).format(timeOfDayFormatter)
+        Instant.ofEpochMilli(epochMillis).atZone(zone).format(timeOfDayFormatter())
 
     /**
      * An approximate instant, e.g. `"~3:00 PM"` — not a range. A session's start and its tracked
