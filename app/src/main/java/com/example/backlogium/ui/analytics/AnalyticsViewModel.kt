@@ -246,6 +246,16 @@ internal data class AnalyticsWindowSelection(
 internal fun AnalyticsWindowSelection.forDate(today: LocalDate): AnalyticsWindow =
     if (followsCurrent) window.copy(anchor = today) else window
 
+internal fun AnalyticsWindowSelection.stepEarlierFrom(
+    effectiveWindow: AnalyticsWindow,
+    earliestTrackedDate: LocalDate,
+): AnalyticsWindowSelection =
+    effectiveWindow.stepEarlier().takeIf { candidate ->
+        candidate.resolve().endInclusive >= earliestTrackedDate
+    }?.let { candidate ->
+        AnalyticsWindowSelection(window = candidate, followsCurrent = false)
+    } ?: this
+
 private data class DatedAnalyticsWindow(
     val window: AnalyticsWindow,
     val today: LocalDate,
@@ -379,12 +389,12 @@ class AnalyticsViewModel @Inject constructor(
     /** Move the selected anchor to the immediately preceding reachable period. */
     fun stepAnchorEarlier() {
         val earliest = earliestTrackedDate.value ?: return
+        val dated = datedWindow.value
         selectedWindow.update { current ->
-            current.window.stepEarlier().takeIf { candidate ->
-                candidate.resolve().endInclusive >= earliest
-            }?.let { candidate ->
-                AnalyticsWindowSelection(window = candidate, followsCurrent = false)
-            } ?: current
+            current.stepEarlierFrom(
+                effectiveWindow = dated.window,
+                earliestTrackedDate = earliest,
+            )
         }
     }
 

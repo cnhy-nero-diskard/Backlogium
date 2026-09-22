@@ -122,7 +122,7 @@ class AnalyticsWindowTest {
     }
 
     @Test
-    fun `midnight advances current window while earlier selection stays put`() = runTest {
+    fun `midnight advances current window and Earlier uses its effective anchor`() = runTest {
         val initialDate = LocalDate.of(2026, 8, 31)
         val nextDate = initialDate.plusDays(1)
         val clock = virtualClock(this, millisAt(initialDate, 23, 50))
@@ -130,23 +130,25 @@ class AnalyticsWindowTest {
             window = AnalyticsWindow(initialDate, AnalyticsWindowLength.ONE_MONTH),
             followsCurrent = true,
         )
-        val earlierSelection = AnalyticsWindowSelection(
-            window = currentSelection.window.stepEarlier(),
-            followsCurrent = false,
-        )
 
         // No repository or settings flow emits here; the date boundary is the only input change.
         val snapshots = CurrentDateProvider(clock).currentDate
             .take(2)
-            .map { today ->
-                currentSelection.forDate(today) to earlierSelection.forDate(today)
-            }
+            .map(currentSelection::forDate)
             .toList()
 
-        assertEquals(nextDate, snapshots[1].first.anchor)
-        assertEquals(earlierSelection.window, snapshots[1].second)
-        assertTrue(snapshots[1].first.isCurrentWindow(nextDate))
-        assertFalse(snapshots[1].second.isCurrentWindow(nextDate))
+        assertEquals(nextDate, snapshots[1].anchor)
+        assertTrue(snapshots[1].isCurrentWindow(nextDate))
+
+        val earlier = currentSelection.stepEarlierFrom(
+            effectiveWindow = snapshots[1],
+            earliestTrackedDate = LocalDate.of(2026, 7, 1),
+        )
+        assertEquals(
+            AnalyticsWindow(LocalDate.of(2026, 8, 1), AnalyticsWindowLength.ONE_MONTH),
+            earlier.window,
+        )
+        assertFalse(earlier.followsCurrent)
     }
 
     @Test
