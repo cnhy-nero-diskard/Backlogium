@@ -1,8 +1,8 @@
 ## 1. Unified filter behavior
 
 - [x] 1.1 Introduce the immutable Library filter model and derivation helpers, and verify unit tests cover query, genre, coverage, Family Shared, combined filtering, and preservation of density/sort preferences.
-- [ ] 1.2 Derive active-filter chips, individual clear actions, clear-all behavior, and empty-result reasons from that model, and verify Family Shared-only and every combined-filter no-result case has truthful recovery.
-- [ ] 1.3 Move filter state to the appropriate screen/ViewModel owner while retaining reset-on-leave behavior, and verify leaving/re-entering Library clears only transient filters and selection.
+- [x] 1.2 Derive active-filter chips, individual clear actions, clear-all behavior, and empty-result reasons from that model, and verify Family Shared-only and every combined-filter no-result case has truthful recovery.
+- [x] 1.3 Move filter state to the appropriate screen/ViewModel owner while retaining reset-on-leave behavior, and verify leaving/re-entering Library clears only transient filters and selection.
 
 ## 2. Discovery-first controls
 

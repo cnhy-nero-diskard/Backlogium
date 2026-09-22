@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
@@ -157,7 +158,8 @@ internal fun shouldShowWishlistSection(
     selectedGenreSet: Set<String>,
 ): Boolean = wishlistState.configured &&
     (libraryState.libraryEmpty ||
-        (libraryState.query.isBlank() && selectedGenreSet.isEmpty()))
+        (libraryState.filters.query.isBlank() && selectedGenreSet.isEmpty() &&
+            !libraryState.filters.notCoveredOnly && !libraryState.filters.familySharedOnly))
 
 @Composable
 private fun LibraryEmptyNotice() {
@@ -196,31 +198,17 @@ fun LibraryScreen(
     val haptics = rememberHaptics()
     var dialogTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
     var pickerTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
-    var selectedGenreIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
-    var showNotCoveredOnly by rememberSaveable { mutableStateOf(false) }
-    var showFamilySharedOnly by rememberSaveable { mutableStateOf(false) }
-    var showGenreSheet by rememberSaveable { mutableStateOf(false) }
-    val selectedGenreSet = selectedGenreIds.toSet()
+    var showFilterSheet by rememberSaveable { mutableStateOf(false) }
+    var showToolsSheet by rememberSaveable { mutableStateOf(false) }
+    var genreSearchQuery by rememberSaveable { mutableStateOf("") }
+    val filters = state.filters
+    val selectedGenreSet = filters.selectedGenreIds
     val genreCatalog = remember(state.availableGenres) {
         genreFilterCatalog(state.availableGenres)
     }
-    val visibleGoalGames = remember(state.goalGames, selectedGenreIds, showNotCoveredOnly, showFamilySharedOnly) {
-        state.goalGames
-            .filterByGenres(selectedGenreSet)
-            .filterByHltbCoverage(showNotCoveredOnly) { it.hltbStatus }
-            .filterByFamilySharedOnly(showFamilySharedOnly) { it.isFamilyShared }
-    }
-    val visibleBacklog = remember(state.backlog, selectedGenreIds, showNotCoveredOnly, showFamilySharedOnly) {
-        state.backlog
-            .filterByGenres(selectedGenreSet)
-            .filterByHltbCoverage(showNotCoveredOnly) { it.hltbStatus }
-            .filterByFamilySharedOnly(showFamilySharedOnly) { it.isFamilyShared }
-    }
-    val noVisibleMatches =
-        (state.query.isNotBlank() || selectedGenreSet.isNotEmpty() || showNotCoveredOnly ||
-            showFamilySharedOnly) &&
-            visibleGoalGames.isEmpty() &&
-            visibleBacklog.isEmpty()
+    val visibleGoalGames = state.goalGames
+    val visibleBacklog = state.backlog
+    val noVisibleMatches = state.noMatches
 
     // A finished per-game lookup can raise a one-shot "needs the match center" request as state:
     // its ViewModel job lives in `viewModelScope` and may outlive the dialog composition that
@@ -258,10 +246,10 @@ fun LibraryScreen(
     DisposableEffect(Unit) {
         onDispose {
             viewModel.clearSelection()
-            selectedGenreIds = emptyList()
-            showNotCoveredOnly = false
-            showFamilySharedOnly = false
-            showGenreSheet = false
+            viewModel.clearFilters()
+            showFilterSheet = false
+            showToolsSheet = false
+            genreSearchQuery = ""
         }
     }
 
@@ -313,7 +301,7 @@ fun LibraryScreen(
                 count = state.selection.size,
                 refreshing = state.refreshing,
                 onRefreshSelection = {
-                    val games = (state.goalGames + state.backlog)
+                    val games = state.allGames
                         .filter { it.appId in state.selection }
                         .map { it.appId to it.name }
                     exitSelectionMode { viewModel.refreshSelection(games) }
@@ -339,13 +327,10 @@ fun LibraryScreen(
                             onClear = viewModel::clearQuery,
                             modifier = Modifier.weight(1f),
                         )
-                        GameListDensityControl(
-                            density = state.density,
-                            onDensityChange = viewModel::setDensity,
-                        )
-                        HltbMatchCenterEntryPoint(
-                            reviewCount = state.reviewCount,
-                            onOpenReview = { onOpenReview(null) },
+                        GenreFilterButton(
+                            selectedCount = filters.activeFilterCount,
+                            enabled = true,
+                            onClick = { showFilterSheet = true },
                         )
                     }
                     Row(
@@ -353,33 +338,41 @@ fun LibraryScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        GenreFilterButton(
-                            selectedCount = selectedGenreSet.size,
-                            enabled = genreCatalog.isNotEmpty(),
-                            onClick = { showGenreSheet = true },
-                        )
-                        FilterChip(
-                            selected = showNotCoveredOnly,
-                            onClick = { showNotCoveredOnly = !showNotCoveredOnly },
-                            label = { Text("Not covered") },
-                        )
-                        FilterChip(
-                            selected = showFamilySharedOnly,
-                            onClick = { showFamilySharedOnly = !showFamilySharedOnly },
-                            label = { Text("Family Shared") },
+                        OutlinedButton(
+                            onClick = { showToolsSheet = true },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Library tools")
+                        }
+                        if (filters.hasActiveFilters) {
+                            TextButton(onClick = viewModel::clearFilters) {
+                                Text("Clear all filters")
+                            }
+                        }
+                    }
+                    if (filters.hasActiveFilters) {
+                        ActiveFilterChips(
+                            filters = filters,
+                            availableGenres = state.availableGenres,
+                            onRemove = { chip ->
+                                when (chip.kind) {
+                                    LibraryFilterChipKind.QUERY -> viewModel.clearQuery()
+                                    LibraryFilterChipKind.GENRE -> chip.value?.let(viewModel::clearGenreFilter)
+                                    LibraryFilterChipKind.NOT_COVERED -> viewModel.setNotCoveredOnly(false)
+                                    LibraryFilterChipKind.FAMILY_SHARED -> viewModel.setFamilySharedOnly(false)
+                                }
+                            },
+                            onClearAll = viewModel::clearFilters,
                         )
                     }
                 }
             }
 
-            if (selectedGenreSet.isNotEmpty()) {
+            if (state.reviewCount > 0) {
                 item {
-                    ActiveGenreFilters(
-                        genres = genreCatalog.filter { it.id in selectedGenreSet },
-                        onRemove = { genre ->
-                            selectedGenreIds = selectedGenreIds - genre.id
-                        },
-                        onClear = { selectedGenreIds = emptyList() },
+                    HltbAttentionRow(
+                        reviewCount = state.reviewCount,
+                        onOpenReview = { onOpenReview(null) },
                     )
                 }
             }
@@ -397,9 +390,7 @@ fun LibraryScreen(
             // Above the owned lists, and only while nothing is being searched or filtered:
             // those controls act on the owned library, and an unfiltered wishlist sitting under a
             // query would read as a result of it.
-            if (state.query.isBlank() && selectedGenreSet.isEmpty() && !showNotCoveredOnly &&
-                !showFamilySharedOnly
-            ) {
+            if (!filters.hasActiveFilters) {
                 wishlistSection(
                     state = wishlistState,
                     density = state.density,
@@ -475,12 +466,13 @@ fun LibraryScreen(
             if (noVisibleMatches) {
                 item {
                     NoMatchesRow(
-                        query = state.query,
-                        hasGenreFilter = selectedGenreSet.isNotEmpty(),
-                        hasCoverageFilter = showNotCoveredOnly,
-                        onClear = viewModel::clearQuery,
-                        onClearGenres = { selectedGenreIds = emptyList() },
-                        onClearCoverage = { showNotCoveredOnly = false },
+                        filters = filters,
+                        reason = filters.emptyReason() ?: LibraryEmptyReason.COMBINED,
+                        onClearAll = viewModel::clearFilters,
+                        onClearQuery = viewModel::clearQuery,
+                        onClearGenres = viewModel::clearGenreFilters,
+                        onClearCoverage = { viewModel.setNotCoveredOnly(false) },
+                        onClearFamilyShared = { viewModel.setFamilySharedOnly(false) },
                     )
                 }
             }
@@ -554,32 +546,141 @@ fun LibraryScreen(
         )
     }
 
-    if (showGenreSheet) {
+    if (showFilterSheet) {
         ModalBottomSheet(
-            onDismissRequest = { showGenreSheet = false },
+            onDismissRequest = {
+                showFilterSheet = false
+                genreSearchQuery = ""
+            },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         ) {
-            Column(Modifier.padding(horizontal = 24.dp, vertical = 12.dp)) {
-                Text("Filter by genres", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(8.dp))
-                genreCatalog.forEach { genre ->
-                    FilterChip(
-                        selected = genre.id in selectedGenreSet,
-                        onClick = {
-                            selectedGenreIds = if (genre.id in selectedGenreSet) {
-                                selectedGenreIds - genre.id
-                            } else {
-                                selectedGenreIds + genre.id
-                            }
-                        },
-                        label = { Text(genre.label) },
-                        modifier = Modifier.fillMaxWidth(),
+            val visibleGenres = genreCatalog.filter {
+                genreSearchQuery.isBlank() || it.label.contains(genreSearchQuery.trim(), ignoreCase = true)
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .padding(horizontal = 24.dp, vertical = 12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Library filters",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f),
                     )
-                    Spacer(Modifier.height(4.dp))
+                    TextButton(
+                        onClick = viewModel::clearFilters,
+                        enabled = filters.hasActiveFilters,
+                    ) {
+                        Text("Clear all")
+                    }
                 }
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = if (selectedGenreSet.isEmpty()) {
+                        "No genres selected"
+                    } else {
+                        "${selectedGenreSet.size} genres selected"
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                OutlinedTextField(
+                    value = genreSearchQuery,
+                    onValueChange = { genreSearchQuery = it },
+                    label = { Text("Search genres") },
+                    singleLine = true,
+                    leadingIcon = {
+                        Icon(
+                            imageVector = TablerIcons.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    trailingIcon = {
+                        if (genreSearchQuery.isNotEmpty()) {
+                            IconButton(onClick = { genreSearchQuery = "" }) {
+                                Icon(
+                                    imageVector = TablerIcons.X,
+                                    contentDescription = "Clear genre search",
+                                )
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                )
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                ) {
+                    items(visibleGenres, key = { it.id }) { genre ->
+                        FilterChip(
+                            selected = genre.id in selectedGenreSet,
+                            onClick = { viewModel.toggleGenreFilter(genre.id) },
+                            label = { Text(genre.label) },
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        )
+                    }
+                }
+                if (visibleGenres.isEmpty()) {
+                    Text(
+                        "No genres match your search.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                    )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(top = 8.dp),
+                ) {
+                    FilterChip(
+                        selected = filters.notCoveredOnly,
+                        onClick = { viewModel.setNotCoveredOnly(!filters.notCoveredOnly) },
+                        label = { Text("Not covered") },
+                    )
+                    FilterChip(
+                        selected = filters.familySharedOnly,
+                        onClick = { viewModel.setFamilySharedOnly(!filters.familySharedOnly) },
+                        label = { Text("Family Shared") },
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
             }
         }
+    }
+
+    if (showToolsSheet) {
+        LibraryToolsSheet(
+            density = state.density,
+            allGames = state.allGames,
+            refreshing = state.refreshing,
+            reviewCount = state.reviewCount,
+            onDensityChange = viewModel::setDensity,
+            onSelectGames = {
+                showToolsSheet = false
+                // The visible bar remains the confirmation/action surface once selection mode
+                // starts; the first game is not selected automatically.
+                viewModel.clearSelection()
+            },
+            onRefreshUncovered = {
+                showToolsSheet = false
+                viewModel.refreshSelection(
+                    state.allGames
+                        .filter { it.hltbStatus == HltbMatchState.NOT_COVERED }
+                        .map { it.appId to it.name },
+                )
+            },
+            onForceRefresh = {
+                showToolsSheet = false
+                viewModel.refreshSelection(state.allGames.map { it.appId to it.name })
+            },
+            onOpenReview = {
+                showToolsSheet = false
+                onOpenReview(null)
+            },
+            onDismiss = { showToolsSheet = false },
+        )
     }
 }
 
@@ -782,15 +883,16 @@ private fun GenreFilterButton(
     onClick: () -> Unit,
 ) {
     OutlinedButton(onClick = onClick, enabled = enabled) {
-        Text(if (selectedCount == 0) "Genres" else "Genres ($selectedCount)")
+        Text(if (selectedCount == 0) "Filters" else "Filters ($selectedCount)")
     }
 }
 
 @Composable
-private fun ActiveGenreFilters(
-    genres: List<GenreFilterChoice>,
-    onRemove: (GenreFilterChoice) -> Unit,
-    onClear: () -> Unit,
+private fun ActiveFilterChips(
+    filters: LibraryFilters,
+    availableGenres: List<com.example.backlogium.data.repo.GameGenre>,
+    onRemove: (LibraryFilterChip) -> Unit,
+    onClearAll: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
@@ -798,20 +900,128 @@ private fun ActiveGenreFilters(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Genre filters",
+                text = "Active filters",
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = onClear) { Text("Clear") }
+            TextButton(onClick = onClearAll) { Text("Clear all") }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            genres.forEach { genre ->
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+        ) {
+            filters.activeChips(availableGenres).forEach { chip ->
                 FilterChip(
                     selected = true,
-                    onClick = { onRemove(genre) },
-                    label = { Text(genre.label) },
+                    onClick = { onRemove(chip) },
+                    label = {
+                        Text(
+                            when (chip.kind) {
+                                LibraryFilterChipKind.QUERY -> "Search: ${chip.value}"
+                                LibraryFilterChipKind.GENRE -> chip.label.orEmpty()
+                                LibraryFilterChipKind.NOT_COVERED -> "Not covered"
+                                LibraryFilterChipKind.FAMILY_SHARED -> "Family Shared"
+                            },
+                        )
+                    },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun HltbAttentionRow(reviewCount: Int, onOpenReview: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = TablerIcons.Clock,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Text(
+                text = if (reviewCount == 1) {
+                    "1 HowLongToBeat match needs review"
+                } else {
+                    "$reviewCount HowLongToBeat matches need review"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+            )
+            TextButton(onClick = onOpenReview) { Text("Review") }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LibraryToolsSheet(
+    density: GameListDensity,
+    allGames: List<LibraryBatchGame>,
+    refreshing: Boolean,
+    reviewCount: Int,
+    onDensityChange: (GameListDensity) -> Unit,
+    onSelectGames: () -> Unit,
+    onRefreshUncovered: () -> Unit,
+    onForceRefresh: () -> Unit,
+    onOpenReview: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Library tools", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "Less-frequent display and enrichment actions",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            GameListDensityControl(
+                density = density,
+                onDensityChange = onDensityChange,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedButton(
+                onClick = onSelectGames,
+                enabled = !refreshing && allGames.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Select games")
+            }
+            OutlinedButton(
+                onClick = onRefreshUncovered,
+                enabled = !refreshing && allGames.any { it.hltbStatus == HltbMatchState.NOT_COVERED },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Refresh uncovered HLTB data")
+            }
+            OutlinedButton(
+                onClick = onForceRefresh,
+                enabled = !refreshing && allGames.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Force refresh all HLTB data")
+            }
+            if (reviewCount > 0) {
+                TextButton(onClick = onOpenReview, modifier = Modifier.fillMaxWidth()) {
+                    Text("Open HLTB review ($reviewCount)")
+                }
+            }
+            Spacer(Modifier.height(12.dp))
         }
     }
 }
@@ -1104,40 +1314,43 @@ private fun SortControl(
 /** Filter matched nothing. Rendered in-list so the search field above it stays reachable. */
 @Composable
 private fun NoMatchesRow(
-    query: String,
-    hasGenreFilter: Boolean,
-    hasCoverageFilter: Boolean,
-    onClear: () -> Unit,
+    filters: LibraryFilters,
+    reason: LibraryEmptyReason,
+    onClearAll: () -> Unit,
+    onClearQuery: () -> Unit,
     onClearGenres: () -> Unit,
     onClearCoverage: () -> Unit,
+    onClearFamilyShared: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp)) {
         Text(
-            text = when {
-                query.isNotBlank() && (hasGenreFilter || hasCoverageFilter) ->
-                    "No games match \"$query\" and the active filters"
-                query.isNotBlank() -> "No games match \"$query\""
-                hasGenreFilter && hasCoverageFilter -> "No games match the active filters"
-                hasGenreFilter -> "No games match the selected genres"
-                else -> "No games are marked not covered"
+            text = when (reason) {
+                LibraryEmptyReason.QUERY -> "No games match \"${filters.query.trim()}\""
+                LibraryEmptyReason.GENRES -> "No games match the selected genres"
+                LibraryEmptyReason.NOT_COVERED -> "No games are marked not covered"
+                LibraryEmptyReason.FAMILY_SHARED -> "No Family Shared games match"
+                LibraryEmptyReason.COMBINED -> "No games match the active filters"
             },
             style = MaterialTheme.typography.bodyMedium,
         )
-        Row {
-            if (query.isNotBlank()) {
-                TextButton(onClick = onClear, modifier = Modifier.padding(top = 4.dp)) {
-                    Text("Clear search")
-                }
+        Row(
+            modifier = Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            TextButton(onClick = onClearAll) { Text("Clear all filters") }
+            if (filters.query.isNotBlank()) {
+                TextButton(onClick = onClearQuery) { Text("Clear search") }
             }
-            if (hasGenreFilter) {
-                TextButton(onClick = onClearGenres, modifier = Modifier.padding(top = 4.dp)) {
-                    Text("Clear genres")
-                }
+            if (filters.selectedGenreIds.isNotEmpty()) {
+                TextButton(onClick = onClearGenres) { Text("Clear genres") }
             }
-            if (hasCoverageFilter) {
-                TextButton(onClick = onClearCoverage, modifier = Modifier.padding(top = 4.dp)) {
-                    Text("Show all coverage")
-                }
+            if (filters.notCoveredOnly) {
+                TextButton(onClick = onClearCoverage) { Text("Show all coverage") }
+            }
+            if (filters.familySharedOnly) {
+                TextButton(onClick = onClearFamilyShared) { Text("Show all games") }
             }
         }
     }

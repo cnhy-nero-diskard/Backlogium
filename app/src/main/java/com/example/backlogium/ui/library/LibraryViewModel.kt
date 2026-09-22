@@ -150,6 +150,13 @@ data class HltbSelectionProgress(
     val outcome: HltbRefreshOutcome,
 )
 
+/** Stable batch-refresh input kept independent of the current discovery filters. */
+data class LibraryBatchGame(
+    val appId: Long,
+    val name: String,
+    val hltbStatus: HltbMatchState,
+)
+
 data class LibraryUiState(
     val loading: Boolean = true,
     val configured: Boolean = true,
@@ -157,6 +164,8 @@ data class LibraryUiState(
     val goalGames: List<GoalGameUi> = emptyList(),
     /** The rest of the library ("Your games"), already filtered and sorted for display. */
     val backlog: List<BacklogGameUi> = emptyList(),
+    /** The complete visible library, used by tools and selection even when filters hide rows. */
+    val allGames: List<LibraryBatchGame> = emptyList(),
     val reviewCount: Int = 0,
     val hltbCandidatesByAppId: Map<Long, List<HltbCandidate>> = emptyMap(),
     val pickerStates: Map<Long, HltbPickerUiState> = emptyMap(),
@@ -326,6 +335,9 @@ class LibraryViewModel @Inject constructor(
             configured = content.configured,
             goalGames = goals,
             backlog = backlog,
+            allGames = (content.goals + content.backlog).map {
+                LibraryBatchGame(it.appId, it.name, it.hltbMatchState)
+            },
             reviewCount = content.reviewCount,
             hltbCandidatesByAppId = content.hltbCandidatesByAppId,
             pickerStates = view.pickerStates,

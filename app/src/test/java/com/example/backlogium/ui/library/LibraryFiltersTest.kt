@@ -70,6 +70,29 @@ class LibraryFiltersTest {
     }
 
     @Test
+    fun everyMultipleFilterCombinationUsesRecoverableCombinedReason() {
+        val combinations = listOf(
+            LibraryFilters(query = "missing", selectedGenreIds = setOf("rpg")),
+            LibraryFilters(query = "missing", notCoveredOnly = true),
+            LibraryFilters(query = "missing", familySharedOnly = true),
+            LibraryFilters(selectedGenreIds = setOf("rpg"), notCoveredOnly = true),
+            LibraryFilters(selectedGenreIds = setOf("rpg"), familySharedOnly = true),
+            LibraryFilters(notCoveredOnly = true, familySharedOnly = true),
+            LibraryFilters(
+                query = "missing",
+                selectedGenreIds = setOf("rpg"),
+                notCoveredOnly = true,
+                familySharedOnly = true,
+            ),
+        )
+
+        combinations.forEach { filters ->
+            assertEquals(LibraryEmptyReason.COMBINED, filters.emptyReason())
+            assertFalse(filters.clearAll().hasActiveFilters)
+        }
+    }
+
+    @Test
     fun filtersDoNotOwnOrChangeIndependentSortPreferences() {
         val prefs = LibrarySortPrefs(
             focus = LibrarySortKey.RECENT_ACTIVITY,
