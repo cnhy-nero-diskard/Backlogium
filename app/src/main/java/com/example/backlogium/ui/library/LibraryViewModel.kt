@@ -190,6 +190,8 @@ data class LibraryUiState(
      * silently drop it from the pending refresh.
      */
     val selection: Set<Long> = emptySet(),
+    /** Selection can be entered from Library tools before the first game is selected. */
+    val selectionMode: Boolean = false,
     /**
      * Whether the library is empty *before* filtering. The full-screen "No games yet" state keys
      * off this, never off the filtered lists: a query matching nothing must not unmount the search
@@ -200,7 +202,6 @@ data class LibraryUiState(
     val batchLog: List<HltbLogEntry> = emptyList(),
 ) {
     val query: String get() = filters.query
-    val selectionMode: Boolean get() = selection.isNotEmpty()
 
     /** A filter is active and matched nothing — an in-list empty state, not a blank screen. */
     val noMatches: Boolean
@@ -239,6 +240,7 @@ class LibraryViewModel @Inject constructor(
 
     /** Transient multi-select for the targeted refresh. Never persisted (see [clearSelection]). */
     private val selection = MutableStateFlow<Set<Long>>(emptySet())
+    private val selectionMode = MutableStateFlow(false)
 
     /**
      * The running explicit-selection lookup, owned by this ViewModel rather than WorkManager: it
@@ -289,13 +291,18 @@ class LibraryViewModel @Inject constructor(
         ::Triple,
     )
 
+    private val selectionPrefs = combine(selection, selectionMode) { selection, mode ->
+        SelectionPrefs(selection = selection, selectionMode = mode)
+    }
+
     private val viewPrefs = combine(
-        combine(filters, selection, fetchOps, pickerCombined, settings.librarySort) {
-                filters, selection, ops, pickerTriple, sort ->
+        combine(filters, selectionPrefs, fetchOps, pickerCombined, settings.librarySort) {
+                filters, selectionPrefs, ops, pickerTriple, sort ->
             val (pickerStates, manualLinkStates, needsAttention) = pickerTriple
             ViewPrefs(
                 filters = filters,
-                selection = selection,
+                selection = selectionPrefs.selection,
+                selectionMode = selectionPrefs.selectionMode,
                 ops = ops,
                 pickerStates = pickerStates,
                 pickerManualLinkStates = manualLinkStates,
@@ -356,6 +363,7 @@ class LibraryViewModel @Inject constructor(
                 .flatMap { it.genres.asSequence() }
                 .toList(),
             selection = view.selection,
+            selectionMode = view.selectionMode,
             libraryEmpty = content.goals.isEmpty() && content.backlog.isEmpty(),
             batchProgress = lookup.progress,
             batchLog = lookup.log,
@@ -427,13 +435,21 @@ class LibraryViewModel @Inject constructor(
     }
 
     /** Add or remove one game from the selection; removing the last one exits selection mode. */
-    fun toggleSelection(appId: Long) = selection.update {
-        if (appId in it) it - appId else it + appId
+    fun toggleSelection(appId: Long) {
+        val next = if (appId in selection.value) selection.value - appId else selection.value + appId
+        selection.value = next
+        selectionMode.value = next.isNotEmpty()
+    }
+
+    /** Enter selection mode without selecting a game, for the labeled tools action. */
+    fun enterSelectionMode() {
+        selectionMode.value = true
     }
 
     /** Drop the whole selection. Called on navigation away, so nothing outlives the screen. */
     fun clearSelection() {
         selection.value = emptySet()
+        selectionMode.value = false
     }
 
     /**
@@ -626,6 +642,7 @@ internal data class XpInputs(
 private data class ViewPrefs(
     val filters: LibraryFilters,
     val selection: Set<Long>,
+    val selectionMode: Boolean,
     val ops: Map<Long, HltbFetchOp>,
     val pickerStates: Map<Long, HltbPickerUiState>,
     val pickerManualLinkStates: Map<Long, PickerManualLinkUiState> = emptyMap(),
@@ -633,6 +650,11 @@ private data class ViewPrefs(
     val needsAttention: Long? = null,
     val sort: LibrarySortPrefs,
     val density: GameListDensity,
+)
+
+private data class SelectionPrefs(
+    val selection: Set<Long>,
+    val selectionMode: Boolean,
 )
 
 /** The running selection lookup's state: whether it is active, its latest snapshot, and its log. */

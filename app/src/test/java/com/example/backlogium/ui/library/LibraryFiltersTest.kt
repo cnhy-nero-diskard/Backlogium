@@ -109,6 +109,18 @@ class LibraryFiltersTest {
         assertEquals(LibrarySortDirection.ASCENDING, prefs.libraryDirection)
     }
 
+    @Test
+    fun emptyStateUsesAnyActiveFilterAndSelectionModeCanStartEmpty() {
+        val state = LibraryUiState(
+            filters = LibraryFilters(familySharedOnly = true),
+            selectionMode = true,
+        )
+
+        assertTrue(state.noMatches)
+        assertTrue(state.selectionMode)
+        assertTrue(state.selection.isEmpty())
+    }
+
     private fun row(
         appId: Long,
         name: String,
