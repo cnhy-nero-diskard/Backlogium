@@ -115,11 +115,6 @@ android {
             assets.srcDir("$projectDir/schemas")
         }
     }
-    testOptions {
-        unitTests {
-            isIncludeAndroidResources = true
-        }
-    }
     lint {
         baseline = file("lint.baseline")
     }

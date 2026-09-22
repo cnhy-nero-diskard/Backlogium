@@ -10,8 +10,14 @@ import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.ui.settings.RuleDraft
 import com.example.backlogium.ui.settings.RuleField
 import com.example.backlogium.ui.settings.SettingsActions
+import com.example.backlogium.ui.settings.SettingsDetailScreen
+import com.example.backlogium.ui.settings.SettingsGroup
+import com.example.backlogium.ui.settings.SettingsOverviewScreen
 import com.example.backlogium.ui.settings.SettingsScreen
 import com.example.backlogium.ui.settings.SettingsUiState
+import com.example.backlogium.ui.settings.SETTINGS_INVENTORY
+import com.example.backlogium.ui.settings.SettingsSection
+import com.example.backlogium.ui.settings.settingsInventoryIssues
 import com.example.backlogium.ui.util.HapticIntent
 import com.example.backlogium.ui.util.HapticPlayer
 import org.junit.Assert.assertEquals
@@ -28,6 +34,69 @@ class SettingsScreenTest {
 
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun allFourDetailDestinations_keepTheirTitleAndBackAffordance() {
+        val titles = mapOf(
+            SettingsGroup.ACCOUNT_SYNC to "Account & sync",
+            SettingsGroup.GAMEPLAY to "Gameplay",
+            SettingsGroup.DATA_PRIVACY to "Data & privacy",
+            SettingsGroup.ADVANCED to "Advanced & diagnostics",
+        )
+
+        SettingsGroup.entries.forEach { group ->
+            composeRule.setContent {
+                SettingsDetailScreen(
+                    group = group,
+                    state = state(advancedExpanded = false),
+                    actions = noopActions(),
+                    haptics = RecordingHapticPlayer(),
+                )
+            }
+
+            composeRule.onNodeWithTag("settings-detail-title")
+                .assertIsDisplayed()
+            composeRule.onNodeWithText(titles.getValue(group)).assertIsDisplayed()
+            composeRule.onNodeWithTag("settings-back").assertIsDisplayed()
+        }
+    }
+
+    @Test
+    fun overviewLoadingAndAttention_usePlayerFacingStatusAndActionCopy() {
+        composeRule.setContent {
+            SettingsOverviewScreen(
+                state = SettingsUiState(),
+                onOpenGroup = {},
+            )
+        }
+
+        SettingsGroup.entries.forEach { group ->
+            composeRule.onNodeWithTag("settings-group-${group.route.substringAfterLast('/')}")
+                .assertIsDisplayed()
+        }
+        composeRule.onNodeWithText("Loading saved settings", substring = true).assertIsDisplayed()
+
+        composeRule.setContent {
+            SettingsOverviewScreen(
+                state = SettingsUiState(loading = false, configured = false),
+                onOpenGroup = {},
+            )
+        }
+
+        composeRule.onNodeWithText("Status: Your Steam account is not connected")
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("Next: Connect account").assertIsDisplayed()
+    }
+
+    @Test
+    fun inventory_keepsEverySectionAndActionReachableExactlyOnce() {
+        assertEquals(SettingsSection.entries.size, SETTINGS_INVENTORY.size)
+        assertEquals(SettingsSection.entries.toSet(), SETTINGS_INVENTORY.map { it.section }.toSet())
+        assertTrue(settingsInventoryIssues().isEmpty())
+        SettingsGroup.entries.forEach { group ->
+            assertTrue(SETTINGS_INVENTORY.any { it.group == group })
+        }
+    }
 
     @Test
     fun advancedControls_areNotComposedUntilTheSectionIsExpanded() {

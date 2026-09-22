@@ -24,6 +24,6 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Expand `SettingsScreenTest` to cover all four destinations, overview loading/attention, advanced progressive disclosure, and action parity; run the focused connected suite when a device is available.
-- [ ] 5.2 Run `./gradlew.bat :app:testDebugUnitTest --offline --no-daemon` and `./gradlew.bat :app:compileDebugKotlin --offline --no-daemon`, verifying repositories/workers require no behavior changes.
-- [ ] 5.3 Run `openspec validate restructure-settings-information-architecture --strict` and `git diff --check`, and verify all sixteen former first-level sections remain reachable through exactly one group.
+- [x] 5.1 Expand `SettingsScreenTest` to cover all four destinations, overview loading/attention, advanced progressive disclosure, and action parity; run the focused connected suite when a device is available.
+- [x] 5.2 Run `./gradlew.bat :app:testDebugUnitTest --offline --no-daemon` and `./gradlew.bat :app:compileDebugKotlin --offline --no-daemon`, verifying repositories/workers require no behavior changes.
+- [x] 5.3 Run `openspec validate restructure-settings-information-architecture --strict` and `git diff --check`, and verify all sixteen former first-level sections remain reachable through exactly one group.
