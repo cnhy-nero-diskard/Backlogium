@@ -273,6 +273,28 @@ class HltbRepositoryTest {
     }
 
     @Test
+    fun unmatchedOnlyQueue_keepsMatchCenterActionableWhileReviewCountIsZero() = runTest {
+        // Regression: the Library gated its only match-center navigation on the review-only
+        // count, so an unmatched-only queue (reviewCount == 0) left rescue entries unreachable
+        // from the Library. The actionable set must still hold the UNMATCHED game while the
+        // review queue is empty, which is what the Library's entry visibility now keys off.
+        val dao = FakeHltbDataDao(
+            initial = listOf(
+                HltbData(
+                    appId = 2L,
+                    fetchedAt = 1_000L,
+                    matchStatus = HltbMatchStatus.UNMATCHED,
+                ),
+            ),
+        )
+        val repository = repository(dao = dao)
+
+        assertTrue(repository.reviewQueue.first().isEmpty())
+        assertEquals(0, repository.reviewCount.first())
+        assertEquals(listOf(2L), repository.matchCenterQueue.first().map { it.appId })
+    }
+
+    @Test
     fun searchCandidates_leavesExistingResolvedRowUntouched() = runTest {
         val existing = HltbData(
             appId = 1L,
