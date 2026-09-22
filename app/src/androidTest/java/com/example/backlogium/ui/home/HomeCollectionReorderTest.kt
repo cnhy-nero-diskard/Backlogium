@@ -158,6 +158,8 @@ class HomeCollectionReorderTest {
             }
         }
 
+        composeRule.onNodeWithTag(HOME_COLLECTIONS_REORDER_TAG).performClick()
+
         val moveDown = composeRule
             .onNodeWithTag(HOME_COLLECTION_CARD_TAG_PREFIX + "7")
             .fetchSemanticsNode()
