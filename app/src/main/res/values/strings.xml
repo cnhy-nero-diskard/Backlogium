@@ -6,6 +6,7 @@
     <string name="settings_group_advanced_title">Advanced &amp; diagnostics</string>
     <string name="settings_overview_title">Settings</string>
     <string name="settings_overview_subtitle">Choose what you want to manage.</string>
+    <string name="settings_back">Back to Settings</string>
     <string name="settings_summary_status">Status: %1$s</string>
     <string name="settings_summary_action">Next: %1$s</string>
     <string name="settings_summary_loading">Loading saved settings…</string>

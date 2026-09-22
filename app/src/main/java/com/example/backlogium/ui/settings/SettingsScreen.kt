@@ -27,6 +27,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -65,6 +66,7 @@ import com.example.backlogium.work.GenreEnrichmentStatus
 import com.example.backlogium.work.SteamAssetDownloadStatus
 import compose.icons.TablerIcons
 import compose.icons.tablericons.BrandSteam
+import compose.icons.tablericons.ArrowLeft
 import compose.icons.tablericons.ChevronDown
 import compose.icons.tablericons.ChevronUp
 import compose.icons.tablericons.CircleCheck
@@ -427,6 +429,7 @@ internal fun SettingsDetailScreen(
     state: SettingsUiState,
     actions: SettingsActions,
     haptics: HapticPlayer,
+    onBack: () -> Unit = {},
     onEditCredentials: () -> Unit = {},
     onOpenDiagnostics: () -> Unit = {},
     onOpenSetup: () -> Unit = {},
@@ -444,11 +447,22 @@ internal fun SettingsDetailScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text(
-            stringResource(group.titleRes),
-            style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.testTag("settings-detail-title"),
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.testTag("settings-back"),
+            ) {
+                Icon(
+                    imageVector = TablerIcons.ArrowLeft,
+                    contentDescription = stringResource(com.example.backlogium.R.string.settings_back),
+                )
+            }
+            Text(
+                stringResource(group.titleRes),
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.testTag("settings-detail-title"),
+            )
+        }
         when (group) {
             SettingsGroup.ACCOUNT_SYNC -> AccountSyncSettingsContent(
                 state,

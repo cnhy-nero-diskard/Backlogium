@@ -26,12 +26,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.navigation.navigation
 import com.example.backlogium.ui.analytics.AnalyticsScreen
 import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.ui.collections.CollectionScreen
@@ -48,8 +50,17 @@ import com.example.backlogium.ui.navigation.Destination
 import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.setup.SetupScreen
 import com.example.backlogium.ui.review.HltbReviewScreen
+import com.example.backlogium.ui.settings.SettingsActions
+import com.example.backlogium.ui.settings.SettingsDetailScreen
+import com.example.backlogium.ui.settings.SettingsGraphScreen
+import com.example.backlogium.ui.settings.SettingsGroup
+import com.example.backlogium.ui.settings.SettingsOverviewScreen
+import com.example.backlogium.ui.settings.SettingsRoutes
 import com.example.backlogium.ui.settings.SettingsScreen
+import com.example.backlogium.ui.settings.SettingsUiState
+import com.example.backlogium.ui.settings.SettingsViewModel
 import com.example.backlogium.ui.settings.hidden.HiddenGamesScreen
+import com.example.backlogium.ui.util.HapticPlayer
 import com.example.backlogium.BuildConfig
 import com.example.backlogium.ui.updates.AppUpdateSheet
 import com.example.backlogium.ui.updates.AppUpdateViewModel
@@ -126,6 +137,10 @@ fun BacklogiumAppRoot(
     // selected — hide it there instead of leaving a misleading state. Same for the collection
     // collection destination, another pushed sub-destination.
     val fullDestinationGameDetailPresented = currentDestination?.route == ROUTE_GAME_DETAIL
+    val settingsDetailPresented = currentDestination?.route in SettingsRoutes.detailRoutes
+    val inSettingsGraph = currentDestination?.hierarchy?.any {
+        it.route == SettingsRoutes.GRAPH
+    } == true
     val onCollectionScreen = currentDestination?.route == ROUTE_COLLECTION ||
         currentDestination?.route == ROUTE_COLLECTIONS ||
         currentDestination?.route == ROUTE_SMART_COLLECTION ||
@@ -173,7 +188,9 @@ fun BacklogiumAppRoot(
             },
             bottomBar = {
                 AnimatedVisibility(
-                    visible = !fullDestinationGameDetailPresented && !onCollectionScreen,
+                    visible = !fullDestinationGameDetailPresented &&
+                        !onCollectionScreen &&
+                        !settingsDetailPresented,
                     enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                     exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                 ) {
@@ -182,13 +199,24 @@ fun BacklogiumAppRoot(
                             val selected = currentDestination
                                 ?.hierarchy
                                 ?.any { it.route == destination.route } == true
+                            val settingsSelected = destination == Destination.SETTINGS && inSettingsGraph
                             NavigationBarItem(
-                                selected = selected,
+                                selected = selected || settingsSelected,
                                 onClick = {
-                                    navController.navigate(destination.route) {
-                                        popUpTo(Destination.HOME.route) { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
+                                    if (destination == Destination.SETTINGS && inSettingsGraph) {
+                                        navController.navigate(SettingsRoutes.OVERVIEW) {
+                                            launchSingleTop = true
+                                        }
+                                    } else {
+                                        navController.navigate(destination.route) {
+                                            if (inSettingsGraph) {
+                                                popUpTo(SettingsRoutes.GRAPH) { inclusive = true }
+                                            } else {
+                                                popUpTo(Destination.HOME.route) { saveState = true }
+                                            }
+                                            launchSingleTop = true
+                                            restoreState = !inSettingsGraph
+                                        }
                                     }
                                 },
                                 icon = {
@@ -238,14 +266,67 @@ fun BacklogiumAppRoot(
                 }
                 composable(Destination.HISTORY.route) { HistoryScreen() }
                 composable(Destination.ANALYTICS.route) { AnalyticsScreen() }
-                composable(Destination.SETTINGS.route) {
-                    SettingsScreen(
-                        onEditCredentials = { navController.navigate(ROUTE_ONBOARDING) },
-                        onOpenSetup = { navController.navigate(ROUTE_SETUP) },
-                        onOpenDiagnostics = { navController.navigate(ROUTE_DIAGNOSTICS) },
-                        onOpenUpdate = { updateSheetVisible = true },
-                        onOpenHiddenGames = { navController.navigate(ROUTE_HIDDEN_GAMES) },
-                    )
+                navigation(
+                    startDestination = SettingsRoutes.OVERVIEW,
+                    route = SettingsRoutes.GRAPH,
+                ) {
+                    composable(SettingsRoutes.OVERVIEW) {
+                        SettingsRoute(navController) { state, _, _ ->
+                            SettingsOverviewScreen(
+                                state = state,
+                                onOpenGroup = { group -> navController.navigate(group.route) },
+                            )
+                        }
+                    }
+                    composable(SettingsRoutes.ACCOUNT_SYNC) {
+                        SettingsRoute(navController) { state, actions, haptics ->
+                            SettingsDetailScreen(
+                                group = SettingsGroup.ACCOUNT_SYNC,
+                                state = state,
+                                actions = actions,
+                                haptics = haptics,
+                                onBack = { navController.popBackStack() },
+                                onEditCredentials = { navController.navigate(ROUTE_ONBOARDING) },
+                                onOpenSetup = { navController.navigate(ROUTE_SETUP) },
+                                onOpenUpdate = { updateSheetVisible = true },
+                            )
+                        }
+                    }
+                    composable(SettingsRoutes.GAMEPLAY) {
+                        SettingsRoute(navController) { state, actions, haptics ->
+                            SettingsDetailScreen(
+                                group = SettingsGroup.GAMEPLAY,
+                                state = state,
+                                actions = actions,
+                                haptics = haptics,
+                                onBack = { navController.popBackStack() },
+                                onOpenHiddenGames = { navController.navigate(ROUTE_HIDDEN_GAMES) },
+                            )
+                        }
+                    }
+                    composable(SettingsRoutes.DATA_PRIVACY) {
+                        SettingsRoute(navController) { state, actions, haptics ->
+                            SettingsDetailScreen(
+                                group = SettingsGroup.DATA_PRIVACY,
+                                state = state,
+                                actions = actions,
+                                haptics = haptics,
+                                onBack = { navController.popBackStack() },
+                            )
+                        }
+                    }
+                    composable(SettingsRoutes.ADVANCED) {
+                        SettingsRoute(navController) { state, actions, haptics ->
+                            SettingsDetailScreen(
+                                group = SettingsGroup.ADVANCED,
+                                state = state,
+                                actions = actions,
+                                haptics = haptics,
+                                onBack = { navController.popBackStack() },
+                                onOpenDiagnostics = { navController.navigate(ROUTE_DIAGNOSTICS) },
+                            )
+                        }
+                    }
                 }
                 composable(ROUTE_DIAGNOSTICS) { DiagnosticsScreen() }
                 composable(ROUTE_HIDDEN_GAMES) { HiddenGamesScreen() }
@@ -344,6 +425,18 @@ fun BacklogiumAppRoot(
             )
         }
     }
+}
+
+@Composable
+private fun SettingsRoute(
+    navController: NavHostController,
+    content: @Composable (SettingsUiState, SettingsActions, HapticPlayer) -> Unit,
+) {
+    val settingsEntry = remember(navController) {
+        navController.getBackStackEntry(SettingsRoutes.GRAPH)
+    }
+    val viewModel: SettingsViewModel = hiltViewModel(settingsEntry)
+    SettingsGraphScreen(viewModel = viewModel, content = content)
 }
 
 /**

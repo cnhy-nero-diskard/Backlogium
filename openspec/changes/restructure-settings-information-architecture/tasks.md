@@ -6,9 +6,9 @@
 
 ## 2. Nested Settings navigation
 
-- [ ] 2.1 Add stable routes for the Settings overview and four pushed detail destinations, and verify navigation tests cover every overview-to-detail and system/back-button return path.
-- [ ] 2.2 Scope one `SettingsViewModel` and action surface to the parent Settings graph, and verify operation state survives navigation between overview/detail but is disposed after leaving the Settings graph.
-- [ ] 2.3 Hide bottom navigation on Settings detail destinations while preserving the Settings selected state on return, and verify top-level back-stack/save-state behavior remains consistent with other pushed screens.
+- [x] 2.1 Add stable routes for the Settings overview and four pushed detail destinations, and verify navigation tests cover every overview-to-detail and system/back-button return path.
+- [x] 2.2 Scope one `SettingsViewModel` and action surface to the parent Settings graph, and verify operation state survives navigation between overview/detail but is disposed after leaving the Settings graph.
+- [x] 2.3 Hide bottom navigation on Settings detail destinations while preserving the Settings selected state on return, and verify top-level back-stack/save-state behavior remains consistent with other pushed screens.
 
 ## 3. Overview and group screens
 

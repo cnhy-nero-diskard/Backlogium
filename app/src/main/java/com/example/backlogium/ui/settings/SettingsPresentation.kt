@@ -18,6 +18,13 @@ object SettingsRoutes {
     val detailRoutes: Set<String> = setOf(ACCOUNT_SYNC, GAMEPLAY, DATA_PRIVACY, ADVANCED)
 }
 
+/** The nested graph's toolbar and system back target; top-level destinations are outside it. */
+fun settingsBackStackTarget(route: String): String? = when {
+    route == SettingsRoutes.OVERVIEW -> SettingsRoutes.OVERVIEW
+    route in SettingsRoutes.detailRoutes -> SettingsRoutes.OVERVIEW
+    else -> null
+}
+
 enum class SettingsGroup(
     @StringRes val titleRes: Int,
     val route: String,
