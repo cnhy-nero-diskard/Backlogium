@@ -114,10 +114,10 @@
     <string name="library_currently_playing">Currently playing</string>
     <string name="library_xp_contributed">%1$d XP contributed</string>
     <string name="library_xp_value">%1$d</string>
-    <string name="library_completed_percent">100% completed</string>
+    <string name="library_completed_percent" formatted="false">100% completed</string>
     <string name="library_achievements_unlocked">%1$d of %2$d achievements unlocked</string>
     <string name="library_achievement_value">%1$d/%2$d</string>
-    <string name="library_achievement_percent">100%</string>
+    <string name="library_achievement_percent" formatted="false">100%</string>
     <string name="library_completion_overrun">%1$s to 100%% · played %2$d%%</string>
     <string name="library_completion_progress">%1$s / %2$s to 100%%</string>
     <string name="library_percent_value">%1$d%%</string>
