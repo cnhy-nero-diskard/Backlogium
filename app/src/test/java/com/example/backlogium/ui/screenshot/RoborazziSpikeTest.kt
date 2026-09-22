@@ -24,7 +24,7 @@ import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(sdk = [35], qualifiers = "en-rUS")
+@Config(sdk = [35], qualifiers = NARROW_SCREEN_QUALIFIERS)
 class RoborazziSpikeTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<ScreenshotTestActivity>()

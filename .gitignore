@@ -7,6 +7,11 @@
 .DS_Store
 /build
 **/build/
+
+# Roborazzi writes compare artifacts and reports under the ignored build tree.
+**/build/outputs/roborazzi/
+**/build/test-results/roborazzi/
+**/build/reports/roborazzi/
 /captures
 .externalNativeBuild
 .cxx
