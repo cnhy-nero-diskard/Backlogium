@@ -133,7 +133,7 @@ private data class GoalDialogTarget(
 )
 
 /** Common display shape used by both Library sections and all three density renderers. */
-private data class LibraryDisplayGame(
+internal data class LibraryDisplayGame(
     val appId: Long,
     val name: String,
     val iconUrl: String,
@@ -1558,7 +1558,7 @@ private fun LazyListScope.libraryGameItems(
 /** The single full-detail renderer used by both Library sections. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LibraryGameRow(
+internal fun LibraryGameRow(
     game: LibraryDisplayGame,
     density: GameListDensity,
     selected: Boolean,
@@ -1632,7 +1632,7 @@ private fun LibraryGameRow(
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LibraryGameCell(
+internal fun LibraryGameCell(
     game: LibraryDisplayGame,
     density: GameListDensity,
     selected: Boolean,
