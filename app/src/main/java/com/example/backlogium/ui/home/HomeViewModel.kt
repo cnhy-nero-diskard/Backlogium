@@ -474,6 +474,7 @@ class HomeViewModel @Inject constructor(
         val library = announcements.library
         val batch = announcements.acquiredBatch
         val shared = announcements.sharedGameAnnouncement
+        val isGameRunning = live.nowPlaying is NowPlaying.InGame
         val playingAppId = (live.nowPlaying as? NowPlaying.InGame)?.gameId
         val acquired = batch.toUi(library.associate { it.appId to it.name }, time.nowMillis())
         val withCards = state.copy(
@@ -489,6 +490,7 @@ class HomeViewModel @Inject constructor(
                 focusGames = announcements.focusGames,
                 collections = cards,
                 currentlyPlayingAppId = playingAppId,
+                isGameRunning = isGameRunning,
                 trackedMinutesByGame = announcements.trackedMinutesByGame,
                 latestSessionAtByGame = announcements.latestSessionAtByGame,
             ),

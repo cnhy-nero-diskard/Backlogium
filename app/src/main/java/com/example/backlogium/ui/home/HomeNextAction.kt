@@ -39,10 +39,11 @@ internal fun selectHomeNextAction(
     focusGames: List<LibraryGame>,
     collections: List<HomeCollectionCard>,
     currentlyPlayingAppId: Long? = null,
+    isGameRunning: Boolean = false,
     trackedMinutesByGame: Map<Long, Int> = emptyMap(),
     latestSessionAtByGame: Map<Long, Long> = emptyMap(),
 ): HomeNextAction {
-    val focusGame = if (currentlyPlayingAppId == null) {
+    val focusGame = if (!isGameRunning) {
         focusGames
             .asSequence()
             .filter { it.isGoal && it.isIncompleteFocusGame(trackedMinutesByGame) }
@@ -94,6 +95,7 @@ internal fun nextActionForHomeState(
     focusGames = focusGames,
     collections = collections,
     currentlyPlayingAppId = (nowPlaying as? NowPlaying.InGame)?.gameId,
+    isGameRunning = nowPlaying is NowPlaying.InGame,
     trackedMinutesByGame = trackedMinutesByGame,
     latestSessionAtByGame = latestSessionAtByGame,
 )

@@ -126,6 +126,7 @@ class HomeNextActionTest {
             focusGames = listOf(focus),
             collections = listOf(card(9L, "Queue", CollectionMode.ORDERED_QUEUE, gameId = 7L)),
             currentlyPlayingAppId = 7L,
+            isGameRunning = true,
         )
 
         assertEquals(HomeNextAction.ChooseGame, action)
@@ -138,6 +139,7 @@ class HomeNextActionTest {
             focusGames = listOf(focus),
             collections = listOf(card(9L, "Queue", CollectionMode.ORDERED_QUEUE, gameId = 44L)),
             currentlyPlayingAppId = 99L,
+            isGameRunning = true,
         )
 
         assertEquals(
@@ -148,6 +150,17 @@ class HomeNextActionTest {
             ),
             action,
         )
+    }
+
+    @Test
+    fun `running game without a parseable app id still suppresses Focus`() {
+        val action = nextActionForHomeState(
+            focusGames = listOf(game(42L, "Focus", playtime = 10, completion = 100, lastPlayed = 100L)),
+            collections = emptyList(),
+            nowPlaying = NowPlaying.InGame(gameId = null, name = "In game", iconUrl = null),
+        )
+
+        assertEquals(HomeNextAction.ChooseGame, action)
     }
 
     @Test
