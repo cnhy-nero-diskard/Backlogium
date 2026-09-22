@@ -1,7 +1,7 @@
 ## 1. Toolchain compatibility gate
 
-- [ ] 1.1 Add a pinned Roborazzi/plugin dependency candidate compatible with the current AGP, Kotlin, Compose BOM, and Robolectric versions, and verify Gradle configuration plus a minimal Compose screenshot test compile offline after dependencies are cached.
-- [ ] 1.2 Render, record, and compare one deterministic theme/card spike through explicit Gradle tasks, and verify a deliberate pixel change fails with expected/actual/diff outputs; if this gate cannot pass, stop and revise the design before further tasks.
+- [x] 1.1 Add a pinned Roborazzi/plugin dependency candidate compatible with the current AGP, Kotlin, Compose BOM, and Robolectric versions, and verify Gradle configuration plus a minimal Compose screenshot test compile offline after dependencies are cached.
+- [x] 1.2 Render, record, and compare one deterministic theme/card spike through explicit Gradle tasks, and verify a deliberate pixel change fails with expected/actual/diff outputs; if this gate cannot pass, stop and revise the design before further tasks.
 
 ## 2. Deterministic screenshot harness
 
