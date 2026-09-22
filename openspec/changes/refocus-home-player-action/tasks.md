@@ -12,9 +12,9 @@
 
 ## 3. Accessible collection reordering
 
-- [ ] 3.1 Add transient reorder mode with a visible entry/exit affordance and drag handle, and verify ordinary card taps still open collections outside reorder mode.
-- [ ] 3.2 Route drag, move-up, and move-down accessibility actions through one reorder mutation while preserving drag cancel rollback and fresh card content, and verify focused unit tests cover first/middle/last positions plus cancellation.
-- [ ] 3.3 Add Compose tests asserting reorder actions, disabled boundary actions, resulting position announcements, and persisted order after leaving/re-entering Home.
+- [x] 3.1 Add transient reorder mode with a visible entry/exit affordance and drag handle, and verify ordinary card taps still open collections outside reorder mode.
+- [x] 3.2 Route drag, move-up, and move-down accessibility actions through one reorder mutation while preserving drag cancel rollback and fresh card content, and verify focused unit tests cover first/middle/last positions plus cancellation.
+- [x] 3.3 Add Compose tests asserting reorder actions, disabled boundary actions, resulting position announcements, and persisted order after leaving/re-entering Home.
 
 ## 4. Loading, motion, and localized copy
 

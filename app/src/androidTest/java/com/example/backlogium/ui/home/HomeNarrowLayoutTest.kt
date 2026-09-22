@@ -53,6 +53,7 @@ class HomeNarrowLayoutTest {
             HOME_COLLECTIONS_NEW_TAG,
             HOME_COLLECTIONS_VIEW_ALL_TAG,
             HOME_PLAN_GAP_TAG,
+            HOME_COLLECTIONS_REORDER_TAG,
         ).forEach { tag ->
             val node = composeRule.onNodeWithTag(tag).assertIsDisplayed().fetchSemanticsNode()
             val bounds = node.boundsInRoot

@@ -76,7 +76,10 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -118,6 +121,7 @@ import compose.icons.TablerIcons
 import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.Clock
 import compose.icons.tablericons.DeviceGamepad
+import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.Flame
 import compose.icons.tablericons.PlayerPlay
 import compose.icons.tablericons.Trophy
@@ -588,12 +592,16 @@ internal fun <T> homeCollectionOrderAfterCancelledDrag(
 
 internal const val HOME_COLLECTIONS_NEW_TAG = "home-collections-new"
 internal const val HOME_COLLECTIONS_VIEW_ALL_TAG = "home-collections-view-all"
+internal const val HOME_COLLECTIONS_REORDER_TAG = "home-collections-reorder"
+internal const val HOME_COLLECTION_CARD_TAG_PREFIX = "home-collection-card-"
 
 @Composable
 internal fun HomeCollectionsHeader(
     onCreateCollection: () -> Unit,
     onOpenCollections: () -> Unit,
     onPlanGap: () -> Unit,
+    reorderMode: Boolean = false,
+    onToggleReorder: () -> Unit = {},
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
@@ -633,12 +641,20 @@ internal fun HomeCollectionsHeader(
             ) {
                 Text("Plan a gap before a release")
             }
+            TextButton(
+                onClick = onToggleReorder,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag(HOME_COLLECTIONS_REORDER_TAG),
+            ) {
+                Text(if (reorderMode) "Done" else "Reorder")
+            }
         }
     }
 }
 
 @Composable
-private fun CollectionsSection(
+internal fun CollectionsSection(
     cards: List<HomeCollectionCard>,
     onOpenCollection: (Long) -> Unit,
     onCreateCollection: () -> Unit,
@@ -650,6 +666,7 @@ private fun CollectionsSection(
     modifier: Modifier = Modifier,
 ) {
     val autoScrollScope = rememberCoroutineScope()
+    var reorderMode by remember { mutableStateOf(false) }
     var orderedCards by remember { mutableStateOf(cards) }
     val cardBounds = remember { mutableStateMapOf<Long, Rect>() }
     val draggedId = remember { mutableStateOf<Long?>(null) }
@@ -671,6 +688,30 @@ private fun CollectionsSection(
         cardBounds.keys.toList()
             .filterNot { it in cardsById }
             .forEach(cardBounds::remove)
+        if (cards.isEmpty()) reorderMode = false
+    }
+
+    fun applyCollectionReorder(
+        fromIndex: Int,
+        targetIndex: Int,
+        persist: Boolean,
+    ) {
+        val activeCards = latestCards.value
+        val reordered = homeCollectionOrderAfterMove(activeCards, fromIndex, targetIndex)
+        if (reordered == activeCards) return
+        orderedCards = reordered
+        if (draggedId.value != null) currentIndex.value = targetIndex
+        if (persist) onReorderCollections(reordered.map { it.collectionId })
+    }
+
+    fun moveCollection(collectionId: Long, delta: Int): Boolean {
+        val index = latestCards.value.indexOfFirst { it.collectionId == collectionId }
+        val targetIndex = index + delta
+        if (index !in latestCards.value.indices || targetIndex !in latestCards.value.indices) {
+            return false
+        }
+        applyCollectionReorder(index, targetIndex, persist = true)
+        return true
     }
 
     fun clearDrag(revertToBaseline: Boolean = false) {
@@ -699,6 +740,11 @@ private fun CollectionsSection(
             onCreateCollection = onCreateCollection,
             onOpenCollections = onOpenCollections,
             onPlanGap = onPlanGap,
+            reorderMode = reorderMode,
+            onToggleReorder = {
+                if (reorderMode) clearDrag(revertToBaseline = true)
+                reorderMode = !reorderMode
+            },
         )
         if (cards.isEmpty()) {
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -713,16 +759,104 @@ private fun CollectionsSection(
                 }
             }
         } else {
-            orderedCards.forEach { card ->
+            orderedCards.forEachIndexed { position, card ->
                 key(card.collectionId) {
                     val isDragged = draggedId.value == card.collectionId
                     val cardCenter = cardBounds[card.collectionId]?.center?.y ?: pointerRootY.floatValue
                     val dragOffset = if (isDragged) pointerRootY.floatValue - cardCenter else 0f
+                    val dragHandleModifier = if (reorderMode) {
+                        Modifier.pointerInput(card.collectionId, reorderMode) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    if (latestCards.value.size <= 1) {
+                                        return@detectDragGesturesAfterLongPress
+                                    }
+                                    val index = latestCards.value.indexOfFirst {
+                                        it.collectionId == card.collectionId
+                                    }
+                                    if (index < 0) return@detectDragGesturesAfterLongPress
+                                    val center = cardBounds[card.collectionId]?.center?.y
+                                        ?: return@detectDragGesturesAfterLongPress
+                                    dragBaseline.value = latestPersistedCards.value
+                                    draggedId.value = card.collectionId
+                                    initialIndex.value = index
+                                    currentIndex.value = index
+                                    pointerRootY.floatValue = center
+                                },
+                                onDragCancel = { clearDrag(revertToBaseline = true) },
+                                onDragEnd = {
+                                    if (draggedId.value == card.collectionId) {
+                                        if (currentIndex.value != initialIndex.value) {
+                                            onReorderCollections(latestCards.value.map { it.collectionId })
+                                        }
+                                        clearDrag()
+                                    }
+                                },
+                                onDrag = { change, dragAmount ->
+                                    if (draggedId.value != card.collectionId) {
+                                        return@detectDragGesturesAfterLongPress
+                                    }
+                                    change.consume()
+                                    pointerRootY.floatValue += dragAmount.y
+
+                                    scrollViewport?.let { viewport ->
+                                        val edgeDistance = 72f
+                                        val scrollDelta = when {
+                                            pointerRootY.floatValue < viewport.top + edgeDistance ->
+                                                -((viewport.top + edgeDistance - pointerRootY.floatValue) /
+                                                    edgeDistance * 24f)
+                                            pointerRootY.floatValue > viewport.bottom - edgeDistance ->
+                                                ((pointerRootY.floatValue - (viewport.bottom - edgeDistance)) /
+                                                    edgeDistance * 24f)
+                                            else -> 0f
+                                        }
+                                        autoScrollJob.value?.cancel()
+                                        autoScrollJob.value = if (scrollDelta != 0f) {
+                                            autoScrollScope.launch { scrollState.scrollBy(scrollDelta) }
+                                        } else {
+                                            null
+                                        }
+                                    }
+
+                                    val activeCards = latestCards.value
+                                    val fromIndex = currentIndex.value
+                                    if (fromIndex !in activeCards.indices) {
+                                        return@detectDragGesturesAfterLongPress
+                                    }
+                                    var targetIndex = activeCards.lastIndex
+                                    activeCards.forEachIndexed { index, candidate ->
+                                        val center = cardBounds[candidate.collectionId]?.center?.y
+                                            ?: return@forEachIndexed
+                                        if (pointerRootY.floatValue < center &&
+                                            targetIndex == activeCards.lastIndex
+                                        ) {
+                                            targetIndex = if (index > fromIndex) index - 1 else index
+                                        }
+                                    }
+                                    applyCollectionReorder(
+                                        fromIndex = fromIndex,
+                                        targetIndex = targetIndex.coerceIn(0, activeCards.lastIndex),
+                                        persist = false,
+                                    )
+                                },
+                            )
+                        }
+                    } else {
+                        Modifier
+                    }
                     CollectionCard(
                         card = card,
                         onClick = {
-                            if (draggedId.value == null) onOpenCollection(card.collectionId)
+                            if (!reorderMode && draggedId.value == null) {
+                                onOpenCollection(card.collectionId)
+                            }
                         },
+                        reorderMode = reorderMode,
+                        position = position,
+                        totalCount = orderedCards.size,
+                        onMoveUp = { moveCollection(card.collectionId, -1) },
+                        onMoveDown = { moveCollection(card.collectionId, 1) },
+                        dragHandleModifier = dragHandleModifier,
                         dragged = isDragged,
                         dragOffset = dragOffset,
                         modifier = Modifier
@@ -735,73 +869,6 @@ private fun CollectionsSection(
                                         coordinates.size.width.toFloat(),
                                         coordinates.size.height.toFloat(),
                                     ),
-                                )
-                            }
-                            .pointerInput(card.collectionId) {
-                                detectDragGesturesAfterLongPress(
-                                    onDragStart = {
-                                        if (latestCards.value.size <= 1) return@detectDragGesturesAfterLongPress
-                                        val index = latestCards.value.indexOfFirst {
-                                            it.collectionId == card.collectionId
-                                        }
-                                        val center = cardBounds[card.collectionId]?.center?.y
-                                            ?: return@detectDragGesturesAfterLongPress
-                                        dragBaseline.value = latestPersistedCards.value
-                                        draggedId.value = card.collectionId
-                                        initialIndex.value = index
-                                        currentIndex.value = index
-                                        pointerRootY.floatValue = center
-                                    },
-                                    onDragCancel = { clearDrag(revertToBaseline = true) },
-                                    onDragEnd = {
-                                        if (draggedId.value == card.collectionId) {
-                                            if (currentIndex.value != initialIndex.value) {
-                                                onReorderCollections(latestCards.value.map { it.collectionId })
-                                            }
-                                            clearDrag()
-                                        }
-                                    },
-                                    onDrag = { change, dragAmount ->
-                                        if (draggedId.value != card.collectionId) return@detectDragGesturesAfterLongPress
-                                        change.consume()
-                                        pointerRootY.floatValue += dragAmount.y
-
-                                        scrollViewport?.let { viewport ->
-                                            val edgeDistance = 72f
-                                            val scrollDelta = when {
-                                                pointerRootY.floatValue < viewport.top + edgeDistance ->
-                                                    -((viewport.top + edgeDistance - pointerRootY.floatValue) / edgeDistance * 24f)
-                                                pointerRootY.floatValue > viewport.bottom - edgeDistance ->
-                                                    ((pointerRootY.floatValue - (viewport.bottom - edgeDistance)) / edgeDistance * 24f)
-                                                else -> 0f
-                                            }
-                                            autoScrollJob.value?.cancel()
-                                            autoScrollJob.value = if (scrollDelta != 0f) {
-                                                autoScrollScope.launch { scrollState.scrollBy(scrollDelta) }
-                                            } else {
-                                                null
-                                            }
-                                        }
-
-                                        val activeCards = latestCards.value
-                                        val fromIndex = currentIndex.value
-                                        if (fromIndex !in activeCards.indices) return@detectDragGesturesAfterLongPress
-                                        var targetIndex = activeCards.lastIndex
-                                        activeCards.forEachIndexed { index, candidate ->
-                                            val center = cardBounds[candidate.collectionId]?.center?.y
-                                                ?: return@forEachIndexed
-                                            if (pointerRootY.floatValue < center && targetIndex == activeCards.lastIndex) {
-                                                targetIndex = if (index > fromIndex) index - 1 else index
-                                            }
-                                        }
-                                        if (targetIndex != fromIndex) {
-                                            val reordered = activeCards.toMutableList()
-                                            val moved = reordered.removeAt(fromIndex)
-                                            reordered.add(targetIndex.coerceIn(0, reordered.size), moved)
-                                            orderedCards = reordered
-                                            currentIndex.value = targetIndex
-                                        }
-                                    },
                                 )
                             },
                     )
@@ -904,9 +971,15 @@ private fun SmartCollectionCard(
 
 /** One collection's mission card: its name plus its mode-specific banner, accented by palette. */
 @Composable
-private fun CollectionCard(
+internal fun CollectionCard(
     card: HomeCollectionCard,
     onClick: () -> Unit,
+    reorderMode: Boolean = false,
+    position: Int = -1,
+    totalCount: Int = 0,
+    onMoveUp: () -> Boolean = { false },
+    onMoveDown: () -> Boolean = { false },
+    dragHandleModifier: Modifier = Modifier,
     dragged: Boolean = false,
     dragOffset: Float = 0f,
     modifier: Modifier = Modifier,
@@ -953,9 +1026,29 @@ private fun CollectionCard(
     val cardSurface = card.accent?.let {
         accentColor.copy(alpha = 0.16f).compositeOver(baseSurface)
     } ?: baseSurface
+    val reorderActions = if (reorderMode) {
+        listOfNotNull(
+            (position > 0).takeIf { it }?.let {
+                CustomAccessibilityAction("Move up") { onMoveUp() }
+            },
+            (position >= 0 && position < totalCount - 1).takeIf { it }?.let {
+                CustomAccessibilityAction("Move down") { onMoveDown() }
+            },
+        )
+    } else {
+        emptyList()
+    }
     Card(
         onClick = onClick,
+        enabled = !reorderMode,
         modifier = modifier
+            .testTag(HOME_COLLECTION_CARD_TAG_PREFIX + card.collectionId)
+            .semantics {
+                if (reorderMode) {
+                    customActions = reorderActions
+                    stateDescription = "Position ${position + 1} of $totalCount"
+                }
+            }
             .shadow(
                 elevation = 12.dp * glowVisibility,
                 shape = RoundedCornerShape(12.dp),
@@ -1048,6 +1141,22 @@ private fun CollectionCard(
                     games = card.games,
                     accentColor = accentColor,
                 )
+                if (reorderMode) {
+                    Box(
+                        modifier = dragHandleModifier
+                            .size(48.dp)
+                            .semantics {
+                                contentDescription = "Drag to reorder ${card.name}"
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = TablerIcons.ArrowsSort,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
         }
     }
