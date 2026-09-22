@@ -6,6 +6,7 @@ import androidx.compose.ui.res.stringResource
 import com.example.backlogium.R
 import java.text.NumberFormat
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
@@ -88,6 +89,9 @@ object UiFormat {
     fun date(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
         Instant.ofEpochMilli(epochMillis).atZone(zone).format(dateFormatter())
 
+    /** Locale-aware date for calendar-only earned events. */
+    fun date(date: LocalDate): String = date.format(dateFormatter())
+
     /** Locale-aware time of day with no date part, e.g. "3:00 PM". */
     fun timeOfDay(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
         Instant.ofEpochMilli(epochMillis).atZone(zone).format(timeOfDayFormatter())
@@ -105,6 +109,13 @@ object UiFormat {
 
     /** Locale-grouped integer, e.g. "1,206,380" — for counts large enough that digit-grouping matters. */
     fun count(value: Int): String = NumberFormat.getIntegerInstance().format(value)
+
+    /** Locale-grouped long for XP and other profile totals. */
+    fun count(value: Long): String = NumberFormat.getIntegerInstance().format(value)
+
+    /** Locale-aware whole percentage for compact progress banners. */
+    fun percent(fraction: Double): String =
+        NumberFormat.getPercentInstance().format(fraction.coerceIn(0.0, 1.0))
 
     /**
      * Abbreviated integer, e.g. "677K" or "1.1M" — for counts that sit beside other values in a

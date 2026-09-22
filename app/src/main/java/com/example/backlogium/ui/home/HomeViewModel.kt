@@ -39,7 +39,6 @@ import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RuleConfig
-import com.example.backlogium.ui.collections.smartCollectionName
 import com.example.backlogium.work.setup.SetupCoordinator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
@@ -56,6 +55,8 @@ import kotlinx.coroutines.launch
 
 data class HomeUiState(
     val loading: Boolean = true,
+    /** True once the local Home snapshot can be rendered, even if a refresh is still in flight. */
+    val hasRenderableContent: Boolean = false,
     val configured: Boolean = true,
     /**
      * True while a first configuration still owes the user the setup step. Durable state, so the
@@ -119,6 +120,12 @@ data class HomeUiState(
         get() = if (xpForNext > 0) (xpIntoLevel.toFloat() / xpForNext).coerceIn(0f, 1f) else 0f
 }
 
+internal fun shouldShowHomeLoading(state: HomeUiState): Boolean =
+    state.loading && state.configured && !state.hasRenderableContent
+
+internal fun shouldShowHomeUpdating(state: HomeUiState): Boolean =
+    state.hasRenderableContent && state.isSyncing
+
 /**
  * The newly-acquired-games banner's content: the names it can show and how many arrived beyond
  * them.
@@ -176,7 +183,6 @@ data class HomeCollectionCard(
  */
 data class HomeSmartCollectionCard(
     val id: SmartCollectionId,
-    val name: String,
     val memberCount: Int,
 )
 
@@ -201,7 +207,7 @@ private data class HomeCollectionInputs(
 )
 data class HomeCollectionGame(
     val appId: Long,
-    val name: String,
+    val name: String?,
     val iconUrl: String?,
 )
 
@@ -286,6 +292,7 @@ class HomeViewModel @Inject constructor(
         val configured = credState as? CredentialsState.Configured
         HomeUiState(
             loading = false,
+            hasRenderableContent = true,
             configured = configured != null,
             level = xpState.level,
             xpIntoLevel = xpState.xpIntoLevel,
@@ -380,7 +387,7 @@ class HomeViewModel @Inject constructor(
                     val game = gamesById[member.appId]
                     HomeCollectionGame(
                         appId = member.appId,
-                        name = game?.name ?: "Game ${member.appId}",
+                        name = game?.name,
                         iconUrl = game?.iconUrl,
                     )
                 },
@@ -404,7 +411,6 @@ class HomeViewModel @Inject constructor(
                     ?.let { count ->
                         HomeSmartCollectionCard(
                             id = id,
-                            name = smartCollectionName(id),
                             memberCount = count,
                         )
                     }

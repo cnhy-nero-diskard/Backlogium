@@ -7,7 +7,7 @@ import com.example.backlogium.domain.CollectionMode
 /** The small game projection needed by Home's next-action surface. */
 data class HomeNextGame(
     val appId: Long,
-    val name: String,
+    val name: String?,
     val iconUrl: String? = null,
 )
 
@@ -59,7 +59,7 @@ internal fun selectHomeNextAction(
             val game = card.games.firstOrNull { it.appId == nextUp.appId }
                 ?: HomeCollectionGame(
                     appId = nextUp.appId,
-                    name = nextUp.name ?: "Game ${nextUp.appId}",
+                    name = nextUp.name,
                     iconUrl = null,
                 )
             HomeNextAction.ContinueCollection(

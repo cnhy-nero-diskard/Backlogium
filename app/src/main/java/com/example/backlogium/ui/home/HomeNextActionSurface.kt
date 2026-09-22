@@ -17,10 +17,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.R
 import compose.icons.TablerIcons
 import compose.icons.tablericons.DeviceGamepad
 import androidx.compose.material3.Icon
@@ -53,14 +55,14 @@ internal fun HomeNextActionSurface(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                text = "Next action",
+                text = stringResource(R.string.home_next_action),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.semantics { heading() },
             )
             when (action) {
                 is HomeNextAction.ContinueFocus -> {
                     ActionGameSummary(
-                        eyebrow = "Continue Focus",
+                        eyebrow = stringResource(R.string.home_continue_focus),
                         game = action.game,
                     )
                     Button(
@@ -69,13 +71,16 @@ internal fun HomeNextActionSurface(
                             .fillMaxWidth()
                             .testTag(HOME_NEXT_ACTION_PRIMARY_TAG),
                     ) {
-                        Text("Open game")
+                        Text(stringResource(R.string.home_open_game))
                     }
                 }
 
                 is HomeNextAction.ContinueCollection -> {
                     ActionGameSummary(
-                        eyebrow = "Continue ${action.collectionName}",
+                        eyebrow = stringResource(
+                            R.string.home_continue_collection,
+                            action.collectionName,
+                        ),
                         game = action.game,
                     )
                     Column(
@@ -88,7 +93,7 @@ internal fun HomeNextActionSurface(
                                 .fillMaxWidth()
                                 .testTag(HOME_NEXT_ACTION_PRIMARY_TAG),
                         ) {
-                            Text("Play next")
+                            Text(stringResource(R.string.home_play_next))
                         }
                         TextButton(
                             onClick = { onOpenCollection(action.collectionId) },
@@ -96,14 +101,14 @@ internal fun HomeNextActionSurface(
                                 .fillMaxWidth()
                                 .testTag(HOME_NEXT_ACTION_COLLECTION_TAG),
                         ) {
-                            Text("Open collection")
+                            Text(stringResource(R.string.home_open_collection))
                         }
                     }
                 }
 
                 HomeNextAction.ChooseGame -> {
                     Text(
-                        text = "Choose a game from your Library.",
+                        text = stringResource(R.string.home_choose_game),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Button(
@@ -112,7 +117,7 @@ internal fun HomeNextActionSurface(
                             .fillMaxWidth()
                             .testTag(HOME_NEXT_ACTION_PRIMARY_TAG),
                     ) {
-                        Text("Browse Library")
+                        Text(stringResource(R.string.home_browse_library))
                     }
                 }
             }
@@ -147,7 +152,7 @@ private fun ActionGameSummary(
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
             Text(
-                text = game.name,
+                text = game.name ?: stringResource(R.string.home_game_fallback, game.appId),
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
