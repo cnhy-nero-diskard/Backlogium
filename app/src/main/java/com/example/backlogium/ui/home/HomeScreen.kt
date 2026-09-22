@@ -138,6 +138,8 @@ fun HomeScreen(
     onOpenCollections: () -> Unit = {},
     onPlanGap: () -> Unit = {},
     onOpenSmartCollection: (SmartCollectionId) -> Unit = {},
+    onOpenLibrary: () -> Unit = {},
+    onOpenGame: (Long) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -273,6 +275,8 @@ fun HomeScreen(
             onOpenCollections = onOpenCollections,
             onPlanGap = onPlanGap,
             onOpenSmartCollection = onOpenSmartCollection,
+            onOpenLibrary = onOpenLibrary,
+            onOpenGame = onOpenGame,
             scrollState = scrollState,
             scrollViewport = scrollViewport,
             onReorderCollections = viewModel::reorderCollections,
@@ -293,6 +297,8 @@ private fun InnerHomeContent(
     onOpenCollections: () -> Unit,
     onPlanGap: () -> Unit,
     onOpenSmartCollection: (SmartCollectionId) -> Unit,
+    onOpenLibrary: () -> Unit,
+    onOpenGame: (Long) -> Unit,
     scrollState: ScrollState,
     scrollViewport: Rect?,
     onReorderCollections: (List<Long>) -> Unit,
@@ -416,6 +422,16 @@ private fun InnerHomeContent(
                 }
             }
         }
+
+        HomeNextActionSurface(
+            action = state.nextAction,
+            onOpenGame = onOpenGame,
+            onOpenCollection = onOpenCollection,
+            onOpenLibrary = onOpenLibrary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(HOME_NEXT_ACTION_TAG),
+        )
 
         // Level + XP.
         Card(modifier = Modifier.fillMaxWidth()) {

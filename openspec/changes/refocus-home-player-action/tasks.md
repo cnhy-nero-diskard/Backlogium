@@ -2,11 +2,11 @@
 
 - [x] 1.1 Add the sealed Home next-action model and deterministic Focus/collection/fallback selector, and verify unit tests cover priority, incomplete filtering, ordered-queue-only collection fallback (skipping non-queue, empty, and completed-queue collections without `nextUp`), current-game suppression, and empty inputs.
 - [x] 1.2 Combine the selector into `HomeUiState` using existing local flows only, and verify a ViewModel test observes updates when Focus, collection order, completion, or live status changes.
-- [ ] 1.3 Add navigation callbacks for next-game, collection, and Library fallback actions, and verify navigation tests resolve each destination without adding a new route type.
+- [x] 1.3 Add navigation callbacks for next-game, collection, and Library fallback actions, and verify navigation tests resolve each destination without adding a new route type.
 
 ## 2. Home hierarchy and collection actions
 
-- [ ] 2.1 Implement the compact next-action surface after urgent/live content and before level/quest/streak, and verify Compose semantics expose one heading, one primary action, and no duplicated now-playing game.
+- [x] 2.1 Implement the compact next-action surface after urgent/live content and before level/quest/streak, and verify Compose semantics expose one heading, one primary action, and no duplicated now-playing game.
 - [ ] 2.2 Rework the Collections heading so `New` is primary and `View all` plus release-gap planning are labeled secondary actions, and verify all three existing destinations remain reachable in a Compose UI test.
 - [ ] 2.3 Verify narrow-screen layout through measurement/semantics tests so the next action and collection controls do not clip or create horizontally scrolling controls.
 
