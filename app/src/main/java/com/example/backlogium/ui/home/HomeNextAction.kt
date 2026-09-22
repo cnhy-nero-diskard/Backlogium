@@ -1,6 +1,7 @@
 package com.example.backlogium.ui.home
 
 import com.example.backlogium.data.repo.LibraryGame
+import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.domain.CollectionMode
 
 /** The small game projection needed by Home's next-action surface. */
@@ -71,6 +72,17 @@ internal fun selectHomeNextAction(
 
     return collectionAction ?: HomeNextAction.ChooseGame
 }
+
+/** Adapter used by the ViewModel combine and by state-transition tests. */
+internal fun nextActionForHomeState(
+    focusGames: List<LibraryGame>,
+    collections: List<HomeCollectionCard>,
+    nowPlaying: NowPlaying,
+): HomeNextAction = selectHomeNextAction(
+    focusGames = focusGames,
+    collections = collections,
+    currentlyPlayingAppId = (nowPlaying as? NowPlaying.InGame)?.gameId,
+)
 
 private fun LibraryGame.isIncompleteFocusGame(): Boolean =
     completionistMinutes?.takeIf { it > 0 }?.let { playtimeForever < it } ?: true

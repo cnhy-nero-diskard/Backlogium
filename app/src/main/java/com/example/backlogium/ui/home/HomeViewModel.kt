@@ -97,6 +97,8 @@ data class HomeUiState(
     val nowPlayingRecencyState: GameRecencyState? = null,
     /** Mission cards derived from the player's custom collections; empty when none exist. */
     val collections: List<HomeCollectionCard> = emptyList(),
+    /** The single locally derived action Home should offer next. */
+    val nextAction: HomeNextAction = HomeNextAction.ChooseGame,
     /**
      * Derived collections, in their fixed order, presented beneath the custom ones. Read-only:
      * they carry no accent, no mode, and no position the player can change.
@@ -185,6 +187,7 @@ data class HomeSmartCollectionCard(
  */
 private data class HomeAnnouncements(
     val library: List<LibraryGame>,
+    val focusGames: List<LibraryGame>,
     val acquiredBatch: AcquiredGamesAnnouncement,
     val sharedGameAnnouncement: SharedGameAnnouncement?,
     val smartCollections: List<HomeSmartCollectionCard>,
@@ -444,7 +447,17 @@ class HomeViewModel @Inject constructor(
             acquiredBatch,
             settings.sharedGameAnnouncement,
             smartCollectionCards,
-        ) { library, batch, shared, smartCards -> HomeAnnouncements(library, batch, shared, smartCards) },
+        ) { library, batch, shared, smartCards ->
+            HomeAnnouncements(
+                library = library,
+                focusGames = emptyList(),
+                acquiredBatch = batch,
+                sharedGameAnnouncement = shared,
+                smartCollections = smartCards,
+            )
+        }.combine(gameRepository.goalGames) { announcements, focusGames ->
+            announcements.copy(focusGames = focusGames)
+        },
     ) { state, live, cards, pendingEvents, announcements ->
         val library = announcements.library
         val batch = announcements.acquiredBatch
@@ -460,6 +473,11 @@ class HomeViewModel @Inject constructor(
                     ),
                 )
             },
+            nextAction = selectHomeNextAction(
+                focusGames = announcements.focusGames,
+                collections = cards,
+                currentlyPlayingAppId = playingAppId,
+            ),
             smartCollections = announcements.smartCollections,
             pendingProgressEvent = pendingEvents.firstOrNull(),
             // Present one durable event at a time. This keeps a queue of simultaneous events from

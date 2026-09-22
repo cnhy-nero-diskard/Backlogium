@@ -5,10 +5,46 @@ import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.CollectionMemberSignals
+import com.example.backlogium.data.repo.NowPlaying
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class HomeNextActionTest {
+
+    @Test
+    fun `state inputs recalculate when focus completion collection order or live status changes`() {
+        val focus = game(1L, "Focus", playtime = 10, completion = 100, lastPlayed = 100L)
+        val queue = card(2L, "Queue", CollectionMode.ORDERED_QUEUE, gameId = 22L)
+
+        assertEquals(
+            HomeNextAction.ContinueFocus(HomeNextGame(1L, "Focus", "icon-1")),
+            nextActionForHomeState(listOf(focus), listOf(queue), NowPlaying.NotPlaying),
+        )
+        assertEquals(
+            HomeNextAction.ContinueCollection(2L, "Queue", HomeNextGame(22L, "Game 22", "icon-22")),
+            nextActionForHomeState(
+                focusGames = listOf(focus.copy(playtimeForever = 100)),
+                collections = listOf(queue),
+                nowPlaying = NowPlaying.NotPlaying,
+            ),
+        )
+        assertEquals(
+            HomeNextAction.ContinueCollection(2L, "Queue", HomeNextGame(22L, "Game 22", "icon-22")),
+            nextActionForHomeState(
+                focusGames = emptyList(),
+                collections = listOf(queue),
+                nowPlaying = NowPlaying.InGame(99L, "Running", null),
+            ),
+        )
+        assertEquals(
+            HomeNextAction.ChooseGame,
+            nextActionForHomeState(
+                focusGames = emptyList(),
+                collections = listOf(queue),
+                nowPlaying = NowPlaying.InGame(22L, "Queue game", null),
+            ),
+        )
+    }
 
     @Test
     fun `most recently played incomplete Focus game wins`() {
