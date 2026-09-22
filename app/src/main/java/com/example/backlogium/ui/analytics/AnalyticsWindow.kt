@@ -140,15 +140,24 @@ data class AnalyticsWindow(
     /**
      * The local-date bounds actually represented as activity: the full calendar period for past
      * windows, but only the elapsed subrange through [today] for the current calendar month/year.
-     * Rolling lengths already end on their anchor, so clamping is a no-op for them; past calendar
-     * periods end on or before [today] and are returned unchanged. Future dates never appear as
+     * When tracking began inside the selected window, [earliestTrackedDate] removes the
+     * pre-tracking dates rather than presenting them as inactivity. Future dates never appear as
      * zero-activity days.
      */
-    fun resolveActivityBounds(today: LocalDate): AnalyticsWindowBounds {
+    fun resolveActivityBounds(
+        today: LocalDate,
+        earliestTrackedDate: LocalDate? = null,
+    ): AnalyticsWindowBounds {
         val full = resolve()
-        if (!full.endInclusive.isAfter(today)) return full
-        if (full.start.isAfter(today)) return full
-        return AnalyticsWindowBounds(start = full.start, endInclusive = today)
+        val end = when {
+            !full.endInclusive.isAfter(today) -> full.endInclusive
+            full.start.isAfter(today) -> full.endInclusive
+            else -> today
+        }
+        val start = earliestTrackedDate
+            ?.takeIf { !it.isBefore(full.start) && !it.isAfter(end) }
+            ?: full.start
+        return AnalyticsWindowBounds(start = start, endInclusive = end)
     }
 }
 

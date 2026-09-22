@@ -488,9 +488,12 @@ class AnalyticsViewModel @Inject constructor(
         achievementRepository.unlockedRarityDetails,
     ) { inputs, resolved, ruleConfig, credState, rarityDetails ->
         // The period identity stays the full calendar period for labels and navigation, while
-        // activity is represented only through today so future dates never appear as empty days.
+        // activity is represented only within observed history through today.
         val periodBounds = inputs.window.resolve()
-        val dataBounds = inputs.window.resolveActivityBounds(resolved.today)
+        val dataBounds = inputs.window.resolveActivityBounds(
+            today = resolved.today,
+            earliestTrackedDate = resolved.earliestTrackedDate,
+        )
         val dates = dataBounds.dates()
         val gamesById = inputs.library.associateBy { it.appId }
         // Session start date is the canonical attribution shared with sync daily progress and

@@ -272,6 +272,23 @@ class AnalyticsWindowTest {
     }
 
     @Test
+    fun activityBoundsExcludePreTrackingDaysFromOldestMonthAndRollingWindow() {
+        val today = LocalDate.of(2026, 9, 21)
+        val earliestTrackedDate = LocalDate.of(2026, 8, 15)
+        val month = AnalyticsWindow(LocalDate.of(2026, 8, 15), AnalyticsWindowLength.ONE_MONTH)
+        val rolling = AnalyticsWindow(LocalDate.of(2026, 8, 31), AnalyticsWindowLength.THIRTY_DAYS)
+
+        assertEquals(
+            AnalyticsWindowBounds(earliestTrackedDate, LocalDate.of(2026, 8, 31)),
+            month.resolveActivityBounds(today, earliestTrackedDate),
+        )
+        assertEquals(
+            AnalyticsWindowBounds(earliestTrackedDate, LocalDate.of(2026, 8, 31)),
+            rolling.resolveActivityBounds(today, earliestTrackedDate),
+        )
+    }
+
+    @Test
     fun representedDayCountUsesElapsedDaysWithFallbackToPeriod() {
         val today = LocalDate.of(2026, 9, 21)
         val window = AnalyticsWindow(today, AnalyticsWindowLength.ONE_MONTH)
