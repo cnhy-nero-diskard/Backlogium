@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -91,6 +92,29 @@ fun SettingsScreen(
     onOpenHiddenGames: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
+    SettingsGraphScreen(viewModel = viewModel) { state, actions, haptics ->
+        SettingsScreen(
+            state = state,
+            onEditCredentials = onEditCredentials,
+            onOpenDiagnostics = onOpenDiagnostics,
+            onOpenSetup = onOpenSetup,
+            onOpenUpdate = onOpenUpdate,
+            onOpenHiddenGames = onOpenHiddenGames,
+            haptics = haptics,
+            actions = actions,
+        )
+    }
+}
+
+/**
+ * Shared Settings-graph host. It owns activity-result launchers, transient dialogs, haptics, and
+ * toasts so every overview/detail destination talks to one state holder and one action surface.
+ */
+@Composable
+internal fun SettingsGraphScreen(
+    viewModel: SettingsViewModel,
+    content: @Composable (SettingsUiState, SettingsActions, HapticPlayer) -> Unit,
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val haptics = rememberHaptics()
 
@@ -122,57 +146,50 @@ fun SettingsScreen(
         viewModel.contributionExportRequests.collect { fileName -> contributionExportLauncher.launch(fileName) }
     }
 
-    SettingsScreen(
-        state = state,
-        onEditCredentials = onEditCredentials,
-        onOpenDiagnostics = onOpenDiagnostics,
-        onOpenSetup = onOpenSetup,
-        onOpenUpdate = onOpenUpdate,
-        onOpenHiddenGames = onOpenHiddenGames,
-        haptics = haptics,
-        actions = remember(viewModel) {
-            SettingsActions(
-                onSyncNow = viewModel::syncNow,
-                onReconcileNow = viewModel::reconcileNow,
-                onDownloadSteamAssets = viewModel::downloadSteamAssets,
-                onCancelSteamAssetDownload = viewModel::cancelSteamAssetDownload,
-                onLiveMonitorEnabledChanged = viewModel::onLiveMonitorEnabledChanged,
-                onFieldChanged = viewModel::onFieldChanged,
-                onQuestModeChanged = viewModel::onQuestModeChanged,
-                onAdvancedExpandedChanged = viewModel::setAdvancedExpanded,
-                onRequestSave = viewModel::requestSave,
-                onDiscardChanges = viewModel::discardChanges,
-                onConfirmSave = viewModel::confirmSave,
-                onDismissConfirmation = viewModel::dismissConfirmation,
-                onImportHistory = viewModel::importSteamHistory,
-                onResetHistoryImport = viewModel::resetHistoryImport,
-                onAutoSnapshotEnabledChanged = viewModel::onAutoSnapshotEnabledChanged,
-                onSnapshotRetentionCountChanged = viewModel::onSnapshotRetentionCountChanged,
-                onSnapshotIntervalHoursChanged = viewModel::onSnapshotIntervalHoursChanged,
-                onExportBackup = { exportLauncher.launch("backlogium-backup-${System.currentTimeMillis()}.json") },
-                onImportBackup = { importLauncher.launch(arrayOf("application/json")) },
-                onRestoreSnapshot = viewModel::onRestoreSnapshot,
-                onDeleteSnapshot = viewModel::onDeleteSnapshot,
-                onConfirmMismatchImport = viewModel::onConfirmMismatchImport,
-                onDismissMismatchImport = viewModel::onDismissMismatchImport,
-                onDismissBackupMessage = viewModel::onDismissBackupMessage,
-                onCheckForUpdates = viewModel::checkForUpdates,
-                onOpenUpdate = onOpenUpdate,
-                onRestoreSharedGame = viewModel::restoreSharedGame,
-                onManualSharedGameInputChanged = viewModel::onManualSharedGameInputChanged,
-                onImportManualSharedGame = viewModel::importManualSharedGame,
-                onCheckHltbDataset = viewModel::checkHltbDataset,
-                onRequestContributionExport = viewModel::onRequestContributionExport,
-                onDismissContributionDisclosure = viewModel::onDismissContributionDisclosure,
-                onConfirmContributionDisclosure = viewModel::onConfirmContributionDisclosure,
-                onVerifyCloudPresence = viewModel::verifyCloudPresence,
-                onReadCloudPresence = viewModel::readCloudPresence,
-                onRemoveCloudPresence = viewModel::removeCloudPresence,
-                onRefileCloudPresence = viewModel::refileCloudPresence,
-                onReverseCloudPresenceRefiling = viewModel::reverseCloudPresenceRefiling,
-            )
-        },
-    )
+    val actions = remember(viewModel, exportLauncher, importLauncher) {
+        SettingsActions(
+            onSyncNow = viewModel::syncNow,
+            onReconcileNow = viewModel::reconcileNow,
+            onDownloadSteamAssets = viewModel::downloadSteamAssets,
+            onCancelSteamAssetDownload = viewModel::cancelSteamAssetDownload,
+            onLiveMonitorEnabledChanged = viewModel::onLiveMonitorEnabledChanged,
+            onFieldChanged = viewModel::onFieldChanged,
+            onQuestModeChanged = viewModel::onQuestModeChanged,
+            onAdvancedExpandedChanged = viewModel::setAdvancedExpanded,
+            onRequestSave = viewModel::requestSave,
+            onDiscardChanges = viewModel::discardChanges,
+            onConfirmSave = viewModel::confirmSave,
+            onDismissConfirmation = viewModel::dismissConfirmation,
+            onImportHistory = viewModel::importSteamHistory,
+            onResetHistoryImport = viewModel::resetHistoryImport,
+            onAutoSnapshotEnabledChanged = viewModel::onAutoSnapshotEnabledChanged,
+            onSnapshotRetentionCountChanged = viewModel::onSnapshotRetentionCountChanged,
+            onSnapshotIntervalHoursChanged = viewModel::onSnapshotIntervalHoursChanged,
+            onExportBackup = { exportLauncher.launch("backlogium-backup-${System.currentTimeMillis()}.json") },
+            onImportBackup = { importLauncher.launch(arrayOf("application/json")) },
+            onRestoreSnapshot = viewModel::onRestoreSnapshot,
+            onDeleteSnapshot = viewModel::onDeleteSnapshot,
+            onConfirmMismatchImport = viewModel::onConfirmMismatchImport,
+            onDismissMismatchImport = viewModel::onDismissMismatchImport,
+            onDismissBackupMessage = viewModel::onDismissBackupMessage,
+            onCheckForUpdates = viewModel::checkForUpdates,
+            onRestoreSharedGame = viewModel::restoreSharedGame,
+            onManualSharedGameInputChanged = viewModel::onManualSharedGameInputChanged,
+            onImportManualSharedGame = viewModel::importManualSharedGame,
+            onCheckHltbDataset = viewModel::checkHltbDataset,
+            onRequestContributionExport = viewModel::onRequestContributionExport,
+            onDismissContributionDisclosure = viewModel::onDismissContributionDisclosure,
+            onConfirmContributionDisclosure = viewModel::onConfirmContributionDisclosure,
+            onVerifyCloudPresence = viewModel::verifyCloudPresence,
+            onReadCloudPresence = viewModel::readCloudPresence,
+            onRemoveCloudPresence = viewModel::removeCloudPresence,
+            onRefileCloudPresence = viewModel::refileCloudPresence,
+            onReverseCloudPresenceRefiling = viewModel::reverseCloudPresenceRefiling,
+        )
+    }
+
+    content(state, actions, haptics)
+    SettingsDialogs(state = state, actions = actions)
 }
 
 /** Every action the screen can raise, so the rendering half stays free of the view model. */
@@ -229,10 +246,51 @@ fun SettingsScreen(
     actions: SettingsActions,
     haptics: HapticPlayer = rememberHaptics(),
 ) {
-    if (state.loading) return
+    if (state.loading) {
+        SettingsLoadingContent()
+        return
+    }
 
-    // The error card is also used by background syncs. Only a sync initiated from this visible
-    // button arms Reject, so a background failure never produces an unattributable buzz.
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        AccountSyncSettingsContent(
+            state = state,
+            actions = actions,
+            haptics = haptics,
+            onEditCredentials = onEditCredentials,
+            onOpenSetup = onOpenSetup,
+            onOpenUpdate = onOpenUpdate,
+        )
+        GameplaySettingsContent(
+            state = state,
+            actions = actions,
+            onOpenHiddenGames = onOpenHiddenGames,
+        )
+        DataPrivacySettingsContent(state = state, actions = actions)
+        AdvancedSettingsContent(
+            state = state,
+            actions = actions,
+            onOpenDiagnostics = onOpenDiagnostics,
+        )
+    }
+}
+
+@Composable
+internal fun AccountSyncSettingsContent(
+    state: SettingsUiState,
+    actions: SettingsActions,
+    haptics: HapticPlayer,
+    onEditCredentials: () -> Unit,
+    onOpenSetup: () -> Unit,
+    onOpenUpdate: () -> Unit,
+) {
+    // Only a sync initiated from this visible button arms Reject, so a background failure never
+    // produces an unattributable buzz.
     var manualSyncAttempt by remember { mutableStateOf(false) }
     var manualSyncInFlight by remember { mutableStateOf(false) }
     LaunchedEffect(state.isSyncing) {
@@ -245,6 +303,140 @@ fun SettingsScreen(
         }
     }
 
+    SectionHeader("Account")
+    SteamAccountCard(
+        configured = state.configured,
+        steamId = state.steamId,
+        apiKeyMasked = state.apiKeyMasked,
+        onEdit = onEditCredentials,
+    )
+    SectionHeader("Setup")
+    RunSetupCard(configured = state.configured, onOpenSetup = onOpenSetup)
+    SectionHeader("Sync")
+    SyncCard(
+        lastSyncAt = state.lastSyncAt,
+        syncing = state.isSyncing,
+        reconciling = state.isReconciling,
+        genreStatus = state.genreEnrichmentStatus,
+        onSyncNow = {
+            manualSyncAttempt = true
+            actions.onSyncNow()
+        },
+        onReconcileNow = actions.onReconcileNow,
+    )
+    if (!BuildConfig.DEBUG) {
+        SectionHeader("Updates")
+        UpdateCard(
+            state = state.appUpdateState,
+            checking = state.updateCheckInProgress,
+            message = state.updateCheckMessage,
+            onCheck = actions.onCheckForUpdates,
+            onOpenUpdate = onOpenUpdate,
+        )
+    }
+}
+
+@Composable
+internal fun GameplaySettingsContent(
+    state: SettingsUiState,
+    actions: SettingsActions,
+    onOpenHiddenGames: () -> Unit,
+) {
+    SectionHeader("Live monitor")
+    LiveMonitorCard(
+        enabled = state.liveMonitorEnabled,
+        configured = state.configured,
+        onEnabledChanged = actions.onLiveMonitorEnabledChanged,
+    )
+    SectionHeader("Family Sharing")
+    ManualSharedGameCard(state, actions)
+    if (state.removedSharedGames.isNotEmpty()) {
+        SectionHeader("Removed shared games")
+        RemovedSharedGamesCard(
+            removed = state.removedSharedGames,
+            onRestore = actions.onRestoreSharedGame,
+        )
+    }
+    SectionHeader("Daily quest")
+    DailyQuestCard(state = state, actions = actions)
+    SectionHeader("Hidden games")
+    HiddenGamesCard(
+        hiddenCount = state.hiddenGameCount,
+        nonGameCandidateCount = state.nonGameCandidateCount,
+        onOpen = onOpenHiddenGames,
+    )
+}
+
+@Composable
+internal fun DataPrivacySettingsContent(state: SettingsUiState, actions: SettingsActions) {
+    SectionHeader("Cloud presence")
+    CloudPresenceCard(state = state, actions = actions)
+    SectionHeader("Completion times")
+    CompletionTimesCard(
+        gatheredAt = state.hltbDatasetGatheredAt,
+        coveredGameCount = state.hltbDatasetCoveredGameCount,
+        checking = state.hltbDatasetCheckInProgress,
+        checkMessage = state.hltbDatasetCheckMessage,
+        contributionBusy = state.hltbContributionBusy,
+        contributionMessage = state.hltbContributionMessage,
+        onCheck = actions.onCheckHltbDataset,
+        onRequestContributionExport = actions.onRequestContributionExport,
+    )
+    SectionHeader("Offline Steam assets")
+    OfflineSteamAssetsCard(
+        state = state,
+        onStart = actions.onDownloadSteamAssets,
+        onCancel = actions.onCancelSteamAssetDownload,
+    )
+    SectionHeader("Data")
+    HistoryImportCard(
+        imported = state.historyImported,
+        importing = state.isImportingHistory,
+        onImport = actions.onImportHistory,
+        onReset = actions.onResetHistoryImport,
+    )
+    SectionHeader("Data & Backup")
+    DataBackupCard(state = state, actions = actions)
+}
+
+@Composable
+internal fun AdvancedSettingsContent(
+    state: SettingsUiState,
+    actions: SettingsActions,
+    onOpenDiagnostics: () -> Unit,
+) {
+    SectionHeader("Diagnostics")
+    Card(modifier = Modifier.fillMaxWidth().clickable { onOpenDiagnostics() }) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Sync diagnostics", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Recent sync runs and presence decisions",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    SectionHeader("Advanced")
+    AdvancedCard(state = state, actions = actions)
+    RuleSaveBar(state = state, actions = actions)
+}
+
+@Composable
+internal fun SettingsDetailScreen(
+    group: SettingsGroup,
+    state: SettingsUiState,
+    actions: SettingsActions,
+    haptics: HapticPlayer,
+    onEditCredentials: () -> Unit = {},
+    onOpenDiagnostics: () -> Unit = {},
+    onOpenSetup: () -> Unit = {},
+    onOpenUpdate: () -> Unit = {},
+    onOpenHiddenGames: () -> Unit = {},
+) {
+    if (state.loading) {
+        SettingsLoadingContent()
+        return
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -252,116 +444,46 @@ fun SettingsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        SectionHeader("Account")
-        SteamAccountCard(
-            configured = state.configured,
-            steamId = state.steamId,
-            apiKeyMasked = state.apiKeyMasked,
-            onEdit = onEditCredentials,
+        Text(
+            stringResource(group.titleRes),
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.testTag("settings-detail-title"),
         )
-
-        SectionHeader("Setup")
-        RunSetupCard(configured = state.configured, onOpenSetup = onOpenSetup)
-
-        SectionHeader("Sync")
-        SyncCard(
-            lastSyncAt = state.lastSyncAt,
-            syncing = state.isSyncing,
-            reconciling = state.isReconciling,
-            genreStatus = state.genreEnrichmentStatus,
-            onSyncNow = {
-                manualSyncAttempt = true
-                actions.onSyncNow()
-            },
-            onReconcileNow = actions.onReconcileNow,
-        )
-
-        SectionHeader("Cloud presence")
-        CloudPresenceCard(state = state, actions = actions)
-
-        SectionHeader("Completion times")
-        CompletionTimesCard(
-            gatheredAt = state.hltbDatasetGatheredAt,
-            coveredGameCount = state.hltbDatasetCoveredGameCount,
-            checking = state.hltbDatasetCheckInProgress,
-            checkMessage = state.hltbDatasetCheckMessage,
-            contributionBusy = state.hltbContributionBusy,
-            contributionMessage = state.hltbContributionMessage,
-            onCheck = actions.onCheckHltbDataset,
-            onRequestContributionExport = actions.onRequestContributionExport,
-        )
-
-        SectionHeader("Offline Steam assets")
-        OfflineSteamAssetsCard(
-            state = state,
-            onStart = actions.onDownloadSteamAssets,
-            onCancel = actions.onCancelSteamAssetDownload,
-        )
-
-        if (!BuildConfig.DEBUG) {
-            SectionHeader("Updates")
-            UpdateCard(
-                state = state.appUpdateState,
-                checking = state.updateCheckInProgress,
-                message = state.updateCheckMessage,
-                onCheck = actions.onCheckForUpdates,
-                onOpenUpdate = onOpenUpdate,
+        when (group) {
+            SettingsGroup.ACCOUNT_SYNC -> AccountSyncSettingsContent(
+                state,
+                actions,
+                haptics,
+                onEditCredentials,
+                onOpenSetup,
+                onOpenUpdate,
             )
+            SettingsGroup.GAMEPLAY -> GameplaySettingsContent(state, actions, onOpenHiddenGames)
+            SettingsGroup.DATA_PRIVACY -> DataPrivacySettingsContent(state, actions)
+            SettingsGroup.ADVANCED -> AdvancedSettingsContent(state, actions, onOpenDiagnostics)
         }
+    }
+}
 
-        SectionHeader("Live monitor")
-        LiveMonitorCard(
-            enabled = state.liveMonitorEnabled,
-            configured = state.configured,
-            onEnabledChanged = actions.onLiveMonitorEnabledChanged,
-        )
-
-        SectionHeader("Family Sharing")
-        ManualSharedGameCard(state, actions)
-
-        if (state.removedSharedGames.isNotEmpty()) {
-            SectionHeader("Removed shared games")
-            RemovedSharedGamesCard(
-                removed = state.removedSharedGames,
-                onRestore = actions.onRestoreSharedGame,
-            )
-        }
-
-        SectionHeader("Daily quest")
-        DailyQuestCard(state = state, actions = actions)
-
-        SectionHeader("Hidden games")
-        HiddenGamesCard(
-            hiddenCount = state.hiddenGameCount,
-            nonGameCandidateCount = state.nonGameCandidateCount,
-            onOpen = onOpenHiddenGames,
-        )
-
-        SectionHeader("Data")
-        HistoryImportCard(
-            imported = state.historyImported,
-            importing = state.isImportingHistory,
-            onImport = actions.onImportHistory,
-            onReset = actions.onResetHistoryImport,
-        )
-
-        SectionHeader("Data & Backup")
-        DataBackupCard(state = state, actions = actions)
-
-        SectionHeader("Diagnostics")
-        Card(modifier = Modifier.fillMaxWidth().clickable { onOpenDiagnostics() }) {
-            Column(Modifier.padding(16.dp)) {
-                Text("Sync diagnostics", style = MaterialTheme.typography.titleMedium)
-                Text("Recent sync runs and presence decisions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+@Composable
+private fun SettingsLoadingContent() {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        repeat(4) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Loading settings…", style = MaterialTheme.typography.titleMedium)
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
             }
         }
-
-        SectionHeader("Advanced")
-        AdvancedCard(state = state, actions = actions)
-
-        RuleSaveBar(state = state, actions = actions)
     }
+}
 
+@Composable
+private fun SettingsDialogs(state: SettingsUiState, actions: SettingsActions) {
     state.confirmation?.let { confirmation ->
         RuleChangeDialog(
             confirmation = confirmation,
@@ -369,7 +491,6 @@ fun SettingsScreen(
             onDismiss = actions.onDismissConfirmation,
         )
     }
-
     if (state.mismatchImportPending) {
         MismatchImportDialog(
             currentSteamId = state.steamId,
@@ -378,7 +499,6 @@ fun SettingsScreen(
             onDismiss = actions.onDismissMismatchImport,
         )
     }
-
     state.backupMessage?.let { message ->
         AlertDialog(
             onDismissRequest = actions.onDismissBackupMessage,
@@ -389,7 +509,6 @@ fun SettingsScreen(
             },
         )
     }
-
     if (state.hltbContributionDisclosurePending) {
         AlertDialog(
             onDismissRequest = actions.onDismissContributionDisclosure,

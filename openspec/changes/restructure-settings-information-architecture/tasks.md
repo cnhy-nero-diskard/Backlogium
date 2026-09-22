@@ -1,8 +1,8 @@
 ## 1. Inventory and presentation contracts
 
-- [ ] 1.1 Build an exhaustive mapping of every current Settings card, action, dialog, busy state, and test tag to exactly one of the four groups, and verify no existing operation is unmapped or duplicated.
-- [ ] 1.2 Add pure group-summary models and deterministic attention priority, and verify unit tests cover unconfigured, failed, in-progress, recommended-action, healthy, and privacy-redaction states.
-- [ ] 1.3 Split the stateless Settings content into four group composables without changing behavior, and verify existing Settings tests still pass before navigation replaces the monolith.
+- [x] 1.1 Build an exhaustive mapping of every current Settings card, action, dialog, busy state, and test tag to exactly one of the four groups, and verify no existing operation is unmapped or duplicated.
+- [x] 1.2 Add pure group-summary models and deterministic attention priority, and verify unit tests cover unconfigured, failed, in-progress, recommended-action, healthy, and privacy-redaction states.
+- [x] 1.3 Split the stateless Settings content into four group composables without changing behavior, and verify existing Settings tests still pass before navigation replaces the monolith.
 
 ## 2. Nested Settings navigation
 
