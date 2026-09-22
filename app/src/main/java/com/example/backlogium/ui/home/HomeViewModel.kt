@@ -198,6 +198,7 @@ private data class HomeAnnouncements(
     val sharedGameAnnouncement: SharedGameAnnouncement?,
     val smartCollections: List<HomeSmartCollectionCard>,
     val trackedMinutesByGame: Map<Long, Int> = emptyMap(),
+    val latestSessionAtByGame: Map<Long, Long> = emptyMap(),
 )
 
 private data class HomeCollectionInputs(
@@ -466,6 +467,8 @@ class HomeViewModel @Inject constructor(
             )
         }.combine(gameRepository.goalGames) { announcements, focusGames ->
             announcements.copy(focusGames = focusGames)
+        }.combine(sessionRepository.latestSessionAtByGame) { announcements, latestSessionAtByGame ->
+            announcements.copy(latestSessionAtByGame = latestSessionAtByGame)
         },
     ) { state, live, cards, pendingEvents, announcements ->
         val library = announcements.library
@@ -487,6 +490,7 @@ class HomeViewModel @Inject constructor(
                 collections = cards,
                 currentlyPlayingAppId = playingAppId,
                 trackedMinutesByGame = announcements.trackedMinutesByGame,
+                latestSessionAtByGame = announcements.latestSessionAtByGame,
             ),
             smartCollections = announcements.smartCollections,
             pendingProgressEvent = pendingEvents.firstOrNull(),

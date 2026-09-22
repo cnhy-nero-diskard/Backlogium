@@ -65,6 +65,26 @@ class HomeNextActionTest {
     }
 
     @Test
+    fun `recently played shared Focus game outranks stale owned Focus game`() {
+        val shared = game(2L, "Shared", playtime = 0, completion = 100)
+            .copy(source = GameSource.FAMILY_SHARED)
+        val action = selectHomeNextAction(
+            focusGames = listOf(
+                game(1L, "Owned", playtime = 10, completion = 100, lastPlayed = 300L),
+                shared,
+            ),
+            collections = emptyList(),
+            trackedMinutesByGame = mapOf(2L to 30),
+            latestSessionAtByGame = mapOf(2L to 400L),
+        )
+
+        assertEquals(
+            HomeNextAction.ContinueFocus(HomeNextGame(2L, "Shared", "icon-2")),
+            action,
+        )
+    }
+
+    @Test
     fun `unknown completion length remains an eligible Focus game`() {
         val action = selectHomeNextAction(
             focusGames = listOf(game(1L, "Unmatched", playtime = 300, completion = null)),

@@ -3,6 +3,7 @@ package com.example.backlogium.ui.home
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.domain.CollectionMode
+import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.displayedPlaytimeMinutes
 
 /** The small game projection needed by Home's next-action surface. */
@@ -28,23 +29,27 @@ sealed interface HomeNextAction {
 /**
  * Select the one next action Home should surface from local presentation inputs.
  *
- * The input order is intentionally not used to decide the Focus winner: the most recent Steam
- * play wins, with app id as a deterministic tie-breaker. Collection order is already the user's
- * persisted display order and is therefore retained exactly. An unknown HLTB length is not proof
- * of completion, so that Focus game remains eligible until it can be classified otherwise.
+ * The input order is intentionally not used to decide the Focus winner: the most recent
+ * source-specific play wins, with app id as a deterministic tie-breaker. Collection order is
+ * already the user's persisted display order and is therefore retained exactly. An unknown HLTB
+ * length is not proof of completion, so that Focus game remains eligible until it can be classified
+ * otherwise.
  */
 internal fun selectHomeNextAction(
     focusGames: List<LibraryGame>,
     collections: List<HomeCollectionCard>,
     currentlyPlayingAppId: Long? = null,
     trackedMinutesByGame: Map<Long, Int> = emptyMap(),
+    latestSessionAtByGame: Map<Long, Long> = emptyMap(),
 ): HomeNextAction {
     val focusGame = focusGames
         .asSequence()
         .filter { it.isGoal && it.isIncompleteFocusGame(trackedMinutesByGame) }
         .filterNot { it.appId == currentlyPlayingAppId }
         .sortedWith(
-            compareByDescending<LibraryGame> { it.lastPlayedAt ?: Long.MIN_VALUE }
+            compareByDescending<LibraryGame> {
+                it.focusRecencyAt(latestSessionAtByGame) ?: Long.MIN_VALUE
+            }
                 .thenBy { it.appId },
         )
         .firstOrNull()
@@ -81,12 +86,19 @@ internal fun nextActionForHomeState(
     collections: List<HomeCollectionCard>,
     nowPlaying: NowPlaying,
     trackedMinutesByGame: Map<Long, Int> = emptyMap(),
+    latestSessionAtByGame: Map<Long, Long> = emptyMap(),
 ): HomeNextAction = selectHomeNextAction(
     focusGames = focusGames,
     collections = collections,
     currentlyPlayingAppId = (nowPlaying as? NowPlaying.InGame)?.gameId,
     trackedMinutesByGame = trackedMinutesByGame,
+    latestSessionAtByGame = latestSessionAtByGame,
 )
+
+private fun LibraryGame.focusRecencyAt(latestSessionAtByGame: Map<Long, Long>): Long? = when (source) {
+    GameSource.STEAM_OWNED -> lastPlayedAt
+    GameSource.FAMILY_SHARED -> latestSessionAtByGame[appId]
+}
 
 private fun LibraryGame.isIncompleteFocusGame(trackedMinutesByGame: Map<Long, Int>): Boolean =
     completionistMinutes?.takeIf { it > 0 }?.let {
