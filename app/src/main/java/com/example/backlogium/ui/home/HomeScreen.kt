@@ -1158,13 +1158,15 @@ internal fun CollectionCard(
     val cardSurface = card.accent?.let {
         accentColor.copy(alpha = 0.16f).compositeOver(baseSurface)
     } ?: baseSurface
+    val moveUpLabel = stringResource(R.string.home_move_up)
+    val moveDownLabel = stringResource(R.string.home_move_down)
     val reorderActions = if (reorderMode) {
         listOfNotNull(
             (position > 0).takeIf { it }?.let {
-                CustomAccessibilityAction("Move up") { onMoveUp() }
+                CustomAccessibilityAction(moveUpLabel) { onMoveUp() }
             },
             (position >= 0 && position < totalCount - 1).takeIf { it }?.let {
-                CustomAccessibilityAction("Move down") { onMoveDown() }
+                CustomAccessibilityAction(moveDownLabel) { onMoveDown() }
             },
         )
     } else {

@@ -12,6 +12,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.rememberScrollState
+import androidx.test.platform.app.InstrumentationRegistry
+import com.example.backlogium.R
 import com.example.backlogium.domain.CollectionMemberSignals
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSummary
@@ -98,8 +100,15 @@ class HomeCollectionReorderTest {
             .onNodeWithTag(HOME_COLLECTION_CARD_TAG_PREFIX + "7")
             .fetchSemanticsNode()
             .config[SemanticsActions.CustomActions]
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
 
-        assertEquals(listOf("Move up", "Move down"), actions.map { it.label })
+        assertEquals(
+            listOf(
+                context.getString(R.string.home_move_up),
+                context.getString(R.string.home_move_down),
+            ),
+            actions.map { it.label },
+        )
         assertEquals("Position 2 of 3", composeRule
             .onNodeWithTag(HOME_COLLECTION_CARD_TAG_PREFIX + "7")
             .fetchSemanticsNode()
@@ -131,7 +140,11 @@ class HomeCollectionReorderTest {
             .fetchSemanticsNode()
             .config[SemanticsActions.CustomActions]
             .single()
-        assertEquals("Move down", action.label)
+        assertEquals(
+            InstrumentationRegistry.getInstrumentation().targetContext
+                .getString(R.string.home_move_down),
+            action.label,
+        )
         assertTrue(action.action())
         assertTrue(movedDown)
     }
@@ -165,7 +178,11 @@ class HomeCollectionReorderTest {
             .fetchSemanticsNode()
             .config[SemanticsActions.CustomActions]
             .single()
-        assertEquals("Move down", moveDown.label)
+        assertEquals(
+            InstrumentationRegistry.getInstrumentation().targetContext
+                .getString(R.string.home_move_down),
+            moveDown.label,
+        )
         assertTrue(moveDown.action())
         composeRule.waitForIdle()
         assertEquals(listOf(8L, 7L), persistedOrder)

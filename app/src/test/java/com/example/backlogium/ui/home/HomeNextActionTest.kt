@@ -6,6 +6,7 @@ import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.CollectionMemberSignals
 import com.example.backlogium.data.repo.NowPlaying
+import com.example.backlogium.domain.GameSource
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -115,6 +116,61 @@ class HomeNextActionTest {
         assertEquals(
             HomeNextAction.ChooseGame,
             selectHomeNextAction(emptyList(), emptyList()),
+        )
+    }
+
+    @Test
+    fun `family shared focus beyond threshold falls back to collection`() {
+        // Steam reports no playtime for family-shared games, so the raw playtimeForever stays 0
+        // while the effective playtime (tracked sessions + manual estimate) is past completion.
+        val shared = LibraryGame(
+            appId = 5L,
+            name = "Shared",
+            iconUrl = "icon-5",
+            playtimeForever = 0,
+            completionistMinutes = 100,
+            isGoal = true,
+            lastPlayedAt = 200L,
+            source = GameSource.FAMILY_SHARED,
+            manualSharedMinutes = 90,
+        )
+        val queue = card(9L, "Queue", CollectionMode.ORDERED_QUEUE, gameId = 44L)
+
+        assertEquals(
+            HomeNextAction.ContinueCollection(
+                collectionId = 9L,
+                collectionName = "Queue",
+                game = HomeNextGame(44L, "Game 44", "icon-44"),
+            ),
+            selectHomeNextAction(
+                focusGames = listOf(shared),
+                collections = listOf(queue),
+                trackedMinutesByGame = mapOf(5L to 30),
+            ),
+        )
+    }
+
+    @Test
+    fun `family shared focus below threshold remains eligible`() {
+        val shared = LibraryGame(
+            appId = 5L,
+            name = "Shared",
+            iconUrl = "icon-5",
+            playtimeForever = 0,
+            completionistMinutes = 100,
+            isGoal = true,
+            lastPlayedAt = 200L,
+            source = GameSource.FAMILY_SHARED,
+            manualSharedMinutes = 20,
+        )
+
+        assertEquals(
+            HomeNextAction.ContinueFocus(HomeNextGame(5L, "Shared", "icon-5")),
+            selectHomeNextAction(
+                focusGames = listOf(shared),
+                collections = emptyList(),
+                trackedMinutesByGame = mapOf(5L to 30),
+            ),
         )
     }
 

@@ -176,6 +176,8 @@
     <string name="home_open_derived_collection">Open %1$s derived collection</string>
     <string name="home_collection_position">Position %1$d of %2$d</string>
     <string name="home_drag_to_reorder">Drag to reorder %1$s</string>
+    <string name="home_move_up">Move up</string>
+    <string name="home_move_down">Move down</string>
     <string name="home_collection_overflow">%1$d+</string>
     <string name="home_mode_basic">Basic list</string>
     <string name="home_mode_completion_goal">Completion goal</string>

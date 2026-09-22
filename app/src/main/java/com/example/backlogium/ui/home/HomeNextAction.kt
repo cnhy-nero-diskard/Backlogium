@@ -3,6 +3,7 @@ package com.example.backlogium.ui.home
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.NowPlaying
 import com.example.backlogium.domain.CollectionMode
+import com.example.backlogium.domain.displayedPlaytimeMinutes
 
 /** The small game projection needed by Home's next-action surface. */
 data class HomeNextGame(
@@ -36,10 +37,11 @@ internal fun selectHomeNextAction(
     focusGames: List<LibraryGame>,
     collections: List<HomeCollectionCard>,
     currentlyPlayingAppId: Long? = null,
+    trackedMinutesByGame: Map<Long, Int> = emptyMap(),
 ): HomeNextAction {
     val focusGame = focusGames
         .asSequence()
-        .filter { it.isGoal && it.isIncompleteFocusGame() }
+        .filter { it.isGoal && it.isIncompleteFocusGame(trackedMinutesByGame) }
         .filterNot { it.appId == currentlyPlayingAppId }
         .sortedWith(
             compareByDescending<LibraryGame> { it.lastPlayedAt ?: Long.MIN_VALUE }
@@ -78,14 +80,31 @@ internal fun nextActionForHomeState(
     focusGames: List<LibraryGame>,
     collections: List<HomeCollectionCard>,
     nowPlaying: NowPlaying,
+    trackedMinutesByGame: Map<Long, Int> = emptyMap(),
 ): HomeNextAction = selectHomeNextAction(
     focusGames = focusGames,
     collections = collections,
     currentlyPlayingAppId = (nowPlaying as? NowPlaying.InGame)?.gameId,
+    trackedMinutesByGame = trackedMinutesByGame,
 )
 
-private fun LibraryGame.isIncompleteFocusGame(): Boolean =
-    completionistMinutes?.takeIf { it > 0 }?.let { playtimeForever < it } ?: true
+private fun LibraryGame.isIncompleteFocusGame(trackedMinutesByGame: Map<Long, Int>): Boolean =
+    completionistMinutes?.takeIf { it > 0 }?.let {
+        effectivePlaytimeMinutes(trackedMinutesByGame) < it
+    } ?: true
+
+/**
+ * The playtime Focus eligibility is judged against: Steam's total for an owned game, and
+ * tracked sessions plus the player's own estimate for a family-shared one. Steam reports no
+ * playtime for family-shared games, so the raw [LibraryGame.playtimeForever] would keep a
+ * completed shared game eligible indefinitely.
+ */
+private fun LibraryGame.effectivePlaytimeMinutes(trackedMinutesByGame: Map<Long, Int>): Int =
+    source.displayedPlaytimeMinutes(
+        steamPlaytimeMinutes = playtimeForever,
+        trackedMinutes = trackedMinutesByGame[appId] ?: 0,
+        manualSharedMinutes = manualSharedMinutes,
+    )
 
 private fun LibraryGame.toHomeNextGame() = HomeNextGame(
     appId = appId,
