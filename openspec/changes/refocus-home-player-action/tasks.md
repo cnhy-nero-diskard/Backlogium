@@ -24,6 +24,8 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Run `./gradlew.bat :app:testDebugUnitTest --offline --no-daemon` and verify all Home presentation/ViewModel regressions pass.
-- [ ] 5.2 Run `./gradlew.bat :app:compileDebugKotlin --offline --no-daemon` and the focused Home connected Compose tests when a device is available; record any unavailable device check without claiming it passed.
-- [ ] 5.3 Run `openspec validate refocus-home-player-action --strict` and `git diff --check`, and verify only this change's production/spec/test paths are included.
+- [x] 5.1 Run `./gradlew.bat :app:testDebugUnitTest --offline --no-daemon` and verify all Home presentation/ViewModel regressions pass.
+- [x] 5.2 Run `./gradlew.bat :app:compileDebugKotlin --offline --no-daemon` and the focused Home connected Compose tests when a device is available; record any unavailable device check without claiming it passed.
+- [x] 5.3 Run `openspec validate refocus-home-player-action --strict` and `git diff --check`, and verify only this change's production/spec/test paths are included.
+
+> The focused connected Home test run was attempted on device `9XDQCM6HLB5DO7YH`, but Android rejected APK installation with `INSTALL_FAILED_USER_RESTRICTED` before any test executed; it is not counted as a passing connected test.
