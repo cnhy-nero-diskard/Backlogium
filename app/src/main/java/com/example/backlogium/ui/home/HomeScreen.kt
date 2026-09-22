@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -585,6 +586,57 @@ internal fun <T> homeCollectionOrderAfterCancelledDrag(
     currentIndex: Int,
 ): List<T> = if (currentIndex != initialIndex) persistedCards else currentCards
 
+internal const val HOME_COLLECTIONS_NEW_TAG = "home-collections-new"
+internal const val HOME_COLLECTIONS_VIEW_ALL_TAG = "home-collections-view-all"
+
+@Composable
+internal fun HomeCollectionsHeader(
+    onCreateCollection: () -> Unit,
+    onOpenCollections: () -> Unit,
+    onPlanGap: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Collections",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Button(
+                onClick = onCreateCollection,
+                modifier = Modifier.testTag(HOME_COLLECTIONS_NEW_TAG),
+            ) {
+                Text("New")
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(
+                onClick = onOpenCollections,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag(HOME_COLLECTIONS_VIEW_ALL_TAG),
+            ) {
+                Text("View all")
+            }
+            TextButton(
+                onClick = onPlanGap,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag(HOME_PLAN_GAP_TAG),
+            ) {
+                Text("Plan a gap before a release")
+            }
+        }
+    }
+}
+
 @Composable
 private fun CollectionsSection(
     cards: List<HomeCollectionCard>,
@@ -643,32 +695,11 @@ private fun CollectionsSection(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Collections",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(onClick = onOpenCollections) { Text("View all") }
-            TextButton(onClick = onCreateCollection) { Text("New") }
-        }
-        // Deliberately its own row rather than a third button crowded into the header: the gap
-        // planner answers a different question from "group these games", and a tab for it would
-        // change the four-tab navigation contract.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(
-                onClick = onPlanGap,
-                modifier = Modifier.testTag(HOME_PLAN_GAP_TAG),
-            ) {
-                Text("Plan a gap before a release")
-            }
-        }
+        HomeCollectionsHeader(
+            onCreateCollection = onCreateCollection,
+            onOpenCollections = onOpenCollections,
+            onPlanGap = onPlanGap,
+        )
         if (cards.isEmpty()) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {

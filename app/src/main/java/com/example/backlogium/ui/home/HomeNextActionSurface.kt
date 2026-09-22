@@ -78,19 +78,23 @@ internal fun HomeNextActionSurface(
                         eyebrow = "Continue ${action.collectionName}",
                         game = action.game,
                     )
-                    Row(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
                         Button(
                             onClick = { onOpenGame(action.game.appId) },
                             modifier = Modifier
-                                .weight(1f)
+                                .fillMaxWidth()
                                 .testTag(HOME_NEXT_ACTION_PRIMARY_TAG),
                         ) {
                             Text("Play next")
                         }
-                        Spacer(Modifier.width(8.dp))
                         TextButton(
                             onClick = { onOpenCollection(action.collectionId) },
-                            modifier = Modifier.testTag(HOME_NEXT_ACTION_COLLECTION_TAG),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag(HOME_NEXT_ACTION_COLLECTION_TAG),
                         ) {
                             Text("Open collection")
                         }

@@ -7,8 +7,8 @@
 ## 2. Home hierarchy and collection actions
 
 - [x] 2.1 Implement the compact next-action surface after urgent/live content and before level/quest/streak, and verify Compose semantics expose one heading, one primary action, and no duplicated now-playing game.
-- [ ] 2.2 Rework the Collections heading so `New` is primary and `View all` plus release-gap planning are labeled secondary actions, and verify all three existing destinations remain reachable in a Compose UI test.
-- [ ] 2.3 Verify narrow-screen layout through measurement/semantics tests so the next action and collection controls do not clip or create horizontally scrolling controls.
+- [x] 2.2 Rework the Collections heading so `New` is primary and `View all` plus release-gap planning are labeled secondary actions, and verify all three existing destinations remain reachable in a Compose UI test.
+- [x] 2.3 Verify narrow-screen layout through measurement/semantics tests so the next action and collection controls do not clip or create horizontally scrolling controls.
 
 ## 3. Accessible collection reordering
 
