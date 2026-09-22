@@ -7,6 +7,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +37,7 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -69,6 +71,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.selected
@@ -651,12 +654,28 @@ fun LibraryScreen(
                         .padding(top = 8.dp),
                 ) {
                     items(visibleGenres, key = { it.id }) { genre ->
-                        FilterChip(
-                            selected = genre.id in selectedGenreSet,
-                            onClick = { viewModel.toggleGenreFilter(genre.id) },
-                            label = { Text(genre.label) },
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                        )
+                        val selected = genre.id in selectedGenreSet
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(
+                                    role = Role.Checkbox,
+                                    onClick = { viewModel.toggleGenreFilter(genre.id) },
+                                ),
+                        ) {
+                            Checkbox(
+                                checked = selected,
+                                onCheckedChange = { viewModel.toggleGenreFilter(genre.id) },
+                            )
+                            Text(
+                                text = genre.label,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(vertical = 12.dp),
+                            )
+                        }
                     }
                 }
                 if (visibleGenres.isEmpty()) {

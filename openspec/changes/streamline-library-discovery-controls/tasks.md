@@ -24,5 +24,5 @@
 ## 5. Verification
 
 - [x] 5.1 Run `./gradlew.bat :app:testDebugUnitTest --offline --no-daemon` and verify all Library filter/presentation regressions pass.
-- [x] 5.2 Run `./gradlew.bat :app:compileDebugKotlin --offline --no-daemon` and focused Library connected Compose tests when a device is available; debug Kotlin and Android-test compilation pass, and the focused connected Library resource test passes on the attached device.
+- [x] 5.2 Run `./gradlew.bat :app:compileDebugKotlin --offline --no-daemon` and focused Library connected Compose tests when a device is available; debug Kotlin and Android-test compilation pass, and the focused connected Library resource test passes on the attached device. `LibraryGameSelectionSemanticsTest` (3.3) is compile-verified only — no device was attached in this pass, so no semantics-test device run is recorded here.
 - [x] 5.3 Run `openspec validate streamline-library-discovery-controls --strict` and `git diff --check`, and verify the visual-regression change remains the sole owner of screenshot infrastructure/goldens; no screenshot infrastructure or golden files changed here.
