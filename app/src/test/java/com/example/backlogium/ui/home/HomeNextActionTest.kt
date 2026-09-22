@@ -132,6 +132,25 @@ class HomeNextActionTest {
     }
 
     @Test
+    fun `running another game suppresses Focus and uses the collection fallback`() {
+        val focus = game(42L, "Focus", playtime = 10, completion = 100, lastPlayed = 100L)
+        val action = selectHomeNextAction(
+            focusGames = listOf(focus),
+            collections = listOf(card(9L, "Queue", CollectionMode.ORDERED_QUEUE, gameId = 44L)),
+            currentlyPlayingAppId = 99L,
+        )
+
+        assertEquals(
+            HomeNextAction.ContinueCollection(
+                collectionId = 9L,
+                collectionName = "Queue",
+                game = HomeNextGame(44L, "Game 44", "icon-44"),
+            ),
+            action,
+        )
+    }
+
+    @Test
     fun `empty inputs use the choose-game fallback`() {
         assertEquals(
             HomeNextAction.ChooseGame,

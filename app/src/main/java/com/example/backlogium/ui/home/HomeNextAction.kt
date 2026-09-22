@@ -42,17 +42,20 @@ internal fun selectHomeNextAction(
     trackedMinutesByGame: Map<Long, Int> = emptyMap(),
     latestSessionAtByGame: Map<Long, Long> = emptyMap(),
 ): HomeNextAction {
-    val focusGame = focusGames
-        .asSequence()
-        .filter { it.isGoal && it.isIncompleteFocusGame(trackedMinutesByGame) }
-        .filterNot { it.appId == currentlyPlayingAppId }
-        .sortedWith(
-            compareByDescending<LibraryGame> {
-                it.focusRecencyAt(latestSessionAtByGame) ?: Long.MIN_VALUE
-            }
-                .thenBy { it.appId },
-        )
-        .firstOrNull()
+    val focusGame = if (currentlyPlayingAppId == null) {
+        focusGames
+            .asSequence()
+            .filter { it.isGoal && it.isIncompleteFocusGame(trackedMinutesByGame) }
+            .sortedWith(
+                compareByDescending<LibraryGame> {
+                    it.focusRecencyAt(latestSessionAtByGame) ?: Long.MIN_VALUE
+                }
+                    .thenBy { it.appId },
+            )
+            .firstOrNull()
+    } else {
+        null
+    }
 
     if (focusGame != null) {
         return HomeNextAction.ContinueFocus(focusGame.toHomeNextGame())
