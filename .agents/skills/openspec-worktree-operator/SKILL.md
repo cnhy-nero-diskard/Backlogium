@@ -1,7 +1,9 @@
 ---
 name: openspec-worktree-operator
-description: Create and manage isolated Git worktrees for autonomous OpenSpec implementation with autoship commit-and-push. Use when the user invokes this skill, starts a branch worktree, applies an OpenSpec proposal in an isolated worktree, asks for worktree status, a handoff prompt, draft PR creation, or cleanup of an OpenSpec implementation worktree.
+description: Create and manage isolated Git worktrees for autonomous OpenSpec implementation with autoship commit-and-push. Use when the agent should start a branch worktree, apply an OpenSpec proposal in an isolated worktree, inspect worktree status, prepare a handoff, create a draft PR, or clean up a completed OpenSpec worktree.
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(openspec:*), Bash(powershell:*)
 license: MIT
+compatibility: Requires Git and openspec CLI; gh CLI optional.
 metadata:
   author: openspec
   version: "1.1"
@@ -13,13 +15,14 @@ metadata:
 This skill manages isolated Git worktrees for applying OpenSpec proposals. All implementation
 work is isolated to the worktree, protecting the original repository state.
 
-It embeds the `openspec-autoship` pipeline (`openspec-apply-change` + `auto-commit-agent`
+It embeds the `openspec-autoship` pipeline (`openspec-apply-change` + auto-commit
 mechanics) scoped to the worktree: every coherent checkpoint is committed **and pushed**
 to `origin/<branch>` immediately, with no permission prompts. The only deliberate
 divergence from autoship is branch policy: autoship ships to whatever branch is checked
 out including `main`; this skill refuses to autoship to protected branches
 (`master`, `main`, `release/*`, `hotfix/*`, `prod/*`) because the whole point is
-isolated feature-branch work. To ship directly to `main`, invoke `$openspec-autoship`
+isolated feature-branch work. To ship directly to `main`, invoke
+`$openspec-autoship` (Codex) or `/openspec-autoship` (other agents)
 in the original repo instead.
 
 ## Supported Commands
@@ -208,7 +211,7 @@ Guardrail: only mark `- [x]` when the task's behavior is fully implemented; neve
 
 ## Checkpoint Commit + Push (inside the worktree)
 
-After each completed task (or tightly-coupled task group), run this sequence. This replaces `auto-commit-agent`'s "ask when in doubt" with "proceed when the gate passes".
+After each completed task (or tightly-coupled task group), run this sequence. This replaces auto-commit "ask when in doubt" with "proceed when the gate passes".
 
 ### 1. Stage explicit paths only
 
@@ -289,7 +292,7 @@ After the last task (or when `instructions apply` reports `all_done`):
 ### Left Untouched (pre-existing)
 - <file>: <why>
 
-Next: `pr branch <branch>` for a draft PR, or archive with `$openspec-archive-change` when ready.
+Next: `pr branch <branch>` for a draft PR, or archive with `$openspec-archive-change` (Codex) or `/openspec-archive-change` (other agents) when ready.
 ```
 
 ## Pause Conditions (exhaustive)

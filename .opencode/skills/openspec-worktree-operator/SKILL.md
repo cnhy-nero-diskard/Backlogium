@@ -1,7 +1,9 @@
 ---
 name: openspec-worktree-operator
 description: Create and manage isolated Git worktrees for autonomous OpenSpec implementation with autoship commit-and-push. Use when the user invokes this skill, starts a branch worktree, applies an OpenSpec proposal in an isolated worktree, asks for worktree status, a handoff prompt, draft PR creation, or cleanup of an OpenSpec implementation worktree.
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(openspec:*), Bash(powershell:*)
 license: MIT
+compatibility: Requires Git and openspec CLI; gh CLI optional.
 metadata:
   author: openspec
   version: "1.1"
