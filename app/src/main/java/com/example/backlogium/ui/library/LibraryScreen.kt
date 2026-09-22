@@ -398,7 +398,9 @@ fun LibraryScreen(
                 }
             }
 
-            if (state.reviewCount > 0) {
+            // Gated on the actionable match-center count: an unmatched-only queue leaves
+            // reviewCount at 0 while rescue entries still need a main-flow entry point.
+            if (state.matchCenterCount > 0) {
                 item {
                     HltbAttentionRow(
                         reviewCount = state.reviewCount,
@@ -690,6 +692,7 @@ fun LibraryScreen(
             allGames = state.allGames,
             refreshing = state.refreshing,
             reviewCount = state.reviewCount,
+            matchCenterCount = state.matchCenterCount,
             onDensityChange = viewModel::setDensity,
             onSelectGames = {
                 showToolsSheet = false
@@ -993,11 +996,17 @@ private fun HltbAttentionRow(reviewCount: Int, onOpenReview: () -> Unit) {
                 tint = MaterialTheme.colorScheme.onTertiaryContainer,
             )
             Text(
-                text = pluralStringResource(
-                    R.plurals.library_hltb_review_count,
-                    reviewCount,
-                    reviewCount,
-                ),
+                // The count stays review-only per app-ui spec; an unmatched-only queue
+                // (matchCenterCount > 0, reviewCount == 0) keeps the entry without a count.
+                text = if (reviewCount > 0) {
+                    pluralStringResource(
+                        R.plurals.library_hltb_review_count,
+                        reviewCount,
+                        reviewCount,
+                    )
+                } else {
+                    stringResource(R.string.library_hltb_match_center)
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onTertiaryContainer,
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
@@ -1014,6 +1023,7 @@ private fun LibraryToolsSheet(
     allGames: List<LibraryBatchGame>,
     refreshing: Boolean,
     reviewCount: Int,
+    matchCenterCount: Int,
     onDensityChange: (GameListDensity) -> Unit,
     onSelectGames: () -> Unit,
     onRefreshUncovered: () -> Unit,
@@ -1068,9 +1078,18 @@ private fun LibraryToolsSheet(
             ) {
                 Text(stringResource(R.string.library_force_refresh_hltb))
             }
-            if (reviewCount > 0) {
+            // Gated on the actionable match-center count, not the review-only badge:
+            // an unmatched-only queue leaves reviewCount at 0 while rescue entries still need
+            // a Library entry point. The count itself stays review-only per app-ui spec.
+            if (matchCenterCount > 0) {
                 TextButton(onClick = onOpenReview, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.library_open_hltb_review, reviewCount))
+                    Text(
+                        if (reviewCount > 0) {
+                            stringResource(R.string.library_open_hltb_review, reviewCount)
+                        } else {
+                            stringResource(R.string.library_hltb_match_center)
+                        },
+                    )
                 }
             }
             Spacer(Modifier.height(12.dp))

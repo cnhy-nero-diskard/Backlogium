@@ -167,6 +167,8 @@ data class LibraryUiState(
     /** The complete visible library, used by tools and selection even when filters hide rows. */
     val allGames: List<LibraryBatchGame> = emptyList(),
     val reviewCount: Int = 0,
+    /** Actionable match-center size (NEEDS_REVIEW plus UNMATCHED rescue); drives entry visibility. */
+    val matchCenterCount: Int = 0,
     val hltbCandidatesByAppId: Map<Long, List<HltbCandidate>> = emptyMap(),
     val pickerStates: Map<Long, HltbPickerUiState> = emptyMap(),
     val pickerManualLinkStates: Map<Long, PickerManualLinkUiState> = emptyMap(),
@@ -254,10 +256,13 @@ class LibraryViewModel @Inject constructor(
     private val content = combine(
         gameRepository.goalGames,
         gameRepository.backlog,
-        hltbRepository.reviewQueue,
+        // Folded to one flow so the outer combine keeps its 5-arity overload: the 6-flow
+        // overload does not resolve here and falls back to the untyped vararg combine.
+        combine(hltbRepository.reviewQueue, hltbRepository.matchCenterQueue, ::Pair),
         credentials.credentialsStateFlow,
         liveStatusRepository.nowPlaying,
-    ) { goals, backlog, reviewQueue, credState, nowPlaying ->
+    ) { goals, backlog, queues, credState, nowPlaying ->
+        val (reviewQueue, matchCenterQueue) = queues
         val goalIds = goals.mapTo(HashSet()) { it.appId }
         LibraryContent(
             configured = credState is CredentialsState.Configured,
@@ -267,6 +272,7 @@ class LibraryViewModel @Inject constructor(
             // and a duplicate appId across LazyColumn items crashes Compose.
             backlog = backlog.filterNot { it.appId in goalIds },
             reviewCount = reviewQueue.size,
+            matchCenterCount = matchCenterQueue.size,
             hltbCandidatesByAppId = reviewQueue.associate { it.appId to it.candidates },
             playingAppId = (nowPlaying as? NowPlaying.InGame)?.gameId,
         )
@@ -346,6 +352,7 @@ class LibraryViewModel @Inject constructor(
                 LibraryBatchGame(it.appId, it.name, it.hltbMatchState)
             },
             reviewCount = content.reviewCount,
+            matchCenterCount = content.matchCenterCount,
             hltbCandidatesByAppId = content.hltbCandidatesByAppId,
             pickerStates = view.pickerStates,
             pickerManualLinkStates = view.pickerManualLinkStates,
@@ -626,6 +633,7 @@ private data class LibraryContent(
     val goals: List<LibraryGame>,
     val backlog: List<LibraryGame>,
     val reviewCount: Int,
+    val matchCenterCount: Int,
     val hltbCandidatesByAppId: Map<Long, List<HltbCandidate>>,
     /** appId of the game Steam's live presence reports as running right now, if any. */
     val playingAppId: Long?,
