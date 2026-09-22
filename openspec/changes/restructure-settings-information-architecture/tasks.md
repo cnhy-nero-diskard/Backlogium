@@ -12,10 +12,10 @@
 
 ## 3. Overview and group screens
 
-- [ ] 3.1 Implement the four-row Settings overview with plain-language summaries, attention treatment, stable loading placeholders, and restored scroll state; verify semantics expose group name, status, and action.
-- [ ] 3.2 Assemble Account & sync and Gameplay detail screens from extracted controls, and verify credentials/setup/sync/update plus monitor/quest/hidden/shared-game operations retain enabled, busy, error, and confirmation behavior.
-- [ ] 3.3 Assemble Data & privacy and Advanced & diagnostics detail screens, and verify import/assets/contribution/cloud/backup plus diagnostics/rule operations retain disclosures, validation, destructive confirmation, and result handling.
-- [ ] 3.4 Keep cross-destination dialogs and activity-result flows at the graph host, and verify backup mismatch, contribution disclosure, export/import, update launch, and rule confirmation survive recomposition/navigation correctly.
+- [x] 3.1 Implement the four-row Settings overview with plain-language summaries, attention treatment, stable loading placeholders, and restored scroll state; verify semantics expose group name, status, and action.
+- [x] 3.2 Assemble Account & sync and Gameplay detail screens from extracted controls, and verify credentials/setup/sync/update plus monitor/quest/hidden/shared-game operations retain enabled, busy, error, and confirmation behavior.
+- [x] 3.3 Assemble Data & privacy and Advanced & diagnostics detail screens, and verify import/assets/contribution/cloud/backup plus diagnostics/rule operations retain disclosures, validation, destructive confirmation, and result handling.
+- [x] 3.4 Keep cross-destination dialogs and activity-result flows at the graph host, and verify backup mismatch, contribution disclosure, export/import, update launch, and rule confirmation survive recomposition/navigation correctly.
 
 ## 4. Player-facing copy and resources
 

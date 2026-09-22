@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -68,7 +67,7 @@ private fun SettingsSummaryRow(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .testTag("settings-group-${summary.group.name.lowercase()}"),
+            .testTag("settings-group-${summary.group.route.substringAfterLast('/')}"),
     ) {
         Row(
             modifier = Modifier
