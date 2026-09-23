@@ -133,7 +133,6 @@
     <string name="home_updating">Updating your Home</string>
     <string name="home_level_up_earned">Level-up earned</string>
     <string name="home_streak_milestone_earned">Streak milestone earned</string>
-    <string name="home_next_action">Next action</string>
     <string name="home_continue_focus">Continue Focus</string>
     <string name="home_continue_collection">Continue %1$s</string>
     <string name="home_open_game">Open game</string>

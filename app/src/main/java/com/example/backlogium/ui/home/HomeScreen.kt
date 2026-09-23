@@ -443,14 +443,13 @@ private fun InnerHomeContent(
             }
         }
 
-        HomeNextActionSurface(
+        HomeNextActionSlot(
+            isInGame = state.isInGame,
             action = state.nextAction,
             onOpenGame = onOpenGame,
             onOpenCollection = onOpenCollection,
             onOpenLibrary = onOpenLibrary,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag(HOME_NEXT_ACTION_TAG),
+            modifier = Modifier.fillMaxWidth(),
         )
 
         // Level + XP.

@@ -6,13 +6,9 @@ import androidx.compose.material3.Text
 import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.backlogium.R
 import com.example.backlogium.ui.theme.BacklogiumTheme
@@ -53,9 +49,11 @@ class HomeLocalePresentationTest {
             CompositionLocalProvider(LocalConfiguration provides germanConfiguration) {
                 BacklogiumTheme {
                     Column {
-                        Text(
-                            text = stringResource(R.string.home_next_action),
-                            modifier = Modifier.testTag("locale-label"),
+                        HomeNextActionSurface(
+                            action = HomeNextAction.ChooseGame,
+                            onOpenGame = {},
+                            onOpenCollection = {},
+                            onOpenLibrary = {},
                         )
                         Text(
                             text = pluralStringResource(
@@ -70,8 +68,8 @@ class HomeLocalePresentationTest {
             }
         }
 
-        composeRule.onNodeWithTag("locale-label").assertIsDisplayed()
-        composeRule.onNodeWithText("Next action").assertIsDisplayed()
+        composeRule.onNodeWithText("Choose a game from your Library.").assertIsDisplayed()
+        composeRule.onNodeWithText("Browse Library").assertIsDisplayed()
         composeRule.onNodeWithText("2 days").assertIsDisplayed()
         composeRule.onNodeWithText("30.08.2026").assertIsDisplayed()
     }

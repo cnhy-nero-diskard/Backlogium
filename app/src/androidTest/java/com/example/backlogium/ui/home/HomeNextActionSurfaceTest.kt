@@ -1,14 +1,19 @@
 package com.example.backlogium.ui.home
 
-import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.unit.dp
 import com.example.backlogium.ui.theme.BacklogiumTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -18,7 +23,7 @@ class HomeNextActionSurfaceTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun focusAction_hasOneHeadingAndOnePrimaryDestination() {
+    fun focusAction_showsCompactSummaryAndOnePrimaryDestination() {
         var openedGame: Long? = null
 
         composeRule.setContent {
@@ -32,7 +37,7 @@ class HomeNextActionSurfaceTest {
             }
         }
 
-        composeRule.onAllNodesWithText("Next action").assertCountEquals(1)
+        composeRule.onAllNodesWithText("Next action").assertCountEquals(0)
         composeRule.onNodeWithText("Continue Focus").assertIsDisplayed()
         composeRule.onNodeWithTag(HOME_NEXT_ACTION_PRIMARY_TAG).performClick()
 
@@ -84,5 +89,80 @@ class HomeNextActionSurfaceTest {
         composeRule.onNodeWithTag(HOME_NEXT_ACTION_PRIMARY_TAG).performClick()
 
         assertEquals(true, openedLibrary)
+    }
+
+    @Test
+    fun playingState_hidesTheWholeNextActionSurface() {
+        composeRule.setContent {
+            BacklogiumTheme {
+                HomeNextActionSlot(
+                    isInGame = true,
+                    action = HomeNextAction.ContinueCollection(
+                        collectionId = 7L,
+                        collectionName = "Weekend queue",
+                        game = HomeNextGame(42L, "Hades"),
+                    ),
+                    onOpenGame = {},
+                    onOpenCollection = {},
+                    onOpenLibrary = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(HOME_NEXT_ACTION_TAG).assertDoesNotExist()
+        composeRule.onNodeWithText("Hades").assertDoesNotExist()
+        composeRule.onNodeWithText("Choose a game from your Library.").assertDoesNotExist()
+    }
+
+    @Test
+    fun chooseGameFallback_isCompactAtNormalWidth() {
+        composeRule.setContent {
+            BacklogiumTheme {
+                Box(Modifier.width(360.dp)) {
+                    HomeNextActionSlot(
+                        isInGame = false,
+                        action = HomeNextAction.ChooseGame,
+                        onOpenGame = {},
+                        onOpenCollection = {},
+                        onOpenLibrary = {},
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Choose a game from your Library.").assertIsDisplayed()
+        composeRule.onNodeWithTag(HOME_NEXT_ACTION_PRIMARY_TAG).assertIsDisplayed()
+        val height = composeRule.onNodeWithTag(HOME_NEXT_ACTION_TAG)
+            .fetchSemanticsNode().boundsInRoot.height
+        assertTrue(
+            "Normal-width fallback should stay within a compact row",
+            height <= with(composeRule.density) { 64.dp.toPx() },
+        )
+    }
+
+    @Test
+    fun chooseGameFallback_staysCompactAtNarrowWidth() {
+        composeRule.setContent {
+            BacklogiumTheme {
+                Box(Modifier.width(240.dp)) {
+                    HomeNextActionSlot(
+                        isInGame = false,
+                        action = HomeNextAction.ChooseGame,
+                        onOpenGame = {},
+                        onOpenCollection = {},
+                        onOpenLibrary = {},
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Choose a game from your Library.").assertIsDisplayed()
+        composeRule.onNodeWithTag(HOME_NEXT_ACTION_PRIMARY_TAG).assertIsDisplayed()
+        val height = composeRule.onNodeWithTag(HOME_NEXT_ACTION_TAG)
+            .fetchSemanticsNode().boundsInRoot.height
+        assertTrue(
+            "Narrow-width fallback should wrap within a compact card",
+            height <= with(composeRule.density) { 84.dp.toPx() },
+        )
     }
 }
