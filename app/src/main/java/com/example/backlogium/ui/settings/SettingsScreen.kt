@@ -42,6 +42,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,7 +62,6 @@ import com.example.backlogium.data.updates.AppUpdateState
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.ui.util.HapticIntent
-import com.example.backlogium.ui.util.HapticPlayer
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.ui.util.playIfNotSilent
 import com.example.backlogium.ui.util.rememberHaptics
@@ -76,6 +76,7 @@ import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.Download
 import compose.icons.tablericons.Pencil
 import compose.icons.tablericons.Upload
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 
 /**
@@ -97,103 +98,139 @@ fun SettingsScreen(
     onOpenHiddenGames: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    SettingsGraphScreen(viewModel = viewModel) { state, actions, _ ->
-        SettingsScreen(
-            state = state,
-            onEditCredentials = onEditCredentials,
-            onOpenDiagnostics = onOpenDiagnostics,
-            onOpenSetup = onOpenSetup,
-            onOpenUpdate = onOpenUpdate,
-            onOpenHiddenGames = onOpenHiddenGames,
-            actions = actions,
-        )
+    SettingsGraphScreen(viewModel = viewModel) { graph ->
+        graph?.let {
+            SettingsScreen(
+                state = it.state,
+                onEditCredentials = onEditCredentials,
+                onOpenDiagnostics = onOpenDiagnostics,
+                onOpenSetup = onOpenSetup,
+                onOpenUpdate = onOpenUpdate,
+                onOpenHiddenGames = onOpenHiddenGames,
+                actions = it.actions,
+            )
+        }
     }
 }
 
 /**
  * Shared Settings-graph host. It owns activity-result launchers, transient dialogs, haptics, and
  * toasts so every overview/detail destination talks to one state holder and one action surface.
+ * In the app shell this wraps the NavHost, rather than being called from an individual destination.
  */
 @Composable
 internal fun SettingsGraphScreen(
-    viewModel: SettingsViewModel,
-    content: @Composable (SettingsUiState, SettingsActions, HapticPlayer) -> Unit,
+    viewModel: SettingsViewModel?,
+    content: @Composable (SettingsGraphSession?) -> Unit,
 ) {
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val haptics = rememberHaptics()
+    val graphSession = if (viewModel == null) {
+        null
+    } else {
+        val state by viewModel.uiState.collectAsStateWithLifecycle()
+        val haptics = rememberHaptics()
+        val context = LocalContext.current
 
-    LaunchedEffect(viewModel, haptics) {
-        viewModel.hapticIntents.collect(haptics::playIfNotSilent)
-    }
-    val context = LocalContext.current
-    LaunchedEffect(viewModel, context) {
-        viewModel.toastMessages.collect { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
-    }
-
-    val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json"),
-    ) { uri -> uri?.let(viewModel::onExportBackup) }
-    val importLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri -> uri?.let(viewModel::onImportBackupPicked) }
-    val contributionExportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json"),
-    ) { uri ->
-        val resolver = context.contentResolver
-        if (uri != null) {
-            viewModel.onContributionDestinationPicked(uri, resolver)
-        } else {
-            viewModel.onContributionExportCancelled()
+        val exportLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.CreateDocument("application/json"),
+        ) { uri -> uri?.let(viewModel::onExportBackup) }
+        val importLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.OpenDocument(),
+        ) { uri -> uri?.let(viewModel::onImportBackupPicked) }
+        val contributionExportLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.CreateDocument("application/json"),
+        ) { uri ->
+            val resolver = context.contentResolver
+            if (uri != null) {
+                viewModel.onContributionDestinationPicked(uri, resolver)
+            } else {
+                viewModel.onContributionExportCancelled()
+            }
         }
-    }
-    LaunchedEffect(viewModel) {
-        viewModel.contributionExportRequests.collect { fileName -> contributionExportLauncher.launch(fileName) }
-    }
-
-    val actions = remember(viewModel, exportLauncher, importLauncher) {
-        SettingsActions(
-            onSyncNow = viewModel::syncNow,
-            onReconcileNow = viewModel::reconcileNow,
-            onDownloadSteamAssets = viewModel::downloadSteamAssets,
-            onCancelSteamAssetDownload = viewModel::cancelSteamAssetDownload,
-            onLiveMonitorEnabledChanged = viewModel::onLiveMonitorEnabledChanged,
-            onFieldChanged = viewModel::onFieldChanged,
-            onQuestModeChanged = viewModel::onQuestModeChanged,
-            onAdvancedExpandedChanged = viewModel::setAdvancedExpanded,
-            onRequestSave = viewModel::requestSave,
-            onDiscardChanges = viewModel::discardChanges,
-            onConfirmSave = viewModel::confirmSave,
-            onDismissConfirmation = viewModel::dismissConfirmation,
-            onImportHistory = viewModel::importSteamHistory,
-            onResetHistoryImport = viewModel::resetHistoryImport,
-            onAutoSnapshotEnabledChanged = viewModel::onAutoSnapshotEnabledChanged,
-            onSnapshotRetentionCountChanged = viewModel::onSnapshotRetentionCountChanged,
-            onSnapshotIntervalHoursChanged = viewModel::onSnapshotIntervalHoursChanged,
-            onExportBackup = { exportLauncher.launch("backlogium-backup-${System.currentTimeMillis()}.json") },
-            onImportBackup = { importLauncher.launch(arrayOf("application/json")) },
-            onRestoreSnapshot = viewModel::onRestoreSnapshot,
-            onDeleteSnapshot = viewModel::onDeleteSnapshot,
-            onConfirmMismatchImport = viewModel::onConfirmMismatchImport,
-            onDismissMismatchImport = viewModel::onDismissMismatchImport,
-            onDismissBackupMessage = viewModel::onDismissBackupMessage,
-            onCheckForUpdates = viewModel::checkForUpdates,
-            onRestoreSharedGame = viewModel::restoreSharedGame,
-            onManualSharedGameInputChanged = viewModel::onManualSharedGameInputChanged,
-            onImportManualSharedGame = viewModel::importManualSharedGame,
-            onCheckHltbDataset = viewModel::checkHltbDataset,
-            onRequestContributionExport = viewModel::onRequestContributionExport,
-            onDismissContributionDisclosure = viewModel::onDismissContributionDisclosure,
-            onConfirmContributionDisclosure = viewModel::onConfirmContributionDisclosure,
-            onVerifyCloudPresence = viewModel::verifyCloudPresence,
-            onReadCloudPresence = viewModel::readCloudPresence,
-            onRemoveCloudPresence = viewModel::removeCloudPresence,
-            onRefileCloudPresence = viewModel::refileCloudPresence,
-            onReverseCloudPresenceRefiling = viewModel::reverseCloudPresenceRefiling,
+        SettingsGraphEffectCollectors(
+            hapticIntents = viewModel.hapticIntents,
+            toastMessages = viewModel.toastMessages,
+            contributionExportRequests = viewModel.contributionExportRequests,
+            onHapticIntent = haptics::playIfNotSilent,
+            onToastMessage = { message -> Toast.makeText(context, message, Toast.LENGTH_SHORT).show() },
+            onContributionExportRequest = contributionExportLauncher::launch,
         )
+
+        val actions = remember(viewModel, exportLauncher, importLauncher) {
+            SettingsActions(
+                onSyncNow = viewModel::syncNow,
+                onReconcileNow = viewModel::reconcileNow,
+                onDownloadSteamAssets = viewModel::downloadSteamAssets,
+                onCancelSteamAssetDownload = viewModel::cancelSteamAssetDownload,
+                onLiveMonitorEnabledChanged = viewModel::onLiveMonitorEnabledChanged,
+                onFieldChanged = viewModel::onFieldChanged,
+                onQuestModeChanged = viewModel::onQuestModeChanged,
+                onAdvancedExpandedChanged = viewModel::setAdvancedExpanded,
+                onRequestSave = viewModel::requestSave,
+                onDiscardChanges = viewModel::discardChanges,
+                onConfirmSave = viewModel::confirmSave,
+                onDismissConfirmation = viewModel::dismissConfirmation,
+                onImportHistory = viewModel::importSteamHistory,
+                onResetHistoryImport = viewModel::resetHistoryImport,
+                onAutoSnapshotEnabledChanged = viewModel::onAutoSnapshotEnabledChanged,
+                onSnapshotRetentionCountChanged = viewModel::onSnapshotRetentionCountChanged,
+                onSnapshotIntervalHoursChanged = viewModel::onSnapshotIntervalHoursChanged,
+                onExportBackup = { exportLauncher.launch("backlogium-backup-${System.currentTimeMillis()}.json") },
+                onImportBackup = { importLauncher.launch(arrayOf("application/json")) },
+                onRestoreSnapshot = viewModel::onRestoreSnapshot,
+                onDeleteSnapshot = viewModel::onDeleteSnapshot,
+                onConfirmMismatchImport = viewModel::onConfirmMismatchImport,
+                onDismissMismatchImport = viewModel::onDismissMismatchImport,
+                onDismissBackupMessage = viewModel::onDismissBackupMessage,
+                onCheckForUpdates = viewModel::checkForUpdates,
+                onRestoreSharedGame = viewModel::restoreSharedGame,
+                onManualSharedGameInputChanged = viewModel::onManualSharedGameInputChanged,
+                onImportManualSharedGame = viewModel::importManualSharedGame,
+                onCheckHltbDataset = viewModel::checkHltbDataset,
+                onRequestContributionExport = viewModel::onRequestContributionExport,
+                onDismissContributionDisclosure = viewModel::onDismissContributionDisclosure,
+                onConfirmContributionDisclosure = viewModel::onConfirmContributionDisclosure,
+                onVerifyCloudPresence = viewModel::verifyCloudPresence,
+                onReadCloudPresence = viewModel::readCloudPresence,
+                onRemoveCloudPresence = viewModel::removeCloudPresence,
+                onRefileCloudPresence = viewModel::refileCloudPresence,
+                onReverseCloudPresenceRefiling = viewModel::reverseCloudPresenceRefiling,
+            )
+        }
+        SettingsGraphSession(state = state, actions = actions)
     }
 
-    content(state, actions, haptics)
-    SettingsDialogs(state = state, actions = actions)
+    content(graphSession)
+    graphSession?.let { SettingsDialogs(state = it.state, actions = it.actions) }
+}
+
+/** The one graph-scoped presentation context shared by every Settings destination. */
+internal data class SettingsGraphSession(
+    val state: SettingsUiState,
+    val actions: SettingsActions,
+)
+
+/** Collects one-shot graph events. The app shell composes this once above its NavHost. */
+@Composable
+internal fun SettingsGraphEffectCollectors(
+    hapticIntents: Flow<HapticIntent>,
+    toastMessages: Flow<String>,
+    contributionExportRequests: Flow<String>,
+    onHapticIntent: (HapticIntent) -> Unit,
+    onToastMessage: (String) -> Unit,
+    onContributionExportRequest: (String) -> Unit,
+) {
+    val currentOnHapticIntent by rememberUpdatedState(onHapticIntent)
+    val currentOnToastMessage by rememberUpdatedState(onToastMessage)
+    val currentOnContributionExportRequest by rememberUpdatedState(onContributionExportRequest)
+    LaunchedEffect(hapticIntents) {
+        hapticIntents.collect { currentOnHapticIntent(it) }
+    }
+    LaunchedEffect(toastMessages) {
+        toastMessages.collect { currentOnToastMessage(it) }
+    }
+    LaunchedEffect(contributionExportRequests) {
+        contributionExportRequests.collect { currentOnContributionExportRequest(it) }
+    }
 }
 
 /** Every action the screen can raise, so the rendering half stays free of the view model. */
@@ -460,7 +497,7 @@ internal fun SettingsDetailScreen(
 }
 
 @Composable
-private fun SettingsLoadingContent() {
+internal fun SettingsLoadingContent() {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),

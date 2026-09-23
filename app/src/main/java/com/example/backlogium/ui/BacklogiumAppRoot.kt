@@ -16,18 +16,21 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavBackStackEntry
-import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -52,17 +55,14 @@ import com.example.backlogium.ui.navigation.navigateToTopLevelDestination
 import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.setup.SetupScreen
 import com.example.backlogium.ui.review.HltbReviewScreen
-import com.example.backlogium.ui.settings.SettingsActions
 import com.example.backlogium.ui.settings.SettingsDetailScreen
 import com.example.backlogium.ui.settings.SettingsGraphScreen
 import com.example.backlogium.ui.settings.SettingsGroup
+import com.example.backlogium.ui.settings.SettingsLoadingContent
 import com.example.backlogium.ui.settings.SettingsOverviewScreen
 import com.example.backlogium.ui.settings.SettingsRoutes
-import com.example.backlogium.ui.settings.SettingsScreen
-import com.example.backlogium.ui.settings.SettingsUiState
 import com.example.backlogium.ui.settings.SettingsViewModel
 import com.example.backlogium.ui.settings.hidden.HiddenGamesScreen
-import com.example.backlogium.ui.util.HapticPlayer
 import com.example.backlogium.BuildConfig
 import com.example.backlogium.ui.updates.AppUpdateSheet
 import com.example.backlogium.ui.updates.AppUpdateViewModel
@@ -143,6 +143,40 @@ fun BacklogiumAppRoot(
     val inSettingsGraph = currentDestination?.hierarchy?.any {
         it.route == SettingsRoutes.GRAPH
     } == true
+    // Settings can push sibling destinations such as Diagnostics without popping its graph. Keep
+    // its single host attached to the graph entry until that entry itself is destroyed.
+    val activeSettingsGraphEntry = if (inSettingsGraph) {
+        remember(backStackEntry) { navController.getBackStackEntry(SettingsRoutes.GRAPH) }
+    } else {
+        null
+    }
+    var retainedSettingsGraphEntry by remember { mutableStateOf<NavBackStackEntry?>(null) }
+    SideEffect {
+        activeSettingsGraphEntry?.let { retainedSettingsGraphEntry = it }
+    }
+    val settingsGraphEntry = activeSettingsGraphEntry ?: retainedSettingsGraphEntry
+    DisposableEffect(settingsGraphEntry) {
+        val entry = settingsGraphEntry
+        if (entry == null) {
+            onDispose { }
+        } else {
+            val observer = LifecycleEventObserver { _, event ->
+                if (
+                    event == Lifecycle.Event.ON_DESTROY &&
+                    retainedSettingsGraphEntry?.id == entry.id
+                ) {
+                    retainedSettingsGraphEntry = null
+                }
+            }
+            if (entry.lifecycle.currentState == Lifecycle.State.DESTROYED) {
+                if (retainedSettingsGraphEntry?.id == entry.id) retainedSettingsGraphEntry = null
+            } else {
+                entry.lifecycle.addObserver(observer)
+            }
+            onDispose { entry.lifecycle.removeObserver(observer) }
+        }
+    }
+    val settingsViewModel = settingsGraphEntry?.let { hiltViewModel<SettingsViewModel>(it) }
     val onCollectionScreen = currentDestination?.route == ROUTE_COLLECTION ||
         currentDestination?.route == ROUTE_COLLECTIONS ||
         currentDestination?.route == ROUTE_SMART_COLLECTION ||
@@ -226,11 +260,12 @@ fun BacklogiumAppRoot(
                 }
             },
         ) { innerPadding ->
-            NavHost(
-                navController = navController,
-                startDestination = Destination.HOME.route,
-                modifier = Modifier.padding(innerPadding),
-            ) {
+            SettingsGraphScreen(viewModel = settingsViewModel) { settings ->
+                NavHost(
+                    navController = navController,
+                    startDestination = Destination.HOME.route,
+                    modifier = Modifier.padding(innerPadding),
+                ) {
                 composable(Destination.HOME.route) {
                     HomeRoute(
                         onAccentColorChanged = { accentColor = it },
@@ -265,20 +300,24 @@ fun BacklogiumAppRoot(
                     startDestination = SettingsRoutes.OVERVIEW,
                     route = SettingsRoutes.GRAPH,
                 ) {
-                    composable(SettingsRoutes.OVERVIEW) { entry ->
-                        SettingsRoute(navController, entry) { state, _, _ ->
+                    composable(SettingsRoutes.OVERVIEW) {
+                        if (settings == null) {
+                            SettingsLoadingContent()
+                        } else {
                             SettingsOverviewScreen(
-                                state = state,
+                                state = settings.state,
                                 onOpenGroup = { group -> navController.navigate(group.route) },
                             )
                         }
                     }
-                    composable(SettingsRoutes.ACCOUNT_SYNC) { entry ->
-                        SettingsRoute(navController, entry) { state, actions, _ ->
+                    composable(SettingsRoutes.ACCOUNT_SYNC) {
+                        if (settings == null) {
+                            SettingsLoadingContent()
+                        } else {
                             SettingsDetailScreen(
                                 group = SettingsGroup.ACCOUNT_SYNC,
-                                state = state,
-                                actions = actions,
+                                state = settings.state,
+                                actions = settings.actions,
                                 onBack = { navController.popBackStack() },
                                 onEditCredentials = { navController.navigate(ROUTE_ONBOARDING) },
                                 onOpenSetup = { navController.navigate(ROUTE_SETUP) },
@@ -286,33 +325,39 @@ fun BacklogiumAppRoot(
                             )
                         }
                     }
-                    composable(SettingsRoutes.GAMEPLAY) { entry ->
-                        SettingsRoute(navController, entry) { state, actions, _ ->
+                    composable(SettingsRoutes.GAMEPLAY) {
+                        if (settings == null) {
+                            SettingsLoadingContent()
+                        } else {
                             SettingsDetailScreen(
                                 group = SettingsGroup.GAMEPLAY,
-                                state = state,
-                                actions = actions,
+                                state = settings.state,
+                                actions = settings.actions,
                                 onBack = { navController.popBackStack() },
                                 onOpenHiddenGames = { navController.navigate(ROUTE_HIDDEN_GAMES) },
                             )
                         }
                     }
-                    composable(SettingsRoutes.DATA_PRIVACY) { entry ->
-                        SettingsRoute(navController, entry) { state, actions, _ ->
+                    composable(SettingsRoutes.DATA_PRIVACY) {
+                        if (settings == null) {
+                            SettingsLoadingContent()
+                        } else {
                             SettingsDetailScreen(
                                 group = SettingsGroup.DATA_PRIVACY,
-                                state = state,
-                                actions = actions,
+                                state = settings.state,
+                                actions = settings.actions,
                                 onBack = { navController.popBackStack() },
                             )
                         }
                     }
-                    composable(SettingsRoutes.ADVANCED) { entry ->
-                        SettingsRoute(navController, entry) { state, actions, _ ->
+                    composable(SettingsRoutes.ADVANCED) {
+                        if (settings == null) {
+                            SettingsLoadingContent()
+                        } else {
                             SettingsDetailScreen(
                                 group = SettingsGroup.ADVANCED,
-                                state = state,
-                                actions = actions,
+                                state = settings.state,
+                                actions = settings.actions,
                                 onBack = { navController.popBackStack() },
                                 onOpenDiagnostics = { navController.navigate(ROUTE_DIAGNOSTICS) },
                             )
@@ -399,6 +444,7 @@ fun BacklogiumAppRoot(
                     CollectionScreen(onDone = { navController.popBackStack() })
                 }
             }
+            }
         }
         if (!BuildConfig.DEBUG && updateSheetVisible && updateState.available != null) {
             AppUpdateSheet(
@@ -416,19 +462,6 @@ fun BacklogiumAppRoot(
             )
         }
     }
-}
-
-@Composable
-private fun SettingsRoute(
-    navController: NavHostController,
-    entry: NavBackStackEntry,
-    content: @Composable (SettingsUiState, SettingsActions, HapticPlayer) -> Unit,
-) {
-    val settingsEntry = remember(entry) {
-        navController.getBackStackEntry(SettingsRoutes.GRAPH)
-    }
-    val viewModel: SettingsViewModel = hiltViewModel(settingsEntry)
-    SettingsGraphScreen(viewModel = viewModel, content = content)
 }
 
 /**
