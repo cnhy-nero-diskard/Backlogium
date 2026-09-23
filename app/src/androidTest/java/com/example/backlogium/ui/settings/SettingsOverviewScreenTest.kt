@@ -1,6 +1,8 @@
 package com.example.backlogium.ui.settings
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -27,7 +29,8 @@ class SettingsOverviewScreenTest {
             composeRule.onNodeWithTag("settings-group-${group.route.substringAfterLast('/')}")
                 .assertIsDisplayed()
         }
-        composeRule.onNodeWithText("Loading saved settings…", substring = true).assertIsDisplayed()
+        composeRule.onAllNodesWithText("Loading saved settings", substring = true)
+            .assertCountEquals(SettingsGroup.entries.size)
         composeRule.onNodeWithText("Connect account").assertDoesNotExist()
     }
 
