@@ -1,0 +1,26 @@
+## ADDED Requirements
+
+### Requirement: Cloud catch-up frequency can be understood and bounded
+
+While the reader is configured, Settings SHALL offer Automatic as the default routine cloud catch-up policy and a choice of 12-hour, daily, or 48-hour minimum gaps. Automatic SHALL combine a daily background opportunity with play-end opportunities under a shared 12-hour minimum gap. A chosen override SHALL use its selected minimum gap across both routine triggers, while preserving Read now and accuracy-driven placement reads independently. The section SHALL explain that these choices limit routine phone reads, not the cloud poller's own minute-by-minute observation or the total number of all cloud requests. It SHALL show the last routine attempt and its outcome, the last successful read, and a next eligible opportunity where determinable without describing it as a guaranteed execution time.
+
+#### Scenario: Newly verified reader
+- **WHEN** a reader is first verified
+- **THEN** Automatic is selected and the meaning of its routine catch-up is available in Settings
+
+#### Scenario: Choosing a slower cadence
+- **WHEN** the player selects daily or 48 hours
+- **THEN** that minimum gap is persisted for routine background and play-end reads and the displayed eligibility reflects it
+
+#### Scenario: Existing placement needs a read
+- **WHEN** the player selects a slower routine cadence
+- **THEN** Settings explains that a Steam sync may still read cloud evidence to place delayed play accurately
+
+#### Scenario: Routine read is partial or failed
+- **WHEN** an attempt stops before reaching the end of unread history or fails
+- **THEN** Settings reports partial progress or failure without describing the reader as caught up
+
+#### Scenario: Unconfigured or offline
+- **WHEN** no cloud reader is configured
+- **THEN** no routine frequency control or cloud error is shown
+- **AND** Settings remains usable offline from local state
