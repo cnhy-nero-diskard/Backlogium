@@ -48,6 +48,7 @@ import com.example.backlogium.ui.history.HistoryScreen
 import com.example.backlogium.ui.home.HomeRoute
 import com.example.backlogium.ui.library.LibraryScreen
 import com.example.backlogium.ui.navigation.Destination
+import com.example.backlogium.ui.navigation.navigateToSettingsTab
 import com.example.backlogium.ui.navigation.navigateToTopLevelDestination
 import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.setup.SetupScreen
@@ -137,9 +138,6 @@ fun BacklogiumAppRoot(
     // collection destination, another pushed sub-destination.
     val fullDestinationGameDetailPresented = currentDestination?.route == ROUTE_GAME_DETAIL
     val settingsDetailPresented = currentDestination?.route in SettingsRoutes.detailRoutes
-    val inSettingsGraph = currentDestination?.hierarchy?.any {
-        it.route == SettingsRoutes.GRAPH
-    } == true
     // Query the restored controller back stack so Settings remains hosted when a sibling screen is
     // current, and naturally detaches as soon as the Settings graph is popped.
     val settingsGraphEntry = remember(navController, backStackEntry) {
@@ -204,14 +202,13 @@ fun BacklogiumAppRoot(
                             val selected = currentDestination
                                 ?.hierarchy
                                 ?.any { it.route == destination.route } == true
-                            val settingsSelected = destination == Destination.SETTINGS && inSettingsGraph
+                            val settingsSelected = destination == Destination.SETTINGS &&
+                                settingsGraphEntry != null
                             NavigationBarItem(
                                 selected = selected || settingsSelected,
                                 onClick = {
-                                    if (destination == Destination.SETTINGS && inSettingsGraph) {
-                                        navController.navigate(SettingsRoutes.OVERVIEW) {
-                                            launchSingleTop = true
-                                        }
+                                    if (destination == Destination.SETTINGS) {
+                                        navController.navigateToSettingsTab()
                                     } else {
                                         navController.navigateToTopLevelDestination(destination.route)
                                     }

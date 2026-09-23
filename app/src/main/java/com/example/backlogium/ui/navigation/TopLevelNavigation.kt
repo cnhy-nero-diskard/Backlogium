@@ -18,3 +18,15 @@ internal fun NavController.navigateToTopLevelDestination(route: String) {
         restoreState = true
     }
 }
+
+/** Return to the active Settings overview without discarding its graph-scoped state. */
+internal fun NavController.navigateToSettingsTab() {
+    if (settingsGraphBackStackEntryOrNull() != null) {
+        navigate(SettingsRoutes.OVERVIEW) {
+            popUpTo(SettingsRoutes.OVERVIEW) { inclusive = false }
+            launchSingleTop = true
+        }
+    } else {
+        navigateToTopLevelDestination(Destination.SETTINGS.route)
+    }
+}

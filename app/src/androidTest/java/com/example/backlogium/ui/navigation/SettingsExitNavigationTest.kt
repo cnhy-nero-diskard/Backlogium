@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Rule
 import org.junit.Test
 
@@ -66,6 +67,16 @@ class SettingsExitNavigationTest {
         assertSettingsGraphIsClearedWhenLeavingFrom("Setup")
     }
 
+    @Test
+    fun settingsTabRestoresExistingOverviewFromDiagnostics() {
+        assertSettingsOverviewRestoredFrom("Diagnostics")
+    }
+
+    @Test
+    fun settingsTabRestoresExistingOverviewFromSetup() {
+        assertSettingsOverviewRestoredFrom("Setup")
+    }
+
     private fun assertSettingsGraphIsClearedWhenLeavingFrom(destination: String) {
         SettingsGraphViewModel.clearCount.set(0)
         setContent()
@@ -75,7 +86,7 @@ class SettingsExitNavigationTest {
         composeRule.onNodeWithTag("library-game-35").assertIsDisplayed()
 
         composeRule.onNodeWithText("Settings tab").performClick()
-        composeRule.onNodeWithText("Open $destination").performClick()
+        openSettingsSibling(destination)
         composeRule.onNodeWithText(destination).assertIsDisplayed()
         composeRule.runOnIdle {
             val settingsGraphEntry = navController.settingsGraphBackStackEntryOrNull()
@@ -89,6 +100,55 @@ class SettingsExitNavigationTest {
         composeRule.runOnIdle {
             assertNull(navController.settingsGraphBackStackEntryOrNull())
             assertEquals(1, SettingsGraphViewModel.clearCount.get())
+        }
+    }
+
+    private fun assertSettingsOverviewRestoredFrom(destination: String) {
+        SettingsGraphViewModel.clearCount.set(0)
+        setContent()
+
+        composeRule.onNodeWithText("Settings tab").performClick()
+        openSettingsSibling(destination)
+        composeRule.onNodeWithText(destination).assertIsDisplayed()
+        var settingsGraphViewModel: SettingsGraphViewModel? = null
+        composeRule.runOnIdle {
+            val settingsGraphEntry = requireNotNull(navController.settingsGraphBackStackEntryOrNull())
+            settingsGraphViewModel = ViewModelProvider(settingsGraphEntry)
+                .get(SettingsGraphViewModel::class.java)
+        }
+
+        composeRule.onNodeWithText("Settings tab").performClick()
+        composeRule.onNodeWithText("Settings overview").assertIsDisplayed()
+        composeRule.runOnIdle {
+            val settingsGraphEntry = requireNotNull(navController.settingsGraphBackStackEntryOrNull())
+            val restoredViewModel = ViewModelProvider(settingsGraphEntry)
+                .get(SettingsGraphViewModel::class.java)
+            assertSame(requireNotNull(settingsGraphViewModel), restoredViewModel)
+            assertEquals(0, SettingsGraphViewModel.clearCount.get())
+            assertEquals(SettingsRoutes.OVERVIEW, navController.currentDestination?.route)
+
+            // Back from the restored overview exits Settings instead of revealing the sibling
+            // that was underneath the Settings-tab navigation.
+            navController.popBackStack()
+        }
+        composeRule.onNodeWithText("Home").assertIsDisplayed()
+        composeRule.runOnIdle {
+            assertNull(navController.settingsGraphBackStackEntryOrNull())
+            assertEquals(1, SettingsGraphViewModel.clearCount.get())
+        }
+    }
+
+    private fun openSettingsSibling(destination: String) {
+        when (destination) {
+            "Diagnostics" -> {
+                composeRule.onNodeWithText("Open Advanced").performClick()
+                composeRule.onNodeWithText("Open Diagnostics").performClick()
+            }
+            "Setup" -> {
+                composeRule.onNodeWithText("Open Account & sync").performClick()
+                composeRule.onNodeWithText("Open Setup").performClick()
+            }
+            else -> error("No Settings path to $destination")
         }
     }
 
@@ -121,9 +181,25 @@ class SettingsExitNavigationTest {
                     composable(SettingsRoutes.OVERVIEW) {
                         Column {
                             Text("Settings overview")
+                            TextButton(onClick = { navController.navigate(SettingsRoutes.ADVANCED) }) {
+                                Text("Open Advanced")
+                            }
+                            TextButton(onClick = { navController.navigate(SettingsRoutes.ACCOUNT_SYNC) }) {
+                                Text("Open Account & sync")
+                            }
+                        }
+                    }
+                    composable(SettingsRoutes.ADVANCED) {
+                        Column {
+                            Text("Advanced")
                             TextButton(onClick = { navController.navigate("diagnostics") }) {
                                 Text("Open Diagnostics")
                             }
+                        }
+                    }
+                    composable(SettingsRoutes.ACCOUNT_SYNC) {
+                        Column {
+                            Text("Account & sync")
                             TextButton(onClick = { navController.navigate("setup") }) {
                                 Text("Open Setup")
                             }
@@ -142,7 +218,7 @@ class SettingsExitNavigationTest {
                 ) { Text("Library tab") }
                 TextButton(
                     onClick = {
-                        navController.navigateToTopLevelDestination(Destination.SETTINGS.route)
+                        navController.navigateToSettingsTab()
                     },
                 ) { Text("Settings tab") }
             }
