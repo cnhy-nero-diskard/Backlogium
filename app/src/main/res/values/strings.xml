@@ -166,6 +166,7 @@
     <string name="home_longest">Longest: %1$s</string>
     <string name="home_collections">Collections</string>
     <string name="home_new">New</string>
+    <string name="home_collection_actions">Collection actions</string>
     <string name="home_view_all">View all</string>
     <string name="home_plan_gap">Plan a gap before a release</string>
     <string name="home_reorder">Reorder</string>

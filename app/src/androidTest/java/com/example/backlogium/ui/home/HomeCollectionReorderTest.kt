@@ -61,6 +61,7 @@ class HomeCollectionReorderTest {
                     onCreateCollection = {},
                     onOpenCollections = {},
                     onPlanGap = {},
+                    canReorder = true,
                     reorderMode = reorderMode,
                     onToggleReorder = {
                         toggles++
@@ -70,12 +71,58 @@ class HomeCollectionReorderTest {
             }
         }
 
+        composeRule.onNodeWithTag(HOME_COLLECTIONS_ACTIONS_TAG).performClick()
         composeRule.onNodeWithText("Reorder").assertIsDisplayed().performClick()
         assertEquals(1, toggles)
+        composeRule.onNodeWithTag(HOME_COLLECTIONS_ACTIONS_TAG).performClick()
         composeRule.onNodeWithText("Done").assertIsDisplayed()
 
         composeRule.onNodeWithText("Done").performClick()
         assertEquals(2, toggles)
+    }
+
+    @Test
+    fun reorderAction_isAvailableOnlyWithAtLeastTwoCards() {
+        var cards by mutableStateOf(emptyList<HomeCollectionCard>())
+
+        composeRule.setContent {
+            BacklogiumTheme {
+                CollectionsSection(
+                    cards = cards,
+                    onOpenCollection = {},
+                    onCreateCollection = {},
+                    onOpenCollections = {},
+                    onPlanGap = {},
+                    scrollState = rememberScrollState(),
+                    scrollViewport = null,
+                    onReorderCollections = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(HOME_COLLECTIONS_ACTIONS_TAG).performClick()
+        composeRule.onNodeWithTag(HOME_COLLECTIONS_REORDER_TAG).assertDoesNotExist()
+        composeRule.onNodeWithTag(HOME_PLAN_GAP_TAG).performClick()
+
+        cards = listOf(queueCard(7L))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(HOME_COLLECTIONS_ACTIONS_TAG).performClick()
+        composeRule.onNodeWithTag(HOME_COLLECTIONS_REORDER_TAG).assertDoesNotExist()
+        composeRule.onNodeWithTag(HOME_PLAN_GAP_TAG).performClick()
+
+        cards = listOf(queueCard(7L), queueCard(8L))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(HOME_COLLECTIONS_ACTIONS_TAG).performClick()
+        composeRule.onNodeWithTag(HOME_COLLECTIONS_REORDER_TAG)
+            .assertIsDisplayed()
+            .performClick()
+        composeRule.onNodeWithTag(HOME_COLLECTIONS_ACTIONS_TAG).performClick()
+        composeRule.onNodeWithText("Done").assertIsDisplayed()
+
+        cards = listOf(queueCard(7L))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(HOME_COLLECTIONS_REORDER_TAG).assertDoesNotExist()
+        composeRule.onNodeWithText("Done").assertDoesNotExist()
     }
 
     @Test
@@ -171,6 +218,7 @@ class HomeCollectionReorderTest {
             }
         }
 
+        composeRule.onNodeWithTag(HOME_COLLECTIONS_ACTIONS_TAG).performClick()
         composeRule.onNodeWithTag(HOME_COLLECTIONS_REORDER_TAG).performClick()
 
         val moveDown = composeRule

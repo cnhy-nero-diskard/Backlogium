@@ -32,7 +32,10 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -122,6 +125,7 @@ import compose.icons.TablerIcons
 import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.Clock
 import compose.icons.tablericons.DeviceGamepad
+import compose.icons.tablericons.DotsVertical
 import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.Flame
 import compose.icons.tablericons.PlayerPlay
@@ -690,6 +694,7 @@ internal fun <T> homeCollectionOrderAfterCancelledDrag(
 ): List<T> = if (currentIndex != initialIndex) persistedCards else currentCards
 
 internal const val HOME_COLLECTIONS_NEW_TAG = "home-collections-new"
+internal const val HOME_COLLECTIONS_ACTIONS_TAG = "home-collections-actions"
 internal const val HOME_COLLECTIONS_VIEW_ALL_TAG = "home-collections-view-all"
 internal const val HOME_COLLECTIONS_REORDER_TAG = "home-collections-reorder"
 internal const val HOME_COLLECTION_CARD_TAG_PREFIX = "home-collection-card-"
@@ -699,58 +704,87 @@ internal fun HomeCollectionsHeader(
     onCreateCollection: () -> Unit,
     onOpenCollections: () -> Unit,
     onPlanGap: () -> Unit,
+    canReorder: Boolean = false,
     reorderMode: Boolean = false,
     onToggleReorder: () -> Unit = {},
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+    var secondaryActionsExpanded by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.home_collections),
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Button(
+            onClick = onCreateCollection,
+            modifier = Modifier.testTag(HOME_COLLECTIONS_NEW_TAG),
         ) {
-            Text(
-                text = stringResource(R.string.home_collections),
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f),
-            )
-            Button(
-                onClick = onCreateCollection,
-                modifier = Modifier.testTag(HOME_COLLECTIONS_NEW_TAG),
-            ) {
-                Text(stringResource(R.string.home_new))
-            }
+            Text(stringResource(R.string.home_new))
         }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(
-                onClick = onOpenCollections,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(HOME_COLLECTIONS_VIEW_ALL_TAG),
+        Box {
+            IconButton(
+                onClick = { secondaryActionsExpanded = true },
+                modifier = Modifier.testTag(HOME_COLLECTIONS_ACTIONS_TAG),
             ) {
-                Text(stringResource(R.string.home_view_all))
-            }
-            TextButton(
-                onClick = onPlanGap,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(HOME_PLAN_GAP_TAG),
-            ) {
-                Text(stringResource(R.string.home_plan_gap))
-            }
-            TextButton(
-                onClick = onToggleReorder,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(HOME_COLLECTIONS_REORDER_TAG),
-            ) {
-                Text(
-                    stringResource(
-                        if (reorderMode) R.string.home_done else R.string.home_reorder,
-                    ),
+                Icon(
+                    imageVector = TablerIcons.DotsVertical,
+                    contentDescription = stringResource(R.string.home_collection_actions),
+                    modifier = Modifier.size(20.dp),
                 )
+            }
+            DropdownMenu(
+                expanded = secondaryActionsExpanded,
+                onDismissRequest = { secondaryActionsExpanded = false },
+            ) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(R.string.home_view_all),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    onClick = {
+                        secondaryActionsExpanded = false
+                        onOpenCollections()
+                    },
+                    modifier = Modifier.testTag(HOME_COLLECTIONS_VIEW_ALL_TAG),
+                )
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(R.string.home_plan_gap),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    onClick = {
+                        secondaryActionsExpanded = false
+                        onPlanGap()
+                    },
+                    modifier = Modifier.testTag(HOME_PLAN_GAP_TAG),
+                )
+                if (canReorder) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(
+                                    if (reorderMode) R.string.home_done else R.string.home_reorder,
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        onClick = {
+                            secondaryActionsExpanded = false
+                            onToggleReorder()
+                        },
+                        modifier = Modifier.testTag(HOME_COLLECTIONS_REORDER_TAG),
+                    )
+                }
             }
         }
     }
@@ -791,7 +825,7 @@ internal fun CollectionsSection(
         cardBounds.keys.toList()
             .filterNot { it in cardsById }
             .forEach(cardBounds::remove)
-        if (cards.isEmpty()) reorderMode = false
+        if (cards.size < 2) reorderMode = false
     }
 
     fun applyCollectionReorder(
@@ -843,10 +877,13 @@ internal fun CollectionsSection(
             onCreateCollection = onCreateCollection,
             onOpenCollections = onOpenCollections,
             onPlanGap = onPlanGap,
+            canReorder = cards.size > 1,
             reorderMode = reorderMode,
             onToggleReorder = {
-                if (reorderMode) clearDrag(revertToBaseline = true)
-                reorderMode = !reorderMode
+                if (cards.size > 1) {
+                    if (reorderMode) clearDrag(revertToBaseline = true)
+                    reorderMode = !reorderMode
+                }
             },
         )
         if (cards.isEmpty()) {
