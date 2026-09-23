@@ -1,7 +1,9 @@
 package com.example.backlogium
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -43,17 +45,22 @@ class SettingsScreenTest {
             SettingsGroup.DATA_PRIVACY to "Data & privacy",
             SettingsGroup.ADVANCED to "Advanced & diagnostics",
         )
+        val selectedGroup = androidx.compose.runtime.mutableStateOf(SettingsGroup.ACCOUNT_SYNC)
 
-        SettingsGroup.entries.forEach { group ->
-            composeRule.setContent {
-                SettingsDetailScreen(
-                    group = group,
+        composeRule.setContent {
+            SettingsDetailScreen(
+                    group = selectedGroup.value,
                     state = state(advancedExpanded = false),
                     actions = noopActions(),
                     haptics = RecordingHapticPlayer(),
-                )
-            }
+            )
+        }
 
+        SettingsGroup.entries.forEachIndexed { index, group ->
+            if (index > 0) {
+                selectedGroup.value = group
+                composeRule.waitForIdle()
+            }
             composeRule.onNodeWithTag("settings-detail-title")
                 .assertIsDisplayed()
             composeRule.onNodeWithText(titles.getValue(group)).assertIsDisplayed()
@@ -63,9 +70,10 @@ class SettingsScreenTest {
 
     @Test
     fun overviewLoadingAndAttention_usePlayerFacingStatusAndActionCopy() {
+        val state = androidx.compose.runtime.mutableStateOf(SettingsUiState())
         composeRule.setContent {
             SettingsOverviewScreen(
-                state = SettingsUiState(),
+                state = state.value,
                 onOpenGroup = {},
             )
         }
@@ -74,14 +82,11 @@ class SettingsScreenTest {
             composeRule.onNodeWithTag("settings-group-${group.route.substringAfterLast('/')}")
                 .assertIsDisplayed()
         }
-        composeRule.onNodeWithText("Loading saved settings", substring = true).assertIsDisplayed()
+        composeRule.onAllNodesWithText("Loading saved settings", substring = true)
+            .assertCountEquals(SettingsGroup.entries.size)
 
-        composeRule.setContent {
-            SettingsOverviewScreen(
-                state = SettingsUiState(loading = false, configured = false),
-                onOpenGroup = {},
-            )
-        }
+        state.value = SettingsUiState(loading = false, configured = false)
+        composeRule.waitForIdle()
 
         composeRule.onNodeWithText("Status: Your Steam account is not connected")
             .assertIsDisplayed()
