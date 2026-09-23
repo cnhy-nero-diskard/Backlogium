@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -264,16 +265,16 @@ fun BacklogiumAppRoot(
                     startDestination = SettingsRoutes.OVERVIEW,
                     route = SettingsRoutes.GRAPH,
                 ) {
-                    composable(SettingsRoutes.OVERVIEW) {
-                        SettingsRoute(navController) { state, _, _ ->
+                    composable(SettingsRoutes.OVERVIEW) { entry ->
+                        SettingsRoute(navController, entry) { state, _, _ ->
                             SettingsOverviewScreen(
                                 state = state,
                                 onOpenGroup = { group -> navController.navigate(group.route) },
                             )
                         }
                     }
-                    composable(SettingsRoutes.ACCOUNT_SYNC) {
-                        SettingsRoute(navController) { state, actions, haptics ->
+                    composable(SettingsRoutes.ACCOUNT_SYNC) { entry ->
+                        SettingsRoute(navController, entry) { state, actions, haptics ->
                             SettingsDetailScreen(
                                 group = SettingsGroup.ACCOUNT_SYNC,
                                 state = state,
@@ -286,8 +287,8 @@ fun BacklogiumAppRoot(
                             )
                         }
                     }
-                    composable(SettingsRoutes.GAMEPLAY) {
-                        SettingsRoute(navController) { state, actions, haptics ->
+                    composable(SettingsRoutes.GAMEPLAY) { entry ->
+                        SettingsRoute(navController, entry) { state, actions, haptics ->
                             SettingsDetailScreen(
                                 group = SettingsGroup.GAMEPLAY,
                                 state = state,
@@ -298,8 +299,8 @@ fun BacklogiumAppRoot(
                             )
                         }
                     }
-                    composable(SettingsRoutes.DATA_PRIVACY) {
-                        SettingsRoute(navController) { state, actions, haptics ->
+                    composable(SettingsRoutes.DATA_PRIVACY) { entry ->
+                        SettingsRoute(navController, entry) { state, actions, haptics ->
                             SettingsDetailScreen(
                                 group = SettingsGroup.DATA_PRIVACY,
                                 state = state,
@@ -309,8 +310,8 @@ fun BacklogiumAppRoot(
                             )
                         }
                     }
-                    composable(SettingsRoutes.ADVANCED) {
-                        SettingsRoute(navController) { state, actions, haptics ->
+                    composable(SettingsRoutes.ADVANCED) { entry ->
+                        SettingsRoute(navController, entry) { state, actions, haptics ->
                             SettingsDetailScreen(
                                 group = SettingsGroup.ADVANCED,
                                 state = state,
@@ -424,9 +425,10 @@ fun BacklogiumAppRoot(
 @Composable
 private fun SettingsRoute(
     navController: NavHostController,
+    entry: NavBackStackEntry,
     content: @Composable (SettingsUiState, SettingsActions, HapticPlayer) -> Unit,
 ) {
-    val settingsEntry = remember(navController) {
+    val settingsEntry = remember(entry) {
         navController.getBackStackEntry(SettingsRoutes.GRAPH)
     }
     val viewModel: SettingsViewModel = hiltViewModel(settingsEntry)

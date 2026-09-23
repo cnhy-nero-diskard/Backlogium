@@ -7,6 +7,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+    alias(libs.plugins.roborazzi)
 }
 
 ksp {
@@ -115,8 +116,26 @@ android {
             assets.srcDir("$projectDir/schemas")
         }
     }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+            all {
+                it.systemProperties["screenshotSpikeMutation"] =
+                    providers.gradleProperty("screenshotSpikeMutation").orElse("false").get()
+            }
+        }
+    }
     lint {
         baseline = file("lint.baseline")
+    }
+}
+
+@OptIn(com.github.takahirom.roborazzi.ExperimentalRoborazziApi::class)
+roborazzi {
+    outputDir.set(layout.projectDirectory.dir("src/test/snapshots"))
+    compare {
+        outputDir.set(layout.buildDirectory.dir("outputs/roborazzi/compare"))
     }
 }
 
@@ -178,6 +197,13 @@ dependencies {
     // Tests
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.junit)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.ui.test.junit4)
+    testImplementation(libs.androidx.ui.test.manifest)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(libs.roborazzi.junit.rule)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.androidx.work.testing)
     androidTestImplementation(libs.androidx.junit)

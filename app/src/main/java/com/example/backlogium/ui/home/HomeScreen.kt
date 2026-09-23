@@ -153,7 +153,6 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val haptics = rememberHaptics()
 
     val nowPlayingAccent = MaterialTheme.colorScheme.tertiaryContainer
     val inGame = state.isInGame && state.nowPlayingName != null
@@ -164,6 +163,46 @@ fun HomeScreen(
     DisposableEffect(Unit) {
         onDispose { onAccentColorChanged(null) }
     }
+
+    HomeContent(
+        state = state,
+        actions = HomeContentActions(
+            onAcknowledgeProgressEvent = viewModel::acknowledgeProgressEvent,
+            onSyncNow = viewModel::syncNow,
+            onOpenCollection = onOpenCollection,
+            onCreateCollection = onCreateCollection,
+            onOpenCollections = onOpenCollections,
+            onPlanGap = onPlanGap,
+            onOpenSmartCollection = onOpenSmartCollection,
+            onOpenLibrary = onOpenLibrary,
+            onOpenGame = onOpenGame,
+            onReorderCollections = viewModel::reorderCollections,
+        ),
+    )
+}
+
+/** Actions raised by the stateless Home presentation. */
+internal data class HomeContentActions(
+    val onAcknowledgeProgressEvent: (ProgressEvent) -> Unit = {},
+    val onSyncNow: () -> Unit = {},
+    val onOpenCollection: (Long) -> Unit = {},
+    val onCreateCollection: () -> Unit = {},
+    val onOpenCollections: () -> Unit = {},
+    val onPlanGap: () -> Unit = {},
+    val onOpenSmartCollection: (SmartCollectionId) -> Unit = {},
+    val onOpenLibrary: () -> Unit = {},
+    val onOpenGame: (Long) -> Unit = {},
+    val onReorderCollections: (List<Long>) -> Unit = {},
+)
+
+/** Renders Home from presentation state so screenshots can exercise the production hierarchy. */
+@Composable
+internal fun HomeContent(
+    state: HomeUiState,
+    actions: HomeContentActions = HomeContentActions(),
+    nowMillis: () -> Long = System::currentTimeMillis,
+) {
+    val haptics = rememberHaptics()
 
     if (shouldShowHomeLoading(state)) {
         HomeLoadingContent()
@@ -213,7 +252,7 @@ fun HomeScreen(
         // The event-specific quest card is the visible presentation; it has no separate animation
         // or dismiss affordance, so acknowledge it after that card has reached a frame.
         if (event is ProgressEvent.QuestMet) {
-            viewModel.acknowledgeProgressEvent(event)
+            actions.onAcknowledgeProgressEvent(event)
         }
     }
 
@@ -264,6 +303,7 @@ fun HomeScreen(
                 headerUrl = state.nowPlayingHeaderUrl,
                 sessionStartedAt = state.nowPlayingSessionStartedAt,
                 recencyState = state.nowPlayingRecencyState,
+                nowMillis = nowMillis,
             )
         }
 
@@ -274,25 +314,25 @@ fun HomeScreen(
             playLevelUp = playLevelUp,
             onLevelUpFinished = {
                 playLevelUp = false
-                pendingLevelUp?.let(viewModel::acknowledgeProgressEvent)
+                pendingLevelUp?.let(actions.onAcknowledgeProgressEvent)
             },
-            onStreakMilestoneFinished = { viewModel.acknowledgeProgressEvent(it) },
+            onStreakMilestoneFinished = actions.onAcknowledgeProgressEvent,
             onSyncNow = {
                 if (!state.isSyncing) {
                     manualSyncAttempt = true
-                    viewModel.syncNow()
+                    actions.onSyncNow()
                 }
             },
-            onOpenCollection = onOpenCollection,
-            onCreateCollection = onCreateCollection,
-            onOpenCollections = onOpenCollections,
-            onPlanGap = onPlanGap,
-            onOpenSmartCollection = onOpenSmartCollection,
-            onOpenLibrary = onOpenLibrary,
-            onOpenGame = onOpenGame,
+            onOpenCollection = actions.onOpenCollection,
+            onCreateCollection = actions.onCreateCollection,
+            onOpenCollections = actions.onOpenCollections,
+            onPlanGap = actions.onPlanGap,
+            onOpenSmartCollection = actions.onOpenSmartCollection,
+            onOpenLibrary = actions.onOpenLibrary,
+            onOpenGame = actions.onOpenGame,
             scrollState = scrollState,
             scrollViewport = scrollViewport,
-            onReorderCollections = viewModel::reorderCollections,
+            onReorderCollections = actions.onReorderCollections,
         )
     }
 }
@@ -1488,8 +1528,9 @@ private fun NowPlayingPanel(
     headerUrl: String?,
     sessionStartedAt: Long?,
     recencyState: GameRecencyState? = null,
+    nowMillis: () -> Long,
 ) {
-    val elapsedMillis by rememberElapsedMillis(sessionStartedAt)
+    val elapsedMillis by rememberElapsedMillis(sessionStartedAt, nowMillis)
     val sheenCenter = rememberNowPlayingSheenCenter()
     val base = MaterialTheme.colorScheme.tertiaryContainer
     val sheen = MaterialTheme.colorScheme.tertiary
@@ -1690,12 +1731,15 @@ internal const val HOME_STREAK_MILESTONE_STATIC_TAG = "home-streak-milestone-sta
 
 /** Elapsed time since [startedAt], ticking every second with no network involved. Zero when null. */
 @Composable
-private fun rememberElapsedMillis(startedAt: Long?): State<Long> {
+private fun rememberElapsedMillis(
+    startedAt: Long?,
+    nowMillis: () -> Long,
+): State<Long> {
     val elapsed = remember(startedAt) { mutableLongStateOf(0L) }
-    LaunchedEffect(startedAt) {
+    LaunchedEffect(startedAt, nowMillis) {
         if (startedAt == null) return@LaunchedEffect
         while (isActive) {
-            elapsed.longValue = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
+            elapsed.longValue = (nowMillis() - startedAt).coerceAtLeast(0L)
             delay(1_000L)
         }
     }

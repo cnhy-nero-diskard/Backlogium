@@ -221,8 +221,95 @@ fun LibraryScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val wishlistState by wishlistViewModel.uiState.collectAsStateWithLifecycle()
-    val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
+
+    LibraryContent(
+        state = state,
+        wishlistState = wishlistState,
+        actions = LibraryContentActions(
+            onOpenReview = onOpenReview,
+            onOpenGameDetail = onOpenGameDetail,
+            onConsumeNeedsAttention = viewModel::consumeNeedsAttention,
+            onToggleSelection = viewModel::toggleSelection,
+            onClearSelection = viewModel::clearSelection,
+            onClearFilters = viewModel::clearFilters,
+            onRefreshSelection = viewModel::refreshSelection,
+            onSetQuery = viewModel::setQuery,
+            onClearQuery = viewModel::clearQuery,
+            onToggleGenreFilter = viewModel::toggleGenreFilter,
+            onClearGenreFilter = viewModel::clearGenreFilter,
+            onClearGenreFilters = viewModel::clearGenreFilters,
+            onSetNotCoveredOnly = viewModel::setNotCoveredOnly,
+            onSetFamilySharedOnly = viewModel::setFamilySharedOnly,
+            onSetFocusSort = viewModel::setFocusSort,
+            onSetFocusSortDirection = viewModel::setFocusSortDirection,
+            onSetLibrarySort = viewModel::setLibrarySort,
+            onSetLibrarySortDirection = viewModel::setLibrarySortDirection,
+            onSetDensity = viewModel::setDensity,
+            onStopHltbRefresh = viewModel::stopHltbRefresh,
+            onTagGoal = viewModel::tagGoal,
+            onUntagGoal = viewModel::untagGoal,
+            onRefreshGame = viewModel::refreshGame,
+            onClearPicker = viewModel::clearPicker,
+            onChangeMatch = viewModel::changeMatch,
+            onResolveMatch = viewModel::resolveMatch,
+            onUpdatePickerManualLinkInput = viewModel::updatePickerManualLinkInput,
+            onPreviewPickerManualLink = viewModel::previewPickerManualLink,
+            onDismissPickerManualLinkPreview = viewModel::dismissPickerManualLinkPreview,
+            onConfirmPickerManualLink = viewModel::confirmPickerManualLink,
+            onEnterSelectionMode = viewModel::enterSelectionMode,
+            onSetWishlistExpanded = wishlistViewModel::setExpanded,
+            onOpenStore = { uriHandler.openUri(it) },
+        ),
+    )
+}
+
+/** Callbacks raised by Library's state-driven presentation. */
+internal data class LibraryContentActions(
+    val onOpenReview: (Long?) -> Unit = {},
+    val onOpenGameDetail: (Long) -> Unit = {},
+    val onConsumeNeedsAttention: () -> Unit = {},
+    val onToggleSelection: (Long) -> Unit = {},
+    val onClearSelection: () -> Unit = {},
+    val onClearFilters: () -> Unit = {},
+    val onRefreshSelection: (List<Pair<Long, String>>) -> Unit = {},
+    val onSetQuery: (String) -> Unit = {},
+    val onClearQuery: () -> Unit = {},
+    val onToggleGenreFilter: (String) -> Unit = {},
+    val onClearGenreFilter: (String) -> Unit = {},
+    val onClearGenreFilters: () -> Unit = {},
+    val onSetNotCoveredOnly: (Boolean) -> Unit = {},
+    val onSetFamilySharedOnly: (Boolean) -> Unit = {},
+    val onSetFocusSort: (LibrarySortKey) -> Unit = {},
+    val onSetFocusSortDirection: (LibrarySortDirection) -> Unit = {},
+    val onSetLibrarySort: (LibrarySortKey) -> Unit = {},
+    val onSetLibrarySortDirection: (LibrarySortDirection) -> Unit = {},
+    val onSetDensity: (GameListDensity) -> Unit = {},
+    val onStopHltbRefresh: () -> Unit = {},
+    val onTagGoal: (Long) -> Unit = {},
+    val onUntagGoal: (Long) -> Unit = {},
+    val onRefreshGame: (Long, String) -> Unit = { _, _ -> },
+    val onClearPicker: (Long) -> Unit = {},
+    val onChangeMatch: (Long, String) -> Unit = { _, _ -> },
+    val onResolveMatch: (Long, HltbCandidate) -> Unit = { _, _ -> },
+    val onUpdatePickerManualLinkInput: (Long, String) -> Unit = { _, _ -> },
+    val onPreviewPickerManualLink: (Long) -> Unit = {},
+    val onDismissPickerManualLinkPreview: (Long) -> Unit = {},
+    val onConfirmPickerManualLink: (Long) -> Unit = {},
+    val onEnterSelectionMode: () -> Unit = {},
+    val onSetWishlistExpanded: (Boolean) -> Unit = {},
+    val onOpenStore: (String) -> Unit = {},
+)
+
+/** Renders Library from presentation state without requiring ViewModels or Hilt. */
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+internal fun LibraryContent(
+    state: LibraryUiState,
+    wishlistState: WishlistUiState = WishlistUiState(),
+    actions: LibraryContentActions = LibraryContentActions(),
+) {
+    val context = LocalContext.current
     val haptics = rememberHaptics()
     var dialogTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
     var pickerTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
@@ -247,15 +334,15 @@ fun LibraryScreen(
     // user there directly rather than requiring a separate trip through the clock icon.
     LaunchedEffect(state.needsAttentionAppId) {
         val appId = state.needsAttentionAppId ?: return@LaunchedEffect
-        viewModel.consumeNeedsAttention()
+        actions.onConsumeNeedsAttention()
         dialogTarget = null
-        onOpenReview(appId)
+        actions.onOpenReview(appId)
     }
 
     fun toggleSelection(appId: Long) {
         val entering = !state.selectionMode
         val leaving = state.selectionMode && state.selection.size == 1 && appId in state.selection
-        viewModel.toggleSelection(appId)
+        actions.onToggleSelection(appId)
         if (entering || leaving) {
             haptics.play(HapticIntent.Toggle(enabled = entering))
         }
@@ -278,8 +365,8 @@ fun LibraryScreen(
         onDispose {
             val recreation = context.findActivity()?.isChangingConfigurations == true
             if (shouldClearLibraryTransientState(recreation)) {
-                viewModel.clearSelection()
-                viewModel.clearFilters()
+                actions.onClearSelection()
+                actions.onClearFilters()
             }
             showFilterSheet = false
             showToolsSheet = false
@@ -318,8 +405,8 @@ fun LibraryScreen(
                     wishlistSection(
                         state = wishlistState,
                         density = state.density,
-                        onToggle = wishlistViewModel::setExpanded,
-                        onOpenStore = { uriHandler.openUri(it.storeUrl) },
+                        onToggle = actions.onSetWishlistExpanded,
+                        onOpenStore = { actions.onOpenStore(it.storeUrl) },
                     )
                 }
                 item { LibraryEmptyNotice() }
@@ -337,9 +424,9 @@ fun LibraryScreen(
                     val games = state.allGames
                         .filter { it.appId in state.selection }
                         .map { it.appId to it.name }
-                    exitSelectionMode { viewModel.refreshSelection(games) }
+                    exitSelectionMode { actions.onRefreshSelection(games) }
                 },
-                onClear = { exitSelectionMode(viewModel::clearSelection) },
+                onClear = { exitSelectionMode(actions.onClearSelection) },
             )
         }
 
@@ -356,8 +443,8 @@ fun LibraryScreen(
                     ) {
                         SearchField(
                             query = state.query,
-                            onQueryChange = viewModel::setQuery,
-                            onClear = viewModel::clearQuery,
+                            onQueryChange = actions.onSetQuery,
+                            onClear = actions.onClearQuery,
                             modifier = Modifier.weight(1f),
                         )
                         GenreFilterButton(
@@ -378,7 +465,7 @@ fun LibraryScreen(
                             Text(stringResource(R.string.library_tools))
                         }
                         if (filters.hasActiveFilters) {
-                            TextButton(onClick = viewModel::clearFilters) {
+                            TextButton(onClick = actions.onClearFilters) {
                                 Text(stringResource(R.string.library_clear_all_filters))
                             }
                         }
@@ -389,13 +476,13 @@ fun LibraryScreen(
                             availableGenres = state.availableGenres,
                             onRemove = { chip ->
                                 when (chip.kind) {
-                                    LibraryFilterChipKind.QUERY -> viewModel.clearQuery()
-                                    LibraryFilterChipKind.GENRE -> chip.value?.let(viewModel::clearGenreFilter)
-                                    LibraryFilterChipKind.NOT_COVERED -> viewModel.setNotCoveredOnly(false)
-                                    LibraryFilterChipKind.FAMILY_SHARED -> viewModel.setFamilySharedOnly(false)
+                                    LibraryFilterChipKind.QUERY -> actions.onClearQuery()
+                                    LibraryFilterChipKind.GENRE -> chip.value?.let(actions.onClearGenreFilter)
+                                    LibraryFilterChipKind.NOT_COVERED -> actions.onSetNotCoveredOnly(false)
+                                    LibraryFilterChipKind.FAMILY_SHARED -> actions.onSetFamilySharedOnly(false)
                                 }
                             },
-                            onClearAll = viewModel::clearFilters,
+                            onClearAll = actions.onClearFilters,
                         )
                     }
                 }
@@ -407,7 +494,7 @@ fun LibraryScreen(
                 item {
                     HltbAttentionRow(
                         reviewCount = state.reviewCount,
-                        onOpenReview = { onOpenReview(null) },
+                        onOpenReview = { actions.onOpenReview(null) },
                     )
                 }
             }
@@ -417,7 +504,7 @@ fun LibraryScreen(
                     SelectionLookupPanel(
                         progress = state.batchProgress,
                         log = state.batchLog,
-                        onStop = viewModel::stopHltbRefresh,
+                        onStop = actions.onStopHltbRefresh,
                     )
                 }
             }
@@ -429,8 +516,8 @@ fun LibraryScreen(
                 wishlistSection(
                     state = wishlistState,
                     density = state.density,
-                    onToggle = wishlistViewModel::setExpanded,
-                    onOpenStore = { uriHandler.openUri(it.storeUrl) },
+                    onToggle = actions.onSetWishlistExpanded,
+                    onOpenStore = { actions.onOpenStore(it.storeUrl) },
                 )
             }
 
@@ -440,8 +527,8 @@ fun LibraryScreen(
                         text = stringResource(R.string.library_focus_section),
                         sort = state.focusSort,
                         direction = state.focusSortDirection,
-                        onSortChange = viewModel::setFocusSort,
-                        onDirectionChange = viewModel::setFocusSortDirection,
+                        onSortChange = actions.onSetFocusSort,
+                        onDirectionChange = actions.onSetFocusSortDirection,
                     )
                 }
                 libraryGameItems(
@@ -451,7 +538,7 @@ fun LibraryScreen(
                     selectionMode = state.selectionMode,
                     onClick = { game ->
                         if (state.selectionMode) toggleSelection(game.appId)
-                        else onOpenGameDetail(game.appId)
+                        else actions.onOpenGameDetail(game.appId)
                     },
                     onLongClick = { game -> toggleSelection(game.appId) },
                     onManageGoal = { game ->
@@ -472,8 +559,8 @@ fun LibraryScreen(
                         text = stringResource(R.string.library_your_games_section),
                         sort = state.librarySort,
                         direction = state.librarySortDirection,
-                        onSortChange = viewModel::setLibrarySort,
-                        onDirectionChange = viewModel::setLibrarySortDirection,
+                        onSortChange = actions.onSetLibrarySort,
+                        onDirectionChange = actions.onSetLibrarySortDirection,
                     )
                 }
                 libraryGameItems(
@@ -483,7 +570,7 @@ fun LibraryScreen(
                     selectionMode = state.selectionMode,
                     onClick = { game ->
                         if (state.selectionMode) toggleSelection(game.appId)
-                        else onOpenGameDetail(game.appId)
+                        else actions.onOpenGameDetail(game.appId)
                     },
                     onLongClick = { game -> toggleSelection(game.appId) },
                     onManageGoal = { game ->
@@ -503,11 +590,11 @@ fun LibraryScreen(
                     NoMatchesRow(
                         filters = filters,
                         reason = filters.emptyReason() ?: LibraryEmptyReason.COMBINED,
-                        onClearAll = viewModel::clearFilters,
-                        onClearQuery = viewModel::clearQuery,
-                        onClearGenres = viewModel::clearGenreFilters,
-                        onClearCoverage = { viewModel.setNotCoveredOnly(false) },
-                        onClearFamilyShared = { viewModel.setFamilySharedOnly(false) },
+                        onClearAll = actions.onClearFilters,
+                        onClearQuery = actions.onClearQuery,
+                        onClearGenres = actions.onClearGenreFilters,
+                        onClearCoverage = { actions.onSetNotCoveredOnly(false) },
+                        onClearFamilyShared = { actions.onSetFamilySharedOnly(false) },
                     )
                 }
             }
@@ -526,28 +613,28 @@ fun LibraryScreen(
             fetchOp = liveGoal?.fetchOp ?: liveBacklog?.fetchOp,
             onDismiss = { dialogTarget = null },
             onTag = {
-                viewModel.tagGoal(target.appId)
+                actions.onTagGoal(target.appId)
                 dialogTarget = null
             },
             onUntag = {
-                viewModel.untagGoal(target.appId)
+                actions.onUntagGoal(target.appId)
                 dialogTarget = null
             },
             onRefresh = {
                 // Any "needs the match center" outcome arrives later as one-shot state (see
                 // the LaunchedEffect below): the lookup can outlive this dialog's composition,
                 // so navigation is driven by the active screen, not a callback captured here.
-                viewModel.refreshGame(target.appId, target.name)
+                actions.onRefreshGame(target.appId, target.name)
             },
             onChooseMatch = {
-                viewModel.clearPicker(target.appId)
+                actions.onClearPicker(target.appId)
                 pickerTarget = target
                 dialogTarget = null
             },
             onChangeMatch = {
                 pickerTarget = target
                 dialogTarget = null
-                viewModel.changeMatch(target.appId, target.name)
+                actions.onChangeMatch(target.appId, target.name)
             },
         )
     }
@@ -563,19 +650,19 @@ fun LibraryScreen(
             failed = transient?.failed == true,
             manualState = manualState,
             onDismiss = {
-                viewModel.clearPicker(target.appId)
+                actions.onClearPicker(target.appId)
                 pickerTarget = null
             },
             onSelect = { candidate ->
-                viewModel.resolveMatch(target.appId, candidate)
-                viewModel.clearPicker(target.appId)
+                actions.onResolveMatch(target.appId, candidate)
+                actions.onClearPicker(target.appId)
                 pickerTarget = null
             },
-            onManualInputChange = { viewModel.updatePickerManualLinkInput(target.appId, it) },
-            onManualPreview = { viewModel.previewPickerManualLink(target.appId) },
-            onManualDismissPreview = { viewModel.dismissPickerManualLinkPreview(target.appId) },
+            onManualInputChange = { actions.onUpdatePickerManualLinkInput(target.appId, it) },
+            onManualPreview = { actions.onPreviewPickerManualLink(target.appId) },
+            onManualDismissPreview = { actions.onDismissPickerManualLinkPreview(target.appId) },
             onManualConfirm = {
-                viewModel.confirmPickerManualLink(target.appId)
+                actions.onConfirmPickerManualLink(target.appId)
                 pickerTarget = null
             },
         )
@@ -604,7 +691,7 @@ fun LibraryScreen(
                         modifier = Modifier.weight(1f),
                     )
                     TextButton(
-                        onClick = viewModel::clearFilters,
+                        onClick = actions.onClearFilters,
                         enabled = filters.hasActiveFilters,
                     ) {
                         Text(stringResource(R.string.library_clear_all))
@@ -662,7 +749,7 @@ fun LibraryScreen(
                                 .toggleable(
                                     value = selected,
                                     role = Role.Checkbox,
-                                    onValueChange = { viewModel.toggleGenreFilter(genre.id) },
+                                    onValueChange = { actions.onToggleGenreFilter(genre.id) },
                                 ),
                         ) {
                             Checkbox(
@@ -692,12 +779,12 @@ fun LibraryScreen(
                 ) {
                     FilterChip(
                         selected = filters.notCoveredOnly,
-                        onClick = { viewModel.setNotCoveredOnly(!filters.notCoveredOnly) },
+                        onClick = { actions.onSetNotCoveredOnly(!filters.notCoveredOnly) },
                         label = { Text(stringResource(R.string.library_not_covered)) },
                     )
                     FilterChip(
                         selected = filters.familySharedOnly,
-                        onClick = { viewModel.setFamilySharedOnly(!filters.familySharedOnly) },
+                        onClick = { actions.onSetFamilySharedOnly(!filters.familySharedOnly) },
                         label = { Text(stringResource(R.string.library_family_shared)) },
                     )
                 }
@@ -713,16 +800,16 @@ fun LibraryScreen(
             refreshing = state.refreshing,
             reviewCount = state.reviewCount,
             matchCenterCount = state.matchCenterCount,
-            onDensityChange = viewModel::setDensity,
+            onDensityChange = actions.onSetDensity,
             onSelectGames = {
                 showToolsSheet = false
                 // The visible bar remains the confirmation/action surface once selection mode
                 // starts; the first game is not selected automatically.
-                viewModel.enterSelectionMode()
+                actions.onEnterSelectionMode()
             },
             onRefreshUncovered = {
                 showToolsSheet = false
-                viewModel.refreshSelection(
+                actions.onRefreshSelection(
                     state.allGames
                         .filter { it.hltbStatus == HltbMatchState.NOT_COVERED }
                         .map { it.appId to it.name },
@@ -730,11 +817,11 @@ fun LibraryScreen(
             },
             onForceRefresh = {
                 showToolsSheet = false
-                viewModel.refreshSelection(state.allGames.map { it.appId to it.name })
+                actions.onRefreshSelection(state.allGames.map { it.appId to it.name })
             },
             onOpenReview = {
                 showToolsSheet = false
-                onOpenReview(null)
+                actions.onOpenReview(null)
             },
             onDismiss = { showToolsSheet = false },
         )
