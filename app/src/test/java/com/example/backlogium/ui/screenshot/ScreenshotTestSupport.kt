@@ -39,6 +39,7 @@ internal abstract class MainScreenshotTestBase {
         TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
         SystemClock.setCurrentTimeMillis(FIXED_SCREEN_TIME_MILLIS)
 
+        // Capture the first deterministic frame; Lottie and infinite Compose transitions cannot tick.
         composeRule.mainClock.autoAdvance = false
     }
 
@@ -58,6 +59,7 @@ internal abstract class MainScreenshotTestBase {
                 }
             }
         }
+        // Compose needs one frame to install the content; subsequent animation frames stay frozen.
         composeRule.mainClock.advanceTimeByFrame()
         composeRule.waitForIdle()
         composeRule.onRoot().captureRoboImage(path)
