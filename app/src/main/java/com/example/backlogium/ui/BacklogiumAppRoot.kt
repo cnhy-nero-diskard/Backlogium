@@ -274,12 +274,11 @@ fun BacklogiumAppRoot(
                         }
                     }
                     composable(SettingsRoutes.ACCOUNT_SYNC) { entry ->
-                        SettingsRoute(navController, entry) { state, actions, haptics ->
+                        SettingsRoute(navController, entry) { state, actions, _ ->
                             SettingsDetailScreen(
                                 group = SettingsGroup.ACCOUNT_SYNC,
                                 state = state,
                                 actions = actions,
-                                haptics = haptics,
                                 onBack = { navController.popBackStack() },
                                 onEditCredentials = { navController.navigate(ROUTE_ONBOARDING) },
                                 onOpenSetup = { navController.navigate(ROUTE_SETUP) },
@@ -288,35 +287,32 @@ fun BacklogiumAppRoot(
                         }
                     }
                     composable(SettingsRoutes.GAMEPLAY) { entry ->
-                        SettingsRoute(navController, entry) { state, actions, haptics ->
+                        SettingsRoute(navController, entry) { state, actions, _ ->
                             SettingsDetailScreen(
                                 group = SettingsGroup.GAMEPLAY,
                                 state = state,
                                 actions = actions,
-                                haptics = haptics,
                                 onBack = { navController.popBackStack() },
                                 onOpenHiddenGames = { navController.navigate(ROUTE_HIDDEN_GAMES) },
                             )
                         }
                     }
                     composable(SettingsRoutes.DATA_PRIVACY) { entry ->
-                        SettingsRoute(navController, entry) { state, actions, haptics ->
+                        SettingsRoute(navController, entry) { state, actions, _ ->
                             SettingsDetailScreen(
                                 group = SettingsGroup.DATA_PRIVACY,
                                 state = state,
                                 actions = actions,
-                                haptics = haptics,
                                 onBack = { navController.popBackStack() },
                             )
                         }
                     }
                     composable(SettingsRoutes.ADVANCED) { entry ->
-                        SettingsRoute(navController, entry) { state, actions, haptics ->
+                        SettingsRoute(navController, entry) { state, actions, _ ->
                             SettingsDetailScreen(
                                 group = SettingsGroup.ADVANCED,
                                 state = state,
                                 actions = actions,
-                                haptics = haptics,
                                 onBack = { navController.popBackStack() },
                                 onOpenDiagnostics = { navController.navigate(ROUTE_DIAGNOSTICS) },
                             )

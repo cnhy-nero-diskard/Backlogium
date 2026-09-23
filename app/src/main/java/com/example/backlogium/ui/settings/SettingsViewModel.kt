@@ -57,6 +57,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.CancellationException
@@ -233,6 +234,9 @@ class SettingsViewModel @Inject constructor(
     private val cloudMessage = MutableStateFlow<String?>(null)
     private val cloudRefilingBusy = MutableStateFlow(false)
     private val cloudRefilingMessage = MutableStateFlow<String?>(null)
+    // The account detail can be disposed by Back while WorkManager keeps syncing, so attribution
+    // belongs to this graph-scoped state holder rather than the detail composable.
+    private val manualSyncFeedback = ManualSyncFeedbackTracker()
     /** Held only between a successful [prepareContributionExport] and the SAF destination pick. */
     private var preparedContribution: HltbContributionPreparation.Ready? = null
     private val _hapticIntents = MutableSharedFlow<HapticIntent>(extraBufferCapacity = 4)
@@ -246,6 +250,15 @@ class SettingsViewModel @Inject constructor(
     init {
         refreshSnapshots()
         viewModelScope.launch { cloudPresence.refreshConfiguration() }
+        viewModelScope.launch {
+            combine(profileRepository.syncInProgress, profileRepository.profile) { syncing, profile ->
+                syncing to profile?.lastSyncError
+            }.collect { (syncing, lastSyncError) ->
+                if (manualSyncFeedback.onSyncStateChanged(syncing, lastSyncError)) {
+                    _hapticIntents.tryEmit(HapticIntent.Reject)
+                }
+            }
+        }
     }
 
     private val assetWorkState = combine(syncScheduler.steamAssetDownloadStatus, syncScheduler.steamAssetDownloadProgress) { status, progress ->
@@ -430,7 +443,10 @@ class SettingsViewModel @Inject constructor(
         initialValue = SettingsUiState(),
     )
 
-    fun syncNow() = profileRepository.syncNow()
+    fun syncNow() {
+        manualSyncFeedback.onManualSyncStarted()
+        profileRepository.syncNow()
+    }
 
     fun verifyCloudPresence(endpoint: String, token: String) {
         if (cloudBusy.value || cloudRefilingBusy.value) return

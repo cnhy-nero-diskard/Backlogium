@@ -20,8 +20,6 @@ import com.example.backlogium.ui.settings.SettingsUiState
 import com.example.backlogium.ui.settings.SETTINGS_INVENTORY
 import com.example.backlogium.ui.settings.SettingsSection
 import com.example.backlogium.ui.settings.settingsInventoryIssues
-import com.example.backlogium.ui.util.HapticIntent
-import com.example.backlogium.ui.util.HapticPlayer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -49,10 +47,9 @@ class SettingsScreenTest {
 
         composeRule.setContent {
             SettingsDetailScreen(
-                    group = selectedGroup.value,
-                    state = state(advancedExpanded = false),
-                    actions = noopActions(),
-                    haptics = RecordingHapticPlayer(),
+                group = selectedGroup.value,
+                state = state(advancedExpanded = false),
+                actions = noopActions(),
             )
         }
 
@@ -154,76 +151,6 @@ class SettingsScreenTest {
         composeRule.onNodeWithText(RuleField.LEGENDARY_ACHIEVEMENT_XP.label).assertExists()
     }
 
-    @Test
-    fun manualSyncFailure_deliversRejectExactlyOnce() {
-        val state = androidx.compose.runtime.mutableStateOf(state(advancedExpanded = false))
-        val haptics = RecordingHapticPlayer()
-
-        composeRule.setContent {
-            SettingsScreen(
-                state = state.value,
-                onEditCredentials = {},
-                actions = noopActions().copy(
-                    onSyncNow = { state.value = state.value.copy(isSyncing = true) },
-                ),
-                haptics = haptics,
-            )
-        }
-
-        composeRule.onNodeWithText("Sync now").performClick()
-        composeRule.waitForIdle()
-        state.value = state.value.copy(isSyncing = false, lastSyncError = "offline")
-        composeRule.waitForIdle()
-
-        assertEquals(listOf(HapticIntent.Reject), haptics.intents)
-    }
-
-    @Test
-    fun backgroundSyncFailure_whileSettingsIsOpen_deliversNothing() {
-        val state = androidx.compose.runtime.mutableStateOf(state(advancedExpanded = false))
-        val haptics = RecordingHapticPlayer()
-
-        composeRule.setContent {
-            SettingsScreen(
-                state = state.value,
-                onEditCredentials = {},
-                actions = noopActions(),
-                haptics = haptics,
-            )
-        }
-
-        state.value = state.value.copy(isSyncing = true)
-        composeRule.waitForIdle()
-        state.value = state.value.copy(isSyncing = false, lastSyncError = "offline")
-        composeRule.waitForIdle()
-
-        assertEquals(emptyList<HapticIntent>(), haptics.intents)
-    }
-
-    @Test
-    fun successfulManualSync_deliversNoReject() {
-        val state = androidx.compose.runtime.mutableStateOf(state(advancedExpanded = false))
-        val haptics = RecordingHapticPlayer()
-
-        composeRule.setContent {
-            SettingsScreen(
-                state = state.value,
-                onEditCredentials = {},
-                actions = noopActions().copy(
-                    onSyncNow = { state.value = state.value.copy(isSyncing = true) },
-                ),
-                haptics = haptics,
-            )
-        }
-
-        composeRule.onNodeWithText("Sync now").performClick()
-        composeRule.waitForIdle()
-        state.value = state.value.copy(isSyncing = false, lastSyncError = null)
-        composeRule.waitForIdle()
-
-        assertEquals(emptyList<HapticIntent>(), haptics.intents)
-    }
-
     private fun state(advancedExpanded: Boolean) = SettingsUiState(
         loading = false,
         configured = true,
@@ -258,12 +185,4 @@ class SettingsScreenTest {
         onDismissMismatchImport = {},
         onDismissBackupMessage = {},
     )
-
-    private class RecordingHapticPlayer : HapticPlayer {
-        val intents = mutableListOf<HapticIntent>()
-
-        override fun play(intent: HapticIntent) {
-            intents += intent
-        }
-    }
 }

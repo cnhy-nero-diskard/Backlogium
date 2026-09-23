@@ -97,7 +97,7 @@ fun SettingsScreen(
     onOpenHiddenGames: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    SettingsGraphScreen(viewModel = viewModel) { state, actions, haptics ->
+    SettingsGraphScreen(viewModel = viewModel) { state, actions, _ ->
         SettingsScreen(
             state = state,
             onEditCredentials = onEditCredentials,
@@ -105,7 +105,6 @@ fun SettingsScreen(
             onOpenSetup = onOpenSetup,
             onOpenUpdate = onOpenUpdate,
             onOpenHiddenGames = onOpenHiddenGames,
-            haptics = haptics,
             actions = actions,
         )
     }
@@ -249,7 +248,6 @@ fun SettingsScreen(
     onOpenUpdate: () -> Unit = {},
     onOpenHiddenGames: () -> Unit = {},
     actions: SettingsActions,
-    haptics: HapticPlayer = rememberHaptics(),
 ) {
     if (state.loading) {
         SettingsLoadingContent()
@@ -266,7 +264,6 @@ fun SettingsScreen(
         AccountSyncSettingsContent(
             state = state,
             actions = actions,
-            haptics = haptics,
             onEditCredentials = onEditCredentials,
             onOpenSetup = onOpenSetup,
             onOpenUpdate = onOpenUpdate,
@@ -289,25 +286,10 @@ fun SettingsScreen(
 internal fun AccountSyncSettingsContent(
     state: SettingsUiState,
     actions: SettingsActions,
-    haptics: HapticPlayer,
     onEditCredentials: () -> Unit,
     onOpenSetup: () -> Unit,
     onOpenUpdate: () -> Unit,
 ) {
-    // Only a sync initiated from this visible button arms Reject, so a background failure never
-    // produces an unattributable buzz.
-    var manualSyncAttempt by remember { mutableStateOf(false) }
-    var manualSyncInFlight by remember { mutableStateOf(false) }
-    LaunchedEffect(state.isSyncing) {
-        if (state.isSyncing && manualSyncAttempt) {
-            manualSyncInFlight = true
-        } else if (!state.isSyncing && manualSyncAttempt && manualSyncInFlight) {
-            if (state.lastSyncError != null) haptics.playIfNotSilent(HapticIntent.Reject)
-            manualSyncAttempt = false
-            manualSyncInFlight = false
-        }
-    }
-
     SectionHeader(stringResource(R.string.settings_section_account))
     SteamAccountCard(
         configured = state.configured,
@@ -323,10 +305,7 @@ internal fun AccountSyncSettingsContent(
         syncing = state.isSyncing,
         reconciling = state.isReconciling,
         genreStatus = state.genreEnrichmentStatus,
-        onSyncNow = {
-            manualSyncAttempt = true
-            actions.onSyncNow()
-        },
+        onSyncNow = actions.onSyncNow,
         onReconcileNow = actions.onReconcileNow,
     )
     if (!BuildConfig.DEBUG) {
@@ -431,7 +410,6 @@ internal fun SettingsDetailScreen(
     group: SettingsGroup,
     state: SettingsUiState,
     actions: SettingsActions,
-    haptics: HapticPlayer,
     onBack: () -> Unit = {},
     onEditCredentials: () -> Unit = {},
     onOpenDiagnostics: () -> Unit = {},
@@ -470,7 +448,6 @@ internal fun SettingsDetailScreen(
             SettingsGroup.ACCOUNT_SYNC -> AccountSyncSettingsContent(
                 state,
                 actions,
-                haptics,
                 onEditCredentials,
                 onOpenSetup,
                 onOpenUpdate,
