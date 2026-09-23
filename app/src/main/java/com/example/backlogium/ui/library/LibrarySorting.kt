@@ -1,6 +1,7 @@
 package com.example.backlogium.ui.library
 
 import com.example.backlogium.data.repo.GameGenre
+import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.ui.search.gameSearchMatchTier
@@ -16,6 +17,8 @@ interface LibraryRow {
     val playtimeForever: Int
     val playtime2Weeks: Int
     val xpContributed: Long
+    val hltbStatus: HltbMatchState get() = HltbMatchState.NOT_COVERED
+    val isFamilyShared: Boolean get() = false
 }
 
 /**
