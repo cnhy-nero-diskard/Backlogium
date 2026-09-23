@@ -1,5 +1,8 @@
 package com.example.backlogium.ui.library
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -19,10 +22,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -32,6 +37,7 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -60,8 +66,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -93,6 +106,7 @@ import com.example.backlogium.ui.components.RecencyBadge
 import com.example.backlogium.ui.util.HapticIntent
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.ui.util.rememberHaptics
+import com.example.backlogium.R
 import compose.icons.TablerIcons
 import compose.icons.tablericons.AlertCircle
 import compose.icons.tablericons.ArrowsSort
@@ -122,7 +136,7 @@ private data class GoalDialogTarget(
 )
 
 /** Common display shape used by both Library sections and all three density renderers. */
-private data class LibraryDisplayGame(
+internal data class LibraryDisplayGame(
     val appId: Long,
     val name: String,
     val iconUrl: String,
@@ -157,7 +171,23 @@ internal fun shouldShowWishlistSection(
     selectedGenreSet: Set<String>,
 ): Boolean = wishlistState.configured &&
     (libraryState.libraryEmpty ||
-        (libraryState.query.isBlank() && selectedGenreSet.isEmpty()))
+        (libraryState.filters.query.isBlank() && selectedGenreSet.isEmpty() &&
+            !libraryState.filters.notCoveredOnly && !libraryState.filters.familySharedOnly))
+
+/**
+ * Whether Library's transient ViewModel state (selection and filters) resets when the screen's
+ * composition disposes. Disposal fires both on an actual navigation-away and on a
+ * configuration/activity recreation (rotation, locale/theme change) where the Hilt ViewModel
+ * survives — so only a navigation-away clears, and a recreation keeps the active filters.
+ */
+internal fun shouldClearLibraryTransientState(isChangingConfigurations: Boolean): Boolean =
+    !isChangingConfigurations
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
 
 @Composable
 private fun LibraryEmptyNotice() {
@@ -168,13 +198,12 @@ private fun LibraryEmptyNotice() {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            text = "No games yet",
+            text = stringResource(R.string.library_no_games_title),
             style = MaterialTheme.typography.titleLarge,
             textAlign = TextAlign.Center,
         )
         Text(
-            text = "Once a sync completes, your Steam library appears here. " +
-                "If it stays empty, your profile may be private.",
+            text = stringResource(R.string.library_no_games_message),
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 8.dp),
@@ -192,35 +221,22 @@ fun LibraryScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val wishlistState by wishlistViewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val haptics = rememberHaptics()
     var dialogTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
     var pickerTarget by remember { mutableStateOf<GoalDialogTarget?>(null) }
-    var selectedGenreIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
-    var showNotCoveredOnly by rememberSaveable { mutableStateOf(false) }
-    var showFamilySharedOnly by rememberSaveable { mutableStateOf(false) }
-    var showGenreSheet by rememberSaveable { mutableStateOf(false) }
-    val selectedGenreSet = selectedGenreIds.toSet()
+    var showFilterSheet by rememberSaveable { mutableStateOf(false) }
+    var showToolsSheet by rememberSaveable { mutableStateOf(false) }
+    var genreSearchQuery by rememberSaveable { mutableStateOf("") }
+    val filters = state.filters
+    val selectedGenreSet = filters.selectedGenreIds
     val genreCatalog = remember(state.availableGenres) {
         genreFilterCatalog(state.availableGenres)
     }
-    val visibleGoalGames = remember(state.goalGames, selectedGenreIds, showNotCoveredOnly, showFamilySharedOnly) {
-        state.goalGames
-            .filterByGenres(selectedGenreSet)
-            .filterByHltbCoverage(showNotCoveredOnly) { it.hltbStatus }
-            .filterByFamilySharedOnly(showFamilySharedOnly) { it.isFamilyShared }
-    }
-    val visibleBacklog = remember(state.backlog, selectedGenreIds, showNotCoveredOnly, showFamilySharedOnly) {
-        state.backlog
-            .filterByGenres(selectedGenreSet)
-            .filterByHltbCoverage(showNotCoveredOnly) { it.hltbStatus }
-            .filterByFamilySharedOnly(showFamilySharedOnly) { it.isFamilyShared }
-    }
-    val noVisibleMatches =
-        (state.query.isNotBlank() || selectedGenreSet.isNotEmpty() || showNotCoveredOnly ||
-            showFamilySharedOnly) &&
-            visibleGoalGames.isEmpty() &&
-            visibleBacklog.isEmpty()
+    val visibleGoalGames = state.goalGames
+    val visibleBacklog = state.backlog
+    val noVisibleMatches = state.noMatches
 
     // A finished per-game lookup can raise a one-shot "needs the match center" request as state:
     // its ViewModel job lives in `viewModelScope` and may outlive the dialog composition that
@@ -253,22 +269,28 @@ fun LibraryScreen(
         }
     }
 
-    // Selection is transient: leaving the Library drops it, so it can never outlive the screen
-    // that shows the count.
+    // Selection and filters are transient: leaving the Library drops them, so they can never
+    // outlive the screen that shows them. Composition disposal alone is not "leaving", though:
+    // a configuration/activity recreation (rotation, locale/theme change) also disposes the
+    // composition while the Hilt ViewModel survives, so an unconditional clear would wipe active
+    // filters the user never left. Only reset ViewModel state on an actual navigation-away.
     DisposableEffect(Unit) {
         onDispose {
-            viewModel.clearSelection()
-            selectedGenreIds = emptyList()
-            showNotCoveredOnly = false
-            showFamilySharedOnly = false
-            showGenreSheet = false
+            val recreation = context.findActivity()?.isChangingConfigurations == true
+            if (shouldClearLibraryTransientState(recreation)) {
+                viewModel.clearSelection()
+                viewModel.clearFilters()
+            }
+            showFilterSheet = false
+            showToolsSheet = false
+            genreSearchQuery = ""
         }
     }
 
     if (!state.configured) {
         EmptyState(
-            title = "Steam not configured",
-            message = "Connect your Steam account from Settings to load your library.",
+            title = stringResource(R.string.library_steam_not_configured),
+            message = stringResource(R.string.library_steam_not_configured_message),
         )
         return
     }
@@ -279,9 +301,8 @@ fun LibraryScreen(
     // reachable even when this owned-library state is empty.
     if (shouldShowFullScreenLibraryEmptyState(state, wishlistState)) {
         EmptyState(
-            title = "No games yet",
-            message = "Once a sync completes, your Steam library appears here. " +
-                "If it stays empty, your profile may be private.",
+            title = stringResource(R.string.library_no_games_title),
+            message = stringResource(R.string.library_no_games_message),
         )
         return
     }
@@ -313,7 +334,7 @@ fun LibraryScreen(
                 count = state.selection.size,
                 refreshing = state.refreshing,
                 onRefreshSelection = {
-                    val games = (state.goalGames + state.backlog)
+                    val games = state.allGames
                         .filter { it.appId in state.selection }
                         .map { it.appId to it.name }
                     exitSelectionMode { viewModel.refreshSelection(games) }
@@ -339,13 +360,10 @@ fun LibraryScreen(
                             onClear = viewModel::clearQuery,
                             modifier = Modifier.weight(1f),
                         )
-                        GameListDensityControl(
-                            density = state.density,
-                            onDensityChange = viewModel::setDensity,
-                        )
-                        HltbMatchCenterEntryPoint(
-                            reviewCount = state.reviewCount,
-                            onOpenReview = { onOpenReview(null) },
+                        GenreFilterButton(
+                            selectedCount = filters.activeFilterCount,
+                            enabled = true,
+                            onClick = { showFilterSheet = true },
                         )
                     }
                     Row(
@@ -353,33 +371,43 @@ fun LibraryScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        GenreFilterButton(
-                            selectedCount = selectedGenreSet.size,
-                            enabled = genreCatalog.isNotEmpty(),
-                            onClick = { showGenreSheet = true },
-                        )
-                        FilterChip(
-                            selected = showNotCoveredOnly,
-                            onClick = { showNotCoveredOnly = !showNotCoveredOnly },
-                            label = { Text("Not covered") },
-                        )
-                        FilterChip(
-                            selected = showFamilySharedOnly,
-                            onClick = { showFamilySharedOnly = !showFamilySharedOnly },
-                            label = { Text("Family Shared") },
+                        OutlinedButton(
+                            onClick = { showToolsSheet = true },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(stringResource(R.string.library_tools))
+                        }
+                        if (filters.hasActiveFilters) {
+                            TextButton(onClick = viewModel::clearFilters) {
+                                Text(stringResource(R.string.library_clear_all_filters))
+                            }
+                        }
+                    }
+                    if (filters.hasActiveFilters) {
+                        ActiveFilterChips(
+                            filters = filters,
+                            availableGenres = state.availableGenres,
+                            onRemove = { chip ->
+                                when (chip.kind) {
+                                    LibraryFilterChipKind.QUERY -> viewModel.clearQuery()
+                                    LibraryFilterChipKind.GENRE -> chip.value?.let(viewModel::clearGenreFilter)
+                                    LibraryFilterChipKind.NOT_COVERED -> viewModel.setNotCoveredOnly(false)
+                                    LibraryFilterChipKind.FAMILY_SHARED -> viewModel.setFamilySharedOnly(false)
+                                }
+                            },
+                            onClearAll = viewModel::clearFilters,
                         )
                     }
                 }
             }
 
-            if (selectedGenreSet.isNotEmpty()) {
+            // Gated on the actionable match-center count: an unmatched-only queue leaves
+            // reviewCount at 0 while rescue entries still need a main-flow entry point.
+            if (state.matchCenterCount > 0) {
                 item {
-                    ActiveGenreFilters(
-                        genres = genreCatalog.filter { it.id in selectedGenreSet },
-                        onRemove = { genre ->
-                            selectedGenreIds = selectedGenreIds - genre.id
-                        },
-                        onClear = { selectedGenreIds = emptyList() },
+                    HltbAttentionRow(
+                        reviewCount = state.reviewCount,
+                        onOpenReview = { onOpenReview(null) },
                     )
                 }
             }
@@ -397,9 +425,7 @@ fun LibraryScreen(
             // Above the owned lists, and only while nothing is being searched or filtered:
             // those controls act on the owned library, and an unfiltered wishlist sitting under a
             // query would read as a result of it.
-            if (state.query.isBlank() && selectedGenreSet.isEmpty() && !showNotCoveredOnly &&
-                !showFamilySharedOnly
-            ) {
+            if (!filters.hasActiveFilters) {
                 wishlistSection(
                     state = wishlistState,
                     density = state.density,
@@ -411,7 +437,7 @@ fun LibraryScreen(
             if (visibleGoalGames.isNotEmpty()) {
                 item {
                     SectionHeader(
-                        text = "Focus",
+                        text = stringResource(R.string.library_focus_section),
                         sort = state.focusSort,
                         direction = state.focusSortDirection,
                         onSortChange = viewModel::setFocusSort,
@@ -443,7 +469,7 @@ fun LibraryScreen(
             if (visibleBacklog.isNotEmpty()) {
                 item {
                     SectionHeader(
-                        text = "Your games",
+                        text = stringResource(R.string.library_your_games_section),
                         sort = state.librarySort,
                         direction = state.librarySortDirection,
                         onSortChange = viewModel::setLibrarySort,
@@ -475,12 +501,13 @@ fun LibraryScreen(
             if (noVisibleMatches) {
                 item {
                     NoMatchesRow(
-                        query = state.query,
-                        hasGenreFilter = selectedGenreSet.isNotEmpty(),
-                        hasCoverageFilter = showNotCoveredOnly,
-                        onClear = viewModel::clearQuery,
-                        onClearGenres = { selectedGenreIds = emptyList() },
-                        onClearCoverage = { showNotCoveredOnly = false },
+                        filters = filters,
+                        reason = filters.emptyReason() ?: LibraryEmptyReason.COMBINED,
+                        onClearAll = viewModel::clearFilters,
+                        onClearQuery = viewModel::clearQuery,
+                        onClearGenres = viewModel::clearGenreFilters,
+                        onClearCoverage = { viewModel.setNotCoveredOnly(false) },
+                        onClearFamilyShared = { viewModel.setFamilySharedOnly(false) },
                     )
                 }
             }
@@ -554,32 +581,163 @@ fun LibraryScreen(
         )
     }
 
-    if (showGenreSheet) {
+    if (showFilterSheet) {
         ModalBottomSheet(
-            onDismissRequest = { showGenreSheet = false },
+            onDismissRequest = {
+                showFilterSheet = false
+                genreSearchQuery = ""
+            },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         ) {
-            Column(Modifier.padding(horizontal = 24.dp, vertical = 12.dp)) {
-                Text("Filter by genres", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(8.dp))
-                genreCatalog.forEach { genre ->
-                    FilterChip(
-                        selected = genre.id in selectedGenreSet,
-                        onClick = {
-                            selectedGenreIds = if (genre.id in selectedGenreSet) {
-                                selectedGenreIds - genre.id
-                            } else {
-                                selectedGenreIds + genre.id
-                            }
-                        },
-                        label = { Text(genre.label) },
-                        modifier = Modifier.fillMaxWidth(),
+            val visibleGenres = genreCatalog.filter {
+                genreSearchQuery.isBlank() || it.label.contains(genreSearchQuery.trim(), ignoreCase = true)
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .padding(horizontal = 24.dp, vertical = 12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.library_filters),
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f),
                     )
-                    Spacer(Modifier.height(4.dp))
+                    TextButton(
+                        onClick = viewModel::clearFilters,
+                        enabled = filters.hasActiveFilters,
+                    ) {
+                        Text(stringResource(R.string.library_clear_all))
+                    }
                 }
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = if (selectedGenreSet.isEmpty()) {
+                        stringResource(R.string.library_no_genres_selected)
+                    } else {
+                        pluralStringResource(
+                            R.plurals.library_genres_selected,
+                            selectedGenreSet.size,
+                            selectedGenreSet.size,
+                        )
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                OutlinedTextField(
+                    value = genreSearchQuery,
+                    onValueChange = { genreSearchQuery = it },
+                    label = { Text(stringResource(R.string.library_search_genres)) },
+                    singleLine = true,
+                    leadingIcon = {
+                        Icon(
+                            imageVector = TablerIcons.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    trailingIcon = {
+                        if (genreSearchQuery.isNotEmpty()) {
+                            IconButton(onClick = { genreSearchQuery = "" }) {
+                                Icon(
+                                    imageVector = TablerIcons.X,
+                                    contentDescription = stringResource(R.string.library_clear_genre_search),
+                                )
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                )
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                ) {
+                    items(visibleGenres, key = { it.id }) { genre ->
+                        val selected = genre.id in selectedGenreSet
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .toggleable(
+                                    value = selected,
+                                    role = Role.Checkbox,
+                                    onValueChange = { viewModel.toggleGenreFilter(genre.id) },
+                                ),
+                        ) {
+                            Checkbox(
+                                checked = selected,
+                                onCheckedChange = null,
+                            )
+                            Text(
+                                text = genre.label,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(vertical = 12.dp),
+                            )
+                        }
+                    }
+                }
+                if (visibleGenres.isEmpty()) {
+                    Text(
+                        stringResource(R.string.library_no_genres_match),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                    )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(top = 8.dp),
+                ) {
+                    FilterChip(
+                        selected = filters.notCoveredOnly,
+                        onClick = { viewModel.setNotCoveredOnly(!filters.notCoveredOnly) },
+                        label = { Text(stringResource(R.string.library_not_covered)) },
+                    )
+                    FilterChip(
+                        selected = filters.familySharedOnly,
+                        onClick = { viewModel.setFamilySharedOnly(!filters.familySharedOnly) },
+                        label = { Text(stringResource(R.string.library_family_shared)) },
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
             }
         }
+    }
+
+    if (showToolsSheet) {
+        LibraryToolsSheet(
+            density = state.density,
+            allGames = state.allGames,
+            refreshing = state.refreshing,
+            reviewCount = state.reviewCount,
+            matchCenterCount = state.matchCenterCount,
+            onDensityChange = viewModel::setDensity,
+            onSelectGames = {
+                showToolsSheet = false
+                // The visible bar remains the confirmation/action surface once selection mode
+                // starts; the first game is not selected automatically.
+                viewModel.enterSelectionMode()
+            },
+            onRefreshUncovered = {
+                showToolsSheet = false
+                viewModel.refreshSelection(
+                    state.allGames
+                        .filter { it.hltbStatus == HltbMatchState.NOT_COVERED }
+                        .map { it.appId to it.name },
+                )
+            },
+            onForceRefresh = {
+                showToolsSheet = false
+                viewModel.refreshSelection(state.allGames.map { it.appId to it.name })
+            },
+            onOpenReview = {
+                showToolsSheet = false
+                onOpenReview(null)
+            },
+            onDismiss = { showToolsSheet = false },
+        )
     }
 }
 
@@ -613,7 +771,7 @@ private fun HltbPickerSheet(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 12.dp),
         ) {
-            Text("Choose HowLongToBeat match", style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.library_choose_hltb_match), style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(4.dp))
             Text(
                 text = gameName,
@@ -628,27 +786,27 @@ private fun HltbPickerSheet(
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Looking up candidates…")
+                        Text(stringResource(R.string.library_hltb_lookup_candidates))
                     }
                     Spacer(Modifier.height(12.dp))
                 }
 
                 failed -> {
                     Text(
-                        text = "HowLongToBeat lookup failed. Try again from Change match.",
+                        text = stringResource(R.string.library_hltb_lookup_failed_retry),
                         color = MaterialTheme.colorScheme.error,
                     )
                     Spacer(Modifier.height(12.dp))
                 }
 
                 candidates.isEmpty() -> {
-                    Text("No candidate matches found.")
+                    Text(stringResource(R.string.library_no_candidate_matches))
                     Spacer(Modifier.height(12.dp))
                 }
 
                 else -> {
                     Text(
-                        text = "Choose the correct entry:",
+                        text = stringResource(R.string.library_choose_correct_hltb_entry),
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Spacer(Modifier.height(4.dp))
@@ -665,9 +823,9 @@ private fun HltbPickerSheet(
 
             // Last-resort manual HLTB link footer — always available, never auto-resolves
             androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-            Text("Or paste an HLTB link", style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.library_paste_hltb_link), style = MaterialTheme.typography.titleSmall)
             Text(
-                "Paste a HowLongToBeat game link (https://howlongtobeat.com/game/{id}) if search found nothing.",
+                stringResource(R.string.library_paste_hltb_link_help),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -675,8 +833,8 @@ private fun HltbPickerSheet(
             OutlinedTextField(
                 value = manualState.input,
                 onValueChange = onManualInputChange,
-                label = { Text("HLTB game link") },
-                placeholder = { Text("https://howlongtobeat.com/game/12345") },
+                label = { Text(stringResource(R.string.library_hltb_game_link)) },
+                placeholder = { Text(stringResource(R.string.library_hltb_game_link_placeholder)) },
                 isError = manualState.validationError != null,
                 supportingText = manualState.validationError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
                 modifier = Modifier.fillMaxWidth(),
@@ -686,19 +844,23 @@ private fun HltbPickerSheet(
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Loading HLTB entry…", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.library_loading_hltb_entry), style = MaterialTheme.typography.bodySmall)
                 }
             } else {
                 Button(onClick = onManualPreview, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                    Text("Preview link")
+                    Text(stringResource(R.string.library_preview_link))
                 }
             }
             if (manualState.notFound) {
-                Text("HLTB page not found for that link.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                Text(stringResource(R.string.library_hltb_page_not_found), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
             }
             if (manualState.failed) {
                 Text(
-                    "Lookup failed (${manualState.failureClass?.name?.lowercase() ?: "transport"}). Correct the link and retry — your existing match is untouched.",
+                    stringResource(
+                        R.string.library_hltb_lookup_failed_detail,
+                        manualState.failureClass?.name?.lowercase()
+                            ?: stringResource(R.string.library_transport),
+                    ),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 4.dp),
@@ -711,15 +873,15 @@ private fun HltbPickerSheet(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Preview — verify before confirming:", style = MaterialTheme.typography.labelMedium)
-                        Text("Steam: $gameName", style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.library_hltb_preview_verify), style = MaterialTheme.typography.labelMedium)
+                        Text(stringResource(R.string.library_steam_game_name, gameName), style = MaterialTheme.typography.bodySmall)
                         HltbCandidateRow(candidate = preview, onClick = {})
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Button(onClick = onManualConfirm, modifier = Modifier.weight(1f)) { Text("Confirm match") }
-                            OutlinedButton(onClick = onManualDismissPreview, modifier = Modifier.weight(1f)) { Text("Dismiss") }
+                            Button(onClick = onManualConfirm, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.library_confirm_match)) }
+                            OutlinedButton(onClick = onManualDismissPreview, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.library_dismiss)) }
                         }
                     }
                 }
@@ -746,7 +908,7 @@ private fun SearchField(
         shape = RoundedCornerShape(20.dp),
         placeholder = {
             Text(
-                text = "Search games or genres",
+                text = stringResource(R.string.library_search_games_or_genres),
                 maxLines = 1,
                 softWrap = false,
                 overflow = TextOverflow.Ellipsis,
@@ -765,7 +927,7 @@ private fun SearchField(
                     IconButton(onClick = onClear) {
                         Icon(
                             imageVector = TablerIcons.X,
-                            contentDescription = "Clear search",
+                            contentDescription = stringResource(R.string.library_clear_search),
                             modifier = Modifier.size(20.dp),
                         )
                     }
@@ -782,15 +944,22 @@ private fun GenreFilterButton(
     onClick: () -> Unit,
 ) {
     OutlinedButton(onClick = onClick, enabled = enabled) {
-        Text(if (selectedCount == 0) "Genres" else "Genres ($selectedCount)")
+        Text(
+            if (selectedCount == 0) {
+                stringResource(R.string.library_filters)
+            } else {
+                stringResource(R.string.library_filters_count, selectedCount)
+            },
+        )
     }
 }
 
 @Composable
-private fun ActiveGenreFilters(
-    genres: List<GenreFilterChoice>,
-    onRemove: (GenreFilterChoice) -> Unit,
-    onClear: () -> Unit,
+private fun ActiveFilterChips(
+    filters: LibraryFilters,
+    availableGenres: List<com.example.backlogium.data.repo.GameGenre>,
+    onRemove: (LibraryFilterChip) -> Unit,
+    onClearAll: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
@@ -798,20 +967,152 @@ private fun ActiveGenreFilters(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Genre filters",
+                text = stringResource(R.string.library_active_filters),
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = onClear) { Text("Clear") }
+            TextButton(onClick = onClearAll) { Text(stringResource(R.string.library_clear_all)) }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            genres.forEach { genre ->
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+        ) {
+            filters.activeChips(availableGenres).forEach { chip ->
                 FilterChip(
                     selected = true,
-                    onClick = { onRemove(genre) },
-                    label = { Text(genre.label) },
+                    onClick = { onRemove(chip) },
+                    label = {
+                        Text(
+                            when (chip.kind) {
+                                LibraryFilterChipKind.QUERY -> stringResource(
+                                    R.string.library_search_filter_chip,
+                                    chip.value.orEmpty(),
+                                )
+                                LibraryFilterChipKind.GENRE -> chip.label.orEmpty()
+                                LibraryFilterChipKind.NOT_COVERED -> stringResource(R.string.library_filter_chip_not_covered)
+                                LibraryFilterChipKind.FAMILY_SHARED -> stringResource(R.string.library_filter_chip_family_shared)
+                            },
+                        )
+                    },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun HltbAttentionRow(reviewCount: Int, onOpenReview: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = TablerIcons.Clock,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Text(
+                // The count stays review-only per app-ui spec; an unmatched-only queue
+                // (matchCenterCount > 0, reviewCount == 0) keeps the entry without a count.
+                text = if (reviewCount > 0) {
+                    pluralStringResource(
+                        R.plurals.library_hltb_review_count,
+                        reviewCount,
+                        reviewCount,
+                    )
+                } else {
+                    stringResource(R.string.library_hltb_match_center)
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+            )
+            TextButton(onClick = onOpenReview) { Text(stringResource(R.string.library_review)) }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LibraryToolsSheet(
+    density: GameListDensity,
+    allGames: List<LibraryBatchGame>,
+    refreshing: Boolean,
+    reviewCount: Int,
+    matchCenterCount: Int,
+    onDensityChange: (GameListDensity) -> Unit,
+    onSelectGames: () -> Unit,
+    onRefreshUncovered: () -> Unit,
+    onForceRefresh: () -> Unit,
+    onOpenReview: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(stringResource(R.string.library_tools), style = MaterialTheme.typography.titleLarge)
+            Text(
+                stringResource(R.string.library_tools_subtitle),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(stringResource(R.string.library_display_density), modifier = Modifier.weight(1f))
+                GameListDensityControl(
+                    density = density,
+                    onDensityChange = onDensityChange,
+                )
+            }
+            OutlinedButton(
+                onClick = onSelectGames,
+                enabled = !refreshing && allGames.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.library_select_games))
+            }
+            OutlinedButton(
+                onClick = onRefreshUncovered,
+                enabled = !refreshing && allGames.any { it.hltbStatus == HltbMatchState.NOT_COVERED },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.library_refresh_uncovered_hltb))
+            }
+            OutlinedButton(
+                onClick = onForceRefresh,
+                enabled = !refreshing && allGames.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.library_force_refresh_hltb))
+            }
+            // Gated on the actionable match-center count, not the review-only badge:
+            // an unmatched-only queue leaves reviewCount at 0 while rescue entries still need
+            // a Library entry point. The count itself stays review-only per app-ui spec.
+            if (matchCenterCount > 0) {
+                TextButton(onClick = onOpenReview, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        if (reviewCount > 0) {
+                            stringResource(R.string.library_open_hltb_review, reviewCount)
+                        } else {
+                            stringResource(R.string.library_hltb_match_center)
+                        },
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
         }
     }
 }
@@ -852,16 +1153,16 @@ internal fun <T> List<T>.filterByFamilySharedOnly(
 private fun HltbMatchCenterEntryPoint(reviewCount: Int, onOpenReview: () -> Unit) {
     IconButton(onClick = onOpenReview) {
         if (reviewCount > 0) {
-            BadgedBox(badge = { Badge { Text(reviewCount.toString()) } }) {
+            BadgedBox(badge = { Badge { Text(stringResource(R.string.library_count_value, reviewCount)) } }) {
                 Icon(
                     imageVector = TablerIcons.Clock,
-                    contentDescription = "HLTB match center ($reviewCount awaiting review)",
+                    contentDescription = stringResource(R.string.library_hltb_match_center_review, reviewCount),
                 )
             }
         } else {
             Icon(
                 imageVector = TablerIcons.Clock,
-                contentDescription = "HLTB match center",
+                contentDescription = stringResource(R.string.library_hltb_match_center),
             )
         }
     }
@@ -891,7 +1192,7 @@ private fun SelectionLookupPanel(
             if (progress == null || progress.total <= 0) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Starting HowLongToBeat lookup…",
+                        text = stringResource(R.string.library_start_hltb_lookup),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
@@ -904,7 +1205,7 @@ private fun SelectionLookupPanel(
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "${progress.done} / ${progress.total}",
+                    text = stringResource(R.string.library_hltb_progress, progress.done, progress.total),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f),
@@ -928,7 +1229,11 @@ private fun SelectionLookupPanel(
                 ) {
                     log.asReversed().forEach { entry ->
                         Text(
-                            text = "${entry.gameName} — ${outcomeLabel(entry.outcome)}",
+                            text = stringResource(
+                                R.string.library_hltb_progress_log,
+                                entry.gameName,
+                                outcomeLabel(entry.outcome),
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -952,20 +1257,24 @@ private fun StopScanButton(onStop: () -> Unit) {
             modifier = Modifier.size(16.dp),
         )
         Spacer(Modifier.width(4.dp))
-        Text("Stop")
+        Text(stringResource(R.string.library_stop))
     }
 }
 
 /** The rolling log distinguishes a failed lookup from a successful no-match. */
+@Composable
 private fun outcomeLabel(outcome: HltbRefreshOutcome): String = when (outcome) {
     is HltbRefreshOutcome.Refreshed -> when (outcome.state) {
-        HltbMatchState.NOT_COVERED -> "not covered"
-        HltbMatchState.RESOLVED -> "matched"
-        HltbMatchState.NEEDS_REVIEW -> "needs review"
-        HltbMatchState.UNMATCHED -> "no match"
+        HltbMatchState.NOT_COVERED -> stringResource(R.string.library_hltb_outcome_not_covered)
+        HltbMatchState.RESOLVED -> stringResource(R.string.library_hltb_outcome_matched)
+        HltbMatchState.NEEDS_REVIEW -> stringResource(R.string.library_hltb_outcome_needs_review)
+        HltbMatchState.UNMATCHED -> stringResource(R.string.library_hltb_outcome_no_match)
     }
-    HltbRefreshOutcome.NoMatch -> "no match"
-    is HltbRefreshOutcome.Failed -> "lookup failed (${outcome.failureClass.name.lowercase()})"
+    HltbRefreshOutcome.NoMatch -> stringResource(R.string.library_hltb_outcome_no_match)
+    is HltbRefreshOutcome.Failed -> stringResource(
+        R.string.library_hltb_outcome_failed,
+        outcome.failureClass.name.lowercase(),
+    )
 }
 
 /**
@@ -987,17 +1296,17 @@ private fun SelectionBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "$count selected",
+            text = pluralStringResource(R.plurals.library_selection_count, count, count),
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
             modifier = Modifier.weight(1f),
         )
-        TextButton(onClick = onRefreshSelection, enabled = !refreshing) {
-            Text("HowLongToBeat lookup ($count)")
+        TextButton(onClick = onRefreshSelection, enabled = !refreshing && count > 0) {
+            Text(stringResource(R.string.library_hltb_lookup_selected, count))
         }
         IconButton(onClick = onClear) {
-            Icon(imageVector = TablerIcons.X, contentDescription = "Clear selection")
+            Icon(imageVector = TablerIcons.X, contentDescription = stringResource(R.string.library_clear_selection))
         }
     }
 }
@@ -1053,16 +1362,16 @@ private fun SortControl(
             TextButton(onClick = { expanded = true }) {
                 Icon(
                     imageVector = TablerIcons.ArrowsSort,
-                    contentDescription = "Change sort order",
+                    contentDescription = stringResource(R.string.library_change_sort_order),
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(4.dp))
-                Text(librarySortLabel(sort), style = MaterialTheme.typography.labelLarge)
+                Text(librarySortLabelText(sort), style = MaterialTheme.typography.labelLarge)
             }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 LibrarySortKey.entries.forEach { key ->
                     DropdownMenuItem(
-                        text = { Text(librarySortLabel(key)) },
+                        text = { Text(librarySortLabelText(key)) },
                         onClick = {
                             onSortChange(key)
                             expanded = false
@@ -1093,8 +1402,11 @@ private fun SortControl(
                 },
                 // Names where the list stands *and* what the tap will do — a bare chevron on its
                 // own says neither.
-                contentDescription = "Sorted ${librarySortDirectionLabel(sort, direction)}; " +
-                    "tap for ${librarySortDirectionLabel(sort, direction.flipped())}",
+                contentDescription = stringResource(
+                    R.string.library_sorted_direction,
+                    librarySortDirectionText(sort, direction),
+                    librarySortDirectionText(sort, direction.flipped()),
+                ),
                 modifier = Modifier.size(18.dp),
             )
         }
@@ -1104,43 +1416,74 @@ private fun SortControl(
 /** Filter matched nothing. Rendered in-list so the search field above it stays reachable. */
 @Composable
 private fun NoMatchesRow(
-    query: String,
-    hasGenreFilter: Boolean,
-    hasCoverageFilter: Boolean,
-    onClear: () -> Unit,
+    filters: LibraryFilters,
+    reason: LibraryEmptyReason,
+    onClearAll: () -> Unit,
+    onClearQuery: () -> Unit,
     onClearGenres: () -> Unit,
     onClearCoverage: () -> Unit,
+    onClearFamilyShared: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp)) {
         Text(
-            text = when {
-                query.isNotBlank() && (hasGenreFilter || hasCoverageFilter) ->
-                    "No games match \"$query\" and the active filters"
-                query.isNotBlank() -> "No games match \"$query\""
-                hasGenreFilter && hasCoverageFilter -> "No games match the active filters"
-                hasGenreFilter -> "No games match the selected genres"
-                else -> "No games are marked not covered"
+            text = when (reason) {
+                LibraryEmptyReason.QUERY -> stringResource(
+                    R.string.library_no_matches_query,
+                    filters.query.trim(),
+                )
+                LibraryEmptyReason.GENRES -> stringResource(R.string.library_no_matches_genres)
+                LibraryEmptyReason.NOT_COVERED -> stringResource(R.string.library_no_matches_not_covered)
+                LibraryEmptyReason.FAMILY_SHARED -> stringResource(R.string.library_no_matches_family_shared)
+                LibraryEmptyReason.COMBINED -> stringResource(R.string.library_no_matches_combined)
             },
             style = MaterialTheme.typography.bodyMedium,
         )
-        Row {
-            if (query.isNotBlank()) {
-                TextButton(onClick = onClear, modifier = Modifier.padding(top = 4.dp)) {
-                    Text("Clear search")
-                }
+        Row(
+            modifier = Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            TextButton(onClick = onClearAll) { Text(stringResource(R.string.library_clear_all_filters)) }
+            if (filters.query.isNotBlank()) {
+                TextButton(onClick = onClearQuery) { Text(stringResource(R.string.library_clear_search_action)) }
             }
-            if (hasGenreFilter) {
-                TextButton(onClick = onClearGenres, modifier = Modifier.padding(top = 4.dp)) {
-                    Text("Clear genres")
-                }
+            if (filters.selectedGenreIds.isNotEmpty()) {
+                TextButton(onClick = onClearGenres) { Text(stringResource(R.string.library_clear_genres_action)) }
             }
-            if (hasCoverageFilter) {
-                TextButton(onClick = onClearCoverage, modifier = Modifier.padding(top = 4.dp)) {
-                    Text("Show all coverage")
-                }
+            if (filters.notCoveredOnly) {
+                TextButton(onClick = onClearCoverage) { Text(stringResource(R.string.library_show_all_coverage)) }
+            }
+            if (filters.familySharedOnly) {
+                TextButton(onClick = onClearFamilyShared) { Text(stringResource(R.string.library_show_all_games)) }
             }
         }
     }
+}
+
+@Composable
+private fun librarySortLabelText(key: LibrarySortKey): String = when (key) {
+    LibrarySortKey.PLAYTIME -> stringResource(R.string.library_sort_playtime)
+    LibrarySortKey.NAME -> stringResource(R.string.library_sort_name)
+    LibrarySortKey.RECENT_ACTIVITY -> stringResource(R.string.library_sort_recently_played)
+    LibrarySortKey.XP_CONTRIBUTED -> stringResource(R.string.library_sort_xp_contributed)
+}
+
+@Composable
+private fun librarySortDirectionText(
+    key: LibrarySortKey,
+    direction: LibrarySortDirection,
+): String = when (key) {
+    LibrarySortKey.NAME -> when (direction) {
+        LibrarySortDirection.ASCENDING -> stringResource(R.string.library_sort_a_to_z)
+        LibrarySortDirection.DESCENDING -> stringResource(R.string.library_sort_z_to_a)
+    }
+
+    LibrarySortKey.PLAYTIME, LibrarySortKey.RECENT_ACTIVITY, LibrarySortKey.XP_CONTRIBUTED ->
+        when (direction) {
+            LibrarySortDirection.ASCENDING -> stringResource(R.string.library_sort_lowest_first)
+            LibrarySortDirection.DESCENDING -> stringResource(R.string.library_sort_highest_first)
+        }
 }
 
 private fun GoalGameUi.toDisplayGame() = LibraryDisplayGame(
@@ -1235,7 +1578,7 @@ private fun LazyListScope.libraryGameItems(
 /** The single full-detail renderer used by both Library sections. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LibraryGameRow(
+internal fun LibraryGameRow(
     game: LibraryDisplayGame,
     density: GameListDensity,
     selected: Boolean,
@@ -1245,9 +1588,11 @@ private fun LibraryGameRow(
     onManageGoal: () -> Unit,
 ) {
     GameCard(
+        gameName = game.name,
         headerUrl = game.headerUrl,
         fallbackUrls = SteamIconMapper.listBackgroundFallbackUrls(game.appId),
         selected = selected,
+        selectionMode = selectionMode,
         onClick = onClick,
         onLongClick = onLongClick,
     ) {
@@ -1307,7 +1652,7 @@ private fun LibraryGameRow(
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LibraryGameCell(
+internal fun LibraryGameCell(
     game: LibraryDisplayGame,
     density: GameListDensity,
     selected: Boolean,
@@ -1319,6 +1664,12 @@ private fun LibraryGameCell(
     val compact = density == GameListDensity.COMPACT_GRID
     val tileShape = RoundedCornerShape(18.dp)
     val heroShape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)
+    val longClickLabel = if (selectionMode) {
+        stringResource(R.string.library_toggle_game_selection, game.name)
+    } else {
+        stringResource(R.string.library_select_game, game.name)
+    }
+    val toggleSelectionLabel = stringResource(R.string.library_toggle_selection)
     val borderColor = when {
         selected -> MaterialTheme.colorScheme.primary
         game.isCurrentlyPlaying -> MaterialTheme.colorScheme.playingIndicator
@@ -1331,7 +1682,20 @@ private fun LibraryGameCell(
             // the hero capsule holds the remaining weight — so the tile grows rather than the
             // artwork shrinking or the name truncating.
             .aspectRatio(if (compact) 0.62f else 0.56f)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+                onLongClickLabel = longClickLabel,
+            )
+            .semantics {
+                this.selected = selected
+                customActions = listOf(
+                    CustomAccessibilityAction(toggleSelectionLabel) {
+                        onLongClick()
+                        true
+                    },
+                )
+            },
         shape = tileShape,
         border = BorderStroke(if (selected) 2.dp else 1.dp, borderColor),
         elevation = CardDefaults.cardElevation(defaultElevation = if (compact) 1.dp else 2.dp),
@@ -1453,7 +1817,9 @@ private fun TileSelectionIndicator(selected: Boolean, modifier: Modifier = Modif
     ) {
         Icon(
             imageVector = if (selected) TablerIcons.Check else TablerIcons.Checkbox,
-            contentDescription = if (selected) "Selected" else "Not selected",
+            contentDescription = stringResource(
+                if (selected) R.string.library_selected else R.string.library_not_selected,
+            ),
             tint = if (selected) {
                 MaterialTheme.colorScheme.onPrimary
             } else {
@@ -1471,11 +1837,15 @@ private fun PlaytimeLabel(
     observed: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val localizedMinutes = UiFormat.localizedMinutes(minutes)
+    val description = if (observed) {
+        stringResource(R.string.library_played_family_shared, localizedMinutes)
+    } else {
+        stringResource(R.string.library_played, localizedMinutes)
+    }
     // Steam reports no lifetime playtime for a family-shared game, so what is shown for one is what
     // the app observed. The word travels with the number rather than living in a legend elsewhere:
     // a total presented as complete when it structurally cannot be is the one thing this must not do.
-    val suffix = if (observed) " observed" else ""
-
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
@@ -1488,15 +1858,15 @@ private fun PlaytimeLabel(
         )
         Spacer(Modifier.width(4.dp))
         Text(
-            text = UiFormat.minutes(minutes) + suffix,
+            text = if (observed) {
+                stringResource(R.string.library_observed_playtime, localizedMinutes)
+            } else {
+                localizedMinutes
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.semantics {
-                contentDescription = if (observed) {
-                    "${UiFormat.minutes(minutes)} observed by Backlogium"
-                } else {
-                    "${UiFormat.minutes(minutes)} played"
-                }
+                contentDescription = description
             },
         )
     }
@@ -1509,12 +1879,13 @@ private fun PlaytimeLabel(
  */
 @Composable
 private fun FamilySharedLabel(modifier: Modifier = Modifier) {
+    val accessibilityLabel = stringResource(R.string.library_played_through_family_shared)
     Text(
-        text = "Family Sharing",
+        text = stringResource(R.string.library_family_sharing),
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = modifier.semantics {
-            contentDescription = "Played through Family Sharing"
+            contentDescription = accessibilityLabel
         },
     )
 }
@@ -1531,18 +1902,39 @@ private fun FamilySharedLabel(modifier: Modifier = Modifier) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GameCard(
+    gameName: String,
     headerUrl: String,
     fallbackUrls: List<String> = emptyList(),
     selected: Boolean,
+    selectionMode: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     content: @Composable RowScope.() -> Unit,
 ) {
+    val longClickLabel = if (selectionMode) {
+        stringResource(R.string.library_toggle_game_selection, gameName)
+    } else {
+        stringResource(R.string.library_select_game, gameName)
+    }
+    val toggleSelectionLabel = stringResource(R.string.library_toggle_selection)
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+                onLongClickLabel = longClickLabel,
+            )
+            .semantics {
+                this.selected = selected
+                customActions = listOf(
+                    CustomAccessibilityAction(toggleSelectionLabel) {
+                        onLongClick()
+                        true
+                    },
+                )
+            },
         border = selectionBorder(selected),
         colors = if (selected) {
             CardDefaults.cardColors(
@@ -1585,7 +1977,9 @@ private fun RowTrailing(selected: Boolean, selectionMode: Boolean, onManageGoal:
     if (selectionMode) {
         Icon(
             imageVector = if (selected) TablerIcons.Check else TablerIcons.Checkbox,
-            contentDescription = if (selected) "Selected" else "Not selected",
+                contentDescription = stringResource(
+                    if (selected) R.string.library_selected else R.string.library_not_selected,
+                ),
             tint = if (selected) {
                 MaterialTheme.colorScheme.primary
             } else {
@@ -1596,7 +1990,10 @@ private fun RowTrailing(selected: Boolean, selectionMode: Boolean, onManageGoal:
         return
     }
     IconButton(onClick = onManageGoal) {
-        Icon(imageVector = TablerIcons.DotsVertical, contentDescription = "Manage focus")
+        Icon(
+            imageVector = TablerIcons.DotsVertical,
+            contentDescription = stringResource(R.string.library_manage_focus),
+        )
     }
 }
 
@@ -1635,10 +2032,12 @@ private fun CompletionProgress(playtimeMinutes: Int, completionistMinutes: Int?)
     )
     Spacer(Modifier.height(2.dp))
     val percent = (playtimeMinutes.toLong() * 100 / completionist).toInt()
+    val completionText = UiFormat.localizedMinutes(completionist)
+    val playtimeText = UiFormat.localizedMinutes(playtimeMinutes)
     val fullDescription = if (overrun) {
-        "${UiFormat.minutes(completionist)} to 100% · played $percent%"
+        stringResource(R.string.library_completion_overrun, completionText, percent)
     } else {
-        "${UiFormat.minutes(playtimeMinutes)} / ${UiFormat.minutes(completionist)} to 100%"
+        stringResource(R.string.library_completion_progress, playtimeText, completionText)
     }
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -1654,7 +2053,7 @@ private fun CompletionProgress(playtimeMinutes: Int, completionistMinutes: Int?)
             Spacer(Modifier.width(4.dp))
         }
         Text(
-            text = "$percent%",
+            text = stringResource(R.string.library_percent_value, percent),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1679,42 +2078,42 @@ private fun HltbStatusLabel(
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                text = "Looking up HowLongToBeat…",
+                text = stringResource(R.string.library_hltb_lookup_in_progress),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
         op == HltbFetchOp.FAILED -> Text(
-            text = "HowLongToBeat lookup failed",
+            text = stringResource(R.string.library_hltb_lookup_failed),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
             modifier = modifier,
         )
 
         status == HltbMatchState.NOT_COVERED -> Text(
-            text = "Not covered by completion-times dataset",
+            text = stringResource(R.string.library_hltb_not_covered_status),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = modifier,
         )
 
         status == HltbMatchState.RESOLVED -> Text(
-            text = "HowLongToBeat matched",
+            text = stringResource(R.string.library_hltb_matched_status),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.primary,
             modifier = modifier,
         )
 
         status == HltbMatchState.NEEDS_REVIEW -> Text(
-            text = "Needs match review",
+            text = stringResource(R.string.library_hltb_needs_review_status),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.tertiary,
             modifier = modifier,
         )
 
         status == HltbMatchState.UNMATCHED -> Text(
-            text = "No HowLongToBeat match",
+            text = stringResource(R.string.library_hltb_no_match_status),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = modifier,
@@ -1737,10 +2136,11 @@ private fun HltbIndicator(
     size: Dp = 14.dp,
 ) {
     if (op == HltbFetchOp.IN_PROGRESS) {
+        val description = stringResource(R.string.library_hltb_lookup_in_progress)
         CircularProgressIndicator(
             modifier = modifier
                 .size(size)
-                .semantics { contentDescription = "Looking up HowLongToBeat…" },
+                .semantics { contentDescription = description },
             strokeWidth = 1.5.dp,
         )
         return
@@ -1751,24 +2151,28 @@ private fun HltbIndicator(
             Triple(
                 TablerIcons.Clock,
                 MaterialTheme.colorScheme.error,
-                "HowLongToBeat lookup failed",
+                stringResource(R.string.library_hltb_lookup_failed),
             )
         status == HltbMatchState.NOT_COVERED ->
             Triple(
                 TablerIcons.AlertCircle,
                 greyedOut,
-                "Not covered by completion-times dataset",
+                stringResource(R.string.library_hltb_not_covered_status),
             )
         status == HltbMatchState.RESOLVED ->
-            Triple(TablerIcons.Clock, MaterialTheme.colorScheme.primary, "HowLongToBeat matched")
+            Triple(
+                TablerIcons.Clock,
+                MaterialTheme.colorScheme.primary,
+                stringResource(R.string.library_hltb_matched_status),
+            )
         status == HltbMatchState.NEEDS_REVIEW ->
             Triple(
                 TablerIcons.Clock,
                 MaterialTheme.colorScheme.tertiary,
-                "Needs HowLongToBeat match review",
+                stringResource(R.string.library_hltb_needs_review_accessibility),
             )
         status == HltbMatchState.UNMATCHED ->
-            Triple(TablerIcons.Clock, greyedOut, "No HowLongToBeat match")
+            Triple(TablerIcons.Clock, greyedOut, stringResource(R.string.library_hltb_no_match_status))
         else -> error("Unreachable HLTB state")
     }
     Icon(
@@ -1797,6 +2201,7 @@ private fun GameIconWithHltbBadge(
     showHltbStatus: Boolean = true,
     recencyState: GameRecencyState? = null,
 ) {
+    val currentlyPlayingDescription = stringResource(R.string.library_currently_playing)
     Box {
         GameIcon(iconUrl, iconSize = iconSize)
         RecencyBadge(
@@ -1830,7 +2235,7 @@ private fun GameIconWithHltbBadge(
                         .size(6.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.playingIndicator)
-                        .semantics { contentDescription = "Currently playing" },
+                        .semantics { contentDescription = currentlyPlayingDescription },
                 )
             }
         }
@@ -1902,10 +2307,11 @@ private fun GameBadges(
  */
 @Composable
 private fun XpContributionLabel(xpContributed: Long) {
+    val description = stringResource(R.string.library_xp_contributed, xpContributed)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.semantics(mergeDescendants = true) {
-            contentDescription = "$xpContributed XP contributed"
+            contentDescription = description
         },
     ) {
         Icon(
@@ -1916,7 +2322,7 @@ private fun XpContributionLabel(xpContributed: Long) {
         )
         Spacer(Modifier.width(2.dp))
         Text(
-            text = "$xpContributed",
+            text = stringResource(R.string.library_xp_value, xpContributed),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -1934,12 +2340,13 @@ private fun XpContributionLabel(xpContributed: Long) {
 private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifier = Modifier) {
     if (unlocked == null || total == null) return
     if (isGameCompleted(unlocked, total)) {
+        val completedDescription = stringResource(R.string.library_completed_percent)
         Row(
             modifier = modifier
                 .clip(RoundedCornerShape(6.dp))
                 .background(MaterialTheme.colorScheme.primary)
                 .padding(horizontal = 8.dp, vertical = 3.dp)
-                .semantics(mergeDescendants = true) { contentDescription = "100% completed" },
+                .semantics(mergeDescendants = true) { contentDescription = completedDescription },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
@@ -1950,7 +2357,7 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifie
             )
             Spacer(Modifier.width(4.dp))
             Text(
-                text = "100%",
+                text = stringResource(R.string.library_achievement_percent),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onPrimary,
@@ -1960,9 +2367,10 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifie
         }
         return
     }
+    val description = stringResource(R.string.library_achievements_unlocked, unlocked, total)
     Row(
         modifier = modifier.semantics(mergeDescendants = true) {
-            contentDescription = "$unlocked of $total achievements unlocked"
+            contentDescription = description
         },
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1974,7 +2382,7 @@ private fun AchievementCountLabel(unlocked: Int?, total: Int?, modifier: Modifie
         )
         Spacer(Modifier.width(4.dp))
         Text(
-            text = "$unlocked/$total",
+            text = stringResource(R.string.library_achievement_value, unlocked, total),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -2002,14 +2410,20 @@ private fun GoalDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (target.isGoal) "Remove from Focus" else "Add to Focus") },
+        title = {
+            Text(
+                stringResource(
+                    if (target.isGoal) R.string.library_remove_from_focus else R.string.library_add_to_focus,
+                ),
+            )
+        },
         text = {
             Column {
                 Text(
                     text = if (target.isGoal) {
-                        "Remove \"${target.name}\" from Focus?"
+                        stringResource(R.string.library_remove_from_focus_confirm, target.name)
                     } else {
-                        "Add \"${target.name}\" to Focus? Its playtime is then tracked separately."
+                        stringResource(R.string.library_add_to_focus_confirm, target.name)
                     },
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -2021,7 +2435,7 @@ private fun GoalDialog(
                         enabled = fetchOp != HltbFetchOp.IN_PROGRESS,
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
                     ) {
-                        Text("Choose match")
+                        Text(stringResource(R.string.library_choose_match))
                     }
 
                     HltbMatchState.RESOLVED -> TextButton(
@@ -2029,7 +2443,7 @@ private fun GoalDialog(
                         enabled = fetchOp != HltbFetchOp.IN_PROGRESS,
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
                     ) {
-                        Text("Change match")
+                        Text(stringResource(R.string.library_change_match))
                     }
 
                     else -> Unit
@@ -2039,19 +2453,19 @@ private fun GoalDialog(
                     enabled = fetchOp != HltbFetchOp.IN_PROGRESS,
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
                 ) {
-                    Text("Refresh HowLongToBeat")
+                    Text(stringResource(R.string.library_refresh_hltb))
                 }
             }
         },
         confirmButton = {
             if (target.isGoal) {
-                TextButton(onClick = onUntag) { Text("Remove") }
+                TextButton(onClick = onUntag) { Text(stringResource(R.string.library_remove)) }
             } else {
-                TextButton(onClick = onTag) { Text("Add") }
+                TextButton(onClick = onTag) { Text(stringResource(R.string.library_add)) }
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.library_cancel)) }
         },
     )
 }

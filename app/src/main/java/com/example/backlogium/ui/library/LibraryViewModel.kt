@@ -90,7 +90,7 @@ data class GoalGameUi(
     /** HowLongToBeat Completionist length, if resolved. Null → no completion-based progress. */
     val completionistMinutes: Int? = null,
     /** Persisted match status, or NOT_COVERED when no lookup/dataset row has been stored. */
-    val hltbStatus: HltbMatchState = HltbMatchState.NOT_COVERED,
+    override val hltbStatus: HltbMatchState = HltbMatchState.NOT_COVERED,
     /** In-flight/failed state of a manual lookup, layered over [hltbStatus]. */
     val fetchOp: HltbFetchOp? = null,
     /** Unlocked/total achievement counts, null when no achievement data is stored yet. */
@@ -105,7 +105,7 @@ data class GoalGameUi(
      * Played through Family Sharing rather than owned. Rendered as a short text label on the row,
      * never as colour alone; false for an owned game, which carries no marking at all.
      */
-    val isFamilyShared: Boolean = false,
+    override val isFamilyShared: Boolean = false,
 ) : LibraryRow
 
 data class BacklogGameUi(
@@ -123,7 +123,7 @@ data class BacklogGameUi(
      * leftover from when only tagged games had a target at all.
      */
     val completionistMinutes: Int? = null,
-    val hltbStatus: HltbMatchState = HltbMatchState.NOT_COVERED,
+    override val hltbStatus: HltbMatchState = HltbMatchState.NOT_COVERED,
     val fetchOp: HltbFetchOp? = null,
     val achievementUnlocked: Int? = null,
     val achievementTotal: Int? = null,
@@ -136,7 +136,7 @@ data class BacklogGameUi(
      * Played through Family Sharing rather than owned. Rendered as a short text label on the row,
      * never as colour alone; false for an owned game, which carries no marking at all.
      */
-    val isFamilyShared: Boolean = false,
+    override val isFamilyShared: Boolean = false,
 ) : LibraryRow
 
 /** One processed game in a running selection lookup, including structured failure evidence. */
@@ -150,6 +150,13 @@ data class HltbSelectionProgress(
     val outcome: HltbRefreshOutcome,
 )
 
+/** Stable batch-refresh input kept independent of the current discovery filters. */
+data class LibraryBatchGame(
+    val appId: Long,
+    val name: String,
+    val hltbStatus: HltbMatchState,
+)
+
 data class LibraryUiState(
     val loading: Boolean = true,
     val configured: Boolean = true,
@@ -157,7 +164,11 @@ data class LibraryUiState(
     val goalGames: List<GoalGameUi> = emptyList(),
     /** The rest of the library ("Your games"), already filtered and sorted for display. */
     val backlog: List<BacklogGameUi> = emptyList(),
+    /** The complete visible library, used by tools and selection even when filters hide rows. */
+    val allGames: List<LibraryBatchGame> = emptyList(),
     val reviewCount: Int = 0,
+    /** Actionable match-center size (NEEDS_REVIEW plus UNMATCHED rescue); drives entry visibility. */
+    val matchCenterCount: Int = 0,
     val hltbCandidatesByAppId: Map<Long, List<HltbCandidate>> = emptyMap(),
     val pickerStates: Map<Long, HltbPickerUiState> = emptyMap(),
     val pickerManualLinkStates: Map<Long, PickerManualLinkUiState> = emptyMap(),
@@ -168,7 +179,7 @@ data class LibraryUiState(
      */
     val needsAttentionAppId: Long? = null,
     val refreshing: Boolean = false,
-    val query: String = "",
+    val filters: LibraryFilters = LibraryFilters(),
     val focusSort: LibrarySortKey = LibrarySortKey.NAME,
     val librarySort: LibrarySortKey = LibrarySortKey.PLAYTIME,
     val focusSortDirection: LibrarySortDirection = focusSort.defaultDirection,
@@ -181,6 +192,8 @@ data class LibraryUiState(
      * silently drop it from the pending refresh.
      */
     val selection: Set<Long> = emptySet(),
+    /** Selection can be entered from Library tools before the first game is selected. */
+    val selectionMode: Boolean = false,
     /**
      * Whether the library is empty *before* filtering. The full-screen "No games yet" state keys
      * off this, never off the filtered lists: a query matching nothing must not unmount the search
@@ -190,11 +203,11 @@ data class LibraryUiState(
     val batchProgress: HltbSelectionProgress? = null,
     val batchLog: List<HltbLogEntry> = emptyList(),
 ) {
-    val selectionMode: Boolean get() = selection.isNotEmpty()
+    val query: String get() = filters.query
 
     /** A filter is active and matched nothing — an in-list empty state, not a blank screen. */
     val noMatches: Boolean
-        get() = query.isNotBlank() && goalGames.isEmpty() && backlog.isEmpty()
+        get() = filters.hasActiveFilters && goalGames.isEmpty() && backlog.isEmpty()
 }
 
 @HiltViewModel
@@ -224,11 +237,12 @@ class LibraryViewModel @Inject constructor(
      */
     private val needsAttention = MutableStateFlow<Long?>(null)
 
-    /** Name filter. Applied in memory: the library is already loaded, so no query per keystroke. */
-    private val query = MutableStateFlow("")
+    /** Transient discovery filters. Cleared by the screen when Library is left. */
+    private val filters = MutableStateFlow(LibraryFilters())
 
     /** Transient multi-select for the targeted refresh. Never persisted (see [clearSelection]). */
     private val selection = MutableStateFlow<Set<Long>>(emptySet())
+    private val selectionMode = MutableStateFlow(false)
 
     /**
      * The running explicit-selection lookup, owned by this ViewModel rather than WorkManager: it
@@ -242,10 +256,13 @@ class LibraryViewModel @Inject constructor(
     private val content = combine(
         gameRepository.goalGames,
         gameRepository.backlog,
-        hltbRepository.reviewQueue,
+        // Folded to one flow so the outer combine keeps its 5-arity overload: the 6-flow
+        // overload does not resolve here and falls back to the untyped vararg combine.
+        combine(hltbRepository.reviewQueue, hltbRepository.matchCenterQueue, ::Pair),
         credentials.credentialsStateFlow,
         liveStatusRepository.nowPlaying,
-    ) { goals, backlog, reviewQueue, credState, nowPlaying ->
+    ) { goals, backlog, queues, credState, nowPlaying ->
+        val (reviewQueue, matchCenterQueue) = queues
         val goalIds = goals.mapTo(HashSet()) { it.appId }
         LibraryContent(
             configured = credState is CredentialsState.Configured,
@@ -255,6 +272,7 @@ class LibraryViewModel @Inject constructor(
             // and a duplicate appId across LazyColumn items crashes Compose.
             backlog = backlog.filterNot { it.appId in goalIds },
             reviewCount = reviewQueue.size,
+            matchCenterCount = matchCenterQueue.size,
             hltbCandidatesByAppId = reviewQueue.associate { it.appId to it.candidates },
             playingAppId = (nowPlaying as? NowPlaying.InGame)?.gameId,
         )
@@ -279,13 +297,18 @@ class LibraryViewModel @Inject constructor(
         ::Triple,
     )
 
+    private val selectionPrefs = combine(selection, selectionMode) { selection, mode ->
+        SelectionPrefs(selection = selection, selectionMode = mode)
+    }
+
     private val viewPrefs = combine(
-        combine(query, selection, fetchOps, pickerCombined, settings.librarySort) {
-                query, selection, ops, pickerTriple, sort ->
+        combine(filters, selectionPrefs, fetchOps, pickerCombined, settings.librarySort) {
+                filters, selectionPrefs, ops, pickerTriple, sort ->
             val (pickerStates, manualLinkStates, needsAttention) = pickerTriple
             ViewPrefs(
-                query = query,
-                selection = selection,
+                filters = filters,
+                selection = selectionPrefs.selection,
+                selectionMode = selectionPrefs.selectionMode,
                 ops = ops,
                 pickerStates = pickerStates,
                 pickerManualLinkStates = manualLinkStates,
@@ -306,32 +329,36 @@ class LibraryViewModel @Inject constructor(
     ) { content, xp, counts, view, lookup ->
         val goals = content.goals
             .map { it.toGoalUi(xp, counts, view.ops, content.playingAppId) }
-            .matching(view.query)
+            .filterByLibraryFilters(view.filters)
             .sortedFor(
                 key = view.sort.focus,
                 direction = view.sort.focusDirection,
-                query = view.query,
+                query = view.filters.query,
             )
         val backlog = content.backlog
             .map { it.toBacklogUi(xp, counts, view.ops, content.playingAppId) }
-            .matching(view.query)
+            .filterByLibraryFilters(view.filters)
             .sortedFor(
                 key = view.sort.library,
                 direction = view.sort.libraryDirection,
-                query = view.query,
+                query = view.filters.query,
             )
         LibraryUiState(
             loading = false,
             configured = content.configured,
             goalGames = goals,
             backlog = backlog,
+            allGames = (content.goals + content.backlog).map {
+                LibraryBatchGame(it.appId, it.name, it.hltbMatchState)
+            },
             reviewCount = content.reviewCount,
+            matchCenterCount = content.matchCenterCount,
             hltbCandidatesByAppId = content.hltbCandidatesByAppId,
             pickerStates = view.pickerStates,
             pickerManualLinkStates = view.pickerManualLinkStates,
             needsAttentionAppId = view.needsAttention,
             refreshing = lookup.running,
-            query = view.query,
+            filters = view.filters,
             focusSort = view.sort.focus,
             librarySort = view.sort.library,
             focusSortDirection = view.sort.focusDirection,
@@ -343,6 +370,7 @@ class LibraryViewModel @Inject constructor(
                 .flatMap { it.genres.asSequence() }
                 .toList(),
             selection = view.selection,
+            selectionMode = view.selectionMode,
             libraryEmpty = content.goals.isEmpty() && content.backlog.isEmpty(),
             batchProgress = lookup.progress,
             batchLog = lookup.log,
@@ -362,11 +390,35 @@ class LibraryViewModel @Inject constructor(
     }
 
     fun setQuery(value: String) {
-        query.value = value
+        filters.update { it.copy(query = value) }
     }
 
     fun clearQuery() {
-        query.value = ""
+        filters.update { it.copy(query = "") }
+    }
+
+    fun toggleGenreFilter(id: String) {
+        filters.update { it.toggleGenre(id) }
+    }
+
+    fun clearGenreFilter(id: String) {
+        filters.update { it.clearGenre(id) }
+    }
+
+    fun clearGenreFilters() {
+        filters.update { it.copy(selectedGenreIds = emptySet()) }
+    }
+
+    fun setNotCoveredOnly(enabled: Boolean) {
+        filters.update { it.copy(notCoveredOnly = enabled) }
+    }
+
+    fun setFamilySharedOnly(enabled: Boolean) {
+        filters.update { it.copy(familySharedOnly = enabled) }
+    }
+
+    fun clearFilters() {
+        filters.value = LibraryFilters()
     }
 
     fun setFocusSort(key: LibrarySortKey) = viewModelScope.launch {
@@ -390,13 +442,21 @@ class LibraryViewModel @Inject constructor(
     }
 
     /** Add or remove one game from the selection; removing the last one exits selection mode. */
-    fun toggleSelection(appId: Long) = selection.update {
-        if (appId in it) it - appId else it + appId
+    fun toggleSelection(appId: Long) {
+        val next = if (appId in selection.value) selection.value - appId else selection.value + appId
+        selection.value = next
+        selectionMode.value = next.isNotEmpty()
+    }
+
+    /** Enter selection mode without selecting a game, for the labeled tools action. */
+    fun enterSelectionMode() {
+        selectionMode.value = true
     }
 
     /** Drop the whole selection. Called on navigation away, so nothing outlives the screen. */
     fun clearSelection() {
         selection.value = emptySet()
+        selectionMode.value = false
     }
 
     /**
@@ -573,6 +633,7 @@ private data class LibraryContent(
     val goals: List<LibraryGame>,
     val backlog: List<LibraryGame>,
     val reviewCount: Int,
+    val matchCenterCount: Int,
     val hltbCandidatesByAppId: Map<Long, List<HltbCandidate>>,
     /** appId of the game Steam's live presence reports as running right now, if any. */
     val playingAppId: Long?,
@@ -587,8 +648,9 @@ internal data class XpInputs(
 
 /** Transient view state (filter, selection, in-flight lookups) plus the persisted sort choices. */
 private data class ViewPrefs(
-    val query: String,
+    val filters: LibraryFilters,
     val selection: Set<Long>,
+    val selectionMode: Boolean,
     val ops: Map<Long, HltbFetchOp>,
     val pickerStates: Map<Long, HltbPickerUiState>,
     val pickerManualLinkStates: Map<Long, PickerManualLinkUiState> = emptyMap(),
@@ -596,6 +658,11 @@ private data class ViewPrefs(
     val needsAttention: Long? = null,
     val sort: LibrarySortPrefs,
     val density: GameListDensity,
+)
+
+private data class SelectionPrefs(
+    val selection: Set<Long>,
+    val selectionMode: Boolean,
 )
 
 /** The running selection lookup's state: whether it is active, its latest snapshot, and its log. */
