@@ -66,4 +66,22 @@ class HomeCollectionPresentationTest {
             ),
         )
     }
+
+    @Test
+    fun moveUpAndDown_preserveAllPositionsAtEveryBoundary() {
+        val cards = listOf(1L, 2L, 3L)
+
+        assertEquals(cards, homeCollectionOrderAfterMove(cards, fromIndex = 0, targetIndex = 0))
+        assertEquals(listOf(2L, 1L, 3L), homeCollectionOrderAfterMove(cards, 1, 0))
+        assertEquals(listOf(1L, 3L, 2L), homeCollectionOrderAfterMove(cards, 1, 2))
+        assertEquals(cards, homeCollectionOrderAfterMove(cards, 2, 2))
+    }
+
+    @Test
+    fun invalidMove_doesNotChangeOrder() {
+        val cards = listOf(1L, 2L, 3L)
+
+        assertEquals(cards, homeCollectionOrderAfterMove(cards, -1, 0))
+        assertEquals(cards, homeCollectionOrderAfterMove(cards, 2, 3))
+    }
 }

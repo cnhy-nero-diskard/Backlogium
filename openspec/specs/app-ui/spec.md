@@ -274,6 +274,69 @@ today's quest has not yet been met while the day is still in progress.
 - **WHEN** elapsed session time is shown
 - **THEN** it is presented as time since the session was detected, not as an exact game-launch time
 
+### Requirement: Home prioritizes the player's next action
+Home SHALL present one concise next-action surface ahead of the level, quest, and streak summaries. While a game is currently running, the now-playing panel SHALL remain the first and most prominent Home surface. The next action SHALL be derived only from locally stored Focus and collection data and SHALL open the relevant game, collection, Library, or planning destination.
+
+#### Scenario: Continue a Focus game
+- **WHEN** Home has one or more incomplete Focus games and no game is currently running
+- **THEN** Home leads with a next-action surface for the most recently played eligible Focus game
+
+#### Scenario: Continue a collection mission
+- **WHEN** no eligible Focus game exists and the first ordered-queue collection in the player's collection display order has an incomplete next game (skipping basic, completion-goal, deadline-goal, empty, and completed-queue collections, which expose no `nextUp`)
+- **THEN** Home leads with a next-action surface that opens that collection or its next game
+
+#### Scenario: No next action is derivable
+- **WHEN** neither Focus nor collection data yields an incomplete game
+- **THEN** Home presents a compact action to browse the Library or create a Focus choice rather than an empty recommendation card
+
+#### Scenario: Now playing remains primary
+- **WHEN** live status identifies a currently running game
+- **THEN** the now-playing panel remains above the next-action surface and the next action does not duplicate the running game as a competing recommendation
+
+### Requirement: Home collection actions are understandable and accessible
+Home SHALL present one primary collection action and SHALL keep secondary collection and release-gap actions available without crowding the section heading. Reordering SHALL have a visible affordance and equivalent accessibility actions that do not require a long press or drag gesture.
+
+#### Scenario: Collection section actions
+- **WHEN** the Collections section is shown
+- **THEN** its heading exposes one visually primary action and groups the remaining actions as clearly labeled secondary choices
+
+#### Scenario: Reorder with touch
+- **WHEN** the player drags a visible collection reorder affordance and releases it at a new position
+- **THEN** the new order is persisted with the same cancellation and scroll-arbitration guarantees as the existing reorder behavior
+
+#### Scenario: Reorder with accessibility actions
+- **WHEN** assistive technology focuses a reorderable collection card
+- **THEN** named move-up and move-down actions are available whenever that move is possible and announce the resulting position
+
+### Requirement: Home loading never appears broken
+Home SHALL retain locally available content during refresh. Before any locally renderable Home state exists, it SHALL show a stable loading presentation rather than an empty content area.
+
+#### Scenario: First Home load
+- **WHEN** Home state is still loading and no cached presentation is available
+- **THEN** the screen shows a bounded progress or skeleton presentation in the normal Home layout
+
+#### Scenario: Refresh with cached content
+- **WHEN** Home refreshes while locally stored content is already available
+- **THEN** the existing content remains visible and the updating state is communicated without replacing the screen with blank space
+
+### Requirement: Home celebrations respect reduced motion
+Level-up and streak-milestone presentations SHALL preserve the earned-event message while avoiding animated playback when the system requests reduced motion.
+
+#### Scenario: Celebration with reduced motion
+- **WHEN** a level-up or streak milestone is pending and reduced motion is requested
+- **THEN** Home shows a static earned-state treatment, delivers the applicable non-visual feedback, and acknowledges the event exactly once without playing the Lottie motion
+
+#### Scenario: Celebration with motion allowed
+- **WHEN** a level-up or streak milestone is pending and reduced motion is not requested
+- **THEN** the existing inline celebration behavior remains available
+
+### Requirement: Home copy is externalized with locale-aware formatting
+User-visible Home labels, quantities, and formatted dates SHALL come from default Android string/plural resources and locale-aware formatting rather than fixed English composition in the screen. This change adds no locale-qualified resources or translations; under a non-default locale labels SHALL fall back to the default English copy while dates and quantities follow the device locale.
+
+#### Scenario: Non-default locale falls back to English copy with locale-aware formatting
+- **WHEN** the device uses a non-default locale with non-US date order
+- **THEN** Home shows the default English labels and pluralized day/minute copy with locale-aware date/quantity formatting, without changing stored values or navigation behavior
+
 ### Requirement: Ongoing now-playing notification
 The system SHALL present an ongoing notification naming the currently played game and its elapsed
 session time while the player is in a game, and SHALL remove it once the game ends.
@@ -1139,6 +1202,73 @@ text within it.
 #### Scenario: Clearing the filter
 - **WHEN** the user clears the search
 - **THEN** the full Library is shown again
+
+### Requirement: Library presents discovery before enrichment tools
+Library SHALL keep search and active filters in its primary control area. Display density and HowLongToBeat enrichment SHALL remain reachable through labeled secondary controls without competing with the search field for first attention. Independent Focus/Your games sorting SHALL remain beside its section heading. Pending review and active refresh states SHALL remain visible without opening those controls.
+
+#### Scenario: Routine Library entry
+- **WHEN** Library opens with no active batch operation or review queue
+- **THEN** search and filter state are the primary controls and enrichment tools are available through a labeled secondary entry point
+
+#### Scenario: HLTB work needs attention
+- **WHEN** a refresh is running or one or more matches need review
+- **THEN** Library surfaces the progress or review count in the primary flow while preserving search and active-filter access
+
+#### Scenario: Density preserved
+- **WHEN** the player opens the secondary Library controls
+- **THEN** every existing density option remains available and retains its current persistence behavior
+
+#### Scenario: Section-local sorting preserved
+- **WHEN** the player views the Focus and Your games sections
+- **THEN** each section exposes its independent sort options beside its heading and retains its current persistence behavior
+
+### Requirement: Library filter state has complete recovery
+Library SHALL model the text query, selected genres, coverage-only state, and Family Shared-only state as one visible active-filter set. Each active filter SHALL be removable individually, and a clear-all action SHALL restore the unfiltered library.
+
+#### Scenario: Family Shared filter has no matches
+- **WHEN** Family Shared-only is active and no visible game matches
+- **THEN** the empty result explicitly names the Family Shared filter and offers an action that clears it
+
+#### Scenario: Combined filters have no matches
+- **WHEN** two or more active filters produce no visible games
+- **THEN** the empty result states that the active filters have no matches and offers both individual removal and clear-all recovery
+
+#### Scenario: Clear all filters
+- **WHEN** the player activates clear all
+- **THEN** the text query, genres, coverage-only state, and Family Shared-only state are all reset while density and sort preferences remain unchanged
+
+### Requirement: Genre filtering scales to a large catalog
+The genre picker SHALL provide text search over the available genre labels, preserve multi-selection while searching, and render a scrollable result set suitable for a large catalog.
+
+#### Scenario: Search genres
+- **WHEN** the player types into the genre picker search field
+- **THEN** the picker shows matching genre labels without clearing selections that are outside the current result set
+
+#### Scenario: Apply multiple genres
+- **WHEN** the player selects multiple genres and dismisses the picker
+- **THEN** the Library applies the existing any-selected-genre matching behavior and shows the selected genres as removable active filters
+
+### Requirement: Library selection is discoverable without long press
+Library SHALL retain long-press selection as an accelerator and SHALL also provide a visible, labeled way to enter selection mode. Assistive technology SHALL receive a long-click label and clear selected-state semantics for each game.
+
+#### Scenario: Enter selection without a gesture
+- **WHEN** the player activates the visible Select action
+- **THEN** Library enters selection mode and exposes selection controls without requiring a long press
+
+#### Scenario: Long-press accelerator
+- **WHEN** the player long-presses a game outside selection mode
+- **THEN** that game becomes selected and accessibility services identify the gesture as selecting the game
+
+#### Scenario: Exit selection
+- **WHEN** the player clears selection or leaves Library
+- **THEN** selection mode ends and ordinary game-opening behavior is restored
+
+### Requirement: Library copy is externalized with locale-aware formatting
+User-visible Library labels, counts, plurals, and formatted values SHALL resolve through default Android string/plural resources and locale-aware formatting. This change adds no locale-qualified resources or translations; under a non-default locale labels SHALL fall back to the default English copy while counts and dates follow the device locale.
+
+#### Scenario: Non-default locale selection count
+- **WHEN** Library is shown under a non-default locale with one or multiple selected games
+- **THEN** the selection count shows the default English copy with the correct quantity form and locale-aware formatting, without changing filtering or selection behavior
 
 ### Requirement: Per-game XP contribution badge
 The system SHALL show, for each game in the Library, the total XP that game has contributed to the

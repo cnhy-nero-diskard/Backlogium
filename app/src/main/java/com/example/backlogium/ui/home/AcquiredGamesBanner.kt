@@ -18,8 +18,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.backlogium.R
+import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.ui.util.rememberReducedMotion
 
 /**
@@ -81,12 +85,16 @@ private fun AcquiredGamesCard(
                 .padding(start = 16.dp, top = 14.dp, bottom = 6.dp, end = 8.dp),
         ) {
             Text(
-                text = acquiredGamesTitle(acquired.totalCount),
+                text = pluralStringResource(
+                    R.plurals.home_new_games,
+                    acquired.totalCount,
+                    UiFormat.count(acquired.totalCount),
+                ),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = acquiredGamesDetail(acquired),
+                text = acquiredGamesDetailText(acquired),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -94,10 +102,14 @@ private fun AcquiredGamesCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
             ) {
-                TextButton(onClick = onDismiss) { Text("Dismiss") }
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(R.string.home_dismiss))
+                }
                 // Opens the Library rather than a filtered view of the new games: this change adds
                 // no query axis, and inventing one for a banner would be the wrong place to start.
-                TextButton(onClick = onViewLibrary) { Text("View library") }
+                TextButton(onClick = onViewLibrary) {
+                    Text(stringResource(R.string.home_view_library))
+                }
             }
         }
     }
@@ -119,5 +131,22 @@ internal fun acquiredGamesDetail(acquired: AcquiredGamesUi): String {
         acquired.namedGames.isEmpty() -> "Added to your library."
         acquired.unnamedCount <= 0 -> "$names — added to your library."
         else -> "$names and ${acquired.unnamedCount} more — added to your library."
+    }
+}
+
+@Composable
+private fun acquiredGamesDetailText(acquired: AcquiredGamesUi): String {
+    val names = acquired.namedGames.joinToString(", ")
+    return when {
+        acquired.namedGames.isEmpty() -> stringResource(R.string.home_added_to_library)
+        acquired.unnamedCount <= 0 -> stringResource(
+            R.string.home_named_games_added_to_library,
+            names,
+        )
+        else -> stringResource(
+            R.string.home_named_games_and_more_added_to_library,
+            names,
+            UiFormat.count(acquired.unnamedCount),
+        )
     }
 }

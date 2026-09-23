@@ -219,6 +219,7 @@ fun BacklogiumAppRoot(
                         onOpenSmartCollection = { id ->
                             navController.navigate(smartCollectionRoute(id))
                         },
+                        onOpenGame = { appId -> navController.navigate(gameDetailRoute(appId)) },
                         // Same navigation the bottom bar performs, so arriving from the banner
                         // leaves the back stack exactly as tapping Library would.
                         onOpenLibrary = {

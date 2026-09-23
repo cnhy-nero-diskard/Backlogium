@@ -39,7 +39,6 @@ import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RuleConfig
-import com.example.backlogium.ui.collections.smartCollectionName
 import com.example.backlogium.work.setup.SetupCoordinator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
@@ -56,6 +55,8 @@ import kotlinx.coroutines.launch
 
 data class HomeUiState(
     val loading: Boolean = true,
+    /** True once the local Home snapshot can be rendered, even if a refresh is still in flight. */
+    val hasRenderableContent: Boolean = false,
     val configured: Boolean = true,
     /**
      * True while a first configuration still owes the user the setup step. Durable state, so the
@@ -97,6 +98,8 @@ data class HomeUiState(
     val nowPlayingRecencyState: GameRecencyState? = null,
     /** Mission cards derived from the player's custom collections; empty when none exist. */
     val collections: List<HomeCollectionCard> = emptyList(),
+    /** The single locally derived action Home should offer next. */
+    val nextAction: HomeNextAction = HomeNextAction.ChooseGame,
     /**
      * Derived collections, in their fixed order, presented beneath the custom ones. Read-only:
      * they carry no accent, no mode, and no position the player can change.
@@ -116,6 +119,12 @@ data class HomeUiState(
     val xpFraction: Float
         get() = if (xpForNext > 0) (xpIntoLevel.toFloat() / xpForNext).coerceIn(0f, 1f) else 0f
 }
+
+internal fun shouldShowHomeLoading(state: HomeUiState): Boolean =
+    state.loading && state.configured && !state.hasRenderableContent
+
+internal fun shouldShowHomeUpdating(state: HomeUiState): Boolean =
+    state.hasRenderableContent && state.isSyncing
 
 /**
  * The newly-acquired-games banner's content: the names it can show and how many arrived beyond
@@ -174,7 +183,6 @@ data class HomeCollectionCard(
  */
 data class HomeSmartCollectionCard(
     val id: SmartCollectionId,
-    val name: String,
     val memberCount: Int,
 )
 
@@ -185,9 +193,12 @@ data class HomeSmartCollectionCard(
  */
 private data class HomeAnnouncements(
     val library: List<LibraryGame>,
+    val focusGames: List<LibraryGame>,
     val acquiredBatch: AcquiredGamesAnnouncement,
     val sharedGameAnnouncement: SharedGameAnnouncement?,
     val smartCollections: List<HomeSmartCollectionCard>,
+    val trackedMinutesByGame: Map<Long, Int> = emptyMap(),
+    val latestSessionAtByGame: Map<Long, Long> = emptyMap(),
 )
 
 private data class HomeCollectionInputs(
@@ -198,7 +209,7 @@ private data class HomeCollectionInputs(
 )
 data class HomeCollectionGame(
     val appId: Long,
-    val name: String,
+    val name: String?,
     val iconUrl: String?,
 )
 
@@ -283,6 +294,7 @@ class HomeViewModel @Inject constructor(
         val configured = credState as? CredentialsState.Configured
         HomeUiState(
             loading = false,
+            hasRenderableContent = true,
             configured = configured != null,
             level = xpState.level,
             xpIntoLevel = xpState.xpIntoLevel,
@@ -377,7 +389,7 @@ class HomeViewModel @Inject constructor(
                     val game = gamesById[member.appId]
                     HomeCollectionGame(
                         appId = member.appId,
-                        name = game?.name ?: "Game ${member.appId}",
+                        name = game?.name,
                         iconUrl = game?.iconUrl,
                     )
                 },
@@ -401,7 +413,6 @@ class HomeViewModel @Inject constructor(
                     ?.let { count ->
                         HomeSmartCollectionCard(
                             id = id,
-                            name = smartCollectionName(id),
                             memberCount = count,
                         )
                     }
@@ -444,11 +455,26 @@ class HomeViewModel @Inject constructor(
             acquiredBatch,
             settings.sharedGameAnnouncement,
             smartCollectionCards,
-        ) { library, batch, shared, smartCards -> HomeAnnouncements(library, batch, shared, smartCards) },
+            sessionRepository.trackedMinutesByGame,
+        ) { library, batch, shared, smartCards, trackedMinutesByGame ->
+            HomeAnnouncements(
+                library = library,
+                focusGames = emptyList(),
+                acquiredBatch = batch,
+                sharedGameAnnouncement = shared,
+                smartCollections = smartCards,
+                trackedMinutesByGame = trackedMinutesByGame,
+            )
+        }.combine(gameRepository.goalGames) { announcements, focusGames ->
+            announcements.copy(focusGames = focusGames)
+        }.combine(sessionRepository.latestSessionAtByGame) { announcements, latestSessionAtByGame ->
+            announcements.copy(latestSessionAtByGame = latestSessionAtByGame)
+        },
     ) { state, live, cards, pendingEvents, announcements ->
         val library = announcements.library
         val batch = announcements.acquiredBatch
         val shared = announcements.sharedGameAnnouncement
+        val isGameRunning = live.nowPlaying is NowPlaying.InGame
         val playingAppId = (live.nowPlaying as? NowPlaying.InGame)?.gameId
         val acquired = batch.toUi(library.associate { it.appId to it.name }, time.nowMillis())
         val withCards = state.copy(
@@ -460,6 +486,14 @@ class HomeViewModel @Inject constructor(
                     ),
                 )
             },
+            nextAction = selectHomeNextAction(
+                focusGames = announcements.focusGames,
+                collections = cards,
+                currentlyPlayingAppId = playingAppId,
+                isGameRunning = isGameRunning,
+                trackedMinutesByGame = announcements.trackedMinutesByGame,
+                latestSessionAtByGame = announcements.latestSessionAtByGame,
+            ),
             smartCollections = announcements.smartCollections,
             pendingProgressEvent = pendingEvents.firstOrNull(),
             // Present one durable event at a time. This keeps a queue of simultaneous events from

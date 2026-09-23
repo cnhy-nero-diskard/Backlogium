@@ -15,8 +15,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.example.backlogium.data.local.SharedGameAnnouncement
+import com.example.backlogium.R
 import com.example.backlogium.ui.util.rememberReducedMotion
 
 @Composable
@@ -39,7 +41,7 @@ fun SharedGameAnnouncementBanner(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    text = "Shared game added",
+                    text = stringResource(R.string.home_shared_game_added),
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
@@ -51,10 +53,10 @@ fun SharedGameAnnouncementBanner(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Button(onClick = onViewLibrary) {
-                        Text("View library")
+                        Text(stringResource(R.string.home_view_library))
                     }
                     TextButton(onClick = onDismiss) {
-                        Text("Dismiss")
+                        Text(stringResource(R.string.home_dismiss))
                     }
                 }
             }

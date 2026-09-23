@@ -30,8 +30,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -55,6 +59,8 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
@@ -75,7 +81,10 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -99,7 +108,6 @@ import com.example.backlogium.domain.label
 import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.ProgressEvent
 import com.example.backlogium.domain.SmartCollectionId
-import com.example.backlogium.ui.collections.smartCollectionRule
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.components.RecencyBadge
 import com.example.backlogium.ui.components.accessibilityLabel
@@ -117,6 +125,8 @@ import compose.icons.TablerIcons
 import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.Clock
 import compose.icons.tablericons.DeviceGamepad
+import compose.icons.tablericons.DotsVertical
+import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.Flame
 import compose.icons.tablericons.PlayerPlay
 import compose.icons.tablericons.Trophy
@@ -138,6 +148,8 @@ fun HomeScreen(
     onOpenCollections: () -> Unit = {},
     onPlanGap: () -> Unit = {},
     onOpenSmartCollection: (SmartCollectionId) -> Unit = {},
+    onOpenLibrary: () -> Unit = {},
+    onOpenGame: (Long) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -153,7 +165,10 @@ fun HomeScreen(
         onDispose { onAccentColorChanged(null) }
     }
 
-    if (state.loading) return
+    if (shouldShowHomeLoading(state)) {
+        HomeLoadingContent()
+        return
+    }
 
     // The takeover latches on the first unconfigured composition and is released by the flow
     // itself, not by `configured` flipping. Saving credentials flips it *mid-flow* — the flow
@@ -273,6 +288,8 @@ fun HomeScreen(
             onOpenCollections = onOpenCollections,
             onPlanGap = onPlanGap,
             onOpenSmartCollection = onOpenSmartCollection,
+            onOpenLibrary = onOpenLibrary,
+            onOpenGame = onOpenGame,
             scrollState = scrollState,
             scrollViewport = scrollViewport,
             onReorderCollections = viewModel::reorderCollections,
@@ -293,6 +310,8 @@ private fun InnerHomeContent(
     onOpenCollections: () -> Unit,
     onPlanGap: () -> Unit,
     onOpenSmartCollection: (SmartCollectionId) -> Unit,
+    onOpenLibrary: () -> Unit,
+    onOpenGame: (Long) -> Unit,
     scrollState: ScrollState,
     scrollViewport: Rect?,
     onReorderCollections: (List<Long>) -> Unit,
@@ -303,6 +322,10 @@ private fun InnerHomeContent(
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        if (shouldShowHomeUpdating(state)) {
+            HomeUpdatingIndicator()
+        }
+
         // The one sync affordance Home keeps: the manual trigger lives in Settings now, but a
         // failure is exactly the case where an immediate retry matters, and sending the user
         // two taps away to find one would be the wrong answer. The card is driven by
@@ -339,7 +362,7 @@ private fun InnerHomeContent(
                                 strokeWidth = 2.dp,
                             )
                         } else {
-                            Text("Retry")
+                            Text(stringResource(R.string.home_retry))
                         }
                     }
                 }
@@ -349,13 +372,13 @@ private fun InnerHomeContent(
         val monitoringMessage = when (state.liveMonitoringAvailability) {
             PresenceMonitoringAvailability.AVAILABLE -> null
             PresenceMonitoringAvailability.FOREGROUND_REQUIRED ->
-                "Android only allows live monitoring to start while Backlogium is open. Open the app to resume live updates."
+                stringResource(R.string.home_monitoring_foreground_required)
             PresenceMonitoringAvailability.RUNTIME_BUDGET_EXHAUSTED ->
-                "Android's daily live-monitoring limit was reached. Open the app to resume live updates."
+                stringResource(R.string.home_monitoring_budget_exhausted)
             PresenceMonitoringAvailability.START_REFUSED ->
-                "Android refused the live-monitoring start. Open the app to try again."
+                stringResource(R.string.home_monitoring_start_refused)
             PresenceMonitoringAvailability.START_FAILED ->
-                "Live monitoring could not start. Open the app to try again."
+                stringResource(R.string.home_monitoring_start_failed)
         }
         monitoringMessage?.let { message ->
             Card(
@@ -366,14 +389,14 @@ private fun InnerHomeContent(
             ) {
                 Column(Modifier.padding(16.dp)) {
                     Text(
-                        text = "Live monitoring unavailable",
+                        text = stringResource(R.string.home_live_monitoring_unavailable),
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(text = message)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "Periodic playtime tracking continues.",
+                        text = stringResource(R.string.home_periodic_tracking_continues),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -403,12 +426,15 @@ private fun InnerHomeContent(
                     Spacer(Modifier.width(8.dp))
                     Column {
                         Text(
-                            text = "Quest completed",
+                            text = stringResource(R.string.home_quest_completed),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
                         Text(
-                            text = "Earned on ${event.date}",
+                            text = stringResource(
+                                R.string.home_earned_on,
+                                UiFormat.date(event.date),
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
@@ -417,12 +443,24 @@ private fun InnerHomeContent(
             }
         }
 
+        HomeNextActionSlot(
+            isInGame = state.isInGame,
+            action = state.nextAction,
+            onOpenGame = onOpenGame,
+            onOpenCollection = onOpenCollection,
+            onOpenLibrary = onOpenLibrary,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
         // Level + XP.
         Card(modifier = Modifier.fillMaxWidth()) {
             Box(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text(
-                        text = "Level ${state.level}",
+                        text = stringResource(
+                            R.string.home_level,
+                            UiFormat.count(state.level),
+                        ),
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                     )
@@ -433,8 +471,12 @@ private fun InnerHomeContent(
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "${state.xpIntoLevel} / ${state.xpForNext} XP to next level " +
-                            "· ${state.totalXp} total",
+                        text = stringResource(
+                            R.string.home_xp_progress,
+                            UiFormat.count(state.xpIntoLevel),
+                            UiFormat.count(state.xpForNext),
+                            UiFormat.count(state.totalXp),
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -442,6 +484,8 @@ private fun InnerHomeContent(
                     resId = R.raw.levelup,
                     play = playLevelUp,
                     onFinished = onLevelUpFinished,
+                    staticLabel = stringResource(R.string.home_level_up_earned),
+                    staticTag = HOME_LEVEL_UP_STATIC_TAG,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(8.dp)
@@ -453,7 +497,10 @@ private fun InnerHomeContent(
         // Today's quest.
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
-                Text("Today's quest", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    stringResource(R.string.home_todays_quest),
+                    style = MaterialTheme.typography.titleMedium,
+                )
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
@@ -468,13 +515,18 @@ private fun InnerHomeContent(
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = if (state.questMet) "Complete" else "In progress",
+                        text = stringResource(
+                            if (state.questMet) R.string.home_complete else R.string.home_in_progress,
+                        ),
                         style = MaterialTheme.typography.bodyLarge,
                     )
                 }
                 Text(
-                    text = "${UiFormat.minutes(state.todayMinutes)} of " +
-                        "${UiFormat.minutes(state.questThreshold)} played today",
+                    text = stringResource(
+                        R.string.home_played_today,
+                        UiFormat.localizedMinutes(state.todayMinutes),
+                        UiFormat.localizedMinutes(state.questThreshold),
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -484,7 +536,10 @@ private fun InnerHomeContent(
         Card(modifier = Modifier.fillMaxWidth()) {
             Box(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("Streak", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        stringResource(R.string.home_streak),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                     Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
@@ -500,15 +555,25 @@ private fun InnerHomeContent(
                             // count without that implication; once met, the plain "days"
                             // phrasing applies exactly as it would for any other completed day.
                             text = if (state.questMet) {
-                                "${state.currentStreak} day${if (state.currentStreak == 1) "" else "s"}"
+                                pluralStringResource(
+                                    R.plurals.home_streak_days,
+                                    state.currentStreak,
+                                    UiFormat.count(state.currentStreak),
+                                )
                             } else {
-                                "${state.currentStreak}-day streak"
+                                stringResource(
+                                    R.string.home_streak_pending,
+                                    UiFormat.count(state.currentStreak),
+                                )
                             },
                             style = MaterialTheme.typography.headlineSmall,
                         )
                     }
                     Text(
-                        text = "Longest: ${state.longestStreak}",
+                        text = stringResource(
+                            R.string.home_longest,
+                            UiFormat.count(state.longestStreak),
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -517,6 +582,8 @@ private fun InnerHomeContent(
                     resId = R.raw.streak_milestone,
                     play = pendingMilestone != null,
                     onFinished = { pendingMilestone?.let(onStreakMilestoneFinished) },
+                    staticLabel = stringResource(R.string.home_streak_milestone_earned),
+                    staticTag = HOME_STREAK_MILESTONE_STATIC_TAG,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(8.dp)
@@ -555,6 +622,62 @@ private fun InnerHomeContent(
     }
 }
 
+internal const val HOME_LOADING_TAG = "home-loading"
+internal const val HOME_LOADING_PLACEHOLDER_TAG = "home-loading-placeholder"
+internal const val HOME_UPDATING_TAG = "home-updating"
+
+/** Bounded first-load presentation; it keeps the Home hierarchy recognizable without fake data. */
+@Composable
+internal fun HomeLoadingContent(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 24.dp)
+            .testTag(HOME_LOADING_TAG),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.home_loading_title),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+        listOf(144.dp, 116.dp, 116.dp, 164.dp).forEach { height ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(height)
+                    .testTag(HOME_LOADING_PLACEHOLDER_TAG),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                ),
+            ) {}
+        }
+    }
+}
+
+/** Small retained-content status; the cached Home remains mounted underneath it. */
+@Composable
+internal fun HomeUpdatingIndicator(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag(HOME_UPDATING_TAG),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(18.dp),
+            strokeWidth = 2.dp,
+        )
+        Text(
+            text = stringResource(R.string.home_updating),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 /**
  * The Home collections section: one mission card per collection plus a create entry point.
  * Renders purely from locally stored state (offline-first), with a dedicated empty state.
@@ -569,8 +692,105 @@ internal fun <T> homeCollectionOrderAfterCancelledDrag(
     currentIndex: Int,
 ): List<T> = if (currentIndex != initialIndex) persistedCards else currentCards
 
+internal const val HOME_COLLECTIONS_NEW_TAG = "home-collections-new"
+internal const val HOME_COLLECTIONS_ACTIONS_TAG = "home-collections-actions"
+internal const val HOME_COLLECTIONS_VIEW_ALL_TAG = "home-collections-view-all"
+internal const val HOME_COLLECTIONS_REORDER_TAG = "home-collections-reorder"
+internal const val HOME_COLLECTION_CARD_TAG_PREFIX = "home-collection-card-"
+
 @Composable
-private fun CollectionsSection(
+internal fun HomeCollectionsHeader(
+    onCreateCollection: () -> Unit,
+    onOpenCollections: () -> Unit,
+    onPlanGap: () -> Unit,
+    canReorder: Boolean = false,
+    reorderMode: Boolean = false,
+    onToggleReorder: () -> Unit = {},
+) {
+    var secondaryActionsExpanded by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.home_collections),
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Button(
+            onClick = onCreateCollection,
+            modifier = Modifier.testTag(HOME_COLLECTIONS_NEW_TAG),
+        ) {
+            Text(stringResource(R.string.home_new))
+        }
+        Box {
+            IconButton(
+                onClick = { secondaryActionsExpanded = true },
+                modifier = Modifier.testTag(HOME_COLLECTIONS_ACTIONS_TAG),
+            ) {
+                Icon(
+                    imageVector = TablerIcons.DotsVertical,
+                    contentDescription = stringResource(R.string.home_collection_actions),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            DropdownMenu(
+                expanded = secondaryActionsExpanded,
+                onDismissRequest = { secondaryActionsExpanded = false },
+            ) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(R.string.home_view_all),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    onClick = {
+                        secondaryActionsExpanded = false
+                        onOpenCollections()
+                    },
+                    modifier = Modifier.testTag(HOME_COLLECTIONS_VIEW_ALL_TAG),
+                )
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(R.string.home_plan_gap),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    onClick = {
+                        secondaryActionsExpanded = false
+                        onPlanGap()
+                    },
+                    modifier = Modifier.testTag(HOME_PLAN_GAP_TAG),
+                )
+                if (canReorder) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(
+                                    if (reorderMode) R.string.home_done else R.string.home_reorder,
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        onClick = {
+                            secondaryActionsExpanded = false
+                            onToggleReorder()
+                        },
+                        modifier = Modifier.testTag(HOME_COLLECTIONS_REORDER_TAG),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun CollectionsSection(
     cards: List<HomeCollectionCard>,
     onOpenCollection: (Long) -> Unit,
     onCreateCollection: () -> Unit,
@@ -582,6 +802,7 @@ private fun CollectionsSection(
     modifier: Modifier = Modifier,
 ) {
     val autoScrollScope = rememberCoroutineScope()
+    var reorderMode by remember { mutableStateOf(false) }
     var orderedCards by remember { mutableStateOf(cards) }
     val cardBounds = remember { mutableStateMapOf<Long, Rect>() }
     val draggedId = remember { mutableStateOf<Long?>(null) }
@@ -603,6 +824,30 @@ private fun CollectionsSection(
         cardBounds.keys.toList()
             .filterNot { it in cardsById }
             .forEach(cardBounds::remove)
+        if (cards.size < 2) reorderMode = false
+    }
+
+    fun applyCollectionReorder(
+        fromIndex: Int,
+        targetIndex: Int,
+        persist: Boolean,
+    ) {
+        val activeCards = latestCards.value
+        val reordered = homeCollectionOrderAfterMove(activeCards, fromIndex, targetIndex)
+        if (reordered == activeCards) return
+        orderedCards = reordered
+        if (draggedId.value != null) currentIndex.value = targetIndex
+        if (persist) onReorderCollections(reordered.map { it.collectionId })
+    }
+
+    fun moveCollection(collectionId: Long, delta: Int): Boolean {
+        val index = latestCards.value.indexOfFirst { it.collectionId == collectionId }
+        val targetIndex = index + delta
+        if (index !in latestCards.value.indices || targetIndex !in latestCards.value.indices) {
+            return false
+        }
+        applyCollectionReorder(index, targetIndex, persist = true)
+        return true
     }
 
     fun clearDrag(revertToBaseline: Boolean = false) {
@@ -627,55 +872,132 @@ private fun CollectionsSection(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Collections",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(onClick = onOpenCollections) { Text("View all") }
-            TextButton(onClick = onCreateCollection) { Text("New") }
-        }
-        // Deliberately its own row rather than a third button crowded into the header: the gap
-        // planner answers a different question from "group these games", and a tab for it would
-        // change the four-tab navigation contract.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(
-                onClick = onPlanGap,
-                modifier = Modifier.testTag(HOME_PLAN_GAP_TAG),
-            ) {
-                Text("Plan a gap before a release")
-            }
-        }
+        HomeCollectionsHeader(
+            onCreateCollection = onCreateCollection,
+            onOpenCollections = onOpenCollections,
+            onPlanGap = onPlanGap,
+            canReorder = cards.size > 1,
+            reorderMode = reorderMode,
+            onToggleReorder = {
+                if (cards.size > 1) {
+                    if (reorderMode) clearDrag(revertToBaseline = true)
+                    reorderMode = !reorderMode
+                }
+            },
+        )
         if (cards.isEmpty()) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("No collections yet", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        stringResource(R.string.home_no_collections),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "Group the games that matter right now — a completion goal, a " +
-                            "deadline, or a play order.",
+                        text = stringResource(R.string.home_no_collections_description),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
             }
         } else {
-            orderedCards.forEach { card ->
+            orderedCards.forEachIndexed { position, card ->
                 key(card.collectionId) {
                     val isDragged = draggedId.value == card.collectionId
                     val cardCenter = cardBounds[card.collectionId]?.center?.y ?: pointerRootY.floatValue
                     val dragOffset = if (isDragged) pointerRootY.floatValue - cardCenter else 0f
+                    val dragHandleModifier = if (reorderMode) {
+                        Modifier.pointerInput(card.collectionId, reorderMode) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    if (latestCards.value.size <= 1) {
+                                        return@detectDragGesturesAfterLongPress
+                                    }
+                                    val index = latestCards.value.indexOfFirst {
+                                        it.collectionId == card.collectionId
+                                    }
+                                    if (index < 0) return@detectDragGesturesAfterLongPress
+                                    val center = cardBounds[card.collectionId]?.center?.y
+                                        ?: return@detectDragGesturesAfterLongPress
+                                    dragBaseline.value = latestPersistedCards.value
+                                    draggedId.value = card.collectionId
+                                    initialIndex.value = index
+                                    currentIndex.value = index
+                                    pointerRootY.floatValue = center
+                                },
+                                onDragCancel = { clearDrag(revertToBaseline = true) },
+                                onDragEnd = {
+                                    if (draggedId.value == card.collectionId) {
+                                        if (currentIndex.value != initialIndex.value) {
+                                            onReorderCollections(latestCards.value.map { it.collectionId })
+                                        }
+                                        clearDrag()
+                                    }
+                                },
+                                onDrag = { change, dragAmount ->
+                                    if (draggedId.value != card.collectionId) {
+                                        return@detectDragGesturesAfterLongPress
+                                    }
+                                    change.consume()
+                                    pointerRootY.floatValue += dragAmount.y
+
+                                    scrollViewport?.let { viewport ->
+                                        val edgeDistance = 72f
+                                        val scrollDelta = when {
+                                            pointerRootY.floatValue < viewport.top + edgeDistance ->
+                                                -((viewport.top + edgeDistance - pointerRootY.floatValue) /
+                                                    edgeDistance * 24f)
+                                            pointerRootY.floatValue > viewport.bottom - edgeDistance ->
+                                                ((pointerRootY.floatValue - (viewport.bottom - edgeDistance)) /
+                                                    edgeDistance * 24f)
+                                            else -> 0f
+                                        }
+                                        autoScrollJob.value?.cancel()
+                                        autoScrollJob.value = if (scrollDelta != 0f) {
+                                            autoScrollScope.launch { scrollState.scrollBy(scrollDelta) }
+                                        } else {
+                                            null
+                                        }
+                                    }
+
+                                    val activeCards = latestCards.value
+                                    val fromIndex = currentIndex.value
+                                    if (fromIndex !in activeCards.indices) {
+                                        return@detectDragGesturesAfterLongPress
+                                    }
+                                    var targetIndex = activeCards.lastIndex
+                                    activeCards.forEachIndexed { index, candidate ->
+                                        val center = cardBounds[candidate.collectionId]?.center?.y
+                                            ?: return@forEachIndexed
+                                        if (pointerRootY.floatValue < center &&
+                                            targetIndex == activeCards.lastIndex
+                                        ) {
+                                            targetIndex = if (index > fromIndex) index - 1 else index
+                                        }
+                                    }
+                                    applyCollectionReorder(
+                                        fromIndex = fromIndex,
+                                        targetIndex = targetIndex.coerceIn(0, activeCards.lastIndex),
+                                        persist = false,
+                                    )
+                                },
+                            )
+                        }
+                    } else {
+                        Modifier
+                    }
                     CollectionCard(
                         card = card,
                         onClick = {
-                            if (draggedId.value == null) onOpenCollection(card.collectionId)
+                            if (!reorderMode && draggedId.value == null) {
+                                onOpenCollection(card.collectionId)
+                            }
                         },
+                        reorderMode = reorderMode,
+                        position = position,
+                        totalCount = orderedCards.size,
+                        onMoveUp = { moveCollection(card.collectionId, -1) },
+                        onMoveDown = { moveCollection(card.collectionId, 1) },
+                        dragHandleModifier = dragHandleModifier,
                         dragged = isDragged,
                         dragOffset = dragOffset,
                         modifier = Modifier
@@ -689,79 +1011,30 @@ private fun CollectionsSection(
                                         coordinates.size.height.toFloat(),
                                     ),
                                 )
-                            }
-                            .pointerInput(card.collectionId) {
-                                detectDragGesturesAfterLongPress(
-                                    onDragStart = {
-                                        if (latestCards.value.size <= 1) return@detectDragGesturesAfterLongPress
-                                        val index = latestCards.value.indexOfFirst {
-                                            it.collectionId == card.collectionId
-                                        }
-                                        val center = cardBounds[card.collectionId]?.center?.y
-                                            ?: return@detectDragGesturesAfterLongPress
-                                        dragBaseline.value = latestPersistedCards.value
-                                        draggedId.value = card.collectionId
-                                        initialIndex.value = index
-                                        currentIndex.value = index
-                                        pointerRootY.floatValue = center
-                                    },
-                                    onDragCancel = { clearDrag(revertToBaseline = true) },
-                                    onDragEnd = {
-                                        if (draggedId.value == card.collectionId) {
-                                            if (currentIndex.value != initialIndex.value) {
-                                                onReorderCollections(latestCards.value.map { it.collectionId })
-                                            }
-                                            clearDrag()
-                                        }
-                                    },
-                                    onDrag = { change, dragAmount ->
-                                        if (draggedId.value != card.collectionId) return@detectDragGesturesAfterLongPress
-                                        change.consume()
-                                        pointerRootY.floatValue += dragAmount.y
-
-                                        scrollViewport?.let { viewport ->
-                                            val edgeDistance = 72f
-                                            val scrollDelta = when {
-                                                pointerRootY.floatValue < viewport.top + edgeDistance ->
-                                                    -((viewport.top + edgeDistance - pointerRootY.floatValue) / edgeDistance * 24f)
-                                                pointerRootY.floatValue > viewport.bottom - edgeDistance ->
-                                                    ((pointerRootY.floatValue - (viewport.bottom - edgeDistance)) / edgeDistance * 24f)
-                                                else -> 0f
-                                            }
-                                            autoScrollJob.value?.cancel()
-                                            autoScrollJob.value = if (scrollDelta != 0f) {
-                                                autoScrollScope.launch { scrollState.scrollBy(scrollDelta) }
-                                            } else {
-                                                null
-                                            }
-                                        }
-
-                                        val activeCards = latestCards.value
-                                        val fromIndex = currentIndex.value
-                                        if (fromIndex !in activeCards.indices) return@detectDragGesturesAfterLongPress
-                                        var targetIndex = activeCards.lastIndex
-                                        activeCards.forEachIndexed { index, candidate ->
-                                            val center = cardBounds[candidate.collectionId]?.center?.y
-                                                ?: return@forEachIndexed
-                                            if (pointerRootY.floatValue < center && targetIndex == activeCards.lastIndex) {
-                                                targetIndex = if (index > fromIndex) index - 1 else index
-                                            }
-                                        }
-                                        if (targetIndex != fromIndex) {
-                                            val reordered = activeCards.toMutableList()
-                                            val moved = reordered.removeAt(fromIndex)
-                                            reordered.add(targetIndex.coerceIn(0, reordered.size), moved)
-                                            orderedCards = reordered
-                                            currentIndex.value = targetIndex
-                                        }
-                                    },
-                                )
                             },
                     )
                 }
             }
         }
     }
+}
+
+@Composable
+private fun smartCollectionName(id: SmartCollectionId): String = when (id) {
+    SmartCollectionId.QUICK_WINS -> stringResource(R.string.home_smart_quick_wins)
+    SmartCollectionId.NEVER_STARTED -> stringResource(R.string.home_smart_never_started)
+    SmartCollectionId.ALMOST_DONE -> stringResource(R.string.home_smart_almost_done)
+    SmartCollectionId.DROPPED -> stringResource(R.string.home_smart_dropped)
+    SmartCollectionId.COMPLETED -> stringResource(R.string.home_smart_completed)
+}
+
+@Composable
+private fun smartCollectionRule(id: SmartCollectionId): String = when (id) {
+    SmartCollectionId.QUICK_WINS -> stringResource(R.string.home_smart_rule_quick_wins)
+    SmartCollectionId.NEVER_STARTED -> stringResource(R.string.home_smart_rule_never_started)
+    SmartCollectionId.ALMOST_DONE -> stringResource(R.string.home_smart_rule_almost_done)
+    SmartCollectionId.DROPPED -> stringResource(R.string.home_smart_rule_dropped)
+    SmartCollectionId.COMPLETED -> stringResource(R.string.home_smart_rule_completed)
 }
 
 /**
@@ -782,7 +1055,10 @@ private fun SmartCollectionsSection(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         DashedSectionDivider(Modifier.padding(vertical = 6.dp))
-        Text("Derived collections", style = MaterialTheme.typography.titleMedium)
+        Text(
+            stringResource(R.string.home_derived_collections),
+            style = MaterialTheme.typography.titleMedium,
+        )
         cards.forEach { card ->
             key(card.id) {
                 SmartCollectionCard(
@@ -821,10 +1097,16 @@ private fun SmartCollectionCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val name = smartCollectionName(card.id)
+    val rule = smartCollectionRule(card.id)
+    val openDescription = stringResource(
+        R.string.home_open_derived_collection,
+        name,
+    )
     Card(
         onClick = onClick,
         modifier = modifier.semantics {
-            contentDescription = "Open ${card.name} derived collection"
+            contentDescription = openDescription
         },
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -836,18 +1118,18 @@ private fun SmartCollectionCard(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = card.name,
+                    text = name,
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    text = "${card.memberCount}",
+                    text = UiFormat.count(card.memberCount),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
             Text(
-                text = smartCollectionRule(card.id),
+                text = rule,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -857,9 +1139,15 @@ private fun SmartCollectionCard(
 
 /** One collection's mission card: its name plus its mode-specific banner, accented by palette. */
 @Composable
-private fun CollectionCard(
+internal fun CollectionCard(
     card: HomeCollectionCard,
     onClick: () -> Unit,
+    reorderMode: Boolean = false,
+    position: Int = -1,
+    totalCount: Int = 0,
+    onMoveUp: () -> Boolean = { false },
+    onMoveDown: () -> Boolean = { false },
+    dragHandleModifier: Modifier = Modifier,
     dragged: Boolean = false,
     dragOffset: Float = 0f,
     modifier: Modifier = Modifier,
@@ -906,9 +1194,37 @@ private fun CollectionCard(
     val cardSurface = card.accent?.let {
         accentColor.copy(alpha = 0.16f).compositeOver(baseSurface)
     } ?: baseSurface
+    val moveUpLabel = stringResource(R.string.home_move_up)
+    val moveDownLabel = stringResource(R.string.home_move_down)
+    val reorderActions = if (reorderMode) {
+        listOfNotNull(
+            (position > 0).takeIf { it }?.let {
+                CustomAccessibilityAction(moveUpLabel) { onMoveUp() }
+            },
+            (position >= 0 && position < totalCount - 1).takeIf { it }?.let {
+                CustomAccessibilityAction(moveDownLabel) { onMoveDown() }
+            },
+        )
+    } else {
+        emptyList()
+    }
+    val positionDescription = stringResource(
+        R.string.home_collection_position,
+        position + 1,
+        totalCount,
+    )
+    val dragDescription = stringResource(R.string.home_drag_to_reorder, card.name)
     Card(
         onClick = onClick,
+        enabled = !reorderMode,
         modifier = modifier
+            .testTag(HOME_COLLECTION_CARD_TAG_PREFIX + card.collectionId)
+            .semantics {
+                if (reorderMode) {
+                    customActions = reorderActions
+                    stateDescription = positionDescription
+                }
+            }
             .shadow(
                 elevation = 12.dp * glowVisibility,
                 shape = RoundedCornerShape(12.dp),
@@ -1001,6 +1317,22 @@ private fun CollectionCard(
                     games = card.games,
                     accentColor = accentColor,
                 )
+                if (reorderMode) {
+                    Box(
+                        modifier = dragHandleModifier
+                            .size(48.dp)
+                            .semantics {
+                                contentDescription = dragDescription
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = TablerIcons.ArrowsSort,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
         }
     }
@@ -1039,7 +1371,10 @@ private fun CollectionGameThumbs(
         }
         if (preview.overflowCount > 0) {
             Text(
-                text = "${preview.overflowCount}+",
+                text = stringResource(
+                    R.string.home_collection_overflow,
+                    preview.overflowCount,
+                ),
                 style = MaterialTheme.typography.labelSmall,
                 color = accentColor,
             )
@@ -1054,54 +1389,82 @@ private fun modeIcon(mode: CollectionMode) = when (mode) {
     CollectionMode.ORDERED_QUEUE -> TablerIcons.PlayerPlay
 }
 
+@Composable
 private fun modeAccessibilityLabel(mode: CollectionMode): String = when (mode) {
-    CollectionMode.BASIC -> "Basic list"
-    CollectionMode.COMPLETION_GOAL -> "Completion goal"
-    CollectionMode.DEADLINE_GOAL -> "Deadline goal"
-    CollectionMode.ORDERED_QUEUE -> "Ordered queue"
+    CollectionMode.BASIC -> stringResource(R.string.home_mode_basic)
+    CollectionMode.COMPLETION_GOAL -> stringResource(R.string.home_mode_completion_goal)
+    CollectionMode.DEADLINE_GOAL -> stringResource(R.string.home_mode_deadline_goal)
+    CollectionMode.ORDERED_QUEUE -> stringResource(R.string.home_mode_ordered_queue)
 }
 
 /** A collection's mode-specific banner copy; a basic list shows its member count. */
+@Composable
 private fun bannerText(banner: CollectionBanner): String = when (banner.mode) {
-    CollectionMode.BASIC -> banner.memberCountLabel
+    CollectionMode.BASIC -> pluralStringResource(
+        R.plurals.home_collection_games,
+        banner.memberCount,
+        UiFormat.count(banner.memberCount),
+    )
     CollectionMode.COMPLETION_GOAL -> {
-        val progress = banner.completionFraction?.let { percent(it) } ?: "—"
+        val progress = banner.completionFraction?.let { percent(it) }
+            ?: stringResource(R.string.home_not_available)
         val trophies = if (banner.achievementsUnlocked != null && banner.achievementsTotal != null) {
-            "${banner.achievementsUnlocked}/${banner.achievementsTotal} trophies · " +
-                "${banner.achievementsRemaining} left"
+            stringResource(
+                R.string.home_trophy_progress,
+                UiFormat.count(banner.achievementsUnlocked),
+                UiFormat.count(banner.achievementsTotal),
+                UiFormat.count(banner.achievementsRemaining),
+            )
         } else {
-            "No trophy data"
+            stringResource(R.string.home_no_trophy_data)
         }
-        "$progress complete · $trophies"
+        stringResource(R.string.home_completion_progress, progress, trophies)
     }
     CollectionMode.DEADLINE_GOAL -> {
-        val progress = banner.completionFraction?.let { percent(it) } ?: "—"
+        val progress = banner.completionFraction?.let { percent(it) }
+            ?: stringResource(R.string.home_not_available)
         val countdown = when {
             banner.daysRemaining != null && banner.daysRemaining < 0 ->
-                "${kotlin.math.abs(banner.daysRemaining)}d past deadline"
-            banner.daysRemaining == 0L -> "Deadline today"
-            banner.daysRemaining != null -> "${banner.daysRemaining}d left"
-            else -> "No deadline set"
+                pluralStringResource(
+                    R.plurals.home_days_past_deadline,
+                    kotlin.math.abs(banner.daysRemaining).toInt(),
+                    kotlin.math.abs(banner.daysRemaining),
+                )
+            banner.daysRemaining == 0L -> stringResource(R.string.home_deadline_today)
+            banner.daysRemaining != null -> pluralStringResource(
+                R.plurals.home_deadline_days_left,
+                banner.daysRemaining.toInt(),
+                banner.daysRemaining,
+            )
+            else -> stringResource(R.string.home_no_deadline)
         }
         val status = when (banner.pacingState) {
             CollectionPacingState.AT_RISK -> banner.requiredMinutesPerActiveDay?.let {
-                "Need ~${UiFormat.minutes(it.toInt())}/day"
-            } ?: "Attention needed"
-            CollectionPacingState.INCOMPLETE_DATA -> "Incomplete"
-            CollectionPacingState.LEARNING -> "Learning"
+                stringResource(R.string.home_need_per_day, UiFormat.localizedMinutes(it.toInt()))
+            } ?: stringResource(R.string.home_attention_needed)
+            CollectionPacingState.INCOMPLETE_DATA -> stringResource(R.string.home_incomplete)
+            CollectionPacingState.LEARNING -> stringResource(R.string.home_learning)
             else -> progress
         }
-        "$countdown · $status"
+        stringResource(R.string.home_deadline_summary, countdown, status)
     }
     CollectionMode.ORDERED_QUEUE -> when {
-        banner.queueCompleted -> "Queue complete — no next game"
-        banner.nextUp != null -> "Next: ${banner.nextUp.name} (#${banner.nextUpPosition})"
-        else -> banner.memberCountLabel
+        banner.queueCompleted -> stringResource(R.string.home_queue_complete)
+        banner.nextUp != null -> stringResource(
+            R.string.home_queue_next,
+            banner.nextUp.name ?: stringResource(R.string.home_game_fallback, banner.nextUp.appId),
+            banner.nextUpPosition ?: 0,
+        )
+        else -> pluralStringResource(
+            R.plurals.home_collection_games,
+            banner.memberCount,
+            UiFormat.count(banner.memberCount),
+        )
     }
 }
 
 /** Format a 0..1 completion fraction as a whole percent, e.g. 0.7 → "70%". */
-private fun percent(fraction: Double): String = "${kotlin.math.round(fraction * 100)}%"
+private fun percent(fraction: Double): String = UiFormat.percent(fraction)
 
 /**
  * The most visually prominent element on Home while the player is in-game: large game art, the
@@ -1133,6 +1496,11 @@ private fun NowPlayingPanel(
     val onContainer = MaterialTheme.colorScheme.onTertiaryContainer
 
     val elapsedLabel = UiFormat.liveElapsed(elapsedMillis)
+    val nowPlayingDescription = stringResource(
+        R.string.home_now_playing_accessibility,
+        name,
+        elapsedLabel,
+    )
 
     Box(
         modifier = Modifier
@@ -1194,7 +1562,7 @@ private fun NowPlayingPanel(
             // own: this node merges its descendants, so a nested contentDescription is swallowed.
             .semantics(mergeDescendants = true) {
                 contentDescription = listOfNotNull(
-                    "Now playing $name, playing for $elapsedLabel",
+                    nowPlayingDescription,
                     recencyState?.accessibilityLabel,
                 ).joinToString(", ")
             },
@@ -1253,7 +1621,7 @@ private fun NowPlayingPanel(
                 // "Playing for" reads as accumulated time since detection, not an exact launch
                 // time — detection can lag the true start by up to the periodic sync's interval.
                 Text(
-                    text = "Playing for $elapsedLabel",
+                    text = stringResource(R.string.home_playing_for, elapsedLabel),
                     style = MaterialTheme.typography.bodyMedium,
                     color = onContainer,
                 )
@@ -1317,6 +1685,9 @@ private const val ART_BACKDROP_FADE_END = 0.95f
 /** Fraction of the panel height over which the art fades in, keeping its top edge seamless. */
 private const val ART_BACKDROP_TOP_FADE_END = 0.5f
 
+internal const val HOME_LEVEL_UP_STATIC_TAG = "home-level-up-static"
+internal const val HOME_STREAK_MILESTONE_STATIC_TAG = "home-streak-milestone-static"
+
 /** Elapsed time since [startedAt], ticking every second with no network involved. Zero when null. */
 @Composable
 private fun rememberElapsedMillis(startedAt: Long?): State<Long> {
@@ -1378,21 +1749,44 @@ private fun NowPlayingIconFallback() {
  * Renders nothing while idle so it never affects layout when not celebrating.
  */
 @Composable
-private fun CelebrationAnimation(
+internal fun CelebrationAnimation(
     @RawRes resId: Int,
     play: Boolean,
     onFinished: () -> Unit,
+    staticLabel: String,
+    staticTag: String,
     modifier: Modifier = Modifier,
+    reducedMotionOverride: Boolean? = null,
 ) {
+    val reducedMotion = reducedMotionOverride ?: rememberReducedMotion()
     val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(resId))
     val progress by animateLottieCompositionAsState(
         composition = composition,
-        isPlaying = play,
+        isPlaying = play && !reducedMotion,
         iterations = 1,
         restartOnPlay = true,
     )
 
-    if (play) {
+    if (play && reducedMotion) {
+        Card(
+            modifier = modifier.testTag(staticTag),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+            ),
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = TablerIcons.Trophy,
+                    contentDescription = staticLabel,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
+        }
+    } else if (play) {
         LottieAnimation(
             composition = composition,
             progress = { progress },
@@ -1400,8 +1794,14 @@ private fun CelebrationAnimation(
         )
     }
 
-    LaunchedEffect(play, progress) {
-        if (play && progress >= 1f) onFinished()
+    LaunchedEffect(play, reducedMotion) {
+        if (play && reducedMotion) {
+            withFrameNanos { }
+            onFinished()
+        }
+    }
+    LaunchedEffect(play, reducedMotion, progress) {
+        if (play && !reducedMotion && progress >= 1f) onFinished()
     }
 }
 

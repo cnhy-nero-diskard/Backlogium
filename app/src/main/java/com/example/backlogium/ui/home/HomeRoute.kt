@@ -20,6 +20,7 @@ fun HomeRoute(
     onPlanGap: () -> Unit = {},
     onOpenSmartCollection: (SmartCollectionId) -> Unit = {},
     onOpenLibrary: () -> Unit = {},
+    onOpenGame: (Long) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -32,6 +33,8 @@ fun HomeRoute(
             onOpenCollections = onOpenCollections,
             onPlanGap = onPlanGap,
             onOpenSmartCollection = onOpenSmartCollection,
+            onOpenLibrary = onOpenLibrary,
+            onOpenGame = onOpenGame,
             viewModel = viewModel,
         )
 
