@@ -22,4 +22,18 @@ fun homeCollectionContainsPlayingGame(
     playingAppId: Long?,
 ): Boolean = playingAppId != null && games.any { it.appId == playingAppId }
 
+/** Move one collection card to an explicit position, preserving every other card's order. */
+internal fun <T> homeCollectionOrderAfterMove(
+    cards: List<T>,
+    fromIndex: Int,
+    targetIndex: Int,
+): List<T> {
+    if (fromIndex !in cards.indices || targetIndex !in cards.indices || fromIndex == targetIndex) {
+        return cards
+    }
+    return cards.toMutableList().apply {
+        add(targetIndex, removeAt(fromIndex))
+    }
+}
+
 const val HOME_COLLECTION_THUMBNAIL_LIMIT: Int = 3
