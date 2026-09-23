@@ -86,15 +86,22 @@ git commit -m "chore: archive <name> change"
 git push
 ```
 
-### 4. Merge
+### 4. Merge (queue behind CI)
+
+`master` enforces required CI status checks with auto-merge enabled, so queue the
+merge rather than merging immediately — GitHub then waits for every required check:
 
 ```bash
-gh pr merge <number> --merge --delete-branch
+gh pr merge <number> --auto --merge --delete-branch
 ```
 
-- Use `--squash` or `--rebase` if the user asks.
+- Use `--squash` or `--rebase` instead of `--merge` only if the user asks.
 - The base branch is `master` (this repo's default branch).
-- Report the merge result.
+- Before queueing, review CI state with `gh pr checks <number>`; after queueing,
+  report that auto-merge is pending — GitHub merges automatically once every
+  required check passes.
+- If any required check fails, the PR stays blocked: report the failure instead of
+  retrying with an immediate (non-`--auto`) merge.
 
 ## Mode B — Bump a version
 
@@ -124,3 +131,5 @@ gh pr merge <number> --merge --delete-branch
 - Do not force-push, delete remote branches, or rewrite history.
 - If the working tree is dirty, stop and ask before checking out `master`.
 - Report clearly what was synced, archived, merged, or tagged.
+- Always queue merges with `--auto` — it merges at once when CI is already green;
+  never merge without it to sidestep pending CI.
