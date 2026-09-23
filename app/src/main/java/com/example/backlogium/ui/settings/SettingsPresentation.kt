@@ -319,16 +319,19 @@ fun settingsGroupSummaries(state: SettingsUiState): List<SettingsGroupSummary> {
         }
     }
 
-    val accountBlocking = !state.configured || state.lastSyncError != null
+    val accountBlocking = !state.configured ||
+        state.lastSyncError != null ||
+        state.updateCheckSeverity == SettingsResultSeverity.ERROR
     val accountInProgress = state.isSyncing || state.isReconciling
     val accountRecommended = state.appUpdateState.available != null
     val accountAttention = settingsAttention(accountBlocking, accountInProgress, accountRecommended)
 
+    val gameplayBlocking = state.manualSharedGameFeedback?.tone == ManualImportFeedbackTone.ERROR
     val gameplayInProgress = state.manualSharedGameBusy
     val gameplayRecommended = state.nonGameCandidateCount > 0
-    val gameplayAttention = settingsAttention(false, gameplayInProgress, gameplayRecommended)
+    val gameplayAttention = settingsAttention(gameplayBlocking, gameplayInProgress, gameplayRecommended)
 
-    val dataBlocking = state.cloudHealthy == false
+    val dataBlocking = state.hasDataAttention()
     val dataInProgress = state.cloudBusy ||
         state.cloudPresenceRefilingBusy ||
         state.backupBusy ||
@@ -354,6 +357,9 @@ fun settingsGroupSummaries(state: SettingsUiState): List<SettingsGroupSummary> {
             status = when (accountAttention) {
                 SettingsAttention.BLOCKING if !state.configured ->
                     SettingsSummaryText(R.string.settings_summary_account_connect)
+                SettingsAttention.BLOCKING if state.updateCheckSeverity == SettingsResultSeverity.ERROR &&
+                    state.lastSyncError == null ->
+                    SettingsSummaryText(R.string.settings_summary_account_update_check_failed)
                 SettingsAttention.BLOCKING -> SettingsSummaryText(R.string.settings_summary_account_sync_failed)
                 SettingsAttention.IN_PROGRESS -> SettingsSummaryText(R.string.settings_summary_account_syncing)
                 SettingsAttention.RECOMMENDED -> SettingsSummaryText(R.string.settings_summary_account_update_ready)
@@ -362,6 +368,9 @@ fun settingsGroupSummaries(state: SettingsUiState): List<SettingsGroupSummary> {
             nextAction = when (accountAttention) {
                 SettingsAttention.BLOCKING if !state.configured ->
                     SettingsSummaryText(R.string.settings_action_connect_account)
+                SettingsAttention.BLOCKING if state.updateCheckSeverity == SettingsResultSeverity.ERROR &&
+                    state.lastSyncError == null ->
+                    SettingsSummaryText(R.string.settings_action_retry_update_check)
                 SettingsAttention.BLOCKING -> SettingsSummaryText(R.string.settings_action_retry_sync)
                 SettingsAttention.IN_PROGRESS -> SettingsSummaryText(R.string.settings_action_view_progress)
                 SettingsAttention.RECOMMENDED -> SettingsSummaryText(R.string.settings_action_review_update)
@@ -373,6 +382,7 @@ fun settingsGroupSummaries(state: SettingsUiState): List<SettingsGroupSummary> {
             group = SettingsGroup.GAMEPLAY,
             title = SettingsSummaryText(R.string.settings_group_gameplay_title),
             status = when (gameplayAttention) {
+                SettingsAttention.BLOCKING -> SettingsSummaryText(R.string.settings_summary_gameplay_attention)
                 SettingsAttention.IN_PROGRESS -> SettingsSummaryText(R.string.settings_summary_gameplay_checking)
                 SettingsAttention.RECOMMENDED -> SettingsSummaryText(
                     R.plurals.settings_summary_gameplay_candidates,
@@ -424,7 +434,9 @@ fun settingsGroupSummaries(state: SettingsUiState): List<SettingsGroupSummary> {
 }
 
 /** Useful to callers that need to reason about a failure without exposing its technical detail. */
-fun SettingsUiState.hasDataAttention(): Boolean = cloudHealthy == false
+fun SettingsUiState.hasDataAttention(): Boolean = cloudHealthy == false ||
+    hltbDatasetCheckSeverity == SettingsResultSeverity.ERROR ||
+    hltbContributionSeverity == SettingsResultSeverity.ERROR
 
 /** Keep the model's privacy contract obvious to tests and future summary additions. */
 fun SettingsSummaryText.containsSensitiveSettingsValue(state: SettingsUiState): Boolean =

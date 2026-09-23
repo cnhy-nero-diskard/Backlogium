@@ -49,6 +49,53 @@ class SettingsPresentationTest {
     }
 
     @Test
+    fun failedUpdateCheckBlocksAccountSummaryUntilItsResultIsCleared() {
+        val messageOnly = settingsGroupSummaries(
+            SettingsUiState(
+                loading = false,
+                configured = true,
+                updateCheckMessage = "Check did not complete. Try again later.",
+            ),
+        ).first()
+        assertEquals(SettingsAttention.HEALTHY, messageOnly.attention)
+
+        val failedState = SettingsUiState(
+            loading = false,
+            configured = true,
+            updateCheckMessage = "Check did not complete. Try again later.",
+            updateCheckSeverity = SettingsResultSeverity.ERROR,
+        )
+        val failed = settingsGroupSummaries(failedState).first()
+        assertEquals(SettingsAttention.BLOCKING, failed.attention)
+
+        val cleared = settingsGroupSummaries(
+            failedState.copy(updateCheckMessage = null, updateCheckSeverity = null),
+        ).first()
+        assertEquals(SettingsAttention.HEALTHY, cleared.attention)
+    }
+
+    @Test
+    fun failedManualSharedGameImportBlocksGameplayUntilItsFeedbackIsCleared() {
+        val failedState = SettingsUiState(
+            loading = false,
+            configured = true,
+            manualSharedGameFeedback = ManualImportFeedback(
+                tone = ManualImportFeedbackTone.ERROR,
+                title = "Couldn't check Steam",
+                message = "Steam Store verification is unavailable. Try again.",
+            ),
+        )
+
+        val failed = settingsGroupSummaries(failedState).single { it.group == SettingsGroup.GAMEPLAY }
+        assertEquals(SettingsAttention.BLOCKING, failed.attention)
+
+        val cleared = settingsGroupSummaries(
+            failedState.copy(manualSharedGameFeedback = null),
+        ).single { it.group == SettingsGroup.GAMEPLAY }
+        assertEquals(SettingsAttention.HEALTHY, cleared.attention)
+    }
+
+    @Test
     fun summariesExposeRecommendationsAndQuietHealth() {
         val recommended = settingsGroupSummaries(
             SettingsUiState(
@@ -91,6 +138,56 @@ class SettingsPresentationTest {
 
         assertEquals(SettingsAttention.HEALTHY, dataPrivacy.attention)
         assertFalse(state.hasDataAttention())
+    }
+
+    @Test
+    fun failedCompletionDatasetCheckBlocksDataUntilItsResultIsCleared() {
+        val healthyCloud = SettingsUiState(
+            loading = false,
+            configured = true,
+            cloudEndpoint = "https://reader.example",
+            cloudHealthy = true,
+        )
+        val failedState = healthyCloud.copy(
+            hltbDatasetCheckMessage = "Check did not complete. Try again later.",
+            hltbDatasetCheckSeverity = SettingsResultSeverity.ERROR,
+        )
+
+        val failed = settingsGroupSummaries(failedState).single { it.group == SettingsGroup.DATA_PRIVACY }
+        assertEquals(SettingsAttention.BLOCKING, failed.attention)
+        assertTrue(failedState.hasDataAttention())
+
+        val clearedState = failedState.copy(
+            hltbDatasetCheckMessage = null,
+            hltbDatasetCheckSeverity = null,
+        )
+        val cleared = settingsGroupSummaries(clearedState).single { it.group == SettingsGroup.DATA_PRIVACY }
+        assertEquals(SettingsAttention.HEALTHY, cleared.attention)
+        assertFalse(clearedState.hasDataAttention())
+    }
+
+    @Test
+    fun failedContributionExportBlocksDataUntilItsResultIsReplaced() {
+        val healthyCloud = SettingsUiState(
+            loading = false,
+            configured = true,
+            cloudEndpoint = "https://reader.example",
+            cloudHealthy = true,
+        )
+        val failedState = healthyCloud.copy(
+            hltbContributionMessage = "Couldn't save the contribution file.",
+            hltbContributionSeverity = SettingsResultSeverity.ERROR,
+        )
+
+        val failed = settingsGroupSummaries(failedState).single { it.group == SettingsGroup.DATA_PRIVACY }
+        assertEquals(SettingsAttention.BLOCKING, failed.attention)
+
+        val replacedState = failedState.copy(
+            hltbContributionMessage = "Saved contribution file.",
+            hltbContributionSeverity = SettingsResultSeverity.SUCCESS,
+        )
+        val replaced = settingsGroupSummaries(replacedState).single { it.group == SettingsGroup.DATA_PRIVACY }
+        assertEquals(SettingsAttention.HEALTHY, replaced.attention)
     }
 
     @Test

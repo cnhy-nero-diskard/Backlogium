@@ -84,6 +84,8 @@ data class RuleChangeConfirmation(
     val levelAfter: Int,
 )
 
+enum class SettingsResultSeverity { INFO, SUCCESS, ERROR }
+
 data class SettingsUiState(
     val loading: Boolean = true,
     val configured: Boolean = false,
@@ -147,6 +149,7 @@ data class SettingsUiState(
     val appUpdateState: AppUpdateState = AppUpdateState(),
     val updateCheckInProgress: Boolean = false,
     val updateCheckMessage: String? = null,
+    val updateCheckSeverity: SettingsResultSeverity? = null,
     val manualSharedGameInput: String = "",
     val manualSharedGameBusy: Boolean = false,
     val manualSharedGameFeedback: ManualImportFeedback? = null,
@@ -162,10 +165,12 @@ data class SettingsUiState(
     val hltbDatasetCoveredGameCount: Int = 0,
     val hltbDatasetCheckInProgress: Boolean = false,
     val hltbDatasetCheckMessage: String? = null,
+    val hltbDatasetCheckSeverity: SettingsResultSeverity? = null,
     /** True while the contribution-export disclosure awaits the user's confirm/decline. */
     val hltbContributionDisclosurePending: Boolean = false,
     val hltbContributionBusy: Boolean = false,
     val hltbContributionMessage: String? = null,
+    val hltbContributionSeverity: SettingsResultSeverity? = null,
 ) {
     /** The candidate config, or null while any field is invalid. */
     val candidate: RuleConfig? get() = draft.toConfig(savedConfig)
@@ -221,15 +226,18 @@ class SettingsViewModel @Inject constructor(
     private val snapshots = MutableStateFlow<List<SnapshotMeta>>(emptyList())
     private val updateCheckInProgress = MutableStateFlow(false)
     private val updateCheckMessage = MutableStateFlow<String?>(null)
+    private val updateCheckSeverity = MutableStateFlow<SettingsResultSeverity?>(null)
     private val manualSharedGameInput = MutableStateFlow("")
     private val manualSharedGameBusy = MutableStateFlow(false)
     private val manualSharedGameFeedback = MutableStateFlow<ManualImportFeedback?>(null)
     private val hltbDatasetCheckInProgress = MutableStateFlow(false)
     private val hltbDatasetCheckMessage = MutableStateFlow<String?>(null)
+    private val hltbDatasetCheckSeverity = MutableStateFlow<SettingsResultSeverity?>(null)
     private val hltbDatasetProgress = MutableStateFlow<HltbDatasetProgress?>(null)
     private val hltbContributionDisclosurePending = MutableStateFlow(false)
     private val hltbContributionBusy = MutableStateFlow(false)
     private val hltbContributionMessage = MutableStateFlow<String?>(null)
+    private val hltbContributionSeverity = MutableStateFlow<SettingsResultSeverity?>(null)
     private val cloudBusy = MutableStateFlow(false)
     private val cloudMessage = MutableStateFlow<String?>(null)
     private val cloudRefilingBusy = MutableStateFlow(false)
@@ -361,19 +369,26 @@ class SettingsViewModel @Inject constructor(
     private val hltbDatasetLocalState = combine(
         hltbDatasetRepository.coverage,
         hltbDatasetCheckInProgress,
-        combine(hltbDatasetCheckMessage, hltbDatasetProgress) { message, progress ->
-            progress?.describe() ?: message
+        combine(hltbDatasetCheckMessage, hltbDatasetProgress, hltbDatasetCheckSeverity) { message, progress, severity ->
+            DatasetCheckLocal(progress?.describe() ?: message, severity)
         },
     ) { coverage, checking, message ->
-        HltbDatasetLocal(coverage.gatheredAt, coverage.coveredGameCount, checking, message)
+        HltbDatasetLocal(
+            coverage.gatheredAt,
+            coverage.coveredGameCount,
+            checking,
+            message.message,
+            message.severity,
+        )
     }
 
     private val hltbContributionLocalState = combine(
         hltbContributionDisclosurePending,
         hltbContributionBusy,
         hltbContributionMessage,
-    ) { disclosurePending, busy, message ->
-        HltbContributionLocal(disclosurePending, busy, message)
+        hltbContributionSeverity,
+    ) { disclosurePending, busy, message, severity ->
+        HltbContributionLocal(disclosurePending, busy, message, severity)
     }
 
     private val hltbLocalState = combine(
@@ -397,14 +412,15 @@ class SettingsViewModel @Inject constructor(
             )
         },
         appUpdates.state,
-        combine(updateCheckInProgress, updateCheckMessage) { inProgress, message ->
-            inProgress to message
+        combine(updateCheckInProgress, updateCheckMessage, updateCheckSeverity) { inProgress, message, severity ->
+            UpdateCheckLocal(inProgress, message, severity)
         },
     ) { state, updates, updateLocal ->
         state.copy(
             appUpdateState = updates,
-            updateCheckInProgress = updateLocal.first,
-            updateCheckMessage = updateLocal.second,
+            updateCheckInProgress = updateLocal.inProgress,
+            updateCheckMessage = updateLocal.message,
+            updateCheckSeverity = updateLocal.severity,
         )
     }.combine(manualSharedState) { state, manual ->
         state.copy(
@@ -418,9 +434,11 @@ class SettingsViewModel @Inject constructor(
             hltbDatasetCoveredGameCount = hltb.dataset.coveredCount,
             hltbDatasetCheckInProgress = hltb.dataset.checking,
             hltbDatasetCheckMessage = hltb.dataset.checkMessage,
+            hltbDatasetCheckSeverity = hltb.dataset.checkSeverity,
             hltbContributionDisclosurePending = hltb.contribution.disclosurePending,
             hltbContributionBusy = hltb.contribution.busy,
             hltbContributionMessage = hltb.contribution.message,
+            hltbContributionSeverity = hltb.contribution.severity,
         )
     }.combine(cloudState) { state, cloud ->
         state.copy(
@@ -664,20 +682,26 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             updateCheckInProgress.value = true
             updateCheckMessage.value = null
+            updateCheckSeverity.value = null
             try {
                 when (appUpdates.check(force = true)) {
-                    is UpdateCheckResult.Available -> Unit
+                    is UpdateCheckResult.Available -> updateCheckSeverity.value = SettingsResultSeverity.SUCCESS
                     is UpdateCheckResult.NoUpdate,
                     is UpdateCheckResult.SkippedRecent,
-                    -> updateCheckMessage.value = "You're up to date."
+                    -> {
+                        updateCheckMessage.value = "You're up to date."
+                        updateCheckSeverity.value = SettingsResultSeverity.SUCCESS
+                    }
                     is UpdateCheckResult.Failed -> {
                         updateCheckMessage.value = "Check did not complete. Try again later."
+                        updateCheckSeverity.value = SettingsResultSeverity.ERROR
                     }
                 }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
                 updateCheckMessage.value = "Check did not complete. Try again later."
+                updateCheckSeverity.value = SettingsResultSeverity.ERROR
             } finally {
                 updateCheckInProgress.value = false
             }
@@ -690,23 +714,31 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             hltbDatasetCheckInProgress.value = true
             hltbDatasetCheckMessage.value = null
+            hltbDatasetCheckSeverity.value = null
             try {
                 val result = hltbDatasetRepository.checkAndApply { progress ->
                     hltbDatasetProgress.value = progress
                 }
                 when (result) {
-                    is HltbDatasetCheckResult.Applied ->
+                    is HltbDatasetCheckResult.Applied -> {
                         hltbDatasetCheckMessage.value =
                             "Updated — ${result.gamesGainingLengths} games gained completion times."
-                    is HltbDatasetCheckResult.UpToDate ->
+                        hltbDatasetCheckSeverity.value = SettingsResultSeverity.SUCCESS
+                    }
+                    is HltbDatasetCheckResult.UpToDate -> {
                         hltbDatasetCheckMessage.value = "Already up to date."
-                    is HltbDatasetCheckResult.Failed ->
+                        hltbDatasetCheckSeverity.value = SettingsResultSeverity.SUCCESS
+                    }
+                    is HltbDatasetCheckResult.Failed -> {
                         hltbDatasetCheckMessage.value = "Check did not complete. Try again later."
+                        hltbDatasetCheckSeverity.value = SettingsResultSeverity.ERROR
+                    }
                 }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
                 hltbDatasetCheckMessage.value = "Check did not complete. Try again later."
+                hltbDatasetCheckSeverity.value = SettingsResultSeverity.ERROR
             } finally {
                 hltbDatasetCheckInProgress.value = false
                 hltbDatasetProgress.value = null
@@ -740,10 +772,12 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             hltbContributionBusy.value = true
             hltbContributionMessage.value = null
+            hltbContributionSeverity.value = null
             try {
                 when (val prepared = hltbContributionExporter.prepare()) {
                     HltbContributionPreparation.NothingToContribute -> {
                         hltbContributionMessage.value = "No resolved games to contribute yet."
+                        hltbContributionSeverity.value = SettingsResultSeverity.INFO
                         hltbContributionBusy.value = false
                     }
                     is HltbContributionPreparation.Ready -> {
@@ -756,6 +790,7 @@ class SettingsViewModel @Inject constructor(
                 throw cancellation
             } catch (failure: Exception) {
                 hltbContributionMessage.value = "Couldn't prepare the contribution. Try again."
+                hltbContributionSeverity.value = SettingsResultSeverity.ERROR
                 hltbContributionBusy.value = false
             }
         }
@@ -780,10 +815,12 @@ class SettingsViewModel @Inject constructor(
                     hltbContributionExporter.writeTo(prepared, destination, contentResolver)
                 }
                 hltbContributionMessage.value = "Saved ${prepared.mappingCount} games to contribute."
+                hltbContributionSeverity.value = SettingsResultSeverity.SUCCESS
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
                 hltbContributionMessage.value = "Couldn't save the contribution file."
+                hltbContributionSeverity.value = SettingsResultSeverity.ERROR
             } finally {
                 hltbContributionBusy.value = false
             }
@@ -1030,15 +1067,28 @@ class SettingsViewModel @Inject constructor(
         val coveredCount: Int,
         val checking: Boolean,
         val checkMessage: String?,
+        val checkSeverity: SettingsResultSeverity?,
+    )
+
+    private data class DatasetCheckLocal(
+        val message: String?,
+        val severity: SettingsResultSeverity?,
     )
 
     private data class HltbContributionLocal(
         val disclosurePending: Boolean,
         val busy: Boolean,
         val message: String?,
+        val severity: SettingsResultSeverity?,
     )
 
     private data class HltbLocal(val dataset: HltbDatasetLocal, val contribution: HltbContributionLocal)
+
+    private data class UpdateCheckLocal(
+        val inProgress: Boolean,
+        val message: String?,
+        val severity: SettingsResultSeverity?,
+    )
 
     private data class CloudLocal(
         val endpoint: String,
