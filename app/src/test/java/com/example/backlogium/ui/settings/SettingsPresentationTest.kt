@@ -76,6 +76,24 @@ class SettingsPresentationTest {
     }
 
     @Test
+    fun dataPrivacyReturnsToHealthyAfterCloudReadSucceedsDespiteHistoricalFailure() {
+        val state = SettingsUiState(
+            loading = false,
+            configured = true,
+            cloudEndpoint = "https://reader.example",
+            cloudLastFailureAt = 1_000L,
+            cloudLastFailure = CloudReadFailure.UNREACHABLE,
+            cloudLastSuccessAt = 2_000L,
+            cloudHealthy = true,
+        )
+
+        val dataPrivacy = settingsGroupSummaries(state).single { it.group == SettingsGroup.DATA_PRIVACY }
+
+        assertEquals(SettingsAttention.HEALTHY, dataPrivacy.attention)
+        assertFalse(state.hasDataAttention())
+    }
+
+    @Test
     fun overviewSummaryNeverCopiesSensitiveOrDiagnosticValues() {
         val state = SettingsUiState(
             loading = false,

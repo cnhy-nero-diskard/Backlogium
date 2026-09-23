@@ -328,7 +328,7 @@ fun settingsGroupSummaries(state: SettingsUiState): List<SettingsGroupSummary> {
     val gameplayRecommended = state.nonGameCandidateCount > 0
     val gameplayAttention = settingsAttention(false, gameplayInProgress, gameplayRecommended)
 
-    val dataBlocking = state.cloudHealthy == false || state.cloudLastFailure != null
+    val dataBlocking = state.cloudHealthy == false
     val dataInProgress = state.cloudBusy ||
         state.cloudPresenceRefilingBusy ||
         state.backupBusy ||
@@ -424,7 +424,7 @@ fun settingsGroupSummaries(state: SettingsUiState): List<SettingsGroupSummary> {
 }
 
 /** Useful to callers that need to reason about a failure without exposing its technical detail. */
-fun SettingsUiState.hasDataAttention(): Boolean = cloudHealthy == false || cloudLastFailure != null
+fun SettingsUiState.hasDataAttention(): Boolean = cloudHealthy == false
 
 /** Keep the model's privacy contract obvious to tests and future summary additions. */
 fun SettingsSummaryText.containsSensitiveSettingsValue(state: SettingsUiState): Boolean =
