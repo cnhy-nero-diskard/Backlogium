@@ -138,6 +138,12 @@ recently after a long period with no play. Every state SHALL expire on its own, 
 recent change carries no state.
 
 Where more than one state's conditions hold, the system SHALL resolve to exactly one, preferring
+newly played over returned to play, and returned to play over newly added.
+
+#### Scenario: Precedence selects one recency state
+- **WHEN** more than one recency state's conditions hold for a game
+- **THEN** the game carries only the highest-precedence state: newly played over returned to play, and returned to play over newly added
+
 ### Requirement: Recency data is durable across restarts and backups
 Recency data SHALL be stored in the same database as the library it describes, SHALL survive app
 restarts without re-derivation from scratch, and SHALL survive backup-and-restore so that a restored
@@ -230,4 +236,3 @@ been running for either to happen.
 #### Scenario: Announcement does not block the surface
 - **WHEN** the announcement is presented
 - **THEN** the surface behind it remains usable and the announcement is not modal
-newly played over returned to play, and returned to play over newly added.
