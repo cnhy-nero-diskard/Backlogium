@@ -47,6 +47,7 @@ import com.example.backlogium.ui.history.HistoryScreen
 import com.example.backlogium.ui.home.HomeRoute
 import com.example.backlogium.ui.library.LibraryScreen
 import com.example.backlogium.ui.navigation.Destination
+import com.example.backlogium.ui.navigation.navigateToTopLevelDestination
 import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.setup.SetupScreen
 import com.example.backlogium.ui.review.HltbReviewScreen
@@ -208,15 +209,7 @@ fun BacklogiumAppRoot(
                                             launchSingleTop = true
                                         }
                                     } else {
-                                        navController.navigate(destination.route) {
-                                            if (inSettingsGraph) {
-                                                popUpTo(SettingsRoutes.GRAPH) { inclusive = true }
-                                            } else {
-                                                popUpTo(Destination.HOME.route) { saveState = true }
-                                            }
-                                            launchSingleTop = true
-                                            restoreState = !inSettingsGraph
-                                        }
+                                        navController.navigateToTopLevelDestination(destination.route)
                                     }
                                 },
                                 icon = {
