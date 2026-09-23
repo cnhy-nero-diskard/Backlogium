@@ -16,21 +16,18 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -143,38 +140,10 @@ fun BacklogiumAppRoot(
     val inSettingsGraph = currentDestination?.hierarchy?.any {
         it.route == SettingsRoutes.GRAPH
     } == true
-    // Settings can push sibling destinations such as Diagnostics without popping its graph. Keep
-    // its single host attached to the graph entry until that entry itself is destroyed.
-    val activeSettingsGraphEntry = if (inSettingsGraph) {
-        remember(backStackEntry) { navController.getBackStackEntry(SettingsRoutes.GRAPH) }
-    } else {
-        null
-    }
-    var retainedSettingsGraphEntry by remember { mutableStateOf<NavBackStackEntry?>(null) }
-    SideEffect {
-        activeSettingsGraphEntry?.let { retainedSettingsGraphEntry = it }
-    }
-    val settingsGraphEntry = activeSettingsGraphEntry ?: retainedSettingsGraphEntry
-    DisposableEffect(settingsGraphEntry) {
-        val entry = settingsGraphEntry
-        if (entry == null) {
-            onDispose { }
-        } else {
-            val observer = LifecycleEventObserver { _, event ->
-                if (
-                    event == Lifecycle.Event.ON_DESTROY &&
-                    retainedSettingsGraphEntry?.id == entry.id
-                ) {
-                    retainedSettingsGraphEntry = null
-                }
-            }
-            if (entry.lifecycle.currentState == Lifecycle.State.DESTROYED) {
-                if (retainedSettingsGraphEntry?.id == entry.id) retainedSettingsGraphEntry = null
-            } else {
-                entry.lifecycle.addObserver(observer)
-            }
-            onDispose { entry.lifecycle.removeObserver(observer) }
-        }
+    // Query the restored controller back stack so Settings remains hosted when a sibling screen is
+    // current, and naturally detaches as soon as the Settings graph is popped.
+    val settingsGraphEntry = remember(navController, backStackEntry) {
+        navController.settingsGraphBackStackEntryOrNull()
     }
     val settingsViewModel = settingsGraphEntry?.let { hiltViewModel<SettingsViewModel>(it) }
     val onCollectionScreen = currentDestination?.route == ROUTE_COLLECTION ||
@@ -493,4 +462,10 @@ private fun ScreenBackdrop(accentColor: Color?) {
             )
         }
     }
+}
+
+internal fun NavController.settingsGraphBackStackEntryOrNull(): NavBackStackEntry? = try {
+    getBackStackEntry(SettingsRoutes.GRAPH)
+} catch (_: IllegalArgumentException) {
+    null
 }
