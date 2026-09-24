@@ -4,6 +4,8 @@ import com.example.backlogium.data.local.AcquiredGamesAnnouncement
 import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.data.repo.CloudRoutinePolicy
+import com.example.backlogium.data.repo.CloudRoutineState
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -81,6 +83,30 @@ internal class FakeSettingsRepository : SettingsRepository {
     private val readerGeneration = MutableStateFlow(0L)
     override val cloudReaderGeneration: Flow<Long> = readerGeneration
     override suspend fun advanceCloudReaderGeneration(): Long = ++readerGeneration.value
+
+    private val routine = MutableStateFlow(CloudRoutineState())
+    override val cloudRoutineState: Flow<CloudRoutineState> = routine
+    override suspend fun initializeCloudRoutinePolicy(): CloudRoutineState {
+        if (routine.value.policy == null) {
+            routine.value = CloudRoutineState(
+                policy = CloudRoutinePolicy.AUTOMATIC,
+                orderingWatermark = routine.value.orderingWatermark + 1,
+                lastAdmissionWatermark = routine.value.orderingWatermark + 1,
+            )
+        }
+        return routine.value
+    }
+    override suspend fun setCloudRoutinePolicy(policy: CloudRoutinePolicy) {
+        if (routine.value.policy != null) routine.value = routine.value.copy(policy = policy)
+    }
+    override suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState {
+        check(routine.value.policy != null)
+        val next = routine.value.orderingWatermark + 1
+        routine.value = routine.value.copy(
+            lastAdmittedAt = at, orderingWatermark = next, lastAdmissionWatermark = next,
+        )
+        return routine.value
+    }
 
     private val cloudIngestCursor = MutableStateFlow<String?>(null)
     override val cloudIngestPosition: Flow<String?> = cloudIngestCursor

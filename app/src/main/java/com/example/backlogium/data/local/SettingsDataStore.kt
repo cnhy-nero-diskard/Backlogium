@@ -28,6 +28,8 @@ import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.domain.librarySortDirectionOrNull
 import com.example.backlogium.domain.librarySortKeyOrNull
 import com.example.backlogium.data.repo.CloudPresenceRefilingBackup
+import com.example.backlogium.data.repo.CloudRoutinePolicy
+import com.example.backlogium.data.repo.CloudRoutineState
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -101,6 +103,10 @@ class SettingsDataStore @Inject constructor(
         val LIVE_MONITORING_AVAILABILITY = stringPreferencesKey("live_monitoring_availability")
         val CLOUD_READ_POSITION = stringPreferencesKey("cloud_read_position")
         val CLOUD_READER_GENERATION = longPreferencesKey("cloud_reader_generation")
+        val CLOUD_ROUTINE_POLICY = stringPreferencesKey("cloud_routine_policy")
+        val CLOUD_ROUTINE_LAST_ADMITTED_AT = longPreferencesKey("cloud_routine_last_admitted_at")
+        val CLOUD_ROUTINE_ORDER = longPreferencesKey("cloud_routine_order")
+        val CLOUD_ROUTINE_LAST_ADMISSION_ORDER = longPreferencesKey("cloud_routine_last_admission_order")
         val RULE_CONFIG_VERSION = longPreferencesKey("rule_config_version")
 
         /**
@@ -485,6 +491,51 @@ class SettingsDataStore @Inject constructor(
         return next
     }
 
+    val cloudRoutineStateFlow: Flow<CloudRoutineState> = context.dataStore.data.map(::cloudRoutineState)
+
+    /** One transaction makes reconciliation safe against simultaneous startup and verification. */
+    suspend fun initializeCloudRoutinePolicy(): CloudRoutineState {
+        lateinit var result: CloudRoutineState
+        context.dataStore.edit { prefs ->
+            if (prefs[Keys.CLOUD_ROUTINE_POLICY] == null) {
+                prefs[Keys.CLOUD_ROUTINE_POLICY] = CloudRoutinePolicy.AUTOMATIC.name
+                // Seed the comparison order even if the existing reader has never run a routine job.
+                val order = (prefs[Keys.CLOUD_ROUTINE_ORDER] ?: 0L) + 1L
+                prefs[Keys.CLOUD_ROUTINE_ORDER] = order
+                prefs[Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER] = order
+            }
+            result = cloudRoutineState(prefs)
+        }
+        return result
+    }
+
+    suspend fun setCloudRoutinePolicy(policy: CloudRoutinePolicy) {
+        context.dataStore.edit { prefs ->
+            // Only a verified reader initializes the policy; changing it never resets cooldown.
+            if (prefs[Keys.CLOUD_ROUTINE_POLICY] != null) prefs[Keys.CLOUD_ROUTINE_POLICY] = policy.name
+        }
+    }
+
+    suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState {
+        lateinit var result: CloudRoutineState
+        context.dataStore.edit { prefs ->
+            check(prefs[Keys.CLOUD_ROUTINE_POLICY] != null) { "Cloud reader has no routine policy" }
+            val order = (prefs[Keys.CLOUD_ROUTINE_ORDER] ?: 0L) + 1L
+            prefs[Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT] = at
+            prefs[Keys.CLOUD_ROUTINE_ORDER] = order
+            prefs[Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER] = order
+            result = cloudRoutineState(prefs)
+        }
+        return result
+    }
+
+    private fun cloudRoutineState(prefs: Preferences): CloudRoutineState = CloudRoutineState(
+        policy = prefs[Keys.CLOUD_ROUTINE_POLICY]?.let { CloudRoutinePolicy.valueOf(it) },
+        lastAdmittedAt = prefs[Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT],
+        orderingWatermark = prefs[Keys.CLOUD_ROUTINE_ORDER] ?: 0L,
+        lastAdmissionWatermark = prefs[Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER] ?: 0L,
+    )
+
     /** Durable cloud-session ingest watermark; account changes clear it with the read watermark. */
     val cloudIngestPositionFlow: Flow<String?> =
         context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_INGEST_POSITION] }
@@ -745,6 +796,10 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
             prefs.remove(Keys.CLOUD_READ_POSITION)
             prefs.remove(Keys.CLOUD_INGEST_POSITION)
+            prefs.remove(Keys.CLOUD_ROUTINE_POLICY)
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT)
+            prefs.remove(Keys.CLOUD_ROUTINE_ORDER)
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER)
             prefs.remove(Keys.CLOUD_REFILE_APPLIED)
             prefs.remove(Keys.CLOUD_REFILE_BACKUP)
             prefs.remove(Keys.CLOUD_REFILE_CREATED_IDS)

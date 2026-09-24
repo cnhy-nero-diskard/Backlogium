@@ -170,6 +170,18 @@ interface SettingsRepository : SessionEndOutbox {
 
     suspend fun advanceCloudReaderGeneration(): Long = 0L
 
+    /** Null until a verified reader is initialized or an existing reader is reconciled. */
+    val cloudRoutineState: Flow<CloudRoutineState>
+        get() = flowOf(CloudRoutineState())
+
+    /** Idempotent: preserves preference, cooldown, and ordering on endpoint replacement. */
+    suspend fun initializeCloudRoutinePolicy(): CloudRoutineState = CloudRoutineState()
+
+    suspend fun setCloudRoutinePolicy(policy: CloudRoutinePolicy) = Unit
+
+    /** Called when a routine job actually begins, not when offline work is enqueued. */
+    suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState = CloudRoutineState()
+
     /** Durable watermark for cloud intervals already folded into presence sessions. */
     val cloudIngestPosition: Flow<String?>
         get() = flowOf(null)
@@ -337,6 +349,17 @@ class DataStoreSettingsRepository @Inject constructor(
     override val cloudReaderGeneration: Flow<Long> = settings.cloudReaderGenerationFlow
 
     override suspend fun advanceCloudReaderGeneration(): Long = settings.advanceCloudReaderGeneration()
+
+    override val cloudRoutineState: Flow<CloudRoutineState> = settings.cloudRoutineStateFlow
+
+    override suspend fun initializeCloudRoutinePolicy(): CloudRoutineState =
+        settings.initializeCloudRoutinePolicy()
+
+    override suspend fun setCloudRoutinePolicy(policy: CloudRoutinePolicy) =
+        settings.setCloudRoutinePolicy(policy)
+
+    override suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState =
+        settings.recordCloudRoutineAdmission(at)
 
     override val cloudIngestPosition: Flow<String?> = settings.cloudIngestPositionFlow
 

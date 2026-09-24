@@ -16,6 +16,7 @@ import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.backup.SnapshotStore
 import com.example.backlogium.data.diagnostics.DiagnosticHistoryMigration
 import com.example.backlogium.data.repo.AccountChangeCoordinator
+import com.example.backlogium.data.repo.CloudPresenceRepository
 import com.example.backlogium.data.steamassets.SteamAssetInterceptor
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.domain.DailyProgressBackfillUseCase
@@ -114,6 +115,9 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
     lateinit var accountChangeCoordinator: AccountChangeCoordinator
 
     @Inject
+    lateinit var cloudPresence: CloudPresenceRepository
+
+    @Inject
     @ApplicationScope
     lateinit var scope: CoroutineScope
 
@@ -148,6 +152,9 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
                 .onFailure { Timber.e(it, "Account-change recovery failed; sync remains unscheduled") }
                 .isSuccess
             if (!ready) return@launch
+
+            runCatching { cloudPresence.reconcileRoutinePolicy() }
+                .onFailure { Timber.e(it, "Cloud routine policy reconciliation failed") }
 
             // Start after account recovery so a durable session-end handoff cannot schedule work
             // against an account reset that is still incomplete. The outbox replays anything

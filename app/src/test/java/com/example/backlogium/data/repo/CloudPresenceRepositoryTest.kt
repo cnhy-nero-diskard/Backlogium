@@ -35,6 +35,51 @@ import java.time.ZoneId
 
 class CloudPresenceRepositoryTest {
     @Test
+    fun startupReconcilesVerifiedReaderWithoutMovingCursorsOrResettingPolicy() = runBlocking {
+        val api = FakeCloudPresenceApi()
+        val store = FakeCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+        )
+        val settings = FakeSettingsRepository()
+        settings.setCloudReadPosition("existing-read")
+        settings.setCloudIngestPosition("existing-ingest")
+        val initial = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT)
+
+        assertEquals(CloudRoutinePolicy.AUTOMATIC, initial.reconcileRoutinePolicy()?.policy)
+        assertEquals(1L, settings.cloudRoutineState.first().lastAdmissionWatermark)
+        settings.setCloudRoutinePolicy(CloudRoutinePolicy.EVERY_48_HOURS)
+        settings.recordCloudRoutineAdmission(1234L)
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT)
+
+        assertEquals(CloudRoutinePolicy.EVERY_48_HOURS, restarted.reconcileRoutinePolicy()?.policy)
+        assertEquals(1234L, settings.cloudRoutineState.first().lastAdmittedAt)
+        assertEquals(2L, settings.cloudRoutineState.first().orderingWatermark)
+        assertEquals("existing-read", settings.cloudReadPosition.first())
+        assertEquals("existing-ingest", settings.cloudIngestPosition.first())
+        assertTrue(api.requests.isEmpty())
+    }
+
+    @Test
+    fun firstVerificationInitializesPolicyAndReplacementKeepsCooldown() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse(nextPosition = "2026-09-15T00:20:00Z"))
+        val settings = FakeSettingsRepository()
+        val store = FakeCloudCredentialsStore()
+        val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT)
+        assertNull(repo.reconcileRoutinePolicy())
+
+        assertEquals(CloudConfigurationResult.Saved,
+            repo.verifyAndSave("https://reader.example.com/read", "secret"))
+        assertEquals(CloudRoutinePolicy.AUTOMATIC, settings.cloudRoutineState.first().policy)
+        settings.setCloudRoutinePolicy(CloudRoutinePolicy.DAILY)
+        settings.recordCloudRoutineAdmission(1234L)
+        assertEquals(CloudConfigurationResult.Saved,
+            repo.verifyAndSave("https://replacement.example.com/read", "secret"))
+
+        assertEquals(CloudRoutinePolicy.DAILY, settings.cloudRoutineState.first().policy)
+        assertEquals(1234L, settings.cloudRoutineState.first().lastAdmittedAt)
+        assertEquals(2L, settings.cloudRoutineState.first().lastAdmissionWatermark)
+    }
+    @Test
     fun everyCursorAdvancingPathRetainsEvidenceBeforeItsPosition() = runBlocking {
         val api = FakeCloudPresenceApi(answer = sampleResponse(nextPosition = "2026-09-15T00:20:00Z"))
         val store = FakeCloudCredentialsStore()

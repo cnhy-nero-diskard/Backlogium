@@ -179,6 +179,14 @@ class CloudPresenceRepository @Inject constructor(
         }
     }
 
+    /** Startup/upgrade reconciliation is local-only and never moves either cloud cursor. */
+    suspend fun reconcileRoutinePolicy(): CloudRoutineState? = cloudStateMutex.withLock {
+        if (credentialsProvider.currentCredentials()?.steamId == null ||
+            credentialsStore.readCloudCredentials() == null
+        ) return@withLock null
+        settings.initializeCloudRoutinePolicy()
+    }
+
     suspend fun verifyAndSave(
         endpoint: String,
         token: String,
@@ -249,6 +257,7 @@ class CloudPresenceRepository @Inject constructor(
                             trigger = CloudReadTrigger.SETTINGS_VERIFICATION,
                             parsed = result.parsed,
                         )
+                        settings.initializeCloudRoutinePolicy()
                         CloudConfigurationResult.Saved
                     }
                 }
