@@ -6,6 +6,7 @@ import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.repo.SessionActionWriter
+import com.example.backlogium.data.repo.CloudPendingEvidencePruner
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,6 +33,7 @@ class PlaytimeObservationCommitter @Inject constructor(
     private val differ: SessionDiffer,
     private val time: TimeProvider,
     private val sessionActionWriter: SessionActionWriter,
+    private val pendingEvidencePruner: CloudPendingEvidencePruner? = null,
 ) {
     /**
      * One game's playtime as an observer saw it.
@@ -171,6 +173,10 @@ class PlaytimeObservationCommitter @Inject constructor(
                 lastPlayedAt = existing?.lastPlayedAt,
                 returnedToPlayAt = existing?.returnedToPlayAt,
             )
+            // Even a zero-delta successful baseline makes closed evidence ending by this
+            // observation ineligible for future windows. The caller's Room transaction ties
+            // retirement to the session and Steam baseline commit (including rollback).
+            pendingEvidencePruner?.afterBaseline(game.appId, syncedAt)
         }
 
         val goalIds = existingGames.values.filter { it.isGoal }.mapTo(mutableSetOf()) { it.appId }
