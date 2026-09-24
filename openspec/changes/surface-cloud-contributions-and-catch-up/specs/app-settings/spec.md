@@ -2,11 +2,16 @@
 
 ### Requirement: Cloud catch-up frequency can be understood and bounded
 
-While the reader is configured, Settings SHALL offer Automatic as the default routine cloud catch-up policy and a choice of 12-hour, daily, or 48-hour minimum gaps. Automatic SHALL combine a daily background opportunity with play-end opportunities under a shared 12-hour minimum gap. A chosen override SHALL use its selected minimum gap across both routine triggers, while preserving Read now and accuracy-driven placement reads independently. The section SHALL explain that these choices limit routine phone reads, not the cloud poller's own minute-by-minute observation or the total number of all cloud requests. It SHALL show the last routine attempt and its outcome, the last successful read, and a next eligible opportunity where determinable without describing it as a guaranteed execution time.
+While the reader is configured, Settings SHALL offer Automatic as the initial routine cloud catch-up policy, selected when a reader is first verified and no policy has been persisted, and a choice of 12-hour, daily, or 48-hour minimum gaps. Automatic SHALL combine a daily background opportunity with play-end opportunities under a shared 12-hour minimum gap. A chosen override SHALL use its selected minimum gap across both routine triggers, while preserving Read now and accuracy-driven placement reads independently. The section SHALL explain that these choices limit routine phone reads, not the cloud poller's own minute-by-minute observation or the total number of all cloud requests. It SHALL show the last routine attempt and its outcome, the last successful read, and a next eligible opportunity where determinable without describing it as a guaranteed execution time.
 
-#### Scenario: Newly verified reader
-- **WHEN** a reader is first verified
+#### Scenario: First verified reader
+- **WHEN** a reader is first verified and no routine policy has been persisted
 - **THEN** Automatic is selected and the meaning of its routine catch-up is available in Settings
+
+#### Scenario: Replacing a verified reader
+- **WHEN** the configured reader is replaced by an endpoint successfully verified for the active Steam account
+- **THEN** the selected cadence and shared minimum-gap cooldown are preserved
+- **AND** routine work is scheduled for the replacement only when that existing cooldown allows it
 
 #### Scenario: Choosing a slower cadence
 - **WHEN** the player selects daily or 48 hours

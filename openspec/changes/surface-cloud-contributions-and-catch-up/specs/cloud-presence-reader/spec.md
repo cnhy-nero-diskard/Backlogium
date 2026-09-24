@@ -82,6 +82,11 @@ The system SHALL resume authenticated, account-bound reads from the existing dur
 - **WHEN** the configured Steam account changes or the cloud configuration is removed while routine work is pending
 - **THEN** that work cannot ingest or present the prior account's observations, and no further routine reads occur without verified configuration
 
+#### Scenario: Reader endpoint is replaced while routine work is pending
+- **WHEN** a replacement reader is successfully verified for the active Steam account while work for the previous endpoint is pending or in flight
+- **THEN** pending work for the previous endpoint is cancelled and in-flight responses are fenced from ingesting or presenting observations
+- **AND** subsequent routine reads use only the verified replacement and remain subject to the existing cadence gate
+
 #### Scenario: Reader succeeds while poller is stale
 - **WHEN** the reader succeeds but the newest observation is old
 - **THEN** the status distinguishes the successful read from the older observation and does not claim the poller is healthy
