@@ -2,7 +2,7 @@
 
 ### Requirement: History identifies proven cloud contributions at session level
 
-History SHALL display a restrained cloud mark only beside a session for which a cloud contribution is recorded and the reader is configured. The mark SHALL identify whether cloud observations recovered presence-derived play or informed timing of Steam-reported minutes; it SHALL qualify a mixed local/cloud session as partly cloud-assisted. It SHALL NOT mark a game, entire day, achievement, or progress total merely because the reader is connected, and SHALL NOT mark a session whose provenance is unknown. The meaning SHALL be available as text and to assistive technology, not through color or icon alone.
+History SHALL display a restrained cloud mark only beside a session for which a cloud contribution is recorded and the reader is configured. The mark SHALL identify recovered presence-derived play and cloud-informed timing of Steam-reported minutes as independent facts, each with its own full/partial qualification; both facts MAY be shown for one session. It SHALL NOT mark a game, entire day, achievement, or progress total merely because the reader is connected, and SHALL NOT present an `UNKNOWN` fact as a contribution. The meaning SHALL be available as text and to assistive technology, not through color or icon alone.
 
 #### Scenario: Shared-game play recovered
 - **WHEN** a visible session has recorded recovered-play contribution
@@ -11,6 +11,14 @@ History SHALL display a restrained cloud mark only beside a session for which a 
 #### Scenario: Owned-game minutes placed
 - **WHEN** a visible session has recorded timing contribution
 - **THEN** History explains that cloud observations informed its timing and Steam supplied the minutes
+
+#### Scenario: Both contribution facts are recorded
+- **WHEN** one visible session has both recovered-play and timing-informed facts
+- **THEN** History exposes both explanations and qualifies the partial state of each independently
+
+#### Scenario: One fact is known and the other is unknown
+- **WHEN** a session has a recorded contribution for one fact and `UNKNOWN` for the other
+- **THEN** History presents only the known contribution and does not infer the unknown fact
 
 #### Scenario: Ordinary or legacy session
 - **WHEN** a session has no recorded cloud contribution, including an older session of unknown provenance
@@ -26,7 +34,7 @@ History SHALL display a restrained cloud mark only beside a session for which a 
 
 ### Requirement: History offers a focused Cloud activity explanation when relevant
 
-When the visible History period includes a recorded cloud contribution, History SHALL offer a compact Cloud activity entry leading to a detail view. That detail SHALL lead with the sessions actually recovered or timed using cloud evidence in the same period, link back to the affected play, and then explain reader success, observation freshness where known, and any partial or unknown coverage. It SHALL use local stored contribution evidence to render offline, avoid presenting missing observations as proof of no play, and leave raw per-interval comparison in Diagnostics. Hidden games SHALL be excluded from its counts, names, and links.
+When the visible History period includes a recorded cloud contribution, History SHALL offer a compact Cloud activity entry leading to a detail view. That detail SHALL lead with the sessions actually recovered or timed using cloud evidence in the same period, link back to the affected play, and then explain reader success, observation freshness where known, and any partial or unknown coverage. A session with both facts MAY appear in both groups; group counts SHALL describe contribution facts rather than imply that the groups are disjoint session sets. It SHALL use local stored contribution evidence to render offline, avoid presenting missing observations as proof of no play, and leave raw per-interval comparison in Diagnostics. Hidden games SHALL be excluded from its counts, names, and links.
 
 #### Scenario: Relevant history has contributions
 - **WHEN** the visible History period contains one or more visible sessions with proven cloud contributions

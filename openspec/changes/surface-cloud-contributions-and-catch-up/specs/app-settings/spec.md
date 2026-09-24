@@ -8,6 +8,12 @@ While the reader is configured, Settings SHALL offer Automatic as the initial ro
 - **WHEN** a reader is first verified and no routine policy has been persisted
 - **THEN** Automatic is selected and the meaning of its routine catch-up is available in Settings
 
+#### Scenario: Existing reader upgraded without a policy
+- **WHEN** an app starts or upgrades with an already verified reader that has no persisted routine policy
+- **THEN** Automatic is initialized without requiring the player to verify the reader again
+- **AND** the initial verification-order watermark is seeded for routine admission
+- **AND** existing cloud read and ingest positions are preserved
+
 #### Scenario: Replacing a verified reader
 - **WHEN** the configured reader is replaced by an endpoint successfully verified for the active Steam account
 - **THEN** the selected cadence and shared minimum-gap cooldown are preserved

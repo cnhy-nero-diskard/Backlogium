@@ -2,7 +2,7 @@
 
 ### Requirement: Cloud contributions remain attributable to the sessions they affected
 
-The system SHALL retain, for each session it writes or changes using cloud observations, whether those observations supplied confirmed play for a presence-derived game or informed the timing of Steam-counted minutes for an owned game. It SHALL retain the distinction when a session contains both locally observed and cloud-assisted contributions. A read that merely fetched evidence, configuration of a reader, or an interval that did not affect a session SHALL NOT create contribution provenance. Unknown legacy provenance SHALL remain unknown rather than being inferred after the fact.
+The system SHALL retain, for each session it writes or changes using cloud observations, two independent facts: whether those observations supplied confirmed play for a presence-derived game, and whether they informed the timing of Steam-counted minutes for an owned game. Each fact SHALL independently record `UNKNOWN`, `NONE`, `FULL`, or `PARTIAL`; both contribution facts MAY be present on one session, and partiality SHALL apply to the relevant fact only. A read that merely fetched evidence, configuration of a reader, or an interval that did not affect a session SHALL NOT create contribution provenance. Unknown legacy provenance SHALL remain unknown rather than being inferred after the fact.
 
 #### Scenario: Cloud recovers shared-game play
 - **WHEN** accepted cloud observations cause confirmed minutes to be credited to a family-shared game's session
@@ -16,13 +16,26 @@ The system SHALL retain, for each session it writes or changes using cloud obser
 - **WHEN** a presence-informed placement changes the session actions that would have been written for a Steam-reported increase
 - **THEN** the affected sessions record a timing contribution, with Steam's counted minutes unchanged
 
+#### Scenario: Historical re-file adds timing provenance
+- **WHEN** accepted cloud intervals cause a historical re-file to change the timing of owned-game replacement sessions
+- **THEN** each changed replacement records a timing-informed fact without clearing any recovered-play or prior timing fact
+- **AND** reversing the re-file restores the exact prior session rows and both prior fact states
+
+#### Scenario: One session carries both contribution facts
+- **WHEN** source conversion, restore, or later writes extend a session that already records one contribution fact using the other cloud path
+- **THEN** the session retains both the recovered-play and timing-informed facts with independent full/partial states
+
 #### Scenario: Cloud consulted without changing the result
 - **WHEN** an interval is fetched but is rejected, unused, or produces no change to the unaided session actions
 - **THEN** no new cloud contribution is attributed to that session
 
 #### Scenario: Existing sessions lack evidence
-- **WHEN** a pre-existing session has no recorded cloud contribution provenance
+- **WHEN** a session row predates provenance storage and its migrated fact fields are null
 - **THEN** its contribution is unknown and the system does not assign one from its timestamps or game source
+
+#### Scenario: New session has no cloud contribution
+- **WHEN** a session is written without cloud observations affecting it
+- **THEN** both contribution facts are recorded as `NONE`, distinct from unknown legacy provenance
 
 #### Scenario: Historical changes can be undone
 - **WHEN** a historical re-file changes sessions and is then reversed
@@ -75,6 +88,12 @@ Manual reads and existing cloud reads needed by the Steam sync or targeted playt
 - **WHEN** the player selects Read now during a routine minimum-gap period
 - **THEN** that request remains available and is not refused on account of the routine preference
 
+#### Scenario: Existing configured reader is reconciled after upgrade
+- **WHEN** an app starts or upgrades with a previously verified reader but no persisted routine policy
+- **THEN** Automatic is initialized and the next opportunity is scheduled under the ordinary gate without requiring a new verification event
+- **AND** the initial verification-order watermark is seeded for admission comparisons
+- **AND** the existing read and ingest positions are preserved
+
 ### Requirement: Routine catch-up reports how far it actually read
 
 The system SHALL resume authenticated, account-bound reads from the existing durable position, consume returned pages through the existing ingest path, and report a catch-up as complete only when no unread page remains. It SHALL bound work per background attempt, preserve an unfinished position for a later eligible attempt, and distinguish a completed read with no new transitions from a partial read or a failure. A successful reader request SHALL NOT be represented as proof that the separate poller has continued to observe Steam; where the latest observed timestamp is available, it SHALL be identified as observation freshness rather than reader success.
@@ -89,20 +108,25 @@ The system SHALL resume authenticated, account-bound reads from the existing dur
 
 #### Scenario: Account changes or reader is removed
 - **WHEN** the configured Steam account changes or the cloud configuration is removed while routine work is pending
-- **THEN** that work cannot ingest or present the prior account's observations, and no further routine reads occur without verified configuration
+- **THEN** that work cannot ingest or present the prior account's observations, pending evidence is deleted, and no further routine reads occur without verified configuration
 
 #### Scenario: Reader endpoint is replaced while routine work is pending
 - **WHEN** a replacement reader is successfully verified for the active Steam account while work for the previous endpoint is pending or in flight
 - **THEN** pending work for the previous endpoint is cancelled and in-flight responses are fenced from ingesting or presenting observations
 - **AND** subsequent routine reads use only the verified replacement and remain subject to the existing cadence gate
+- **AND** pending evidence from the previous reader generation is deleted and cannot inform placement from the replacement
 
 #### Scenario: Reader succeeds while poller is stale
 - **WHEN** the reader succeeds but the newest observation is old
 - **THEN** the status distinguishes the successful read from the older observation and does not claim the poller is healthy
 
-### Requirement: Routine reads retain owned-game evidence for a later Steam delta
+### Requirement: Cursor-advancing reads retain owned-game evidence for a later Steam delta
 
-A routine read SHALL durably retain account-bound intervals for Steam-owned games, including their coverage metadata, before advancing the shared read position past them. Intervals SHALL be upserted by account, app id, and interval start so page overlap does not duplicate evidence. Retaining an interval is acquisition of timing evidence only: it SHALL NOT write a session, place Steam-counted minutes, or create contribution provenance. When a later Steam delta covers retained evidence, accuracy-driven placement SHALL combine that evidence with any newly unread intervals before applying the existing coverage and complete-window rules. Pending evidence SHALL remain available until the Steam sync commits the corresponding baseline and session actions; that commit consumes the evidence so a failed or interrupted sync can retry it. Account changes and reader removal SHALL clear account-bound pending evidence.
+Every operation that advances the shared cloud read position — successful verification, manual Read now, routine catch-up, accuracy-driven placement reads, and the complete-history drain for historical re-file — SHALL durably retain reconstructed intervals for Steam-owned games, including their coverage metadata and needed interval boundary state, before advancing past them. The reads SHALL use the existing serialized sequence. Page effects SHALL be idempotent: if evidence persistence or the shared-game ingest consumer fails, the page position SHALL remain retryable; if effects persist but position persistence fails, replay SHALL safely upsert evidence and SHALL NOT double-credit ingested play. A later failed Steam baseline/session commit SHALL leave pending evidence available for retry.
+
+The configured reader SHALL have a persisted, monotonically increasing generation. Pending evidence SHALL be bound to the Steam account and reader generation, and SHALL be upserted by account, reader generation, app id, and interval start so page overlap refines rather than duplicates it. A terminal read that emits an ongoing interval SHALL retain its opening transition or equivalent current-state boundary. If a later page contains only the closing transition, reconstruction SHALL use the retained boundary and update that same interval's final end and coverage rather than leaving stale ongoing evidence or losing the close. Retaining evidence is acquisition of timing evidence only: it SHALL NOT write a session, place Steam-counted minutes, or create contribution provenance. When a later Steam delta covers retained evidence, accuracy-driven placement SHALL combine it with newly unread intervals before applying the existing coverage and complete-window rules.
+
+Pending evidence SHALL remain available until the Steam sync commits the corresponding baseline and session actions. After each successful per-app Steam baseline commit, including a successful sync with no positive delta, closed intervals whose end is at or before the new `lastSyncAt` SHALL be pruned because no future diff window can intersect them; intervals extending beyond the baseline and ongoing intervals SHALL remain available. Reader removal, endpoint replacement, account change, and `AccountRoomReset` SHALL delete prior-generation/account pending evidence, and in-flight reads SHALL be fenced from writing after the generation changes.
 
 #### Scenario: Routine catch-up precedes Steam's reported increase
 - **WHEN** a routine read consumes an owned-game interval before Steam reports the matching playtime increase
@@ -118,6 +142,19 @@ A routine read SHALL durably retain account-bound intervals for Steam-owned game
 #### Scenario: Placement does not commit
 - **WHEN** placement or the Steam sync fails before committing its baseline and session actions
 - **THEN** the pending intervals remain available for retry
+
+#### Scenario: A placement read is retried after a failed Steam commit
+- **WHEN** a placement read persists an owned interval and advances the shared cursor, but the Steam baseline/session commit fails
+- **THEN** the retry can reuse that interval and consumes or prunes it only after a successful baseline commit makes it no longer applicable
+
+#### Scenario: A terminal open interval is closed on a later read
+- **WHEN** a terminal read persists an ongoing interval and a later read contains only its closing transition
+- **THEN** the retained opening boundary reconstructs the same interval with its final end and coverage
+- **AND** two successive Steam deltas use only the evidence intersecting their respective diff windows without losing or double-counting minutes
+
+#### Scenario: A no-delta Steam baseline makes old evidence terminal
+- **WHEN** a successful Steam sync advances an app's `lastSyncAt` without a positive playtime delta
+- **THEN** closed pending intervals ending at or before that baseline are pruned, while intervals extending beyond it remain available
 
 #### Scenario: Account changes before placement
 - **WHEN** the Steam account changes or the reader is removed while owned-game intervals are pending
