@@ -110,6 +110,7 @@ class SettingsDataStore @Inject constructor(
         val CLOUD_READER_GENERATION = longPreferencesKey("cloud_reader_generation")
         val CLOUD_ROUTINE_POLICY = stringPreferencesKey("cloud_routine_policy")
         val CLOUD_ROUTINE_LAST_ADMITTED_AT = longPreferencesKey("cloud_routine_last_admitted_at")
+        val CLOUD_ROUTINE_LAST_OUTCOME = stringPreferencesKey("cloud_routine_last_outcome")
         val CLOUD_ROUTINE_ORDER = longPreferencesKey("cloud_routine_order")
         val CLOUD_ROUTINE_LAST_ADMISSION_ORDER = longPreferencesKey("cloud_routine_last_admission_order")
         val CLOUD_ROUTINE_OTHER_READ_ORDER = longPreferencesKey("cloud_routine_other_read_order")
@@ -537,6 +538,7 @@ class SettingsDataStore @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs.remove(Keys.CLOUD_ROUTINE_POLICY)
             prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT)
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_OUTCOME)
             prefs.remove(Keys.CLOUD_ROUTINE_ORDER)
             prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER)
             prefs.remove(Keys.CLOUD_ROUTINE_OTHER_READ_ORDER)
@@ -551,6 +553,7 @@ class SettingsDataStore @Inject constructor(
             check(prefs[Keys.CLOUD_ROUTINE_POLICY] != null) { "Cloud reader has no routine policy" }
             val order = (prefs[Keys.CLOUD_ROUTINE_ORDER] ?: 0L) + 1L
             prefs[Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT] = at
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_OUTCOME)
             prefs[Keys.CLOUD_ROUTINE_ORDER] = order
             prefs[Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER] = order
             result = cloudRoutineState(prefs)
@@ -590,6 +593,7 @@ class SettingsDataStore @Inject constructor(
             prefs[Keys.CLOUD_ROUTINE_ORDER] = order
             prefs[Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER] = order
             prefs[Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT] = at
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_OUTCOME)
             result = CloudRoutineAdmission.ADMITTED
         }
         return result
@@ -598,12 +602,21 @@ class SettingsDataStore @Inject constructor(
     private fun cloudRoutineState(prefs: Preferences): CloudRoutineState = CloudRoutineState(
         policy = prefs[Keys.CLOUD_ROUTINE_POLICY]?.let { CloudRoutinePolicy.valueOf(it) },
         lastAdmittedAt = prefs[Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT],
+        lastOutcome = prefs[Keys.CLOUD_ROUTINE_LAST_OUTCOME]?.let { CloudReadSummaryOutcome.valueOf(it) },
         orderingWatermark = prefs[Keys.CLOUD_ROUTINE_ORDER] ?: 0L,
         lastAdmissionWatermark = prefs[Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER] ?: 0L,
         latestOtherReadWatermark = prefs[Keys.CLOUD_ROUTINE_OTHER_READ_ORDER] ?: 0L,
         latestOtherReadTerminal = prefs[Keys.CLOUD_ROUTINE_OTHER_READ_TERMINAL] ?: false,
         consumedOtherReadWatermark = prefs[Keys.CLOUD_ROUTINE_CONSUMED_READ_ORDER] ?: 0L,
     )
+
+    suspend fun recordCloudRoutineOutcome(admittedAt: Long, outcome: CloudReadSummaryOutcome) {
+        context.dataStore.edit { prefs ->
+            if (prefs[Keys.CLOUD_ROUTINE_POLICY] != null &&
+                prefs[Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT] == admittedAt
+            ) prefs[Keys.CLOUD_ROUTINE_LAST_OUTCOME] = outcome.name
+        }
+    }
 
     val cloudReadSummaryFlow: Flow<CloudReadSummary> = context.dataStore.data.map { prefs ->
         CloudReadSummary(
@@ -919,6 +932,7 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.CLOUD_INGEST_POSITION)
             prefs.remove(Keys.CLOUD_ROUTINE_POLICY)
             prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT)
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_OUTCOME)
             prefs.remove(Keys.CLOUD_ROUTINE_ORDER)
             prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER)
             prefs.remove(Keys.CLOUD_ROUTINE_OTHER_READ_ORDER)

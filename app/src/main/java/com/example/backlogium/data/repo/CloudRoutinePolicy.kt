@@ -11,6 +11,7 @@ enum class CloudRoutinePolicy(val minimumGapHours: Long, val periodicHours: Long
 data class CloudRoutineState(
     val policy: CloudRoutinePolicy? = null,
     val lastAdmittedAt: Long? = null,
+    val lastOutcome: CloudReadSummaryOutcome? = null,
     val orderingWatermark: Long = 0L,
     val lastAdmissionWatermark: Long = 0L,
     val latestOtherReadWatermark: Long = 0L,

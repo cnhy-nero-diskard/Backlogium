@@ -33,6 +33,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -58,6 +59,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.data.backup.SnapshotMeta
 import com.example.backlogium.data.repo.RemovedSharedGame
 import com.example.backlogium.data.repo.CloudReadFailure
+import com.example.backlogium.data.repo.CloudRoutinePolicy
+import com.example.backlogium.data.repo.CloudReadSummaryOutcome
+import androidx.compose.ui.semantics.Role
 import com.example.backlogium.data.updates.AppUpdateState
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
@@ -191,6 +195,7 @@ internal fun SettingsGraphScreen(
                 onConfirmContributionDisclosure = viewModel::onConfirmContributionDisclosure,
                 onVerifyCloudPresence = viewModel::verifyCloudPresence,
                 onReadCloudPresence = viewModel::readCloudPresence,
+                onCloudRoutinePolicyChanged = viewModel::setCloudRoutinePolicy,
                 onRemoveCloudPresence = viewModel::removeCloudPresence,
                 onRefileCloudPresence = viewModel::refileCloudPresence,
                 onReverseCloudPresenceRefiling = viewModel::reverseCloudPresenceRefiling,
@@ -271,6 +276,7 @@ data class SettingsActions(
     val onConfirmContributionDisclosure: () -> Unit = {},
     val onVerifyCloudPresence: (String, String) -> Unit = { _, _ -> },
     val onReadCloudPresence: () -> Unit = {},
+    val onCloudRoutinePolicyChanged: (CloudRoutinePolicy) -> Unit = {},
     val onRemoveCloudPresence: () -> Unit = {},
     val onRefileCloudPresence: () -> Unit = {},
     val onReverseCloudPresenceRefiling: () -> Unit = {},
@@ -934,6 +940,7 @@ private fun CloudPresenceCard(
                 }
             }
             if (state.cloudEndpoint.isNotBlank()) {
+                CloudRoutineControls(state, actions.onCloudRoutinePolicyChanged)
                 TextButton(
                     onClick = actions.onRemoveCloudPresence,
                     enabled = !state.cloudBusy,
@@ -953,6 +960,53 @@ private fun CloudPresenceCard(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun CloudRoutineControls(
+    state: SettingsUiState,
+    onPolicyChanged: (CloudRoutinePolicy) -> Unit,
+) {
+    val routine = state.cloudRoutine
+    Text(stringResource(R.string.settings_cloud_routine_title), style = MaterialTheme.typography.titleSmall)
+    CloudRoutinePolicy.entries.forEach { policy ->
+        val label = stringResource(when (policy) {
+            CloudRoutinePolicy.AUTOMATIC -> R.string.settings_cloud_routine_automatic
+            CloudRoutinePolicy.EVERY_12_HOURS -> R.string.settings_cloud_routine_12h
+            CloudRoutinePolicy.DAILY -> R.string.settings_cloud_routine_daily
+            CloudRoutinePolicy.EVERY_48_HOURS -> R.string.settings_cloud_routine_48h
+        })
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().clickable(role = Role.RadioButton,
+                onClick = { onPolicyChanged(policy) }),
+        ) {
+            RadioButton(selected = routine.policy == policy, onClick = null)
+            Text(label, modifier = Modifier.padding(start = 8.dp))
+        }
+    }
+    Text(stringResource(R.string.settings_cloud_routine_explanation),
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val attempt = routine.lastAdmittedAt
+    Text(if (attempt != null) {
+        stringResource(R.string.settings_cloud_routine_last_attempt, UiFormat.dateTime(attempt),
+            stringResource(when (routine.lastOutcome) {
+                CloudReadSummaryOutcome.COMPLETE -> R.string.history_cloud_read_complete
+                CloudReadSummaryOutcome.NO_NEW_DATA -> R.string.history_cloud_read_no_transitions
+                CloudReadSummaryOutcome.PARTIAL -> R.string.history_cloud_read_partial
+                CloudReadSummaryOutcome.FAILED -> R.string.history_cloud_read_failed
+                null -> R.string.settings_cloud_routine_no_outcome
+            }))
+    } else stringResource(R.string.settings_cloud_routine_no_attempt),
+        style = MaterialTheme.typography.bodySmall)
+    Text(stringResource(R.string.history_cloud_last_success,
+        state.cloudReadSummary.lastSuccessAt?.let(UiFormat::dateTime) ?:
+            stringResource(R.string.history_cloud_unknown)), style = MaterialTheme.typography.bodySmall)
+    if (routine.policy != null && attempt != null) {
+        val next = attempt + routine.policy.minimumGapHours * 60L * 60L * 1000L
+        Text(stringResource(R.string.settings_cloud_routine_eligible, UiFormat.dateTime(next)),
+            style = MaterialTheme.typography.bodySmall)
     }
 }
 

@@ -7,6 +7,10 @@ import androidx.work.WorkerParameters
 import com.example.backlogium.data.repo.CloudPresenceRepository
 import com.example.backlogium.data.repo.CloudPresenceSessionIngestor
 import com.example.backlogium.data.repo.CloudRoutineAdmission
+import com.example.backlogium.data.repo.CloudCatchUpResult
+import com.example.backlogium.data.repo.CloudReadSummaryOutcome
+import com.example.backlogium.data.repo.SettingsRepository
+import kotlinx.coroutines.flow.first
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
@@ -18,19 +22,33 @@ class CloudRoutineCatchUpWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val reader: CloudPresenceRepository,
     private val ingestor: CloudPresenceSessionIngestor,
+    private val settings: SettingsRepository,
 ) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val account = inputData.getString(KEY_ACCOUNT)?.takeIf { it.isNotBlank() }
             ?: return Result.success()
         val generation = inputData.getLong(KEY_GENERATION, -1L)
         if (generation < 0L) return Result.success()
+        var admittedAt: Long? = null
         return try {
             if (reader.admitRoutineWork(account, generation) == CloudRoutineAdmission.ADMITTED) {
-                reader.readRoutineCatchUp(
+                admittedAt = settings.cloudRoutineState.first().lastAdmittedAt
+                val outcome = reader.readRoutineCatchUp(
                     consume = { ingestor.ingest(it) },
                     expectedAccount = account,
                     expectedGeneration = generation,
                 )
+                if (admittedAt != null && settings.cloudReaderGeneration.first() == generation) {
+                    val summary = when (outcome) {
+                        is CloudCatchUpResult.Complete -> if (outcome.noNewData) {
+                            CloudReadSummaryOutcome.NO_NEW_DATA
+                        } else CloudReadSummaryOutcome.COMPLETE
+                        is CloudCatchUpResult.Partial -> CloudReadSummaryOutcome.PARTIAL
+                        is CloudCatchUpResult.Failed -> CloudReadSummaryOutcome.FAILED
+                        CloudCatchUpResult.Unavailable -> null
+                    }
+                    if (summary != null) settings.recordCloudRoutineOutcome(admittedAt, summary)
+                }
             }
             // A failed attempt has already consumed its shared cooldown. A future opportunity
             // resumes from its durable page position; WorkManager retries must not burst reads.
@@ -39,6 +57,9 @@ class CloudRoutineCatchUpWorker @AssistedInject constructor(
             throw cancelled
         } catch (error: Exception) {
             Timber.w(error, "Routine cloud catch-up failed")
+            if (admittedAt != null && settings.cloudReaderGeneration.first() == generation) {
+                settings.recordCloudRoutineOutcome(admittedAt, CloudReadSummaryOutcome.FAILED)
+            }
             Result.success()
         }
     }

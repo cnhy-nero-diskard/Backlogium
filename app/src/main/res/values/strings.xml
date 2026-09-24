@@ -92,8 +92,8 @@
     <string name="settings_cloud_reader_title">Optional cloud reader</string>
     <string name="settings_cloud_disclosure">Compare a bounded cloud presence window with this phone\u0027s local ledger. Cloud presence adds a record of when play happened, even while Backlogium is closed. Recovered shared-game sessions update observed time and progress without retroactive celebrations. Backlogium functions fully without it. It never imports Steam lifetime playtime or invents unobserved time.</string>
     <string name="settings_cloud_connected">Connected to %1$s</string>
-    <string name="settings_cloud_healthy_with_last_read">Healthy — last read %1$s</string>
-    <string name="settings_cloud_healthy">Healthy</string>
+    <string name="settings_cloud_healthy_with_last_read">Reader request succeeded · %1$s</string>
+    <string name="settings_cloud_healthy">Reader request succeeded</string>
     <string name="settings_cloud_last_read_failed">Last read failed: %1$s</string>
     <string name="settings_cloud_last_success"> — last success %1$s</string>
     <string name="settings_cloud_configured_no_read">Configured; no successful read yet.</string>
@@ -480,6 +480,16 @@
     <string name="history_cloud_coverage_partial">History is incomplete: more pages were available at the last successful read.</string>
     <string name="history_cloud_coverage_unknown">Observation coverage between reads is unknown.</string>
     <string name="history_cloud_status_caution">A reader response does not confirm that the separate cloud poller is currently observing play. Missing observations do not mean no play occurred.</string>
+    <string name="settings_cloud_routine_title">Routine catch-up</string>
+    <string name="settings_cloud_routine_automatic">Automatic · daily opportunity and play ends</string>
+    <string name="settings_cloud_routine_12h">At least 12 hours apart</string>
+    <string name="settings_cloud_routine_daily">At least 24 hours apart</string>
+    <string name="settings_cloud_routine_48h">At least 48 hours apart</string>
+    <string name="settings_cloud_routine_explanation">Automatic has a daily background opportunity and can also catch up after play ends, with at least 12 hours between routine starts. Other choices set the minimum gap for both opportunities. These limits apply only to routine phone reads, not the cloud poller’s minute observations, manual Read now, or cloud evidence reads needed to place Steam minutes. They do not cap all cloud requests.</string>
+    <string name="settings_cloud_routine_last_attempt">Last routine attempt: %1$s · %2$s</string>
+    <string name="settings_cloud_routine_no_attempt">No routine attempt recorded yet.</string>
+    <string name="settings_cloud_routine_no_outcome">No outcome recorded</string>
+    <string name="settings_cloud_routine_eligible">Next eligible after %1$s. Background work may run later depending on connectivity and device scheduling.</string>
     <string name="history_cloud_explanation_title">Cloud contribution</string>
     <string name="history_cloud_recovered">Recovered play</string>
     <string name="history_cloud_recovered_partial">Partly recovered play</string>

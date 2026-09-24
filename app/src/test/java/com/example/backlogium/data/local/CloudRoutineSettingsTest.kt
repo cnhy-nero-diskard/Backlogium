@@ -17,6 +17,30 @@ import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class CloudRoutineSettingsTest {
+    @Test fun routineOutcomeSurvivesManualReadPolicyChangeAndRestartButNotRemoval() = runTest {
+        val context = RuntimeEnvironment.getApplication()
+        val store = SettingsDataStore(context)
+        store.clearAccountDerivedState()
+        try {
+            store.initializeCloudRoutinePolicy()
+            store.recordCloudRoutineAdmission(100L)
+            store.recordCloudRoutineOutcome(100L, CloudReadSummaryOutcome.PARTIAL)
+            store.recordCloudReadSummary(200L, CloudReadTrigger.SETTINGS_MANUAL,
+                CloudReadSummaryOutcome.COMPLETE, null, null, false, null, null)
+            store.setCloudRoutinePolicy(CloudRoutinePolicy.DAILY)
+            val reopened = SettingsDataStore(context).cloudRoutineStateFlow.first()
+            assertEquals(CloudRoutinePolicy.DAILY, reopened.policy)
+            assertEquals(100L, reopened.lastAdmittedAt)
+            assertEquals(CloudReadSummaryOutcome.PARTIAL, reopened.lastOutcome)
+            store.recordCloudRoutineOutcome(99L, CloudReadSummaryOutcome.COMPLETE)
+            assertEquals(CloudReadSummaryOutcome.PARTIAL, store.cloudRoutineStateFlow.first().lastOutcome)
+            store.clearCloudRoutinePolicy()
+            assertNull(store.cloudRoutineStateFlow.first().lastOutcome)
+        } finally {
+            store.clearAccountDerivedState()
+        }
+    }
+
     @Test
     fun readSummaryRetainsLastSuccessAndObservationAfterPartialAndFailureAcrossRestart() = runTest {
         val context = RuntimeEnvironment.getApplication()

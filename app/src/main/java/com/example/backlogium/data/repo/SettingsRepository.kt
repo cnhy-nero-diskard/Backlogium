@@ -184,6 +184,8 @@ interface SettingsRepository : SessionEndOutbox {
     /** Called when a routine job actually begins, not when offline work is enqueued. */
     suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState = CloudRoutineState()
 
+    suspend fun recordCloudRoutineOutcome(admittedAt: Long, outcome: CloudReadSummaryOutcome) = Unit
+
     suspend fun recordCloudOtherRead(terminal: Boolean) = Unit
 
     /** Transactionally decide one opportunity across all routine triggers. */
@@ -385,6 +387,9 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState =
         settings.recordCloudRoutineAdmission(at)
+
+    override suspend fun recordCloudRoutineOutcome(admittedAt: Long, outcome: CloudReadSummaryOutcome) =
+        settings.recordCloudRoutineOutcome(admittedAt, outcome)
 
     override suspend fun recordCloudOtherRead(terminal: Boolean) =
         settings.recordCloudOtherRead(terminal)
