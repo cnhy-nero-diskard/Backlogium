@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.settings
 
+import com.example.backlogium.R
 import com.example.backlogium.data.repo.CloudConfigurationResult
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -11,15 +12,15 @@ class SettingsViewModelCloudActionTest {
         val feedback = CloudConfigurationResult.InvalidEndpoint.toSettingsActionFeedback()
 
         assertEquals(SettingsResultSeverity.ERROR, feedback.severity)
-        assertEquals("Use an HTTPS Cloud reader URL.", feedback.message)
+        assertEquals(R.string.settings_cloud_feedback_invalid_endpoint, feedback.message.resId)
     }
 
     @Test
     fun thrownRemoveAndRefilingActionsBecomeTypedErrors() = runTest {
-        val removeFailure = settingsCloudActionFeedback("The cloud reader could not be removed.") {
+        val removeFailure = settingsCloudActionFeedback(SettingsText(R.string.settings_cloud_feedback_remove_failed)) {
             throw IllegalStateException("remove failed")
         }
-        val refileFailure = settingsCloudActionFeedback("Cloud playtime could not be re-filed. Try again.") {
+        val refileFailure = settingsCloudActionFeedback(SettingsText(R.string.settings_cloud_feedback_refile_failed)) {
             throw IllegalStateException("re-file failed")
         }
 
@@ -29,8 +30,8 @@ class SettingsViewModelCloudActionTest {
 
     @Test
     fun successfulCloudActionCarriesSuccessSeverity() = runTest {
-        val result = settingsCloudActionFeedback("fallback") {
-            SettingsActionFeedback.success("Cloud presence removed.")
+        val result = settingsCloudActionFeedback(SettingsText(R.string.settings_cloud_feedback_remove_failed)) {
+            SettingsActionFeedback.success(SettingsText(R.string.settings_cloud_feedback_removed))
         }
 
         assertEquals(SettingsResultSeverity.SUCCESS, result.severity)

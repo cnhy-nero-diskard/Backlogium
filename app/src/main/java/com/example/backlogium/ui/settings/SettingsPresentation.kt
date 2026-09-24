@@ -1,6 +1,12 @@
 package com.example.backlogium.ui.settings
 
+import android.content.res.Resources
+import androidx.annotation.AnyRes
 import androidx.annotation.StringRes
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import com.example.backlogium.R
 import com.example.backlogium.data.repo.CloudReadFailure
 import com.example.backlogium.data.updates.AppUpdateState
@@ -270,11 +276,38 @@ fun settingsInventoryIssues(): List<String> = buildList {
 @StringRes
 private fun SettingsGroup.summaryTitleRes(): Int = titleRes
 
-data class SettingsSummaryText(
+data class SettingsText(
+    @param:AnyRes
     val resId: Int,
-    val args: List<Any> = emptyList(),
+    val args: List<Any?> = emptyList(),
     val quantity: Int? = null,
-)
+) {
+    @Suppress("ResourceType")
+    fun resolve(resources: Resources): String {
+        val resolvedArgs = args.map { it.resolveSettingsTextArgument(resources) }.toTypedArray()
+        return quantity?.let { resources.getQuantityString(resId, it, *resolvedArgs) }
+            ?: resources.getString(resId, *resolvedArgs)
+    }
+}
+
+data class SettingsTextList(
+    val items: List<SettingsText>,
+    @param:StringRes val separatorResId: Int,
+) {
+    fun resolve(resources: Resources): String =
+        items.joinToString(resources.getString(separatorResId)) { it.resolve(resources) }
+}
+
+private fun Any?.resolveSettingsTextArgument(resources: Resources): Any? = when (this) {
+    is SettingsText -> resolve(resources)
+    is SettingsTextList -> resolve(resources)
+    else -> this
+}
+
+typealias SettingsSummaryText = SettingsText
+
+@Composable
+internal fun SettingsText.resolveText(): String = resolve(LocalContext.current.resources)
 
 enum class SettingsAttention {
     BLOCKING,

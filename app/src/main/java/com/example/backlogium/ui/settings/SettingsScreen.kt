@@ -213,12 +213,13 @@ internal data class SettingsGraphSession(
 @Composable
 internal fun SettingsGraphEffectCollectors(
     hapticIntents: Flow<HapticIntent>,
-    toastMessages: Flow<String>,
+    toastMessages: Flow<SettingsText>,
     contributionExportRequests: Flow<String>,
     onHapticIntent: (HapticIntent) -> Unit,
     onToastMessage: (String) -> Unit,
     onContributionExportRequest: (String) -> Unit,
 ) {
+    val context = LocalContext.current
     val currentOnHapticIntent by rememberUpdatedState(onHapticIntent)
     val currentOnToastMessage by rememberUpdatedState(onToastMessage)
     val currentOnContributionExportRequest by rememberUpdatedState(onContributionExportRequest)
@@ -226,7 +227,7 @@ internal fun SettingsGraphEffectCollectors(
         hapticIntents.collect { currentOnHapticIntent(it) }
     }
     LaunchedEffect(toastMessages) {
-        toastMessages.collect { currentOnToastMessage(it) }
+        toastMessages.collect { currentOnToastMessage(it.resolve(context.resources)) }
     }
     LaunchedEffect(contributionExportRequests) {
         contributionExportRequests.collect { currentOnContributionExportRequest(it) }
@@ -539,7 +540,7 @@ private fun SettingsDialogs(state: SettingsUiState, actions: SettingsActions) {
         AlertDialog(
             onDismissRequest = actions.onDismissBackupMessage,
             title = { Text(stringResource(R.string.settings_backup_title)) },
-            text = { Text(message) },
+            text = { Text(message.resolveText()) },
             confirmButton = {
                 TextButton(onClick = actions.onDismissBackupMessage) {
                     Text(stringResource(R.string.settings_ok))
@@ -860,7 +861,7 @@ private fun CloudPresenceCard(
                 }
                 state.cloudPresenceRefilingMessage?.let { message ->
                     Text(
-                        message,
+                        message.resolveText(),
                         style = MaterialTheme.typography.bodySmall,
                         color = if (
                             state.cloudPresenceRefilingMessageSeverity == SettingsResultSeverity.ERROR
@@ -942,7 +943,7 @@ private fun CloudPresenceCard(
             }
             state.cloudMessage?.let { message ->
                 Text(
-                    message,
+                    message.resolveText(),
                     style = MaterialTheme.typography.bodySmall,
                     color = if (state.cloudMessageSeverity == SettingsResultSeverity.ERROR) {
                         MaterialTheme.colorScheme.error
@@ -967,7 +968,7 @@ private fun cloudFailureLabelRes(failure: CloudReadFailure?): Int = when (failur
 private fun UpdateCard(
     state: AppUpdateState,
     checking: Boolean,
-    message: String?,
+    message: SettingsText?,
     onCheck: () -> Unit,
     onOpenUpdate: () -> Unit,
 ) {
@@ -1000,7 +1001,7 @@ private fun UpdateCard(
                     Text(stringResource(R.string.settings_update_review))
                 }
             } else if (message != null) {
-                Text(message, style = MaterialTheme.typography.bodySmall)
+                Text(message.resolveText(), style = MaterialTheme.typography.bodySmall)
             } else if (state.lastCheckAtMillis != null) {
                 Text(stringResource(R.string.settings_update_none), style = MaterialTheme.typography.bodySmall)
             }
@@ -1029,9 +1030,9 @@ private fun CompletionTimesCard(
     gatheredAt: Long?,
     coveredGameCount: Int,
     checking: Boolean,
-    checkMessage: String?,
+    checkMessage: SettingsText?,
     contributionBusy: Boolean,
-    contributionMessage: String?,
+    contributionMessage: SettingsText?,
     onCheck: () -> Unit,
     onRequestContributionExport: () -> Unit,
 ) {
@@ -1059,8 +1060,8 @@ private fun CompletionTimesCard(
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
-            checkMessage?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            checkMessage?.let { message ->
+                Text(message.resolveText(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = onCheck, enabled = !checking) {
@@ -1084,8 +1085,8 @@ private fun CompletionTimesCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            contributionMessage?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            contributionMessage?.let { message ->
+                Text(message.resolveText(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             OutlinedButton(onClick = onRequestContributionExport, enabled = !contributionBusy) {
                 Text(

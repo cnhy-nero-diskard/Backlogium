@@ -1,10 +1,10 @@
 package com.example.backlogium.ui.settings
 
+import com.example.backlogium.R
 import com.example.backlogium.data.repo.ManualImportUnavailableAt
 import com.example.backlogium.data.repo.ManualSharedGameImportResult
 import com.example.backlogium.data.repo.PlayerDataProbe
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ManualSharedGameToastTest {
@@ -19,7 +19,7 @@ class ManualSharedGameToastTest {
             ),
         )
 
-        assertEquals("Family Shared game added.", manualImportToast(feedback))
+        assertEquals(R.string.settings_shared_game_toast_added, manualImportToast(feedback).resId)
     }
 
     @Test
@@ -33,7 +33,7 @@ class ManualSharedGameToastTest {
             ),
         )
 
-        assertEquals("Family Shared game is already tracked.", manualImportToast(feedback))
+        assertEquals(R.string.settings_shared_game_toast_already_tracked, manualImportToast(feedback).resId)
     }
 
     @Test
@@ -42,7 +42,7 @@ class ManualSharedGameToastTest {
             ManualSharedGameImportResult.NotAGame(620),
         )
 
-        assertEquals("Family Shared game was not added.", manualImportToast(feedback))
+        assertEquals(R.string.settings_shared_game_toast_not_added, manualImportToast(feedback).resId)
     }
 
     @Test
@@ -50,8 +50,8 @@ class ManualSharedGameToastTest {
         val feedback = manualImportFeedback(ManualSharedGameImportResult.InvalidInput)
 
         assertEquals(ManualImportFeedbackTone.ERROR, feedback.tone)
-        assertEquals("Check the link", feedback.title)
-        assertEquals("Family Shared game was not added.", manualImportToast(feedback))
+        assertEquals(R.string.settings_shared_game_feedback_title_invalid_input, feedback.title.resId)
+        assertEquals(R.string.settings_shared_game_toast_not_added, manualImportToast(feedback).resId)
     }
 
     @Test
@@ -59,12 +59,10 @@ class ManualSharedGameToastTest {
         val feedback = manualImportFeedback(ManualSharedGameImportResult.Owned(440, "Team Fortress 2"))
 
         assertEquals(ManualImportFeedbackTone.INFO, feedback.tone)
-        assertEquals("Already in your library", feedback.title)
-        assertEquals(
-            "Team Fortress 2 is in your owned Steam library; no Family Shared import was made.",
-            feedback.message,
-        )
-        assertEquals("Family Shared game was not added.", manualImportToast(feedback))
+        assertEquals(R.string.settings_shared_game_feedback_title_owned, feedback.title.resId)
+        assertEquals(R.string.settings_shared_game_feedback_owned, feedback.message.resId)
+        assertEquals(listOf("Team Fortress 2"), feedback.message.args)
+        assertEquals(R.string.settings_shared_game_toast_not_added, manualImportToast(feedback).resId)
     }
 
     @Test
@@ -72,8 +70,8 @@ class ManualSharedGameToastTest {
         val feedback = manualImportFeedback(ManualSharedGameImportResult.Excluded(42))
 
         assertEquals(ManualImportFeedbackTone.ERROR, feedback.tone)
-        assertEquals("Game is removed", feedback.title)
-        assertEquals("Family Shared game was not added.", manualImportToast(feedback))
+        assertEquals(R.string.settings_shared_game_feedback_title_excluded, feedback.title.resId)
+        assertEquals(R.string.settings_shared_game_toast_not_added, manualImportToast(feedback).resId)
     }
 
     @Test
@@ -83,8 +81,8 @@ class ManualSharedGameToastTest {
         )
 
         assertEquals(ManualImportFeedbackTone.ERROR, feedback.tone)
-        assertEquals("Steam ownership check is unavailable. Try again.", feedback.message)
-        assertEquals("Family Shared game was not added.", manualImportToast(feedback))
+        assertEquals(R.string.settings_shared_game_feedback_owned_unavailable, feedback.message.resId)
+        assertEquals(R.string.settings_shared_game_toast_not_added, manualImportToast(feedback).resId)
     }
 
     @Test
@@ -94,8 +92,8 @@ class ManualSharedGameToastTest {
         )
 
         assertEquals(ManualImportFeedbackTone.ERROR, feedback.tone)
-        assertEquals("Steam Store verification is unavailable. Try again.", feedback.message)
-        assertEquals("Family Shared game was not added.", manualImportToast(feedback))
+        assertEquals(R.string.settings_shared_game_feedback_store_unavailable, feedback.message.resId)
+        assertEquals(R.string.settings_shared_game_toast_not_added, manualImportToast(feedback).resId)
     }
 
     @Test
@@ -110,8 +108,11 @@ class ManualSharedGameToastTest {
         )
 
         assertEquals(ManualImportFeedbackTone.SUCCESS, feedback.tone)
-        assertTrue(feedback.message.contains("Steam returned 12 achievements; 4 unlocked."))
-        assertEquals("Family Shared game added.", manualImportToast(feedback))
+        assertEquals(R.string.settings_shared_game_feedback_imported, feedback.message.resId)
+        val probe = feedback.message.args[1] as SettingsText
+        assertEquals(R.plurals.settings_shared_game_feedback_achievements_returned, probe.resId)
+        assertEquals(listOf(12, 4), probe.args)
+        assertEquals(R.string.settings_shared_game_toast_added, manualImportToast(feedback).resId)
     }
 
     @Test
@@ -125,8 +126,9 @@ class ManualSharedGameToastTest {
             ),
         )
 
-        assertTrue(feedback.message.contains("this game has no achievements"))
-        assertEquals("Family Shared game added.", manualImportToast(feedback))
+        val probe = feedback.message.args[1] as SettingsText
+        assertEquals(R.string.settings_shared_game_feedback_no_achievements, probe.resId)
+        assertEquals(R.string.settings_shared_game_toast_added, manualImportToast(feedback).resId)
     }
 
     @Test
@@ -135,7 +137,8 @@ class ManualSharedGameToastTest {
             ManualSharedGameImportResult.Imported(401, "Flaky Probe", true, PlayerDataProbe.Unavailable),
         )
 
-        assertTrue(feedback.message.contains("The achievement check is temporarily unavailable."))
-        assertEquals("Family Shared game is already tracked.", manualImportToast(feedback))
+        val probe = feedback.message.args[1] as SettingsText
+        assertEquals(R.string.settings_shared_game_feedback_achievement_check_unavailable, probe.resId)
+        assertEquals(R.string.settings_shared_game_toast_already_tracked, manualImportToast(feedback).resId)
     }
 }

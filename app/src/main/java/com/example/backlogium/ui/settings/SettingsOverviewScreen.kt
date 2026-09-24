@@ -16,7 +16,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -100,8 +99,3 @@ private fun SettingsSummaryRow(
         }
     }
 }
-
-@Composable
-private fun SettingsSummaryText.resolveText(): String =
-    quantity?.let { pluralStringResource(resId, it, *args.toTypedArray()) }
-        ?: stringResource(resId, *args.toTypedArray())

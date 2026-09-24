@@ -124,13 +124,13 @@ private fun ManualSharedGameFeedbackCard(feedback: ManualImportFeedback) {
             )
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = feedback.title,
+                    text = feedback.title.resolveText(),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = contentColor,
                 )
                 Text(
-                    text = feedback.message,
+                    text = feedback.message.resolveText(),
                     style = MaterialTheme.typography.bodyMedium,
                     color = contentColor,
                 )

@@ -85,7 +85,7 @@ class SettingsPresentationTest {
             SettingsUiState(
                 loading = false,
                 configured = true,
-                updateCheckMessage = "Check did not complete. Try again later.",
+                updateCheckMessage = SettingsText(R.string.settings_update_check_failed),
             ),
         ).first()
         assertEquals(SettingsAttention.HEALTHY, messageOnly.attention)
@@ -93,7 +93,7 @@ class SettingsPresentationTest {
         val failedState = SettingsUiState(
             loading = false,
             configured = true,
-            updateCheckMessage = "Check did not complete. Try again later.",
+            updateCheckMessage = SettingsText(R.string.settings_update_check_failed),
             updateCheckSeverity = SettingsResultSeverity.ERROR,
         )
         val failed = settingsGroupSummaries(failedState).first()
@@ -112,8 +112,9 @@ class SettingsPresentationTest {
             configured = true,
             manualSharedGameFeedback = ManualImportFeedback(
                 tone = ManualImportFeedbackTone.ERROR,
-                title = "Couldn't check Steam",
-                message = "Steam Store verification is unavailable. Try again.",
+                title = SettingsText(R.string.settings_shared_game_feedback_title_unavailable),
+                message = SettingsText(R.string.settings_shared_game_feedback_store_unavailable),
+                toastMessage = SettingsText(R.string.settings_shared_game_toast_not_added),
             ),
         )
 
@@ -130,8 +131,9 @@ class SettingsPresentationTest {
                 manualSharedGameBusy = false,
                 manualSharedGameFeedback = ManualImportFeedback(
                     tone = ManualImportFeedbackTone.SUCCESS,
-                    title = "Game found and imported",
-                    message = "The game was imported.",
+                    title = SettingsText(R.string.settings_shared_game_feedback_title_imported),
+                    message = SettingsText(R.string.settings_shared_game_feedback_imported),
+                    toastMessage = SettingsText(R.string.settings_shared_game_toast_added),
                 ),
             ),
         ).single { it.group == SettingsGroup.GAMEPLAY }
@@ -267,8 +269,8 @@ class SettingsPresentationTest {
             cloudEndpoint = "https://reader.example",
             cloudHealthy = true,
         )
-        val removeFailure = SettingsActionFeedback.error("The cloud reader could not be removed.")
-        val refileFailure = SettingsActionFeedback.error("Cloud playtime could not be re-filed. Try again.")
+        val removeFailure = SettingsActionFeedback.error(SettingsText(R.string.settings_cloud_feedback_remove_failed))
+        val refileFailure = SettingsActionFeedback.error(SettingsText(R.string.settings_cloud_feedback_refile_failed))
 
         val removeState = healthyCloud.copy(
             cloudMessage = removeFailure.message,
@@ -301,7 +303,7 @@ class SettingsPresentationTest {
             cloudHealthy = true,
         )
         val failedState = healthyCloud.copy(
-            hltbDatasetCheckMessage = "Check did not complete. Try again later.",
+            hltbDatasetCheckMessage = SettingsText(R.string.settings_update_check_failed),
             hltbDatasetCheckSeverity = SettingsResultSeverity.ERROR,
         )
 
@@ -327,7 +329,7 @@ class SettingsPresentationTest {
             cloudHealthy = true,
         )
         val failedState = healthyCloud.copy(
-            hltbContributionMessage = "Couldn't save the contribution file.",
+            hltbContributionMessage = SettingsText(R.string.settings_completion_contribution_save_failed),
             hltbContributionSeverity = SettingsResultSeverity.ERROR,
         )
 
@@ -335,7 +337,7 @@ class SettingsPresentationTest {
         assertEquals(SettingsAttention.BLOCKING, failed.attention)
 
         val replacedState = failedState.copy(
-            hltbContributionMessage = "Saved contribution file.",
+            hltbContributionMessage = SettingsText(R.plurals.settings_completion_contribution_saved, listOf(1), quantity = 1),
             hltbContributionSeverity = SettingsResultSeverity.SUCCESS,
         )
         val replaced = settingsGroupSummaries(replacedState).single { it.group == SettingsGroup.DATA_PRIVACY }

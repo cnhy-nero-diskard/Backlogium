@@ -15,6 +15,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navigation
+import com.example.backlogium.R
 import com.example.backlogium.ui.screenshot.ScreenshotTestActivity
 import com.example.backlogium.ui.settingsGraphBackStackEntryOrNull
 import com.example.backlogium.ui.util.HapticIntent
@@ -32,7 +33,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class SettingsGraphEffectsNavigationTest {
     private val hapticIntents = MutableSharedFlow<HapticIntent>(extraBufferCapacity = 1)
-    private val toastMessages = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    private val toastMessages = MutableSharedFlow<SettingsText>(extraBufferCapacity = 1)
     private val contributionExportRequests = MutableSharedFlow<String>(extraBufferCapacity = 1)
     private val handledHaptics = mutableListOf<HapticIntent>()
     private val handledToasts = mutableListOf<String>()
@@ -119,13 +120,13 @@ class SettingsGraphEffectsNavigationTest {
 
         composeRule.runOnIdle {
             assertTrue(hapticIntents.tryEmit(HapticIntent.Reject))
-            assertTrue(toastMessages.tryEmit("Sync failed"))
+            assertTrue(toastMessages.tryEmit(SettingsText(R.string.settings_shared_game_toast_added)))
             assertTrue(contributionExportRequests.tryEmit("contribution.json"))
         }
         composeRule.waitForIdle()
 
         assertEquals(listOf(HapticIntent.Reject), handledHaptics)
-        assertEquals(listOf("Sync failed"), handledToasts)
+        assertEquals(listOf("Family Shared game added."), handledToasts)
         assertEquals(listOf("contribution.json"), handledExports)
     }
 

@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.backlogium.R
 import com.example.backlogium.data.backup.BackupFile
 import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.backup.BackupValidationProblem
@@ -87,17 +88,17 @@ data class RuleChangeConfirmation(
 enum class SettingsResultSeverity { INFO, SUCCESS, ERROR }
 
 internal data class SettingsActionFeedback(
-    val message: String,
+    val message: SettingsText,
     val severity: SettingsResultSeverity,
 ) {
     companion object {
-        fun success(message: String) = SettingsActionFeedback(message, SettingsResultSeverity.SUCCESS)
-        fun error(message: String) = SettingsActionFeedback(message, SettingsResultSeverity.ERROR)
+        fun success(message: SettingsText) = SettingsActionFeedback(message, SettingsResultSeverity.SUCCESS)
+        fun error(message: SettingsText) = SettingsActionFeedback(message, SettingsResultSeverity.ERROR)
     }
 }
 
 internal suspend fun settingsCloudActionFeedback(
-    failureMessage: String,
+    failureMessage: SettingsText,
     action: suspend () -> SettingsActionFeedback,
 ): SettingsActionFeedback = try {
     action()
@@ -108,48 +109,84 @@ internal suspend fun settingsCloudActionFeedback(
 }
 
 internal fun CloudConfigurationResult.toSettingsActionFeedback(): SettingsActionFeedback = when (this) {
-    CloudConfigurationResult.Saved -> SettingsActionFeedback.success("Cloud presence connected.")
+    CloudConfigurationResult.Saved -> SettingsActionFeedback.success(
+        SettingsText(R.string.settings_cloud_feedback_connected),
+    )
     CloudConfigurationResult.NoSteamAccount ->
-        SettingsActionFeedback.error("Connect a Steam account before verifying the reader.")
+        SettingsActionFeedback.error(SettingsText(R.string.settings_cloud_feedback_verify_account_required))
     CloudConfigurationResult.InvalidEndpoint ->
-        SettingsActionFeedback.error("Use an HTTPS Cloud reader URL.")
+        SettingsActionFeedback.error(SettingsText(R.string.settings_cloud_feedback_invalid_endpoint))
     CloudConfigurationResult.RejectedCredential ->
-        SettingsActionFeedback.error("The reader credential was rejected.")
+        SettingsActionFeedback.error(SettingsText(R.string.settings_cloud_feedback_credential_rejected))
     CloudConfigurationResult.Unreachable ->
-        SettingsActionFeedback.error("The reader could not be reached.")
+        SettingsActionFeedback.error(SettingsText(R.string.settings_cloud_feedback_verify_unreachable))
     CloudConfigurationResult.UnusableResponse ->
-        SettingsActionFeedback.error("The reader returned unusable data.")
+        SettingsActionFeedback.error(SettingsText(R.string.settings_cloud_feedback_unusable_response))
     is CloudConfigurationResult.AccountMismatch -> SettingsActionFeedback.error(
-        "Endpoint account $endpointAccount does not match expected Steam account $expectedAccount.",
+        SettingsText(
+            R.string.settings_cloud_feedback_account_mismatch,
+            listOf(endpointAccount, expectedAccount),
+        ),
     )
 }
 
 internal fun CloudReadResult.toSettingsActionFeedback(): SettingsActionFeedback = when (this) {
-    CloudReadResult.Unconfigured -> SettingsActionFeedback.error("Configure the cloud reader first.")
-    CloudReadResult.NoSteamAccount -> SettingsActionFeedback.error("Connect a Steam account first.")
+    CloudReadResult.Unconfigured ->
+        SettingsActionFeedback.error(SettingsText(R.string.settings_cloud_feedback_configure_first))
+    CloudReadResult.NoSteamAccount ->
+        SettingsActionFeedback.error(SettingsText(R.string.settings_cloud_feedback_read_account_required))
     is CloudReadResult.Success -> SettingsActionFeedback.success(
-        "Cloud presence updated (${snapshot.observationCount} observations).",
+        SettingsText(
+            R.plurals.settings_cloud_feedback_read_success,
+            listOf(snapshot.observationCount),
+            quantity = snapshot.observationCount,
+        ),
     )
     is CloudReadResult.Failed -> SettingsActionFeedback.error(failure.settingsMessage())
 }
 
-private fun CloudReadFailure.settingsMessage(): String = when (this) {
-    CloudReadFailure.UNREACHABLE -> "The cloud reader could not be reached."
-    CloudReadFailure.REJECTED_CREDENTIAL -> "The reader credential was rejected."
-    CloudReadFailure.ACCOUNT_MISMATCH ->
-        "The endpoint account does not match this Steam account."
-    CloudReadFailure.UNUSABLE_RESPONSE -> "The reader returned unusable data."
+private fun CloudReadFailure.settingsMessage(): SettingsText = when (this) {
+    CloudReadFailure.UNREACHABLE -> SettingsText(R.string.settings_cloud_feedback_read_unreachable)
+    CloudReadFailure.REJECTED_CREDENTIAL -> SettingsText(R.string.settings_cloud_feedback_read_credential_rejected)
+    CloudReadFailure.ACCOUNT_MISMATCH -> SettingsText(R.string.settings_cloud_feedback_read_account_mismatch)
+    CloudReadFailure.UNUSABLE_RESPONSE -> SettingsText(R.string.settings_cloud_feedback_read_unusable_response)
 }
 
 internal fun CloudPresenceRefilingResult.toSettingsActionFeedback(): SettingsActionFeedback =
-    SettingsActionFeedback.success(describe())
+    SettingsActionFeedback.success(toSettingsText())
 
-internal fun CloudPresenceRefilingResult.describe(): String = when (operation) {
-    CloudPresenceRefilingOperation.APPLIED ->
-        "Re-filed $sessionsRefiled sessions across ${datesAffected.size} dates."
-    CloudPresenceRefilingOperation.REVERSED ->
-        "Re-filing undone; restored $sessionsRefiled sessions across ${datesAffected.size} dates."
-    CloudPresenceRefilingOperation.NO_OP -> "No cloud playtime re-filing was needed."
+private fun CloudPresenceRefilingResult.toSettingsText(): SettingsText = when (operation) {
+    CloudPresenceRefilingOperation.APPLIED -> SettingsText(
+        R.string.settings_cloud_refiling_applied,
+        listOf(
+            SettingsText(
+                R.plurals.settings_cloud_refiling_sessions_applied,
+                listOf(sessionsRefiled),
+                quantity = sessionsRefiled,
+            ),
+            SettingsText(
+                R.plurals.settings_cloud_refiling_dates,
+                listOf(datesAffected.size),
+                quantity = datesAffected.size,
+            ),
+        ),
+    )
+    CloudPresenceRefilingOperation.REVERSED -> SettingsText(
+        R.string.settings_cloud_refiling_reversed,
+        listOf(
+            SettingsText(
+                R.plurals.settings_cloud_refiling_sessions_restored,
+                listOf(sessionsRefiled),
+                quantity = sessionsRefiled,
+            ),
+            SettingsText(
+                R.plurals.settings_cloud_refiling_dates,
+                listOf(datesAffected.size),
+                quantity = datesAffected.size,
+            ),
+        ),
+    )
+    CloudPresenceRefilingOperation.NO_OP -> SettingsText(R.string.settings_cloud_refiling_not_needed)
 }
 
 data class SettingsUiState(
@@ -167,11 +204,11 @@ data class SettingsUiState(
     val cloudLastFailure: CloudReadFailure? = null,
     val cloudHealthy: Boolean? = null,
     val cloudBusy: Boolean = false,
-    val cloudMessage: String? = null,
+    val cloudMessage: SettingsText? = null,
     val cloudMessageSeverity: SettingsResultSeverity? = null,
     val cloudPresenceRefilingApplied: Boolean = false,
     val cloudPresenceRefilingBusy: Boolean = false,
-    val cloudPresenceRefilingMessage: String? = null,
+    val cloudPresenceRefilingMessage: SettingsText? = null,
     val cloudPresenceRefilingMessageSeverity: SettingsResultSeverity? = null,
     val lastSyncAt: Long = 0L,
     val lastSyncError: String? = null,
@@ -205,7 +242,7 @@ data class SettingsUiState(
     /** True while an export/import/restore is in flight. */
     val backupBusy: Boolean = false,
     /** One-shot status text (export/import success, or a rejected-file reason). */
-    val backupMessage: String? = null,
+    val backupMessage: SettingsText? = null,
     /** True while a cross-account mismatch warning awaits the user's confirm/cancel. */
     val mismatchImportPending: Boolean = false,
     /** The mismatched backup's recorded SteamID64, for the warning dialog's text. */
@@ -216,7 +253,7 @@ data class SettingsUiState(
     val nonGameCandidateCount: Int = 0,
     val appUpdateState: AppUpdateState = AppUpdateState(),
     val updateCheckInProgress: Boolean = false,
-    val updateCheckMessage: String? = null,
+    val updateCheckMessage: SettingsText? = null,
     val updateCheckSeverity: SettingsResultSeverity? = null,
     val manualSharedGameInput: String = "",
     val manualSharedGameBusy: Boolean = false,
@@ -232,12 +269,12 @@ data class SettingsUiState(
     /** How many of the user's owned games the applied dataset covers. */
     val hltbDatasetCoveredGameCount: Int = 0,
     val hltbDatasetCheckInProgress: Boolean = false,
-    val hltbDatasetCheckMessage: String? = null,
+    val hltbDatasetCheckMessage: SettingsText? = null,
     val hltbDatasetCheckSeverity: SettingsResultSeverity? = null,
     /** True while the contribution-export disclosure awaits the user's confirm/decline. */
     val hltbContributionDisclosurePending: Boolean = false,
     val hltbContributionBusy: Boolean = false,
-    val hltbContributionMessage: String? = null,
+    val hltbContributionMessage: SettingsText? = null,
     val hltbContributionSeverity: SettingsResultSeverity? = null,
 ) {
     /** The candidate config, or null while any field is invalid. */
@@ -289,22 +326,22 @@ class SettingsViewModel @Inject constructor(
     private val isImportingHistory = MutableStateFlow(false)
 
     private val backupBusy = MutableStateFlow(false)
-    private val backupMessage = MutableStateFlow<String?>(null)
+    private val backupMessage = MutableStateFlow<SettingsText?>(null)
     private val pendingMismatchImport = MutableStateFlow<BackupFile?>(null)
     private val snapshots = MutableStateFlow<List<SnapshotMeta>>(emptyList())
     private val updateCheckInProgress = MutableStateFlow(false)
-    private val updateCheckMessage = MutableStateFlow<String?>(null)
+    private val updateCheckMessage = MutableStateFlow<SettingsText?>(null)
     private val updateCheckSeverity = MutableStateFlow<SettingsResultSeverity?>(null)
     private val manualSharedGameInput = MutableStateFlow("")
     private val manualSharedGameBusy = MutableStateFlow(false)
     private val manualSharedGameFeedback = MutableStateFlow<ManualImportFeedback?>(null)
     private val hltbDatasetCheckInProgress = MutableStateFlow(false)
-    private val hltbDatasetCheckMessage = MutableStateFlow<String?>(null)
+    private val hltbDatasetCheckMessage = MutableStateFlow<SettingsText?>(null)
     private val hltbDatasetCheckSeverity = MutableStateFlow<SettingsResultSeverity?>(null)
     private val hltbDatasetProgress = MutableStateFlow<HltbDatasetProgress?>(null)
     private val hltbContributionDisclosurePending = MutableStateFlow(false)
     private val hltbContributionBusy = MutableStateFlow(false)
-    private val hltbContributionMessage = MutableStateFlow<String?>(null)
+    private val hltbContributionMessage = MutableStateFlow<SettingsText?>(null)
     private val hltbContributionSeverity = MutableStateFlow<SettingsResultSeverity?>(null)
     private val cloudBusy = MutableStateFlow(false)
     private val cloudMessage = MutableStateFlow<SettingsActionFeedback?>(null)
@@ -316,10 +353,10 @@ class SettingsViewModel @Inject constructor(
     /** Held only between a successful [prepareContributionExport] and the SAF destination pick. */
     private var preparedContribution: HltbContributionPreparation.Ready? = null
     private val _hapticIntents = MutableSharedFlow<HapticIntent>(extraBufferCapacity = 4)
-    private val _toastMessages = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    private val _toastMessages = MutableSharedFlow<SettingsText>(extraBufferCapacity = 4)
     /** Emits a suggested file name once a contribution is prepared and ready to be written. */
     private val _contributionExportRequests = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val toastMessages: SharedFlow<String> = _toastMessages.asSharedFlow()
+    val toastMessages: SharedFlow<SettingsText> = _toastMessages.asSharedFlow()
     val hapticIntents: SharedFlow<HapticIntent> = _hapticIntents.asSharedFlow()
     val contributionExportRequests: SharedFlow<String> = _contributionExportRequests.asSharedFlow()
 
@@ -547,7 +584,7 @@ class SettingsViewModel @Inject constructor(
             cloudMessage.value = null
             try {
                 cloudMessage.value = settingsCloudActionFeedback(
-                    failureMessage = "The cloud reader could not be verified. Try again.",
+                    failureMessage = SettingsText(R.string.settings_cloud_feedback_verify_failed),
                 ) {
                     cloudPresence.verifyAndSave(
                         endpoint,
@@ -568,7 +605,7 @@ class SettingsViewModel @Inject constructor(
             cloudMessage.value = null
             try {
                 cloudMessage.value = settingsCloudActionFeedback(
-                    failureMessage = "The cloud reader could not be read. Try again.",
+                    failureMessage = SettingsText(R.string.settings_cloud_feedback_read_failed),
                 ) {
                     cloudPresence.read(consume = cloudPresenceIngestor::ingest)
                         .toSettingsActionFeedback()
@@ -586,10 +623,10 @@ class SettingsViewModel @Inject constructor(
             cloudMessage.value = null
             try {
                 cloudMessage.value = settingsCloudActionFeedback(
-                    failureMessage = "The cloud reader could not be removed.",
+                    failureMessage = SettingsText(R.string.settings_cloud_feedback_remove_failed),
                 ) {
                     cloudPresence.removeConfiguration()
-                    SettingsActionFeedback.success("Cloud presence removed.")
+                    SettingsActionFeedback.success(SettingsText(R.string.settings_cloud_feedback_removed))
                 }
             } finally {
                 cloudBusy.value = false
@@ -606,16 +643,16 @@ class SettingsViewModel @Inject constructor(
             cloudRefilingMessage.value = null
             try {
                 cloudRefilingMessage.value = settingsCloudActionFeedback(
-                    failureMessage = "Cloud playtime could not be re-filed. Try again.",
+                    failureMessage = SettingsText(R.string.settings_cloud_feedback_refile_failed),
                 ) {
                     when (val read = cloudPresence.readCompleteHistory(
                         trigger = CloudReadTrigger.SETTINGS_MANUAL,
                         consume = cloudPresenceIngestor::ingest,
                     )) {
                         CloudReadResult.Unconfigured ->
-                            SettingsActionFeedback.error("Configure the cloud reader first.")
+                            SettingsActionFeedback.error(SettingsText(R.string.settings_cloud_feedback_configure_first))
                         CloudReadResult.NoSteamAccount ->
-                            SettingsActionFeedback.error("Connect a Steam account first.")
+                            SettingsActionFeedback.error(SettingsText(R.string.settings_cloud_feedback_read_account_required))
                         is CloudReadResult.Failed ->
                             SettingsActionFeedback.error(read.failure.settingsMessage())
                         is CloudReadResult.Success -> {
@@ -641,7 +678,7 @@ class SettingsViewModel @Inject constructor(
             cloudRefilingMessage.value = null
             try {
                 cloudRefilingMessage.value = settingsCloudActionFeedback(
-                    failureMessage = "Cloud playtime could not be restored. Try again.",
+                    failureMessage = SettingsText(R.string.settings_cloud_feedback_restore_failed),
                 ) {
                     val result = cloudPresenceRefiling.reverse()
                     if (result.operation == CloudPresenceRefilingOperation.REVERSED) {
@@ -670,8 +707,9 @@ class SettingsViewModel @Inject constructor(
                 val feedback = if (configured == null) {
                     ManualImportFeedback(
                         ManualImportFeedbackTone.ERROR,
-                        "Steam account required",
-                        "Connect a Steam account before checking a game.",
+                        SettingsText(R.string.settings_shared_game_title_account_required),
+                        SettingsText(R.string.settings_shared_game_message_account_required),
+                        SettingsText(R.string.settings_shared_game_toast_not_added),
                     )
                 } else {
                     manualImportFeedback(
@@ -694,8 +732,9 @@ class SettingsViewModel @Inject constructor(
             } catch (_: Exception) {
                 val feedback = ManualImportFeedback(
                     ManualImportFeedbackTone.ERROR,
-                    "Import failed",
-                    "Backlogium couldn't finish the check. Try again.",
+                    SettingsText(R.string.settings_shared_game_title_import_failed),
+                    SettingsText(R.string.settings_shared_game_message_import_failed),
+                    SettingsText(R.string.settings_shared_game_toast_not_added),
                 )
                 manualSharedGameFeedback.value = feedback
                 _toastMessages.tryEmit(manualImportToast(feedback))
@@ -723,18 +762,18 @@ class SettingsViewModel @Inject constructor(
                     is UpdateCheckResult.NoUpdate,
                     is UpdateCheckResult.SkippedRecent,
                     -> {
-                        updateCheckMessage.value = "You're up to date."
+                        updateCheckMessage.value = SettingsText(R.string.settings_up_to_date)
                         updateCheckSeverity.value = SettingsResultSeverity.SUCCESS
                     }
                     is UpdateCheckResult.Failed -> {
-                        updateCheckMessage.value = "Check did not complete. Try again later."
+                        updateCheckMessage.value = SettingsText(R.string.settings_update_check_failed)
                         updateCheckSeverity.value = SettingsResultSeverity.ERROR
                     }
                 }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
-                updateCheckMessage.value = "Check did not complete. Try again later."
+                updateCheckMessage.value = SettingsText(R.string.settings_update_check_failed)
                 updateCheckSeverity.value = SettingsResultSeverity.ERROR
             } finally {
                 updateCheckInProgress.value = false
@@ -755,23 +794,26 @@ class SettingsViewModel @Inject constructor(
                 }
                 when (result) {
                     is HltbDatasetCheckResult.Applied -> {
-                        hltbDatasetCheckMessage.value =
-                            "Updated — ${result.gamesGainingLengths} games gained completion times."
+                        hltbDatasetCheckMessage.value = SettingsText(
+                            R.plurals.settings_completion_dataset_updated,
+                            listOf(result.gamesGainingLengths),
+                            quantity = result.gamesGainingLengths,
+                        )
                         hltbDatasetCheckSeverity.value = SettingsResultSeverity.SUCCESS
                     }
                     is HltbDatasetCheckResult.UpToDate -> {
-                        hltbDatasetCheckMessage.value = "Already up to date."
+                        hltbDatasetCheckMessage.value = SettingsText(R.string.settings_completion_already_up_to_date)
                         hltbDatasetCheckSeverity.value = SettingsResultSeverity.SUCCESS
                     }
                     is HltbDatasetCheckResult.Failed -> {
-                        hltbDatasetCheckMessage.value = "Check did not complete. Try again later."
+                        hltbDatasetCheckMessage.value = SettingsText(R.string.settings_update_check_failed)
                         hltbDatasetCheckSeverity.value = SettingsResultSeverity.ERROR
                     }
                 }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
-                hltbDatasetCheckMessage.value = "Check did not complete. Try again later."
+                hltbDatasetCheckMessage.value = SettingsText(R.string.settings_update_check_failed)
                 hltbDatasetCheckSeverity.value = SettingsResultSeverity.ERROR
             } finally {
                 hltbDatasetCheckInProgress.value = false
@@ -780,11 +822,11 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    private fun HltbDatasetProgress.describe(): String = when (this) {
-        HltbDatasetProgress.Checking -> "Checking for a newer dataset…"
-        is HltbDatasetProgress.Downloading -> "Downloading…"
-        HltbDatasetProgress.Verifying -> "Verifying…"
-        HltbDatasetProgress.Applying -> "Applying…"
+    private fun HltbDatasetProgress.describe(): SettingsText = when (this) {
+        HltbDatasetProgress.Checking -> SettingsText(R.string.settings_completion_checking_newer)
+        is HltbDatasetProgress.Downloading -> SettingsText(R.string.settings_completion_downloading)
+        HltbDatasetProgress.Verifying -> SettingsText(R.string.settings_completion_verifying)
+        HltbDatasetProgress.Applying -> SettingsText(R.string.settings_completion_applying)
     }
 
     /** Step 1 of the contribution export: show what the file reveals before anything is written. */
@@ -810,7 +852,7 @@ class SettingsViewModel @Inject constructor(
             try {
                 when (val prepared = hltbContributionExporter.prepare()) {
                     HltbContributionPreparation.NothingToContribute -> {
-                        hltbContributionMessage.value = "No resolved games to contribute yet."
+                        hltbContributionMessage.value = SettingsText(R.string.settings_completion_no_resolved_games)
                         hltbContributionSeverity.value = SettingsResultSeverity.INFO
                         hltbContributionBusy.value = false
                     }
@@ -823,7 +865,7 @@ class SettingsViewModel @Inject constructor(
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
-                hltbContributionMessage.value = "Couldn't prepare the contribution. Try again."
+                hltbContributionMessage.value = SettingsText(R.string.settings_completion_prepare_failed)
                 hltbContributionSeverity.value = SettingsResultSeverity.ERROR
                 hltbContributionBusy.value = false
             }
@@ -848,12 +890,16 @@ class SettingsViewModel @Inject constructor(
                 withContext(Dispatchers.IO) {
                     hltbContributionExporter.writeTo(prepared, destination, contentResolver)
                 }
-                hltbContributionMessage.value = "Saved ${prepared.mappingCount} games to contribute."
+                hltbContributionMessage.value = SettingsText(
+                    R.plurals.settings_completion_contribution_saved,
+                    listOf(prepared.mappingCount),
+                    quantity = prepared.mappingCount,
+                )
                 hltbContributionSeverity.value = SettingsResultSeverity.SUCCESS
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
-                hltbContributionMessage.value = "Couldn't save the contribution file."
+                hltbContributionMessage.value = SettingsText(R.string.settings_completion_contribution_save_failed)
                 hltbContributionSeverity.value = SettingsResultSeverity.ERROR
             } finally {
                 hltbContributionBusy.value = false
@@ -974,14 +1020,14 @@ class SettingsViewModel @Inject constructor(
     /** Export a backup to a user-chosen SAF destination. Always available. */
     fun onExportBackup(destination: Uri) = runBackupOp {
         backupRepository.exportTo(destination)
-        backupMessage.value = "Backup exported."
+        backupMessage.value = SettingsText(R.string.settings_backup_exported)
     }
 
     /** A file was picked via SAF's OpenDocument — validate, then import or warn on mismatch. */
     fun onImportBackupPicked(source: Uri) = runBackupOp {
         when (val parsed = backupRepository.parseFrom(source)) {
             ParsedBackup.InvalidFormat ->
-                backupMessage.value = "That file isn't a valid Backlogium backup."
+                backupMessage.value = SettingsText(R.string.settings_backup_invalid_file)
             is ParsedBackup.Invalid -> backupMessage.value = parsed.problems.describeRejection()
             is ParsedBackup.TooLarge -> backupMessage.value = parsed.describeTooLarge()
             is ParsedBackup.Valid -> proceedOrWarn(parsed.file)
@@ -991,7 +1037,7 @@ class SettingsViewModel @Inject constructor(
     /** Restore a listed automatic snapshot through the same merge path as a manual import. */
     fun onRestoreSnapshot(snapshot: SnapshotMeta) = runBackupOp {
         when (val parsed = backupRepository.parseSnapshot(snapshot.fileName)) {
-            ParsedBackup.InvalidFormat -> backupMessage.value = "That snapshot could not be read."
+            ParsedBackup.InvalidFormat -> backupMessage.value = SettingsText(R.string.settings_backup_snapshot_unreadable)
             is ParsedBackup.Invalid -> backupMessage.value = parsed.problems.describeRejection()
             is ParsedBackup.TooLarge -> backupMessage.value = parsed.describeTooLarge()
             is ParsedBackup.Valid -> proceedOrWarn(parsed.file)
@@ -1003,7 +1049,7 @@ class SettingsViewModel @Inject constructor(
             pendingMismatchImport.value = file
         } else {
             backupRepository.importBackup(file)
-            backupMessage.value = "Backup imported."
+            backupMessage.value = SettingsText(R.string.settings_backup_imported)
             refreshSnapshots()
             _hapticIntents.tryEmit(HapticIntent.Confirm)
         }
@@ -1015,7 +1061,7 @@ class SettingsViewModel @Inject constructor(
         pendingMismatchImport.value = null
         runBackupOp {
             backupRepository.importBackup(file)
-            backupMessage.value = "Backup imported."
+            backupMessage.value = SettingsText(R.string.settings_backup_imported)
             refreshSnapshots()
             _hapticIntents.tryEmit(HapticIntent.Confirm)
         }
@@ -1024,10 +1070,10 @@ class SettingsViewModel @Inject constructor(
     /** Delete one retained automatic snapshot after the user confirms the action in the UI. */
     fun onDeleteSnapshot(snapshot: SnapshotMeta) = runBackupOp {
         if (backupRepository.deleteSnapshot(snapshot.fileName)) {
-            backupMessage.value = "Snapshot deleted."
+            backupMessage.value = SettingsText(R.string.settings_backup_snapshot_deleted)
             _hapticIntents.tryEmit(HapticIntent.Confirm)
         } else {
-            backupMessage.value = "That snapshot is no longer available."
+            backupMessage.value = SettingsText(R.string.settings_backup_snapshot_unavailable)
         }
         refreshSnapshots()
     }
@@ -1045,16 +1091,16 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 if (sharedGames.reverseRemoval(appId)) {
-                    _toastMessages.tryEmit("Family Shared game restored.")
+                    _toastMessages.tryEmit(SettingsText(R.string.settings_shared_game_toast_restored))
                     _hapticIntents.tryEmit(HapticIntent.Confirm)
                 } else {
-                    _toastMessages.tryEmit("Family Shared game could not be restored.")
+                    _toastMessages.tryEmit(SettingsText(R.string.settings_shared_game_toast_restore_failed))
                     _hapticIntents.tryEmit(HapticIntent.Reject)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                _toastMessages.tryEmit("Family Shared game could not be restored.")
+                _toastMessages.tryEmit(SettingsText(R.string.settings_shared_game_toast_restore_failed))
                 _hapticIntents.tryEmit(HapticIntent.Reject)
             }
         }
@@ -1072,7 +1118,7 @@ class SettingsViewModel @Inject constructor(
             try {
                 op()
             } catch (e: Exception) {
-                backupMessage.value = "Backup operation failed: ${e.message}"
+                backupMessage.value = SettingsText(R.string.settings_backup_operation_failed, listOf(e.message))
             } finally {
                 backupBusy.update { false }
             }
@@ -1089,7 +1135,7 @@ class SettingsViewModel @Inject constructor(
 
     private data class BackupLocal(
         val busy: Boolean,
-        val message: String?,
+        val message: SettingsText?,
         val pendingMismatch: BackupFile?,
         val snapshots: List<SnapshotMeta>,
     )
@@ -1100,19 +1146,19 @@ class SettingsViewModel @Inject constructor(
         val gatheredAt: Long?,
         val coveredCount: Int,
         val checking: Boolean,
-        val checkMessage: String?,
+        val checkMessage: SettingsText?,
         val checkSeverity: SettingsResultSeverity?,
     )
 
     private data class DatasetCheckLocal(
-        val message: String?,
+        val message: SettingsText?,
         val severity: SettingsResultSeverity?,
     )
 
     private data class HltbContributionLocal(
         val disclosurePending: Boolean,
         val busy: Boolean,
-        val message: String?,
+        val message: SettingsText?,
         val severity: SettingsResultSeverity?,
     )
 
@@ -1120,7 +1166,7 @@ class SettingsViewModel @Inject constructor(
 
     private data class UpdateCheckLocal(
         val inProgress: Boolean,
-        val message: String?,
+        val message: SettingsText?,
         val severity: SettingsResultSeverity?,
     )
 
@@ -1136,82 +1182,115 @@ class SettingsViewModel @Inject constructor(
 
 
 /** Names what failed and where, rather than reporting only that the import failed (tasks.md 2.5). */
-private fun List<BackupValidationProblem>.describeRejection(): String {
-    val summary = joinToString("; ") { "${it.recordType}[${it.index}]: ${it.detail}" }
-    return "Backup rejected — $summary"
-}
+private fun List<BackupValidationProblem>.describeRejection(): SettingsText = SettingsText(
+    R.string.settings_backup_rejected,
+    listOf(
+        SettingsTextList(
+            items = map { problem ->
+                SettingsText(
+                    R.string.settings_backup_validation_problem,
+                    listOf(problem.recordType, problem.index, problem.detail),
+                )
+            },
+            separatorResId = R.string.settings_backup_validation_separator,
+        ),
+    ),
+)
 
-private fun ParsedBackup.TooLarge.describeTooLarge(): String {
+private fun ParsedBackup.TooLarge.describeTooLarge(): SettingsText {
     fun Long.toMb() = this / (1024 * 1024)
-    return "Backup too large: ${actualBytes.toMb()} MB exceeds the ${limitBytes.toMb()} MB limit."
+    return SettingsText(
+        R.string.settings_backup_too_large,
+        listOf(actualBytes.toMb(), limitBytes.toMb()),
+    )
 }
 
 enum class ManualImportFeedbackTone { SUCCESS, INFO, ERROR }
 
 data class ManualImportFeedback(
     val tone: ManualImportFeedbackTone,
-    val title: String,
-    val message: String,
+    val title: SettingsText,
+    val message: SettingsText,
+    val toastMessage: SettingsText,
 )
 
 internal fun manualImportFeedback(result: ManualSharedGameImportResult): ManualImportFeedback = when (result) {
     ManualSharedGameImportResult.InvalidInput -> ManualImportFeedback(
         ManualImportFeedbackTone.ERROR,
-        "Check the link",
-        "Enter a numeric app ID or Steam Store URL.",
+        SettingsText(R.string.settings_shared_game_feedback_title_invalid_input),
+        SettingsText(R.string.settings_shared_game_feedback_invalid_input),
+        SettingsText(R.string.settings_shared_game_toast_not_added),
     )
     is ManualSharedGameImportResult.Owned -> ManualImportFeedback(
         ManualImportFeedbackTone.INFO,
-        "Already in your library",
-        "${result.name} is in your owned Steam library; no Family Shared import was made.",
+        SettingsText(R.string.settings_shared_game_feedback_title_owned),
+        SettingsText(R.string.settings_shared_game_feedback_owned, listOf(result.name)),
+        SettingsText(R.string.settings_shared_game_toast_not_added),
     )
     is ManualSharedGameImportResult.Excluded -> ManualImportFeedback(
         ManualImportFeedbackTone.ERROR,
-        "Game is removed",
-        "App ${result.appId} is in Removed shared games. Restore it first.",
+        SettingsText(R.string.settings_shared_game_feedback_title_excluded),
+        SettingsText(R.string.settings_shared_game_feedback_excluded, listOf(result.appId)),
+        SettingsText(R.string.settings_shared_game_toast_not_added),
     )
     is ManualSharedGameImportResult.NotAGame -> ManualImportFeedback(
         ManualImportFeedbackTone.ERROR,
-        "Game not found",
-        "Steam Store does not identify app ${result.appId} as a game.",
+        SettingsText(R.string.settings_shared_game_feedback_title_not_game),
+        SettingsText(R.string.settings_shared_game_feedback_not_game, listOf(result.appId)),
+        SettingsText(R.string.settings_shared_game_toast_not_added),
     )
     is ManualSharedGameImportResult.Unavailable -> ManualImportFeedback(
         ManualImportFeedbackTone.ERROR,
-        "Couldn't check Steam",
-        when (result.at) {
-            ManualImportUnavailableAt.OWNED_LIBRARY -> "Steam ownership check is unavailable. Try again."
-            ManualImportUnavailableAt.STORE -> "Steam Store verification is unavailable. Try again."
-        },
+        SettingsText(R.string.settings_shared_game_feedback_title_unavailable),
+        SettingsText(
+            when (result.at) {
+                ManualImportUnavailableAt.OWNED_LIBRARY -> R.string.settings_shared_game_feedback_owned_unavailable
+                ManualImportUnavailableAt.STORE -> R.string.settings_shared_game_feedback_store_unavailable
+            },
+        ),
+        SettingsText(R.string.settings_shared_game_toast_not_added),
     )
     is ManualSharedGameImportResult.Imported -> {
         val probe = when (val data = result.playerData) {
             is PlayerDataProbe.Returned -> if (data.total == 0) {
-                "Steam returned player data: this game has no achievements."
+                SettingsText(R.string.settings_shared_game_feedback_no_achievements)
             } else {
-                "Steam returned ${data.total} achievements; ${data.unlocked} unlocked."
+                SettingsText(
+                    R.plurals.settings_shared_game_feedback_achievements_returned,
+                    listOf(data.total, data.unlocked),
+                    quantity = data.total,
+                )
             }
-            PlayerDataProbe.NoData -> "Steam returned no usable player achievement data."
-            PlayerDataProbe.Unavailable -> "The achievement check is temporarily unavailable."
-        }
-        val tracking = if (result.alreadyTracked) {
-            "${result.name} is already tracked as Family Shared."
-        } else {
-            "${result.name} is now tracked as Family Shared."
+            PlayerDataProbe.NoData -> SettingsText(R.string.settings_shared_game_feedback_no_player_data)
+            PlayerDataProbe.Unavailable ->
+                SettingsText(R.string.settings_shared_game_feedback_achievement_check_unavailable)
         }
         ManualImportFeedback(
             ManualImportFeedbackTone.SUCCESS,
-            if (result.alreadyTracked) "Game already found" else "Game found and imported",
-            "$tracking $probe Borrowed playtime is observed by Backlogium, not supplied by Steam.",
+            SettingsText(
+                if (result.alreadyTracked) R.string.settings_shared_game_feedback_title_already_tracked
+                else R.string.settings_shared_game_feedback_title_imported,
+            ),
+            SettingsText(
+                R.string.settings_shared_game_feedback_imported,
+                listOf(
+                    SettingsText(
+                        if (result.alreadyTracked) R.string.settings_shared_game_feedback_already_tracked
+                        else R.string.settings_shared_game_feedback_tracked_now,
+                        listOf(result.name),
+                    ),
+                    probe,
+                ),
+            ),
+            SettingsText(
+                if (result.alreadyTracked) R.string.settings_shared_game_toast_already_tracked
+                else R.string.settings_shared_game_toast_added,
+            ),
         )
     }
 }
 
-internal fun manualImportMessage(result: ManualSharedGameImportResult): String =
+internal fun manualImportMessage(result: ManualSharedGameImportResult): SettingsText =
     manualImportFeedback(result).message
 
-internal fun manualImportToast(feedback: ManualImportFeedback): String = when {
-    feedback.tone == ManualImportFeedbackTone.SUCCESS && feedback.title == "Game already found" ->
-        "Family Shared game is already tracked."
-    feedback.tone == ManualImportFeedbackTone.SUCCESS -> "Family Shared game added."
-    else -> "Family Shared game was not added."
-}
+internal fun manualImportToast(feedback: ManualImportFeedback): SettingsText = feedback.toastMessage
