@@ -454,10 +454,6 @@ internal fun SettingsDetailScreen(
     onOpenUpdate: () -> Unit = {},
     onOpenHiddenGames: () -> Unit = {},
 ) {
-    if (state.loading) {
-        SettingsLoadingContent()
-        return
-    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -481,17 +477,21 @@ internal fun SettingsDetailScreen(
                 modifier = Modifier.testTag("settings-detail-title"),
             )
         }
-        when (group) {
-            SettingsGroup.ACCOUNT_SYNC -> AccountSyncSettingsContent(
-                state,
-                actions,
-                onEditCredentials,
-                onOpenSetup,
-                onOpenUpdate,
-            )
-            SettingsGroup.GAMEPLAY -> GameplaySettingsContent(state, actions, onOpenHiddenGames)
-            SettingsGroup.DATA_PRIVACY -> DataPrivacySettingsContent(state, actions)
-            SettingsGroup.ADVANCED -> AdvancedSettingsContent(state, actions, onOpenDiagnostics)
+        if (state.loading) {
+            SettingsLoadingRows()
+        } else {
+            when (group) {
+                SettingsGroup.ACCOUNT_SYNC -> AccountSyncSettingsContent(
+                    state,
+                    actions,
+                    onEditCredentials,
+                    onOpenSetup,
+                    onOpenUpdate,
+                )
+                SettingsGroup.GAMEPLAY -> GameplaySettingsContent(state, actions, onOpenHiddenGames)
+                SettingsGroup.DATA_PRIVACY -> DataPrivacySettingsContent(state, actions)
+                SettingsGroup.ADVANCED -> AdvancedSettingsContent(state, actions, onOpenDiagnostics)
+            }
         }
     }
 }
@@ -502,12 +502,17 @@ internal fun SettingsLoadingContent() {
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        repeat(4) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.settings_summary_loading), style = MaterialTheme.typography.titleMedium)
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
+        SettingsLoadingRows()
+    }
+}
+
+@Composable
+private fun SettingsLoadingRows() {
+    repeat(4) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.settings_summary_loading), style = MaterialTheme.typography.titleMedium)
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
         }
     }

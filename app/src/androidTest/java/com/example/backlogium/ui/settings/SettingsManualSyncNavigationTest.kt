@@ -34,6 +34,49 @@ class SettingsManualSyncNavigationTest {
     val composeRule = createComposeRule()
 
     @Test
+    fun openingLoadingGroupKeepsTitleAndBackActionAvailable() {
+        composeRule.setContent {
+            val navController = remember {
+                TestNavHostController(InstrumentationRegistry.getInstrumentation().targetContext).apply {
+                    navigatorProvider.addNavigator(ComposeNavigator())
+                }
+            }
+
+            NavHost(
+                navController = navController,
+                startDestination = SettingsRoutes.GRAPH,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                navigation(
+                    startDestination = SettingsRoutes.OVERVIEW,
+                    route = SettingsRoutes.GRAPH,
+                ) {
+                    composable(SettingsRoutes.OVERVIEW) {
+                        SettingsOverviewScreen(
+                            state = SettingsUiState(loading = true),
+                            onOpenGroup = { group -> navController.navigate(group.route) },
+                        )
+                    }
+                    composable(SettingsRoutes.GAMEPLAY) {
+                        SettingsDetailScreen(
+                            group = SettingsGroup.GAMEPLAY,
+                            state = SettingsUiState(loading = true),
+                            actions = noopActions(),
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("settings-group-gameplay").performClick()
+        composeRule.onNodeWithTag("settings-detail-title").assertIsDisplayed()
+        composeRule.onNodeWithText("Gameplay").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings-back").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("settings-overview-title").assertIsDisplayed()
+    }
+
+    @Test
     fun manualSyncFailureAfterReturningToOverviewStillDeliversReject() {
         val haptics = RecordingHapticPlayer()
 
