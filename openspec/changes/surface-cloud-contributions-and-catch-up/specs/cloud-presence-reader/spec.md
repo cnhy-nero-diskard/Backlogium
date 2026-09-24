@@ -32,7 +32,7 @@ The system SHALL retain, for each session it writes or changes using cloud obser
 
 Once a cloud reader has been successfully configured, the system SHALL offer a default Automatic catch-up policy with a daily background opportunity and a play-end opportunity. It SHALL also offer bounded routine minimum-gap choices of 12 hours, 24 hours, and 48 hours. Automatic SHALL use a 12-hour minimum gap with a daily background opportunity. A chosen minimum gap SHALL apply across the routine background and play-end triggers together; a routine read SHALL NOT start before it is eligible. The chosen interval is a minimum gap, not an exact execution time or a guarantee that a phone without network will catch up.
 
-Manual reads and existing cloud reads needed by the Steam sync or targeted playtime path to place delayed play SHALL remain available independently of that routine minimum gap. A recent successful read by another path SHALL satisfy a pending routine opportunity only if it reached the end of the unread history; a partial page SHALL NOT suppress needed catch-up. The configured preference SHALL NOT alter the cloud poller's own one-minute observation schedule.
+Manual reads and existing cloud reads needed by the Steam sync or targeted playtime path to place delayed play SHALL remain available independently of that routine minimum gap. The system SHALL use persisted, monotonically ordered watermarks for routine admissions and successful reads by other paths; freshness SHALL NOT be inferred from an elapsed-time window. The latest successful read by another path SHALL satisfy at most the next pending routine opportunity only when it reached the end of unread history and its terminal-completion watermark is strictly later than the watermark of the latest admitted routine attempt (or the initial reader-verification watermark before any routine attempt). Once used to satisfy an opportunity, that completion watermark SHALL be consumed so the same read cannot suppress a later opportunity. A successful read completed at or before the latest routine-admission watermark, or a latest successful read that left unread history, SHALL NOT suppress catch-up. The configured preference SHALL NOT alter the cloud poller's own one-minute observation schedule.
 
 #### Scenario: No reader configured
 - **WHEN** cloud presence is not configured
@@ -50,8 +50,17 @@ Manual reads and existing cloud reads needed by the Steam sync or targeted playt
 - **WHEN** a play-end opportunity and a background opportunity arrive during one minimum-gap period
 - **THEN** at most one routine catch-up is admitted for that period
 
-#### Scenario: A manual read returns only one of several pages
-- **WHEN** a recent manual read succeeded but reports that more unread history remains
+#### Scenario: A newer terminal read satisfies one routine opportunity
+- **WHEN** the latest successful manual or placement read completes after the latest admitted routine attempt and reaches the end of unread history
+- **THEN** the next eligible routine opportunity is satisfied without another routine read
+- **AND** that read completion cannot satisfy a later routine opportunity again
+
+#### Scenario: An older terminal read does not suppress catch-up
+- **WHEN** the latest successful manual or placement read reached the end of unread history but completed at or before the latest admitted routine attempt
+- **THEN** the next eligible routine opportunity remains eligible for catch-up
+
+#### Scenario: A partial read does not suppress catch-up
+- **WHEN** the latest successful manual or placement read completes after the latest admitted routine attempt but reports that more unread history remains
 - **THEN** the next eligible routine catch-up is not treated as already complete
 
 #### Scenario: A correctness-driven sync read is due during cooldown
