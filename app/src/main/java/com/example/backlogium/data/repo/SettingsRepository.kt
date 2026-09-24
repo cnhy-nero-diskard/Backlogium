@@ -189,6 +189,22 @@ interface SettingsRepository : SessionEndOutbox {
     /** Transactionally decide one opportunity across all routine triggers. */
     suspend fun admitCloudRoutine(at: Long): CloudRoutineAdmission = CloudRoutineAdmission.UNAVAILABLE
 
+    val cloudReadSummary: Flow<CloudReadSummary>
+        get() = flowOf(CloudReadSummary())
+
+    suspend fun recordCloudReadSummary(
+        at: Long,
+        trigger: CloudReadTrigger,
+        outcome: CloudReadSummaryOutcome,
+        failure: CloudReadFailure? = null,
+        observedAt: Long? = null,
+        hasMore: Boolean? = null,
+        windowStart: Long? = null,
+        windowEnd: Long? = null,
+    ) = Unit
+
+    suspend fun clearCloudReadSummary() = Unit
+
     /** Durable watermark for cloud intervals already folded into presence sessions. */
     val cloudIngestPosition: Flow<String?>
         get() = flowOf(null)
@@ -375,6 +391,18 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun admitCloudRoutine(at: Long): CloudRoutineAdmission =
         settings.admitCloudRoutine(at)
+
+    override val cloudReadSummary: Flow<CloudReadSummary> = settings.cloudReadSummaryFlow
+
+    override suspend fun recordCloudReadSummary(
+        at: Long, trigger: CloudReadTrigger, outcome: CloudReadSummaryOutcome,
+        failure: CloudReadFailure?, observedAt: Long?, hasMore: Boolean?,
+        windowStart: Long?, windowEnd: Long?,
+    ) = settings.recordCloudReadSummary(
+        at, trigger, outcome, failure, observedAt, hasMore, windowStart, windowEnd,
+    )
+
+    override suspend fun clearCloudReadSummary() = settings.clearCloudReadSummary()
 
     override val cloudIngestPosition: Flow<String?> = settings.cloudIngestPositionFlow
 

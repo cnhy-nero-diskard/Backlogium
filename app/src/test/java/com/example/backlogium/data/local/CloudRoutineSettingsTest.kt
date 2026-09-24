@@ -2,6 +2,9 @@ package com.example.backlogium.data.local
 
 import com.example.backlogium.data.repo.CloudRoutinePolicy
 import com.example.backlogium.data.repo.CloudRoutineAdmission
+import com.example.backlogium.data.repo.CloudReadFailure
+import com.example.backlogium.data.repo.CloudReadSummaryOutcome
+import com.example.backlogium.data.repo.CloudReadTrigger
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -14,6 +17,39 @@ import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class CloudRoutineSettingsTest {
+    @Test
+    fun readSummaryRetainsLastSuccessAndObservationAfterPartialAndFailureAcrossRestart() = runTest {
+        val context = RuntimeEnvironment.getApplication()
+        val store = SettingsDataStore(context)
+        store.clearAccountDerivedState()
+        try {
+            store.recordCloudReadSummary(
+                10L, CloudReadTrigger.SETTINGS_MANUAL, CloudReadSummaryOutcome.PARTIAL,
+                null, 5L, true, 0L, 10L,
+            )
+            store.recordCloudReadSummary(
+                20L, CloudReadTrigger.ROUTINE, CloudReadSummaryOutcome.FAILED,
+                CloudReadFailure.UNREACHABLE, null, null, null, null,
+            )
+            val restarted = SettingsDataStore(context).cloudReadSummaryFlow.first()
+            assertEquals(20L, restarted.lastAttemptAt)
+            assertEquals(CloudReadSummaryOutcome.FAILED, restarted.lastOutcome)
+            assertEquals(CloudReadFailure.UNREACHABLE, restarted.lastFailure)
+            assertEquals(10L, restarted.lastSuccessAt)
+            assertEquals(5L, restarted.latestObservationAt)
+            assertEquals(true, restarted.lastSuccessHasMore)
+
+            store.recordCloudReadSummary(
+                30L, CloudReadTrigger.SYNC, CloudReadSummaryOutcome.NO_NEW_DATA,
+                null, null, false, 0L, 30L,
+            )
+            assertEquals(5L, store.cloudReadSummaryFlow.first().latestObservationAt)
+            assertEquals(false, store.cloudReadSummaryFlow.first().lastSuccessHasMore)
+        } finally {
+            store.clearAccountDerivedState()
+        }
+    }
+
     @Test
     fun concurrentTriggersFailureCooldownAndTerminalWatermarkAreShared() = runTest {
         val store = SettingsDataStore(RuntimeEnvironment.getApplication())

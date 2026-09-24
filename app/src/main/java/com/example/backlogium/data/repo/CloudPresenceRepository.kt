@@ -160,6 +160,9 @@ class CloudPresenceRepository @Inject constructor(
 
     val snapshot: Flow<CloudPresenceSnapshot?> = snapshotState.asStateFlow()
 
+    /** Durable reader metadata; never the in-memory interval snapshot or a poller health flag. */
+    val readSummary: Flow<CloudReadSummary> = settings.cloudReadSummary
+
     val status: Flow<CloudReadStatus> =
         combine(configuration, cloudReadDao.observeRecords()) { configuration, records ->
             val latest = records.firstOrNull()
@@ -272,6 +275,7 @@ class CloudPresenceRepository @Inject constructor(
                         settings.advanceCloudReaderGeneration()
                         routineWorkCanceller?.cancelOldReaderWork(removePeriodic = false)
                         settings.clearCloudReadPosition()
+                        settings.clearCloudReadSummary()
                         persistVerifiedConfiguration(
                             credentials = CloudCredentials(normalizedEndpoint, normalizedToken),
                             trigger = CloudReadTrigger.SETTINGS_VERIFICATION,
@@ -596,6 +600,7 @@ class CloudPresenceRepository @Inject constructor(
             settings.clearCloudReadPosition()
             settings.clearCloudIngestPosition()
             settings.clearCloudRoutinePolicy()
+            settings.clearCloudReadSummary()
             configurationState.value = null
             snapshotState.value = null
         }
@@ -743,9 +748,10 @@ class CloudPresenceRepository @Inject constructor(
         outcome: CloudReadOutcome,
         parsed: ParsedCloudRead?,
     ) {
+        val at = time.nowMillis()
         cloudReadDao.insert(
             CloudReadRecord(
-                at = time.nowMillis(),
+                at = at,
                 trigger = trigger.name,
                 outcome = outcome.name,
                 windowStart = parsed?.windowStart,
@@ -755,6 +761,26 @@ class CloudPresenceRepository @Inject constructor(
             ),
         )
         cloudReadDao.prune(MAX_DIAGNOSTIC_RECORDS)
+        val observationAt = parsed?.let { read ->
+            listOfNotNull(read.current?.observedAt, read.transitions.maxOfOrNull { it.at }).maxOrNull()
+        }
+        settings.recordCloudReadSummary(
+            at = at,
+            trigger = trigger,
+            outcome = when {
+                outcome != CloudReadOutcome.SUCCESS -> CloudReadSummaryOutcome.FAILED
+                parsed!!.hasMore -> CloudReadSummaryOutcome.PARTIAL
+                parsed.transitions.isEmpty() -> CloudReadSummaryOutcome.NO_NEW_DATA
+                else -> CloudReadSummaryOutcome.COMPLETE
+            },
+            failure = outcome.takeIf { it != CloudReadOutcome.SUCCESS }?.let {
+                outcomeToFailure(it.name)
+            },
+            observedAt = observationAt,
+            hasMore = parsed?.hasMore,
+            windowStart = parsed?.windowStart,
+            windowEnd = parsed?.windowEnd,
+        )
     }
 
     private sealed interface RemoteReadResult {

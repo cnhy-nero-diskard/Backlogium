@@ -31,6 +31,10 @@ import com.example.backlogium.data.repo.CloudPresenceRefilingBackup
 import com.example.backlogium.data.repo.CloudRoutinePolicy
 import com.example.backlogium.data.repo.CloudRoutineState
 import com.example.backlogium.data.repo.CloudRoutineAdmission
+import com.example.backlogium.data.repo.CloudReadSummary
+import com.example.backlogium.data.repo.CloudReadSummaryOutcome
+import com.example.backlogium.data.repo.CloudReadTrigger
+import com.example.backlogium.data.repo.CloudReadFailure
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -111,6 +115,15 @@ class SettingsDataStore @Inject constructor(
         val CLOUD_ROUTINE_OTHER_READ_ORDER = longPreferencesKey("cloud_routine_other_read_order")
         val CLOUD_ROUTINE_OTHER_READ_TERMINAL = booleanPreferencesKey("cloud_routine_other_read_terminal")
         val CLOUD_ROUTINE_CONSUMED_READ_ORDER = longPreferencesKey("cloud_routine_consumed_read_order")
+        val CLOUD_SUMMARY_ATTEMPT_AT = longPreferencesKey("cloud_summary_attempt_at")
+        val CLOUD_SUMMARY_TRIGGER = stringPreferencesKey("cloud_summary_trigger")
+        val CLOUD_SUMMARY_OUTCOME = stringPreferencesKey("cloud_summary_outcome")
+        val CLOUD_SUMMARY_FAILURE = stringPreferencesKey("cloud_summary_failure")
+        val CLOUD_SUMMARY_SUCCESS_AT = longPreferencesKey("cloud_summary_success_at")
+        val CLOUD_SUMMARY_OBSERVED_AT = longPreferencesKey("cloud_summary_observed_at")
+        val CLOUD_SUMMARY_HAS_MORE = booleanPreferencesKey("cloud_summary_has_more")
+        val CLOUD_SUMMARY_WINDOW_START = longPreferencesKey("cloud_summary_window_start")
+        val CLOUD_SUMMARY_WINDOW_END = longPreferencesKey("cloud_summary_window_end")
         val RULE_CONFIG_VERSION = longPreferencesKey("rule_config_version")
 
         /**
@@ -592,6 +605,58 @@ class SettingsDataStore @Inject constructor(
         consumedOtherReadWatermark = prefs[Keys.CLOUD_ROUTINE_CONSUMED_READ_ORDER] ?: 0L,
     )
 
+    val cloudReadSummaryFlow: Flow<CloudReadSummary> = context.dataStore.data.map { prefs ->
+        CloudReadSummary(
+            lastAttemptAt = prefs[Keys.CLOUD_SUMMARY_ATTEMPT_AT],
+            lastTrigger = prefs[Keys.CLOUD_SUMMARY_TRIGGER]?.let(CloudReadTrigger::valueOf),
+            lastOutcome = prefs[Keys.CLOUD_SUMMARY_OUTCOME]?.let(CloudReadSummaryOutcome::valueOf),
+            lastFailure = prefs[Keys.CLOUD_SUMMARY_FAILURE]?.let(CloudReadFailure::valueOf),
+            lastSuccessAt = prefs[Keys.CLOUD_SUMMARY_SUCCESS_AT],
+            latestObservationAt = prefs[Keys.CLOUD_SUMMARY_OBSERVED_AT],
+            lastSuccessHasMore = prefs[Keys.CLOUD_SUMMARY_HAS_MORE],
+            lastSuccessWindowStart = prefs[Keys.CLOUD_SUMMARY_WINDOW_START],
+            lastSuccessWindowEnd = prefs[Keys.CLOUD_SUMMARY_WINDOW_END],
+        )
+    }
+
+    suspend fun recordCloudReadSummary(
+        at: Long, trigger: CloudReadTrigger, outcome: CloudReadSummaryOutcome,
+        failure: CloudReadFailure?, observedAt: Long?, hasMore: Boolean?,
+        windowStart: Long?, windowEnd: Long?,
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CLOUD_SUMMARY_ATTEMPT_AT] = at
+            prefs[Keys.CLOUD_SUMMARY_TRIGGER] = trigger.name
+            prefs[Keys.CLOUD_SUMMARY_OUTCOME] = outcome.name
+            if (failure == null) prefs.remove(Keys.CLOUD_SUMMARY_FAILURE)
+            else prefs[Keys.CLOUD_SUMMARY_FAILURE] = failure.name
+            if (outcome != CloudReadSummaryOutcome.FAILED) {
+                prefs[Keys.CLOUD_SUMMARY_SUCCESS_AT] = at
+                // A successful read with no observation does not mean there was no play, and
+                // must not erase the last known observation watermark.
+                if (observedAt != null) prefs[Keys.CLOUD_SUMMARY_OBSERVED_AT] =
+                    maxOf(observedAt, prefs[Keys.CLOUD_SUMMARY_OBSERVED_AT] ?: observedAt)
+                if (hasMore != null) prefs[Keys.CLOUD_SUMMARY_HAS_MORE] = hasMore
+                if (windowStart != null) prefs[Keys.CLOUD_SUMMARY_WINDOW_START] = windowStart
+                if (windowEnd != null) prefs[Keys.CLOUD_SUMMARY_WINDOW_END] = windowEnd
+            }
+        }
+    }
+
+    suspend fun clearCloudReadSummary() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.CLOUD_SUMMARY_ATTEMPT_AT)
+            prefs.remove(Keys.CLOUD_SUMMARY_TRIGGER)
+            prefs.remove(Keys.CLOUD_SUMMARY_OUTCOME)
+            prefs.remove(Keys.CLOUD_SUMMARY_FAILURE)
+            prefs.remove(Keys.CLOUD_SUMMARY_SUCCESS_AT)
+            prefs.remove(Keys.CLOUD_SUMMARY_OBSERVED_AT)
+            prefs.remove(Keys.CLOUD_SUMMARY_HAS_MORE)
+            prefs.remove(Keys.CLOUD_SUMMARY_WINDOW_START)
+            prefs.remove(Keys.CLOUD_SUMMARY_WINDOW_END)
+        }
+    }
+
     /** Durable cloud-session ingest watermark; account changes clear it with the read watermark. */
     val cloudIngestPositionFlow: Flow<String?> =
         context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_INGEST_POSITION] }
@@ -859,6 +924,15 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.CLOUD_ROUTINE_OTHER_READ_ORDER)
             prefs.remove(Keys.CLOUD_ROUTINE_OTHER_READ_TERMINAL)
             prefs.remove(Keys.CLOUD_ROUTINE_CONSUMED_READ_ORDER)
+            prefs.remove(Keys.CLOUD_SUMMARY_ATTEMPT_AT)
+            prefs.remove(Keys.CLOUD_SUMMARY_TRIGGER)
+            prefs.remove(Keys.CLOUD_SUMMARY_OUTCOME)
+            prefs.remove(Keys.CLOUD_SUMMARY_FAILURE)
+            prefs.remove(Keys.CLOUD_SUMMARY_SUCCESS_AT)
+            prefs.remove(Keys.CLOUD_SUMMARY_OBSERVED_AT)
+            prefs.remove(Keys.CLOUD_SUMMARY_HAS_MORE)
+            prefs.remove(Keys.CLOUD_SUMMARY_WINDOW_START)
+            prefs.remove(Keys.CLOUD_SUMMARY_WINDOW_END)
             prefs.remove(Keys.CLOUD_REFILE_APPLIED)
             prefs.remove(Keys.CLOUD_REFILE_BACKUP)
             prefs.remove(Keys.CLOUD_REFILE_CREATED_IDS)

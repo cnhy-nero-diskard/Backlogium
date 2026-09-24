@@ -7,6 +7,10 @@ import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.CloudRoutinePolicy
 import com.example.backlogium.data.repo.CloudRoutineState
 import com.example.backlogium.data.repo.CloudRoutineAdmission
+import com.example.backlogium.data.repo.CloudReadSummary
+import com.example.backlogium.data.repo.CloudReadSummaryOutcome
+import com.example.backlogium.data.repo.CloudReadTrigger
+import com.example.backlogium.data.repo.CloudReadFailure
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -133,6 +137,26 @@ internal class FakeSettingsRepository : SettingsRepository {
         recordCloudRoutineAdmission(at)
         return CloudRoutineAdmission.ADMITTED
     }
+
+    private val readSummaryState = MutableStateFlow(CloudReadSummary())
+    override val cloudReadSummary: Flow<CloudReadSummary> = readSummaryState
+    override suspend fun recordCloudReadSummary(
+        at: Long, trigger: CloudReadTrigger, outcome: CloudReadSummaryOutcome,
+        failure: CloudReadFailure?, observedAt: Long?, hasMore: Boolean?,
+        windowStart: Long?, windowEnd: Long?,
+    ) {
+        val prior = readSummaryState.value
+        readSummaryState.value = prior.copy(
+            lastAttemptAt = at, lastTrigger = trigger, lastOutcome = outcome,
+            lastFailure = failure,
+            lastSuccessAt = if (outcome == CloudReadSummaryOutcome.FAILED) prior.lastSuccessAt else at,
+            latestObservationAt = listOfNotNull(prior.latestObservationAt, observedAt).maxOrNull(),
+            lastSuccessHasMore = if (outcome == CloudReadSummaryOutcome.FAILED) prior.lastSuccessHasMore else hasMore,
+            lastSuccessWindowStart = if (outcome == CloudReadSummaryOutcome.FAILED) prior.lastSuccessWindowStart else windowStart,
+            lastSuccessWindowEnd = if (outcome == CloudReadSummaryOutcome.FAILED) prior.lastSuccessWindowEnd else windowEnd,
+        )
+    }
+    override suspend fun clearCloudReadSummary() { readSummaryState.value = CloudReadSummary() }
 
     private val cloudIngestCursor = MutableStateFlow<String?>(null)
     override val cloudIngestPosition: Flow<String?> = cloudIngestCursor

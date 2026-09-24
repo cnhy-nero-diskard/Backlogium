@@ -35,6 +35,32 @@ import java.time.ZoneId
 
 class CloudPresenceRepositoryTest {
     @Test
+    fun offlineReopenUsesStoredReaderOutcomeRatherThanAnInMemorySnapshot() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse(
+            nextPosition = "2026-09-15T00:20:00Z", hasMore = true,
+        ))
+        val settings = FakeSettingsRepository()
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret"))
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT)
+        first.reconcileRoutinePolicy()
+        assertTrue(first.read() is CloudReadResult.Success)
+        api.failure = HttpException(Response.error<CloudPresenceResponseDto>(
+            503, "offline".toResponseBody("text/plain".toMediaType()),
+        ))
+        assertEquals(CloudReadResult.Failed(CloudReadFailure.UNREACHABLE), first.read())
+
+        val callsBeforeReopen = api.requests.size
+        val reopened = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT)
+        assertNull(reopened.snapshot.first())
+        val summary = reopened.readSummary.first()
+        assertEquals(CloudReadSummaryOutcome.FAILED, summary.lastOutcome)
+        assertEquals(CloudReadFailure.UNREACHABLE, summary.lastFailure)
+        assertEquals(true, summary.lastSuccessHasMore)
+        assertTrue(summary.latestObservationAt != null)
+        assertEquals(callsBeforeReopen, api.requests.size)
+    }
+
+    @Test
     fun onlyTerminalManualOrPlacementReadCanSatisfyTheNextOpportunity() = runBlocking {
         val api = FakeCloudPresenceApi(answer = sampleResponse(
             nextPosition = "2026-09-15T00:20:00Z", hasMore = true,
