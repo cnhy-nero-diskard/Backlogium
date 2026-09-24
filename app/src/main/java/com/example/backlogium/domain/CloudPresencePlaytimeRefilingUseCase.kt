@@ -7,6 +7,7 @@ import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.data.repo.CloudPresenceRefilingBackup
 import com.example.backlogium.data.repo.SettingsRepository
 import java.time.Instant
@@ -50,12 +51,13 @@ internal fun cloudPresenceSessionRefiles(
         )
             ?.filterIsInstance<SessionDiffer.SessionAction.Open>()
             ?.map { action ->
-                Session(
-                    appId = action.appId,
+                original.copy(
+                    id = 0L,
                     startAt = action.startAt,
                     endAt = action.endAt,
                     minutes = action.minutes,
                     open = false,
+                    timingInformedSteamPlay = TimingInformedSteamPlayState.FULL,
                 )
             }
             ?.takeIf { it.isNotEmpty() && it.sumOf(Session::minutes) == original.minutes }

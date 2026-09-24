@@ -23,6 +23,8 @@ import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.VersionedRuleConfig
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.domain.librarySortDirectionOrNull
 import com.example.backlogium.domain.librarySortKeyOrNull
 import com.example.backlogium.data.repo.CloudPresenceRefilingBackup
@@ -912,7 +914,7 @@ data class PendingSessionEnd(
     val steamId: String,
 )
 
-/** `id|appId|startAt|endAt-or-dash|minutes|open` for an exact refile reversal. */
+/** Legacy six-column backups decode as unknown; new backups preserve both facts verbatim. */
 private fun encodeCloudPresenceRefilingSession(session: Session): String = listOf(
     session.id.toString(),
     session.appId.toString(),
@@ -920,11 +922,13 @@ private fun encodeCloudPresenceRefilingSession(session: Session): String = listO
     session.endAt?.toString() ?: "-",
     session.minutes.toString(),
     session.open.toString(),
+    session.recoveredSharedPlay?.name ?: "-",
+    session.timingInformedSteamPlay?.name ?: "-",
 ).joinToString("|")
 
 private fun decodeCloudPresenceRefilingSession(raw: String): Session? {
-    val parts = raw.split('|', limit = 6)
-    if (parts.size != 6) return null
+    val parts = raw.split('|', limit = 8)
+    if (parts.size != 6 && parts.size != 8) return null
     val id = parts[0].toLongOrNull() ?: return null
     val appId = parts[1].toLongOrNull() ?: return null
     val startAt = parts[2].toLongOrNull() ?: return null
@@ -935,8 +939,17 @@ private fun decodeCloudPresenceRefilingSession(raw: String): Session? {
         "false" -> false
         else -> return null
     }
-    return Session(id, appId, startAt, endAt, minutes, open)
+    val recovered = if (parts.size == 6 || parts[6] == "-") null else {
+        enumValueOrNull<RecoveredSharedPlayState>(parts[6]) ?: return null
+    }
+    val timing = if (parts.size == 6 || parts[7] == "-") null else {
+        enumValueOrNull<TimingInformedSteamPlayState>(parts[7]) ?: return null
+    }
+    return Session(id, appId, startAt, endAt, minutes, open, recovered, timing)
 }
+
+private inline fun <reified T : Enum<T>> enumValueOrNull(value: String): T? =
+    enumValues<T>().firstOrNull { it.name == value }
 
 /** `date|minutesPlayed|goalMinutesPlayed|questMet` for exact daily-progress reversal. */
 private fun encodeCloudPresenceRefilingDailyProgress(day: DailyProgress): String =
