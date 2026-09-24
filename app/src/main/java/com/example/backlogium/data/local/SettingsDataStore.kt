@@ -520,6 +520,18 @@ class SettingsDataStore @Inject constructor(
         }
     }
 
+    suspend fun clearCloudRoutinePolicy() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.CLOUD_ROUTINE_POLICY)
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT)
+            prefs.remove(Keys.CLOUD_ROUTINE_ORDER)
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER)
+            prefs.remove(Keys.CLOUD_ROUTINE_OTHER_READ_ORDER)
+            prefs.remove(Keys.CLOUD_ROUTINE_OTHER_READ_TERMINAL)
+            prefs.remove(Keys.CLOUD_ROUTINE_CONSUMED_READ_ORDER)
+        }
+    }
+
     suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState {
         lateinit var result: CloudRoutineState
         context.dataStore.edit { prefs ->

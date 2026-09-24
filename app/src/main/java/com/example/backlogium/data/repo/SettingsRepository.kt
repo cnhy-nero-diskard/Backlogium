@@ -179,6 +179,8 @@ interface SettingsRepository : SessionEndOutbox {
 
     suspend fun setCloudRoutinePolicy(policy: CloudRoutinePolicy) = Unit
 
+    suspend fun clearCloudRoutinePolicy() = Unit
+
     /** Called when a routine job actually begins, not when offline work is enqueued. */
     suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState = CloudRoutineState()
 
@@ -362,6 +364,8 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun setCloudRoutinePolicy(policy: CloudRoutinePolicy) =
         settings.setCloudRoutinePolicy(policy)
+
+    override suspend fun clearCloudRoutinePolicy() = settings.clearCloudRoutinePolicy()
 
     override suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState =
         settings.recordCloudRoutineAdmission(at)

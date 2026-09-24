@@ -14,6 +14,7 @@ import com.example.backlogium.domain.CloudPresenceInterval
 import com.example.backlogium.domain.CloudPresenceReconstruction
 import com.example.backlogium.domain.CloudPresenceTransition
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.work.CloudRoutineWorkCanceller
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
@@ -115,6 +116,7 @@ class CloudPresenceRepository @Inject constructor(
     private val cloudReadDao: CloudReadDao,
     private val pendingEvidence: CloudPendingEvidence,
     private val time: TimeProvider,
+    private val routineWorkCanceller: CloudRoutineWorkCanceller? = null,
 ) {
     /** Compatibility constructor for existing read-protocol tests without a Room evidence store. */
     internal constructor(
@@ -226,8 +228,15 @@ class CloudPresenceRepository @Inject constructor(
             // holds the old sequence's pages. The fetch stays outside both locks so a drain
             // never blocks verification's network; only promotion waits for the terminal
             // watermark, and drains wait for promotion.
-            is RemoteReadResult.Success -> cloudReadSequenceMutex.withLock {
-                cloudStateMutex.withLock {
+            is RemoteReadResult.Success -> {
+                // Cancel queued/running routine work as soon as the replacement has answered;
+                // the serialized promotion below still waits for any active page to finish.
+                val stillCurrent = cloudStateMutex.withLock {
+                    generationAtStart == accountGeneration.get() &&
+                        credentialsProvider.currentCredentials()?.steamId == account
+                }
+                if (stillCurrent) routineWorkCanceller?.cancelOldReaderWork(removePeriodic = false)
+                cloudReadSequenceMutex.withLock { cloudStateMutex.withLock {
                     val current = credentialsProvider.currentCredentials()?.steamId
                     if (generationAtStart != accountGeneration.get() || current != account) {
                         // The account changed while verifying: A's endpoint must not become B's
@@ -261,6 +270,7 @@ class CloudPresenceRepository @Inject constructor(
                         // intact. Only after both effects succeed do we retire old evidence.
                         pendingEvidence.clearExcept(account, readerGeneration)
                         settings.advanceCloudReaderGeneration()
+                        routineWorkCanceller?.cancelOldReaderWork(removePeriodic = false)
                         settings.clearCloudReadPosition()
                         persistVerifiedConfiguration(
                             credentials = CloudCredentials(normalizedEndpoint, normalizedToken),
@@ -270,7 +280,7 @@ class CloudPresenceRepository @Inject constructor(
                         settings.initializeCloudRoutinePolicy()
                         CloudConfigurationResult.Saved
                     }
-                }
+                } }
             }
             is RemoteReadResult.AccountMismatch -> cloudStateMutex.withLock {
                 val current = credentialsProvider.currentCredentials()?.steamId
@@ -581,9 +591,11 @@ class CloudPresenceRepository @Inject constructor(
             accountGeneration.incrementAndGet()
             settings.advanceCloudReaderGeneration()
             pendingEvidence.clear()
+            routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
             credentialsStore.clearCloudCredentials()
             settings.clearCloudReadPosition()
             settings.clearCloudIngestPosition()
+            settings.clearCloudRoutinePolicy()
             configurationState.value = null
             snapshotState.value = null
         }
@@ -606,6 +618,7 @@ class CloudPresenceRepository @Inject constructor(
             accountGeneration.incrementAndGet()
             settings.advanceCloudReaderGeneration()
             pendingEvidence.clear()
+            routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
             snapshotState.value = null
             settings.clearCloudReadPosition()
             settings.clearCloudIngestPosition()
@@ -628,6 +641,7 @@ class CloudPresenceRepository @Inject constructor(
             accountGeneration.incrementAndGet()
             settings.advanceCloudReaderGeneration()
             pendingEvidence.clear()
+            routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
             snapshotState.value = null
             settings.clearCloudReadPosition()
             settings.clearCloudIngestPosition()
@@ -638,6 +652,7 @@ class CloudPresenceRepository @Inject constructor(
                 accountGeneration.incrementAndGet()
                 settings.advanceCloudReaderGeneration()
                 pendingEvidence.clear()
+                routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
                 snapshotState.value = null
                 settings.clearCloudReadPosition()
                 settings.clearCloudIngestPosition()

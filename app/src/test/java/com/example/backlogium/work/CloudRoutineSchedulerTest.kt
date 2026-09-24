@@ -1,5 +1,6 @@
 package com.example.backlogium.work
 
+import android.app.Application
 import androidx.work.Configuration
 import androidx.work.NetworkType
 import androidx.work.WorkInfo
@@ -16,8 +17,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class)
 class CloudRoutineSchedulerTest {
     private lateinit var workManager: WorkManager
 
@@ -34,7 +37,7 @@ class CloudRoutineSchedulerTest {
     fun tearDown() = WorkManagerTestInitHelper.closeWorkDatabase()
 
     @Test
-    fun periodicPolicyUpdatesCadenceAndNeverRequiresThePhoneToBeOnline() {
+    fun periodicPolicyUpdatesCadenceAndNeverRequiresThePhoneToBeOnline() = runTest {
         val expectedHours = mapOf(
             CloudRoutinePolicy.AUTOMATIC to 24L,
             CloudRoutinePolicy.EVERY_12_HOURS to 12L,
@@ -63,5 +66,24 @@ class CloudRoutineSchedulerTest {
         val infos = workManager.getWorkInfosForUniqueWork(CloudRoutineCatchUpWorker.ONE_TIME_NAME).get()
         assertEquals(1, infos.count { !it.state.isFinished })
         assertTrue(infos.all { it.state == WorkInfo.State.ENQUEUED })
+    }
+
+    @Test
+    fun replacementCancelsOldOneTimeButKeepsPeriodicAndRemovalCancelsBoth() = runTest {
+        val context = RuntimeEnvironment.getApplication()
+        CloudRoutineScheduler.enqueuePeriodic(workManager, "old", 1L, CloudRoutinePolicy.AUTOMATIC)
+        CloudRoutineScheduler.enqueueOneTime(workManager, "old", 1L)
+        val canceller = CloudRoutineWorkCanceller(context)
+
+        canceller.cancelOldReaderWork(removePeriodic = false)
+        assertTrue(workManager.getWorkInfosForUniqueWork(CloudRoutineCatchUpWorker.ONE_TIME_NAME)
+            .get().all { it.state == WorkInfo.State.CANCELLED })
+        assertEquals(WorkInfo.State.ENQUEUED,
+            workManager.getWorkInfosForUniqueWork(CloudRoutineCatchUpWorker.PERIODIC_NAME)
+                .get().single().state)
+
+        canceller.cancelOldReaderWork(removePeriodic = true)
+        assertTrue(workManager.getWorkInfosForUniqueWork(CloudRoutineCatchUpWorker.PERIODIC_NAME)
+            .get().all { it.state == WorkInfo.State.CANCELLED })
     }
 }

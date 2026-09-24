@@ -70,6 +70,21 @@ class CloudPendingEvidenceTest {
         assertEquals(emptyList<CloudPresenceInterval>(), evidence.intervals("account-a", 1))
     }
 
+    @Test fun replacementDeletesOldGenerationAndOldAccountBoundaries() = runTest {
+        db.gameDao().upsert(Game(440, "Owned", "", 0, 0, 0))
+        evidence.retain("account-a", 1, 0, listOf(interval(20, true)), transition(10, 440))
+        evidence.retain("account-b", 1, 0, listOf(interval(20, true)), transition(10, 440))
+        evidence.retain("account-a", 2, 0, listOf(interval(30, false)), transition(30, null))
+
+        evidence.clearExcept("account-a", 2)
+
+        assertEquals(emptyList<CloudPresenceInterval>(), evidence.intervals("account-a", 1))
+        assertEquals(emptyList<CloudPresenceInterval>(), evidence.intervals("account-b", 1))
+        assertNull(evidence.boundary("account-a", 1))
+        assertNull(evidence.boundary("account-b", 1))
+        assertEquals(30L, evidence.intervals("account-a", 2).single().endAt)
+    }
+
     private fun transition(at: Long, appId: Long?) = CloudPresenceTransition(
         at = at, appId = appId, gameName = "Owned", personastate = null,
         previousLastObservedAt = null, previousCoverageLapseFrom = null,

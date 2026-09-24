@@ -100,6 +100,23 @@ class CloudPresenceRepositoryTest {
         assertEquals(1234L, settings.cloudRoutineState.first().lastAdmittedAt)
         assertEquals(2L, settings.cloudRoutineState.first().lastAdmissionWatermark)
     }
+
+    @Test
+    fun removingReaderClearsRoutinePolicyAndAdvancesEvidenceGeneration() = runBlocking {
+        val settings = FakeSettingsRepository()
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret"))
+        val repo = repository(FakeCloudPresenceApi(), store, FakeCloudReadDao(), settings, ACCOUNT)
+        repo.reconcileRoutinePolicy()
+        settings.setCloudRoutinePolicy(CloudRoutinePolicy.EVERY_48_HOURS)
+        val before = settings.cloudReaderGeneration.first()
+
+        repo.removeConfiguration()
+
+        assertNull(settings.cloudRoutineState.first().policy)
+        assertEquals(before + 1L, settings.cloudReaderGeneration.first())
+        assertEquals(CloudRoutineAdmission.UNAVAILABLE,
+            repo.admitRoutineWork(ACCOUNT, before))
+    }
     @Test
     fun everyCursorAdvancingPathRetainsEvidenceBeforeItsPosition() = runBlocking {
         val api = FakeCloudPresenceApi(answer = sampleResponse(nextPosition = "2026-09-15T00:20:00Z"))

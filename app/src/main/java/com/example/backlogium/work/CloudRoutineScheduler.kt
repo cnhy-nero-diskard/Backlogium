@@ -70,7 +70,7 @@ class CloudRoutineScheduler @Inject constructor(
         }
     }
 
-    private fun ensurePeriodicOpportunity(account: String, generation: Long, policy: CloudRoutinePolicy) {
+    private suspend fun ensurePeriodicOpportunity(account: String, generation: Long, policy: CloudRoutinePolicy) {
         enqueuePeriodic(manager, account, generation, policy)
     }
 
@@ -89,7 +89,7 @@ class CloudRoutineScheduler @Inject constructor(
     }
 
     companion object {
-        internal fun enqueuePeriodic(
+        internal suspend fun enqueuePeriodic(
             manager: WorkManager, account: String, generation: Long, policy: CloudRoutinePolicy,
         ) {
             val request = PeriodicWorkRequestBuilder<CloudRoutineCatchUpWorker>(
@@ -103,7 +103,7 @@ class CloudRoutineScheduler @Inject constructor(
                 .build()
             manager.enqueueUniquePeriodicWork(
                 CloudRoutineCatchUpWorker.PERIODIC_NAME, ExistingPeriodicWorkPolicy.UPDATE, request,
-            )
+            ).await()
         }
 
         internal suspend fun enqueueOneTime(manager: WorkManager, account: String, generation: Long) {

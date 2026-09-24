@@ -54,12 +54,23 @@ class PostPlaySyncScheduler @Inject constructor(
      */
     fun observeSessionEnds() {
         scope.launch {
-            sessionEnds.events.collect { dispatch(it) }
+            sessionEnds.events.collect { safelyDispatch(it) }
         }
         scope.launch {
             sessionEndOutbox.pendingSessionEnds.collect { pending ->
-                pending.forEach { dispatch(it) }
+                pending.forEach { safelyDispatch(it) }
             }
+        }
+    }
+
+    private suspend fun safelyDispatch(end: PlaySessionEnd) {
+        try {
+            dispatch(end)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            // Leave the durable end in the outbox; another emission or startup can retry it.
+            Timber.w(error, "Post-play dispatch failed")
         }
     }
 

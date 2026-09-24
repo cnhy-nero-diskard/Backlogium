@@ -100,6 +100,7 @@ internal class FakeSettingsRepository : SettingsRepository {
     override suspend fun setCloudRoutinePolicy(policy: CloudRoutinePolicy) {
         if (routine.value.policy != null) routine.value = routine.value.copy(policy = policy)
     }
+    override suspend fun clearCloudRoutinePolicy() { routine.value = CloudRoutineState() }
     override suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState {
         check(routine.value.policy != null)
         val next = routine.value.orderingWatermark + 1
