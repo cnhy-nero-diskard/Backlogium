@@ -723,6 +723,30 @@ class CloudPresenceSessionIngestorTest {
     }
 
     @Test
+    fun paginatedCatchUpAfterRestartCreditsSharedMinutesOnce() = runTest {
+        database.gameDao().upsert(sharedGame())
+        val settings = FakeSettingsRepository()
+        val initial = ingestor(settings)
+        var firstAttemptMinutes = 0
+        repeat(4) { page ->
+            val start = page * 20L * MINUTE
+            val snapshot = snapshot(startAt = start, endAt = start + 2L * MINUTE).copy(
+                hasMore = true, nextPosition = (start + 2L * MINUTE).toString(),
+            )
+            firstAttemptMinutes += initial.ingest(snapshot).creditedMinutes
+        }
+        assertEquals(8, firstAttemptMinutes)
+
+        val restarted = ingestor(settings)
+        val last = snapshot(startAt = 80L * MINUTE, endAt = 82L * MINUTE).copy(
+            nextPosition = (82L * MINUTE).toString(),
+        )
+        assertEquals(2, restarted.ingest(last).creditedMinutes)
+        assertEquals(0, restarted.ingest(last).creditedMinutes)
+        assertEquals(10, database.sessionDao().getAll().sumOf { it.minutes })
+    }
+
+    @Test
     fun rejectedCoverageDoesNotMarkARecoveredSession() = runTest {
         database.gameDao().upsert(sharedGame())
         val rejected = snapshot(endAt = 120_000L).copy(
