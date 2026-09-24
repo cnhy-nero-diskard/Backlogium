@@ -243,6 +243,88 @@ class CloudPresencePlacementReaderTest {
     }
 
     @Test
+    fun terminalOngoingBoundaryIsRefinedByCloseOnlyPageAcrossTwoSteamDeltas() = runBlocking {
+        val start = "2026-09-15T00:00:00Z"
+        val opening = "2026-09-15T00:10:00Z"
+        val firstBaseline = "2026-09-15T00:30:00Z"
+        val closing = "2026-09-15T00:50:00Z"
+        val secondBaseline = "2026-09-15T01:00:00Z"
+        val openingPage = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(CloudPresenceTransitionDto(v = 3, t = opening,
+                gameid = "10", gameName = "Owned", personastate = 1)),
+            current = CloudPresenceCurrentDto(v = 2, lastObservedAt = firstBaseline,
+                since = opening, gameid = "10", gameName = "Owned", personastate = 1),
+            nextPosition = opening, hasMore = false, windowStart = start,
+            windowEnd = firstBaseline, readAt = firstBaseline,
+        )
+        val closingPage = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(CloudPresenceTransitionDto(v = 3, t = closing,
+                gameid = "20", gameName = "Other", personastate = 1,
+                prevLastObservedAt = "2026-09-15T00:49:00Z")),
+            current = CloudPresenceCurrentDto(v = 2, lastObservedAt = secondBaseline,
+                gameid = "20", gameName = "Other", personastate = 1),
+            nextPosition = closing, hasMore = false, windowStart = firstBaseline,
+            windowEnd = secondBaseline, readAt = secondBaseline,
+        )
+        val api = FakeCloudPresenceApi { position -> when (position) {
+            null -> openingPage
+            opening -> closingPage
+            closing -> closingPage.copy(transitions = emptyList(), windowStart = closing)
+            else -> error("Unexpected position $position")
+        } }
+        val settings = FakeSettingsRepository()
+        val (reader, placement) = readerPair(api, settings)
+        val evidence = database.pendingCloudEvidenceDao()
+        database.gameDao().upsert(Game(10L, "Owned", "", 100, 0, 100))
+        database.playerProfileDao().insertIfMissing()
+        database.playerProfileDao().updateSyncStatus(Instant.parse(start).toEpochMilli(), null)
+
+        assertTrue(reader.read() is CloudReadResult.Success)
+        val provisional = evidence.intervals(ACCOUNT, 0L).single { it.appId == 10L }
+        assertTrue(provisional.ongoing)
+        assertEquals(Instant.parse(opening).toEpochMilli(), provisional.startAt)
+        assertTrue(reader.read() is CloudReadResult.Success)
+        val closed = evidence.intervals(ACCOUNT, 0L).filter { it.appId == 10L }
+        assertEquals(1, closed.size)
+        assertFalse(closed.single().ongoing)
+        assertEquals(Instant.parse(closing).toEpochMilli(), closed.single().endAt)
+
+        val committer = PlaytimeObservationCommitter(
+            gameDao = database.gameDao(), sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(), profileDao = database.playerProfileDao(),
+            hiddenGameDao = database.hiddenGameDao(), differ = SessionDiffer(), time = FixedTimeProvider(),
+            sessionActionWriter = SessionActionWriter(database.sessionDao(), database.dailyProgressDao(),
+                database.hiddenGameDao(), FixedTimeProvider()),
+            pendingEvidencePruner = CloudPendingEvidencePruner(evidence, FakeCredentials(ACCOUNT), settings),
+        )
+        val firstAt = Instant.parse(firstBaseline).toEpochMilli()
+        val secondAt = Instant.parse(secondBaseline).toEpochMilli()
+        val firstEvidence = placement.read(CloudReadTrigger.SYNC, Instant.parse(start).toEpochMilli(), firstAt)!!
+        database.withTransaction {
+            committer.commit(listOf(PlaytimeObservationCommitter.ObservedGame(10L, "Owned", "", 120, 0)),
+                firstAt, firstAt, CloudPresencePlaytimePlacement.Input(firstEvidence.intervals))
+            database.playerProfileDao().updateSyncStatus(firstAt, null)
+        }
+        assertEquals(1, evidence.intervals(ACCOUNT, 0L).count { it.appId == 10L })
+
+        val secondEvidence = placement.read(CloudReadTrigger.SYNC, firstAt, secondAt)!!
+        assertEquals(1, secondEvidence.intervals.count { it.appId == 10L })
+        val secondCommit = database.withTransaction {
+            val commit = committer.commit(
+                listOf(PlaytimeObservationCommitter.ObservedGame(10L, "Owned", "", 140, 0)),
+                secondAt, secondAt, CloudPresencePlaytimePlacement.Input(secondEvidence.intervals),
+            )
+            database.playerProfileDao().updateSyncStatus(secondAt, null)
+            commit
+        }
+        assertEquals(20, secondCommit.playedDeltaByAppId[10L])
+        assertEquals(40, database.sessionDao().getAll().filter { it.appId == 10L }.sumOf { it.minutes })
+        assertTrue(evidence.intervals(ACCOUNT, 0L).none { it.appId == 10L })
+    }
+
+    @Test
     fun cursorAdvancedInsideSteamPeriodRefusesSuffix() = runBlocking {
         val periodStart = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
         val cursor = "2026-09-16T00:00:00Z"
