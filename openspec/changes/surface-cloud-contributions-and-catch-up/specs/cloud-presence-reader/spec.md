@@ -85,3 +85,26 @@ The system SHALL resume authenticated, account-bound reads from the existing dur
 #### Scenario: Reader succeeds while poller is stale
 - **WHEN** the reader succeeds but the newest observation is old
 - **THEN** the status distinguishes the successful read from the older observation and does not claim the poller is healthy
+
+### Requirement: Routine reads retain owned-game evidence for a later Steam delta
+
+A routine read SHALL durably retain account-bound intervals for Steam-owned games, including their coverage metadata, before advancing the shared read position past them. Intervals SHALL be upserted by account, app id, and interval start so page overlap does not duplicate evidence. Retaining an interval is acquisition of timing evidence only: it SHALL NOT write a session, place Steam-counted minutes, or create contribution provenance. When a later Steam delta covers retained evidence, accuracy-driven placement SHALL combine that evidence with any newly unread intervals before applying the existing coverage and complete-window rules. Pending evidence SHALL remain available until the Steam sync commits the corresponding baseline and session actions; that commit consumes the evidence so a failed or interrupted sync can retry it. Account changes and reader removal SHALL clear account-bound pending evidence.
+
+#### Scenario: Routine catch-up precedes Steam's reported increase
+- **WHEN** a routine read consumes an owned-game interval before Steam reports the matching playtime increase
+- **THEN** the interval is retained as pending placement evidence before the shared read position advances
+- **AND** no session, Steam minute, or session contribution provenance is written by the routine read
+
+#### Scenario: Placement follows a routine read inside the Steam diff window
+- **WHEN** the later accuracy-driven read starts after the routine read advanced the shared cursor into its diff window
+- **THEN** placement combines the retained interval with the newly unread suffix
+- **AND** it applies the ordinary complete-window and coverage rules to the combined evidence rather than rejecting or placing against the suffix alone
+- **AND** the total credited minutes remain exactly the Steam-reported increase
+
+#### Scenario: Placement does not commit
+- **WHEN** placement or the Steam sync fails before committing its baseline and session actions
+- **THEN** the pending intervals remain available for retry
+
+#### Scenario: Account changes before placement
+- **WHEN** the Steam account changes or the reader is removed while owned-game intervals are pending
+- **THEN** the old account's intervals are discarded and cannot inform a later placement
