@@ -621,7 +621,10 @@ private fun HistorySessionRow(
             stringResource(if (timing == ContributionState.PARTIAL)
                 R.string.history_cloud_timed_partial else R.string.history_cloud_timed)
         } else null,
-    ).joinToString(". ")
+    )
+    val accessibilityLabel = if (markLabel.size == 2) {
+        stringResource(R.string.history_cloud_both_facts, markLabel[0], markLabel[1])
+    } else markLabel.singleOrNull().orEmpty()
     Row(verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().bringIntoViewRequester(bringIntoViewRequester)) {
         Text(
@@ -634,7 +637,7 @@ private fun HistorySessionRow(
             TextButton(
                 onClick = { showExplanation = true },
                 modifier = Modifier.heightIn(min = 48.dp).testTag(TAG_HISTORY_CLOUD_MARK)
-                    .semantics { contentDescription = markLabel },
+                    .semantics { contentDescription = accessibilityLabel },
             ) {
                 Icon(TablerIcons.Cloud, contentDescription = null, modifier = Modifier.size(18.dp))
                 Text(stringResource(R.string.history_cloud_mark), modifier = Modifier.padding(start = 4.dp))

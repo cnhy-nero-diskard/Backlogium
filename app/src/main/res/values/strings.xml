@@ -460,6 +460,8 @@
     <string name="history_measurement_help_body">Session starts are approximate because play is discovered by periodic polls. The tracked minutes come from changes observed in the Steam playtime counter, so they can differ from the Steam lifetime total change. These are two honest measurements, not an exact start-to-end interval or a sign that data was lost.</string>
     <string name="history_measurement_help_close">Got it</string>
     <string name="history_cloud_mark">Cloud</string>
+    <string name="history_cloud_both_facts">%1$s. %2$s.</string>
+    <string name="history_cloud_open_session">View session in History</string>
     <string name="history_cloud_activity">Cloud activity</string>
     <string name="history_cloud_back">Back to History</string>
     <string name="history_cloud_recovered_facts">Recovered play · %1$d facts</string>

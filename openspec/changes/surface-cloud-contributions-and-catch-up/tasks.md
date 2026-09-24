@@ -27,7 +27,7 @@
 - [x] 3.2 Add a Cloud activity entry only when the loaded visible History period has contributed facts, and a pushed detail leading with recovered and cloud-timed sessions linked back to History; verify a dual-fact session may appear in both fact groups, counts are not described as disjoint sessions, and new/older/empty windows show the correct conditional entry.
 - [x] 3.3 Present stored reader attempt/success and observation freshness below contributions, with unknown/partial coverage and failed-read-after-success states; verify offline reopening makes no network request and never describes reader success as live poller health.
 - [x] 3.4 Add the Automatic and bounded cadence choices and routine status once in the cloud Settings destination (Data & privacy after the Settings restructuring lands), preserving Read now; verify copy explains that override limits routine reads only, not minute polling or placement reads, and that next eligibility is not a promised execution time.
-- [ ] 3.5 Move new History and Settings labels/counts into Android resources and provide icon-independent accessibility semantics; verify a non-default locale and screen reader can distinguish recovered from timing-informed sessions without relying on color.
+- [x] 3.5 Move new History and Settings labels/counts into Android resources and provide icon-independent accessibility semantics; verify a non-default locale and screen reader can distinguish recovered from timing-informed sessions without relying on color.
 
 ## 4. Backup and integration verification
 

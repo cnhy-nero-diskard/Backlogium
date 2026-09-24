@@ -108,7 +108,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.cloudGroup(
             item.session.cloudContribution.timingInformedSteamPlay == ContributionState.PARTIAL
         }
         Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
-            .clickable(role = Role.Button, onClick = { onOpen(item) })) {
+            .clickable(role = Role.Button, onClickLabel = stringResource(R.string.history_cloud_open_session),
+                onClick = { onOpen(item) })) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(item.game.name, style = MaterialTheme.typography.bodyLarge)
                 Text(stringResource(when {

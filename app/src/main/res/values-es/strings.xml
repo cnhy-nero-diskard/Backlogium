@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="history_cloud_mark">Nube</string>
+    <string name="history_cloud_both_facts">%1$s. %2$s.</string>
+    <string name="history_cloud_open_session">Ver sesión en Historial</string>
+    <string name="history_cloud_activity">Actividad de la nube</string>
+    <string name="history_cloud_back">Volver a Historial</string>
+    <string name="history_cloud_recovered_facts">Juego recuperado · %1$d aportaciones</string>
+    <string name="history_cloud_timed_facts">Juego de Steam con horario ajustado · %1$d aportaciones</string>
+    <string name="history_cloud_activity_overlap">Una sesión puede aparecer en ambos grupos. Las cifras cuentan aportaciones, no sesiones distintas.</string>
+    <string name="history_cloud_session_link">%1$s · %2$s · %3$s</string>
+    <string name="history_cloud_explanation_title">Aportación de la nube</string>
+    <string name="history_cloud_recovered">Juego recuperado</string>
+    <string name="history_cloud_recovered_partial">Juego recuperado parcialmente</string>
+    <string name="history_cloud_timed">Horario ajustado con datos de la nube</string>
+    <string name="history_cloud_timed_partial">Horario ajustado parcialmente con datos de la nube</string>
+    <string name="history_cloud_recovered_body">Las observaciones de la nube ayudaron a recuperar el juego de esta sesión.</string>
+    <string name="history_cloud_recovered_partial_body">Las observaciones de la nube recuperaron parte del juego de esta sesión; el resto se registró en el dispositivo.</string>
+    <string name="history_cloud_timed_body">Las observaciones de la nube ayudaron a ubicar los minutos registrados por Steam. Steam proporcionó el total de minutos.</string>
+    <string name="history_cloud_timed_partial_body">Las observaciones de la nube ayudaron a ubicar parte de esta sesión. Steam proporcionó el total de minutos.</string>
+    <string name="history_cloud_reader_status">Estado del lector y las observaciones</string>
+    <string name="history_cloud_last_attempt">Último intento de lectura: %1$s · %2$s</string>
+    <string name="history_cloud_last_success">Última lectura correcta: %1$s</string>
+    <string name="history_cloud_last_observation">Última observación conocida: %1$s</string>
+    <string name="history_cloud_unknown">Desconocido</string>
+    <string name="history_cloud_read_complete">Se llegó al final del historial disponible</string>
+    <string name="history_cloud_read_no_transitions">La lectura no encontró nuevas transiciones</string>
+    <string name="history_cloud_read_partial">Quedan páginas por leer</string>
+    <string name="history_cloud_read_failed">Falló la solicitud de lectura</string>
+    <string name="history_cloud_read_unknown">No hay intentos de lectura registrados</string>
+    <string name="history_cloud_observation_stale">La última observación conocida tiene más de un día.</string>
+    <string name="history_cloud_coverage_partial">El historial está incompleto: había más páginas en la última lectura correcta.</string>
+    <string name="history_cloud_coverage_unknown">Se desconoce la cobertura entre lecturas.</string>
+    <string name="history_cloud_status_caution">Una respuesta del lector no confirma que el sondeo independiente de la nube siga observando el juego. La ausencia de observaciones no significa que no se haya jugado.</string>
+    <string name="settings_cloud_routine_title">Actualización periódica</string>
+    <string name="settings_cloud_routine_automatic">Automática · oportunidad diaria y al terminar de jugar</string>
+    <string name="settings_cloud_routine_12h">Al menos 12 horas entre lecturas</string>
+    <string name="settings_cloud_routine_daily">Al menos 24 horas entre lecturas</string>
+    <string name="settings_cloud_routine_48h">Al menos 48 horas entre lecturas</string>
+    <string name="settings_cloud_routine_explanation">El modo automático ofrece una lectura diaria y otra al terminar de jugar, con al menos 12 horas entre inicios. Las otras opciones fijan el intervalo mínimo para ambas. Solo limitan las lecturas periódicas del teléfono, no las observaciones cada minuto del sondeo en la nube, la opción Leer ahora ni las lecturas necesarias para ubicar los minutos de Steam. No limitan todas las solicitudes a la nube.</string>
+    <string name="settings_cloud_routine_last_attempt">Último intento periódico: %1$s · %2$s</string>
+    <string name="settings_cloud_routine_no_attempt">No hay intentos periódicos registrados.</string>
+    <string name="settings_cloud_routine_no_outcome">No hay resultado registrado</string>
+    <string name="settings_cloud_routine_eligible">Próxima lectura posible después de %1$s. El trabajo en segundo plano puede ejecutarse más tarde, según la conexión y el dispositivo.</string>
+    <string name="settings_cloud_healthy_with_last_read">Solicitud al lector correcta · %1$s</string>
+    <string name="settings_cloud_healthy">Solicitud al lector correcta</string>
+</resources>
