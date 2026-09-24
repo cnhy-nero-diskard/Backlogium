@@ -1,6 +1,8 @@
 package com.example.backlogium.ui.settings
 
 import com.example.backlogium.data.repo.CloudReadFailure
+import com.example.backlogium.data.updates.AppUpdateState
+import com.example.backlogium.data.updates.AvailableUpdate
 import com.example.backlogium.gamification.RuleConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -46,6 +48,31 @@ class SettingsPresentationTest {
             SettingsUiState(loading = false, configured = true, isSyncing = true),
         ).first()
         assertEquals(SettingsAttention.IN_PROGRESS, syncing.attention)
+    }
+
+    @Test
+    fun activeUpdateCheckTakesPriorityOverAvailableUpdateRecommendation() {
+        val summary = settingsGroupSummaries(
+            SettingsUiState(
+                loading = false,
+                configured = true,
+                appUpdateState = AppUpdateState(
+                    available = AvailableUpdate(
+                        tag = "v1.8.0",
+                        versionName = "1.8.0",
+                        versionCode = 1_008_000L,
+                        releaseName = "Release",
+                        releaseNotes = "Notes",
+                        apkName = "app-release.apk",
+                        apkUrl = "https://example.test/app.apk",
+                        checksumUrl = "https://example.test/app.sha256",
+                    ),
+                ),
+                updateCheckInProgress = true,
+            ),
+        ).first()
+
+        assertEquals(SettingsAttention.IN_PROGRESS, summary.attention)
     }
 
     @Test

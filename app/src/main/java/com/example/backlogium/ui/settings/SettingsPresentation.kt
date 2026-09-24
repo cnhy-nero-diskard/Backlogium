@@ -322,7 +322,7 @@ fun settingsGroupSummaries(state: SettingsUiState): List<SettingsGroupSummary> {
     val accountBlocking = !state.configured ||
         state.lastSyncError != null ||
         state.updateCheckSeverity == SettingsResultSeverity.ERROR
-    val accountInProgress = state.isSyncing || state.isReconciling
+    val accountInProgress = state.isSyncing || state.isReconciling || state.updateCheckInProgress
     val accountRecommended = state.appUpdateState.available != null
     val accountAttention = settingsAttention(accountBlocking, accountInProgress, accountRecommended)
 
