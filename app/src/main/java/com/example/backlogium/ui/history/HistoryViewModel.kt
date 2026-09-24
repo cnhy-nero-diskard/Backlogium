@@ -8,6 +8,7 @@ import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.SessionRepository
+import com.example.backlogium.data.repo.CloudPresenceRepository
 import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -25,6 +26,7 @@ data class HistoryUiState(
     val days: List<HistoryDayGroup> = emptyList(),
     /** Today's local date (ISO), so the screen can expand it by default without its own clock. */
     val today: String = "",
+    val cloudReaderConfigured: Boolean = false,
 )
 
 @HiltViewModel
@@ -36,6 +38,7 @@ class HistoryViewModel @Inject constructor(
     private val credentials: CredentialsRepository,
     private val time: TimeProvider,
     private val currentDate: CurrentDateProvider,
+    private val cloudPresence: CloudPresenceRepository,
 ) : ViewModel() {
 
     /**
@@ -68,6 +71,8 @@ class HistoryViewModel @Inject constructor(
                     ),
                     today = today.toString(),
                 )
+            }.combine(cloudPresence.configuration) { state, reader ->
+                state.copy(cloudReaderConfigured = reader != null)
             }
         }
         .stateIn(

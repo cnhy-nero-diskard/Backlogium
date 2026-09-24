@@ -4,6 +4,8 @@ import com.example.backlogium.data.repo.AchievementUnlockSummary
 import com.example.backlogium.data.repo.DayProgress
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.PlaySession
+import com.example.backlogium.data.repo.SessionCloudContribution
+import com.example.backlogium.data.repo.ContributionState
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -23,7 +25,12 @@ data class HistorySessionUi(
     val startAt: Long,
     val minutes: Int,
     val open: Boolean,
+    val cloudContribution: SessionCloudContribution = SessionCloudContribution(),
 )
+
+internal fun SessionCloudContribution.hasRecordedContribution(): Boolean =
+    recoveredSharedPlay == ContributionState.FULL || recoveredSharedPlay == ContributionState.PARTIAL ||
+        timingInformedSteamPlay == ContributionState.FULL || timingInformedSteamPlay == ContributionState.PARTIAL
 
 /** A game played on a given day, holding that day's sessions for that game. */
 data class HistoryGameGroup(
@@ -140,6 +147,7 @@ fun groupHistory(
                             startAt = it.startAt,
                             minutes = it.minutes,
                             open = it.open,
+                            cloudContribution = it.cloudContribution,
                         )
                     },
                 )

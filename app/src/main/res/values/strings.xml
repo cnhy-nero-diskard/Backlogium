@@ -459,6 +459,16 @@
     <string name="history_measurement_help_title">How tracked sessions are measured</string>
     <string name="history_measurement_help_body">Session starts are approximate because play is discovered by periodic polls. The tracked minutes come from changes observed in the Steam playtime counter, so they can differ from the Steam lifetime total change. These are two honest measurements, not an exact start-to-end interval or a sign that data was lost.</string>
     <string name="history_measurement_help_close">Got it</string>
+    <string name="history_cloud_mark">Cloud</string>
+    <string name="history_cloud_explanation_title">Cloud contribution</string>
+    <string name="history_cloud_recovered">Recovered play</string>
+    <string name="history_cloud_recovered_partial">Partly recovered play</string>
+    <string name="history_cloud_timed">Cloud-informed timing</string>
+    <string name="history_cloud_timed_partial">Partly cloud-informed timing</string>
+    <string name="history_cloud_recovered_body">Cloud observations helped recover this session’s play.</string>
+    <string name="history_cloud_recovered_partial_body">Cloud observations recovered some of this session’s play; other play was recorded locally.</string>
+    <string name="history_cloud_timed_body">Cloud observations informed when Steam-reported minutes were credited. Steam supplied the minute total.</string>
+    <string name="history_cloud_timed_partial_body">Cloud observations informed the timing of part of this session. Steam supplied the minute total.</string>
     <string name="history_today_section">Today</string>
     <string name="history_earlier_section">Earlier history</string>
     <string name="history_load_older">Load older</string>

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -56,14 +57,17 @@ import com.example.backlogium.R
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.util.UiFormat
+import com.example.backlogium.data.repo.ContributionState
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ChevronDown
 import compose.icons.tablericons.ChevronUp
 import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.CircleMinus
+import compose.icons.tablericons.Cloud
 
 internal const val TAG_HISTORY_MEASUREMENT_HELP = "history-measurement-help"
 internal const val TAG_HISTORY_LOADING = "history-loading"
+internal const val TAG_HISTORY_CLOUD_MARK = "history-cloud-mark"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -162,7 +166,7 @@ internal fun HistoryContent(
             item(key = "today-heading") {
                 SectionHeader(stringResource(R.string.history_today_section))
             }
-            dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame)
+            dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame, state.cloudReaderConfigured)
         }
 
         if (sections.earlier.isNotEmpty()) {
@@ -171,7 +175,7 @@ internal fun HistoryContent(
             }
         }
         sections.earlier.forEach { day ->
-            dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame)
+            dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame, state.cloudReaderConfigured)
         }
 
         item(key = "load-older") {
@@ -223,6 +227,7 @@ private fun LazyListScope.dayItems(
     expandedGames: Set<Pair<String, Long>>,
     onToggleDay: (String) -> Unit,
     onToggleGame: (String, Long) -> Unit,
+    cloudReaderConfigured: Boolean,
 ) {
     val dayExpanded = day.date in expandedDays
     val expandable = day.games.isNotEmpty()
@@ -244,6 +249,7 @@ private fun LazyListScope.dayItems(
             games = day.games,
             expandedGames = expandedGames,
             onToggleGame = onToggleGame,
+            cloudReaderConfigured = cloudReaderConfigured,
         )
     }
 }
@@ -456,6 +462,7 @@ private fun DayGamesBlock(
     games: List<HistoryGameGroup>,
     expandedGames: Set<Pair<String, Long>>,
     onToggleGame: (String, Long) -> Unit,
+    cloudReaderConfigured: Boolean,
 ) {
     val lineColor = MaterialTheme.colorScheme.outlineVariant
     // Tracked so the line can stop exactly at the last game's dot instead of running past it to the
@@ -526,13 +533,72 @@ private fun DayGamesBlock(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         game.sessions.forEach { session ->
-                            Text(
-                                text = sessionLabel(session),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            HistorySessionRow(session, cloudReaderConfigured)
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HistorySessionRow(session: HistorySessionUi, cloudReaderConfigured: Boolean) {
+    var showExplanation by remember(session.id) { mutableStateOf(false) }
+    val contribution = session.cloudContribution
+    val hasMark = cloudReaderConfigured && contribution.hasRecordedContribution()
+    val recovery = contribution.recoveredSharedPlay
+    val timing = contribution.timingInformedSteamPlay
+    val markLabel = listOfNotNull(
+        if (recovery == ContributionState.FULL || recovery == ContributionState.PARTIAL) {
+            stringResource(if (recovery == ContributionState.PARTIAL)
+                R.string.history_cloud_recovered_partial else R.string.history_cloud_recovered)
+        } else null,
+        if (timing == ContributionState.FULL || timing == ContributionState.PARTIAL) {
+            stringResource(if (timing == ContributionState.PARTIAL)
+                R.string.history_cloud_timed_partial else R.string.history_cloud_timed)
+        } else null,
+    ).joinToString(". ")
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = sessionLabel(session),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        if (hasMark) {
+            TextButton(
+                onClick = { showExplanation = true },
+                modifier = Modifier.heightIn(min = 48.dp).testTag(TAG_HISTORY_CLOUD_MARK)
+                    .semantics { contentDescription = markLabel },
+            ) {
+                Icon(TablerIcons.Cloud, contentDescription = null, modifier = Modifier.size(18.dp))
+                Text(stringResource(R.string.history_cloud_mark), modifier = Modifier.padding(start = 4.dp))
+            }
+        }
+    }
+    if (hasMark && showExplanation) {
+        ModalBottomSheet(
+            onDismissRequest = { showExplanation = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(stringResource(R.string.history_cloud_explanation_title),
+                    style = MaterialTheme.typography.titleLarge)
+                if (recovery == ContributionState.FULL || recovery == ContributionState.PARTIAL) {
+                    Text(stringResource(if (recovery == ContributionState.PARTIAL)
+                        R.string.history_cloud_recovered_partial_body else R.string.history_cloud_recovered_body))
+                }
+                if (timing == ContributionState.FULL || timing == ContributionState.PARTIAL) {
+                    Text(stringResource(if (timing == ContributionState.PARTIAL)
+                        R.string.history_cloud_timed_partial_body else R.string.history_cloud_timed_body))
+                }
+                TextButton(onClick = { showExplanation = false }, modifier = Modifier.align(Alignment.End)) {
+                    Text(stringResource(R.string.history_measurement_help_close))
                 }
             }
         }
