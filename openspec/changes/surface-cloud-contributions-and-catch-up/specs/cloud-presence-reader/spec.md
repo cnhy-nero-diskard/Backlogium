@@ -122,3 +122,25 @@ A routine read SHALL durably retain account-bound intervals for Steam-owned game
 #### Scenario: Account changes before placement
 - **WHEN** the Steam account changes or the reader is removed while owned-game intervals are pending
 - **THEN** the old account's intervals are discarded and cannot inform a later placement
+
+## MODIFIED Requirements
+
+### Requirement: A recovered session is an ordinary session
+
+A session derived from or changed using cloud observations SHALL use the same session ledger and
+shared writer as a session derived on-device, and SHALL participate identically in session
+identity, credited minutes, XP, quests, streaks, and analytics. The additive cloud-contribution
+provenance required above is an intentional exception to the same-stored-shape and downstream-
+indistinguishability guarantees: History SHALL expose it only as attribution explaining the
+cloud-assisted contribution. Provenance SHALL NOT create a separate session type or alter session,
+play, or progression calculations.
+
+#### Scenario: Downstream treatment
+- **WHEN** a session derived from or changed using cloud observations is examined by any consumer
+- **THEN** it participates identically to a session derived on-device, with its provenance available
+  for the History attribution
+
+#### Scenario: Written through the shared writer
+- **WHEN** cloud-derived or cloud-modified sessions are persisted
+- **THEN** they are written through the same writer other session mechanisms use, not a parallel
+  path
