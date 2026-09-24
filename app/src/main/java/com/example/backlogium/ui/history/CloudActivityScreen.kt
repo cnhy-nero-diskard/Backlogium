@@ -22,6 +22,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.R
 import com.example.backlogium.data.repo.ContributionState
+import com.example.backlogium.data.repo.CloudReadSummary
+import com.example.backlogium.data.repo.CloudReadSummaryOutcome
 import com.example.backlogium.ui.util.UiFormat
 
 @Composable
@@ -48,6 +50,45 @@ fun CloudActivityScreen(viewModel: HistoryViewModel, onBack: () -> Unit) {
             viewModel.revealSession(item)
             onBack()
         }
+        if (state.cloudReaderConfigured) {
+            item { CloudReaderStatus(state.cloudReadSummary, state.statusNow) }
+        }
+    }
+}
+
+internal fun observationOlderThanDay(summary: CloudReadSummary, now: Long): Boolean =
+    summary.latestObservationAt?.let { now - it > 24L * 60 * 60 * 1000 } ?: false
+
+@Composable
+private fun CloudReaderStatus(summary: CloudReadSummary, now: Long) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.history_cloud_reader_status), style = MaterialTheme.typography.titleMedium)
+        val outcome = when (summary.lastOutcome) {
+            CloudReadSummaryOutcome.COMPLETE -> R.string.history_cloud_read_complete
+            CloudReadSummaryOutcome.NO_NEW_DATA -> R.string.history_cloud_read_no_transitions
+            CloudReadSummaryOutcome.PARTIAL -> R.string.history_cloud_read_partial
+            CloudReadSummaryOutcome.FAILED -> R.string.history_cloud_read_failed
+            null -> R.string.history_cloud_read_unknown
+        }
+        Text(stringResource(R.string.history_cloud_last_attempt,
+            summary.lastAttemptAt?.let(UiFormat::dateTime) ?: stringResource(R.string.history_cloud_unknown),
+            stringResource(outcome)))
+        Text(stringResource(R.string.history_cloud_last_success,
+            summary.lastSuccessAt?.let(UiFormat::dateTime) ?: stringResource(R.string.history_cloud_unknown)))
+        Text(stringResource(R.string.history_cloud_last_observation,
+            summary.latestObservationAt?.let(UiFormat::dateTime) ?: stringResource(R.string.history_cloud_unknown)))
+        if (observationOlderThanDay(summary, now)) {
+            Text(stringResource(R.string.history_cloud_observation_stale))
+        }
+        if (summary.lastSuccessHasMore == true) {
+            Text(stringResource(R.string.history_cloud_coverage_partial))
+        } else {
+            Text(stringResource(R.string.history_cloud_coverage_unknown))
+        }
+        Text(stringResource(R.string.history_cloud_status_caution),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
