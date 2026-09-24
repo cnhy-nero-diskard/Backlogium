@@ -86,6 +86,72 @@ data class RuleChangeConfirmation(
 
 enum class SettingsResultSeverity { INFO, SUCCESS, ERROR }
 
+internal data class SettingsActionFeedback(
+    val message: String,
+    val severity: SettingsResultSeverity,
+) {
+    companion object {
+        fun success(message: String) = SettingsActionFeedback(message, SettingsResultSeverity.SUCCESS)
+        fun error(message: String) = SettingsActionFeedback(message, SettingsResultSeverity.ERROR)
+    }
+}
+
+internal suspend fun settingsCloudActionFeedback(
+    failureMessage: String,
+    action: suspend () -> SettingsActionFeedback,
+): SettingsActionFeedback = try {
+    action()
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: Exception) {
+    SettingsActionFeedback.error(failureMessage)
+}
+
+internal fun CloudConfigurationResult.toSettingsActionFeedback(): SettingsActionFeedback = when (this) {
+    CloudConfigurationResult.Saved -> SettingsActionFeedback.success("Cloud presence connected.")
+    CloudConfigurationResult.NoSteamAccount ->
+        SettingsActionFeedback.error("Connect a Steam account before verifying the reader.")
+    CloudConfigurationResult.InvalidEndpoint ->
+        SettingsActionFeedback.error("Use an HTTPS Cloud reader URL.")
+    CloudConfigurationResult.RejectedCredential ->
+        SettingsActionFeedback.error("The reader credential was rejected.")
+    CloudConfigurationResult.Unreachable ->
+        SettingsActionFeedback.error("The reader could not be reached.")
+    CloudConfigurationResult.UnusableResponse ->
+        SettingsActionFeedback.error("The reader returned unusable data.")
+    is CloudConfigurationResult.AccountMismatch -> SettingsActionFeedback.error(
+        "Endpoint account $endpointAccount does not match expected Steam account $expectedAccount.",
+    )
+}
+
+internal fun CloudReadResult.toSettingsActionFeedback(): SettingsActionFeedback = when (this) {
+    CloudReadResult.Unconfigured -> SettingsActionFeedback.error("Configure the cloud reader first.")
+    CloudReadResult.NoSteamAccount -> SettingsActionFeedback.error("Connect a Steam account first.")
+    is CloudReadResult.Success -> SettingsActionFeedback.success(
+        "Cloud presence updated (${snapshot.observationCount} observations).",
+    )
+    is CloudReadResult.Failed -> SettingsActionFeedback.error(failure.settingsMessage())
+}
+
+private fun CloudReadFailure.settingsMessage(): String = when (this) {
+    CloudReadFailure.UNREACHABLE -> "The cloud reader could not be reached."
+    CloudReadFailure.REJECTED_CREDENTIAL -> "The reader credential was rejected."
+    CloudReadFailure.ACCOUNT_MISMATCH ->
+        "The endpoint account does not match this Steam account."
+    CloudReadFailure.UNUSABLE_RESPONSE -> "The reader returned unusable data."
+}
+
+internal fun CloudPresenceRefilingResult.toSettingsActionFeedback(): SettingsActionFeedback =
+    SettingsActionFeedback.success(describe())
+
+internal fun CloudPresenceRefilingResult.describe(): String = when (operation) {
+    CloudPresenceRefilingOperation.APPLIED ->
+        "Re-filed $sessionsRefiled sessions across ${datesAffected.size} dates."
+    CloudPresenceRefilingOperation.REVERSED ->
+        "Re-filing undone; restored $sessionsRefiled sessions across ${datesAffected.size} dates."
+    CloudPresenceRefilingOperation.NO_OP -> "No cloud playtime re-filing was needed."
+}
+
 data class SettingsUiState(
     val loading: Boolean = true,
     val configured: Boolean = false,
@@ -102,9 +168,11 @@ data class SettingsUiState(
     val cloudHealthy: Boolean? = null,
     val cloudBusy: Boolean = false,
     val cloudMessage: String? = null,
+    val cloudMessageSeverity: SettingsResultSeverity? = null,
     val cloudPresenceRefilingApplied: Boolean = false,
     val cloudPresenceRefilingBusy: Boolean = false,
     val cloudPresenceRefilingMessage: String? = null,
+    val cloudPresenceRefilingMessageSeverity: SettingsResultSeverity? = null,
     val lastSyncAt: Long = 0L,
     val lastSyncError: String? = null,
     val isSyncing: Boolean = false,
@@ -239,9 +307,9 @@ class SettingsViewModel @Inject constructor(
     private val hltbContributionMessage = MutableStateFlow<String?>(null)
     private val hltbContributionSeverity = MutableStateFlow<SettingsResultSeverity?>(null)
     private val cloudBusy = MutableStateFlow(false)
-    private val cloudMessage = MutableStateFlow<String?>(null)
+    private val cloudMessage = MutableStateFlow<SettingsActionFeedback?>(null)
     private val cloudRefilingBusy = MutableStateFlow(false)
-    private val cloudRefilingMessage = MutableStateFlow<String?>(null)
+    private val cloudRefilingMessage = MutableStateFlow<SettingsActionFeedback?>(null)
     // The account detail can be disposed by Back while WorkManager keeps syncing, so attribution
     // belongs to this graph-scoped state holder rather than the detail composable.
     private val manualSyncFeedback = ManualSyncFeedbackTracker()
@@ -448,13 +516,19 @@ class SettingsViewModel @Inject constructor(
             cloudLastFailureAt = cloud.lastFailureAt,
             cloudLastFailure = cloud.lastFailure,
             cloudHealthy = cloud.healthy,
-            cloudBusy = cloudBusy.value,
-            cloudMessage = cloudMessage.value,
         )
     }.combine(combine(cloudBusy, cloudMessage) { busy, message -> busy to message }) { state, local ->
-        state.copy(cloudBusy = local.first, cloudMessage = local.second)
+        state.copy(
+            cloudBusy = local.first,
+            cloudMessage = local.second?.message,
+            cloudMessageSeverity = local.second?.severity,
+        )
     }.combine(combine(cloudRefilingBusy, cloudRefilingMessage) { busy, message -> busy to message }) { state, local ->
-        state.copy(cloudPresenceRefilingBusy = local.first, cloudPresenceRefilingMessage = local.second)
+        state.copy(
+            cloudPresenceRefilingBusy = local.first,
+            cloudPresenceRefilingMessage = local.second?.message,
+            cloudPresenceRefilingMessageSeverity = local.second?.severity,
+        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -472,30 +546,15 @@ class SettingsViewModel @Inject constructor(
             cloudBusy.value = true
             cloudMessage.value = null
             try {
-                cloudMessage.value = when (val result = cloudPresence.verifyAndSave(
-                    endpoint,
-                    token,
-                    consume = cloudPresenceIngestor::ingest,
-                )) {
-                    CloudConfigurationResult.Saved -> "Cloud presence connected."
-                    CloudConfigurationResult.NoSteamAccount ->
-                        "Connect a Steam account before verifying the reader."
-                    CloudConfigurationResult.InvalidEndpoint ->
-                        "Use an HTTPS Cloud reader URL."
-                    CloudConfigurationResult.RejectedCredential ->
-                        "The reader credential was rejected."
-                    CloudConfigurationResult.Unreachable ->
-                        "The reader could not be reached."
-                    CloudConfigurationResult.UnusableResponse ->
-                        "The reader returned unusable data."
-                    is CloudConfigurationResult.AccountMismatch ->
-                        "Endpoint account ${result.endpointAccount} does not match expected " +
-                            "Steam account ${result.expectedAccount}."
+                cloudMessage.value = settingsCloudActionFeedback(
+                    failureMessage = "The cloud reader could not be verified. Try again.",
+                ) {
+                    cloudPresence.verifyAndSave(
+                        endpoint,
+                        token,
+                        consume = cloudPresenceIngestor::ingest,
+                    ).toSettingsActionFeedback()
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                cloudMessage.value = "The cloud reader could not be verified. Try again."
             } finally {
                 cloudBusy.value = false
             }
@@ -508,19 +567,12 @@ class SettingsViewModel @Inject constructor(
             cloudBusy.value = true
             cloudMessage.value = null
             try {
-                cloudMessage.value = when (val result = cloudPresence.read(
-                    consume = cloudPresenceIngestor::ingest,
-                )) {
-                    CloudReadResult.Unconfigured -> "Configure the cloud reader first."
-                    CloudReadResult.NoSteamAccount -> "Connect a Steam account first."
-                    is CloudReadResult.Success ->
-                        "Cloud presence updated (${result.snapshot.observationCount} observations)."
-                    is CloudReadResult.Failed -> result.failure.cloudMessage()
+                cloudMessage.value = settingsCloudActionFeedback(
+                    failureMessage = "The cloud reader could not be read. Try again.",
+                ) {
+                    cloudPresence.read(consume = cloudPresenceIngestor::ingest)
+                        .toSettingsActionFeedback()
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                cloudMessage.value = "The cloud reader could not be read. Try again."
             } finally {
                 cloudBusy.value = false
             }
@@ -533,12 +585,12 @@ class SettingsViewModel @Inject constructor(
             cloudBusy.value = true
             cloudMessage.value = null
             try {
-                cloudPresence.removeConfiguration()
-                cloudMessage.value = "Cloud presence removed."
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                cloudMessage.value = "The cloud reader could not be removed."
+                cloudMessage.value = settingsCloudActionFeedback(
+                    failureMessage = "The cloud reader could not be removed.",
+                ) {
+                    cloudPresence.removeConfiguration()
+                    SettingsActionFeedback.success("Cloud presence removed.")
+                }
             } finally {
                 cloudBusy.value = false
             }
@@ -553,31 +605,28 @@ class SettingsViewModel @Inject constructor(
             cloudMessage.value = null
             cloudRefilingMessage.value = null
             try {
-                when (val read = cloudPresence.readCompleteHistory(
-                    trigger = CloudReadTrigger.SETTINGS_MANUAL,
-                    consume = cloudPresenceIngestor::ingest,
-                )) {
-                    CloudReadResult.Unconfigured -> {
-                        cloudRefilingMessage.value = "Configure the cloud reader first."
-                    }
-                    CloudReadResult.NoSteamAccount -> {
-                        cloudRefilingMessage.value = "Connect a Steam account first."
-                    }
-                    is CloudReadResult.Failed -> {
-                        cloudRefilingMessage.value = read.failure.cloudMessage()
-                    }
-                    is CloudReadResult.Success -> {
-                        val result = cloudPresenceRefiling.apply(read.snapshot.intervals)
-                        cloudRefilingMessage.value = result.describe()
-                        if (result.operation == CloudPresenceRefilingOperation.APPLIED) {
-                            _hapticIntents.tryEmit(HapticIntent.Confirm)
+                cloudRefilingMessage.value = settingsCloudActionFeedback(
+                    failureMessage = "Cloud playtime could not be re-filed. Try again.",
+                ) {
+                    when (val read = cloudPresence.readCompleteHistory(
+                        trigger = CloudReadTrigger.SETTINGS_MANUAL,
+                        consume = cloudPresenceIngestor::ingest,
+                    )) {
+                        CloudReadResult.Unconfigured ->
+                            SettingsActionFeedback.error("Configure the cloud reader first.")
+                        CloudReadResult.NoSteamAccount ->
+                            SettingsActionFeedback.error("Connect a Steam account first.")
+                        is CloudReadResult.Failed ->
+                            SettingsActionFeedback.error(read.failure.settingsMessage())
+                        is CloudReadResult.Success -> {
+                            val result = cloudPresenceRefiling.apply(read.snapshot.intervals)
+                            if (result.operation == CloudPresenceRefilingOperation.APPLIED) {
+                                _hapticIntents.tryEmit(HapticIntent.Confirm)
+                            }
+                            result.toSettingsActionFeedback()
                         }
                     }
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                cloudRefilingMessage.value = "Cloud playtime could not be re-filed. Try again."
             } finally {
                 cloudBusy.value = false
                 cloudRefilingBusy.value = false
@@ -591,35 +640,19 @@ class SettingsViewModel @Inject constructor(
             cloudRefilingBusy.value = true
             cloudRefilingMessage.value = null
             try {
-                val result = cloudPresenceRefiling.reverse()
-                cloudRefilingMessage.value = result.describe()
-                if (result.operation == CloudPresenceRefilingOperation.REVERSED) {
-                    _hapticIntents.tryEmit(HapticIntent.Confirm)
+                cloudRefilingMessage.value = settingsCloudActionFeedback(
+                    failureMessage = "Cloud playtime could not be restored. Try again.",
+                ) {
+                    val result = cloudPresenceRefiling.reverse()
+                    if (result.operation == CloudPresenceRefilingOperation.REVERSED) {
+                        _hapticIntents.tryEmit(HapticIntent.Confirm)
+                    }
+                    result.toSettingsActionFeedback()
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                cloudRefilingMessage.value = "Cloud playtime could not be restored. Try again."
             } finally {
                 cloudRefilingBusy.value = false
             }
         }
-    }
-
-    private fun CloudPresenceRefilingResult.describe(): String = when (operation) {
-        CloudPresenceRefilingOperation.APPLIED ->
-            "Re-filed $sessionsRefiled sessions across ${datesAffected.size} dates."
-        CloudPresenceRefilingOperation.REVERSED ->
-            "Re-filing undone; restored $sessionsRefiled sessions across ${datesAffected.size} dates."
-        CloudPresenceRefilingOperation.NO_OP -> "No cloud playtime re-filing was needed."
-    }
-
-    private fun CloudReadFailure.cloudMessage(): String = when (this) {
-        CloudReadFailure.UNREACHABLE -> "The cloud reader could not be reached."
-        CloudReadFailure.REJECTED_CREDENTIAL -> "The reader credential was rejected."
-        CloudReadFailure.ACCOUNT_MISMATCH ->
-            "The endpoint account does not match this Steam account."
-        CloudReadFailure.UNUSABLE_RESPONSE -> "The reader returned unusable data."
     }
 
     fun onManualSharedGameInputChanged(value: String) {

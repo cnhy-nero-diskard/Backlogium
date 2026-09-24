@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.settings
 
+import com.example.backlogium.data.repo.CloudConfigurationResult
 import com.example.backlogium.data.repo.CloudReadFailure
 import com.example.backlogium.data.updates.AppUpdateState
 import com.example.backlogium.data.updates.AvailableUpdate
@@ -165,6 +166,57 @@ class SettingsPresentationTest {
 
         assertEquals(SettingsAttention.HEALTHY, dataPrivacy.attention)
         assertFalse(state.hasDataAttention())
+    }
+
+    @Test
+    fun invalidCloudVerificationBlocksDataPrivacyWithoutARecordedRepositoryFailure() {
+        val feedback = CloudConfigurationResult.InvalidEndpoint.toSettingsActionFeedback()
+        val state = SettingsUiState(
+            loading = false,
+            configured = true,
+            cloudMessage = feedback.message,
+            cloudMessageSeverity = feedback.severity,
+            cloudHealthy = null,
+        )
+
+        val dataPrivacy = settingsGroupSummaries(state).single { it.group == SettingsGroup.DATA_PRIVACY }
+
+        assertEquals(SettingsResultSeverity.ERROR, feedback.severity)
+        assertEquals(SettingsAttention.BLOCKING, dataPrivacy.attention)
+        assertTrue(state.hasDataAttention())
+    }
+
+    @Test
+    fun cloudActionFailuresBlockDataPrivacyWhileRepositoryStillLooksHealthy() {
+        val healthyCloud = SettingsUiState(
+            loading = false,
+            configured = true,
+            cloudEndpoint = "https://reader.example",
+            cloudHealthy = true,
+        )
+        val removeFailure = SettingsActionFeedback.error("The cloud reader could not be removed.")
+        val refileFailure = SettingsActionFeedback.error("Cloud playtime could not be re-filed. Try again.")
+
+        val removeState = healthyCloud.copy(
+            cloudMessage = removeFailure.message,
+            cloudMessageSeverity = removeFailure.severity,
+        )
+        val refileState = healthyCloud.copy(
+            cloudPresenceRefilingMessage = refileFailure.message,
+            cloudPresenceRefilingMessageSeverity = refileFailure.severity,
+        )
+
+        listOf(removeState, refileState).forEach { state ->
+            val dataPrivacy = settingsGroupSummaries(state).single { it.group == SettingsGroup.DATA_PRIVACY }
+            assertEquals(SettingsAttention.BLOCKING, dataPrivacy.attention)
+            assertTrue(state.hasDataAttention())
+        }
+
+        val cleared = removeState.copy(cloudMessage = null, cloudMessageSeverity = null)
+        assertEquals(
+            SettingsAttention.HEALTHY,
+            settingsGroupSummaries(cleared).single { it.group == SettingsGroup.DATA_PRIVACY }.attention,
+        )
     }
 
     @Test

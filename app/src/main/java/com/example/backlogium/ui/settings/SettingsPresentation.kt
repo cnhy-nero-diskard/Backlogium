@@ -435,6 +435,8 @@ fun settingsGroupSummaries(state: SettingsUiState): List<SettingsGroupSummary> {
 
 /** Useful to callers that need to reason about a failure without exposing its technical detail. */
 fun SettingsUiState.hasDataAttention(): Boolean = cloudHealthy == false ||
+    cloudMessageSeverity == SettingsResultSeverity.ERROR ||
+    cloudPresenceRefilingMessageSeverity == SettingsResultSeverity.ERROR ||
     hltbDatasetCheckSeverity == SettingsResultSeverity.ERROR ||
     hltbContributionSeverity == SettingsResultSeverity.ERROR
 

@@ -857,7 +857,13 @@ private fun CloudPresenceCard(
                     Text(
                         message,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (
+                            state.cloudPresenceRefilingMessageSeverity == SettingsResultSeverity.ERROR
+                        ) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                 }
             }
@@ -933,11 +939,7 @@ private fun CloudPresenceCard(
                 Text(
                     message,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (
-                        state.cloudHealthy == false ||
-                        message.contains("rejected", ignoreCase = true) ||
-                        message.contains("match", ignoreCase = true)
-                    ) {
+                    color = if (state.cloudMessageSeverity == SettingsResultSeverity.ERROR) {
                         MaterialTheme.colorScheme.error
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
