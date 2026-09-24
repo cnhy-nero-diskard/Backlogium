@@ -22,6 +22,7 @@ import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.HltbDatasetDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.dao.PendingCloudEvidenceDao
 import com.example.backlogium.data.local.dao.SteamAssetDao
 import com.example.backlogium.data.local.dao.SteamReviewCacheDao
 import com.example.backlogium.data.local.dao.WishlistDao
@@ -40,6 +41,8 @@ import com.example.backlogium.data.local.entity.HltbDatasetMapping
 import com.example.backlogium.data.local.entity.HltbDatasetState
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.PendingCloudInterval
+import com.example.backlogium.data.local.entity.PendingCloudBoundary
 import com.example.backlogium.data.local.entity.WishlistItem
 import com.example.backlogium.data.local.entity.WishlistPriceObservation
 import com.example.backlogium.data.local.entity.PresenceDecision
@@ -67,6 +70,8 @@ import com.example.backlogium.data.local.entity.SyncRun
         RequestTotal::class,
         PresenceDecision::class,
         CloudReadRecord::class,
+        PendingCloudInterval::class,
+        PendingCloudBoundary::class,
         Collection::class,
         CollectionMember::class,
         GameGenreCache::class,
@@ -79,7 +84,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         HiddenGame::class,
         SteamReviewCache::class,
     ],
-    version = 37,
+    version = 38,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -92,6 +97,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun hltbDatasetDao(): HltbDatasetDao
     abstract fun achievementDao(): AchievementDao
     abstract fun cloudReadDao(): CloudReadDao
+    abstract fun pendingCloudEvidenceDao(): PendingCloudEvidenceDao
     abstract fun diagnosticsDao(): DiagnosticsDao
     abstract fun collectionDao(): CollectionDao
     abstract fun gameGenreCacheDao(): GameGenreCacheDao
@@ -867,6 +873,30 @@ abstract class BacklogiumDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `sessions` ADD COLUMN `recoveredSharedPlay` TEXT")
                 db.execSQL("ALTER TABLE `sessions` ADD COLUMN `timingInformedSteamPlay` TEXT")
+            }
+        }
+
+        /** v37 -> v38: persist account-bound pending intervals and cross-page boundaries. */
+        val MIGRATION_37_38 = object : Migration(37, 38) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `pending_cloud_intervals` (" +
+                        "`account` TEXT NOT NULL, `generation` INTEGER NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, `startAt` INTEGER NOT NULL, `endAt` INTEGER, " +
+                        "`ongoing` INTEGER NOT NULL, `coverage` TEXT NOT NULL, " +
+                        "`observedUntil` INTEGER, `coverageLapseFrom` INTEGER, " +
+                        "`coverageLapseRecoveredAt` INTEGER, `mayHaveStartedBefore` INTEGER NOT NULL, " +
+                        "`gameName` TEXT, `windowStart` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`account`, `generation`, `appId`, `startAt`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `pending_cloud_boundaries` (" +
+                        "`account` TEXT NOT NULL, `generation` INTEGER NOT NULL, `at` INTEGER NOT NULL, " +
+                        "`appId` INTEGER, `gameName` TEXT, `personastate` INTEGER, " +
+                        "`previousLastObservedAt` INTEGER, `previousCoverageLapseFrom` INTEGER, " +
+                        "`previousCoverageLapseRecoveredAt` INTEGER, `schemaVersion` INTEGER, " +
+                        "PRIMARY KEY(`account`, `generation`))",
+                )
             }
         }
 

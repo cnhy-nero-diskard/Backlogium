@@ -92,6 +92,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_34_35,
         BacklogiumDatabase.MIGRATION_35_36,
         BacklogiumDatabase.MIGRATION_36_37,
+        BacklogiumDatabase.MIGRATION_37_38,
     )
 
     @Test
@@ -121,6 +122,55 @@ class MigrationTest {
             )
             try {
                 migrated.assertRepresentativeData()
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun v37ToV38_createsPendingEvidenceWithoutChangingSessionFacts() {
+        val databaseName = "migration-v37-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 37)
+        try {
+            database.execSQL(
+                "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                    "lastPlaytime, isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+                    "firstSeenAt, lastPlayedAt, returnedToPlayAt, manualSharedMinutes) VALUES " +
+                    "(440, 'Game', '', 90, 0, 90, 0, NULL, 1700000000000, 0, 'STEAM_OWNED', " +
+                    "1700000000000, NULL, NULL, 0)",
+            )
+            database.execSQL(
+                "INSERT INTO sessions (id, appId, startAt, endAt, minutes, open, " +
+                    "recoveredSharedPlay, timingInformedSteamPlay) VALUES " +
+                    "(7, 440, 1700000000000, 1700005400000, 90, 0, 'PARTIAL', 'FULL')",
+            )
+        } finally {
+            database.close()
+        }
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName, 38, true, BacklogiumDatabase.MIGRATION_37_38,
+            )
+            try {
+                migrated.query("SELECT COUNT(*) FROM pending_cloud_intervals").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+                migrated.query("SELECT COUNT(*) FROM pending_cloud_boundaries").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+                migrated.query(
+                    "SELECT minutes, recoveredSharedPlay, timingInformedSteamPlay FROM sessions WHERE id = 7",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(90, cursor.getInt(0))
+                    assertEquals("PARTIAL", cursor.getString(1))
+                    assertEquals("FULL", cursor.getString(2))
+                }
             } finally {
                 migrated.close()
             }
