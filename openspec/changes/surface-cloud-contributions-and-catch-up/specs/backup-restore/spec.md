@@ -7,9 +7,15 @@ sum, duplicate, or otherwise double-count any value. Aggregate values (total XP,
 streak) SHALL always be recomputed from the merged raw data after import; they SHALL NOT be
 taken directly from the imported file. The recompute SHALL use the receiving installation's
 active rule configuration, not the configuration recorded in the file. A session's known
-cloud-contribution provenance SHALL be replaced by an explicit value in a newer backup, but
-an older backup that carries no provenance field SHALL leave existing local session
-provenance intact.
+cloud-contribution provenance SHALL be replaced by an explicit value in a version 2 backup,
+but a version 1 backup that carries no provenance field SHALL leave existing local session
+provenance intact. The importer SHALL support exactly backup format versions 1 and 2; all new
+exports SHALL use version 2. A missing root `formatVersion` SHALL be interpreted as version 1
+only for a legacy payload with no `cloudContribution` fields, because the version 1 serializer
+could omit its default version value. A version 1 payload that contains `cloudContribution` SHALL
+be rejected as mixed-version input. Version 2 SHALL include an explicit root version and a
+required, non-null tagged `cloudContribution` value on every session. Version 2 SHALL encode
+unknown provenance as `{"kind":"UNKNOWN"}`; JSON null or an absent session field is invalid.
 
 #### Scenario: Overlapping session imported
 - **WHEN** an imported session matches an existing session's game, start time, and end time
@@ -42,13 +48,41 @@ A backup containing session history SHALL also carry any recorded session cloud-
 - **WHEN** a backup containing a session with cloud contribution evidence is restored on the same account
 - **THEN** that session retains the kind and partial status of its contribution and its recorded minutes are unchanged
 
+#### Scenario: New export writes explicit version and provenance markers
+- **WHEN** a backup is exported
+- **THEN** it declares `formatVersion: 2` and every session carries a non-null tagged `cloudContribution` marker, including `{"kind":"UNKNOWN"}` when no contribution is known
+
 #### Scenario: Import an older backup
-- **WHEN** a supported earlier-format backup has a session with no provenance field
+- **WHEN** a version 1 backup (with an explicit `formatVersion: 1` or the root version omitted as in legacy exports) has a session with no provenance field
 - **THEN** the backup remains importable and a newly inserted session's provenance is unknown
 
 #### Scenario: Older backup overlaps a known session
 - **WHEN** a legacy backup session matches a local session that already records cloud contribution evidence
 - **THEN** the existing evidence is retained rather than replaced with an inferred or unknown value
+
+#### Scenario: Version 2 explicitly records unknown provenance
+- **WHEN** a version 2 backup session has `cloudContribution` set to `{"kind":"UNKNOWN"}` and matches a local session with known contribution evidence
+- **THEN** the matching session's provenance is replaced with unknown while its natural key and recorded minutes remain unchanged
+
+#### Scenario: Version 2 replaces known provenance
+- **WHEN** a version 2 backup session has a known `cloudContribution` value and matches a local session with different provenance
+- **THEN** the imported kind and partial status replace the local values while the session's natural key and recorded minutes remain unchanged
+
+#### Scenario: Version 2 provenance marker is missing or null
+- **WHEN** a version 2 backup omits a session's `cloudContribution` field or sets it to JSON null
+- **THEN** the backup is rejected before any data is modified
+
+#### Scenario: V2 provenance appears without a root version
+- **WHEN** a backup omits `formatVersion` but contains a `cloudContribution` field
+- **THEN** the backup is rejected as an ambiguous mixed-version file before any data is modified
+
+#### Scenario: Version 1 contains a version 2 provenance field
+- **WHEN** a backup declares `formatVersion: 1` but contains a `cloudContribution` field
+- **THEN** the backup is rejected as mixed-version input before any data is modified
+
+#### Scenario: Unsupported backup format version
+- **WHEN** a backup declares a format version other than 1 or 2
+- **THEN** the backup is rejected before any data is modified
 
 #### Scenario: Reader credentials stay on the device
 - **WHEN** a backup is exported
