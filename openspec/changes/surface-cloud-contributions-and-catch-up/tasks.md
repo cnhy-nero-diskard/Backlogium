@@ -1,6 +1,6 @@
 ## 1. Durable contribution evidence
 
-- [ ] 1.1 Add nullable, type-safe cloud contribution provenance to the session ledger and migrate older rows to unknown; verify a Room migration test opens a pre-change database without changing session times or minutes.
+- [ ] 1.1 Bump Room from v36 to v37 and commit the exported schema; add nullable, type-safe cloud contribution provenance to the session ledger, implement `MIGRATION_36_37`, and register it in `DatabaseModule`. Add `v36ToV37_preservesSessionTimesMinutesAndDefaultsProvenanceToUnknown` to `MigrationTest`, and extend `allMigrationsFromV13` through v37; verify the hop and chain with the connected MigrationTest job in task 4.3.
 - [ ] 1.2 Project provenance through `SessionRepository` as a domain value with no Room imports in product UI; verify a repository test distinguishes unknown, recovered, timing-informed, and partial contributions.
 - [ ] 1.3 Record recovered-play provenance only when cloud ingest actually credits shared-game play through the existing writer; verify tests for accepted, rejected-gap, duplicated, and mixed live/cloud observations.
 - [ ] 1.4 Record timing provenance only when cloud placement changes the unaided owned-game session actions, in the existing atomic commit; verify tests for changed actions, unchanged actions, rejected coverage, no reader, and exact Steam-owned minute totals.
@@ -30,5 +30,5 @@
 
 - [ ] 4.1 Version backup session serialization for explicit nullable contribution evidence without exporting endpoint, bearer token, or cursor; verify round-trip import/export preserves kind, partial status, and session minutes.
 - [ ] 4.2 Import older supported backups with unknown provenance for new sessions and preserved local provenance for matching sessions, leaving normal merge/recompute intact; verify both legacy and new-format fixtures.
-- [ ] 4.3 Run `.\gradlew.bat :gamification:test :app:testDebugUnitTest` and `.\gradlew.bat :app:compileDebugKotlin`; verify all pass and the `CLAUDE.md` UI storage-boundary and haptics checks report no new breach.
+- [ ] 4.3 Run `.\gradlew.bat --no-daemon :gamification:test :app:testDebugUnitTest`, `.\gradlew.bat --no-daemon :app:compileDebugKotlin`, and `.\gradlew.bat --no-daemon :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.example.backlogium.data.local.MigrationTest` on a connected emulator/device; verify all pass, including the v36-to-v37 case and v13-to-current chain, and the `CLAUDE.md` UI storage-boundary and haptics checks report no new breach.
 - [ ] 4.4 Exercise a configured, offline, stale, failing, and multi-page catch-up with realistic session history on a device; verify displayed contributions match stored evidence, cloud remains optional, and no new routine trigger modifies the poller's server-side schedule.
