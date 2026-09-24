@@ -29,6 +29,22 @@ import com.example.backlogium.ui.util.UiFormat
 @Composable
 fun CloudActivityScreen(viewModel: HistoryViewModel, onBack: () -> Unit) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    CloudActivityContent(
+        state = state,
+        onOpenSession = { item ->
+            viewModel.revealSession(item)
+            onBack()
+        },
+        onBack = onBack,
+    )
+}
+
+@Composable
+internal fun CloudActivityContent(
+    state: HistoryUiState,
+    onOpenSession: (HistoryContribution) -> Unit = {},
+    onBack: () -> Unit = {},
+) {
     val activity = historyCloudActivity(state.days, state.cloudReaderConfigured)
     if (state.loading) {
         CircularProgressIndicator()
@@ -42,14 +58,8 @@ fun CloudActivityScreen(viewModel: HistoryViewModel, onBack: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        cloudGroup(R.string.history_cloud_recovered_facts, activity.recovered) { item ->
-            viewModel.revealSession(item)
-            onBack()
-        }
-        cloudGroup(R.string.history_cloud_timed_facts, activity.timed) { item ->
-            viewModel.revealSession(item)
-            onBack()
-        }
+        cloudGroup(R.string.history_cloud_recovered_facts, activity.recovered, onOpenSession)
+        cloudGroup(R.string.history_cloud_timed_facts, activity.timed, onOpenSession)
         if (state.cloudReaderConfigured) {
             item { CloudReaderStatus(state.cloudReadSummary, state.statusNow) }
         }
