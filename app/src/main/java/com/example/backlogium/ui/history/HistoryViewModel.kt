@@ -29,6 +29,8 @@ data class HistoryUiState(
     val cloudReaderConfigured: Boolean = false,
 )
 
+data class HistoryReveal(val date: String, val appId: Long, val sessionId: Long)
+
 @HiltViewModel
 class HistoryViewModel @Inject constructor(
     private val sessionRepository: SessionRepository,
@@ -40,6 +42,15 @@ class HistoryViewModel @Inject constructor(
     private val currentDate: CurrentDateProvider,
     private val cloudPresence: CloudPresenceRepository,
 ) : ViewModel() {
+
+    private val revealState = MutableStateFlow<HistoryReveal?>(null)
+    val reveal: StateFlow<HistoryReveal?> = revealState
+
+    fun revealSession(item: HistoryContribution) {
+        revealState.value = HistoryReveal(item.date, item.game.appId, item.session.id)
+    }
+
+    fun clearReveal() { revealState.value = null }
 
     /**
      * How many trailing calendar days are in view. Transient (not persisted): the screen opens

@@ -14,6 +14,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -71,9 +75,15 @@ internal const val TAG_HISTORY_CLOUD_MARK = "history-cloud-mark"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
+fun HistoryScreen(
+    viewModel: HistoryViewModel = hiltViewModel(),
+    onOpenCloudActivity: () -> Unit = {},
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    HistoryContent(state = state, onLoadOlder = viewModel::loadOlder)
+    val reveal by viewModel.reveal.collectAsStateWithLifecycle()
+    HistoryContent(state = state, onLoadOlder = viewModel::loadOlder,
+        onOpenCloudActivity = onOpenCloudActivity, reveal = reveal,
+        onRevealHandled = viewModel::clearReveal)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -81,6 +91,9 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
 internal fun HistoryContent(
     state: HistoryUiState,
     onLoadOlder: () -> Unit = {},
+    onOpenCloudActivity: () -> Unit = {},
+    reveal: HistoryReveal? = null,
+    onRevealHandled: () -> Unit = {},
 ) {
 
     if (!state.configured) {
@@ -117,6 +130,7 @@ internal fun HistoryContent(
     var expandedGames by remember { mutableStateOf<Set<Pair<String, Long>>>(emptySet()) }
     var autoExpandedDate by remember { mutableStateOf<String?>(null) }
     var showMeasurementHelp by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
 
     LaunchedEffect(state.today) {
         // Request identity is checked at publish time: only the current input, job, or date may publish.
@@ -136,8 +150,25 @@ internal fun HistoryContent(
     }
 
     val sections = historySections(state.days, state.today)
+    val activity = historyCloudActivity(state.days, state.cloudReaderConfigured)
+    LaunchedEffect(reveal, state.days) {
+        val target = reveal ?: return@LaunchedEffect
+        if (state.days.none { it.date == target.date }) return@LaunchedEffect
+        expandedDays = expandedDays + target.date
+        expandedGames = expandedGames + (target.date to target.appId)
+        withFrameNanos { }
+        val dayIndex = 1 + (if (activity.hasContributions) 1 else 0) +
+            if (sections.today?.date == target.date) 1 else {
+                (if (sections.today != null) 1 + (if (sections.today.date in expandedDays) 1 else 0) else 0) +
+                    1 + sections.earlier.takeWhile { it.date != target.date }.sumOf { earlier ->
+                    1 + (if (earlier.date in expandedDays) 1 else 0)
+                }
+            }
+        listState.scrollToItem(dayIndex)
+    }
 
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp, vertical = 16.dp),
@@ -162,11 +193,21 @@ internal fun HistoryContent(
             }
         }
 
+        if (activity.hasContributions) {
+            item(key = "cloud-activity") {
+                TextButton(onClick = onOpenCloudActivity, modifier = Modifier.fillMaxWidth()) {
+                    Icon(TablerIcons.Cloud, contentDescription = null)
+                    Text(stringResource(R.string.history_cloud_activity), modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+        }
+
         sections.today?.let { day ->
             item(key = "today-heading") {
                 SectionHeader(stringResource(R.string.history_today_section))
             }
-            dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame, state.cloudReaderConfigured)
+            dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame,
+                state.cloudReaderConfigured, reveal, onRevealHandled)
         }
 
         if (sections.earlier.isNotEmpty()) {
@@ -175,7 +216,8 @@ internal fun HistoryContent(
             }
         }
         sections.earlier.forEach { day ->
-            dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame, state.cloudReaderConfigured)
+            dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame,
+                state.cloudReaderConfigured, reveal, onRevealHandled)
         }
 
         item(key = "load-older") {
@@ -228,6 +270,8 @@ private fun LazyListScope.dayItems(
     onToggleDay: (String) -> Unit,
     onToggleGame: (String, Long) -> Unit,
     cloudReaderConfigured: Boolean,
+    reveal: HistoryReveal?,
+    onRevealHandled: () -> Unit,
 ) {
     val dayExpanded = day.date in expandedDays
     val expandable = day.games.isNotEmpty()
@@ -250,6 +294,8 @@ private fun LazyListScope.dayItems(
             expandedGames = expandedGames,
             onToggleGame = onToggleGame,
             cloudReaderConfigured = cloudReaderConfigured,
+            reveal = reveal,
+            onRevealHandled = onRevealHandled,
         )
     }
 }
@@ -463,6 +509,8 @@ private fun DayGamesBlock(
     expandedGames: Set<Pair<String, Long>>,
     onToggleGame: (String, Long) -> Unit,
     cloudReaderConfigured: Boolean,
+    reveal: HistoryReveal?,
+    onRevealHandled: () -> Unit,
 ) {
     val lineColor = MaterialTheme.colorScheme.outlineVariant
     // Tracked so the line can stop exactly at the last game's dot instead of running past it to the
@@ -533,7 +581,9 @@ private fun DayGamesBlock(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         game.sessions.forEach { session ->
-                            HistorySessionRow(session, cloudReaderConfigured)
+                            HistorySessionRow(session, cloudReaderConfigured,
+                                reveal?.takeIf { it.date == date && it.appId == game.appId && it.sessionId == session.id },
+                                onRevealHandled)
                         }
                     }
                 }
@@ -544,8 +594,20 @@ private fun DayGamesBlock(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HistorySessionRow(session: HistorySessionUi, cloudReaderConfigured: Boolean) {
+private fun HistorySessionRow(
+    session: HistorySessionUi,
+    cloudReaderConfigured: Boolean,
+    reveal: HistoryReveal? = null,
+    onRevealHandled: () -> Unit = {},
+) {
     var showExplanation by remember(session.id) { mutableStateOf(false) }
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    LaunchedEffect(reveal) {
+        if (reveal != null) {
+            bringIntoViewRequester.bringIntoView()
+            onRevealHandled()
+        }
+    }
     val contribution = session.cloudContribution
     val hasMark = cloudReaderConfigured && contribution.hasRecordedContribution()
     val recovery = contribution.recoveredSharedPlay
@@ -560,7 +622,8 @@ private fun HistorySessionRow(session: HistorySessionUi, cloudReaderConfigured: 
                 R.string.history_cloud_timed_partial else R.string.history_cloud_timed)
         } else null,
     ).joinToString(". ")
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+    Row(verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().bringIntoViewRequester(bringIntoViewRequester)) {
         Text(
             text = sessionLabel(session),
             style = MaterialTheme.typography.bodySmall,
