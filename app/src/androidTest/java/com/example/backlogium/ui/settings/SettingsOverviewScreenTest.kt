@@ -17,11 +17,12 @@ class SettingsOverviewScreenTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun loadingKeepsFourRowsAndDoesNotExposeResolvedAction() {
+    fun loadingKeepsFourRowsNavigableAndDoesNotExposeResolvedAction() {
+        var openedGroup: SettingsGroup? = null
         composeRule.setContent {
             SettingsOverviewScreen(
                 state = SettingsUiState(),
-                onOpenGroup = {},
+                onOpenGroup = { openedGroup = it },
             )
         }
 
@@ -32,6 +33,12 @@ class SettingsOverviewScreenTest {
         composeRule.onAllNodesWithText("Loading saved settings", substring = true)
             .assertCountEquals(SettingsGroup.entries.size)
         composeRule.onNodeWithText("Connect account").assertDoesNotExist()
+
+        SettingsGroup.entries.forEach { group ->
+            composeRule.onNodeWithTag("settings-group-${group.route.substringAfterLast('/')}")
+                .performClick()
+            assertEquals(group, openedGroup)
+        }
     }
 
     @Test

@@ -72,7 +72,7 @@ private fun SettingsSummaryRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(enabled = !summary.loading, onClick = onClick)
+                .clickable(onClick = onClick)
                 .semantics {
                     role = Role.Button
                     stateDescription = status
