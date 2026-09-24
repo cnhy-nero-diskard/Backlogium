@@ -34,4 +34,12 @@ data class Session(
     val endAt: Long? = null,
     val minutes: Int,
     val open: Boolean,
+    val recoveredSharedPlay: RecoveredSharedPlayState? = RecoveredSharedPlayState.NONE,
+    val timingInformedSteamPlay: TimingInformedSteamPlayState? = TimingInformedSteamPlayState.NONE,
 )
+
+/** Null denotes a row written before contribution evidence existed. */
+enum class RecoveredSharedPlayState { UNKNOWN, NONE, FULL, PARTIAL }
+
+/** Independent of recovery: Steam remains authoritative for the counted minutes. */
+enum class TimingInformedSteamPlayState { UNKNOWN, NONE, FULL, PARTIAL }

@@ -79,7 +79,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         HiddenGame::class,
         SteamReviewCache::class,
     ],
-    version = 36,
+    version = 37,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -862,6 +862,14 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 )
             }
         }
+        /** v36 -> v37: legacy sessions have unknown, not absent, cloud contribution evidence. */
+        val MIGRATION_36_37 = object : Migration(36, 37) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `sessions` ADD COLUMN `recoveredSharedPlay` TEXT")
+                db.execSQL("ALTER TABLE `sessions` ADD COLUMN `timingInformedSteamPlay` TEXT")
+            }
+        }
+
         private fun SupportSQLiteDatabase.hasColumn(table: String, column: String): Boolean {
             query("PRAGMA table_info(`$table`)").use { cursor ->
                 val nameIndex = cursor.getColumnIndex("name")

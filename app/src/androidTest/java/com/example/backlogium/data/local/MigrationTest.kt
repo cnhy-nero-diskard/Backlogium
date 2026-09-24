@@ -91,6 +91,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_33_34,
         BacklogiumDatabase.MIGRATION_34_35,
         BacklogiumDatabase.MIGRATION_35_36,
+        BacklogiumDatabase.MIGRATION_36_37,
     )
 
     @Test
@@ -120,6 +121,52 @@ class MigrationTest {
             )
             try {
                 migrated.assertRepresentativeData()
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun v36ToV37_preservesSessionTimesMinutesAndDefaultsProvenanceToUnknown() {
+        val databaseName = "migration-v36-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 36)
+        try {
+            database.execSQL(
+                "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                    "lastPlaytime, isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+                    "firstSeenAt, lastPlayedAt, returnedToPlayAt, manualSharedMinutes) VALUES " +
+                    "(440, 'Game', '', 90, 0, 90, 0, NULL, 1700000000000, 0, 'STEAM_OWNED', " +
+                    "1700000000000, NULL, NULL, 0)",
+            )
+            database.execSQL(
+                "INSERT INTO sessions (id, appId, startAt, endAt, minutes, open) VALUES " +
+                    "(7, 440, 1700000000000, 1700005400000, 90, 0)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName, 37, true, BacklogiumDatabase.MIGRATION_36_37,
+            )
+            try {
+                migrated.query(
+                    "SELECT startAt, endAt, minutes, open, recoveredSharedPlay, " +
+                        "timingInformedSteamPlay FROM sessions WHERE id = 7",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1700000000000L, cursor.getLong(0))
+                    assertEquals(1700005400000L, cursor.getLong(1))
+                    assertEquals(90, cursor.getInt(2))
+                    assertEquals(0, cursor.getInt(3))
+                    assertTrue(cursor.isNull(4))
+                    assertTrue(cursor.isNull(5))
+                    assertFalse(cursor.moveToNext())
+                }
             } finally {
                 migrated.close()
             }
