@@ -325,6 +325,65 @@ class CloudPresencePlacementReaderTest {
     }
 
     @Test
+    fun zeroDeltaBaselinePrunesOnlyClosedIntervalsThatCannotEnterFutureWindows() = runBlocking {
+        val origin = Instant.parse("2026-09-15T00:00:00Z").toEpochMilli()
+        val minute = 60_000L
+        val first = CloudPresenceInterval(
+            appId = 10L, gameName = "Owned", startAt = origin + 10 * minute,
+            endAt = origin + 30 * minute, ongoing = false,
+            coverage = CloudCoverageState.CONTINUOUS, observedUntil = null,
+            coverageLapseFrom = null, coverageLapseRecoveredAt = null, mayHaveStartedBefore = false,
+        )
+        val future = first.copy(startAt = origin + 40 * minute, endAt = origin + 70 * minute)
+        val settings = FakeSettingsRepository()
+        val pending = RoomCloudPendingEvidence(database.pendingCloudEvidenceDao(), database.gameDao(),
+            RoomDatabaseTransactionScope(database))
+        database.gameDao().upsert(Game(10L, "Owned", "", 100, 0, 100))
+        database.playerProfileDao().insertIfMissing()
+        database.playerProfileDao().updateSyncStatus(origin + minute, null)
+        pending.retain(ACCOUNT, 0L, origin, listOf(first, future), null)
+        val dao = database.pendingCloudEvidenceDao()
+        val committer = PlaytimeObservationCommitter(
+            gameDao = database.gameDao(), sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(), profileDao = database.playerProfileDao(),
+            hiddenGameDao = database.hiddenGameDao(), differ = SessionDiffer(), time = FixedTimeProvider(),
+            sessionActionWriter = SessionActionWriter(database.sessionDao(), database.dailyProgressDao(),
+                database.hiddenGameDao(), FixedTimeProvider()),
+            pendingEvidencePruner = CloudPendingEvidencePruner(dao, FakeCredentials(ACCOUNT), settings),
+        )
+        val at50 = origin + 50 * minute
+        val at80 = origin + 80 * minute
+        database.withTransaction {
+            val result = committer.commit(
+                listOf(PlaytimeObservationCommitter.ObservedGame(10L, "Owned", "", 100, 0)),
+                at50, at50,
+            )
+            assertFalse(result.recordedPlay)
+            database.playerProfileDao().updateSyncStatus(at50, null)
+        }
+        assertEquals(listOf(future.startAt), dao.intervals(ACCOUNT, 0L).map { it.startAt })
+
+        val terminalAt = Instant.ofEpochMilli(at80).toString()
+        val (_, placement) = readerPair(FakeCloudPresenceApi { position ->
+            assertNull(position)
+            CloudPresenceResponseDto(
+                account = ACCOUNT, transitions = emptyList(), current = null,
+                nextPosition = terminalAt, hasMore = false,
+                windowStart = Instant.ofEpochMilli(at50).toString(),
+                windowEnd = terminalAt, readAt = terminalAt,
+            )
+        }, settings, pending)
+        val snapshot = placement.read(CloudReadTrigger.SYNC, at50, at80)!!
+        assertEquals(listOf(future.startAt), snapshot.intervals.filter { it.appId == 10L }.map { it.startAt })
+        database.withTransaction {
+            committer.commit(listOf(PlaytimeObservationCommitter.ObservedGame(10L, "Owned", "", 100, 0)),
+                at80, at80)
+            database.playerProfileDao().updateSyncStatus(at80, null)
+        }
+        assertTrue(dao.intervals(ACCOUNT, 0L).none { it.appId == 10L })
+    }
+
+    @Test
     fun cursorAdvancedInsideSteamPeriodRefusesSuffix() = runBlocking {
         val periodStart = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
         val cursor = "2026-09-16T00:00:00Z"
