@@ -120,6 +120,23 @@ class SettingsPresentationTest {
         val failed = settingsGroupSummaries(failedState).single { it.group == SettingsGroup.GAMEPLAY }
         assertEquals(SettingsAttention.BLOCKING, failed.attention)
 
+        val retrying = settingsGroupSummaries(
+            failedState.copy(manualSharedGameBusy = true, manualSharedGameFeedback = null),
+        ).single { it.group == SettingsGroup.GAMEPLAY }
+        assertEquals(SettingsAttention.IN_PROGRESS, retrying.attention)
+
+        val completed = settingsGroupSummaries(
+            failedState.copy(
+                manualSharedGameBusy = false,
+                manualSharedGameFeedback = ManualImportFeedback(
+                    tone = ManualImportFeedbackTone.SUCCESS,
+                    title = "Game found and imported",
+                    message = "The game was imported.",
+                ),
+            ),
+        ).single { it.group == SettingsGroup.GAMEPLAY }
+        assertEquals(SettingsAttention.HEALTHY, completed.attention)
+
         val cleared = settingsGroupSummaries(
             failedState.copy(manualSharedGameFeedback = null),
         ).single { it.group == SettingsGroup.GAMEPLAY }

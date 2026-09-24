@@ -664,6 +664,7 @@ class SettingsViewModel @Inject constructor(
         if (manualSharedGameBusy.value) return
         viewModelScope.launch {
             manualSharedGameBusy.value = true
+            manualSharedGameFeedback.value = null
             try {
                 val configured = credentials.currentCredentials()
                 val feedback = if (configured == null) {
