@@ -11,10 +11,12 @@ import com.example.backlogium.data.repo.PlaySessionEndPublisher
 import com.example.backlogium.data.repo.SessionEndOutbox
 import com.example.backlogium.di.ApplicationScope
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import timber.log.Timber
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -39,6 +41,7 @@ class PostPlaySyncScheduler @Inject constructor(
     private val sessionEndOutbox: SessionEndOutbox,
     private val workEnqueuer: PostPlayWorkEnqueuer,
     @ApplicationScope private val scope: CoroutineScope,
+    private val cloudRoutineScheduler: CloudRoutineScheduler? = null,
 ) {
     private val dispatchMutex = Mutex()
     private val dispatchedSessionEnds = mutableSetOf<PlaySessionEnd>()
@@ -64,6 +67,14 @@ class PostPlaySyncScheduler @Inject constructor(
         dispatchMutex.withLock {
             if (sessionEnd in dispatchedSessionEnds) return@withLock
             schedule(sessionEnd)
+            try {
+                cloudRoutineScheduler?.enqueueAfterPlayEnd(sessionEnd)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                // Cloud is optional: an inaccessible reader must not strand Steam's end outbox.
+                Timber.w(error, "Cloud play-end opportunity could not be enqueued")
+            }
             sessionEndOutbox.acknowledgeSessionEnd(sessionEnd)
             dispatchedSessionEnds += sessionEnd
         }

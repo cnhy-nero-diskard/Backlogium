@@ -22,6 +22,7 @@ import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.domain.DailyProgressBackfillUseCase
 import com.example.backlogium.domain.PendingImportRecomputeUseCase
 import com.example.backlogium.work.PostPlaySyncScheduler
+import com.example.backlogium.work.CloudRoutineScheduler
 import com.example.backlogium.work.PresenceServiceStarter
 import com.example.backlogium.work.SyncScheduler
 import com.example.backlogium.work.UpdateScheduler
@@ -97,6 +98,9 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
     lateinit var postPlaySyncScheduler: PostPlaySyncScheduler
 
     @Inject
+    lateinit var cloudRoutineScheduler: CloudRoutineScheduler
+
+    @Inject
     lateinit var settings: SettingsRepository
 
     @Inject
@@ -155,6 +159,7 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
 
             runCatching { cloudPresence.reconcileRoutinePolicy() }
                 .onFailure { Timber.e(it, "Cloud routine policy reconciliation failed") }
+            cloudRoutineScheduler.observeConfiguration()
 
             // Start after account recovery so a durable session-end handoff cannot schedule work
             // against an account reset that is still incomplete. The outbox replays anything
