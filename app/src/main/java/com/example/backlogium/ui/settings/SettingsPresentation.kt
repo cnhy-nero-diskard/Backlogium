@@ -436,7 +436,8 @@ fun settingsGroupSummaries(state: SettingsUiState): List<SettingsGroupSummary> {
 }
 
 /** Useful to callers that need to reason about a failure without exposing its technical detail. */
-fun SettingsUiState.hasDataAttention(): Boolean = cloudHealthy == false ||
+fun SettingsUiState.hasDataAttention(): Boolean = steamAssetStatus == SteamAssetDownloadStatus.FAILED ||
+    cloudHealthy == false ||
     cloudMessageSeverity == SettingsResultSeverity.ERROR ||
     cloudPresenceRefilingMessageSeverity == SettingsResultSeverity.ERROR ||
     hltbDatasetCheckSeverity == SettingsResultSeverity.ERROR ||

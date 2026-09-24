@@ -6,6 +6,7 @@ import com.example.backlogium.data.repo.CloudReadFailure
 import com.example.backlogium.data.updates.AppUpdateState
 import com.example.backlogium.data.updates.AvailableUpdate
 import com.example.backlogium.gamification.RuleConfig
+import com.example.backlogium.work.SteamAssetDownloadStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -201,6 +202,26 @@ class SettingsPresentationTest {
 
         assertEquals(SettingsAttention.HEALTHY, dataPrivacy.attention)
         assertFalse(state.hasDataAttention())
+    }
+
+    @Test
+    fun failedSteamAssetDownloadBlocksDataPrivacyButCancelledDownloadDoesNot() {
+        val healthyState = SettingsUiState(
+            loading = false,
+            configured = true,
+            cloudEndpoint = "https://reader.example",
+            cloudHealthy = true,
+        )
+        val failedState = healthyState.copy(steamAssetStatus = SteamAssetDownloadStatus.FAILED)
+        val cancelledState = healthyState.copy(steamAssetStatus = SteamAssetDownloadStatus.CANCELLED)
+
+        val failed = settingsGroupSummaries(failedState).single { it.group == SettingsGroup.DATA_PRIVACY }
+        assertEquals(SettingsAttention.BLOCKING, failed.attention)
+        assertTrue(failedState.hasDataAttention())
+
+        val cancelled = settingsGroupSummaries(cancelledState).single { it.group == SettingsGroup.DATA_PRIVACY }
+        assertEquals(SettingsAttention.HEALTHY, cancelled.attention)
+        assertFalse(cancelledState.hasDataAttention())
     }
 
     @Test
