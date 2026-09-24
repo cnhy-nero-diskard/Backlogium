@@ -5,6 +5,7 @@ import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
 import com.example.backlogium.domain.SessionDiffer
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.attributeDailyProgress
@@ -45,7 +46,10 @@ class SessionActionWriter @Inject constructor(
      *   contributes nothing here, so crediting this list cannot double-count it even when a later
      *   action in the same batch still writes.
      */
-    suspend fun applySessionActions(actions: List<SessionDiffer.SessionAction>): List<SessionDiffer.SessionAction> {
+    suspend fun applySessionActions(
+        actions: List<SessionDiffer.SessionAction>,
+        recoveredFromCloud: Boolean = false,
+    ): List<SessionDiffer.SessionAction> {
         val effective = mutableListOf<SessionDiffer.SessionAction>()
         for ((index, action) in actions.withIndex()) {
             when (action) {
@@ -55,6 +59,11 @@ class SessionActionWriter @Inject constructor(
                         startAt = action.startAt,
                         endAt = action.endAt,
                         minutes = action.minutes,
+                        recoveredSharedPlay = if (recoveredFromCloud && action.addedMinutes > 0) {
+                            RecoveredSharedPlayState.FULL
+                        } else {
+                            RecoveredSharedPlayState.NONE
+                        },
                     )
                     if (opened != -1L) {
                         effective += action
@@ -68,6 +77,11 @@ class SessionActionWriter @Inject constructor(
                                 endAt = action.endAt,
                                 minutes = action.minutes,
                                 open = true,
+                                recoveredSharedPlay = if (recoveredFromCloud && action.addedMinutes > 0) {
+                                    RecoveredSharedPlayState.FULL
+                                } else {
+                                    RecoveredSharedPlayState.NONE
+                                },
                             ),
                         )
                         effective += action
@@ -88,6 +102,9 @@ class SessionActionWriter @Inject constructor(
                                     startAt = minOf(it.startAt, action.startAt),
                                     minutes = it.minutes + action.addedMinutes,
                                     endAt = maxOf(it.endAt ?: it.startAt, action.endAt),
+                                    recoveredSharedPlay = it.recoveryAfter(
+                                        recoveredFromCloud, action.addedMinutes,
+                                    ),
                                 ),
                             )
                             effective += action
@@ -110,6 +127,9 @@ class SessionActionWriter @Inject constructor(
                                     minutes = minutes,
                                     endAt = endAt,
                                     open = true,
+                                    recoveredSharedPlay = it.recoveryAfter(
+                                        recoveredFromCloud, minutes - it.minutes,
+                                    ),
                                 ),
                             )
                             effective += action.copy(
@@ -151,12 +171,22 @@ class SessionActionWriter @Inject constructor(
     suspend fun apply(
         actions: List<SessionDiffer.SessionAction>,
         goalAppIds: Set<Long>,
+        recoveredFromCloud: Boolean = false,
     ): List<SessionDiffer.SessionAction> {
         if (actions.isEmpty()) return emptyList()
         return transaction.run {
-            val effective = applySessionActions(actions)
+            val effective = applySessionActions(actions, recoveredFromCloud)
             if (effective.isNotEmpty()) creditDailyProgress(effective, goalAppIds)
             effective
+        }
+    }
+
+    private fun Session.recoveryAfter(cloud: Boolean, addedMinutes: Int): RecoveredSharedPlayState? {
+        if (!cloud || addedMinutes <= 0) return recoveredSharedPlay
+        return when {
+            minutes == 0 -> RecoveredSharedPlayState.FULL
+            recoveredSharedPlay == RecoveredSharedPlayState.FULL -> RecoveredSharedPlayState.FULL
+            else -> RecoveredSharedPlayState.PARTIAL
         }
     }
 

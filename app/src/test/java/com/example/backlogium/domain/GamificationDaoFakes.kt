@@ -22,6 +22,7 @@ import com.example.backlogium.data.local.entity.HltbDataOrigin
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,7 +38,10 @@ import kotlinx.coroutines.flow.map
 
 internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao {
     override suspend fun insert(session: Session): Long = 0L
-    override suspend fun tryOpenSession(appId: Long, startAt: Long, endAt: Long?, minutes: Int): Long = 0L
+    override suspend fun tryOpenSession(
+        appId: Long, startAt: Long, endAt: Long?, minutes: Int,
+        recoveredSharedPlay: RecoveredSharedPlayState,
+    ): Long = 0L
     override suspend fun update(session: Session) = Unit
     override suspend fun deleteById(id: Long) = Unit
     override suspend fun getOpenSession(appId: Long): Session? = null

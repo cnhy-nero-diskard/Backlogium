@@ -117,7 +117,7 @@ class CloudPresenceSessionIngestor @Inject constructor(
             sharedIds = sharedIds,
             actions = actions,
         )
-        val effective = sessionActionWriter.apply(allActions, goalIds)
+        val effective = sessionActionWriter.apply(allActions, goalIds, recoveredFromCloud = true)
         val wrote = effective.isNotEmpty()
         if (wrote) recompute()
         settings.setCloudIngestPosition(position.raw)

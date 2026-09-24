@@ -6,6 +6,7 @@ import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -33,7 +34,13 @@ interface SessionDao {
      *   already holds one open and nothing was inserted.
      */
     @Transaction
-    suspend fun tryOpenSession(appId: Long, startAt: Long, endAt: Long?, minutes: Int): Long {
+    suspend fun tryOpenSession(
+        appId: Long,
+        startAt: Long,
+        endAt: Long?,
+        minutes: Int,
+        recoveredSharedPlay: RecoveredSharedPlayState = RecoveredSharedPlayState.NONE,
+    ): Long {
         if (getOpenSession(appId) != null) return -1L
         return insert(
             Session(
@@ -42,6 +49,7 @@ interface SessionDao {
                 endAt = endAt,
                 minutes = minutes,
                 open = true,
+                recoveredSharedPlay = recoveredSharedPlay,
             ),
         )
     }
