@@ -62,8 +62,7 @@ import com.example.backlogium.ui.library.LibraryUiState
 import com.example.backlogium.ui.library.WishlistEntryUi
 import com.example.backlogium.ui.library.WishlistPriceUi
 import com.example.backlogium.ui.library.WishlistUiState
-import com.example.backlogium.ui.settings.SettingsActions
-import com.example.backlogium.ui.settings.SettingsScreen
+import com.example.backlogium.ui.settings.SettingsOverviewScreen
 import com.example.backlogium.ui.settings.SettingsUiState
 import com.example.backlogium.work.GenreEnrichmentStatus
 import java.time.Instant
@@ -134,20 +133,17 @@ internal fun MainScreenshotFixtureHost(fixture: MainScreenshotFixture) {
             MainFixtureKind.ANALYTICS_POPULATED -> AnalyticsContent(analyticsState())
             MainFixtureKind.ANALYTICS_SELECTED_DAY -> AnalyticsContent(analyticsState(selectedDay = true))
             MainFixtureKind.ANALYTICS_EMPTY_WINDOW -> AnalyticsContent(analyticsState(empty = true))
-            MainFixtureKind.SETTINGS_OVERVIEW -> SettingsScreen(
+            MainFixtureKind.SETTINGS_OVERVIEW -> SettingsOverviewScreen(
                 state = settingsState(),
-                onEditCredentials = {},
-                actions = screenshotSettingsActions,
+                onOpenGroup = {},
             )
-            MainFixtureKind.SETTINGS_HEALTHY -> SettingsScreen(
+            MainFixtureKind.SETTINGS_HEALTHY -> SettingsOverviewScreen(
                 state = settingsState(healthy = true),
-                onEditCredentials = {},
-                actions = screenshotSettingsActions,
+                onOpenGroup = {},
             )
-            MainFixtureKind.SETTINGS_ATTENTION -> SettingsScreen(
+            MainFixtureKind.SETTINGS_ATTENTION -> SettingsOverviewScreen(
                 state = settingsState(attention = true),
-                onEditCredentials = {},
-                actions = screenshotSettingsActions,
+                onOpenGroup = {},
             )
         }
     }
@@ -527,8 +523,10 @@ private fun settingsState(
     steamId = "76561198000000000",
     apiKeyMasked = "••••••••••••••••",
     lastSyncAt = FIXED_SCREEN_TIME_MILLIS - 47 * 60_000L,
+    lastSyncError = if (attention) "Sync failed" else null,
     isSyncing = attention,
     isReconciling = attention,
+    cloudHealthy = if (healthy) true else if (attention) false else null,
     genreEnrichmentStatus = when {
         attention -> GenreEnrichmentStatus.RETRYING
         healthy -> GenreEnrichmentStatus.IDLE
@@ -537,31 +535,6 @@ private fun settingsState(
     storedSteamAssetCount = 328,
     storedSteamAssetBytes = 48_200_000L,
     hasSteamAssetInventory = true,
-)
-
-private val screenshotSettingsActions = SettingsActions(
-    onSyncNow = {},
-    onReconcileNow = {},
-    onLiveMonitorEnabledChanged = {},
-    onFieldChanged = { _, _ -> },
-    onQuestModeChanged = {},
-    onAdvancedExpandedChanged = {},
-    onRequestSave = {},
-    onDiscardChanges = {},
-    onConfirmSave = {},
-    onDismissConfirmation = {},
-    onImportHistory = {},
-    onResetHistoryImport = {},
-    onAutoSnapshotEnabledChanged = {},
-    onSnapshotRetentionCountChanged = {},
-    onSnapshotIntervalHoursChanged = {},
-    onExportBackup = {},
-    onImportBackup = {},
-    onRestoreSnapshot = {},
-    onDeleteSnapshot = {},
-    onConfirmMismatchImport = {},
-    onDismissMismatchImport = {},
-    onDismissBackupMessage = {},
 )
 
 /** The fake owns every art request in this host, so screenshot composition never reaches the web. */

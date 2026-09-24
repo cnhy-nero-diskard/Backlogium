@@ -1,21 +1,24 @@
 package com.example.backlogium.ui.settings
 
+import com.example.backlogium.R
 import com.example.backlogium.data.repo.ManualImportUnavailableAt
 import com.example.backlogium.data.repo.ManualSharedGameImportResult
 import com.example.backlogium.data.repo.PlayerDataProbe
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ManualSharedGameImportMessageTest {
     @Test fun invalidInputExplainsAcceptedShape() {
-        assertTrue(manualImportMessage(ManualSharedGameImportResult.InvalidInput).contains("Store URL"))
+        assertEquals(
+            R.string.settings_shared_game_feedback_invalid_input,
+            manualImportMessage(ManualSharedGameImportResult.InvalidInput).resId,
+        )
     }
 
     @Test fun ownedResultRefusesSharedImport() {
         val message = manualImportMessage(ManualSharedGameImportResult.Owned(620, "Portal 2"))
-        assertTrue(message.contains("owned Steam library"))
-        assertTrue(message.contains("no Family Shared import"))
+        assertEquals(R.string.settings_shared_game_feedback_owned, message.resId)
+        assertEquals(listOf("Portal 2"), message.args)
     }
 
     @Test fun importedResultReportsReturnedAchievementsAndPlaytimeBoundary() {
@@ -27,9 +30,13 @@ class ManualSharedGameImportMessageTest {
                 PlayerDataProbe.Returned(total = 50, unlocked = 12),
             ),
         )
-        assertTrue(message.contains("50 achievements"))
-        assertTrue(message.contains("12 unlocked"))
-        assertTrue(message.contains("not supplied by Steam"))
+        assertEquals(R.string.settings_shared_game_feedback_imported, message.resId)
+        val tracking = message.args[0] as SettingsText
+        assertEquals(R.string.settings_shared_game_feedback_tracked_now, tracking.resId)
+        assertEquals(listOf("Portal 2"), tracking.args)
+        val probe = message.args[1] as SettingsText
+        assertEquals(R.plurals.settings_shared_game_feedback_achievements_returned, probe.resId)
+        assertEquals(listOf(50, 12), probe.args)
     }
 
     @Test fun importedResultDistinguishesNoDataFromUnavailable() {
@@ -39,15 +46,17 @@ class ManualSharedGameImportMessageTest {
         val unavailable = manualImportMessage(
             ManualSharedGameImportResult.Imported(1, "Game", true, PlayerDataProbe.Unavailable),
         )
-        assertTrue(noData.contains("no usable"))
-        assertTrue(unavailable.contains("temporarily unavailable"))
+        val noDataProbe = noData.args[1] as SettingsText
+        val unavailableProbe = unavailable.args[1] as SettingsText
+        assertEquals(R.string.settings_shared_game_feedback_no_player_data, noDataProbe.resId)
+        assertEquals(R.string.settings_shared_game_feedback_achievement_check_unavailable, unavailableProbe.resId)
     }
 
     @Test fun unavailableResultNamesFailedSafetyCheck() {
         val message = manualImportMessage(
             ManualSharedGameImportResult.Unavailable(1, ManualImportUnavailableAt.OWNED_LIBRARY),
         )
-        assertTrue(message.contains("ownership check"))
+        assertEquals(R.string.settings_shared_game_feedback_owned_unavailable, message.resId)
     }
 
     @Test fun importedGameUsesProminentFoundFeedback() {
@@ -61,7 +70,7 @@ class ManualSharedGameImportMessageTest {
         )
 
         assertEquals(ManualImportFeedbackTone.SUCCESS, feedback.tone)
-        assertEquals("Game found and imported", feedback.title)
+        assertEquals(R.string.settings_shared_game_feedback_title_imported, feedback.title.resId)
     }
 
     @Test fun rejectedStoreAppUsesProminentNotFoundFeedback() {
@@ -70,6 +79,6 @@ class ManualSharedGameImportMessageTest {
         )
 
         assertEquals(ManualImportFeedbackTone.ERROR, feedback.tone)
-        assertEquals("Game not found", feedback.title)
+        assertEquals(R.string.settings_shared_game_feedback_title_not_game, feedback.title.resId)
     }
 }

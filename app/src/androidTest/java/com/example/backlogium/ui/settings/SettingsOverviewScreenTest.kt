@@ -1,0 +1,79 @@
+package com.example.backlogium.ui.settings
+
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.performClick
+import com.example.backlogium.gamification.RuleConfig
+import org.junit.Assert.assertEquals
+import org.junit.Rule
+import org.junit.Test
+
+class SettingsOverviewScreenTest {
+    @get:Rule
+    val composeRule = createComposeRule()
+
+    @Test
+    fun loadingKeepsFourRowsNavigableAndDoesNotExposeResolvedAction() {
+        var openedGroup: SettingsGroup? = null
+        composeRule.setContent {
+            SettingsOverviewScreen(
+                state = SettingsUiState(),
+                onOpenGroup = { openedGroup = it },
+            )
+        }
+
+        SettingsGroup.entries.forEach { group ->
+            composeRule.onNodeWithTag("settings-group-${group.route.substringAfterLast('/')}")
+                .assertIsDisplayed()
+        }
+        composeRule.onAllNodesWithText("Loading saved settings", substring = true)
+            .assertCountEquals(SettingsGroup.entries.size)
+        composeRule.onNodeWithText("Connect account").assertDoesNotExist()
+
+        SettingsGroup.entries.forEach { group ->
+            composeRule.onNodeWithTag("settings-group-${group.route.substringAfterLast('/')}")
+                .performClick()
+            assertEquals(group, openedGroup)
+        }
+    }
+
+    @Test
+    fun rowsExposePlainLanguageStatusAndNextAction() {
+        composeRule.setContent {
+            SettingsOverviewScreen(
+                state = SettingsUiState(
+                    loading = false,
+                    configured = true,
+                    cloudHealthy = true,
+                    savedConfig = RuleConfig(),
+                    draft = RuleDraft.from(RuleConfig()),
+                ),
+                onOpenGroup = {},
+            )
+        }
+
+        composeRule.onNodeWithText("Account & sync").assertIsDisplayed()
+        composeRule.onNodeWithText("Status: Your account and sync are ready").assertIsDisplayed()
+        composeRule.onNodeWithText("Next: Manage account & sync").assertIsDisplayed()
+        composeRule.onNodeWithText("Status: Your data tools are quiet and healthy").assertIsDisplayed()
+        composeRule.onNodeWithText("Next: Manage data & privacy").assertIsDisplayed()
+    }
+
+    @Test
+    fun openingGroupInvokesOnlyThatGroupDestination() {
+        var opened: SettingsGroup? = null
+        composeRule.setContent {
+            SettingsOverviewScreen(
+                state = SettingsUiState(loading = false),
+                onOpenGroup = { opened = it },
+            )
+        }
+
+        composeRule.onNodeWithTag("settings-group-data-privacy").performClick()
+        assertEquals(SettingsGroup.DATA_PRIVACY, opened)
+    }
+}

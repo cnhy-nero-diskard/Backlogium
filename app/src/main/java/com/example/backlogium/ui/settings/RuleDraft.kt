@@ -1,5 +1,7 @@
 package com.example.backlogium.ui.settings
 
+import androidx.annotation.StringRes
+import com.example.backlogium.R
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
 
@@ -99,6 +101,47 @@ enum class RuleField(
     /** Whether a change to this field alters daily-quest or streak evaluation. */
     val affectsQuestRules: Boolean
         get() = this == QUEST_GOAL_MINUTES || this == STREAK_GRACE_DAYS
+}
+
+@StringRes
+fun RuleField.labelResource(): Int = when (this) {
+    RuleField.QUEST_GOAL_MINUTES -> R.string.settings_rule_quest_goal
+    RuleField.STREAK_GRACE_DAYS -> R.string.settings_rule_streak_grace
+    RuleField.XP_PER_MINUTE -> R.string.settings_rule_xp_per_minute
+    RuleField.LEVEL_BASE -> R.string.settings_rule_level_base
+    RuleField.COMMON_ACHIEVEMENT_XP -> R.string.settings_rule_common_xp
+    RuleField.UNCOMMON_ACHIEVEMENT_XP -> R.string.settings_rule_uncommon_xp
+    RuleField.RARE_ACHIEVEMENT_XP -> R.string.settings_rule_rare_xp
+    RuleField.EPIC_ACHIEVEMENT_XP -> R.string.settings_rule_epic_xp
+    RuleField.LEGENDARY_ACHIEVEMENT_XP -> R.string.settings_rule_legendary_xp
+}
+
+@StringRes
+fun RuleField.rejectionResource(): Int = when (this) {
+    RuleField.QUEST_GOAL_MINUTES -> R.string.settings_rule_quest_goal_error
+    RuleField.STREAK_GRACE_DAYS -> R.string.settings_rule_streak_grace_error
+    RuleField.XP_PER_MINUTE -> R.string.settings_rule_xp_per_minute_error
+    RuleField.LEVEL_BASE -> R.string.settings_rule_level_base_error
+    RuleField.COMMON_ACHIEVEMENT_XP,
+    RuleField.UNCOMMON_ACHIEVEMENT_XP,
+    RuleField.RARE_ACHIEVEMENT_XP,
+    RuleField.EPIC_ACHIEVEMENT_XP,
+    RuleField.LEGENDARY_ACHIEVEMENT_XP,
+    -> R.string.settings_rule_achievement_xp_error
+}
+
+fun RuleField.rejectionResourceArgs(): List<Any> = when (this) {
+    RuleField.XP_PER_MINUTE -> listOf(RuleConfig.XP_PER_MINUTE_MAX)
+    RuleField.LEVEL_BASE -> listOf(RuleConfig.LEVEL_BASE_MAX)
+    RuleField.COMMON_ACHIEVEMENT_XP,
+    RuleField.UNCOMMON_ACHIEVEMENT_XP,
+    RuleField.RARE_ACHIEVEMENT_XP,
+    RuleField.EPIC_ACHIEVEMENT_XP,
+    RuleField.LEGENDARY_ACHIEVEMENT_XP,
+    -> listOf(RuleConfig.ACHIEVEMENT_XP_MAX)
+    RuleField.QUEST_GOAL_MINUTES,
+    RuleField.STREAK_GRACE_DAYS,
+    -> emptyList()
 }
 
 private const val ACHIEVEMENT_XP_REJECTION =

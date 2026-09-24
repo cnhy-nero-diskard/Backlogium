@@ -1,7 +1,9 @@
 package com.example.backlogium
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -10,10 +12,14 @@ import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.ui.settings.RuleDraft
 import com.example.backlogium.ui.settings.RuleField
 import com.example.backlogium.ui.settings.SettingsActions
+import com.example.backlogium.ui.settings.SettingsDetailScreen
+import com.example.backlogium.ui.settings.SettingsGroup
+import com.example.backlogium.ui.settings.SettingsOverviewScreen
 import com.example.backlogium.ui.settings.SettingsScreen
 import com.example.backlogium.ui.settings.SettingsUiState
-import com.example.backlogium.ui.util.HapticIntent
-import com.example.backlogium.ui.util.HapticPlayer
+import com.example.backlogium.ui.settings.SETTINGS_INVENTORY
+import com.example.backlogium.ui.settings.SettingsSection
+import com.example.backlogium.ui.settings.settingsInventoryIssues
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -28,6 +34,71 @@ class SettingsScreenTest {
 
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun allFourDetailDestinations_keepTheirTitleAndBackAffordance() {
+        val titles = mapOf(
+            SettingsGroup.ACCOUNT_SYNC to "Account & sync",
+            SettingsGroup.GAMEPLAY to "Gameplay",
+            SettingsGroup.DATA_PRIVACY to "Data & privacy",
+            SettingsGroup.ADVANCED to "Advanced & diagnostics",
+        )
+        val selectedGroup = androidx.compose.runtime.mutableStateOf(SettingsGroup.ACCOUNT_SYNC)
+
+        composeRule.setContent {
+            SettingsDetailScreen(
+                group = selectedGroup.value,
+                state = state(advancedExpanded = false),
+                actions = noopActions(),
+            )
+        }
+
+        SettingsGroup.entries.forEachIndexed { index, group ->
+            if (index > 0) {
+                selectedGroup.value = group
+                composeRule.waitForIdle()
+            }
+            composeRule.onNodeWithTag("settings-detail-title")
+                .assertIsDisplayed()
+            composeRule.onNodeWithText(titles.getValue(group)).assertIsDisplayed()
+            composeRule.onNodeWithTag("settings-back").assertIsDisplayed()
+        }
+    }
+
+    @Test
+    fun overviewLoadingAndAttention_usePlayerFacingStatusAndActionCopy() {
+        val state = androidx.compose.runtime.mutableStateOf(SettingsUiState())
+        composeRule.setContent {
+            SettingsOverviewScreen(
+                state = state.value,
+                onOpenGroup = {},
+            )
+        }
+
+        SettingsGroup.entries.forEach { group ->
+            composeRule.onNodeWithTag("settings-group-${group.route.substringAfterLast('/')}")
+                .assertIsDisplayed()
+        }
+        composeRule.onAllNodesWithText("Loading saved settings", substring = true)
+            .assertCountEquals(SettingsGroup.entries.size)
+
+        state.value = SettingsUiState(loading = false, configured = false)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("Status: Your Steam account is not connected")
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("Next: Connect account").assertIsDisplayed()
+    }
+
+    @Test
+    fun inventory_keepsEverySectionAndActionReachableExactlyOnce() {
+        assertEquals(SettingsSection.entries.size, SETTINGS_INVENTORY.size)
+        assertEquals(SettingsSection.entries.toSet(), SETTINGS_INVENTORY.map { it.section }.toSet())
+        assertTrue(settingsInventoryIssues().isEmpty())
+        SettingsGroup.entries.forEach { group ->
+            assertTrue(SETTINGS_INVENTORY.any { it.group == group })
+        }
+    }
 
     @Test
     fun advancedControls_areNotComposedUntilTheSectionIsExpanded() {
@@ -80,76 +151,6 @@ class SettingsScreenTest {
         composeRule.onNodeWithText(RuleField.LEGENDARY_ACHIEVEMENT_XP.label).assertExists()
     }
 
-    @Test
-    fun manualSyncFailure_deliversRejectExactlyOnce() {
-        val state = androidx.compose.runtime.mutableStateOf(state(advancedExpanded = false))
-        val haptics = RecordingHapticPlayer()
-
-        composeRule.setContent {
-            SettingsScreen(
-                state = state.value,
-                onEditCredentials = {},
-                actions = noopActions().copy(
-                    onSyncNow = { state.value = state.value.copy(isSyncing = true) },
-                ),
-                haptics = haptics,
-            )
-        }
-
-        composeRule.onNodeWithText("Sync now").performClick()
-        composeRule.waitForIdle()
-        state.value = state.value.copy(isSyncing = false, lastSyncError = "offline")
-        composeRule.waitForIdle()
-
-        assertEquals(listOf(HapticIntent.Reject), haptics.intents)
-    }
-
-    @Test
-    fun backgroundSyncFailure_whileSettingsIsOpen_deliversNothing() {
-        val state = androidx.compose.runtime.mutableStateOf(state(advancedExpanded = false))
-        val haptics = RecordingHapticPlayer()
-
-        composeRule.setContent {
-            SettingsScreen(
-                state = state.value,
-                onEditCredentials = {},
-                actions = noopActions(),
-                haptics = haptics,
-            )
-        }
-
-        state.value = state.value.copy(isSyncing = true)
-        composeRule.waitForIdle()
-        state.value = state.value.copy(isSyncing = false, lastSyncError = "offline")
-        composeRule.waitForIdle()
-
-        assertEquals(emptyList<HapticIntent>(), haptics.intents)
-    }
-
-    @Test
-    fun successfulManualSync_deliversNoReject() {
-        val state = androidx.compose.runtime.mutableStateOf(state(advancedExpanded = false))
-        val haptics = RecordingHapticPlayer()
-
-        composeRule.setContent {
-            SettingsScreen(
-                state = state.value,
-                onEditCredentials = {},
-                actions = noopActions().copy(
-                    onSyncNow = { state.value = state.value.copy(isSyncing = true) },
-                ),
-                haptics = haptics,
-            )
-        }
-
-        composeRule.onNodeWithText("Sync now").performClick()
-        composeRule.waitForIdle()
-        state.value = state.value.copy(isSyncing = false, lastSyncError = null)
-        composeRule.waitForIdle()
-
-        assertEquals(emptyList<HapticIntent>(), haptics.intents)
-    }
-
     private fun state(advancedExpanded: Boolean) = SettingsUiState(
         loading = false,
         configured = true,
@@ -184,12 +185,4 @@ class SettingsScreenTest {
         onDismissMismatchImport = {},
         onDismissBackupMessage = {},
     )
-
-    private class RecordingHapticPlayer : HapticPlayer {
-        val intents = mutableListOf<HapticIntent>()
-
-        override fun play(intent: HapticIntent) {
-            intents += intent
-        }
-    }
 }

@@ -18,7 +18,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.backlogium.R
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.work.SteamAssetDownloadStatus
 
@@ -36,27 +39,38 @@ internal fun OfflineSteamAssetsCard(
     )
     Card(modifier = Modifier.fillMaxWidth().testTag("offline-steam-assets")) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Offline Steam assets", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.settings_assets_title), style = MaterialTheme.typography.titleMedium)
             Text(
-                "Store the Steam images already known to your library for offline viewing. This never starts a Steam sync.",
+                stringResource(R.string.settings_assets_description),
                 style = MaterialTheme.typography.bodySmall,
             )
             Text(
-                "${state.storedSteamAssetCount} stored • ${state.storedSteamAssetBytes / (1024 * 1024)} MB",
+                pluralStringResource(
+                    R.plurals.settings_assets_stored,
+                    state.storedSteamAssetCount,
+                    state.storedSteamAssetCount,
+                    state.storedSteamAssetBytes / (1024 * 1024),
+                ),
                 style = MaterialTheme.typography.bodyMedium,
             )
             state.lastSteamAssetRun?.let { run ->
                 Text(
-                    "Last run: ${run.storedCount} downloaded, ${run.alreadyPresentCount} already present, ${run.unavailableCount} unavailable, ${run.failedCount} failed",
+                    stringResource(
+                        R.string.settings_assets_last_run,
+                        run.storedCount,
+                        run.alreadyPresentCount,
+                        run.unavailableCount,
+                        run.failedCount,
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
             if (active) {
                 Text(
                     when (state.steamAssetStatus) {
-                        SteamAssetDownloadStatus.QUEUED -> "Queued for network and available storage"
-                        SteamAssetDownloadStatus.PREPARING -> "Preparing image inventory"
-                        else -> "Downloading Steam assets"
+                        SteamAssetDownloadStatus.QUEUED -> stringResource(R.string.settings_assets_queued)
+                        SteamAssetDownloadStatus.PREPARING -> stringResource(R.string.settings_assets_preparing)
+                        else -> stringResource(R.string.settings_assets_downloading)
                     },
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -66,35 +80,47 @@ internal fun OfflineSteamAssetsCard(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        "${progress.processed} / ${progress.total} • ${progress.stored} downloaded, ${progress.unavailable} unavailable, ${progress.failed} failed",
+                        stringResource(
+                            R.string.settings_assets_progress,
+                            progress.processed,
+                            progress.total,
+                            progress.stored,
+                            progress.unavailable,
+                            progress.failed,
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                TextButton(onClick = onCancel) { Text("Stop download") }
+                TextButton(onClick = onCancel) {
+                    Text(stringResource(R.string.settings_assets_stop))
+                }
             } else {
                 if (!state.hasSteamAssetInventory) {
-                    Text("Sync a Steam library first to discover images.", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        stringResource(R.string.settings_assets_need_sync),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
                 OutlinedButton(
                     onClick = { choosingMode = true },
                     enabled = state.hasSteamAssetInventory,
-                ) { Text("Download Steam assets") }
+                ) { Text(stringResource(R.string.settings_assets_download)) }
             }
         }
     }
     if (choosingMode) {
         AlertDialog(
             onDismissRequest = { choosingMode = false },
-            title = { Text("Download Steam assets") },
-            text = { Text("Choose a mode. Refresh all re-downloads every known image.") },
+            title = { Text(stringResource(R.string.settings_assets_download)) },
+            text = { Text(stringResource(R.string.settings_assets_choose_mode)) },
             confirmButton = {
                 TextButton(onClick = { choosingMode = false; onStart(SteamAssetDownloadMode.DOWNLOAD_MISSING) }) {
-                    Text("Download missing assets")
+                    Text(stringResource(R.string.settings_assets_missing))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { choosingMode = false; onStart(SteamAssetDownloadMode.REFRESH_ALL) }) {
-                    Text("Refresh all assets")
+                    Text(stringResource(R.string.settings_assets_refresh))
                 }
             },
         )

@@ -3,6 +3,8 @@ package com.example.backlogium.ui.settings
 import android.net.Uri
 import android.widget.Toast
 import com.example.backlogium.BuildConfig
+import com.example.backlogium.R
+import androidx.annotation.StringRes
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -27,6 +29,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -39,11 +42,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -56,7 +62,6 @@ import com.example.backlogium.data.updates.AppUpdateState
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.ui.util.HapticIntent
-import com.example.backlogium.ui.util.HapticPlayer
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.ui.util.playIfNotSilent
 import com.example.backlogium.ui.util.rememberHaptics
@@ -64,12 +69,14 @@ import com.example.backlogium.work.GenreEnrichmentStatus
 import com.example.backlogium.work.SteamAssetDownloadStatus
 import compose.icons.TablerIcons
 import compose.icons.tablericons.BrandSteam
+import compose.icons.tablericons.ArrowLeft
 import compose.icons.tablericons.ChevronDown
 import compose.icons.tablericons.ChevronUp
 import compose.icons.tablericons.CircleCheck
 import compose.icons.tablericons.Download
 import compose.icons.tablericons.Pencil
 import compose.icons.tablericons.Upload
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 
 /**
@@ -91,46 +98,64 @@ fun SettingsScreen(
     onOpenHiddenGames: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val haptics = rememberHaptics()
-
-    LaunchedEffect(viewModel, haptics) {
-        viewModel.hapticIntents.collect(haptics::playIfNotSilent)
-    }
-    val context = LocalContext.current
-    LaunchedEffect(viewModel, context) {
-        viewModel.toastMessages.collect { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
-    }
-
-    val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json"),
-    ) { uri -> uri?.let(viewModel::onExportBackup) }
-    val importLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri -> uri?.let(viewModel::onImportBackupPicked) }
-    val contributionExportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json"),
-    ) { uri ->
-        val resolver = context.contentResolver
-        if (uri != null) {
-            viewModel.onContributionDestinationPicked(uri, resolver)
-        } else {
-            viewModel.onContributionExportCancelled()
+    SettingsGraphScreen(viewModel = viewModel) { graph ->
+        graph?.let {
+            SettingsScreen(
+                state = it.state,
+                onEditCredentials = onEditCredentials,
+                onOpenDiagnostics = onOpenDiagnostics,
+                onOpenSetup = onOpenSetup,
+                onOpenUpdate = onOpenUpdate,
+                onOpenHiddenGames = onOpenHiddenGames,
+                actions = it.actions,
+            )
         }
     }
-    LaunchedEffect(viewModel) {
-        viewModel.contributionExportRequests.collect { fileName -> contributionExportLauncher.launch(fileName) }
-    }
+}
 
-    SettingsScreen(
-        state = state,
-        onEditCredentials = onEditCredentials,
-        onOpenDiagnostics = onOpenDiagnostics,
-        onOpenSetup = onOpenSetup,
-        onOpenUpdate = onOpenUpdate,
-        onOpenHiddenGames = onOpenHiddenGames,
-        haptics = haptics,
-        actions = remember(viewModel) {
+/**
+ * Shared Settings-graph host. It owns activity-result launchers, transient dialogs, haptics, and
+ * toasts so every overview/detail destination talks to one state holder and one action surface.
+ * In the app shell this wraps the NavHost, rather than being called from an individual destination.
+ */
+@Composable
+internal fun SettingsGraphScreen(
+    viewModel: SettingsViewModel?,
+    content: @Composable (SettingsGraphSession?) -> Unit,
+) {
+    val graphSession = if (viewModel == null) {
+        null
+    } else {
+        val state by viewModel.uiState.collectAsStateWithLifecycle()
+        val haptics = rememberHaptics()
+        val context = LocalContext.current
+
+        val exportLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.CreateDocument("application/json"),
+        ) { uri -> uri?.let(viewModel::onExportBackup) }
+        val importLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.OpenDocument(),
+        ) { uri -> uri?.let(viewModel::onImportBackupPicked) }
+        val contributionExportLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.CreateDocument("application/json"),
+        ) { uri ->
+            val resolver = context.contentResolver
+            if (uri != null) {
+                viewModel.onContributionDestinationPicked(uri, resolver)
+            } else {
+                viewModel.onContributionExportCancelled()
+            }
+        }
+        SettingsGraphEffectCollectors(
+            hapticIntents = viewModel.hapticIntents,
+            toastMessages = viewModel.toastMessages,
+            contributionExportRequests = viewModel.contributionExportRequests,
+            onHapticIntent = haptics::playIfNotSilent,
+            onToastMessage = { message -> Toast.makeText(context, message, Toast.LENGTH_SHORT).show() },
+            onContributionExportRequest = contributionExportLauncher::launch,
+        )
+
+        val actions = remember(viewModel, exportLauncher, importLauncher) {
             SettingsActions(
                 onSyncNow = viewModel::syncNow,
                 onReconcileNow = viewModel::reconcileNow,
@@ -157,7 +182,6 @@ fun SettingsScreen(
                 onDismissMismatchImport = viewModel::onDismissMismatchImport,
                 onDismissBackupMessage = viewModel::onDismissBackupMessage,
                 onCheckForUpdates = viewModel::checkForUpdates,
-                onOpenUpdate = onOpenUpdate,
                 onRestoreSharedGame = viewModel::restoreSharedGame,
                 onManualSharedGameInputChanged = viewModel::onManualSharedGameInputChanged,
                 onImportManualSharedGame = viewModel::importManualSharedGame,
@@ -171,8 +195,43 @@ fun SettingsScreen(
                 onRefileCloudPresence = viewModel::refileCloudPresence,
                 onReverseCloudPresenceRefiling = viewModel::reverseCloudPresenceRefiling,
             )
-        },
-    )
+        }
+        SettingsGraphSession(state = state, actions = actions)
+    }
+
+    content(graphSession)
+    graphSession?.let { SettingsDialogs(state = it.state, actions = it.actions) }
+}
+
+/** The one graph-scoped presentation context shared by every Settings destination. */
+internal data class SettingsGraphSession(
+    val state: SettingsUiState,
+    val actions: SettingsActions,
+)
+
+/** Collects one-shot graph events. The app shell composes this once above its NavHost. */
+@Composable
+internal fun SettingsGraphEffectCollectors(
+    hapticIntents: Flow<HapticIntent>,
+    toastMessages: Flow<SettingsText>,
+    contributionExportRequests: Flow<String>,
+    onHapticIntent: (HapticIntent) -> Unit,
+    onToastMessage: (String) -> Unit,
+    onContributionExportRequest: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    val currentOnHapticIntent by rememberUpdatedState(onHapticIntent)
+    val currentOnToastMessage by rememberUpdatedState(onToastMessage)
+    val currentOnContributionExportRequest by rememberUpdatedState(onContributionExportRequest)
+    LaunchedEffect(hapticIntents) {
+        hapticIntents.collect { currentOnHapticIntent(it) }
+    }
+    LaunchedEffect(toastMessages) {
+        toastMessages.collect { currentOnToastMessage(it.resolve(context.resources)) }
+    }
+    LaunchedEffect(contributionExportRequests) {
+        contributionExportRequests.collect { currentOnContributionExportRequest(it) }
+    }
 }
 
 /** Every action the screen can raise, so the rendering half stays free of the view model. */
@@ -227,22 +286,10 @@ fun SettingsScreen(
     onOpenUpdate: () -> Unit = {},
     onOpenHiddenGames: () -> Unit = {},
     actions: SettingsActions,
-    haptics: HapticPlayer = rememberHaptics(),
 ) {
-    if (state.loading) return
-
-    // The error card is also used by background syncs. Only a sync initiated from this visible
-    // button arms Reject, so a background failure never produces an unattributable buzz.
-    var manualSyncAttempt by remember { mutableStateOf(false) }
-    var manualSyncInFlight by remember { mutableStateOf(false) }
-    LaunchedEffect(state.isSyncing) {
-        if (state.isSyncing && manualSyncAttempt) {
-            manualSyncInFlight = true
-        } else if (!state.isSyncing && manualSyncAttempt && manualSyncInFlight) {
-            if (state.lastSyncError != null) haptics.playIfNotSilent(HapticIntent.Reject)
-            manualSyncAttempt = false
-            manualSyncInFlight = false
-        }
+    if (state.loading) {
+        SettingsLoadingContent()
+        return
     }
 
     Column(
@@ -252,116 +299,228 @@ fun SettingsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        SectionHeader("Account")
-        SteamAccountCard(
-            configured = state.configured,
-            steamId = state.steamId,
-            apiKeyMasked = state.apiKeyMasked,
-            onEdit = onEditCredentials,
-        )
-
-        SectionHeader("Setup")
-        RunSetupCard(configured = state.configured, onOpenSetup = onOpenSetup)
-
-        SectionHeader("Sync")
-        SyncCard(
-            lastSyncAt = state.lastSyncAt,
-            syncing = state.isSyncing,
-            reconciling = state.isReconciling,
-            genreStatus = state.genreEnrichmentStatus,
-            onSyncNow = {
-                manualSyncAttempt = true
-                actions.onSyncNow()
-            },
-            onReconcileNow = actions.onReconcileNow,
-        )
-
-        SectionHeader("Cloud presence")
-        CloudPresenceCard(state = state, actions = actions)
-
-        SectionHeader("Completion times")
-        CompletionTimesCard(
-            gatheredAt = state.hltbDatasetGatheredAt,
-            coveredGameCount = state.hltbDatasetCoveredGameCount,
-            checking = state.hltbDatasetCheckInProgress,
-            checkMessage = state.hltbDatasetCheckMessage,
-            contributionBusy = state.hltbContributionBusy,
-            contributionMessage = state.hltbContributionMessage,
-            onCheck = actions.onCheckHltbDataset,
-            onRequestContributionExport = actions.onRequestContributionExport,
-        )
-
-        SectionHeader("Offline Steam assets")
-        OfflineSteamAssetsCard(
+        AccountSyncSettingsContent(
             state = state,
-            onStart = actions.onDownloadSteamAssets,
-            onCancel = actions.onCancelSteamAssetDownload,
+            actions = actions,
+            onEditCredentials = onEditCredentials,
+            onOpenSetup = onOpenSetup,
+            onOpenUpdate = onOpenUpdate,
         )
+        GameplaySettingsContent(
+            state = state,
+            actions = actions,
+            onOpenHiddenGames = onOpenHiddenGames,
+        )
+        DataPrivacySettingsContent(state = state, actions = actions)
+        AdvancedSettingsContent(
+            state = state,
+            actions = actions,
+            onOpenDiagnostics = onOpenDiagnostics,
+        )
+    }
+}
 
-        if (!BuildConfig.DEBUG) {
-            SectionHeader("Updates")
-            UpdateCard(
-                state = state.appUpdateState,
-                checking = state.updateCheckInProgress,
-                message = state.updateCheckMessage,
-                onCheck = actions.onCheckForUpdates,
-                onOpenUpdate = onOpenUpdate,
+@Composable
+internal fun AccountSyncSettingsContent(
+    state: SettingsUiState,
+    actions: SettingsActions,
+    onEditCredentials: () -> Unit,
+    onOpenSetup: () -> Unit,
+    onOpenUpdate: () -> Unit,
+) {
+    SectionHeader(stringResource(R.string.settings_section_account))
+    SteamAccountCard(
+        configured = state.configured,
+        steamId = state.steamId,
+        apiKeyMasked = state.apiKeyMasked,
+        onEdit = onEditCredentials,
+    )
+    SectionHeader(stringResource(R.string.settings_section_setup))
+    RunSetupCard(configured = state.configured, onOpenSetup = onOpenSetup)
+    SectionHeader(stringResource(R.string.settings_section_sync))
+    SyncCard(
+        lastSyncAt = state.lastSyncAt,
+        syncing = state.isSyncing,
+        reconciling = state.isReconciling,
+        genreStatus = state.genreEnrichmentStatus,
+        onSyncNow = actions.onSyncNow,
+        onReconcileNow = actions.onReconcileNow,
+    )
+    if (!BuildConfig.DEBUG) {
+        SectionHeader(stringResource(R.string.settings_section_updates))
+        UpdateCard(
+            state = state.appUpdateState,
+            checking = state.updateCheckInProgress,
+            message = state.updateCheckMessage,
+            onCheck = actions.onCheckForUpdates,
+            onOpenUpdate = onOpenUpdate,
+        )
+    }
+}
+
+@Composable
+internal fun GameplaySettingsContent(
+    state: SettingsUiState,
+    actions: SettingsActions,
+    onOpenHiddenGames: () -> Unit,
+) {
+    SectionHeader(stringResource(R.string.settings_section_live_monitor))
+    LiveMonitorCard(
+        enabled = state.liveMonitorEnabled,
+        configured = state.configured,
+        onEnabledChanged = actions.onLiveMonitorEnabledChanged,
+    )
+    SectionHeader(stringResource(R.string.settings_section_family_sharing))
+    ManualSharedGameCard(state, actions)
+    if (state.removedSharedGames.isNotEmpty()) {
+        SectionHeader(stringResource(R.string.settings_section_removed_shared_games))
+        RemovedSharedGamesCard(
+            removed = state.removedSharedGames,
+            onRestore = actions.onRestoreSharedGame,
+        )
+    }
+    SectionHeader(stringResource(R.string.settings_section_daily_quest))
+    DailyQuestCard(state = state, actions = actions)
+    SectionHeader(stringResource(R.string.settings_section_hidden_games))
+    HiddenGamesCard(
+        hiddenCount = state.hiddenGameCount,
+        nonGameCandidateCount = state.nonGameCandidateCount,
+        onOpen = onOpenHiddenGames,
+    )
+}
+
+@Composable
+internal fun DataPrivacySettingsContent(state: SettingsUiState, actions: SettingsActions) {
+    SectionHeader(stringResource(R.string.settings_section_cloud_presence))
+    CloudPresenceCard(state = state, actions = actions)
+    SectionHeader(stringResource(R.string.settings_section_completion_times))
+    CompletionTimesCard(
+        gatheredAt = state.hltbDatasetGatheredAt,
+        coveredGameCount = state.hltbDatasetCoveredGameCount,
+        checking = state.hltbDatasetCheckInProgress,
+        checkMessage = state.hltbDatasetCheckMessage,
+        contributionBusy = state.hltbContributionBusy,
+        contributionMessage = state.hltbContributionMessage,
+        onCheck = actions.onCheckHltbDataset,
+        onRequestContributionExport = actions.onRequestContributionExport,
+    )
+    SectionHeader(stringResource(R.string.settings_section_offline_assets))
+    OfflineSteamAssetsCard(
+        state = state,
+        onStart = actions.onDownloadSteamAssets,
+        onCancel = actions.onCancelSteamAssetDownload,
+    )
+    SectionHeader(stringResource(R.string.settings_section_data))
+    HistoryImportCard(
+        imported = state.historyImported,
+        importing = state.isImportingHistory,
+        onImport = actions.onImportHistory,
+        onReset = actions.onResetHistoryImport,
+    )
+    SectionHeader(stringResource(R.string.settings_section_data_backup))
+    DataBackupCard(state = state, actions = actions)
+}
+
+@Composable
+internal fun AdvancedSettingsContent(
+    state: SettingsUiState,
+    actions: SettingsActions,
+    onOpenDiagnostics: () -> Unit,
+) {
+    SectionHeader(stringResource(R.string.settings_section_diagnostics))
+    Card(modifier = Modifier.fillMaxWidth().clickable { onOpenDiagnostics() }) {
+        Column(Modifier.padding(16.dp)) {
+            Text(stringResource(R.string.settings_diagnostics_title), style = MaterialTheme.typography.titleMedium)
+            Text(
+                stringResource(R.string.settings_diagnostics_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+    SectionHeader(stringResource(R.string.settings_section_advanced))
+    AdvancedCard(state = state, actions = actions)
+    RuleSaveBar(state = state, actions = actions)
+}
 
-        SectionHeader("Live monitor")
-        LiveMonitorCard(
-            enabled = state.liveMonitorEnabled,
-            configured = state.configured,
-            onEnabledChanged = actions.onLiveMonitorEnabledChanged,
-        )
-
-        SectionHeader("Family Sharing")
-        ManualSharedGameCard(state, actions)
-
-        if (state.removedSharedGames.isNotEmpty()) {
-            SectionHeader("Removed shared games")
-            RemovedSharedGamesCard(
-                removed = state.removedSharedGames,
-                onRestore = actions.onRestoreSharedGame,
+@Composable
+internal fun SettingsDetailScreen(
+    group: SettingsGroup,
+    state: SettingsUiState,
+    actions: SettingsActions,
+    onBack: () -> Unit = {},
+    onEditCredentials: () -> Unit = {},
+    onOpenDiagnostics: () -> Unit = {},
+    onOpenSetup: () -> Unit = {},
+    onOpenUpdate: () -> Unit = {},
+    onOpenHiddenGames: () -> Unit = {},
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.testTag("settings-back"),
+            ) {
+                Icon(
+                    imageVector = TablerIcons.ArrowLeft,
+                    contentDescription = stringResource(com.example.backlogium.R.string.settings_back),
+                )
+            }
+            Text(
+                stringResource(group.titleRes),
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.testTag("settings-detail-title"),
             )
         }
-
-        SectionHeader("Daily quest")
-        DailyQuestCard(state = state, actions = actions)
-
-        SectionHeader("Hidden games")
-        HiddenGamesCard(
-            hiddenCount = state.hiddenGameCount,
-            nonGameCandidateCount = state.nonGameCandidateCount,
-            onOpen = onOpenHiddenGames,
-        )
-
-        SectionHeader("Data")
-        HistoryImportCard(
-            imported = state.historyImported,
-            importing = state.isImportingHistory,
-            onImport = actions.onImportHistory,
-            onReset = actions.onResetHistoryImport,
-        )
-
-        SectionHeader("Data & Backup")
-        DataBackupCard(state = state, actions = actions)
-
-        SectionHeader("Diagnostics")
-        Card(modifier = Modifier.fillMaxWidth().clickable { onOpenDiagnostics() }) {
-            Column(Modifier.padding(16.dp)) {
-                Text("Sync diagnostics", style = MaterialTheme.typography.titleMedium)
-                Text("Recent sync runs and presence decisions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (state.loading) {
+            SettingsLoadingRows()
+        } else {
+            when (group) {
+                SettingsGroup.ACCOUNT_SYNC -> AccountSyncSettingsContent(
+                    state,
+                    actions,
+                    onEditCredentials,
+                    onOpenSetup,
+                    onOpenUpdate,
+                )
+                SettingsGroup.GAMEPLAY -> GameplaySettingsContent(state, actions, onOpenHiddenGames)
+                SettingsGroup.DATA_PRIVACY -> DataPrivacySettingsContent(state, actions)
+                SettingsGroup.ADVANCED -> AdvancedSettingsContent(state, actions, onOpenDiagnostics)
             }
         }
-
-        SectionHeader("Advanced")
-        AdvancedCard(state = state, actions = actions)
-
-        RuleSaveBar(state = state, actions = actions)
     }
+}
 
+@Composable
+internal fun SettingsLoadingContent() {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        SettingsLoadingRows()
+    }
+}
+
+@Composable
+private fun SettingsLoadingRows() {
+    repeat(4) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.settings_summary_loading), style = MaterialTheme.typography.titleMedium)
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsDialogs(state: SettingsUiState, actions: SettingsActions) {
     state.confirmation?.let { confirmation ->
         RuleChangeDialog(
             confirmation = confirmation,
@@ -369,7 +528,6 @@ fun SettingsScreen(
             onDismiss = actions.onDismissConfirmation,
         )
     }
-
     if (state.mismatchImportPending) {
         MismatchImportDialog(
             currentSteamId = state.steamId,
@@ -378,35 +536,32 @@ fun SettingsScreen(
             onDismiss = actions.onDismissMismatchImport,
         )
     }
-
     state.backupMessage?.let { message ->
         AlertDialog(
             onDismissRequest = actions.onDismissBackupMessage,
-            title = { Text("Backup") },
-            text = { Text(message) },
+            title = { Text(stringResource(R.string.settings_backup_title)) },
+            text = { Text(message.resolveText()) },
             confirmButton = {
-                TextButton(onClick = actions.onDismissBackupMessage) { Text("OK") }
+                TextButton(onClick = actions.onDismissBackupMessage) {
+                    Text(stringResource(R.string.settings_ok))
+                }
             },
         )
     }
-
     if (state.hltbContributionDisclosurePending) {
         AlertDialog(
             onDismissRequest = actions.onDismissContributionDisclosure,
-            title = { Text("Share completion times?") },
-            text = {
-                Text(
-                    "The file lists which Steam games you own — every app id with a resolved " +
-                        "HowLongToBeat match. No playtime, sessions, achievements, or account " +
-                        "details are included. Contributing publishes that list of games in a " +
-                        "public pull request.",
-                )
-            },
+            title = { Text(stringResource(R.string.settings_contribution_disclosure_title)) },
+            text = { Text(stringResource(R.string.settings_contribution_disclosure)) },
             confirmButton = {
-                TextButton(onClick = actions.onConfirmContributionDisclosure) { Text("Continue") }
+                TextButton(onClick = actions.onConfirmContributionDisclosure) {
+                    Text(stringResource(R.string.settings_continue))
+                }
             },
             dismissButton = {
-                TextButton(onClick = actions.onDismissContributionDisclosure) { Text("Cancel") }
+                TextButton(onClick = actions.onDismissContributionDisclosure) {
+                    Text(stringResource(R.string.settings_cancel))
+                }
             },
         )
     }
@@ -422,12 +577,12 @@ fun SettingsScreen(
 private fun RunSetupCard(configured: Boolean, onOpenSetup: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth().clickable { onOpenSetup() }) {
         Column(Modifier.padding(16.dp)) {
-            Text("Run setup", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.settings_run_setup_title), style = MaterialTheme.typography.titleMedium)
             Text(
                 text = if (configured) {
-                    "Sync your library, download artwork, or fetch completion times"
+                    stringResource(R.string.settings_run_setup_configured)
                 } else {
-                    "Connect your Steam account first — every step needs it"
+                    stringResource(R.string.settings_run_setup_unconfigured)
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -449,13 +604,16 @@ private fun HiddenGamesCard(
 ) {
     Card(modifier = Modifier.fillMaxWidth().clickable { onOpen() }) {
         Column(Modifier.padding(16.dp)) {
-            Text("Hidden games", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.settings_section_hidden_games), style = MaterialTheme.typography.titleMedium)
             Text(
                 text = when {
-                    hiddenCount > 0 -> "$hiddenCount hidden — unhide any of them here"
-                    nonGameCandidateCount > 0 ->
-                        "Nothing is hidden. $nonGameCandidateCount library items are applications or tools"
-                    else -> "Nothing is hidden"
+                    hiddenCount > 0 -> pluralStringResource(R.plurals.settings_hidden_count, hiddenCount, hiddenCount)
+                    nonGameCandidateCount > 0 -> pluralStringResource(
+                        R.plurals.settings_hidden_candidates,
+                        nonGameCandidateCount,
+                        nonGameCandidateCount,
+                    )
+                    else -> stringResource(R.string.settings_hidden_none)
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -501,21 +659,20 @@ private fun SteamAccountCard(
             )
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text("Steam account", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.settings_steam_account_title), style = MaterialTheme.typography.titleMedium)
                 if (configured) {
                     Text(
-                        text = "SteamID $steamId",
+                        text = stringResource(R.string.settings_steam_id, steamId),
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Text(
-                        text = "API key $apiKeyMasked",
+                        text = stringResource(R.string.settings_api_key, apiKeyMasked),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
                     Text(
-                        text = "Not connected — sync, playtime, and achievements are unavailable " +
-                            "until you connect an account.",
+                        text = stringResource(R.string.settings_steam_not_connected),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -529,10 +686,10 @@ private fun SteamAccountCard(
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(4.dp))
-                    Text("Edit")
+                    Text(stringResource(R.string.settings_edit))
                 }
             } else {
-                Button(onClick = onEdit) { Text("Connect") }
+                Button(onClick = onEdit) { Text(stringResource(R.string.settings_connect)) }
             }
         }
     }
@@ -562,33 +719,46 @@ private fun SyncCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (syncing) "Syncing…" else "Last sync: ${UiFormat.dateTime(lastSyncAt)}",
+                    text = if (syncing) {
+                        stringResource(R.string.settings_syncing)
+                    } else {
+                        stringResource(R.string.settings_last_sync, UiFormat.dateTime(lastSyncAt))
+                    },
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    text = genreStatusLabel(genreStatus),
+                    text = stringResource(genreStatusLabelRes(genreStatus)),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
                 Button(onClick = onSyncNow, enabled = !syncing) {
-                    Text(if (syncing) "Sync in progress" else "Sync now")
+                    Text(
+                        stringResource(
+                            if (syncing) R.string.settings_sync_in_progress else R.string.settings_sync_now,
+                        ),
+                    )
                 }
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = onReconcileNow, enabled = !reconciling) {
-                    Text(if (reconciling) "Refreshing…" else "Full achievement refresh")
+                    Text(
+                        stringResource(
+                            if (reconciling) R.string.settings_refreshing else R.string.settings_full_achievement_refresh,
+                        ),
+                    )
                 }
             }
         }
     }
 }
 
-private fun genreStatusLabel(status: GenreEnrichmentStatus): String = when (status) {
-    GenreEnrichmentStatus.IDLE -> "Genres: idle"
-    GenreEnrichmentStatus.QUEUED -> "Genres: queued"
-    GenreEnrichmentStatus.RUNNING -> "Genres: fetching…"
-    GenreEnrichmentStatus.RETRYING -> "Genres: retrying…"
+@StringRes
+private fun genreStatusLabelRes(status: GenreEnrichmentStatus): Int = when (status) {
+    GenreEnrichmentStatus.IDLE -> R.string.settings_genres_idle
+    GenreEnrichmentStatus.QUEUED -> R.string.settings_genres_queued
+    GenreEnrichmentStatus.RUNNING -> R.string.settings_genres_fetching
+    GenreEnrichmentStatus.RETRYING -> R.string.settings_genres_retrying
 }
 
 internal const val CLOUD_PRESENCE_DISCLOSURE =
@@ -614,24 +784,30 @@ private fun CloudPresenceCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("Optional cloud reader", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.settings_cloud_reader_title), style = MaterialTheme.typography.titleMedium)
             Text(
-                CLOUD_PRESENCE_DISCLOSURE,
+                stringResource(R.string.settings_cloud_disclosure),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (state.cloudEndpoint.isNotBlank()) {
                 Text(
-                    "Connected to ${state.cloudEndpoint}",
+                    stringResource(R.string.settings_cloud_connected, state.cloudEndpoint),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 val healthText = when {
                     state.cloudHealthy == true ->
-                        "Healthy${state.cloudLastSuccessAt?.let { " - last read ${UiFormat.dateTime(it)}" }.orEmpty()}"
+                        state.cloudLastSuccessAt?.let {
+                            stringResource(R.string.settings_cloud_healthy_with_last_read, UiFormat.dateTime(it))
+                        } ?: stringResource(R.string.settings_cloud_healthy)
                     state.cloudHealthy == false ->
-                        "Last read failed: ${cloudFailureLabel(state.cloudLastFailure)}" +
-                            state.cloudLastSuccessAt?.let { " - last success ${UiFormat.dateTime(it)}" }.orEmpty()
-                    else -> "Configured; no successful read yet."
+                        stringResource(
+                            R.string.settings_cloud_last_read_failed,
+                            stringResource(cloudFailureLabelRes(state.cloudLastFailure)),
+                        ) + state.cloudLastSuccessAt?.let {
+                            stringResource(R.string.settings_cloud_last_success, UiFormat.dateTime(it))
+                        }.orEmpty()
+                    else -> stringResource(R.string.settings_cloud_configured_no_read)
                 }
                 Text(
                     text = healthText,
@@ -643,12 +819,12 @@ private fun CloudPresenceCard(
                     },
                 )
                 Text(
-                    "Credential ${state.cloudTokenMasked}",
+                    stringResource(R.string.settings_cloud_credential, state.cloudTokenMasked),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    CLOUD_PRESENCE_REFILING_DISCLOSURE,
+                    stringResource(R.string.settings_cloud_refiling_disclosure),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -657,35 +833,67 @@ private fun CloudPresenceCard(
                         onClick = actions.onReverseCloudPresenceRefiling,
                         enabled = !state.cloudBusy && !state.cloudPresenceRefilingBusy,
                     ) {
-                        Text(if (state.cloudPresenceRefilingBusy) "Restoring..." else "Undo re-filing")
+                        Text(
+                            stringResource(
+                                if (state.cloudPresenceRefilingBusy) {
+                                    R.string.settings_cloud_restoring
+                                } else {
+                                    R.string.settings_cloud_undo_refiling
+                                },
+                            ),
+                        )
                     }
                 } else {
                     Button(
                         onClick = actions.onRefileCloudPresence,
                         enabled = !state.cloudBusy && !state.cloudPresenceRefilingBusy,
                     ) {
-                        Text(if (state.cloudPresenceRefilingBusy) "Re-filing..." else "Re-file recorded play")
+                        Text(
+                            stringResource(
+                                if (state.cloudPresenceRefilingBusy) {
+                                    R.string.settings_cloud_refiling
+                                } else {
+                                    R.string.settings_cloud_refile_play
+                                },
+                            ),
+                        )
                     }
                 }
                 state.cloudPresenceRefilingMessage?.let { message ->
                     Text(
-                        message,
+                        message.resolveText(),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (
+                            state.cloudPresenceRefilingMessageSeverity == SettingsResultSeverity.ERROR
+                        ) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                 }
             }
             OutlinedTextField(
                 value = endpoint,
                 onValueChange = { endpoint = it },
-                label = { Text("HTTPS reader URL") },
+                label = { Text(stringResource(R.string.settings_cloud_reader_url)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
                 value = token,
                 onValueChange = { token = it },
-                label = { Text(if (state.cloudEndpoint.isBlank()) "Reader credential" else "Replace credential") },
+                label = {
+                    Text(
+                        stringResource(
+                            if (state.cloudEndpoint.isBlank()) {
+                                R.string.settings_cloud_reader_credential
+                            } else {
+                                R.string.settings_cloud_replace_credential
+                            },
+                        ),
+                    )
+                },
                 placeholder = {
                     if (state.cloudEndpoint.isNotBlank()) Text(state.cloudTokenMasked)
                 },
@@ -701,14 +909,27 @@ private fun CloudPresenceCard(
                     },
                     enabled = !state.cloudBusy && endpoint.isNotBlank() && token.isNotBlank(),
                 ) {
-                    Text(if (state.cloudEndpoint.isBlank()) "Verify and save" else "Verify replacement")
+                    Text(
+                        stringResource(
+                            if (state.cloudEndpoint.isBlank()) {
+                                R.string.settings_cloud_verify_save
+                            } else {
+                                R.string.settings_cloud_verify_replacement
+                            },
+                        ),
+                    )
                 }
                 if (state.cloudEndpoint.isNotBlank()) {
                     OutlinedButton(
                         onClick = actions.onReadCloudPresence,
                         enabled = !state.cloudBusy,
                     ) {
-                        Text(if (state.cloudBusy) "Reading..." else "Read now")
+                        Text(
+                            stringResource(
+                                if (state.cloudBusy) R.string.settings_cloud_reading
+                                else R.string.settings_cloud_read_now,
+                            ),
+                        )
                     }
                 }
             }
@@ -717,18 +938,14 @@ private fun CloudPresenceCard(
                     onClick = actions.onRemoveCloudPresence,
                     enabled = !state.cloudBusy,
                 ) {
-                    Text("Remove reader")
+                    Text(stringResource(R.string.settings_cloud_remove_reader))
                 }
             }
             state.cloudMessage?.let { message ->
                 Text(
-                    message,
+                    message.resolveText(),
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (
-                        state.cloudHealthy == false ||
-                        message.contains("rejected", ignoreCase = true) ||
-                        message.contains("match", ignoreCase = true)
-                    ) {
+                    color = if (state.cloudMessageSeverity == SettingsResultSeverity.ERROR) {
                         MaterialTheme.colorScheme.error
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
@@ -739,18 +956,19 @@ private fun CloudPresenceCard(
     }
 }
 
-private fun cloudFailureLabel(failure: CloudReadFailure?): String = when (failure) {
-    CloudReadFailure.UNREACHABLE -> "unreachable endpoint"
-    CloudReadFailure.REJECTED_CREDENTIAL -> "rejected credential"
-    CloudReadFailure.ACCOUNT_MISMATCH -> "account mismatch"
-    CloudReadFailure.UNUSABLE_RESPONSE -> "unusable response"
-    null -> "unknown failure"
+@StringRes
+private fun cloudFailureLabelRes(failure: CloudReadFailure?): Int = when (failure) {
+    CloudReadFailure.UNREACHABLE -> R.string.settings_cloud_failure_unreachable
+    CloudReadFailure.REJECTED_CREDENTIAL -> R.string.settings_cloud_failure_rejected
+    CloudReadFailure.ACCOUNT_MISMATCH -> R.string.settings_cloud_failure_mismatch
+    CloudReadFailure.UNUSABLE_RESPONSE -> R.string.settings_cloud_failure_unusable
+    null -> R.string.settings_cloud_failure_unknown
 }
 @Composable
 private fun UpdateCard(
     state: AppUpdateState,
     checking: Boolean,
-    message: String?,
+    message: SettingsText?,
     onCheck: () -> Unit,
     onOpenUpdate: () -> Unit,
 ) {
@@ -763,30 +981,40 @@ private fun UpdateCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("Backlogium ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = state.lastCheckAtMillis?.let { "Last checked: ${UiFormat.dateTime(it)}" }
-                    ?: "Never checked",
+                stringResource(R.string.settings_update_version, BuildConfig.VERSION_NAME),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = state.lastCheckAtMillis?.let {
+                    stringResource(R.string.settings_update_last_checked, UiFormat.dateTime(it))
+                } ?: stringResource(R.string.settings_update_never_checked),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (state.available != null) {
                 Text(
-                    text = "Version ${state.available.versionName} is available",
+                    text = stringResource(R.string.settings_update_available, state.available.versionName),
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                OutlinedButton(onClick = onOpenUpdate) { Text("Review update") }
+                OutlinedButton(onClick = onOpenUpdate) {
+                    Text(stringResource(R.string.settings_update_review))
+                }
             } else if (message != null) {
-                Text(message, style = MaterialTheme.typography.bodySmall)
+                Text(message.resolveText(), style = MaterialTheme.typography.bodySmall)
             } else if (state.lastCheckAtMillis != null) {
-                Text("No update available", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.settings_update_none), style = MaterialTheme.typography.bodySmall)
             }
             Button(onClick = onCheck, enabled = !checking) {
                 if (checking) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                 }
-                Text(if (checking) "Checking…" else "Check for updates")
+                Text(
+                    stringResource(
+                        if (checking) R.string.settings_update_checking else R.string.settings_update_check,
+                    ),
+                )
             }
         }
     }
@@ -802,9 +1030,9 @@ private fun CompletionTimesCard(
     gatheredAt: Long?,
     coveredGameCount: Int,
     checking: Boolean,
-    checkMessage: String?,
+    checkMessage: SettingsText?,
     contributionBusy: Boolean,
-    contributionMessage: String?,
+    contributionMessage: SettingsText?,
     onCheck: () -> Unit,
     onRequestContributionExport: () -> Unit,
 ) {
@@ -819,17 +1047,21 @@ private fun CompletionTimesCard(
         ) {
             if (gatheredAt != null) {
                 Text(
-                    text = "Gathered ${UiFormat.dateTime(gatheredAt)} · covers $coveredGameCount games",
+                    text = stringResource(
+                        R.string.settings_completion_gathered,
+                        UiFormat.dateTime(gatheredAt),
+                        coveredGameCount,
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                 )
             } else {
                 Text(
-                    text = "No completion-times dataset applied yet.",
+                    text = stringResource(R.string.settings_completion_none),
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
-            checkMessage?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            checkMessage?.let { message ->
+                Text(message.resolveText(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = onCheck, enabled = !checking) {
@@ -837,22 +1069,32 @@ private fun CompletionTimesCard(
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text(if (checking) "Checking…" else "Check for a newer dataset")
+                    Text(
+                        stringResource(
+                            if (checking) R.string.settings_completion_checking
+                            else R.string.settings_completion_check,
+                        ),
+                    )
                 }
             }
 
             HorizontalDivider()
 
             Text(
-                text = "Contribute your resolved games back to the shared dataset.",
+                text = stringResource(R.string.settings_completion_contribute),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            contributionMessage?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            contributionMessage?.let { message ->
+                Text(message.resolveText(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             OutlinedButton(onClick = onRequestContributionExport, enabled = !contributionBusy) {
-                Text(if (contributionBusy) "Preparing…" else "Export contribution")
+                Text(
+                    stringResource(
+                        if (contributionBusy) R.string.settings_completion_preparing
+                        else R.string.settings_completion_export,
+                    ),
+                )
             }
         }
     }
@@ -874,14 +1116,12 @@ private fun LiveMonitorCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text("Monitor Steam activity", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.settings_monitor_title), style = MaterialTheme.typography.titleMedium)
                 Text(
                     text = if (configured) {
-                        "Checks Steam every 30 seconds while armed, even before you start a game. " +
-                            "Uses an ongoing notification, battery, and data; Android may stop it " +
-                            "after about 6 hours in the background."
+                        stringResource(R.string.settings_monitor_configured)
                     } else {
-                        "Connect a Steam account to enable live monitoring."
+                        stringResource(R.string.settings_monitor_unconfigured)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -912,7 +1152,7 @@ private fun RemovedSharedGamesCard(
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                "These are not tracked until you choose Track again.",
+                stringResource(R.string.settings_removed_shared_intro),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -926,7 +1166,9 @@ private fun RemovedSharedGamesCard(
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f),
                     )
-                    TextButton(onClick = { onRestore(game.appId) }) { Text("Track again") }
+                    TextButton(onClick = { onRestore(game.appId) }) {
+                        Text(stringResource(R.string.settings_track_again))
+                    }
                 }
             }
         }
@@ -943,14 +1185,17 @@ private fun DailyQuestCard(state: SettingsUiState, actions: SettingsActions) {
             RuleTextField(RuleField.QUEST_GOAL_MINUTES, state, actions)
 
             Column {
-                Text("Counts toward the quest", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    stringResource(R.string.settings_quest_counts_toward),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     QuestMode.entries.forEach { mode ->
                         FilterChip(
                             selected = state.draft.questMode == mode,
                             onClick = { actions.onQuestModeChanged(mode) },
-                            label = { Text(questModeLabel(mode)) },
+                            label = { Text(stringResource(questModeLabelRes(mode))) },
                         )
                     }
                 }
@@ -958,7 +1203,7 @@ private fun DailyQuestCard(state: SettingsUiState, actions: SettingsActions) {
 
             RuleTextField(RuleField.STREAK_GRACE_DAYS, state, actions)
             Text(
-                text = "Grace forgives that many missed days before a streak breaks.",
+                text = stringResource(R.string.settings_quest_grace_help),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -983,9 +1228,9 @@ private fun AdvancedCard(state: SettingsUiState, actions: SettingsActions) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("XP and level curve", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.settings_advanced_title), style = MaterialTheme.typography.titleMedium)
                     Text(
-                        text = "Changing these recalculates your total XP and level.",
+                        text = stringResource(R.string.settings_advanced_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -996,7 +1241,9 @@ private fun AdvancedCard(state: SettingsUiState, actions: SettingsActions) {
                     } else {
                         TablerIcons.ChevronDown
                     },
-                    contentDescription = if (state.advancedExpanded) "Collapse" else "Expand",
+                    contentDescription = stringResource(
+                        if (state.advancedExpanded) R.string.settings_collapse else R.string.settings_expand,
+                    ),
                 )
             }
 
@@ -1025,10 +1272,19 @@ private fun RuleTextField(
     OutlinedTextField(
         value = state.draft.values[field].orEmpty(),
         onValueChange = { actions.onFieldChanged(field, it) },
-        label = { Text(field.label) },
+        label = { Text(stringResource(field.labelResource())) },
         singleLine = true,
         isError = error != null,
-        supportingText = error?.let { { Text(it) } },
+        supportingText = error?.let {
+            {
+                Text(
+                    stringResource(
+                        field.rejectionResource(),
+                        *field.rejectionResourceArgs().toTypedArray(),
+                    ),
+                )
+            }
+        },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         modifier = Modifier.fillMaxWidth(),
     )
@@ -1059,10 +1315,12 @@ private fun RuleSaveBar(state: SettingsUiState, actions: SettingsActions) {
                     color = MaterialTheme.colorScheme.onPrimary,
                 )
             } else {
-                Text("Save rules")
+                Text(stringResource(R.string.settings_save_rules))
             }
         }
-        TextButton(onClick = actions.onDiscardChanges) { Text("Discard") }
+        TextButton(onClick = actions.onDiscardChanges) {
+            Text(stringResource(R.string.settings_discard))
+        }
     }
 }
 
@@ -1082,34 +1340,50 @@ private fun RuleChangeDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Apply new rules?") },
+        title = { Text(stringResource(R.string.settings_apply_rules_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Every day you have recorded is re-evaluated under the new rules.")
+                Text(stringResource(R.string.settings_apply_rules_message))
                 if (confirmation.kind.questRules) {
                     Text(
-                        text = "Current streak: ${confirmation.currentStreakBefore} → " +
-                            "${confirmation.currentStreakAfter} days",
+                        text = stringResource(
+                            R.string.settings_current_streak,
+                            confirmation.currentStreakBefore,
+                            confirmation.currentStreakAfter,
+                        ),
                     )
                     Text(
-                        text = "Longest streak: ${confirmation.longestStreakBefore} → " +
-                            "${confirmation.longestStreakAfter} days " +
-                            "(a record already earned is never lowered)",
+                        text = stringResource(
+                            R.string.settings_longest_streak,
+                            confirmation.longestStreakBefore,
+                            confirmation.longestStreakAfter,
+                        ),
                     )
                 }
                 if (confirmation.kind.advancedRules) {
                     Text(
-                        text = "Total XP: ${confirmation.totalXpBefore} → " +
-                            "${confirmation.totalXpAfter}",
+                        text = stringResource(
+                            R.string.settings_total_xp,
+                            confirmation.totalXpBefore,
+                            confirmation.totalXpAfter,
+                        ),
                     )
                     Text(
-                        text = "Level: ${confirmation.levelBefore} → ${confirmation.levelAfter}",
+                        text = stringResource(
+                            R.string.settings_level,
+                            confirmation.levelBefore,
+                            confirmation.levelAfter,
+                        ),
                     )
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onConfirm) { Text("Apply") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text(stringResource(R.string.settings_apply)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.settings_cancel)) }
+        },
     )
 }
 
@@ -1133,10 +1407,13 @@ private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Automatic snapshots", style = MaterialTheme.typography.bodyLarge)
+                    Text(stringResource(R.string.settings_backup_automatic_title), style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        text = "Every ${state.snapshotIntervalHours} hours after a sync, keeping the " +
-                            "${state.snapshotRetentionCount} most recent snapshots.",
+                        text = stringResource(
+                            R.string.settings_backup_schedule,
+                            state.snapshotIntervalHours,
+                            state.snapshotRetentionCount,
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1153,7 +1430,7 @@ private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
                     text.trim().toIntOrNull()?.takeIf { it > 0 }
                         ?.let(actions.onSnapshotRetentionCountChanged)
                 },
-                label = { Text("Snapshots to keep") },
+                label = { Text(stringResource(R.string.settings_backup_keep)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
@@ -1164,7 +1441,7 @@ private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
                     text.trim().toIntOrNull()?.takeIf { it > 0 }
                         ?.let(actions.onSnapshotIntervalHoursChanged)
                 },
-                label = { Text("Interval between snapshots (hours)") },
+                label = { Text(stringResource(R.string.settings_backup_interval)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
@@ -1172,7 +1449,7 @@ private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
 
             if (state.snapshots.isNotEmpty()) {
                 HorizontalDivider()
-                Text("Snapshots", style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.settings_backup_snapshots), style = MaterialTheme.typography.bodyMedium)
                 state.snapshots.forEach { snapshot ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1188,13 +1465,13 @@ private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
                                 onClick = { actions.onRestoreSnapshot(snapshot) },
                                 enabled = !state.backupBusy,
                             ) {
-                                Text("Restore")
+                                Text(stringResource(R.string.settings_restore))
                             }
                             TextButton(
                                 onClick = { deleteTarget = snapshot },
                                 enabled = !state.backupBusy,
                             ) {
-                                Text("Delete")
+                                Text(stringResource(R.string.settings_delete))
                             }
                         }
                     }
@@ -1217,7 +1494,7 @@ private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("Export backup")
+                    Text(stringResource(R.string.settings_export_backup))
                 }
                 OutlinedButton(
                     onClick = actions.onImportBackup,
@@ -1230,7 +1507,7 @@ private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("Import backup")
+                    Text(stringResource(R.string.settings_import_backup))
                 }
             }
             if (state.backupBusy) {
@@ -1242,8 +1519,15 @@ private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
     deleteTarget?.let { snapshot ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
-            title = { Text("Delete snapshot?") },
-            text = { Text("The snapshot from ${UiFormat.dateTime(snapshot.writtenAtMillis)} will be removed.") },
+            title = { Text(stringResource(R.string.settings_delete_snapshot_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.settings_delete_snapshot_message,
+                        UiFormat.dateTime(snapshot.writtenAtMillis),
+                    ),
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -1251,11 +1535,13 @@ private fun DataBackupCard(state: SettingsUiState, actions: SettingsActions) {
                         actions.onDeleteSnapshot(snapshot)
                     },
                 ) {
-                    Text("Delete")
+                    Text(stringResource(R.string.settings_delete))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
+                TextButton(onClick = { deleteTarget = null }) {
+                    Text(stringResource(R.string.settings_cancel))
+                }
             },
         )
     }
@@ -1275,17 +1561,22 @@ private fun MismatchImportDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Different Steam account") },
+        title = { Text(stringResource(R.string.settings_different_account_title)) },
         text = {
             Text(
-                "This backup belongs to a different Steam account (SteamID $backupSteamId), " +
-                    "while you're signed in as $currentSteamId. Importing will merge its " +
-                    "history, XP, and streaks into your current account; it will not change " +
-                    "the configured SteamID. Continue?",
+                stringResource(
+                    R.string.settings_different_account_message,
+                    backupSteamId,
+                    currentSteamId,
+                ),
             )
         },
-        confirmButton = { TextButton(onClick = onConfirm) { Text("Import anyway") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text(stringResource(R.string.settings_import_anyway)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.settings_cancel)) }
+        },
     )
 }
 
@@ -1307,7 +1598,7 @@ private fun HistoryImportCard(
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text("Steam history", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.settings_history_title), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
             if (imported) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1319,12 +1610,12 @@ private fun HistoryImportCard(
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = "History imported",
+                        text = stringResource(R.string.settings_history_imported),
                         style = MaterialTheme.typography.bodyLarge,
                     )
                 }
                 Text(
-                    text = "Past playtime already counts toward your XP.",
+                    text = stringResource(R.string.settings_history_imported_description),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Spacer(Modifier.height(8.dp))
@@ -1338,12 +1629,12 @@ private fun HistoryImportCard(
                             strokeWidth = 2.dp,
                         )
                     } else {
-                        Text("Reset import")
+                        Text(stringResource(R.string.settings_history_reset))
                     }
                 }
             } else {
                 Text(
-                    text = "Count your pre-install Steam playtime toward XP. One-time only.",
+                    text = stringResource(R.string.settings_history_unimported_description),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Spacer(Modifier.height(12.dp))
@@ -1363,7 +1654,7 @@ private fun HistoryImportCard(
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text("Import Steam history")
+                        Text(stringResource(R.string.settings_history_import))
                     }
                 }
             }
@@ -1373,13 +1664,9 @@ private fun HistoryImportCard(
     if (showConfirm) {
         AlertDialog(
             onDismissRequest = { showConfirm = false },
-            title = { Text("Import Steam history?") },
+            title = { Text(stringResource(R.string.settings_history_import_title)) },
             text = {
-                Text(
-                    "This counts your past Steam playtime toward XP and can only be done once. " +
-                        "Games matched to HowLongToBeat are capped by the usual taper; unmatched " +
-                        "games count their full playtime.",
-                )
+                Text(stringResource(R.string.settings_history_import_message))
             },
             confirmButton = {
                 TextButton(
@@ -1388,12 +1675,12 @@ private fun HistoryImportCard(
                         onImport()
                     },
                 ) {
-                    Text("Import")
+                    Text(stringResource(R.string.settings_import))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showConfirm = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.settings_cancel))
                 }
             },
         )
@@ -1402,13 +1689,9 @@ private fun HistoryImportCard(
     if (showResetConfirm) {
         AlertDialog(
             onDismissRequest = { showResetConfirm = false },
-            title = { Text("Reset imported history?") },
+            title = { Text(stringResource(R.string.settings_history_reset_title)) },
             text = {
-                Text(
-                    "This removes imported past playtime from your XP; your level drops back to " +
-                        "reflect tracked playtime only. Streaks and tracked sessions are kept, and " +
-                        "you can import again afterward.",
-                )
+                Text(stringResource(R.string.settings_history_reset_message))
             },
             confirmButton = {
                 TextButton(
@@ -1417,12 +1700,12 @@ private fun HistoryImportCard(
                         onReset()
                     },
                 ) {
-                    Text("Reset")
+                    Text(stringResource(R.string.settings_reset))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showResetConfirm = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.settings_cancel))
                 }
             },
         )
@@ -1434,7 +1717,8 @@ private fun HistoryImportCard(
  * the Library's "Focus" wording — this chip is the one place where that section's name has a
  * functional consequence, so leaving it as "Goal games only" would leave the relabel half-done.
  */
-private fun questModeLabel(mode: QuestMode) = when (mode) {
-    QuestMode.ANY -> "Any game"
-    QuestMode.GOAL_ONLY -> "Focus games only"
+@StringRes
+private fun questModeLabelRes(mode: QuestMode): Int = when (mode) {
+    QuestMode.ANY -> R.string.settings_quest_any_game
+    QuestMode.GOAL_ONLY -> R.string.settings_quest_focus_only
 }

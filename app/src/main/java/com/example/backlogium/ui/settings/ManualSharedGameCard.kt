@@ -26,9 +26,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.example.backlogium.R
 import compose.icons.TablerIcons
 import compose.icons.tablericons.AlertCircle
 import compose.icons.tablericons.BrandSteam
@@ -39,7 +41,7 @@ internal fun ManualSharedGameCard(state: SettingsUiState, actions: SettingsActio
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
-                "Paste a Steam Store link or app ID. Backlogium checks ownership, imports an eligible borrowed game, and tests whether Steam returns achievement data.",
+                stringResource(R.string.settings_shared_game_description),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -47,7 +49,7 @@ internal fun ManualSharedGameCard(state: SettingsUiState, actions: SettingsActio
                 value = state.manualSharedGameInput,
                 onValueChange = actions.onManualSharedGameInputChanged,
                 modifier = Modifier.fillMaxWidth().testTag("settings-manual-shared-game-input"),
-                label = { Text("Steam Store URL or app ID") },
+                label = { Text(stringResource(R.string.settings_shared_game_input)) },
                 singleLine = true,
                 enabled = state.configured && !state.manualSharedGameBusy,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
@@ -61,9 +63,16 @@ internal fun ManualSharedGameCard(state: SettingsUiState, actions: SettingsActio
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                 }
-                Text(if (state.manualSharedGameBusy) "Checking" else "Check and import")
+                Text(
+                    stringResource(
+                        if (state.manualSharedGameBusy) R.string.settings_shared_game_checking
+                        else R.string.settings_shared_game_check,
+                    ),
+                )
             }
-            if (!state.configured) Text("Connect a Steam account first.")
+            if (!state.configured) {
+                Text(stringResource(R.string.settings_shared_game_account_required))
+            }
             val feedback = state.manualSharedGameFeedback
             AnimatedVisibility(
                 visible = feedback != null,
@@ -115,13 +124,13 @@ private fun ManualSharedGameFeedbackCard(feedback: ManualImportFeedback) {
             )
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = feedback.title,
+                    text = feedback.title.resolveText(),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = contentColor,
                 )
                 Text(
-                    text = feedback.message,
+                    text = feedback.message.resolveText(),
                     style = MaterialTheme.typography.bodyMedium,
                     color = contentColor,
                 )
