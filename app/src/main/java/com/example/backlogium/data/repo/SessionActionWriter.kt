@@ -119,6 +119,7 @@ class SessionActionWriter @Inject constructor(
                                     ),
                                     timingInformedSteamPlay = it.timingAfter(
                                         action.appId to action.startAt in timingInformedSessionKeys,
+                                        action.addedMinutes,
                                     ),
                                 ),
                             )
@@ -146,8 +147,8 @@ class SessionActionWriter @Inject constructor(
                                         recoveredFromCloud, minutes - it.minutes,
                                     ),
                                     timingInformedSteamPlay = it.timingAfter(
-                                        action.appId to action.startAt in timingInformedSessionKeys &&
-                                            minutes > it.minutes,
+                                        action.appId to action.startAt in timingInformedSessionKeys,
+                                        minutes - it.minutes,
                                     ),
                                 ),
                             )
@@ -201,7 +202,12 @@ class SessionActionWriter @Inject constructor(
     }
 
     private fun Session.recoveryAfter(cloud: Boolean, addedMinutes: Int): RecoveredSharedPlayState? {
-        if (!cloud || addedMinutes <= 0) return recoveredSharedPlay
+        if (addedMinutes <= 0) return recoveredSharedPlay
+        if (!cloud) return if (recoveredSharedPlay == RecoveredSharedPlayState.FULL) {
+            RecoveredSharedPlayState.PARTIAL
+        } else {
+            recoveredSharedPlay
+        }
         return when {
             minutes == 0 -> RecoveredSharedPlayState.FULL
             recoveredSharedPlay == RecoveredSharedPlayState.FULL -> RecoveredSharedPlayState.FULL
@@ -209,8 +215,13 @@ class SessionActionWriter @Inject constructor(
         }
     }
 
-    private fun Session.timingAfter(informed: Boolean): TimingInformedSteamPlayState? {
-        if (!informed) return timingInformedSteamPlay
+    private fun Session.timingAfter(informed: Boolean, addedMinutes: Int): TimingInformedSteamPlayState? {
+        if (addedMinutes <= 0) return timingInformedSteamPlay
+        if (!informed) return if (timingInformedSteamPlay == TimingInformedSteamPlayState.FULL) {
+            TimingInformedSteamPlayState.PARTIAL
+        } else {
+            timingInformedSteamPlay
+        }
         return if (minutes == 0 || timingInformedSteamPlay == TimingInformedSteamPlayState.FULL) {
             TimingInformedSteamPlayState.FULL
         } else {

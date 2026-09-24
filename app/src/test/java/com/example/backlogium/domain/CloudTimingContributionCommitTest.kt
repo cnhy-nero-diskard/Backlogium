@@ -47,6 +47,37 @@ class CloudTimingContributionCommitTest {
         assertEquals(RecoveredSharedPlayState.PARTIAL, stored.recoveredSharedPlay)
     }
 
+    @Test fun sourceConvertedRecoveredOpenSessionKeepsBothFactsWithoutClaimingFullRecovery() = runTest {
+        seed(source = GameSource.FAMILY_SHARED)
+        db.sessionDao().insert(Session(
+            appId = 440, startAt = 10 * minute, endAt = 20 * minute,
+            minutes = 10, open = true, recoveredSharedPlay = RecoveredSharedPlayState.FULL,
+        ))
+        // A shared game's conversion changes its source and Steam baseline, not its open row.
+        // The next owned-game diff therefore extends the very same recovered session.
+        assertEquals(1, db.gameDao().convertSharedToOwned(440, 100, 0, 10 * minute))
+        val result = commit(interval(10 * minute, 40 * minute), playtime = 120)
+        val stored = db.sessionDao().getAll().single()
+
+        assertEquals(20, result.playedDeltaByAppId[440])
+        assertEquals(30, stored.minutes)
+        assertEquals(RecoveredSharedPlayState.PARTIAL, stored.recoveredSharedPlay)
+        assertEquals(TimingInformedSteamPlayState.PARTIAL, stored.timingInformedSteamPlay)
+        assertEquals(false, stored.open)
+    }
+
+    @Test fun laterUnaidedMinutesMakePreviouslyFullTimingPartial() = runTest {
+        seed()
+        db.sessionDao().insert(Session(
+            appId = 440, startAt = 10 * minute, endAt = 20 * minute, minutes = 10, open = true,
+            timingInformedSteamPlay = TimingInformedSteamPlayState.FULL,
+        ))
+
+        commit(null, playtime = 120)
+
+        assertEquals(TimingInformedSteamPlayState.PARTIAL, db.sessionDao().getAll().single().timingInformedSteamPlay)
+    }
+
     @Test fun unchangedSuggestionAndRejectedCoverageDoNotClaimTiming() = runTest {
         seed()
         // The unaided Open starts at the previous sync and ends at the observation.
@@ -66,10 +97,10 @@ class CloudTimingContributionCommitTest {
         assertEquals(20, db.sessionDao().getAll().single().minutes)
     }
 
-    private suspend fun seed() {
+    private suspend fun seed(source: GameSource = GameSource.STEAM_OWNED) {
         db.gameDao().upsert(Game(
             appId = 440, name = "Owned", iconUrl = "", playtimeForever = 100,
-            playtime2Weeks = 0, lastPlaytime = 100,
+            playtime2Weeks = 0, lastPlaytime = 100, source = source,
         ))
         db.playerProfileDao().insertIfMissing()
         db.playerProfileDao().updateSyncStatus(10 * minute, null)

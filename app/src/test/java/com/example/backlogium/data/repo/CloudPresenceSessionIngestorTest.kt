@@ -743,7 +743,7 @@ class CloudPresenceSessionIngestorTest {
         database.sessionDao().insert(
             Session(
                 appId = 440L, startAt = 0L, endAt = 600_000L, minutes = 10, open = true,
-                timingInformedSteamPlay = TimingInformedSteamPlayState.PARTIAL,
+                timingInformedSteamPlay = TimingInformedSteamPlayState.FULL,
             ),
         )
 
