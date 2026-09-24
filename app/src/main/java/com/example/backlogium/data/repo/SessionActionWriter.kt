@@ -6,6 +6,7 @@ import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.domain.SessionDiffer
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.attributeDailyProgress
@@ -49,6 +50,7 @@ class SessionActionWriter @Inject constructor(
     suspend fun applySessionActions(
         actions: List<SessionDiffer.SessionAction>,
         recoveredFromCloud: Boolean = false,
+        timingInformedSessionKeys: Set<Pair<Long, Long>> = emptySet(),
     ): List<SessionDiffer.SessionAction> {
         val effective = mutableListOf<SessionDiffer.SessionAction>()
         for ((index, action) in actions.withIndex()) {
@@ -63,6 +65,11 @@ class SessionActionWriter @Inject constructor(
                             RecoveredSharedPlayState.FULL
                         } else {
                             RecoveredSharedPlayState.NONE
+                        },
+                        timingInformedSteamPlay = if (action.appId to action.startAt in timingInformedSessionKeys) {
+                            TimingInformedSteamPlayState.FULL
+                        } else {
+                            TimingInformedSteamPlayState.NONE
                         },
                     )
                     if (opened != -1L) {
@@ -81,6 +88,11 @@ class SessionActionWriter @Inject constructor(
                                     RecoveredSharedPlayState.FULL
                                 } else {
                                     RecoveredSharedPlayState.NONE
+                                },
+                                timingInformedSteamPlay = if (action.appId to action.startAt in timingInformedSessionKeys) {
+                                    TimingInformedSteamPlayState.FULL
+                                } else {
+                                    TimingInformedSteamPlayState.NONE
                                 },
                             ),
                         )
@@ -104,6 +116,9 @@ class SessionActionWriter @Inject constructor(
                                     endAt = maxOf(it.endAt ?: it.startAt, action.endAt),
                                     recoveredSharedPlay = it.recoveryAfter(
                                         recoveredFromCloud, action.addedMinutes,
+                                    ),
+                                    timingInformedSteamPlay = it.timingAfter(
+                                        action.appId to action.startAt in timingInformedSessionKeys,
                                     ),
                                 ),
                             )
@@ -129,6 +144,10 @@ class SessionActionWriter @Inject constructor(
                                     open = true,
                                     recoveredSharedPlay = it.recoveryAfter(
                                         recoveredFromCloud, minutes - it.minutes,
+                                    ),
+                                    timingInformedSteamPlay = it.timingAfter(
+                                        action.appId to action.startAt in timingInformedSessionKeys &&
+                                            minutes > it.minutes,
                                     ),
                                 ),
                             )
@@ -187,6 +206,15 @@ class SessionActionWriter @Inject constructor(
             minutes == 0 -> RecoveredSharedPlayState.FULL
             recoveredSharedPlay == RecoveredSharedPlayState.FULL -> RecoveredSharedPlayState.FULL
             else -> RecoveredSharedPlayState.PARTIAL
+        }
+    }
+
+    private fun Session.timingAfter(informed: Boolean): TimingInformedSteamPlayState? {
+        if (!informed) return timingInformedSteamPlay
+        return if (minutes == 0 || timingInformedSteamPlay == TimingInformedSteamPlayState.FULL) {
+            TimingInformedSteamPlayState.FULL
+        } else {
+            TimingInformedSteamPlayState.PARTIAL
         }
     }
 

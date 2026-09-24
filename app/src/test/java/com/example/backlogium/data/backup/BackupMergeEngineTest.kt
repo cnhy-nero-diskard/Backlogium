@@ -29,6 +29,7 @@ import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.FakeHiddenGameDao
@@ -1153,11 +1154,13 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     override suspend fun tryOpenSession(
         appId: Long, startAt: Long, endAt: Long?, minutes: Int,
         recoveredSharedPlay: RecoveredSharedPlayState,
+        timingInformedSteamPlay: TimingInformedSteamPlayState,
     ): Long {
         if (store.any { it.appId == appId && it.open }) return -1L
         return insert(Session(
             appId = appId, startAt = startAt, endAt = endAt, minutes = minutes, open = true,
             recoveredSharedPlay = recoveredSharedPlay,
+            timingInformedSteamPlay = timingInformedSteamPlay,
         ))
     }
 

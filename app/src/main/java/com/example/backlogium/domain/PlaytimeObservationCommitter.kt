@@ -131,10 +131,16 @@ class PlaytimeObservationCommitter @Inject constructor(
             )
         }
 
+        // Mark only rows whose persisted actions actually differ from Steam's unaided estimate.
+        // Merely consulting a reader (or accepting an identical suggestion) is not attribution.
+        val timingInformedKeys = if (placement == null || actions == diff.actions) emptySet() else {
+            (actions - diff.actions.toSet()).mapTo(mutableSetOf()) { it.appId to it.startAt }
+        }
+
         // Routed through the shared writer, not a local copy, so the single-open-session guard
         // (auditfix-session-ledger-integrity, #116) holds here exactly as it does for the
         // presence path — "regardless of which caller reaches it."
-        sessionActionWriter.applySessionActions(actions)
+        sessionActionWriter.applySessionActions(actions, timingInformedSessionKeys = timingInformedKeys)
 
         observed.forEach { game ->
             val existing = existingGames[game.appId]

@@ -7,6 +7,7 @@ import androidx.room.Transaction
 import androidx.room.Update
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -40,6 +41,7 @@ interface SessionDao {
         endAt: Long?,
         minutes: Int,
         recoveredSharedPlay: RecoveredSharedPlayState = RecoveredSharedPlayState.NONE,
+        timingInformedSteamPlay: TimingInformedSteamPlayState = TimingInformedSteamPlayState.NONE,
     ): Long {
         if (getOpenSession(appId) != null) return -1L
         return insert(
@@ -50,6 +52,7 @@ interface SessionDao {
                 minutes = minutes,
                 open = true,
                 recoveredSharedPlay = recoveredSharedPlay,
+                timingInformedSteamPlay = timingInformedSteamPlay,
             ),
         )
     }

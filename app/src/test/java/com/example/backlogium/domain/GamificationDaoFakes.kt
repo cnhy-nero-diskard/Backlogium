@@ -23,6 +23,7 @@ import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,6 +42,7 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
     override suspend fun tryOpenSession(
         appId: Long, startAt: Long, endAt: Long?, minutes: Int,
         recoveredSharedPlay: RecoveredSharedPlayState,
+        timingInformedSteamPlay: TimingInformedSteamPlayState,
     ): Long = 0L
     override suspend fun update(session: Session) = Unit
     override suspend fun deleteById(id: Long) = Unit
