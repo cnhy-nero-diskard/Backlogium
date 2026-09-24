@@ -165,6 +165,11 @@ interface SettingsRepository : SessionEndOutbox {
 
     suspend fun clearCloudReadPosition() = Unit
 
+    val cloudReaderGeneration: Flow<Long>
+        get() = flowOf(0L)
+
+    suspend fun advanceCloudReaderGeneration(): Long = 0L
+
     /** Durable watermark for cloud intervals already folded into presence sessions. */
     val cloudIngestPosition: Flow<String?>
         get() = flowOf(null)
@@ -328,6 +333,10 @@ class DataStoreSettingsRepository @Inject constructor(
         settings.setCloudReadPosition(position)
 
     override suspend fun clearCloudReadPosition() = settings.clearCloudReadPosition()
+
+    override val cloudReaderGeneration: Flow<Long> = settings.cloudReaderGenerationFlow
+
+    override suspend fun advanceCloudReaderGeneration(): Long = settings.advanceCloudReaderGeneration()
 
     override val cloudIngestPosition: Flow<String?> = settings.cloudIngestPositionFlow
 

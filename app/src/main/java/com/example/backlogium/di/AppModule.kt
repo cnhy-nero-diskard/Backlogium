@@ -6,6 +6,8 @@ import com.example.backlogium.data.backup.BackupExportGateway
 import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
+import com.example.backlogium.data.repo.CloudPendingEvidence
+import com.example.backlogium.data.repo.RoomCloudPendingEvidence
 import com.example.backlogium.data.repo.AccountChangeCoordinator
 import com.example.backlogium.data.repo.AccountChangeGateway
 import com.example.backlogium.data.repo.CredentialsProvider
@@ -165,6 +167,9 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindDatabaseTransactionScope(impl: RoomDatabaseTransactionScope): DatabaseTransactionScope
+
+    @Binds
+    abstract fun bindCloudPendingEvidence(impl: RoomCloudPendingEvidence): CloudPendingEvidence
 
     @Binds
     @Singleton

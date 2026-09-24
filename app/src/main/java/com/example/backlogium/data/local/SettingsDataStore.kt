@@ -100,6 +100,7 @@ class SettingsDataStore @Inject constructor(
         val LIVE_MONITOR_ENABLED = booleanPreferencesKey("live_monitor_enabled")
         val LIVE_MONITORING_AVAILABILITY = stringPreferencesKey("live_monitoring_availability")
         val CLOUD_READ_POSITION = stringPreferencesKey("cloud_read_position")
+        val CLOUD_READER_GENERATION = longPreferencesKey("cloud_reader_generation")
         val RULE_CONFIG_VERSION = longPreferencesKey("rule_config_version")
 
         /**
@@ -470,6 +471,18 @@ class SettingsDataStore @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs.remove(Keys.CLOUD_READ_POSITION)
         }
+    }
+
+    val cloudReaderGenerationFlow: Flow<Long> =
+        context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_READER_GENERATION] ?: 0L }
+
+    suspend fun advanceCloudReaderGeneration(): Long {
+        var next = 0L
+        context.dataStore.edit { prefs ->
+            next = (prefs[Keys.CLOUD_READER_GENERATION] ?: 0L) + 1L
+            prefs[Keys.CLOUD_READER_GENERATION] = next
+        }
+        return next
     }
 
     /** Durable cloud-session ingest watermark; account changes clear it with the read watermark. */

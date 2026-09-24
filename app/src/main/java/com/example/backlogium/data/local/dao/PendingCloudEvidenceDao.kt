@@ -29,4 +29,10 @@ interface PendingCloudEvidenceDao {
 
     @Query("DELETE FROM pending_cloud_boundaries")
     suspend fun deleteAllBoundaries()
+
+    @Query("DELETE FROM pending_cloud_intervals WHERE account != :account OR generation != :generation")
+    suspend fun deleteOtherIntervals(account: String, generation: Long)
+
+    @Query("DELETE FROM pending_cloud_boundaries WHERE account != :account OR generation != :generation")
+    suspend fun deleteOtherBoundaries(account: String, generation: Long)
 }

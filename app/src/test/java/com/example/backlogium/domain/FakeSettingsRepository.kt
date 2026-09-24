@@ -65,13 +65,22 @@ internal class FakeSettingsRepository : SettingsRepository {
     }
 
     private val cloudPosition = MutableStateFlow<String?>(null)
+    var failNextCloudReadPosition = false
     override val cloudReadPosition: Flow<String?> = cloudPosition
     override suspend fun setCloudReadPosition(position: String) {
+        if (failNextCloudReadPosition) {
+            failNextCloudReadPosition = false
+            error("simulated cursor persistence failure")
+        }
         cloudPosition.value = position
     }
     override suspend fun clearCloudReadPosition() {
         cloudPosition.value = null
     }
+
+    private val readerGeneration = MutableStateFlow(0L)
+    override val cloudReaderGeneration: Flow<Long> = readerGeneration
+    override suspend fun advanceCloudReaderGeneration(): Long = ++readerGeneration.value
 
     private val cloudIngestCursor = MutableStateFlow<String?>(null)
     override val cloudIngestPosition: Flow<String?> = cloudIngestCursor

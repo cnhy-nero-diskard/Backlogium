@@ -9,6 +9,8 @@ import com.example.backlogium.data.remote.dto.CloudPresenceCurrentDto
 import com.example.backlogium.data.remote.dto.CloudPresenceResponseDto
 import com.example.backlogium.data.remote.dto.CloudPresenceTransitionDto
 import com.example.backlogium.domain.FakeSettingsRepository
+import com.example.backlogium.domain.CloudPresenceInterval
+import com.example.backlogium.domain.CloudPresenceTransition
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -32,6 +34,123 @@ import java.time.LocalDate
 import java.time.ZoneId
 
 class CloudPresenceRepositoryTest {
+    @Test
+    fun everyCursorAdvancingPathRetainsEvidenceBeforeItsPosition() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse(nextPosition = "2026-09-15T00:20:00Z"))
+        val store = FakeCloudCredentialsStore()
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+
+        assertEquals(CloudConfigurationResult.Saved,
+            repo.verifyAndSave("https://reader.example.com/read", "secret"))
+        assertEquals(1, evidence.writes)
+        assertTrue(repo.read() is CloudReadResult.Success)
+        assertEquals(2, evidence.writes)
+        assertTrue(repo.readRemainingHistory() is CloudReadResult.Success)
+        assertEquals(3, evidence.writes)
+        assertTrue(repo.readCompleteHistory() is CloudReadResult.Success)
+        assertEquals(4, evidence.writes)
+        assertEquals("2026-09-15T00:20:00Z", settings.cloudReadPosition.first())
+    }
+
+    @Test
+    fun failedEvidenceEffectLeavesPageRetryableAndRoutineResumesAfterFourPages() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse(
+            nextPosition = "2026-09-15T00:20:00Z", hasMore = true,
+        ))
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        evidence.failNext = true
+        assertEquals(
+            CloudCatchUpResult.Failed(0, 0, CloudReadFailure.UNUSABLE_RESPONSE),
+            repo.readRoutineCatchUp { },
+        )
+        assertNull(settings.cloudReadPosition.first())
+
+        assertEquals(CloudCatchUpResult.Partial(4, 4), repo.readRoutineCatchUp { })
+        assertEquals(2, api.requests.count { it.position == null })
+        assertEquals("2026-09-15T00:20:00Z", settings.cloudReadPosition.first())
+        api.answer = sampleResponse(nextPosition = "2026-09-15T00:30:00Z")
+        assertEquals(CloudCatchUpResult.Complete(1, 1, false), repo.readRoutineCatchUp { })
+    }
+
+    @Test
+    fun routineRestartContinuesAtSavedPageAndReportsNoNewTerminalData() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse(
+            nextPosition = "2026-09-15T00:20:00Z", hasMore = true,
+        ))
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudCatchUpResult.Partial(4, 4), first.readRoutineCatchUp { })
+        val savedPosition = settings.cloudReadPosition.first()
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        api.answer = sampleResponse(nextPosition = "2026-09-15T00:30:00Z").copy(
+            transitions = emptyList(), current = null,
+        )
+
+        assertEquals(CloudCatchUpResult.Complete(1, 0, true), restarted.readRoutineCatchUp { })
+        assertEquals(savedPosition, api.requests.last().position)
+        assertEquals("2026-09-15T00:30:00Z", settings.cloudReadPosition.first())
+        assertEquals(5, evidence.writes)
+    }
+
+    @Test
+    fun replayAfterEvidenceAndIngestCommitButCursorFailsDoesNotDoubleCredit() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse(nextPosition = "2026-09-15T00:20:00Z"))
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        val creditedPositions = mutableSetOf<String>()
+        val consume: suspend (CloudPresenceSnapshot) -> Unit = { snapshot ->
+            creditedPositions += snapshot.nextPosition.orEmpty()
+        }
+        settings.failNextCloudReadPosition = true
+        try {
+            repo.read(consume = consume)
+            org.junit.Assert.fail("cursor write should fail after page effects")
+        } catch (_: IllegalStateException) {
+            // Both effects committed; the read position did not.
+        }
+        assertNull(settings.cloudReadPosition.first())
+        assertEquals(1, evidence.writes)
+        assertEquals(1, creditedPositions.size)
+
+        assertTrue(repo.read(consume = consume) is CloudReadResult.Success)
+        assertEquals(2, evidence.writes)
+        assertEquals(1, creditedPositions.size)
+        assertEquals("2026-09-15T00:20:00Z", settings.cloudReadPosition.first())
+    }
+
+    @Test
+    fun failedReplacementEffectsKeepOldReaderCursorAndGeneration() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse(nextPosition = "2026-09-15T00:20:00Z"))
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        settings.setCloudReadPosition("old-position")
+        settings.setCloudIngestPosition("old-ingest")
+        val evidence = MemoryEvidence()
+        val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        evidence.failNext = true
+
+        try {
+            repo.verifyAndSave("https://new.example.com/read", "new-secret")
+            org.junit.Assert.fail("evidence write should fail")
+        } catch (_: IllegalStateException) {
+            // Page effects failed before endpoint promotion or cursor advance.
+        }
+
+        assertEquals("old-position", settings.cloudReadPosition.first())
+        assertEquals("old-ingest", settings.cloudIngestPosition.first())
+        assertEquals(0L, settings.cloudReaderGeneration.first())
+        assertEquals("https://old.example.com/read", store.credentials?.endpoint)
+    }
+
     @Test
     fun unconfiguredReadDoesNotCallNetworkOrWriteDiagnostics() = runBlocking {
         val api = FakeCloudPresenceApi()
@@ -1041,14 +1160,36 @@ class CloudPresenceRepositoryTest {
         records: FakeCloudReadDao,
         settings: FakeSettingsRepository = FakeSettingsRepository(),
         steamId: String?,
+        pending: CloudPendingEvidence? = null,
     ): CloudPresenceRepository = CloudPresenceRepository(
         api = api,
         credentialsStore = store,
         credentialsProvider = FakeCredentials(steamId),
         settings = settings,
         cloudReadDao = records,
+        pendingEvidence = pending ?: MemoryEvidence(),
         time = FixedTimeProvider(),
     )
+
+    private class MemoryEvidence : CloudPendingEvidence {
+        var writes = 0
+        var failNext = false
+        override suspend fun boundary(account: String, generation: Long): CloudPresenceTransition? = null
+        override suspend fun retain(
+            account: String, generation: Long, windowStart: Long,
+            intervals: List<CloudPresenceInterval>, lastTransition: CloudPresenceTransition?,
+        ) {
+            if (failNext) {
+                failNext = false
+                error("simulated evidence write failure")
+            }
+            writes++
+        }
+        override suspend fun intervals(account: String, generation: Long): List<CloudPresenceInterval> = emptyList()
+        override suspend fun earliestWindowStart(account: String, generation: Long): Long? = null
+        override suspend fun clear() = Unit
+        override suspend fun clearExcept(account: String, generation: Long) = Unit
+    }
 
     private class FakeCloudPresenceApi(
         var answer: CloudPresenceResponseDto = sampleResponse(),

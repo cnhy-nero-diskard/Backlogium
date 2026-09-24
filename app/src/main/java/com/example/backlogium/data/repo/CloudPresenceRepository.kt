@@ -39,6 +39,14 @@ enum class CloudReadTrigger {
     DIAGNOSTICS,
     SYNC,
     POST_PLAY,
+    ROUTINE,
+}
+
+sealed interface CloudCatchUpResult {
+    data class Complete(val pages: Int, val transitions: Int, val noNewData: Boolean) : CloudCatchUpResult
+    data class Partial(val pages: Int, val transitions: Int) : CloudCatchUpResult
+    data class Failed(val pages: Int, val transitions: Int, val failure: CloudReadFailure) : CloudCatchUpResult
+    data object Unavailable : CloudCatchUpResult
 }
 
 enum class CloudReadFailure {
@@ -105,8 +113,19 @@ class CloudPresenceRepository @Inject constructor(
     private val credentialsProvider: CredentialsProvider,
     private val settings: SettingsRepository,
     private val cloudReadDao: CloudReadDao,
+    private val pendingEvidence: CloudPendingEvidence,
     private val time: TimeProvider,
 ) {
+    /** Compatibility constructor for existing read-protocol tests without a Room evidence store. */
+    internal constructor(
+        api: CloudPresenceApi,
+        credentialsStore: CloudCredentialsStore,
+        credentialsProvider: CredentialsProvider,
+        settings: SettingsRepository,
+        cloudReadDao: CloudReadDao,
+        time: TimeProvider,
+    ) : this(api, credentialsStore, credentialsProvider, settings, cloudReadDao, EmptyPendingEvidence, time)
+
     private val configurationState = MutableStateFlow<CloudPresenceConfiguration?>(null)
     private val snapshotState = MutableStateFlow<CloudPresenceSnapshot?>(null)
     // Account-change generation: captured atomically with the account-bound inputs under
@@ -204,9 +223,27 @@ class CloudPresenceRepository @Inject constructor(
                             CloudConfigurationResult.AccountMismatch(current, result.parsed.account)
                         }
                     } else {
-                        settings.clearCloudReadPosition()
+                        val readerGeneration = settings.cloudReaderGeneration.first() + 1L
+                        val snapshot = result.parsed.toSnapshot()
+                        val previousIngestPosition = settings.cloudIngestPosition.first()
                         settings.clearCloudIngestPosition()
-                        consume(result.parsed.toSnapshot())
+                        try {
+                            consume(snapshot)
+                            pendingEvidence.retain(
+                                account, readerGeneration, snapshot.windowStart,
+                                snapshot.intervals, result.parsed.transitions.maxByOrNull { it.at },
+                            )
+                        } catch (failure: Throwable) {
+                            if (previousIngestPosition != null) {
+                                settings.setCloudIngestPosition(previousIngestPosition)
+                            }
+                            throw failure
+                        }
+                        // A failed page effect leaves the old verified reader and its position
+                        // intact. Only after both effects succeed do we retire old evidence.
+                        pendingEvidence.clearExcept(account, readerGeneration)
+                        settings.advanceCloudReaderGeneration()
+                        settings.clearCloudReadPosition()
                         persistVerifiedConfiguration(
                             credentials = CloudCredentials(normalizedEndpoint, normalizedToken),
                             trigger = CloudReadTrigger.SETTINGS_VERIFICATION,
@@ -254,6 +291,42 @@ class CloudPresenceRepository @Inject constructor(
         readPage(trigger, consume)
     }
 
+    /** At most four serialized pages per routine opportunity; every consumed page commits its cursor. */
+    suspend fun readRoutineCatchUp(
+        consume: suspend (CloudPresenceSnapshot) -> Unit,
+    ): CloudCatchUpResult = cloudReadSequenceMutex.withLock {
+        val account = credentialsProvider.currentCredentials()?.steamId ?: return@withLock CloudCatchUpResult.Unavailable
+        if (credentialsStore.readCloudCredentials() == null) return@withLock CloudCatchUpResult.Unavailable
+        val generation = settings.cloudReaderGeneration.first()
+        var transitions = 0
+        repeat(MAX_ROUTINE_PAGES) { page ->
+            if (credentialsProvider.currentCredentials()?.steamId != account ||
+                settings.cloudReaderGeneration.first() != generation
+            ) return@withLock CloudCatchUpResult.Failed(page, transitions, CloudReadFailure.ACCOUNT_MISMATCH)
+            val result = try {
+                readPage(CloudReadTrigger.ROUTINE, consume)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                return@withLock CloudCatchUpResult.Failed(page, transitions, CloudReadFailure.UNUSABLE_RESPONSE)
+            }
+            when (result) {
+                is CloudReadResult.Success -> {
+                    transitions += result.snapshot.observationCount
+                    if (!result.snapshot.hasMore) {
+                        return@withLock CloudCatchUpResult.Complete(
+                            page + 1, transitions, noNewData = transitions == 0,
+                        )
+                    }
+                }
+                is CloudReadResult.Failed ->
+                    return@withLock CloudCatchUpResult.Failed(page, transitions, result.failure)
+                else -> return@withLock CloudCatchUpResult.Unavailable
+            }
+        }
+        CloudCatchUpResult.Partial(MAX_ROUTINE_PAGES, transitions)
+    }
+
     /**
      * Single-page read without acquiring [cloudReadSequenceMutex]: the caller must hold it.
      * Ordinary [read] holds it for one page; [readCompleteHistory] and [readRemainingHistory]
@@ -273,6 +346,7 @@ class CloudPresenceRepository @Inject constructor(
                 account = credentialsProvider.currentCredentials()?.steamId,
                 position = settings.cloudReadPosition.first(),
                 generation = accountGeneration.get(),
+                readerGeneration = settings.cloudReaderGeneration.first(),
             )
         }
         val credentials = start.credentials ?: return CloudReadResult.Unconfigured
@@ -282,7 +356,9 @@ class CloudPresenceRepository @Inject constructor(
         return when (val result = fetch(credentials.endpoint, credentials.token, account, position)) {
             is RemoteReadResult.Success -> cloudStateMutex.withLock {
                 if (generationAtStart != accountGeneration.get() ||
-                    credentialsProvider.currentCredentials()?.steamId != account
+                    credentialsProvider.currentCredentials()?.steamId != account ||
+                    settings.cloudReaderGeneration.first() != start.readerGeneration ||
+                    credentialsStore.readCloudCredentials() != credentials
                 ) {
                     // A success carries A's timeline: returning it would leak A's data to B's
                     // caller, and persisting it would repopulate watermark/audit/snapshot.
@@ -290,11 +366,19 @@ class CloudPresenceRepository @Inject constructor(
                     // the new Steam identity was committed/visible.
                     return@withLock CloudReadResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
                 }
-                val snapshot = result.parsed.toSnapshot()
+                val opening = pendingEvidence.boundary(account, start.readerGeneration)
+                    ?.takeIf { boundary ->
+                        result.parsed.transitions.firstOrNull()?.at?.let { boundary.at < it } == true
+                    }
+                val snapshot = result.parsed.toSnapshot(opening)
                 // The consumer runs under the same account-state mutex and before the read
                 // watermark advances. A failed ingest therefore leaves the cloud window retryable
                 // instead of moving the acquisition cursor past uncommitted derived state.
                 consume(snapshot)
+                pendingEvidence.retain(
+                    account, start.readerGeneration, snapshot.windowStart, snapshot.intervals,
+                    result.parsed.transitions.maxByOrNull { it.at },
+                )
                 persistSuccessfulRead(trigger, result.parsed, credentials)
                 CloudReadResult.Success(snapshot)
             }
@@ -345,14 +429,19 @@ class CloudPresenceRepository @Inject constructor(
         if (credentialsStore.readCloudCredentials() == null) {
             return@withLock CloudReadResult.Unconfigured
         }
-        if (credentialsProvider.currentCredentials()?.steamId == null) {
+        val account = credentialsProvider.currentCredentials()?.steamId
+        if (account == null) {
             return@withLock CloudReadResult.NoSteamAccount
         }
+        val generation = settings.cloudReaderGeneration.first()
         settings.clearCloudReadPosition()
         val allIntervals = mutableListOf<CloudPresenceInterval>()
         var totalObservations = 0
         var firstWindowStart: Long? = null
         repeat(MAX_REFILE_PAGES) {
+            if (credentialsProvider.currentCredentials()?.steamId != account ||
+                settings.cloudReaderGeneration.first() != generation
+            ) return@withLock CloudReadResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
             when (val result = readPage(trigger, consume)) {
                 is CloudReadResult.Unconfigured,
                 is CloudReadResult.NoSteamAccount,
@@ -364,6 +453,9 @@ class CloudPresenceRepository @Inject constructor(
                     allIntervals += snapshot.intervals
                     totalObservations += snapshot.observationCount
                     if (!snapshot.hasMore) {
+                        if (credentialsProvider.currentCredentials()?.steamId != account ||
+                            settings.cloudReaderGeneration.first() != generation
+                        ) return@withLock CloudReadResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
                         val combined = snapshot.copy(
                             windowStart = firstWindowStart ?: snapshot.windowStart,
                             intervals = allIntervals.sortedWith(
@@ -408,13 +500,18 @@ class CloudPresenceRepository @Inject constructor(
         if (credentialsStore.readCloudCredentials() == null) {
             return@withLock CloudReadResult.Unconfigured
         }
-        if (credentialsProvider.currentCredentials()?.steamId == null) {
+        val accountAtStart = credentialsProvider.currentCredentials()?.steamId
+        if (accountAtStart == null) {
             return@withLock CloudReadResult.NoSteamAccount
         }
+        val generationAtStart = settings.cloudReaderGeneration.first()
         val allIntervals = mutableListOf<CloudPresenceInterval>()
         var totalObservations = 0
         var firstWindowStart: Long? = null
         repeat(MAX_REFILE_PAGES) {
+            if (credentialsProvider.currentCredentials()?.steamId != accountAtStart ||
+                settings.cloudReaderGeneration.first() != generationAtStart
+            ) return@withLock CloudReadResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
             when (val result = readPage(trigger, consume)) {
                 is CloudReadResult.Unconfigured,
                 is CloudReadResult.NoSteamAccount,
@@ -426,9 +523,18 @@ class CloudPresenceRepository @Inject constructor(
                     allIntervals += snapshot.intervals
                     totalObservations += snapshot.observationCount
                     if (!snapshot.hasMore) {
+                        if (credentialsProvider.currentCredentials()?.steamId != accountAtStart ||
+                            settings.cloudReaderGeneration.first() != generationAtStart
+                        ) return@withLock CloudReadResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
+                        val retained = pendingEvidence.intervals(accountAtStart, generationAtStart)
                         val combined = snapshot.copy(
-                            windowStart = firstWindowStart ?: snapshot.windowStart,
-                            intervals = allIntervals.sortedWith(
+                            windowStart = listOfNotNull(
+                                firstWindowStart,
+                                pendingEvidence.earliestWindowStart(accountAtStart, generationAtStart),
+                            ).minOrNull() ?: snapshot.windowStart,
+                            intervals = (retained + allIntervals)
+                                .distinctBy { it.appId to it.startAt }
+                                .sortedWith(
                                 compareBy(
                                     { interval -> interval.startAt },
                                     { interval -> interval.endAt ?: Long.MAX_VALUE },
@@ -449,6 +555,8 @@ class CloudPresenceRepository @Inject constructor(
         cloudStateMutex.withLock {
             // Invalidate in-flight reads so a late response cannot repopulate after removal.
             accountGeneration.incrementAndGet()
+            settings.advanceCloudReaderGeneration()
+            pendingEvidence.clear()
             credentialsStore.clearCloudCredentials()
             settings.clearCloudReadPosition()
             settings.clearCloudIngestPosition()
@@ -472,6 +580,8 @@ class CloudPresenceRepository @Inject constructor(
     suspend fun invalidateForAccountChange() {
         cloudStateMutex.withLock {
             accountGeneration.incrementAndGet()
+            settings.advanceCloudReaderGeneration()
+            pendingEvidence.clear()
             snapshotState.value = null
             settings.clearCloudReadPosition()
             settings.clearCloudIngestPosition()
@@ -492,6 +602,8 @@ class CloudPresenceRepository @Inject constructor(
     suspend fun runAccountChangeTransition(block: suspend () -> Unit) {
         cloudStateMutex.withLock {
             accountGeneration.incrementAndGet()
+            settings.advanceCloudReaderGeneration()
+            pendingEvidence.clear()
             snapshotState.value = null
             settings.clearCloudReadPosition()
             settings.clearCloudIngestPosition()
@@ -500,6 +612,8 @@ class CloudPresenceRepository @Inject constructor(
                 block()
             } finally {
                 accountGeneration.incrementAndGet()
+                settings.advanceCloudReaderGeneration()
+                pendingEvidence.clear()
                 snapshotState.value = null
                 settings.clearCloudReadPosition()
                 settings.clearCloudIngestPosition()
@@ -518,6 +632,7 @@ class CloudPresenceRepository @Inject constructor(
         val account: String?,
         val position: String?,
         val generation: Long,
+        val readerGeneration: Long,
     )
 
     private suspend fun persistVerifiedConfiguration(
@@ -616,7 +731,7 @@ class CloudPresenceRepository @Inject constructor(
         val nextPosition: String?,
         val hasMore: Boolean,
     ) {
-        fun toSnapshot(): CloudPresenceSnapshot {
+        fun toSnapshot(openingBoundary: CloudPresenceTransition? = null): CloudPresenceSnapshot {
             // An incomplete page covers only its returned transitions: combining the page's
             // prefix with the latest current state would fabricate a tail interval across
             // the omitted transitions, and presenting the server's full-window end would
@@ -628,11 +743,14 @@ class CloudPresenceRepository @Inject constructor(
             } else {
                 windowEnd
             }
+            val reconstructedTransitions = if (openingBoundary == null) transitions else {
+                listOf(openingBoundary) + transitions
+            }
             return CloudPresenceSnapshot(
                 windowStart = windowStart,
                 windowEnd = effectiveWindowEnd,
                 readAt = readAt,
-                intervals = CloudPresenceReconstruction.reconstruct(transitions, effectiveCurrent),
+                intervals = CloudPresenceReconstruction.reconstruct(reconstructedTransitions, effectiveCurrent),
                 current = current,
                 observationCount = transitions.size,
                 nextPosition = nextPosition,
@@ -673,6 +791,7 @@ class CloudPresenceRepository @Inject constructor(
         // Bounds a re-file drain so a server that keeps reporting more never hangs the caller:
         // exceeding it surfaces as a failure rather than applying a partial history.
         private const val MAX_REFILE_PAGES = 50
+        private const val MAX_ROUTINE_PAGES = 4
 
         fun normalizeEndpoint(raw: String): String? {
             val endpoint = raw.trim()
@@ -683,6 +802,18 @@ class CloudPresenceRepository @Inject constructor(
             return url.toString().removeSuffix("/")
         }
     }
+}
+
+private object EmptyPendingEvidence : CloudPendingEvidence {
+    override suspend fun boundary(account: String, generation: Long): CloudPresenceTransition? = null
+    override suspend fun retain(
+        account: String, generation: Long, windowStart: Long,
+        intervals: List<CloudPresenceInterval>, lastTransition: CloudPresenceTransition?,
+    ) = Unit
+    override suspend fun intervals(account: String, generation: Long): List<CloudPresenceInterval> = emptyList()
+    override suspend fun earliestWindowStart(account: String, generation: Long): Long? = null
+    override suspend fun clear() = Unit
+    override suspend fun clearExcept(account: String, generation: Long) = Unit
 }
 
 private enum class CloudReadOutcome {
