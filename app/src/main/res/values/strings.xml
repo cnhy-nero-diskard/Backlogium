@@ -39,8 +39,10 @@
     <string name="settings_action_review_data">Review data tools</string>
     <string name="settings_action_manage_data">Manage data &amp; privacy</string>
     <string name="settings_summary_advanced_working">Advanced settings are being recalculated</string>
+    <string name="settings_summary_advanced_invalid">An advanced rule has an invalid value</string>
     <string name="settings_summary_advanced_review">An advanced rule change is ready to review</string>
     <string name="settings_summary_advanced_quiet">Diagnostics and advanced rules are quiet</string>
+    <string name="settings_action_fix_invalid_rules">Fix or discard rule edit</string>
     <string name="settings_action_review_rules">Review rule change</string>
     <string name="settings_action_manage_advanced">Manage advanced tools</string>
     <string name="settings_section_account">Account</string>

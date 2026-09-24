@@ -348,7 +348,7 @@ fun settingsGroupSummaries(state: SettingsUiState): List<SettingsGroupSummary> {
 
     val advancedInProgress = state.previewing
     val advancedRecommended = state.dirty || state.confirmation != null
-    val advancedAttention = settingsAttention(false, advancedInProgress, advancedRecommended)
+    val advancedAttention = settingsAttention(state.hasInvalidField, advancedInProgress, advancedRecommended)
 
     return listOf(
         SettingsGroupSummary(
@@ -420,11 +420,13 @@ fun settingsGroupSummaries(state: SettingsUiState): List<SettingsGroupSummary> {
             group = SettingsGroup.ADVANCED,
             title = SettingsSummaryText(R.string.settings_group_advanced_title),
             status = when (advancedAttention) {
+                SettingsAttention.BLOCKING -> SettingsSummaryText(R.string.settings_summary_advanced_invalid)
                 SettingsAttention.IN_PROGRESS -> SettingsSummaryText(R.string.settings_summary_advanced_working)
                 SettingsAttention.RECOMMENDED -> SettingsSummaryText(R.string.settings_summary_advanced_review)
-                else -> SettingsSummaryText(R.string.settings_summary_advanced_quiet)
+                SettingsAttention.HEALTHY -> SettingsSummaryText(R.string.settings_summary_advanced_quiet)
             },
             nextAction = when (advancedAttention) {
+                SettingsAttention.BLOCKING -> SettingsSummaryText(R.string.settings_action_fix_invalid_rules)
                 SettingsAttention.RECOMMENDED -> SettingsSummaryText(R.string.settings_action_review_rules)
                 else -> SettingsSummaryText(R.string.settings_action_manage_advanced)
             },

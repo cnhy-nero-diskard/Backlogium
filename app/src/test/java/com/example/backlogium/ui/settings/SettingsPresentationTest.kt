@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.settings
 
+import com.example.backlogium.R
 import com.example.backlogium.data.repo.CloudConfigurationResult
 import com.example.backlogium.data.repo.CloudReadFailure
 import com.example.backlogium.data.updates.AppUpdateState
@@ -7,6 +8,7 @@ import com.example.backlogium.data.updates.AvailableUpdate
 import com.example.backlogium.gamification.RuleConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -148,6 +150,39 @@ class SettingsPresentationTest {
         )
         assertEquals(SettingsAttention.HEALTHY, healthy[2].attention)
         assertEquals(SettingsAttention.HEALTHY, healthy[3].attention)
+    }
+
+    @Test
+    fun invalidRetainedRuleDraftBlocksAdvancedSummaryUntilCorrectedOrDiscarded() {
+        val saved = RuleConfig()
+        val invalidDraft = RuleDraft.from(saved).with(RuleField.LEVEL_BASE, "0")
+        val invalidState = SettingsUiState(
+            loading = false,
+            savedConfig = saved,
+            draft = invalidDraft,
+        )
+
+        assertTrue(invalidState.hasInvalidField)
+        assertNull(invalidState.candidate)
+        assertFalse(invalidState.dirty)
+        val invalidSummary = settingsGroupSummaries(invalidState).single { it.group == SettingsGroup.ADVANCED }
+        assertEquals(SettingsAttention.BLOCKING, invalidSummary.attention)
+        assertEquals(R.string.settings_summary_advanced_invalid, invalidSummary.status.resId)
+        assertEquals(R.string.settings_action_fix_invalid_rules, invalidSummary.nextAction.resId)
+
+        val corrected = invalidState.copy(
+            draft = invalidDraft.with(RuleField.LEVEL_BASE, (saved.levelBase + 1).toString()),
+        )
+        assertEquals(
+            SettingsAttention.RECOMMENDED,
+            settingsGroupSummaries(corrected).single { it.group == SettingsGroup.ADVANCED }.attention,
+        )
+
+        val discarded = invalidState.copy(draft = RuleDraft.from(saved))
+        assertEquals(
+            SettingsAttention.HEALTHY,
+            settingsGroupSummaries(discarded).single { it.group == SettingsGroup.ADVANCED }.attention,
+        )
     }
 
     @Test
