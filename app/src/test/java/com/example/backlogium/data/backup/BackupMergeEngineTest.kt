@@ -469,6 +469,37 @@ class BackupMergeEngineTest {
         assertEquals(25, all.single().minutes)
     }
 
+    @Test fun v1AbsencePreservesLocalFactsAndInsertsUnknownButV2ReplacesBothIndependently() = runTest {
+        val existing = Session(appId = 1L, startAt = 1_000L, endAt = 2_000L, minutes = 10,
+            open = false, recoveredSharedPlay = RecoveredSharedPlayState.FULL,
+            timingInformedSteamPlay = TimingInformedSteamPlayState.PARTIAL)
+        val harness = newEngine(games = mutableMapOf(1L to testGame(1L)), sessions = mutableListOf(existing))
+        val matching = BackupSession(1L, 1_000L.toIso8601(), 2_000L.toIso8601(), 25)
+        val inserted = BackupSession(1L, 5_000L.toIso8601(), 6_000L.toIso8601(), 15)
+
+        harness.engine.merge(baseFile(sessions = listOf(matching, inserted)), RuleConfig())
+        val afterLegacy = harness.sessionDao.getAll()
+        assertEquals(2, afterLegacy.size)
+        assertEquals(25, afterLegacy.first { it.startAt == 1_000L }.minutes)
+        assertEquals(RecoveredSharedPlayState.FULL, afterLegacy.first { it.startAt == 1_000L }.recoveredSharedPlay)
+        assertEquals(TimingInformedSteamPlayState.PARTIAL, afterLegacy.first { it.startAt == 1_000L }.timingInformedSteamPlay)
+        assertEquals(RecoveredSharedPlayState.UNKNOWN, afterLegacy.first { it.startAt == 5_000L }.recoveredSharedPlay)
+        assertEquals(TimingInformedSteamPlayState.UNKNOWN, afterLegacy.first { it.startAt == 5_000L }.timingInformedSteamPlay)
+
+        harness.engine.merge(baseFile(sessions = listOf(matching.copy(
+            cloudContribution = BackupCloudContribution(BackupContributionState.UNKNOWN, BackupContributionState.FULL),
+        ), inserted.copy(
+            cloudContribution = BackupCloudContribution(BackupContributionState.PARTIAL, BackupContributionState.FULL),
+        ))).copy(formatVersion = 2), RuleConfig())
+        val afterV2 = harness.sessionDao.getAll()
+        assertEquals(2, afterV2.size)
+        assertEquals(RecoveredSharedPlayState.UNKNOWN, afterV2.first { it.startAt == 1_000L }.recoveredSharedPlay)
+        assertEquals(TimingInformedSteamPlayState.FULL, afterV2.first { it.startAt == 1_000L }.timingInformedSteamPlay)
+        assertEquals(RecoveredSharedPlayState.PARTIAL, afterV2.first { it.startAt == 5_000L }.recoveredSharedPlay)
+        assertEquals(TimingInformedSteamPlayState.FULL, afterV2.first { it.startAt == 5_000L }.timingInformedSteamPlay)
+        assertEquals(listOf(25, 15), afterV2.sortedBy { it.startAt }.map { it.minutes })
+    }
+
     /**
      * A restore that dropped the hidden set would silently unhide everything and re-apply XP the
      * player deliberately removed, so the set is carried and reapplied (add-hidden-games).

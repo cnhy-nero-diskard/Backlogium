@@ -20,6 +20,8 @@ import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDataOrigin
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
@@ -269,8 +271,16 @@ class BackupMergeEngine @Inject constructor(
         val startAt = backupSession.startAt.iso8601ToEpochMilli()
         val endAt = backupSession.endAt?.iso8601ToEpochMilli()
         val existing = sessionDao.findByNaturalKey(backupSession.appId, startAt, endAt)
+        val recovered = backupSession.cloudContribution?.recoveredSharedPlay?.name
+            ?.let(RecoveredSharedPlayState::valueOf)
+        val timing = backupSession.cloudContribution?.timingInformedSteamPlay?.name
+            ?.let(TimingInformedSteamPlayState::valueOf)
         if (existing != null) {
-            sessionDao.update(existing.copy(minutes = backupSession.minutes))
+            sessionDao.update(existing.copy(
+                minutes = backupSession.minutes,
+                recoveredSharedPlay = recovered ?: existing.recoveredSharedPlay,
+                timingInformedSteamPlay = timing ?: existing.timingInformedSteamPlay,
+            ))
         } else {
             sessionDao.insert(
                 Session(
@@ -281,6 +291,10 @@ class BackupMergeEngine @Inject constructor(
                     // A merged session is, by construction, a completed historical record —
                     // never the one currently-open session a live sync is still extending.
                     open = false,
+                    recoveredSharedPlay = recovered
+                        ?: RecoveredSharedPlayState.UNKNOWN,
+                    timingInformedSteamPlay = timing
+                        ?: TimingInformedSteamPlayState.UNKNOWN,
                 ),
             )
         }
