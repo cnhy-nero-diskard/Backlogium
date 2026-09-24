@@ -1,6 +1,8 @@
 package com.example.backlogium.data.repo
 
 import androidx.room.Room
+import androidx.room.withTransaction
+import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.credentials.CloudCredentials
 import com.example.backlogium.data.credentials.CloudCredentialsStore
 import com.example.backlogium.data.local.BacklogiumDatabase
@@ -18,6 +20,9 @@ import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.FakeSettingsRepository
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.domain.PlaytimeObservationCommitter
+import com.example.backlogium.domain.SessionDiffer
+import com.example.backlogium.data.local.entity.Game
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -60,6 +65,97 @@ class CloudPresencePlacementReaderTest {
     @After
     fun tearDown() {
         database.close()
+    }
+
+    @Test
+    fun routineBeforeSteamDeltaRetainsOwnedIntervalAndCombinesItWithUnreadSuffix() = runBlocking {
+        val periodStart = "2026-09-14T00:00:00Z"
+        val opening = "2026-09-15T00:00:00Z"
+        val firstClose = "2026-09-15T02:00:00Z"
+        val suffixStart = "2026-09-17T00:00:00Z"
+        val suffixClose = "2026-09-17T02:00:00Z"
+        val periodEnd = "2026-09-18T00:00:00Z"
+        val owned = "10"
+        val firstPage = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(
+                CloudPresenceTransitionDto(v = 3, t = opening, gameid = owned, gameName = "Owned", personastate = 1),
+                CloudPresenceTransitionDto(v = 3, t = firstClose, gameid = "20", gameName = "Other",
+                    personastate = 1, prevLastObservedAt = "2026-09-15T01:59:00Z"),
+            ),
+            current = CloudPresenceCurrentDto(v = 2, lastObservedAt = "2026-09-16T00:00:00Z",
+                gameid = "20", gameName = "Other", personastate = 1),
+            nextPosition = firstClose, hasMore = false, windowStart = periodStart,
+            windowEnd = "2026-09-16T00:00:00Z", readAt = "2026-09-16T00:01:00Z",
+        )
+        val suffix = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(
+                CloudPresenceTransitionDto(v = 3, t = suffixStart, gameid = owned,
+                    gameName = "Owned", personastate = 1),
+                CloudPresenceTransitionDto(v = 3, t = suffixClose, gameid = "20", gameName = "Other",
+                    personastate = 1, prevLastObservedAt = "2026-09-17T01:59:00Z"),
+            ),
+            current = CloudPresenceCurrentDto(v = 2, lastObservedAt = periodEnd,
+                gameid = "20", gameName = "Other", personastate = 1),
+            nextPosition = suffixClose, hasMore = false, windowStart = firstClose,
+            windowEnd = periodEnd, readAt = "2026-09-18T00:01:00Z",
+        )
+        val api = FakeCloudPresenceApi { position ->
+            when (position) {
+                null -> firstPage
+                firstClose -> suffix
+                else -> error("Unexpected position $position")
+            }
+        }
+        val settings = FakeSettingsRepository()
+        val (reader, placement) = readerPair(api, settings)
+        database.gameDao().upsert(Game(10L, "Owned", "", 100, 0, 100))
+        database.playerProfileDao().insertIfMissing()
+        val startAt = Instant.parse(periodStart).toEpochMilli()
+        val endAt = Instant.parse(periodEnd).toEpochMilli()
+        database.playerProfileDao().updateSyncStatus(startAt, null)
+
+        assertEquals(CloudCatchUpResult.Complete(1, 2, false), reader.readRoutineCatchUp { })
+        assertEquals(firstClose, settings.cloudReadPosition.first())
+        val evidence = database.pendingCloudEvidenceDao()
+        assertEquals(Instant.parse(opening).toEpochMilli(),
+            evidence.intervals(ACCOUNT, 0L).first { it.appId == 10L }.startAt)
+        assertTrue(database.sessionDao().getAll().isEmpty()) // acquisition is not attribution
+
+        val combined = placement.read(CloudReadTrigger.SYNC, startAt, endAt)!!
+        assertEquals(startAt, combined.windowStart)
+        assertEquals(listOf(Instant.parse(opening).toEpochMilli(), Instant.parse(suffixStart).toEpochMilli()),
+            combined.intervals.filter { it.appId == 10L }.map { it.startAt })
+
+        val committer = PlaytimeObservationCommitter(
+            gameDao = database.gameDao(), sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(), profileDao = database.playerProfileDao(),
+            hiddenGameDao = database.hiddenGameDao(), differ = SessionDiffer(),
+            time = FixedTimeProvider(), sessionActionWriter = SessionActionWriter(
+                database.sessionDao(), database.dailyProgressDao(), database.hiddenGameDao(), FixedTimeProvider(),
+            ),
+        )
+        val observed = listOf(PlaytimeObservationCommitter.ObservedGame(10L, "Owned", "", 130, 0))
+        try {
+            database.withTransaction {
+                committer.commit(observed, endAt, endAt, CloudPresencePlaytimePlacement.Input(combined.intervals))
+                error("simulate failed Steam baseline commit")
+            }
+        } catch (_: IllegalStateException) {
+            // The Room rollback must leave both the baseline and acquired evidence retryable.
+        }
+        assertEquals(100, database.gameDao().getById(10L)!!.lastPlaytime)
+        assertEquals(2, evidence.intervals(ACCOUNT, 0L).count { it.appId == 10L })
+
+        val committed = database.withTransaction {
+            val result = committer.commit(observed, endAt, endAt,
+                CloudPresencePlaytimePlacement.Input(combined.intervals))
+            database.playerProfileDao().updateSyncStatus(endAt, null)
+            result
+        }
+        assertEquals(30, committed.playedDeltaByAppId[10L])
+        assertEquals(30, database.sessionDao().getAll().filter { it.appId == 10L }.sumOf { it.minutes })
     }
 
     @Test
@@ -518,7 +614,13 @@ class CloudPresencePlacementReaderTest {
     private fun placementReader(
         api: CloudPresenceApi,
         settings: FakeSettingsRepository,
-    ): RepositoryCloudPresencePlacementReader {
+    ): RepositoryCloudPresencePlacementReader = readerPair(api, settings).second
+
+    private fun readerPair(
+        api: CloudPresenceApi,
+        settings: FakeSettingsRepository,
+        pending: CloudPendingEvidence? = null,
+    ): Pair<CloudPresenceRepository, RepositoryCloudPresencePlacementReader> {
         val store = FakeCloudCredentialsStore(
             CloudCredentials("https://reader.example.com/read", "secret"),
         )
@@ -529,6 +631,9 @@ class CloudPresencePlacementReaderTest {
             credentialsProvider = FakeCredentials(ACCOUNT),
             settings = settings,
             cloudReadDao = records,
+            pendingEvidence = pending ?: RoomCloudPendingEvidence(
+                database.pendingCloudEvidenceDao(), database.gameDao(), RoomDatabaseTransactionScope(database),
+            ),
             time = FixedTimeProvider(),
         )
         val ingestor = CloudPresenceSessionIngestor(
@@ -553,7 +658,7 @@ class CloudPresencePlacementReaderTest {
             derivedStateWrites = DerivedStateWriteCoordinator(),
             time = FixedTimeProvider(),
         )
-        return RepositoryCloudPresencePlacementReader(repository, ingestor)
+        return repository to RepositoryCloudPresencePlacementReader(repository, ingestor)
     }
 
     private class FakeCloudPresenceApi(
