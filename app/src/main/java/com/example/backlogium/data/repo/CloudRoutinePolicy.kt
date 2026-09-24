@@ -13,4 +13,9 @@ data class CloudRoutineState(
     val lastAdmittedAt: Long? = null,
     val orderingWatermark: Long = 0L,
     val lastAdmissionWatermark: Long = 0L,
+    val latestOtherReadWatermark: Long = 0L,
+    val latestOtherReadTerminal: Boolean = false,
+    val consumedOtherReadWatermark: Long = 0L,
 )
+
+enum class CloudRoutineAdmission { ADMITTED, SATISFIED_BY_READ, COOLDOWN, UNAVAILABLE }

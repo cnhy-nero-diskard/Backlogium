@@ -30,6 +30,7 @@ import com.example.backlogium.domain.librarySortKeyOrNull
 import com.example.backlogium.data.repo.CloudPresenceRefilingBackup
 import com.example.backlogium.data.repo.CloudRoutinePolicy
 import com.example.backlogium.data.repo.CloudRoutineState
+import com.example.backlogium.data.repo.CloudRoutineAdmission
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -107,6 +108,9 @@ class SettingsDataStore @Inject constructor(
         val CLOUD_ROUTINE_LAST_ADMITTED_AT = longPreferencesKey("cloud_routine_last_admitted_at")
         val CLOUD_ROUTINE_ORDER = longPreferencesKey("cloud_routine_order")
         val CLOUD_ROUTINE_LAST_ADMISSION_ORDER = longPreferencesKey("cloud_routine_last_admission_order")
+        val CLOUD_ROUTINE_OTHER_READ_ORDER = longPreferencesKey("cloud_routine_other_read_order")
+        val CLOUD_ROUTINE_OTHER_READ_TERMINAL = booleanPreferencesKey("cloud_routine_other_read_terminal")
+        val CLOUD_ROUTINE_CONSUMED_READ_ORDER = longPreferencesKey("cloud_routine_consumed_read_order")
         val RULE_CONFIG_VERSION = longPreferencesKey("rule_config_version")
 
         /**
@@ -529,11 +533,51 @@ class SettingsDataStore @Inject constructor(
         return result
     }
 
+    suspend fun recordCloudOtherRead(terminal: Boolean) {
+        context.dataStore.edit { prefs ->
+            if (prefs[Keys.CLOUD_ROUTINE_POLICY] == null) return@edit
+            val order = (prefs[Keys.CLOUD_ROUTINE_ORDER] ?: 0L) + 1L
+            prefs[Keys.CLOUD_ROUTINE_ORDER] = order
+            prefs[Keys.CLOUD_ROUTINE_OTHER_READ_ORDER] = order
+            prefs[Keys.CLOUD_ROUTINE_OTHER_READ_TERMINAL] = terminal
+        }
+    }
+
+    suspend fun admitCloudRoutine(at: Long): CloudRoutineAdmission {
+        var result = CloudRoutineAdmission.UNAVAILABLE
+        context.dataStore.edit { prefs ->
+            val state = cloudRoutineState(prefs)
+            val policy = state.policy ?: return@edit
+            val previous = state.lastAdmittedAt
+            if (previous != null && at - previous < policy.minimumGapHours * 3_600_000L) {
+                result = CloudRoutineAdmission.COOLDOWN
+                return@edit
+            }
+            if (state.latestOtherReadTerminal &&
+                state.latestOtherReadWatermark > state.lastAdmissionWatermark &&
+                state.latestOtherReadWatermark > state.consumedOtherReadWatermark
+            ) {
+                prefs[Keys.CLOUD_ROUTINE_CONSUMED_READ_ORDER] = state.latestOtherReadWatermark
+                result = CloudRoutineAdmission.SATISFIED_BY_READ
+                return@edit
+            }
+            val order = state.orderingWatermark + 1L
+            prefs[Keys.CLOUD_ROUTINE_ORDER] = order
+            prefs[Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER] = order
+            prefs[Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT] = at
+            result = CloudRoutineAdmission.ADMITTED
+        }
+        return result
+    }
+
     private fun cloudRoutineState(prefs: Preferences): CloudRoutineState = CloudRoutineState(
         policy = prefs[Keys.CLOUD_ROUTINE_POLICY]?.let { CloudRoutinePolicy.valueOf(it) },
         lastAdmittedAt = prefs[Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT],
         orderingWatermark = prefs[Keys.CLOUD_ROUTINE_ORDER] ?: 0L,
         lastAdmissionWatermark = prefs[Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER] ?: 0L,
+        latestOtherReadWatermark = prefs[Keys.CLOUD_ROUTINE_OTHER_READ_ORDER] ?: 0L,
+        latestOtherReadTerminal = prefs[Keys.CLOUD_ROUTINE_OTHER_READ_TERMINAL] ?: false,
+        consumedOtherReadWatermark = prefs[Keys.CLOUD_ROUTINE_CONSUMED_READ_ORDER] ?: 0L,
     )
 
     /** Durable cloud-session ingest watermark; account changes clear it with the read watermark. */
@@ -800,6 +844,9 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT)
             prefs.remove(Keys.CLOUD_ROUTINE_ORDER)
             prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER)
+            prefs.remove(Keys.CLOUD_ROUTINE_OTHER_READ_ORDER)
+            prefs.remove(Keys.CLOUD_ROUTINE_OTHER_READ_TERMINAL)
+            prefs.remove(Keys.CLOUD_ROUTINE_CONSUMED_READ_ORDER)
             prefs.remove(Keys.CLOUD_REFILE_APPLIED)
             prefs.remove(Keys.CLOUD_REFILE_BACKUP)
             prefs.remove(Keys.CLOUD_REFILE_CREATED_IDS)

@@ -182,6 +182,11 @@ interface SettingsRepository : SessionEndOutbox {
     /** Called when a routine job actually begins, not when offline work is enqueued. */
     suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState = CloudRoutineState()
 
+    suspend fun recordCloudOtherRead(terminal: Boolean) = Unit
+
+    /** Transactionally decide one opportunity across all routine triggers. */
+    suspend fun admitCloudRoutine(at: Long): CloudRoutineAdmission = CloudRoutineAdmission.UNAVAILABLE
+
     /** Durable watermark for cloud intervals already folded into presence sessions. */
     val cloudIngestPosition: Flow<String?>
         get() = flowOf(null)
@@ -360,6 +365,12 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState =
         settings.recordCloudRoutineAdmission(at)
+
+    override suspend fun recordCloudOtherRead(terminal: Boolean) =
+        settings.recordCloudOtherRead(terminal)
+
+    override suspend fun admitCloudRoutine(at: Long): CloudRoutineAdmission =
+        settings.admitCloudRoutine(at)
 
     override val cloudIngestPosition: Flow<String?> = settings.cloudIngestPositionFlow
 

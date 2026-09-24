@@ -35,6 +35,27 @@ import java.time.ZoneId
 
 class CloudPresenceRepositoryTest {
     @Test
+    fun onlyTerminalManualOrPlacementReadCanSatisfyTheNextOpportunity() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse(
+            nextPosition = "2026-09-15T00:20:00Z", hasMore = true,
+        ))
+        val settings = FakeSettingsRepository()
+        val repo = repository(api, FakeCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+        ), FakeCloudReadDao(), settings, ACCOUNT)
+        repo.reconcileRoutinePolicy()
+        assertTrue(repo.read(trigger = CloudReadTrigger.SETTINGS_MANUAL) is CloudReadResult.Success)
+        assertEquals(false, settings.cloudRoutineState.first().latestOtherReadTerminal)
+        api.answer = sampleResponse(nextPosition = "2026-09-15T00:30:00Z")
+        assertTrue(repo.read(trigger = CloudReadTrigger.SYNC) is CloudReadResult.Success)
+        assertEquals(true, settings.cloudRoutineState.first().latestOtherReadTerminal)
+        assertEquals(CloudRoutineAdmission.SATISFIED_BY_READ,
+            settings.admitCloudRoutine(1_000L))
+        assertEquals(CloudRoutineAdmission.ADMITTED,
+            settings.admitCloudRoutine(1_000L))
+    }
+
+    @Test
     fun startupReconcilesVerifiedReaderWithoutMovingCursorsOrResettingPolicy() = runBlocking {
         val api = FakeCloudPresenceApi()
         val store = FakeCloudCredentialsStore(

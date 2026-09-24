@@ -1,6 +1,8 @@
 package com.example.backlogium.data.local
 
 import com.example.backlogium.data.repo.CloudRoutinePolicy
+import com.example.backlogium.data.repo.CloudRoutineAdmission
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -12,6 +14,36 @@ import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class CloudRoutineSettingsTest {
+    @Test
+    fun concurrentTriggersFailureCooldownAndTerminalWatermarkAreShared() = runTest {
+        val store = SettingsDataStore(RuntimeEnvironment.getApplication())
+        store.clearAccountDerivedState()
+        try {
+            store.initializeCloudRoutinePolicy()
+            val first = async { store.admitCloudRoutine(1_000L) }
+            val second = async { store.admitCloudRoutine(1_000L) }
+            assertEquals(
+                setOf(CloudRoutineAdmission.ADMITTED, CloudRoutineAdmission.COOLDOWN),
+                setOf(first.await(), second.await()),
+            )
+            assertEquals(CloudRoutineAdmission.COOLDOWN, store.admitCloudRoutine(2_000L))
+            store.recordCloudOtherRead(terminal = true)
+            assertEquals(CloudRoutineAdmission.SATISFIED_BY_READ,
+                store.admitCloudRoutine(1_000L + 12L * 3_600_000L))
+            assertEquals(CloudRoutineAdmission.ADMITTED,
+                store.admitCloudRoutine(1_000L + 12L * 3_600_000L))
+            // The used terminal read is now older than the latest admission.
+            assertEquals(CloudRoutineAdmission.ADMITTED,
+                store.admitCloudRoutine(1_000L + 24L * 3_600_000L))
+            store.recordCloudOtherRead(terminal = true)
+            store.recordCloudOtherRead(terminal = false)
+            assertEquals(CloudRoutineAdmission.ADMITTED,
+                store.admitCloudRoutine(1_000L + 36L * 3_600_000L))
+        } finally {
+            store.clearAccountDerivedState()
+        }
+    }
+
     @Test
     fun preferenceAndAdmissionSurviveStoreRecreationWithoutResettingCursors() = runTest {
         val context = RuntimeEnvironment.getApplication()

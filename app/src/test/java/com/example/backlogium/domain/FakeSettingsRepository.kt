@@ -6,6 +6,7 @@ import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.CloudRoutinePolicy
 import com.example.backlogium.data.repo.CloudRoutineState
+import com.example.backlogium.data.repo.CloudRoutineAdmission
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -106,6 +107,30 @@ internal class FakeSettingsRepository : SettingsRepository {
             lastAdmittedAt = at, orderingWatermark = next, lastAdmissionWatermark = next,
         )
         return routine.value
+    }
+    override suspend fun recordCloudOtherRead(terminal: Boolean) {
+        if (routine.value.policy == null) return
+        val next = routine.value.orderingWatermark + 1
+        routine.value = routine.value.copy(
+            orderingWatermark = next, latestOtherReadWatermark = next,
+            latestOtherReadTerminal = terminal,
+        )
+    }
+    override suspend fun admitCloudRoutine(at: Long): CloudRoutineAdmission {
+        val state = routine.value
+        val policy = state.policy ?: return CloudRoutineAdmission.UNAVAILABLE
+        if (state.lastAdmittedAt != null &&
+            at - state.lastAdmittedAt < policy.minimumGapHours * 3_600_000L
+        ) return CloudRoutineAdmission.COOLDOWN
+        if (state.latestOtherReadTerminal &&
+            state.latestOtherReadWatermark > state.lastAdmissionWatermark &&
+            state.latestOtherReadWatermark > state.consumedOtherReadWatermark
+        ) {
+            routine.value = state.copy(consumedOtherReadWatermark = state.latestOtherReadWatermark)
+            return CloudRoutineAdmission.SATISFIED_BY_READ
+        }
+        recordCloudRoutineAdmission(at)
+        return CloudRoutineAdmission.ADMITTED
     }
 
     private val cloudIngestCursor = MutableStateFlow<String?>(null)

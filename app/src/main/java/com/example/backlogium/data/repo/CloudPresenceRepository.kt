@@ -187,6 +187,16 @@ class CloudPresenceRepository @Inject constructor(
         settings.initializeCloudRoutinePolicy()
     }
 
+    /** Verify identity at work start; DataStore arbitrates coincident trigger admissions. */
+    suspend fun admitRoutineWork(account: String, generation: Long): CloudRoutineAdmission =
+        cloudStateMutex.withLock {
+            if (credentialsProvider.currentCredentials()?.steamId != account ||
+                credentialsStore.readCloudCredentials() == null ||
+                settings.cloudReaderGeneration.first() != generation
+            ) return@withLock CloudRoutineAdmission.UNAVAILABLE
+            settings.admitCloudRoutine(time.nowMillis())
+        }
+
     suspend fun verifyAndSave(
         endpoint: String,
         token: String,
@@ -302,11 +312,16 @@ class CloudPresenceRepository @Inject constructor(
 
     /** At most four serialized pages per routine opportunity; every consumed page commits its cursor. */
     suspend fun readRoutineCatchUp(
+        expectedAccount: String? = null,
+        expectedGeneration: Long? = null,
         consume: suspend (CloudPresenceSnapshot) -> Unit,
     ): CloudCatchUpResult = cloudReadSequenceMutex.withLock {
         val account = credentialsProvider.currentCredentials()?.steamId ?: return@withLock CloudCatchUpResult.Unavailable
         if (credentialsStore.readCloudCredentials() == null) return@withLock CloudCatchUpResult.Unavailable
         val generation = settings.cloudReaderGeneration.first()
+        if ((expectedAccount != null && account != expectedAccount) ||
+            (expectedGeneration != null && generation != expectedGeneration)
+        ) return@withLock CloudCatchUpResult.Unavailable
         var transitions = 0
         repeat(MAX_ROUTINE_PAGES) { page ->
             if (credentialsProvider.currentCredentials()?.steamId != account ||
@@ -667,6 +682,9 @@ class CloudPresenceRepository @Inject constructor(
         configurationState.value = credentials.toConfiguration()
         snapshotState.value = parsed.toSnapshot()
         record(trigger, CloudReadOutcome.SUCCESS, parsed)
+        if (trigger == CloudReadTrigger.SETTINGS_MANUAL || trigger == CloudReadTrigger.SYNC ||
+            trigger == CloudReadTrigger.POST_PLAY
+        ) settings.recordCloudOtherRead(terminal = !parsed.hasMore)
     }
 
     private suspend fun fetch(
