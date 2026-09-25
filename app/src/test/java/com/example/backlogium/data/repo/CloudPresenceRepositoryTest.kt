@@ -678,6 +678,53 @@ class CloudPresenceRepositoryTest {
     }
 
     @Test
+    fun recoveryClearsOldIngestFenceBeforeTheGenerationCommitItThenDiesAfter() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://old.example.com/read", "old-secret"))
+        settings.setCloudIngestPosition("old-ingest")
+
+        // Death after the marker and the credential promotion but before the generation
+        // commit: B's credentials are active, the persisted generation is still A's, and
+        // A's ingest watermark — the "already folded" fence over A's history — is stored.
+        evidence.retain(ACCOUNT, 2L, 1_000L, listOf(foreignInterval(20L)), null)
+        store.writeCloudCredentials("https://new.example.com/read", "new-secret")
+        settings.markCloudReaderPromotion(2L)
+
+        // First recovery dies at the first effect after the generation commit boundary.
+        // Recovery must clear A's ingest fence before that commit, mirroring the normal
+        // path, so the fence is already gone when the commit lands: a restart can then
+        // never mistake a surviving watermark for B's own ingest fence. Under the old
+        // post-commit ordering the fence would still be stored behind the promoted
+        // generation at this death point.
+        evidence.failNext = true
+        try {
+            repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+                .reconcileRoutinePolicy()
+            org.junit.Assert.fail("evidence clear should fail")
+        } catch (_: IllegalStateException) {
+            // The generation committed; the marker survives for the second recovery.
+        }
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertEquals(2L, settings.cloudReaderPromotionTarget.first())
+        assertNull(settings.cloudIngestPosition.first())
+
+        // Second recovery: the persisted generation already equals the target, so the fence
+        // clear is skipped by design; the watermark it leaves in place must not be A's.
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertTrue(restarted.reconcileRoutinePolicy() != null)
+
+        assertEquals("https://new.example.com/read", store.credentials?.endpoint)
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        assertEquals(setOf(ACCOUNT to 2L), evidence.rows.keys.toSet())
+        assertNull(settings.cloudIngestPosition.first())
+    }
+
+    @Test
     fun removingConfigurationAbandonsAnyStagedPromotion() = runBlocking {
         val api = FakeCloudPresenceApi(answer = sampleResponse())
         val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
@@ -1756,6 +1803,10 @@ class CloudPresenceRepositoryTest {
         }
 
         override suspend fun clearExcept(account: String, generation: Long) {
+            if (failNext) {
+                failNext = false
+                error("simulated evidence clear failure")
+            }
             rows.keys.removeAll { it != account to generation }
             boundaries.keys.removeAll { it != account to generation }
         }

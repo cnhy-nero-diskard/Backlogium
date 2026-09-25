@@ -230,6 +230,15 @@ class CloudPresenceRepository @Inject constructor(
             val account = credentialsProvider.currentCredentials()?.steamId ?: return@withLock
             if (staged != null) credentialsStore.commitStagedCloudCredentials()
             val generationBefore = settings.cloudReaderGeneration.first()
+            // Mirror the normal path: the old reader's ingest fence is retired before the
+            // generation commit. While the persisted generation still names the old reader,
+            // this promotion's ingest cannot have run and the watermark is the old reader's,
+            // so clearing it first makes a death after the clear but before the commit safely
+            // repeatable; a death after the commit then always finds the watermark either
+            // already gone or the replacement's own ingest fence. Once the generation already
+            // equals the target the clear must be skipped, because a re-read of the committed
+            // page relies on the replacement's own fence to avoid re-crediting its fold.
+            if (generationBefore != marker) settings.clearCloudIngestPosition()
             val target = settings.finishCloudReaderPromotion() ?: return@withLock
             // Re-apply the post-commit effects a crash may have skipped, so the replacement
             // never resumes the old reader's watermark. The marker is the recovery signal for
@@ -237,14 +246,6 @@ class CloudPresenceRepository @Inject constructor(
             // step below has run; the final clear retires it.
             pendingEvidence.clearExcept(account, target)
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = false)
-            // The old reader's ingest fence is retired only when this recovery performed the
-            // generation commit: the normal path clears it just before that commit, so while
-            // the persisted generation still names the old reader the promotion's ingest
-            // cannot have run and the watermark is the old reader's. Once the generation
-            // already equals the target the watermark is either cleared or the replacement's
-            // own ingest fence, which a re-read of the committed page relies on to avoid
-            // re-crediting the replacement's own fold.
-            if (generationBefore != target) settings.clearCloudIngestPosition()
             settings.clearCloudReadPosition()
             settings.clearCloudReadSummary()
             settings.initializeCloudRoutinePolicy()
