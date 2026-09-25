@@ -172,15 +172,19 @@ interface SettingsRepository : SessionEndOutbox {
 
     /**
      * Durable staged-replacement marker: non-null target generation while an endpoint
-     * replacement's credential+generation promotion is mid-commit. Old implementations
-     * always report no promotion.
+     * replacement's credential+generation promotion is mid-commit or its post-commit
+     * cleanup has not finished. Old implementations always report no promotion.
      */
     val cloudReaderPromotionTarget: Flow<Long?>
         get() = flowOf(null)
 
     suspend fun markCloudReaderPromotion(target: Long) = Unit
 
-    /** Sets the persisted generation to the staged target and clears the marker, atomically. */
+    /**
+     * Sets the persisted generation to the staged target, leaving the marker in place so a
+     * death before the post-commit cleanup completes still leaves a recovery signal. Returns
+     * the target, or null when no promotion was marked.
+     */
     suspend fun finishCloudReaderPromotion(): Long? = null
 
     suspend fun clearCloudReaderPromotion() = Unit

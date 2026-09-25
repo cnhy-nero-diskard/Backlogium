@@ -377,6 +377,47 @@ class CloudPresenceRepositoryTest {
     }
 
     @Test
+    fun restartedPromotionRetiresOldReaderStateWhenDeathFollowsTheGenerationCommit() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://old.example.com/read", "old-secret"))
+        settings.setCloudReadPosition("old-position")
+        settings.recordCloudReadSummary(
+            at = 1_000L, trigger = CloudReadTrigger.SETTINGS_MANUAL, outcome = CloudReadSummaryOutcome.COMPLETE,
+        )
+
+        // Death after finishCloudReaderPromotion committed generation 2 but before the
+        // post-commit cleanup ran: B is active, generation 2 is durable, the marker survives,
+        // and A's watermark, summary, and evidence are all still present.
+        evidence.retain(ACCOUNT, 2L, 1_000L, listOf(foreignInterval(20L)), null)
+        store.stageCloudCredentials("https://new.example.com/read", "new-secret")
+        settings.markCloudReaderPromotion(2L)
+        store.commitStagedCloudCredentials()
+        assertEquals(2L, settings.finishCloudReaderPromotion())
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertEquals(2L, settings.cloudReaderPromotionTarget.first())
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertTrue(restarted.reconcileRoutinePolicy() != null)
+
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        assertEquals(setOf(ACCOUNT to 2L), evidence.rows.keys.toSet())
+        assertNull(evidence.boundary(ACCOUNT, 1L))
+        assertNull(settings.cloudReadPosition.first())
+        assertNull(settings.cloudReadSummary.first().lastOutcome)
+
+        // The replacement's first read resumes from the beginning: A's watermark must never
+        // be sent to B.
+        assertTrue(restarted.read() is CloudReadResult.Success)
+        assertEquals("Bearer new-secret", api.requests.last().authorization)
+        assertNull(api.requests.last().position)
+    }
+
+    @Test
     fun orphanedStagedCredentialsAreDiscardedWhenNoMarkerExists() = runBlocking {
         val api = FakeCloudPresenceApi(answer = sampleResponse())
         val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))

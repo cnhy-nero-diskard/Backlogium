@@ -107,7 +107,9 @@ internal class FakeSettingsRepository : SettingsRepository {
         }
         val target = promotionTarget.value ?: return null
         readerGeneration.value = target
-        promotionTarget.value = null
+        // Mirrors SettingsDataStore: the marker survives the generation commit and is removed
+        // by clearCloudReaderPromotion once the post-commit cleanup has run, so a death between
+        // the two still leaves a recoverable promotion.
         return target
     }
     override suspend fun clearCloudReaderPromotion() {

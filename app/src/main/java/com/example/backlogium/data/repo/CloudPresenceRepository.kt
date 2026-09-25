@@ -200,10 +200,13 @@ class CloudPresenceRepository @Inject constructor(
      * replacement proceeds. Staged credentials and the staged page are written before the durable
      * marker, so a marked promotion can always be completed by re-running the idempotent steps
      * after its commit point; staged inputs without a marker are an abandoned attempt and are
-     * discarded. This is what makes endpoint replacement one logical transaction across the
-     * pending-evidence Room store, Settings DataStore, and the encrypted credential DataStore:
-     * no read can observe the replacement reader's evidence paired with the old credentials, or
-     * the old generation with its evidence already retired.
+     * discarded. The marker survives the generation commit itself and is removed only once the
+     * post-commit cleanup has run, so a death between the commit and that cleanup still finds a
+     * recovery signal and re-runs the same steps idempotently; this path therefore also tolerates
+     * the generation already equalling the target. This is what makes endpoint replacement one
+     * logical transaction across the pending-evidence Room store, Settings DataStore, and the
+     * encrypted credential DataStore: no read can observe the replacement reader's evidence paired
+     * with the old credentials, or the old generation with its evidence already retired.
      *
      * Caller must hold [cloudReadSequenceMutex]; the account-state mutex is taken here so
      * invalidation cannot interleave with the completed promotion's writes.
@@ -220,12 +223,15 @@ class CloudPresenceRepository @Inject constructor(
             if (staged != null) credentialsStore.commitStagedCloudCredentials()
             val target = settings.finishCloudReaderPromotion() ?: return@withLock
             // Re-apply the post-commit effects a crash may have skipped, so the replacement
-            // never resumes the old reader's watermark.
+            // never resumes the old reader's watermark. The marker is the recovery signal for
+            // a death between the generation commit and this cleanup, so it stays until every
+            // step below has run; the final clear retires it.
             pendingEvidence.clearExcept(account, target)
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = false)
             settings.clearCloudReadPosition()
             settings.clearCloudReadSummary()
             settings.initializeCloudRoutinePolicy()
+            settings.clearCloudReaderPromotion()
         }
     }
 
@@ -324,7 +330,9 @@ class CloudPresenceRepository @Inject constructor(
                         // The marker is the commit point. Every step below it is idempotent,
                         // so a persistence failure or process death after it is finished by
                         // recoverStagedPromotionLocked on the next access rather than rolled
-                        // back: the old credentials are already replaced.
+                        // back: the old credentials are already replaced. The marker stays
+                        // until the final step below, so a death mid-cleanup still leaves the
+                        // recovery signal that points at these idempotent effects.
                         credentialsStore.commitStagedCloudCredentials()
                         settings.finishCloudReaderPromotion()
                         // Only now that the credential+generation promotion is durably
@@ -339,6 +347,10 @@ class CloudPresenceRepository @Inject constructor(
                             parsed = result.parsed,
                         )
                         settings.initializeCloudRoutinePolicy()
+                        // Every post-promotion effect above is durable; only now is the
+                        // recovery marker retired, so a death at any earlier point re-runs
+                        // them idempotently instead of leaving the old reader's state behind.
+                        settings.clearCloudReaderPromotion()
                         CloudConfigurationResult.Saved
                     }
                 } }

@@ -525,9 +525,16 @@ class SettingsDataStore @Inject constructor(
     }
 
     /**
-     * Commit the staged replacement: set the persisted reader generation to the staged target and
-     * clear the marker in one edit. Returns the target, or null when no promotion was marked, so
-     * recovery can resume the same step idempotently after process death.
+     * Commit the staged replacement's generation: set the persisted reader generation to the
+     * staged target and leave the marker in place. Returns the target, or null when no promotion
+     * was marked, so recovery can resume the same step idempotently after process death. The
+     * marker deliberately survives this edit because the post-commit cleanup (retiring the old
+     * generation's evidence and clearing the old reader's watermark and summary) runs after it:
+     * clearing the marker here would let a process death between the two leave the durable
+     * generation promoted while the old reader's state survives with no recovery signal left.
+     * Callers remove the marker with [clearCloudReaderPromotion] once every cleanup step has
+     * completed; re-running this when the generation already equals the target changes nothing
+     * and still returns the target.
      */
     suspend fun finishCloudReaderPromotion(): Long? {
         var target: Long? = null
@@ -535,7 +542,6 @@ class SettingsDataStore @Inject constructor(
             val marked = prefs[Keys.CLOUD_READER_PROMOTION_TARGET]
             if (marked != null) {
                 prefs[Keys.CLOUD_READER_GENERATION] = marked
-                prefs.remove(Keys.CLOUD_READER_PROMOTION_TARGET)
                 target = marked
             }
         }
