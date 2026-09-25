@@ -556,7 +556,7 @@ class CloudPresenceRepositoryTest {
         }
 
         // The ingest never ran, so no B-derived session and no B ingest watermark exist, and
-        // A's ingest cursor was restored rather than left suppressed by a foreign watermark.
+        // A's ingest cursor was never touched: it is cleared only after a committed promotion.
         assertTrue(ingested.isEmpty())
         assertEquals("old-ingest", settings.cloudIngestPosition.first())
         assertEquals("https://old.example.com/read", store.credentials?.endpoint)
@@ -568,6 +568,36 @@ class CloudPresenceRepositoryTest {
         assertTrue(restarted.read(consume = consume) is CloudReadResult.Success)
         assertEquals(1, ingested.size)
         assertEquals("ingested-${ingested.single().readAt}", settings.cloudIngestPosition.first())
+    }
+
+    @Test
+    fun preMarkerRestartAbandonsReplacementAndKeepsOldIngestWatermark() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://old.example.com/read", "old-secret"))
+        settings.setCloudIngestPosition("old-ingest")
+
+        // Process death in the pre-marker window: B's page and credentials are staged at
+        // generation 2, but the durable marker was never written, so no catch block ran and
+        // nothing rolled back. A stays the active reader and its ingest watermark — the fence
+        // that stops a later complete-history drain from re-crediting pages A already
+        // consumed — must survive the abandoned attempt.
+        evidence.retain(ACCOUNT, 2L, 1_000L, listOf(foreignInterval(20L)), null)
+        store.stageCloudCredentials("https://new.example.com/read", "new-secret")
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertTrue(restarted.read() is CloudReadResult.Success)
+
+        // Recovery discarded B's abandoned attempt; A's credentials, generation, and ingest
+        // watermark are exactly as they were before B started.
+        assertNull(store.stagedCredentials)
+        assertEquals("https://old.example.com/read", store.credentials?.endpoint)
+        assertEquals(1L, settings.cloudReaderGeneration.first())
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        assertEquals("old-ingest", settings.cloudIngestPosition.first())
     }
 
     @Test

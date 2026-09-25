@@ -206,7 +206,9 @@ class CloudPresenceRepository @Inject constructor(
      * the generation already equalling the target. The replacement page's ingest runs only after
      * that commit, so its derived sessions and ingest watermark never exist without a marker: a
      * marker-less restart cannot inherit them, and a marker-covered death always completes the
-     * promotion that owns them. This is what makes endpoint replacement one
+     * promotion that owns them. The old reader's ingest watermark is cleared only inside that same
+     * marker-covered phase, so a marker-less restart also keeps the old reader's ingest fence
+     * intact for its next read. This is what makes endpoint replacement one
      * logical transaction across the pending-evidence Room store, Settings DataStore, and the
      * encrypted credential DataStore: no read can observe the replacement reader's evidence paired
      * with the old credentials, or the old generation with its evidence already retired.
@@ -305,11 +307,12 @@ class CloudPresenceRepository @Inject constructor(
                         val persistedGeneration = settings.cloudReaderGeneration.first()
                         val readerGeneration = persistedGeneration + 1L
                         val snapshot = result.parsed.toSnapshot()
-                        val previousIngestPosition = settings.cloudIngestPosition.first()
-                        settings.clearCloudIngestPosition()
                         // Discard rows an interrupted replacement left staged, so this
                         // verification's page can never combine with a previous attempt's
-                        // evidence under the same target generation.
+                        // evidence under the same target generation. A's ingest cursor is
+                        // deliberately left untouched here: it is cleared only after the
+                        // durable promotion commit below, so an attempt abandoned before the
+                        // marker leaves A fully intact for its next read.
                         pendingEvidence.clearExcept(account, persistedGeneration)
                         try {
                             pendingEvidence.retain(
@@ -320,14 +323,11 @@ class CloudPresenceRepository @Inject constructor(
                             settings.markCloudReaderPromotion(readerGeneration)
                         } catch (failure: Throwable) {
                             // Nothing passed the durable marker: the old verified reader is
-                            // still the active one, so abandon the staged page and restore
-                            // its ingest cursor. The ingest has not run yet, so there are no
+                            // still the active one, so abandon the staged page. The ingest has
+                            // not run yet and its cursor was never touched, so there are no
                             // derived effects to roll back.
                             credentialsStore.clearStagedCloudCredentials()
                             pendingEvidence.clearExcept(account, persistedGeneration)
-                            if (previousIngestPosition != null) {
-                                settings.setCloudIngestPosition(previousIngestPosition)
-                            }
                             throw failure
                         }
                         // The marker is the commit point. Every step below it is idempotent,
@@ -344,12 +344,16 @@ class CloudPresenceRepository @Inject constructor(
                         // The ingest is part of the committed promotion: it runs only after
                         // the marker and the credential+generation commit, and before the
                         // read watermark advances below, so its derived sessions and ingest
-                        // cursor can never exist without a promotion marker. A death before
-                        // it returns is still finished by recovery as the replacement's
-                        // promotion, with no ingest watermark, so the replacement re-ingests
-                        // the page; a death after it keeps the effects as the replacement's
-                        // own. A failed ingest also leaves the page retryable, since the read
-                        // position has not advanced.
+                        // cursor can never exist without a promotion marker. A's ingest
+                        // cursor is cleared at the same point, immediately before the ingest,
+                        // so a death anywhere before the marker abandons the attempt with
+                        // A's watermark intact, while a death after the marker is finished
+                        // by recovery as the replacement's promotion. A death after this
+                        // clear but before the ingest returns leaves no ingest watermark, so
+                        // the replacement re-ingests the page; a death after it keeps the
+                        // effects as the replacement's own. A failed ingest also leaves the
+                        // page retryable, since the read position has not advanced.
+                        settings.clearCloudIngestPosition()
                         consume(snapshot)
                         routineWorkCanceller?.cancelOldReaderWork(removePeriodic = false)
                         settings.clearCloudReadPosition()
