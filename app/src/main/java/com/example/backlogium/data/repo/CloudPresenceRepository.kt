@@ -352,14 +352,27 @@ class CloudPresenceRepository @Inject constructor(
         settings.clearCloudReaderRemoval()
     }
 
-    /** Verify identity at work start; DataStore arbitrates coincident trigger admissions. */
+    /**
+     * Verify identity at work start; DataStore arbitrates coincident trigger admissions.
+     *
+     * Recovery-aware: an interrupted promotion/removal is finished or abandoned before the
+     * identity check, so admission can never mutate cooldown state on behalf of a stale
+     * generation that recovery is about to retire — a job tagged with the pre-promotion
+     * generation would otherwise consume the new reader's cooldown without reading a page.
+     * Holds [cloudReadSequenceMutex] like every other read path, so the recovery cannot
+     * interleave with a drain or verification; a recovery failure propagates and no
+     * admission is recorded.
+     */
     suspend fun admitRoutineWork(account: String, generation: Long): CloudRoutineAdmission =
-        cloudStateMutex.withLock {
-            if (credentialsProvider.currentCredentials()?.steamId != account ||
-                credentialsStore.readCloudCredentials() == null ||
-                settings.cloudReaderGeneration.first() != generation
-            ) return@withLock CloudRoutineAdmission.UNAVAILABLE
-            settings.admitCloudRoutine(time.nowMillis())
+        cloudReadSequenceMutex.withLock {
+            recoverStagedPromotionLocked()
+            cloudStateMutex.withLock {
+                if (credentialsProvider.currentCredentials()?.steamId != account ||
+                    credentialsStore.readCloudCredentials() == null ||
+                    settings.cloudReaderGeneration.first() != generation
+                ) return@withLock CloudRoutineAdmission.UNAVAILABLE
+                settings.admitCloudRoutine(time.nowMillis())
+            }
         }
 
     suspend fun verifyAndSave(

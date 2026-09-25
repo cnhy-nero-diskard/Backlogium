@@ -726,6 +726,64 @@ class CloudPresenceRepositoryTest {
     }
 
     @Test
+    fun staleRoutineAdmissionNeverConsumesCooldownBeforePromotionRecoveryCommits() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://old.example.com/read", "old-secret"))
+        settings.setCloudIngestPosition("old-ingest")
+        settings.recordCloudRoutineAdmission(1234L)
+
+        // Death after B's credentials were promoted but before the generation commit: B is
+        // active, the marker names generation 2, and the persisted generation is still 1.
+        // A routine job tagged with generation 1 may already be enqueued from before the
+        // crash; its admission must not land until recovery has committed the promotion.
+        store.writeCloudCredentials("https://new.example.com/read", "new-secret")
+        settings.markCloudReaderPromotion(2L)
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+
+        // The startup reconciliation dies at its first recovery attempt, like a startup whose
+        // reconcileRoutinePolicy() throws: the generation committed and the marker survives.
+        evidence.failNextClear = true
+        try {
+            restarted.reconcileRoutinePolicy()
+            org.junit.Assert.fail("reconciliation should fail at the forced recovery point")
+        } catch (_: IllegalStateException) {
+            // Generation committed; the marker survives for the next recovery.
+        }
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertEquals(2L, settings.cloudReaderPromotionTarget.first())
+
+        // A stale job arriving while recovery is incomplete must not record an admission: its
+        // own recovery attempt still fails, and the failure propagates with the cooldown
+        // untouched.
+        evidence.failNextClear = true
+        try {
+            restarted.admitRoutineWork(ACCOUNT, 1L)
+            org.junit.Assert.fail("admission must not proceed when recovery still fails")
+        } catch (_: IllegalStateException) {
+            // No admission was recorded and the persisted cooldown is untouched.
+        }
+        assertEquals(1234L, settings.cloudRoutineState.first().lastAdmittedAt)
+        assertEquals(2L, settings.cloudRoutineState.first().orderingWatermark)
+
+        // The retry completes the promotion to generation 2 and then refuses the stale
+        // generation-1 job, still without recording an admission: zero pages read, zero
+        // cooldown consumed for the replacement reader.
+        assertEquals(CloudRoutineAdmission.UNAVAILABLE, restarted.admitRoutineWork(ACCOUNT, 1L))
+
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        val routine = settings.cloudRoutineState.first()
+        assertEquals(1234L, routine.lastAdmittedAt)
+        assertEquals(2L, routine.orderingWatermark)
+        assertEquals(2L, routine.lastAdmissionWatermark)
+    }
+
+    @Test
     fun removingConfigurationAbandonsAnyStagedPromotion() = runBlocking {
         val api = FakeCloudPresenceApi(answer = sampleResponse())
         val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))

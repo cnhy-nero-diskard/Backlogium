@@ -157,9 +157,17 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
                 .isSuccess
             if (!ready) return@launch
 
-            runCatching { cloudPresence.reconcileRoutinePolicy() }
+            // Routine work must not be exposed until promotion/removal recovery has
+            // succeeded: a job admitted against the pre-promotion generation before recovery
+            // commits would consume the new reader's cooldown without reading a page. On
+            // failure, skip scheduling for this launch; the next startup retries the
+            // idempotent reconciliation.
+            val routineReady = runCatching { cloudPresence.reconcileRoutinePolicy() }
                 .onFailure { Timber.e(it, "Cloud routine policy reconciliation failed") }
-            cloudRoutineScheduler.observeConfiguration()
+                .isSuccess
+            if (routineReady) {
+                cloudRoutineScheduler.observeConfiguration()
+            }
 
             // Start after account recovery so a durable session-end handoff cannot schedule work
             // against an account reset that is still incomplete. The outbox replays anything
