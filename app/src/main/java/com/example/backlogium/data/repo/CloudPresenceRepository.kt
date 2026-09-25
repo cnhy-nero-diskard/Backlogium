@@ -326,7 +326,8 @@ class CloudPresenceRepository @Inject constructor(
      * flows observing a reader the durable store has already removed. Any failure below keeps
      * the marker, so the next recovery retries the idempotent cleanup instead of losing it.
      *
-     * Caller must hold [cloudStateMutex] (via [recoverStagedPromotionLocked]).
+     * Caller must hold [cloudStateMutex] (via [recoverStagedPromotionLocked], or
+     * [runAccountChangeTransition] so the account reset cannot clear the marker first).
      */
     private suspend fun recoverInterruptedRemovalLocked() {
         val target = settings.cloudReaderRemovalTarget.first() ?: return
@@ -877,6 +878,14 @@ class CloudPresenceRepository @Inject constructor(
      */
     suspend fun runAccountChangeTransition(block: suspend () -> Unit) {
         cloudStateMutex.withLock {
+            // The durable reset inside [block] removes the removal marker
+            // (SettingsDataStore.clearAccountDerivedState), which is the only recovery signal
+            // [recoverInterruptedRemovalLocked] can observe. Finish or abandon an interrupted
+            // removal here first, under the same mutex, so the reset cannot destroy the marker
+            // before the same-process configuration/snapshot are cleared: a removal whose
+            // cleanup failed after its commit point would otherwise leave the removed reader
+            // exposed in configurationState forever, with no tombstone left for recovery.
+            recoverInterruptedRemovalLocked()
             accountGeneration.incrementAndGet()
             settings.abandonCloudReaderPromotion()
             credentialsStore.clearStagedCloudCredentials()

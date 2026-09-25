@@ -907,6 +907,68 @@ class CloudPresenceRepositoryTest {
     }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun accountChangeFinishesInterruptedRemovalBeforeTheResetClearsItsMarker() = runTest {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, repo.verifyAndSave("https://reader.example.com/read", "secret"))
+        settings.setCloudReadPosition("stale-position")
+        settings.setCloudIngestPosition("stale-ingest")
+        settings.setCloudRoutinePolicy(CloudRoutinePolicy.DAILY)
+        settings.recordCloudRoutineAdmission(1234L)
+        val generationBefore = settings.cloudReaderGeneration.first()
+
+        // Same-process observers already subscribed at removal time.
+        val observedConfigurations = mutableListOf<CloudPresenceConfiguration?>()
+        val observedSnapshots = mutableListOf<CloudPresenceSnapshot?>()
+        backgroundScope.launch { repo.configuration.collect { observedConfigurations += it } }
+        backgroundScope.launch { repo.snapshot.collect { observedSnapshots += it } }
+        runCurrent()
+        assertTrue(observedConfigurations.last() != null)
+        assertTrue(observedSnapshots.last() != null)
+
+        // The removal commits — both credential pairs are destroyed in one store edit — and
+        // then dies at the generation fence: the durable reader is gone, the removal marker
+        // survives for recovery, and this repository instance still exposes the removed
+        // endpoint because the normal path never reached its in-memory cleanup.
+        settings.failNextPromotionAbandon = true
+        try {
+            repo.removeConfiguration()
+            org.junit.Assert.fail("removal fence should fail")
+        } catch (_: IllegalStateException) {
+            // The commit point landed; the fence and the in-memory cleanup never ran.
+        }
+        assertNull(store.credentials)
+        assertNull(store.stagedCredentials)
+        assertTrue(observedConfigurations.last() != null)
+
+        // The account change runs before any cloud read reconciles the removal. Its durable
+        // reset removes the removal marker (SettingsDataStore.clearAccountDerivedState), so
+        // without the transition finishing the removal first there would be no tombstone left
+        // for recovery and the exposed configuration would never be cleared.
+        repo.runAccountChangeTransition {
+            // What SettingsDataStore.clearAccountDerivedState does to the removal marker.
+            settings.clearCloudReaderRemoval()
+        }
+        runCurrent()
+
+        // The transition consumed the interrupted removal before the reset cleared its
+        // marker, so the same-process collectors stop observing the removed reader and the
+        // removal's durable cleanup is not orphaned.
+        assertNull(observedConfigurations.last())
+        assertNull(observedSnapshots.last())
+        assertNull(settings.cloudReaderRemovalTarget.first())
+        assertNull(settings.cloudRoutineState.first().policy)
+        assertNull(settings.cloudReadPosition.first())
+        assertNull(settings.cloudIngestPosition.first())
+        assertTrue(evidence.rows.isEmpty())
+        assertTrue(settings.cloudReaderGeneration.first() > generationBefore)
+    }
+
+    @Test
     fun removalCrashWithAMarkedPromotionAbandonsItInsteadOfCompletingIt() = runBlocking {
         val api = FakeCloudPresenceApi(answer = sampleResponse())
         val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
