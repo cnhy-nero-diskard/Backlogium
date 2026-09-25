@@ -750,6 +750,99 @@ class CloudPresenceRepositoryTest {
     }
 
     @Test
+    fun removalCrashBetweenCredentialClearAndFenceStaysUnconfiguredAfterRestart() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://reader.example.com/read", "secret"))
+        settings.setCloudReadPosition("stale-position")
+        settings.setCloudIngestPosition("stale-ingest")
+        val generationBefore = settings.cloudReaderGeneration.first()
+
+        // The removal commit point: both credential pairs are cleared in one atomic store edit,
+        // then the process dies before the generation fence or any later cleanup ran. The old
+        // ordering fenced first, so this death point left the active credentials behind with no
+        // promotion marker left to recover from, and the restart treated the removed reader as
+        // still configured.
+        store.clearAllCloudCredentials()
+        val requestsBeforeRestart = api.requests.size
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertNull(restarted.reconcileRoutinePolicy())
+        assertNull(restarted.configuration.first())
+        assertNull(store.credentials)
+        assertNull(store.stagedCredentials)
+        assertEquals(generationBefore, settings.cloudReaderGeneration.first())
+        assertEquals(CloudReadResult.Unconfigured, restarted.read())
+        assertEquals(requestsBeforeRestart, api.requests.size)
+    }
+
+    @Test
+    fun removalCrashAfterTheFenceStaysUnconfiguredWithoutPolicyOrWork() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://reader.example.com/read", "secret"))
+        settings.setCloudReadPosition("stale-position")
+        val generationBefore = settings.cloudReaderGeneration.first()
+
+        // Death immediately after the durable generation fence, before the evidence/work/policy
+        // cleanup: the credential clear already committed, so the fence's position in the
+        // ordering is no longer what keeps the reader dead — nothing can promote or use a
+        // reader whose credentials were already destroyed.
+        store.clearAllCloudCredentials()
+        settings.abandonCloudReaderPromotion()
+        val requestsBeforeRestart = api.requests.size
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertNull(restarted.reconcileRoutinePolicy())
+        assertNull(restarted.configuration.first())
+        assertEquals(CloudReadResult.Unconfigured, restarted.read())
+        assertEquals(generationBefore + 1L, settings.cloudReaderGeneration.first())
+        assertEquals(requestsBeforeRestart, api.requests.size)
+    }
+
+    @Test
+    fun removalCrashWithAMarkedPromotionAbandonsItInsteadOfCompletingIt() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://old.example.com/read", "old-secret"))
+
+        // An interrupted promotion: B's page and credentials are staged and the marker names
+        // generation 2, while A's credentials and generation 1 are still durable.
+        evidence.retain(ACCOUNT, 2L, 1_000L, listOf(foreignInterval(20L)), null)
+        store.stageCloudCredentials("https://new.example.com/read", "new-secret")
+        settings.markCloudReaderPromotion(2L)
+
+        // Removal destroys both credential pairs in one atomic store edit, then dies before its
+        // generation fence: the marker survives but no credentials exist for recovery to
+        // promote or keep.
+        store.clearAllCloudCredentials()
+        val requestsBeforeRestart = api.requests.size
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertNull(restarted.reconcileRoutinePolicy())
+
+        // Recovery abandoned the credential-less marker instead of completing it: no generation
+        // commit, no replacement credentials, no routine policy for a reader that was being
+        // removed, and B's staged rows were discarded with the attempt.
+        assertNull(store.credentials)
+        assertNull(store.stagedCredentials)
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        assertEquals(1L, settings.cloudReaderGeneration.first())
+        assertEquals(setOf(ACCOUNT to 1L), evidence.rows.keys.toSet())
+        assertEquals(CloudReadResult.Unconfigured, restarted.read())
+        assertEquals(requestsBeforeRestart, api.requests.size)
+    }
+
+    @Test
     fun fencingPastAMarkedPromotionCannotBeRevivedByRecovery() = runBlocking {
         val api = FakeCloudPresenceApi(answer = sampleResponse())
         val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))

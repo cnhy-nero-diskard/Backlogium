@@ -35,6 +35,18 @@ interface CloudCredentialsStore {
 
     /** Remove an orphaned staged pair when no promotion marker exists. */
     suspend fun clearStagedCloudCredentials() = Unit
+
+    /**
+     * Remove the active and any staged cloud pair in one store edit. This is the reader-removal
+     * path's commit point: once it has run, nothing remains that a restart can promote or a read
+     * can use, whatever happens to the Settings/evidence cleanup that follows it. The default
+     * composition exists for in-memory fakes; the real store overrides it with a single atomic
+     * edit so no crash can split the two pairs.
+     */
+    suspend fun clearAllCloudCredentials() {
+        clearCloudCredentials()
+        clearStagedCloudCredentials()
+    }
 }
 
 /**
@@ -89,6 +101,15 @@ class EncryptedCredentialStore @Inject constructor(
         context.credentialsDataStore.edit { prefs ->
             prefs.remove(Keys.CLOUD_ENDPOINT)
             prefs.remove(Keys.CLOUD_TOKEN)
+        }
+    }
+
+    override suspend fun clearAllCloudCredentials() {
+        context.credentialsDataStore.edit { prefs ->
+            prefs.remove(Keys.CLOUD_ENDPOINT)
+            prefs.remove(Keys.CLOUD_TOKEN)
+            prefs.remove(Keys.PENDING_CLOUD_ENDPOINT)
+            prefs.remove(Keys.PENDING_CLOUD_TOKEN)
         }
     }
 

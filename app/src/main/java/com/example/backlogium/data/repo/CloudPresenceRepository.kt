@@ -222,7 +222,9 @@ class CloudPresenceRepository @Inject constructor(
      * build persisted mid-fence. Completing it would resurrect a replacement that fencing already
      * retired or write the older target back, decreasing the generation. The abandoned attempt's
      * staged credentials and page rows are discarded with it; evidence bound to the current
-     * generation is kept.
+     * generation is kept. A marker with neither staged nor active credentials is abandoned the
+     * same way: it can only be a removal whose atomic credential clear landed before its fence,
+     * and completing it would run promotion effects for a reader that was being removed.
      *
      * Caller must hold [cloudReadSequenceMutex]; the account-state mutex is taken here so
      * invalidation cannot interleave with the completed promotion's writes.
@@ -258,6 +260,17 @@ class CloudPresenceRepository @Inject constructor(
                 // rows are inert once the generation has passed them, so discarding them is
                 // best-effort; the refusal itself does not depend on it.
                 if (staged != null) credentialsStore.clearStagedCloudCredentials()
+                runCatching { pendingEvidence.clearExcept(account, generationBefore) }
+                settings.clearCloudReaderPromotion()
+                return@withLock
+            }
+            if (staged == null && credentialsStore.readCloudCredentials() == null) {
+                // Both credential pairs are gone while the marker survives: a removal destroyed
+                // them in one atomic store edit and died before its generation fence. Nothing
+                // remains to promote and no active reader exists to keep, so the attempt is
+                // abandoned like the pre-marker window instead of completed, which would run
+                // promotion effects (generation commit, ingest-cursor clear, work re-cancel,
+                // routine-policy init) for a reader that was being removed.
                 runCatching { pendingEvidence.clearExcept(account, generationBefore) }
                 settings.clearCloudReaderPromotion()
                 return@withLock
@@ -737,11 +750,20 @@ class CloudPresenceRepository @Inject constructor(
         cloudStateMutex.withLock {
             // Invalidate in-flight reads so a late response cannot repopulate after removal.
             accountGeneration.incrementAndGet()
+            // The credential clear is the removal's commit point and must run before the
+            // generation fence: it atomically destroys both the active and any staged pair,
+            // so a crash anywhere after it — including one that skips the fence below —
+            // leaves no credentials for recovery to promote or for any read to use, and the
+            // reader stays unconfigured after restart. The earlier ordering fenced first, so
+            // a death between the fence and the credential clear left the active pair behind
+            // with no promotion marker left to recover from, and the restart treated the
+            // removed reader as still configured. Every step after the commit point is
+            // idempotent cleanup: re-running it changes nothing, and skipping it leaves only
+            // inert state that no credential-less read, admission, or scheduler can act on.
+            credentialsStore.clearAllCloudCredentials()
             settings.abandonCloudReaderPromotion()
-            credentialsStore.clearStagedCloudCredentials()
             pendingEvidence.clear()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
-            credentialsStore.clearCloudCredentials()
             settings.clearCloudReadPosition()
             settings.clearCloudIngestPosition()
             settings.clearCloudRoutinePolicy()
