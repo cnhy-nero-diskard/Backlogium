@@ -1176,6 +1176,11 @@ private class FakeExcludedSharedGameDao : ExcludedSharedGameDao {
 private class FakeSessionDao(private val store: MutableList<Session>) : SessionDao {
     private var nextId = (store.maxOfOrNull { it.id } ?: 0L) + 1
 
+    override suspend fun insertOpenSessionIfAbsent(session: Session): Long {
+        if (store.any { it.appId == session.appId && it.open }) return -1L
+        return insert(session)
+    }
+
     override suspend fun insert(session: Session): Long {
         val withId = session.copy(id = nextId++)
         store += withId

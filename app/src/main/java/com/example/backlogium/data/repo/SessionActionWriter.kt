@@ -72,18 +72,24 @@ class SessionActionWriter @Inject constructor(
                             TimingInformedSteamPlayState.NONE
                         },
                     )
+                    val historicalClose = if (opened == -1L) {
+                        historicalBackfillClose(actions, index, action)
+                    } else {
+                        null
+                    }
                     if (opened != -1L) {
                         effective += action
-                    } else if (isHistoricalBackfill(actions, index, action)) {
-                        // Historical backfill while a newer session is still open: a separate
-                        // closed-to-be row, not a merge into the live one.
+                    } else if (historicalClose != null) {
+                        // Historical backfill while a newer session is still open: persist the
+                        // completed interval closed, so even the intermediate write respects the
+                        // database's one-open-session index.
                         sessionDao.insert(
                             Session(
                                 appId = action.appId,
                                 startAt = action.startAt,
-                                endAt = action.endAt,
+                                endAt = historicalClose.endAt,
                                 minutes = action.minutes,
-                                open = true,
+                                open = false,
                                 recoveredSharedPlay = if (recoveredFromCloud && action.addedMinutes > 0) {
                                     RecoveredSharedPlayState.FULL
                                 } else {
@@ -143,6 +149,7 @@ class SessionActionWriter @Inject constructor(
                                     minutes = minutes,
                                     endAt = endAt,
                                     open = true,
+                                    openAppId = it.appId,
                                     recoveredSharedPlay = it.recoveryAfter(
                                         recoveredFromCloud, minutes - it.minutes,
                                     ),
@@ -167,7 +174,9 @@ class SessionActionWriter @Inject constructor(
                     sessionDao.getAll()
                         .firstOrNull { it.appId == action.appId && it.open && it.startAt == action.startAt }
                         ?.let {
-                        sessionDao.update(it.copy(open = false, endAt = action.endAt))
+                        sessionDao.update(
+                            it.copy(open = false, openAppId = null, endAt = action.endAt),
+                        )
                         effective += action
                     }
             }
@@ -229,24 +238,25 @@ class SessionActionWriter @Inject constructor(
         }
     }
 
-    private suspend fun isHistoricalBackfill(
+    private suspend fun historicalBackfillClose(
         actions: List<SessionDiffer.SessionAction>,
         index: Int,
         action: SessionDiffer.SessionAction.Open,
-    ): Boolean {
+    ): SessionDiffer.SessionAction.Close? {
         val earliestOpenStart = sessionDao.getAll()
             .asSequence()
             .filter { it.appId == action.appId && it.open }
             .minOfOrNull { it.startAt }
-            ?: return false
-        if (action.endAt >= earliestOpenStart) return false
+            ?: return null
+        if (action.endAt >= earliestOpenStart) return null
         // Only a closed-to-be row takes the separate path. A live Open with no following Close
         // is the concurrent-observation race (#116), which must still merge even when it happens
         // to sort earlier.
-        return actions.subList(index + 1, actions.size).any {
-            it is SessionDiffer.SessionAction.Close &&
+        return actions.subList(index + 1, actions.size)
+            .filterIsInstance<SessionDiffer.SessionAction.Close>()
+            .firstOrNull {
                 it.appId == action.appId &&
-                it.startAt == action.startAt
-        }
+                    it.startAt == action.startAt
+            }
     }
 }

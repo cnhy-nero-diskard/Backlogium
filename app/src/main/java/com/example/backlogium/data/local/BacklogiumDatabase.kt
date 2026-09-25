@@ -84,7 +84,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         HiddenGame::class,
         SteamReviewCache::class,
     ],
-    version = 38,
+    version = 39,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -896,6 +896,26 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "`previousLastObservedAt` INTEGER, `previousCoverageLapseFrom` INTEGER, " +
                         "`previousCoverageLapseRecoveredAt` INTEGER, `schemaVersion` INTEGER, " +
                         "PRIMARY KEY(`account`, `generation`))",
+                )
+            }
+        }
+
+        /** v38 -> v39: enforce one open session per game without constraining closed natural keys. */
+        val MIGRATION_38_39 = object : Migration(38, 39) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `sessions` ADD COLUMN `openAppId` INTEGER")
+                // Keep the most recently inserted row open if an older database already contains
+                // duplicates; retain every row, closing only the stale open copies.
+                db.execSQL(
+                    "UPDATE `sessions` SET `open` = 0 WHERE `open` = 1 AND EXISTS (" +
+                        "SELECT 1 FROM `sessions` AS `newer` " +
+                        "WHERE `newer`.`appId` = `sessions`.`appId` " +
+                        "AND `newer`.`open` = 1 AND `newer`.`id` > `sessions`.`id`)",
+                )
+                db.execSQL("UPDATE `sessions` SET `openAppId` = `appId` WHERE `open` = 1")
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_sessions_openAppId` " +
+                        "ON `sessions` (`openAppId`)",
                 )
             }
         }

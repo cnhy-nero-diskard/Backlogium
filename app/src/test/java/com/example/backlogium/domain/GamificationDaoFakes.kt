@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.map
 
 internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao {
     override suspend fun insert(session: Session): Long = 0L
+    override suspend fun insertOpenSessionIfAbsent(session: Session): Long = -1L
     override suspend fun tryOpenSession(
         appId: Long, startAt: Long, endAt: Long?, minutes: Int,
         recoveredSharedPlay: RecoveredSharedPlayState,

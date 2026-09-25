@@ -93,6 +93,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_35_36,
         BacklogiumDatabase.MIGRATION_36_37,
         BacklogiumDatabase.MIGRATION_37_38,
+        BacklogiumDatabase.MIGRATION_38_39,
     )
 
     @Test
@@ -170,6 +171,56 @@ class MigrationTest {
                     assertEquals(90, cursor.getInt(0))
                     assertEquals("PARTIAL", cursor.getString(1))
                     assertEquals("FULL", cursor.getString(2))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun v38ToV39_closesDuplicateOpenRowsAndKeepsClosedNaturalKeyDuplicates() {
+        val databaseName = "migration-v38-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 38)
+        try {
+            database.execSQL(
+                "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                    "lastPlaytime, isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+                    "firstSeenAt, lastPlayedAt, returnedToPlayAt, manualSharedMinutes) VALUES " +
+                    "(730, 'Game', '', 0, 0, 0, 0, NULL, 1700000000000, 0, 'FAMILY_SHARED', " +
+                    "NULL, NULL, NULL, 0)",
+            )
+            database.execSQL(
+                "INSERT INTO sessions (id, appId, startAt, endAt, minutes, open, " +
+                    "recoveredSharedPlay, timingInformedSteamPlay) VALUES " +
+                    "(1, 730, 1000, 1100, 10, 1, 'FULL', 'FULL'), " +
+                    "(2, 730, 1000, 1100, 10, 1, 'PARTIAL', 'PARTIAL'), " +
+                    "(3, 730, 1000, 1100, 10, 0, 'NONE', 'NONE'), " +
+                    "(4, 730, 1000, 1100, 10, 0, 'NONE', 'NONE')",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName, 39, true, BacklogiumDatabase.MIGRATION_38_39,
+            )
+            try {
+                migrated.query("SELECT id, openAppId FROM sessions WHERE open = 1").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(2, cursor.getInt(0))
+                    assertEquals(730, cursor.getInt(1))
+                    assertFalse(cursor.moveToNext())
+                }
+                migrated.query(
+                    "SELECT COUNT(*) FROM sessions WHERE open = 0 " +
+                        "AND appId = 730 AND startAt = 1000 AND endAt = 1100",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(3, cursor.getInt(0))
                 }
             } finally {
                 migrated.close()

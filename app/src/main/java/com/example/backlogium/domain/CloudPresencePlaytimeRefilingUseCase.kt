@@ -57,6 +57,7 @@ internal fun cloudPresenceSessionRefiles(
                     endAt = action.endAt,
                     minutes = action.minutes,
                     open = false,
+                    openAppId = null,
                     timingInformedSteamPlay = TimingInformedSteamPlayState.FULL,
                 )
             }
