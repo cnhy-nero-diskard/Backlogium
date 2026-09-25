@@ -601,6 +601,40 @@ class CloudPresenceRepositoryTest {
     }
 
     @Test
+    fun restartedPromotionClearsOldIngestFenceWhenDeathPrecedesTheGenerationCommit() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://old.example.com/read", "old-secret"))
+        settings.setCloudReadPosition("old-position")
+        settings.setCloudIngestPosition("old-ingest")
+
+        // Death after the marker and the credential promotion but before the generation
+        // commit and the ingest-cursor clear that precedes it: B's credentials are active,
+        // the persisted generation is still A's, and A's ingest watermark — the "already
+        // folded" fence over A's history — is still stored. Left under B it could make B's
+        // first ingest no-op a page B's history has never folded.
+        store.writeCloudCredentials("https://new.example.com/read", "new-secret")
+        settings.markCloudReaderPromotion(2L)
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertTrue(restarted.read() is CloudReadResult.Success)
+
+        // Recovery performed the generation commit and retired A's ingest fence with it, so
+        // B reads and ingests from a clean watermark instead of inheriting A's fence.
+        assertEquals("https://new.example.com/read", store.credentials?.endpoint)
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        assertNull(settings.cloudReadPosition.first())
+        assertNull(settings.cloudIngestPosition.first())
+        // The resumed read talked to the replacement from the beginning, not A's watermark.
+        assertEquals("Bearer new-secret", api.requests.last().authorization)
+        assertNull(api.requests.last().position)
+    }
+
+    @Test
     fun restartedPromotionKeepsIngestEffectsWhenDeathFollowsTheIngest() = runBlocking {
         val api = FakeCloudPresenceApi(answer = sampleResponse())
         val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
