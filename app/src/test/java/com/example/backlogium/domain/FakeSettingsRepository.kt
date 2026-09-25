@@ -91,6 +91,7 @@ internal class FakeSettingsRepository : SettingsRepository {
     private val promotionTarget = MutableStateFlow<Long?>(null)
     var failNextPromotionMark = false
     var failNextPromotionFinish = false
+    var failNextPromotionAbandon = false
     override val cloudReaderPromotionTarget: Flow<Long?> = promotionTarget
     override suspend fun markCloudReaderPromotion(target: Long) {
         if (failNextPromotionMark) {
@@ -115,6 +116,10 @@ internal class FakeSettingsRepository : SettingsRepository {
         promotionTarget.value = null
     }
     override suspend fun abandonCloudReaderPromotion(): Long {
+        if (failNextPromotionAbandon) {
+            failNextPromotionAbandon = false
+            error("simulated removal fence failure")
+        }
         // Mirrors SettingsDataStore: one edit advances the generation past any marked target
         // and clears the marker, so a death cannot leave a marker behind a newer generation.
         val next = maxOf(readerGeneration.value + 1L, (promotionTarget.value ?: 0L) + 1L)

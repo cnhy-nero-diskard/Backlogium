@@ -319,14 +319,25 @@ class CloudPresenceRepository @Inject constructor(
      * removal's own fence may have landed before the crash, and re-running it would advance the
      * generation a second time. When credentials are still present the removal died before its
      * commit point and is an abandoned attempt: the reader remains configured and only the
-     * marker is retired. Any failure below keeps the marker, so the next recovery retries the
-     * idempotent cleanup instead of losing it.
+     * marker is retired. Once the commit point has landed the in-memory configuration and
+     * snapshot are cleared here too, mirroring the normal path's cleanup: they are dropped as
+     * soon as the commit point is confirmed, before the durable cleanup below, so a failure in
+     * any later step — which keeps the marker for a retry — cannot leave the same-process
+     * flows observing a reader the durable store has already removed. Any failure below keeps
+     * the marker, so the next recovery retries the idempotent cleanup instead of losing it.
      *
      * Caller must hold [cloudStateMutex] (via [recoverStagedPromotionLocked]).
      */
     private suspend fun recoverInterruptedRemovalLocked() {
         val target = settings.cloudReaderRemovalTarget.first() ?: return
         if (credentialsStore.readCloudCredentials() == null) {
+            // The commit point has landed: nothing remains that a read can use or a restart
+            // can promote, so the reader is unconfigured whatever happens below. Clear the
+            // same-process configuration and snapshot before the fallible durable cleanup so
+            // an exception there cannot leave them reporting the removed endpoint while the
+            // marker survives for a retry.
+            configurationState.value = null
+            snapshotState.value = null
             if (settings.cloudReaderGeneration.first() < target) {
                 settings.abandonCloudReaderPromotion()
             }

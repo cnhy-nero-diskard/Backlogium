@@ -16,6 +16,7 @@ import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -838,6 +839,71 @@ class CloudPresenceRepositoryTest {
         assertNull(settings.cloudReaderRemovalTarget.first())
         assertNull(settings.cloudRoutineState.first().policy)
         assertTrue(evidence.rows.isEmpty())
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun sameProcessRemovalRecoveryClearsExposedConfigurationAndSnapshot() = runTest {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, repo.verifyAndSave("https://reader.example.com/read", "secret"))
+        settings.setCloudReadPosition("stale-position")
+        settings.setCloudIngestPosition("stale-ingest")
+        settings.setCloudRoutinePolicy(CloudRoutinePolicy.DAILY)
+        settings.recordCloudRoutineAdmission(1234L)
+        val generationBefore = settings.cloudReaderGeneration.first()
+
+        // Same-process observers already subscribed at removal time, like a Settings collector
+        // and a scheduler/UI subscriber: they see the removed reader's in-memory state until the
+        // repository clears it, because the configuration flow re-reads durable credentials only
+        // when a new collector starts.
+        val observedConfigurations = mutableListOf<CloudPresenceConfiguration?>()
+        val observedSnapshots = mutableListOf<CloudPresenceSnapshot?>()
+        backgroundScope.launch { repo.configuration.collect { observedConfigurations += it } }
+        backgroundScope.launch { repo.snapshot.collect { observedSnapshots += it } }
+        runCurrent()
+        assertTrue(observedConfigurations.last() != null)
+        assertTrue(observedSnapshots.last() != null)
+
+        // The removal commits — both credential pairs are destroyed in one store edit — and then
+        // dies at the generation fence: the durable reader is gone, but this repository instance
+        // still holds the old configuration and snapshot because the normal path never reached
+        // its in-memory cleanup.
+        settings.failNextPromotionAbandon = true
+        try {
+            repo.removeConfiguration()
+            org.junit.Assert.fail("removal fence should fail")
+        } catch (_: IllegalStateException) {
+            // The commit point landed; the fence and the in-memory cleanup never ran.
+        }
+        assertNull(store.credentials)
+        assertNull(store.stagedCredentials)
+        assertTrue(observedConfigurations.last() != null)
+        assertTrue(observedSnapshots.last() != null)
+        val requestsBeforeRecovery = api.requests.size
+
+        // The next repository call recovers the interrupted removal in the same process, without
+        // reconstructing the repository.
+        assertEquals(CloudReadResult.Unconfigured, repo.read())
+        runCurrent()
+
+        // Recovery finished the durable cleanup and, like the normal path, cleared the exposed
+        // in-memory configuration and snapshot so the same-process flows stop observing the
+        // removed reader instead of waiting for an unrelated refresh or reconfiguration.
+        assertEquals(generationBefore + 1L, settings.cloudReaderGeneration.first())
+        assertNull(settings.cloudReaderRemovalTarget.first())
+        assertNull(settings.cloudRoutineState.first().policy)
+        assertNull(settings.cloudReadPosition.first())
+        assertNull(settings.cloudIngestPosition.first())
+        assertTrue(evidence.rows.isEmpty())
+        assertEquals(requestsBeforeRecovery, api.requests.size)
+        assertNull(store.credentials)
+        assertNull(store.stagedCredentials)
+        assertNull(observedConfigurations.last())
+        assertNull(observedSnapshots.last())
     }
 
     @Test
