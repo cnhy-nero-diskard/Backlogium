@@ -168,7 +168,12 @@ interface SettingsRepository : SessionEndOutbox {
     val cloudReaderGeneration: Flow<Long>
         get() = flowOf(0L)
 
-    suspend fun advanceCloudReaderGeneration(): Long = 0L
+    /**
+     * Fence and abandon any staged replacement in one durable edit: advance the generation and
+     * clear the promotion marker together, so a crash between the two can never leave a marker
+     * behind a newer generation for recovery to misread. Old test doubles default to no fence.
+     */
+    suspend fun abandonCloudReaderPromotion(): Long = 0L
 
     /**
      * Durable staged-replacement marker: non-null target generation while an endpoint
@@ -392,7 +397,7 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override val cloudReaderGeneration: Flow<Long> = settings.cloudReaderGenerationFlow
 
-    override suspend fun advanceCloudReaderGeneration(): Long = settings.advanceCloudReaderGeneration()
+    override suspend fun abandonCloudReaderPromotion(): Long = settings.abandonCloudReaderPromotion()
 
     override val cloudReaderPromotionTarget: Flow<Long?> = settings.cloudReaderPromotionTargetFlow
 

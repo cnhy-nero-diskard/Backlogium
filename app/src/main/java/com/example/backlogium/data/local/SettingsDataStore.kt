@@ -506,11 +506,26 @@ class SettingsDataStore @Inject constructor(
     val cloudReaderGenerationFlow: Flow<Long> =
         context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_READER_GENERATION] ?: 0L }
 
-    suspend fun advanceCloudReaderGeneration(): Long {
+    /**
+     * Fence and abandon any staged replacement in one transaction. Removal and account-change
+     * paths advance the reader generation and clear the promotion marker in the same edit, so a
+     * process death between the two can never persist a newer generation behind a surviving
+     * marker: recovery would otherwise read a marker the newer generation has already fenced
+     * and either finish the fenced promotion (resurrecting the replacement) or write the older
+     * marker back, decreasing the generation. When a promotion is marked, the generation is
+     * advanced past the marked target as well, because the staged page is bound to that target
+     * generation and landing exactly on it would let a marker-less restart inherit the
+     * abandoned page as the active reader's own evidence.
+     */
+    suspend fun abandonCloudReaderPromotion(): Long {
         var next = 0L
         context.dataStore.edit { prefs ->
-            next = (prefs[Keys.CLOUD_READER_GENERATION] ?: 0L) + 1L
+            next = maxOf(
+                (prefs[Keys.CLOUD_READER_GENERATION] ?: 0L) + 1L,
+                (prefs[Keys.CLOUD_READER_PROMOTION_TARGET] ?: 0L) + 1L,
+            )
             prefs[Keys.CLOUD_READER_GENERATION] = next
+            prefs.remove(Keys.CLOUD_READER_PROMOTION_TARGET)
         }
         return next
     }

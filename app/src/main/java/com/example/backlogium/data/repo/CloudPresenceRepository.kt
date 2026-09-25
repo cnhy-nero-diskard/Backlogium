@@ -216,6 +216,14 @@ class CloudPresenceRepository @Inject constructor(
      * encrypted credential DataStore: no read can observe the replacement reader's evidence paired
      * with the old credentials, or the old generation with its evidence already retired.
      *
+     * A marker older than the persisted generation is refused rather than completed: removal and
+     * account-change fencing clears the marker in the same edit that advances the generation (and
+     * jumps past a marked target), so a surviving older marker can only come from state an older
+     * build persisted mid-fence. Completing it would resurrect a replacement that fencing already
+     * retired or write the older target back, decreasing the generation. The abandoned attempt's
+     * staged credentials and page rows are discarded with it; evidence bound to the current
+     * generation is kept.
+     *
      * Caller must hold [cloudReadSequenceMutex]; the account-state mutex is taken here so
      * invalidation cannot interleave with the completed promotion's writes.
      */
@@ -225,11 +233,36 @@ class CloudPresenceRepository @Inject constructor(
             val staged = credentialsStore.readStagedCloudCredentials()
             if (marker == null) {
                 if (staged != null) credentialsStore.clearStagedCloudCredentials()
+                // A staged page without a marker is an abandoned attempt: discard its rows so no
+                // later read or verification can combine them with the active reader's evidence.
+                // Only rows bound to the current generation survive, which also retires evidence
+                // a removal/account-change fence left staged when it died before its own clear.
+                // This is best-effort housekeeping: every read looks up evidence by the current
+                // generation, so a row bound to any other generation is inert even if the clear
+                // fails, and a transient Room failure must not fail the read itself.
+                val account = credentialsProvider.currentCredentials()?.steamId
+                if (account != null) {
+                    runCatching {
+                        pendingEvidence.clearExcept(account, settings.cloudReaderGeneration.first())
+                    }
+                }
                 return@withLock
             }
             val account = credentialsProvider.currentCredentials()?.steamId ?: return@withLock
-            if (staged != null) credentialsStore.commitStagedCloudCredentials()
             val generationBefore = settings.cloudReaderGeneration.first()
+            if (marker < generationBefore) {
+                // The durable generation has moved past the marker: removal/account-change
+                // fencing has already retired this promotion. Completing it would resurrect the
+                // fenced replacement or write the older marker back, decreasing the generation,
+                // so the attempt is abandoned and the newer fence is kept. The staged page's
+                // rows are inert once the generation has passed them, so discarding them is
+                // best-effort; the refusal itself does not depend on it.
+                if (staged != null) credentialsStore.clearStagedCloudCredentials()
+                runCatching { pendingEvidence.clearExcept(account, generationBefore) }
+                settings.clearCloudReaderPromotion()
+                return@withLock
+            }
+            if (staged != null) credentialsStore.commitStagedCloudCredentials()
             // Mirror the normal path: the old reader's ingest fence is retired before the
             // generation commit. While the persisted generation still names the old reader,
             // this promotion's ingest cannot have run and the watermark is the old reader's,
@@ -704,8 +737,7 @@ class CloudPresenceRepository @Inject constructor(
         cloudStateMutex.withLock {
             // Invalidate in-flight reads so a late response cannot repopulate after removal.
             accountGeneration.incrementAndGet()
-            settings.advanceCloudReaderGeneration()
-            settings.clearCloudReaderPromotion()
+            settings.abandonCloudReaderPromotion()
             credentialsStore.clearStagedCloudCredentials()
             pendingEvidence.clear()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
@@ -734,8 +766,7 @@ class CloudPresenceRepository @Inject constructor(
     suspend fun invalidateForAccountChange() {
         cloudStateMutex.withLock {
             accountGeneration.incrementAndGet()
-            settings.advanceCloudReaderGeneration()
-            settings.clearCloudReaderPromotion()
+            settings.abandonCloudReaderPromotion()
             credentialsStore.clearStagedCloudCredentials()
             pendingEvidence.clear()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
@@ -759,8 +790,7 @@ class CloudPresenceRepository @Inject constructor(
     suspend fun runAccountChangeTransition(block: suspend () -> Unit) {
         cloudStateMutex.withLock {
             accountGeneration.incrementAndGet()
-            settings.advanceCloudReaderGeneration()
-            settings.clearCloudReaderPromotion()
+            settings.abandonCloudReaderPromotion()
             credentialsStore.clearStagedCloudCredentials()
             pendingEvidence.clear()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
@@ -772,8 +802,7 @@ class CloudPresenceRepository @Inject constructor(
                 block()
             } finally {
                 accountGeneration.incrementAndGet()
-                settings.advanceCloudReaderGeneration()
-                settings.clearCloudReaderPromotion()
+                settings.abandonCloudReaderPromotion()
                 credentialsStore.clearStagedCloudCredentials()
                 pendingEvidence.clear()
                 routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)

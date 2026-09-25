@@ -173,7 +173,7 @@ class CloudPresenceRepositoryTest {
         val settings = FakeSettingsRepository()
         val evidence = MemoryEvidence()
         val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
-        evidence.failNext = true
+        evidence.failNextRetain = true
         assertEquals(
             CloudCatchUpResult.Failed(0, 0, CloudReadFailure.UNUSABLE_RESPONSE),
             repo.readRoutineCatchUp { },
@@ -246,7 +246,7 @@ class CloudPresenceRepositoryTest {
         settings.setCloudIngestPosition("old-ingest")
         val evidence = MemoryEvidence()
         val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
-        evidence.failNext = true
+        evidence.failNextRetain = true
 
         try {
             repo.verifyAndSave("https://new.example.com/read", "new-secret")
@@ -700,7 +700,7 @@ class CloudPresenceRepositoryTest {
         // never mistake a surviving watermark for B's own ingest fence. Under the old
         // post-commit ordering the fence would still be stored behind the promoted
         // generation at this death point.
-        evidence.failNext = true
+        evidence.failNextClear = true
         try {
             repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
                 .reconcileRoutinePolicy()
@@ -742,8 +742,83 @@ class CloudPresenceRepositoryTest {
         assertNull(store.credentials)
         assertNull(store.stagedCredentials)
         assertNull(settings.cloudReaderPromotionTarget.first())
+        // The fence advances past the marked target so the abandoned page cannot land on the
+        // active generation.
+        assertEquals(3L, settings.cloudReaderGeneration.first())
         assertTrue(evidence.rows.isEmpty())
         assertTrue(evidence.boundaries.isEmpty())
+    }
+
+    @Test
+    fun fencingPastAMarkedPromotionCannotBeRevivedByRecovery() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://old.example.com/read", "old-secret"))
+
+        // Interrupted promotion: B's page and credentials are staged and the marker names
+        // generation 2, while A's credentials and generation 1 are still durable.
+        evidence.retain(ACCOUNT, 2L, 1_000L, listOf(foreignInterval(20L)), null)
+        store.stageCloudCredentials("https://new.example.com/read", "new-secret")
+        settings.markCloudReaderPromotion(2L)
+
+        // Removal/account-change fencing advances the generation past the marker and clears it
+        // in the same Settings edit; the process then dies before the staged-credential clear
+        // that sits in a later step, so B's staged inputs survive into the restart.
+        assertEquals(3L, settings.abandonCloudReaderPromotion())
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertTrue(restarted.reconcileRoutinePolicy() != null)
+
+        // The fenced replacement stays dead: B's credentials were never promoted, its staged
+        // inputs and page rows were discarded, and the fence's generation value is kept.
+        assertEquals("https://old.example.com/read", store.credentials?.endpoint)
+        assertNull(store.stagedCredentials)
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        assertEquals(3L, settings.cloudReaderGeneration.first())
+        assertTrue(evidence.rows.isEmpty())
+        assertTrue(evidence.boundaries.isEmpty())
+
+        // The resumed read talks to the original reader, not the fenced replacement.
+        assertTrue(restarted.read() is CloudReadResult.Success)
+        assertEquals("Bearer old-secret", api.requests.last().authorization)
+    }
+
+    @Test
+    fun stalePromotionMarkerOlderThanTheGenerationIsRefusedWithoutRevivingOrDecreasingIt() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://old.example.com/read", "old-secret"))
+
+        // Crash state only an older build could persist: a promotion marked at 2 whose staged
+        // inputs survived while repeated invalidation fencing advanced the generation to 3 in a
+        // separate edit that never cleared the marker.
+        evidence.retain(ACCOUNT, 2L, 1_000L, listOf(foreignInterval(20L)), null)
+        store.stageCloudCredentials("https://new.example.com/read", "new-secret")
+        settings.markCloudReaderPromotion(2L)
+        settings.simulateLegacyGenerationAdvance() // 1 -> 2
+        settings.simulateLegacyGenerationAdvance() // 2 -> 3
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertTrue(restarted.reconcileRoutinePolicy() != null)
+
+        // The marker names a generation the durable fence has already passed: recovery must
+        // abandon it rather than commit the fenced replacement or write the older target back.
+        assertEquals("https://old.example.com/read", store.credentials?.endpoint)
+        assertNull(store.stagedCredentials)
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        assertEquals(3L, settings.cloudReaderGeneration.first())
+        assertTrue(evidence.rows.isEmpty())
+        assertTrue(evidence.boundaries.isEmpty())
+
+        // The resumed read talks to the original reader, not the fenced replacement.
+        assertTrue(restarted.read() is CloudReadResult.Success)
+        assertEquals("Bearer old-secret", api.requests.last().authorization)
     }
 
     @Test
@@ -1768,7 +1843,8 @@ class CloudPresenceRepositoryTest {
 
     private class MemoryEvidence : CloudPendingEvidence {
         var writes = 0
-        var failNext = false
+        var failNextRetain = false
+        var failNextClear = false
         val boundaries = mutableMapOf<Pair<String, Long>, CloudPresenceTransition>()
         val rows = mutableMapOf<Pair<String, Long>, MutableList<CloudPresenceInterval>>()
 
@@ -1779,8 +1855,8 @@ class CloudPresenceRepositoryTest {
             account: String, generation: Long, windowStart: Long,
             intervals: List<CloudPresenceInterval>, lastTransition: CloudPresenceTransition?,
         ) {
-            if (failNext) {
-                failNext = false
+            if (failNextRetain) {
+                failNextRetain = false
                 error("simulated evidence write failure")
             }
             writes++
@@ -1803,8 +1879,8 @@ class CloudPresenceRepositoryTest {
         }
 
         override suspend fun clearExcept(account: String, generation: Long) {
-            if (failNext) {
-                failNext = false
+            if (failNextClear) {
+                failNextClear = false
                 error("simulated evidence clear failure")
             }
             rows.keys.removeAll { it != account to generation }

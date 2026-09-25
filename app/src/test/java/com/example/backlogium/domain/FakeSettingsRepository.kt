@@ -87,7 +87,6 @@ internal class FakeSettingsRepository : SettingsRepository {
 
     private val readerGeneration = MutableStateFlow(0L)
     override val cloudReaderGeneration: Flow<Long> = readerGeneration
-    override suspend fun advanceCloudReaderGeneration(): Long = ++readerGeneration.value
 
     private val promotionTarget = MutableStateFlow<Long?>(null)
     var failNextPromotionMark = false
@@ -115,6 +114,16 @@ internal class FakeSettingsRepository : SettingsRepository {
     override suspend fun clearCloudReaderPromotion() {
         promotionTarget.value = null
     }
+    override suspend fun abandonCloudReaderPromotion(): Long {
+        // Mirrors SettingsDataStore: one edit advances the generation past any marked target
+        // and clears the marker, so a death cannot leave a marker behind a newer generation.
+        val next = maxOf(readerGeneration.value + 1L, (promotionTarget.value ?: 0L) + 1L)
+        readerGeneration.value = next
+        promotionTarget.value = null
+        return next
+    }
+    /** Simulates the pre-atomic fencing edit that advanced the generation without clearing the marker. */
+    fun simulateLegacyGenerationAdvance(): Long = ++readerGeneration.value
 
     private val routine = MutableStateFlow(CloudRoutineState())
     override val cloudRoutineState: Flow<CloudRoutineState> = routine
