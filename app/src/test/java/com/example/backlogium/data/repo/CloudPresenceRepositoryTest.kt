@@ -528,6 +528,92 @@ class CloudPresenceRepositoryTest {
     }
 
     @Test
+    fun ingestEffectsNeverExistWhenPromotionDiesBeforeTheMarker() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val ingested = mutableListOf<CloudPresenceSnapshot>()
+        val consume: suspend (CloudPresenceSnapshot) -> Unit = { snapshot ->
+            // Mirrors the real ingestor's durable effects: recovered sessions plus the ingest
+            // watermark. Neither may exist when the promotion is abandoned before the marker.
+            ingested += snapshot
+            settings.setCloudIngestPosition("ingested-${snapshot.readAt}")
+        }
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://old.example.com/read", "old-secret"))
+        settings.setCloudIngestPosition("old-ingest")
+
+        // Death at the marker write — the point that used to sit after the ingest — simulates
+        // a kill between the ingest and the marker under the old ordering.
+        api.answer = sampleResponseFor("20")
+        settings.failNextPromotionMark = true
+        try {
+            first.verifyAndSave("https://new.example.com/read", "new-secret", consume = consume)
+            org.junit.Assert.fail("promotion marker write should fail")
+        } catch (_: IllegalStateException) {
+            // Still before the commit point: the whole attempt is abandoned.
+        }
+
+        // The ingest never ran, so no B-derived session and no B ingest watermark exist, and
+        // A's ingest cursor was restored rather than left suppressed by a foreign watermark.
+        assertTrue(ingested.isEmpty())
+        assertEquals("old-ingest", settings.cloudIngestPosition.first())
+        assertEquals("https://old.example.com/read", store.credentials?.endpoint)
+        assertEquals(1L, settings.cloudReaderGeneration.first())
+        assertNull(settings.cloudReaderPromotionTarget.first())
+
+        // Reconstruct as A: A's next page still ingests normally instead of being skipped.
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertTrue(restarted.read(consume = consume) is CloudReadResult.Success)
+        assertEquals(1, ingested.size)
+        assertEquals("ingested-${ingested.single().readAt}", settings.cloudIngestPosition.first())
+    }
+
+    @Test
+    fun restartedPromotionKeepsIngestEffectsWhenDeathFollowsTheIngest() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val ingested = mutableListOf<CloudPresenceSnapshot>()
+        val consume: suspend (CloudPresenceSnapshot) -> Unit = { snapshot ->
+            ingested += snapshot
+            settings.setCloudIngestPosition("ingested-${snapshot.readAt}")
+        }
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://old.example.com/read", "old-secret"))
+        settings.setCloudIngestPosition("old-ingest")
+
+        // The replacement commits its promotion and its ingest, then dies when the read cursor
+        // write fails (after the ingest, before the marker is retired): the marker survives and
+        // covers the ingest effects, so restart completes the promotion instead of leaving B's
+        // effects behind an active A.
+        api.answer = sampleResponseFor("20").copy(nextPosition = "2026-09-15T00:20:00Z")
+        settings.failNextCloudReadPosition = true
+        try {
+            first.verifyAndSave("https://new.example.com/read", "new-secret", consume = consume)
+            org.junit.Assert.fail("read cursor write should fail")
+        } catch (_: IllegalStateException) {
+            // The promotion committed and the ingest ran; only the marker's retirement is pending.
+        }
+        assertEquals(1, ingested.size)
+        assertEquals("https://new.example.com/read", store.credentials?.endpoint)
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertEquals(2L, settings.cloudReaderPromotionTarget.first())
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertTrue(restarted.read() is CloudReadResult.Success)
+
+        // The promotion completed as B and keeps B's ingest effects as its own; A's ingest
+        // cursor was cleared for the promotion and never restored.
+        assertEquals("https://new.example.com/read", store.credentials?.endpoint)
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        assertEquals("ingested-${ingested.single().readAt}", settings.cloudIngestPosition.first())
+    }
+
+    @Test
     fun removingConfigurationAbandonsAnyStagedPromotion() = runBlocking {
         val api = FakeCloudPresenceApi(answer = sampleResponse())
         val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
