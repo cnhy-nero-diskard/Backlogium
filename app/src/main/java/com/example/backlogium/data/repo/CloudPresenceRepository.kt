@@ -155,7 +155,18 @@ class CloudPresenceRepository @Inject constructor(
 
     val configuration: Flow<CloudPresenceConfiguration?> =
         configurationState.onStart {
-            configurationState.value = credentialsStore.readCloudCredentials()?.toConfiguration()
+            // The initial re-read is serialized with the same state mutex that removal and
+            // promotion hold, so a blocked or slow read cannot publish a stale endpoint after
+            // the durable credentials changed under it: unsynchronized, a read of old pair A
+            // could finish after removeConfiguration() committed its credential clear and
+            // retired the removal marker, resurrecting the removed endpoint in memory with no
+            // tombstone left for recovery (and likewise republishing A across an A->B
+            // replacement). Under the mutex the read either sees the pre-change credentials or
+            // the post-change emptiness — never a value it can write back after the change
+            // committed.
+            cloudStateMutex.withLock {
+                configurationState.value = credentialsStore.readCloudCredentials()?.toConfiguration()
+            }
         }
 
     val snapshot: Flow<CloudPresenceSnapshot?> = snapshotState.asStateFlow()

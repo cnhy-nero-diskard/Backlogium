@@ -1027,6 +1027,47 @@ class CloudPresenceRepositoryTest {
     }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun blockedInitialConfigurationReadCannotResurrectRemovedEndpoint() = runTest {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val readEntered = CompletableDeferred<Unit>()
+        val readGate = CompletableDeferred<Unit>()
+        val store = GatingCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+            readEntered,
+            readGate,
+        )
+        val settings = FakeSettingsRepository()
+        val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT)
+
+        // A new collector starts and blocks inside its initial credential re-read. That read
+        // is serialized with the state mutex, so it holds the mutex for its whole duration.
+        val observedConfigurations = mutableListOf<CloudPresenceConfiguration?>()
+        backgroundScope.launch { repo.configuration.collect { observedConfigurations += it } }
+        readEntered.await()
+
+        // Removal is requested while the re-read is still blocked: it cannot commit its
+        // credential clear — let alone retire the removal marker — until the blocked read
+        // releases the mutex. Unsynchronized, the removal would complete here and the blocked
+        // read would later write the removed endpoint back into the exposed flow with no
+        // tombstone left for recovery.
+        val removal = async { repo.removeConfiguration() }
+        runCurrent()
+        assertTrue(store.credentials != null)
+
+        // The stale read finishes with the pre-removal credentials. The collector may
+        // transiently publish them, but the serialized removal then clears them before the
+        // marker is retired, so the flow settles on null and keeps reporting it afterward.
+        readGate.complete(Unit)
+        removal.await()
+        runCurrent()
+
+        assertNull(settings.cloudReaderRemovalTarget.first())
+        assertNull(store.credentials)
+        assertNull(observedConfigurations.last())
+    }
+
+    @Test
     fun removalCrashWithAMarkedPromotionAbandonsItInsteadOfCompletingIt() = runBlocking {
         val api = FakeCloudPresenceApi(answer = sampleResponse())
         val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
@@ -2304,6 +2345,31 @@ class CloudPresenceRepositoryTest {
 
         override suspend fun clearStagedCloudCredentials() {
             stagedCredentials = null
+        }
+    }
+
+    private class GatingCloudCredentialsStore(
+        var credentials: CloudCredentials?,
+        private val entered: CompletableDeferred<Unit>,
+        private val gate: CompletableDeferred<Unit>,
+    ) : CloudCredentialsStore {
+        private var first = true
+
+        override suspend fun readCloudCredentials(): CloudCredentials? {
+            if (first) {
+                first = false
+                entered.complete(Unit)
+                gate.await()
+            }
+            return credentials
+        }
+
+        override suspend fun writeCloudCredentials(endpoint: String, token: String) {
+            credentials = CloudCredentials(endpoint, token)
+        }
+
+        override suspend fun clearCloudCredentials() {
+            credentials = null
         }
     }
 
