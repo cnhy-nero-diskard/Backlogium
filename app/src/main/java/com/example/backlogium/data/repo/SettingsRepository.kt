@@ -194,6 +194,24 @@ interface SettingsRepository : SessionEndOutbox {
 
     suspend fun clearCloudReaderPromotion() = Unit
 
+    /**
+     * Durable removal marker: non-null fence target while a removal's credential clear has
+     * committed but its post-credential Settings cleanup has not finished. Recovery consumes it
+     * before a later verification can inherit the removed reader's policy/cooldown. Old
+     * implementations always report no removal in flight.
+     */
+    val cloudReaderRemovalTarget: Flow<Long?>
+        get() = flowOf(null)
+
+    /**
+     * Record the removal's fence target before its credential-clear commit point, so recovery
+     * can finish an interrupted removal's post-credential cleanup without double-advancing the
+     * generation. Returns the recorded target.
+     */
+    suspend fun markCloudReaderRemoval(): Long = 0L
+
+    suspend fun clearCloudReaderRemoval() = Unit
+
     /** Null until a verified reader is initialized or an existing reader is reconciled. */
     val cloudRoutineState: Flow<CloudRoutineState>
         get() = flowOf(CloudRoutineState())
@@ -407,6 +425,12 @@ class DataStoreSettingsRepository @Inject constructor(
     override suspend fun finishCloudReaderPromotion(): Long? = settings.finishCloudReaderPromotion()
 
     override suspend fun clearCloudReaderPromotion() = settings.clearCloudReaderPromotion()
+
+    override val cloudReaderRemovalTarget: Flow<Long?> = settings.cloudReaderRemovalTargetFlow
+
+    override suspend fun markCloudReaderRemoval(): Long = settings.markCloudReaderRemoval()
+
+    override suspend fun clearCloudReaderRemoval() = settings.clearCloudReaderRemoval()
 
     override val cloudRoutineState: Flow<CloudRoutineState> = settings.cloudRoutineStateFlow
 

@@ -742,6 +742,7 @@ class CloudPresenceRepositoryTest {
         assertNull(store.credentials)
         assertNull(store.stagedCredentials)
         assertNull(settings.cloudReaderPromotionTarget.first())
+        assertNull(settings.cloudReaderRemovalTarget.first())
         // The fence advances past the marked target so the abandoned page cannot land on the
         // active generation.
         assertEquals(3L, settings.cloudReaderGeneration.first())
@@ -759,13 +760,16 @@ class CloudPresenceRepositoryTest {
         assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://reader.example.com/read", "secret"))
         settings.setCloudReadPosition("stale-position")
         settings.setCloudIngestPosition("stale-ingest")
+        settings.setCloudRoutinePolicy(CloudRoutinePolicy.DAILY)
+        settings.recordCloudRoutineAdmission(1234L)
         val generationBefore = settings.cloudReaderGeneration.first()
 
-        // The removal commit point: both credential pairs are cleared in one atomic store edit,
-        // then the process dies before the generation fence or any later cleanup ran. The old
-        // ordering fenced first, so this death point left the active credentials behind with no
-        // promotion marker left to recover from, and the restart treated the removed reader as
-        // still configured.
+        // The removal records its fence target and then commits: both credential pairs are
+        // cleared in one atomic store edit, then the process dies before the generation fence
+        // or any later cleanup ran. The old ordering fenced first, so this death point left the
+        // active credentials behind with no promotion marker left to recover from, and the
+        // restart treated the removed reader as still configured.
+        settings.markCloudReaderRemoval()
         store.clearAllCloudCredentials()
         val requestsBeforeRestart = api.requests.size
 
@@ -774,9 +778,30 @@ class CloudPresenceRepositoryTest {
         assertNull(restarted.configuration.first())
         assertNull(store.credentials)
         assertNull(store.stagedCredentials)
-        assertEquals(generationBefore, settings.cloudReaderGeneration.first())
+        // Startup recovery finished the removal the interrupted call never reached, including
+        // the generation fence.
+        assertEquals(generationBefore + 1L, settings.cloudReaderGeneration.first())
         assertEquals(CloudReadResult.Unconfigured, restarted.read())
         assertEquals(requestsBeforeRestart, api.requests.size)
+
+        // Startup recovery consumed the removal marker and finished the cleanup the
+        // interrupted call never reached, so the removed reader's policy/cooldown cannot be
+        // inherited by a later reader.
+        assertNull(settings.cloudReaderRemovalTarget.first())
+        assertNull(settings.cloudRoutineState.first().policy)
+        assertNull(settings.cloudReadPosition.first())
+        assertNull(settings.cloudIngestPosition.first())
+        assertTrue(evidence.rows.isEmpty())
+
+        // A later reconfiguration is a fresh reader: Automatic is initialized with a fresh
+        // ordering seed, not the removed reader's DAILY policy or its admission cooldown.
+        assertEquals(CloudConfigurationResult.Saved,
+            restarted.verifyAndSave("https://fresh.example.com/read", "fresh-secret"))
+        val routine = settings.cloudRoutineState.first()
+        assertEquals(CloudRoutinePolicy.AUTOMATIC, routine.policy)
+        assertNull(routine.lastAdmittedAt)
+        assertEquals(1L, routine.orderingWatermark)
+        assertEquals(1L, routine.lastAdmissionWatermark)
     }
 
     @Test
@@ -788,12 +813,16 @@ class CloudPresenceRepositoryTest {
         val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
         assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://reader.example.com/read", "secret"))
         settings.setCloudReadPosition("stale-position")
+        settings.setCloudRoutinePolicy(CloudRoutinePolicy.EVERY_48_HOURS)
+        settings.recordCloudRoutineAdmission(1234L)
         val generationBefore = settings.cloudReaderGeneration.first()
 
         // Death immediately after the durable generation fence, before the evidence/work/policy
         // cleanup: the credential clear already committed, so the fence's position in the
         // ordering is no longer what keeps the reader dead — nothing can promote or use a
-        // reader whose credentials were already destroyed.
+        // reader whose credentials were already destroyed. The removal marker survives because
+        // the cleanup never retired it.
+        settings.markCloudReaderRemoval()
         store.clearAllCloudCredentials()
         settings.abandonCloudReaderPromotion()
         val requestsBeforeRestart = api.requests.size
@@ -802,8 +831,13 @@ class CloudPresenceRepositoryTest {
         assertNull(restarted.reconcileRoutinePolicy())
         assertNull(restarted.configuration.first())
         assertEquals(CloudReadResult.Unconfigured, restarted.read())
+        // Recovery sees the generation already at the recorded target and does not advance it
+        // a second time.
         assertEquals(generationBefore + 1L, settings.cloudReaderGeneration.first())
         assertEquals(requestsBeforeRestart, api.requests.size)
+        assertNull(settings.cloudReaderRemovalTarget.first())
+        assertNull(settings.cloudRoutineState.first().policy)
+        assertTrue(evidence.rows.isEmpty())
     }
 
     @Test
@@ -821,23 +855,26 @@ class CloudPresenceRepositoryTest {
         store.stageCloudCredentials("https://new.example.com/read", "new-secret")
         settings.markCloudReaderPromotion(2L)
 
-        // Removal destroys both credential pairs in one atomic store edit, then dies before its
-        // generation fence: the marker survives but no credentials exist for recovery to
-        // promote or keep.
+        // Removal records its fence target (past the marked promotion), destroys both
+        // credential pairs in one atomic store edit, then dies before its generation fence:
+        // the removal marker and the promotion marker both survive.
+        settings.markCloudReaderRemoval()
         store.clearAllCloudCredentials()
         val requestsBeforeRestart = api.requests.size
 
         val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
         assertNull(restarted.reconcileRoutinePolicy())
 
-        // Recovery abandoned the credential-less marker instead of completing it: no generation
-        // commit, no replacement credentials, no routine policy for a reader that was being
-        // removed, and B's staged rows were discarded with the attempt.
+        // Recovery finished the removal rather than completing the promotion: no generation
+        // commit to B's target, no replacement credentials, no routine policy for a reader
+        // that was being removed. The removal's own fence advanced past the marked target and
+        // B's staged rows were discarded with the attempt.
         assertNull(store.credentials)
         assertNull(store.stagedCredentials)
         assertNull(settings.cloudReaderPromotionTarget.first())
-        assertEquals(1L, settings.cloudReaderGeneration.first())
-        assertEquals(setOf(ACCOUNT to 1L), evidence.rows.keys.toSet())
+        assertNull(settings.cloudReaderRemovalTarget.first())
+        assertEquals(3L, settings.cloudReaderGeneration.first())
+        assertTrue(evidence.rows.isEmpty())
         assertEquals(CloudReadResult.Unconfigured, restarted.read())
         assertEquals(requestsBeforeRestart, api.requests.size)
     }

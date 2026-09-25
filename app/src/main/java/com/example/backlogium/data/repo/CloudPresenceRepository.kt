@@ -231,6 +231,11 @@ class CloudPresenceRepository @Inject constructor(
      */
     private suspend fun recoverStagedPromotionLocked() {
         cloudStateMutex.withLock {
+            // An interrupted removal's post-credential cleanup runs before promotion recovery,
+            // so the removal's fence sees any surviving promotion marker intact and can advance
+            // past its target in one edit; promotion recovery then finds no marker and performs
+            // its ordinary housekeeping on state the removal already cleared.
+            recoverInterruptedRemovalLocked()
             val marker = settings.cloudReaderPromotionTarget.first()
             val staged = credentialsStore.readStagedCloudCredentials()
             if (marker == null) {
@@ -297,6 +302,42 @@ class CloudPresenceRepository @Inject constructor(
             settings.initializeCloudRoutinePolicy()
             settings.clearCloudReaderPromotion()
         }
+    }
+
+    /**
+     * Finishes a reader removal whose credential-clear commit point landed but whose
+     * post-credential cleanup was interrupted by process death. The removal marker is written
+     * before the credential clear and stays until every cleanup step below has run, so the
+     * persisted routine policy/cooldown, ordering watermarks, cursors, and read summary cannot
+     * survive to be inherited by a later reader: without this, a successful reconfiguration
+     * would call [initializeCloudRoutinePolicy][com.example.backlogium.data.repo.SettingsRepository.initializeCloudRoutinePolicy],
+     * which deliberately preserves policy and cooldown for endpoint replacement and cannot tell
+     * the removed reader's state from a same-reader replacement's.
+     *
+     * The marker records the fence target computed before the commit point, so the fence here
+     * runs only when the persisted generation has not already reached it: the interrupted
+     * removal's own fence may have landed before the crash, and re-running it would advance the
+     * generation a second time. When credentials are still present the removal died before its
+     * commit point and is an abandoned attempt: the reader remains configured and only the
+     * marker is retired. Any failure below keeps the marker, so the next recovery retries the
+     * idempotent cleanup instead of losing it.
+     *
+     * Caller must hold [cloudStateMutex] (via [recoverStagedPromotionLocked]).
+     */
+    private suspend fun recoverInterruptedRemovalLocked() {
+        val target = settings.cloudReaderRemovalTarget.first() ?: return
+        if (credentialsStore.readCloudCredentials() == null) {
+            if (settings.cloudReaderGeneration.first() < target) {
+                settings.abandonCloudReaderPromotion()
+            }
+            pendingEvidence.clear()
+            routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
+            settings.clearCloudReadPosition()
+            settings.clearCloudIngestPosition()
+            settings.clearCloudRoutinePolicy()
+            settings.clearCloudReadSummary()
+        }
+        settings.clearCloudReaderRemoval()
     }
 
     /** Verify identity at work start; DataStore arbitrates coincident trigger admissions. */
@@ -757,9 +798,19 @@ class CloudPresenceRepository @Inject constructor(
             // reader stays unconfigured after restart. The earlier ordering fenced first, so
             // a death between the fence and the credential clear left the active pair behind
             // with no promotion marker left to recover from, and the restart treated the
-            // removed reader as still configured. Every step after the commit point is
-            // idempotent cleanup: re-running it changes nothing, and skipping it leaves only
-            // inert state that no credential-less read, admission, or scheduler can act on.
+            // removed reader as still configured.
+            //
+            // The removal marker is recorded before the commit point so the opposite crash
+            // window is covered too: a death after the credential clear but before the
+            // Settings cleanup below would otherwise leave the routine policy/cooldown,
+            // ordering watermarks, cursors, and read summary durable with no reader, and a
+            // later reconfiguration would inherit the removed reader's policy and cooldown.
+            // The marker names the fence target computed from the same persisted inputs, so
+            // recovery can finish this cleanup idempotently and skip the fence when it
+            // already ran. If the death lands before the commit point, the marker is an
+            // abandoned attempt that recovery retires without touching the still-configured
+            // reader.
+            settings.markCloudReaderRemoval()
             credentialsStore.clearAllCloudCredentials()
             settings.abandonCloudReaderPromotion()
             pendingEvidence.clear()
@@ -770,6 +821,10 @@ class CloudPresenceRepository @Inject constructor(
             settings.clearCloudReadSummary()
             configurationState.value = null
             snapshotState.value = null
+            // Every durable cleanup step above has run; only now is the removal marker
+            // retired, so a death at any earlier point re-runs the idempotent cleanup via
+            // recovery instead of leaving the removed reader's policy/cooldown behind.
+            settings.clearCloudReaderRemoval()
         }
     }
 

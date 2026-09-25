@@ -114,6 +114,15 @@ class SettingsDataStore @Inject constructor(
          * value the reader generation is set to when the promotion commits.
          */
         val CLOUD_READER_PROMOTION_TARGET = longPreferencesKey("cloud_reader_promotion_target")
+        /**
+         * Write-ahead marker for a reader removal whose credential-clear commit point has landed
+         * but whose post-credential cleanup (generation fence, pending evidence, routine policy
+         * and cooldown, cursors, and read summary) has not finished. The value is the fence
+         * target generation the removal must leave the reader generation at or past, computed
+         * before the credential clear so recovery can tell whether the fence already ran.
+         * Absent means no removal is mid-cleanup.
+         */
+        val CLOUD_READER_REMOVAL_TARGET = longPreferencesKey("cloud_reader_removal_target")
         val CLOUD_ROUTINE_POLICY = stringPreferencesKey("cloud_routine_policy")
         val CLOUD_ROUTINE_LAST_ADMITTED_AT = longPreferencesKey("cloud_routine_last_admitted_at")
         val CLOUD_ROUTINE_LAST_OUTCOME = stringPreferencesKey("cloud_routine_last_outcome")
@@ -520,14 +529,47 @@ class SettingsDataStore @Inject constructor(
     suspend fun abandonCloudReaderPromotion(): Long {
         var next = 0L
         context.dataStore.edit { prefs ->
-            next = maxOf(
-                (prefs[Keys.CLOUD_READER_GENERATION] ?: 0L) + 1L,
-                (prefs[Keys.CLOUD_READER_PROMOTION_TARGET] ?: 0L) + 1L,
-            )
+            next = nextGenerationAfter(prefs)
             prefs[Keys.CLOUD_READER_GENERATION] = next
             prefs.remove(Keys.CLOUD_READER_PROMOTION_TARGET)
         }
         return next
+    }
+
+    /**
+     * The fence target a removal/account-change would leave the reader generation at: one past
+     * the persisted generation, or past a marked promotion's target when one survives, so the
+     * abandoned staged page can never land exactly on the active generation.
+     */
+    private fun nextGenerationAfter(prefs: Preferences): Long =
+        maxOf(
+            (prefs[Keys.CLOUD_READER_GENERATION] ?: 0L) + 1L,
+            (prefs[Keys.CLOUD_READER_PROMOTION_TARGET] ?: 0L) + 1L,
+        )
+
+    val cloudReaderRemovalTargetFlow: Flow<Long?> =
+        context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_READER_REMOVAL_TARGET] }
+
+    /**
+     * Record the removal's fence target before its credential-clear commit point, so recovery
+     * can finish an interrupted removal's post-credential cleanup without double-advancing the
+     * generation. The target is recomputed by [abandonCloudReaderPromotion] from the same
+     * inputs, so a caller that records it and then fences without interleaving other writes
+     * lands the generation exactly on the recorded value and recovery can skip the fence.
+     */
+    suspend fun markCloudReaderRemoval(): Long {
+        var target = 0L
+        context.dataStore.edit { prefs ->
+            target = nextGenerationAfter(prefs)
+            prefs[Keys.CLOUD_READER_REMOVAL_TARGET] = target
+        }
+        return target
+    }
+
+    suspend fun clearCloudReaderRemoval() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.CLOUD_READER_REMOVAL_TARGET)
+        }
     }
 
     val cloudReaderPromotionTargetFlow: Flow<Long?> =
@@ -991,6 +1033,7 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.CLOUD_READ_POSITION)
             prefs.remove(Keys.CLOUD_INGEST_POSITION)
             prefs.remove(Keys.CLOUD_READER_PROMOTION_TARGET)
+            prefs.remove(Keys.CLOUD_READER_REMOVAL_TARGET)
             prefs.remove(Keys.CLOUD_ROUTINE_POLICY)
             prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT)
             prefs.remove(Keys.CLOUD_ROUTINE_LAST_OUTCOME)

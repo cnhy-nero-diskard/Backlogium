@@ -122,6 +122,20 @@ internal class FakeSettingsRepository : SettingsRepository {
         promotionTarget.value = null
         return next
     }
+
+    private val removalTarget = MutableStateFlow<Long?>(null)
+    override val cloudReaderRemovalTarget: Flow<Long?> = removalTarget
+    override suspend fun markCloudReaderRemoval(): Long {
+        // Mirrors SettingsDataStore: records the same fence target abandon would compute, so
+        // recovery can skip the fence when the interrupted removal already ran it.
+        val target = maxOf(readerGeneration.value + 1L, (promotionTarget.value ?: 0L) + 1L)
+        removalTarget.value = target
+        return target
+    }
+    override suspend fun clearCloudReaderRemoval() {
+        removalTarget.value = null
+    }
+
     /** Simulates the pre-atomic fencing edit that advanced the generation without clearing the marker. */
     fun simulateLegacyGenerationAdvance(): Long = ++readerGeneration.value
 
