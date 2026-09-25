@@ -9,6 +9,7 @@ import com.example.backlogium.data.remote.dto.CloudPresenceCurrentDto
 import com.example.backlogium.data.remote.dto.CloudPresenceResponseDto
 import com.example.backlogium.data.remote.dto.CloudPresenceTransitionDto
 import com.example.backlogium.domain.FakeSettingsRepository
+import com.example.backlogium.domain.CloudCoverageState
 import com.example.backlogium.domain.CloudPresenceInterval
 import com.example.backlogium.domain.CloudPresenceTransition
 import com.example.backlogium.domain.TimeProvider
@@ -258,6 +259,253 @@ class CloudPresenceRepositoryTest {
         assertEquals("old-ingest", settings.cloudIngestPosition.first())
         assertEquals(0L, settings.cloudReaderGeneration.first())
         assertEquals("https://old.example.com/read", store.credentials?.endpoint)
+    }
+
+    @Test
+    fun stagingFailureKeepsOldReaderAndNeverCombinesWithLaterReplacement() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, repo.verifyAndSave("https://old.example.com/read", "old-secret"))
+        assertEquals(1L, settings.cloudReaderGeneration.first())
+
+        // B's page is staged and then its credential staging fails, before the promotion marker.
+        api.answer = sampleResponseFor("20")
+        store.failNextStage = true
+        try {
+            repo.verifyAndSave("https://new.example.com/read", "new-secret")
+            org.junit.Assert.fail("staged credential write should fail")
+        } catch (_: IllegalStateException) {
+            // Rolled back before the commit point: the old reader stays fully intact.
+        }
+        assertEquals("https://old.example.com/read", store.credentials?.endpoint)
+        assertNull(store.stagedCredentials)
+        assertEquals(1L, settings.cloudReaderGeneration.first())
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        // A's evidence survived; B's staged rows were abandoned.
+        assertEquals(setOf(ACCOUNT to 1L), evidence.rows.keys.toSet())
+
+        // C verifies into the same target generation 2. Its page must not combine with B's.
+        api.answer = sampleResponseFor("30")
+        assertEquals(CloudConfigurationResult.Saved, repo.verifyAndSave("https://third.example.com/read", "third-secret"))
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertEquals(setOf(ACCOUNT to 2L), evidence.rows.keys.toSet())
+        assertEquals(listOf(30L), evidence.rows.getValue(ACCOUNT to 2L).map { it.appId })
+    }
+
+    @Test
+    fun restartedStagingNeverCombinesWithALaterReplacement() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://old.example.com/read", "old-secret"))
+
+        // Process death right after B's page was staged at generation 2: no staged credentials,
+        // no marker. A stays active with its own evidence intact.
+        evidence.retain(ACCOUNT, 2L, 1_000L, listOf(foreignInterval(20L)), null)
+
+        api.answer = sampleResponseFor("30")
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, restarted.verifyAndSave("https://third.example.com/read", "third-secret"))
+
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertEquals(setOf(ACCOUNT to 2L), evidence.rows.keys.toSet())
+        assertEquals(listOf(30L), evidence.rows.getValue(ACCOUNT to 2L).map { it.appId })
+        assertEquals("https://third.example.com/read", store.credentials?.endpoint)
+    }
+
+    @Test
+    fun restartedMarkedPromotionCompletesOnStartupReconciliation() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://old.example.com/read", "old-secret"))
+        settings.setCloudReadPosition("old-position")
+
+        // Death after the marker: staged credentials + staged page + marker at 2, while the
+        // active credentials and the persisted generation are still A/1.
+        evidence.retain(ACCOUNT, 2L, 1_000L, listOf(foreignInterval(20L)), null)
+        store.stageCloudCredentials("https://new.example.com/read", "new-secret")
+        settings.markCloudReaderPromotion(2L)
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertTrue(restarted.reconcileRoutinePolicy() != null)
+
+        assertEquals("https://new.example.com/read", store.credentials?.endpoint)
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        assertEquals(setOf(ACCOUNT to 2L), evidence.rows.keys.toSet())
+        assertEquals(listOf(20L), evidence.rows.getValue(ACCOUNT to 2L).map { it.appId })
+        // The old reader's watermark must not survive into the replacement's reads.
+        assertNull(settings.cloudReadPosition.first())
+    }
+
+    @Test
+    fun restartedPromotionCompletesWhenCredentialsWerePromotedBeforeGeneration() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://old.example.com/read", "old-secret"))
+        settings.setCloudReadPosition("old-position")
+
+        // Death after the credential promotion: B is active, staged values cleared, but the
+        // marker is still set and the persisted generation is still 1. A's evidence at 1
+        // remains, and must never be read against B's credentials.
+        evidence.retain(ACCOUNT, 2L, 1_000L, listOf(foreignInterval(20L)), null)
+        store.writeCloudCredentials("https://new.example.com/read", "new-secret")
+        settings.markCloudReaderPromotion(2L)
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertTrue(restarted.read() is CloudReadResult.Success)
+
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        assertEquals(setOf(ACCOUNT to 2L), evidence.rows.keys.toSet())
+        assertNull(evidence.boundary(ACCOUNT, 1L))
+        assertNull(settings.cloudReadPosition.first())
+        // The resumed read talked to the replacement, not the old reader.
+        assertEquals("Bearer new-secret", api.requests.last().authorization)
+        assertNull(api.requests.last().position)
+    }
+
+    @Test
+    fun orphanedStagedCredentialsAreDiscardedWhenNoMarkerExists() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val first = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, first.verifyAndSave("https://old.example.com/read", "old-secret"))
+
+        // Death between staging the credentials and writing the marker: an abandoned attempt.
+        store.stageCloudCredentials("https://new.example.com/read", "new-secret")
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertTrue(restarted.read() is CloudReadResult.Success)
+
+        assertNull(store.stagedCredentials)
+        assertEquals("https://old.example.com/read", store.credentials?.endpoint)
+        assertEquals(1L, settings.cloudReaderGeneration.first())
+    }
+
+    @Test
+    fun credentialPromotionFailureLeavesADurablePromotionForRecovery() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, repo.verifyAndSave("https://old.example.com/read", "old-secret"))
+
+        api.answer = sampleResponseFor("20")
+        store.failNextCommit = true
+        try {
+            repo.verifyAndSave("https://new.example.com/read", "new-secret")
+            org.junit.Assert.fail("credential promotion should fail")
+        } catch (_: IllegalStateException) {
+            // After the marker: the failure leaves a durable, recoverable promotion instead of
+            // a half-promoted reader.
+        }
+        assertEquals(2L, settings.cloudReaderPromotionTarget.first())
+        assertEquals(CloudCredentials("https://new.example.com/read", "new-secret"), store.stagedCredentials)
+        // A remains the active reader with its evidence intact; only B's page is staged.
+        assertEquals("https://old.example.com/read", store.credentials?.endpoint)
+        assertEquals(1L, settings.cloudReaderGeneration.first())
+        assertEquals(setOf(ACCOUNT to 1L, ACCOUNT to 2L), evidence.rows.keys.toSet())
+        assertEquals(listOf(10L), evidence.rows.getValue(ACCOUNT to 1L).map { it.appId })
+        assertEquals(listOf(20L), evidence.rows.getValue(ACCOUNT to 2L).map { it.appId })
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertTrue(restarted.read() is CloudReadResult.Success)
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        assertEquals("https://new.example.com/read", store.credentials?.endpoint)
+        assertEquals(setOf(ACCOUNT to 2L), evidence.rows.keys.toSet())
+    }
+
+    @Test
+    fun generationAdvanceFailureAfterCredentialCommitIsRecovered() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, repo.verifyAndSave("https://old.example.com/read", "old-secret"))
+
+        api.answer = sampleResponseFor("20")
+        settings.failNextPromotionFinish = true
+        try {
+            repo.verifyAndSave("https://new.example.com/read", "new-secret")
+            org.junit.Assert.fail("generation advance should fail")
+        } catch (_: IllegalStateException) {
+            // Credentials already promoted; the marker remains so recovery finishes the promotion.
+        }
+        assertEquals("https://new.example.com/read", store.credentials?.endpoint)
+        assertNull(store.stagedCredentials)
+        assertEquals(2L, settings.cloudReaderPromotionTarget.first())
+        assertEquals(1L, settings.cloudReaderGeneration.first())
+        // A's evidence is not retired yet: the promotion has not committed.
+        assertEquals(setOf(ACCOUNT to 1L, ACCOUNT to 2L), evidence.rows.keys.toSet())
+
+        val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertTrue(restarted.read() is CloudReadResult.Success)
+        assertEquals(2L, settings.cloudReaderGeneration.first())
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        assertEquals(setOf(ACCOUNT to 2L), evidence.rows.keys.toSet())
+    }
+
+    @Test
+    fun failedPromotionMarkerKeepsOldReaderIntact() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, repo.verifyAndSave("https://old.example.com/read", "old-secret"))
+
+        api.answer = sampleResponseFor("20")
+        settings.failNextPromotionMark = true
+        try {
+            repo.verifyAndSave("https://new.example.com/read", "new-secret")
+            org.junit.Assert.fail("promotion marker write should fail")
+        } catch (_: IllegalStateException) {
+            // Still before the commit point: the whole attempt is abandoned.
+        }
+        assertNull(store.stagedCredentials)
+        assertEquals("https://old.example.com/read", store.credentials?.endpoint)
+        assertEquals(1L, settings.cloudReaderGeneration.first())
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        assertEquals(setOf(ACCOUNT to 1L), evidence.rows.keys.toSet())
+    }
+
+    @Test
+    fun removingConfigurationAbandonsAnyStagedPromotion() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
+        val settings = FakeSettingsRepository()
+        val evidence = MemoryEvidence()
+        val repo = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT, evidence)
+        assertEquals(CloudConfigurationResult.Saved, repo.verifyAndSave("https://old.example.com/read", "old-secret"))
+
+        evidence.retain(ACCOUNT, 2L, 1_000L, listOf(foreignInterval(20L)), null)
+        store.stageCloudCredentials("https://new.example.com/read", "new-secret")
+        settings.markCloudReaderPromotion(2L)
+
+        repo.removeConfiguration()
+
+        assertNull(store.credentials)
+        assertNull(store.stagedCredentials)
+        assertNull(settings.cloudReaderPromotionTarget.first())
+        assertTrue(evidence.rows.isEmpty())
+        assertTrue(evidence.boundaries.isEmpty())
     }
 
     @Test
@@ -1283,7 +1531,12 @@ class CloudPresenceRepositoryTest {
     private class MemoryEvidence : CloudPendingEvidence {
         var writes = 0
         var failNext = false
-        override suspend fun boundary(account: String, generation: Long): CloudPresenceTransition? = null
+        val boundaries = mutableMapOf<Pair<String, Long>, CloudPresenceTransition>()
+        val rows = mutableMapOf<Pair<String, Long>, MutableList<CloudPresenceInterval>>()
+
+        override suspend fun boundary(account: String, generation: Long): CloudPresenceTransition? =
+            boundaries[account to generation]
+
         override suspend fun retain(
             account: String, generation: Long, windowStart: Long,
             intervals: List<CloudPresenceInterval>, lastTransition: CloudPresenceTransition?,
@@ -1293,11 +1546,28 @@ class CloudPresenceRepositoryTest {
                 error("simulated evidence write failure")
             }
             writes++
+            val existing = rows.getOrPut(account to generation) { mutableListOf() }
+            intervals.forEach { interval ->
+                existing.removeAll { it.appId == interval.appId && it.startAt == interval.startAt }
+                existing += interval
+            }
+            if (lastTransition != null) boundaries[account to generation] = lastTransition
         }
-        override suspend fun intervals(account: String, generation: Long): List<CloudPresenceInterval> = emptyList()
+
+        override suspend fun intervals(account: String, generation: Long): List<CloudPresenceInterval> =
+            rows[account to generation].orEmpty()
+
         override suspend fun earliestWindowStart(account: String, generation: Long): Long? = null
-        override suspend fun clear() = Unit
-        override suspend fun clearExcept(account: String, generation: Long) = Unit
+
+        override suspend fun clear() {
+            rows.clear()
+            boundaries.clear()
+        }
+
+        override suspend fun clearExcept(account: String, generation: Long) {
+            rows.keys.removeAll { it != account to generation }
+            boundaries.keys.removeAll { it != account to generation }
+        }
     }
 
     private class FakeCloudPresenceApi(
@@ -1362,6 +1632,9 @@ class CloudPresenceRepositoryTest {
         var credentials: CloudCredentials? = null,
     ) : CloudCredentialsStore {
         var writeCount = 0
+        var stagedCredentials: CloudCredentials? = null
+        var failNextStage = false
+        var failNextCommit = false
 
         override suspend fun readCloudCredentials(): CloudCredentials? = credentials
 
@@ -1372,6 +1645,31 @@ class CloudPresenceRepositoryTest {
 
         override suspend fun clearCloudCredentials() {
             credentials = null
+        }
+
+        override suspend fun stageCloudCredentials(endpoint: String, token: String) {
+            if (failNextStage) {
+                failNextStage = false
+                error("simulated staged credential write failure")
+            }
+            stagedCredentials = CloudCredentials(endpoint, token)
+        }
+
+        override suspend fun readStagedCloudCredentials(): CloudCredentials? = stagedCredentials
+
+        override suspend fun commitStagedCloudCredentials() {
+            if (failNextCommit) {
+                failNextCommit = false
+                error("simulated credential promotion failure")
+            }
+            val staged = stagedCredentials ?: error("No staged cloud credentials")
+            writeCount++
+            credentials = staged
+            stagedCredentials = null
+        }
+
+        override suspend fun clearStagedCloudCredentials() {
+            stagedCredentials = null
         }
     }
 
@@ -1405,6 +1703,38 @@ class CloudPresenceRepositoryTest {
     private companion object {
         const val ACCOUNT = "76561198000000001"
         const val OTHER_ACCOUNT = "76561198000000002"
+
+        fun sampleResponseFor(gameId: String) = sampleResponse().copy(
+            transitions = listOf(
+                CloudPresenceTransitionDto(
+                    v = 2,
+                    t = "2026-09-15T00:00:00Z",
+                    gameid = gameId,
+                    gameName = "Game$gameId",
+                    personastate = 1,
+                ),
+            ),
+            current = CloudPresenceCurrentDto(
+                v = 2,
+                lastObservedAt = "2026-09-15T00:10:00Z",
+                gameid = gameId,
+                gameName = "Game$gameId",
+                personastate = 1,
+            ),
+        )
+
+        fun foreignInterval(appId: Long) = CloudPresenceInterval(
+            appId = appId,
+            gameName = null,
+            startAt = 1_000L,
+            endAt = null,
+            ongoing = true,
+            coverage = CloudCoverageState.UNKNOWN,
+            observedUntil = null,
+            coverageLapseFrom = null,
+            coverageLapseRecoveredAt = null,
+            mayHaveStartedBefore = true,
+        )
 
         fun sampleResponse(
             account: String = ACCOUNT,

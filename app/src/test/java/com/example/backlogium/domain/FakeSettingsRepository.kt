@@ -89,6 +89,31 @@ internal class FakeSettingsRepository : SettingsRepository {
     override val cloudReaderGeneration: Flow<Long> = readerGeneration
     override suspend fun advanceCloudReaderGeneration(): Long = ++readerGeneration.value
 
+    private val promotionTarget = MutableStateFlow<Long?>(null)
+    var failNextPromotionMark = false
+    var failNextPromotionFinish = false
+    override val cloudReaderPromotionTarget: Flow<Long?> = promotionTarget
+    override suspend fun markCloudReaderPromotion(target: Long) {
+        if (failNextPromotionMark) {
+            failNextPromotionMark = false
+            error("simulated promotion marker failure")
+        }
+        promotionTarget.value = target
+    }
+    override suspend fun finishCloudReaderPromotion(): Long? {
+        if (failNextPromotionFinish) {
+            failNextPromotionFinish = false
+            error("simulated promotion finish failure")
+        }
+        val target = promotionTarget.value ?: return null
+        readerGeneration.value = target
+        promotionTarget.value = null
+        return target
+    }
+    override suspend fun clearCloudReaderPromotion() {
+        promotionTarget.value = null
+    }
+
     private val routine = MutableStateFlow(CloudRoutineState())
     override val cloudRoutineState: Flow<CloudRoutineState> = routine
     override suspend fun initializeCloudRoutinePolicy(): CloudRoutineState {

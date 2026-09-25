@@ -23,6 +23,18 @@ interface CloudCredentialsStore {
     suspend fun readCloudCredentials(): CloudCredentials?
     suspend fun writeCloudCredentials(endpoint: String, token: String)
     suspend fun clearCloudCredentials()
+
+    /** Stage a replacement endpoint/token without touching the active credentials. */
+    suspend fun stageCloudCredentials(endpoint: String, token: String) = Unit
+
+    /** Read staged credentials for promotion recovery, or null when the pair is incomplete. */
+    suspend fun readStagedCloudCredentials(): CloudCredentials? = null
+
+    /** Promote staged credentials to the active pair and clear the staged values in one edit. */
+    suspend fun commitStagedCloudCredentials() = Unit
+
+    /** Remove an orphaned staged pair when no promotion marker exists. */
+    suspend fun clearStagedCloudCredentials() = Unit
 }
 
 /**
@@ -44,6 +56,8 @@ class EncryptedCredentialStore @Inject constructor(
         val STEAM_ID = stringPreferencesKey("steam_id")
         val CLOUD_ENDPOINT = stringPreferencesKey("cloud_endpoint")
         val CLOUD_TOKEN = stringPreferencesKey("cloud_token")
+        val PENDING_CLOUD_ENDPOINT = stringPreferencesKey("pending_cloud_endpoint")
+        val PENDING_CLOUD_TOKEN = stringPreferencesKey("pending_cloud_token")
         val PENDING_API_KEY = stringPreferencesKey("pending_api_key")
         val PENDING_STEAM_ID = stringPreferencesKey("pending_steam_id")
     }
@@ -75,6 +89,42 @@ class EncryptedCredentialStore @Inject constructor(
         context.credentialsDataStore.edit { prefs ->
             prefs.remove(Keys.CLOUD_ENDPOINT)
             prefs.remove(Keys.CLOUD_TOKEN)
+        }
+    }
+
+    override suspend fun stageCloudCredentials(endpoint: String, token: String) {
+        val encryptedEndpoint = encrypt(endpoint.trim())
+        val encryptedToken = encrypt(token.trim())
+        context.credentialsDataStore.edit { prefs ->
+            prefs[Keys.PENDING_CLOUD_ENDPOINT] = encryptedEndpoint
+            prefs[Keys.PENDING_CLOUD_TOKEN] = encryptedToken
+        }
+    }
+
+    override suspend fun readStagedCloudCredentials(): CloudCredentials? {
+        val endpoint = read(Keys.PENDING_CLOUD_ENDPOINT)?.trim()
+        val token = read(Keys.PENDING_CLOUD_TOKEN)?.trim()
+        return if (!endpoint.isNullOrBlank() && !token.isNullOrBlank()) {
+            CloudCredentials(endpoint, token)
+        } else {
+            null
+        }
+    }
+
+    override suspend fun commitStagedCloudCredentials() {
+        val staged = readStagedCloudCredentials() ?: error("No complete staged cloud credentials")
+        context.credentialsDataStore.edit { prefs ->
+            prefs[Keys.CLOUD_ENDPOINT] = encrypt(staged.endpoint)
+            prefs[Keys.CLOUD_TOKEN] = encrypt(staged.token)
+            prefs.remove(Keys.PENDING_CLOUD_ENDPOINT)
+            prefs.remove(Keys.PENDING_CLOUD_TOKEN)
+        }
+    }
+
+    override suspend fun clearStagedCloudCredentials() {
+        context.credentialsDataStore.edit { prefs ->
+            prefs.remove(Keys.PENDING_CLOUD_ENDPOINT)
+            prefs.remove(Keys.PENDING_CLOUD_TOKEN)
         }
     }
 

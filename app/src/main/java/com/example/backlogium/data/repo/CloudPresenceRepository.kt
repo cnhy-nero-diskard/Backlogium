@@ -185,11 +185,48 @@ class CloudPresenceRepository @Inject constructor(
     }
 
     /** Startup/upgrade reconciliation is local-only and never moves either cloud cursor. */
-    suspend fun reconcileRoutinePolicy(): CloudRoutineState? = cloudStateMutex.withLock {
-        if (credentialsProvider.currentCredentials()?.steamId == null ||
-            credentialsStore.readCloudCredentials() == null
-        ) return@withLock null
-        settings.initializeCloudRoutinePolicy()
+    suspend fun reconcileRoutinePolicy(): CloudRoutineState? {
+        cloudReadSequenceMutex.withLock { recoverStagedPromotionLocked() }
+        return cloudStateMutex.withLock {
+            if (credentialsProvider.currentCredentials()?.steamId == null ||
+                credentialsStore.readCloudCredentials() == null
+            ) return@withLock null
+            settings.initializeCloudRoutinePolicy()
+        }
+    }
+
+    /**
+     * Finishes or abandons a reader promotion interrupted by process death, before any read or
+     * replacement proceeds. Staged credentials and the staged page are written before the durable
+     * marker, so a marked promotion can always be completed by re-running the idempotent steps
+     * after its commit point; staged inputs without a marker are an abandoned attempt and are
+     * discarded. This is what makes endpoint replacement one logical transaction across the
+     * pending-evidence Room store, Settings DataStore, and the encrypted credential DataStore:
+     * no read can observe the replacement reader's evidence paired with the old credentials, or
+     * the old generation with its evidence already retired.
+     *
+     * Caller must hold [cloudReadSequenceMutex]; the account-state mutex is taken here so
+     * invalidation cannot interleave with the completed promotion's writes.
+     */
+    private suspend fun recoverStagedPromotionLocked() {
+        cloudStateMutex.withLock {
+            val marker = settings.cloudReaderPromotionTarget.first()
+            val staged = credentialsStore.readStagedCloudCredentials()
+            if (marker == null) {
+                if (staged != null) credentialsStore.clearStagedCloudCredentials()
+                return@withLock
+            }
+            val account = credentialsProvider.currentCredentials()?.steamId ?: return@withLock
+            if (staged != null) credentialsStore.commitStagedCloudCredentials()
+            val target = settings.finishCloudReaderPromotion() ?: return@withLock
+            // Re-apply the post-commit effects a crash may have skipped, so the replacement
+            // never resumes the old reader's watermark.
+            pendingEvidence.clearExcept(account, target)
+            routineWorkCanceller?.cancelOldReaderWork(removePeriodic = false)
+            settings.clearCloudReadPosition()
+            settings.clearCloudReadSummary()
+            settings.initializeCloudRoutinePolicy()
+        }
     }
 
     /** Verify identity at work start; DataStore arbitrates coincident trigger admissions. */
@@ -210,6 +247,9 @@ class CloudPresenceRepository @Inject constructor(
         val normalizedEndpoint = normalizeEndpoint(endpoint) ?: return CloudConfigurationResult.InvalidEndpoint
         val normalizedToken = token.trim().takeIf { it.isNotBlank() }
             ?: return CloudConfigurationResult.RejectedCredential
+        // A promotion interrupted by process death is finished or abandoned before this
+        // verification captures anything, so the capture below always sees committed state.
+        cloudReadSequenceMutex.withLock { recoverStagedPromotionLocked() }
         // Capture the Steam account and the generation atomically under the same mutex that
         // invalidation owns: sampling them separately would let an A->B bump land between the
         // two reads, capturing old account A with B's new generation so A's late response
@@ -253,26 +293,43 @@ class CloudPresenceRepository @Inject constructor(
                             CloudConfigurationResult.AccountMismatch(current, result.parsed.account)
                         }
                     } else {
-                        val readerGeneration = settings.cloudReaderGeneration.first() + 1L
+                        val persistedGeneration = settings.cloudReaderGeneration.first()
+                        val readerGeneration = persistedGeneration + 1L
                         val snapshot = result.parsed.toSnapshot()
                         val previousIngestPosition = settings.cloudIngestPosition.first()
                         settings.clearCloudIngestPosition()
+                        // Discard rows an interrupted replacement left staged, so this
+                        // verification's page can never combine with a previous attempt's
+                        // evidence under the same target generation.
+                        pendingEvidence.clearExcept(account, persistedGeneration)
                         try {
                             consume(snapshot)
                             pendingEvidence.retain(
                                 account, readerGeneration, snapshot.windowStart,
                                 snapshot.intervals, result.parsed.transitions.maxByOrNull { it.at },
                             )
+                            credentialsStore.stageCloudCredentials(normalizedEndpoint, normalizedToken)
+                            settings.markCloudReaderPromotion(readerGeneration)
                         } catch (failure: Throwable) {
+                            // Nothing passed the durable marker: the old verified reader is
+                            // still the active one, so abandon the staged page and restore
+                            // its ingest cursor.
+                            credentialsStore.clearStagedCloudCredentials()
+                            pendingEvidence.clearExcept(account, persistedGeneration)
                             if (previousIngestPosition != null) {
                                 settings.setCloudIngestPosition(previousIngestPosition)
                             }
                             throw failure
                         }
-                        // A failed page effect leaves the old verified reader and its position
-                        // intact. Only after both effects succeed do we retire old evidence.
+                        // The marker is the commit point. Every step below it is idempotent,
+                        // so a persistence failure or process death after it is finished by
+                        // recoverStagedPromotionLocked on the next access rather than rolled
+                        // back: the old credentials are already replaced.
+                        credentialsStore.commitStagedCloudCredentials()
+                        settings.finishCloudReaderPromotion()
+                        // Only now that the credential+generation promotion is durably
+                        // committed is the old generation's evidence retired.
                         pendingEvidence.clearExcept(account, readerGeneration)
-                        settings.advanceCloudReaderGeneration()
                         routineWorkCanceller?.cancelOldReaderWork(removePeriodic = false)
                         settings.clearCloudReadPosition()
                         settings.clearCloudReadSummary()
@@ -321,6 +378,7 @@ class CloudPresenceRepository @Inject constructor(
         trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
         consume: suspend (CloudPresenceSnapshot) -> Unit = {},
     ): CloudReadResult = cloudReadSequenceMutex.withLock {
+        recoverStagedPromotionLocked()
         readPage(trigger, consume)
     }
 
@@ -330,6 +388,7 @@ class CloudPresenceRepository @Inject constructor(
         expectedGeneration: Long? = null,
         consume: suspend (CloudPresenceSnapshot) -> Unit,
     ): CloudCatchUpResult = cloudReadSequenceMutex.withLock {
+        recoverStagedPromotionLocked()
         val account = credentialsProvider.currentCredentials()?.steamId ?: return@withLock CloudCatchUpResult.Unavailable
         if (credentialsStore.readCloudCredentials() == null) return@withLock CloudCatchUpResult.Unavailable
         val generation = settings.cloudReaderGeneration.first()
@@ -462,6 +521,7 @@ class CloudPresenceRepository @Inject constructor(
         trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
         consume: suspend (CloudPresenceSnapshot) -> Unit = {},
     ): CloudReadResult = cloudReadSequenceMutex.withLock {
+        recoverStagedPromotionLocked()
         // Peek before the destructive reset so an unconfigured app or a missing Steam account
         // does not discard the watermark it never needed to move.
         if (credentialsStore.readCloudCredentials() == null) {
@@ -535,6 +595,7 @@ class CloudPresenceRepository @Inject constructor(
         trigger: CloudReadTrigger = CloudReadTrigger.SETTINGS_MANUAL,
         consume: suspend (CloudPresenceSnapshot) -> Unit = {},
     ): CloudReadResult = cloudReadSequenceMutex.withLock {
+        recoverStagedPromotionLocked()
         if (credentialsStore.readCloudCredentials() == null) {
             return@withLock CloudReadResult.Unconfigured
         }
@@ -594,6 +655,8 @@ class CloudPresenceRepository @Inject constructor(
             // Invalidate in-flight reads so a late response cannot repopulate after removal.
             accountGeneration.incrementAndGet()
             settings.advanceCloudReaderGeneration()
+            settings.clearCloudReaderPromotion()
+            credentialsStore.clearStagedCloudCredentials()
             pendingEvidence.clear()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
             credentialsStore.clearCloudCredentials()
@@ -622,6 +685,8 @@ class CloudPresenceRepository @Inject constructor(
         cloudStateMutex.withLock {
             accountGeneration.incrementAndGet()
             settings.advanceCloudReaderGeneration()
+            settings.clearCloudReaderPromotion()
+            credentialsStore.clearStagedCloudCredentials()
             pendingEvidence.clear()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
             snapshotState.value = null
@@ -645,6 +710,8 @@ class CloudPresenceRepository @Inject constructor(
         cloudStateMutex.withLock {
             accountGeneration.incrementAndGet()
             settings.advanceCloudReaderGeneration()
+            settings.clearCloudReaderPromotion()
+            credentialsStore.clearStagedCloudCredentials()
             pendingEvidence.clear()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
             snapshotState.value = null
@@ -656,6 +723,8 @@ class CloudPresenceRepository @Inject constructor(
             } finally {
                 accountGeneration.incrementAndGet()
                 settings.advanceCloudReaderGeneration()
+                settings.clearCloudReaderPromotion()
+                credentialsStore.clearStagedCloudCredentials()
                 pendingEvidence.clear()
                 routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
                 snapshotState.value = null
@@ -685,7 +754,8 @@ class CloudPresenceRepository @Inject constructor(
         parsed: ParsedCloudRead,
     ) {
         // Caller holds cloudStateMutex and has already checked generation + identity.
-        credentialsStore.writeCloudCredentials(credentials.endpoint, credentials.token)
+        // The credential promotion itself committed earlier (commitStagedCloudCredentials),
+        // before the generation advanced; this only records the read's durable effects.
         persistSuccessfulRead(trigger, parsed, credentials)
     }
 

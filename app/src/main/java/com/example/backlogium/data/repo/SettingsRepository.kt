@@ -170,6 +170,21 @@ interface SettingsRepository : SessionEndOutbox {
 
     suspend fun advanceCloudReaderGeneration(): Long = 0L
 
+    /**
+     * Durable staged-replacement marker: non-null target generation while an endpoint
+     * replacement's credential+generation promotion is mid-commit. Old implementations
+     * always report no promotion.
+     */
+    val cloudReaderPromotionTarget: Flow<Long?>
+        get() = flowOf(null)
+
+    suspend fun markCloudReaderPromotion(target: Long) = Unit
+
+    /** Sets the persisted generation to the staged target and clears the marker, atomically. */
+    suspend fun finishCloudReaderPromotion(): Long? = null
+
+    suspend fun clearCloudReaderPromotion() = Unit
+
     /** Null until a verified reader is initialized or an existing reader is reconciled. */
     val cloudRoutineState: Flow<CloudRoutineState>
         get() = flowOf(CloudRoutineState())
@@ -374,6 +389,15 @@ class DataStoreSettingsRepository @Inject constructor(
     override val cloudReaderGeneration: Flow<Long> = settings.cloudReaderGenerationFlow
 
     override suspend fun advanceCloudReaderGeneration(): Long = settings.advanceCloudReaderGeneration()
+
+    override val cloudReaderPromotionTarget: Flow<Long?> = settings.cloudReaderPromotionTargetFlow
+
+    override suspend fun markCloudReaderPromotion(target: Long) =
+        settings.markCloudReaderPromotion(target)
+
+    override suspend fun finishCloudReaderPromotion(): Long? = settings.finishCloudReaderPromotion()
+
+    override suspend fun clearCloudReaderPromotion() = settings.clearCloudReaderPromotion()
 
     override val cloudRoutineState: Flow<CloudRoutineState> = settings.cloudRoutineStateFlow
 

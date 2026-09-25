@@ -108,6 +108,12 @@ class SettingsDataStore @Inject constructor(
         val LIVE_MONITORING_AVAILABILITY = stringPreferencesKey("live_monitoring_availability")
         val CLOUD_READ_POSITION = stringPreferencesKey("cloud_read_position")
         val CLOUD_READER_GENERATION = longPreferencesKey("cloud_reader_generation")
+        /**
+         * Write-ahead marker for an endpoint replacement whose credential+generation promotion
+         * has not finished. Absent means no promotion is in flight; the target generation is the
+         * value the reader generation is set to when the promotion commits.
+         */
+        val CLOUD_READER_PROMOTION_TARGET = longPreferencesKey("cloud_reader_promotion_target")
         val CLOUD_ROUTINE_POLICY = stringPreferencesKey("cloud_routine_policy")
         val CLOUD_ROUTINE_LAST_ADMITTED_AT = longPreferencesKey("cloud_routine_last_admitted_at")
         val CLOUD_ROUTINE_LAST_OUTCOME = stringPreferencesKey("cloud_routine_last_outcome")
@@ -507,6 +513,39 @@ class SettingsDataStore @Inject constructor(
             prefs[Keys.CLOUD_READER_GENERATION] = next
         }
         return next
+    }
+
+    val cloudReaderPromotionTargetFlow: Flow<Long?> =
+        context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_READER_PROMOTION_TARGET] }
+
+    suspend fun markCloudReaderPromotion(target: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CLOUD_READER_PROMOTION_TARGET] = target
+        }
+    }
+
+    /**
+     * Commit the staged replacement: set the persisted reader generation to the staged target and
+     * clear the marker in one edit. Returns the target, or null when no promotion was marked, so
+     * recovery can resume the same step idempotently after process death.
+     */
+    suspend fun finishCloudReaderPromotion(): Long? {
+        var target: Long? = null
+        context.dataStore.edit { prefs ->
+            val marked = prefs[Keys.CLOUD_READER_PROMOTION_TARGET]
+            if (marked != null) {
+                prefs[Keys.CLOUD_READER_GENERATION] = marked
+                prefs.remove(Keys.CLOUD_READER_PROMOTION_TARGET)
+                target = marked
+            }
+        }
+        return target
+    }
+
+    suspend fun clearCloudReaderPromotion() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.CLOUD_READER_PROMOTION_TARGET)
+        }
     }
 
     val cloudRoutineStateFlow: Flow<CloudRoutineState> = context.dataStore.data.map(::cloudRoutineState)
@@ -930,6 +969,7 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
             prefs.remove(Keys.CLOUD_READ_POSITION)
             prefs.remove(Keys.CLOUD_INGEST_POSITION)
+            prefs.remove(Keys.CLOUD_READER_PROMOTION_TARGET)
             prefs.remove(Keys.CLOUD_ROUTINE_POLICY)
             prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT)
             prefs.remove(Keys.CLOUD_ROUTINE_LAST_OUTCOME)
