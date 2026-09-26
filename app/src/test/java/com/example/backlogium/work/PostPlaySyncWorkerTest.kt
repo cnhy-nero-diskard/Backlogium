@@ -2,6 +2,7 @@ package com.example.backlogium.work
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.withTransaction
 import androidx.work.Configuration
 import androidx.work.ListenableWorker
 import androidx.work.WorkInfo
@@ -301,7 +302,7 @@ class PostPlaySyncWorkerTest {
     }
 
     @Test
-    fun `post-play commit rejects placement from a reader generation promoted before commit`() = runTest {
+    fun `post-play rejects stale placement and retires replacement evidence before periodic delta`() = runTest {
         val longGapStart = sessionEndAt - 2L * 60 * 60 * 1_000
         val placementStart = longGapStart + 60L * 60 * 1_000
         val placementEnd = placementStart + 30L * 60 * 1_000
@@ -362,7 +363,71 @@ class PostPlaySyncWorkerTest {
         assertEquals(30, session.minutes)
         assertEquals(TimingInformedSteamPlayState.NONE, session.timingInformedSteamPlay)
         assertTrue(session.startAt != placementStart)
-        assertEquals(1, pendingDao.intervals(credentials.steamId, 1L).size)
+        assertEquals(1L, cloudSettings.cloudReaderGeneration.first())
+        assertTrue(
+            "the committed post-play baseline retires the replacement reader's earlier interval",
+            pendingDao.intervals(credentials.steamId, 1L).none { it.appId == APP_ID },
+        )
+        assertEquals(
+            "post-play does not advance the periodic window",
+            longGapStart,
+            db.playerProfileDao().get()?.lastSyncAt,
+        )
+
+        // The next periodic poll still has a t0-based placement window, but its evidence snapshot
+        // can no longer contain B/g+1's interval ending before the t1 post-play baseline.
+        val periodicAt = sessionEndAt + 60L * 60 * 1_000
+        val remainingBIntervals = pendingDao.intervals(credentials.steamId, 1L).map { interval ->
+            CloudPresenceInterval(
+                appId = interval.appId,
+                gameName = interval.gameName,
+                startAt = interval.startAt,
+                endAt = interval.endAt,
+                ongoing = interval.ongoing,
+                coverage = CloudCoverageState.valueOf(interval.coverage),
+                observedUntil = interval.observedUntil,
+                coverageLapseFrom = interval.coverageLapseFrom,
+                coverageLapseRecoveredAt = interval.coverageLapseRecoveredAt,
+                mayHaveStartedBefore = interval.mayHaveStartedBefore,
+            )
+        }
+        val periodicCommitter = committer()
+        val periodicCommit = periodicCommitter.withValidatedPlacement(
+            CloudPresencePlaytimePlacement.Input(
+                intervals = remainingBIntervals,
+                readerIdentity = CloudReaderIdentity(credentials.steamId, 1L),
+            ),
+        ) { validatedPlacement, pruningIdentity ->
+            db.withTransaction {
+                val commit = periodicCommitter.commit(
+                    observed = listOf(
+                        PlaytimeObservationCommitter.ObservedGame(
+                            appId = APP_ID,
+                            name = "Portal",
+                            iconUrl = "",
+                            playtimeForever = 150,
+                            playtime2Weeks = 150,
+                        ),
+                    ),
+                    observedPlayAt = periodicAt,
+                    syncedAt = periodicAt,
+                    placement = validatedPlacement,
+                    pruningIdentity = pruningIdentity,
+                )
+                db.playerProfileDao().updateSyncStatus(lastSyncAt = periodicAt, lastSyncError = null)
+                commit
+            }
+        }
+
+        assertEquals(20, periodicCommit.playedDeltaByAppId[APP_ID])
+        val sessionsAfterPeriodic = db.sessionDao().getAll().filter { it.appId == APP_ID }
+        assertEquals(1, sessionsAfterPeriodic.size)
+        assertEquals(
+            "later minutes remain on the unaided t0-based session",
+            longGapStart,
+            sessionsAfterPeriodic.single().startAt,
+        )
+        assertEquals(50, sessionsAfterPeriodic.single().minutes)
     }
 
     @Test

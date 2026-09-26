@@ -75,7 +75,6 @@ class PlaytimeObservationCommitter @Inject constructor(
             ?: return block(placement, placement?.readerIdentity)
         return pruner.withValidatedEvidence(
             evidenceIdentity = placement?.readerIdentity,
-            evidenceSupplied = placement != null,
         ) { validatedIdentity, pruningIdentity ->
             val validatedPlacement = placement?.takeIf {
                 validatedIdentity != null && it.readerIdentity == validatedIdentity
@@ -147,7 +146,7 @@ class PlaytimeObservationCommitter @Inject constructor(
 
         // In production the worker supplies placement only through withValidatedPlacement,
         // which holds the reader-promotion fence until this transaction completes. Keep the
-        // identity check here too, so evidence cannot be paired with a different prune target.
+        // identity check here too, so evidence cannot bypass validation against the active reader.
         val acceptedPlacement = if (pendingEvidencePruner == null) {
             placement
         } else {

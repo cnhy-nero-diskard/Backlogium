@@ -668,7 +668,7 @@ class CloudPresencePlacementReaderTest {
         assertEquals(30, session.minutes)
         assertEquals(TimingInformedSteamPlayState.NONE, session.timingInformedSteamPlay)
         assertTrue(session.startAt != placementStart)
-        assertEquals(1, database.pendingCloudEvidenceDao().intervals(ACCOUNT, 1L).size)
+        assertTrue(database.pendingCloudEvidenceDao().intervals(ACCOUNT, 1L).none { it.appId == 10L })
     }
 
     @Test

@@ -15,12 +15,11 @@ class CloudPendingEvidencePruner @Inject constructor(
 ) {
     /**
      * Holds the same fence used by reader promotion until the caller's Room commit completes.
-     * Stale evidence is rejected, and its commit is not allowed to prune the replacement reader.
-     * With no placement read, the active identity is still safe for ordinary baseline pruning.
+     * Stale evidence is rejected for placement, while a committed Steam baseline still retires
+     * evidence belonging to the active reader.
      */
     suspend fun <T> withValidatedEvidence(
         evidenceIdentity: CloudReaderIdentity?,
-        evidenceSupplied: Boolean,
         block: suspend (validatedEvidenceIdentity: CloudReaderIdentity?, pruningIdentity: CloudReaderIdentity?) -> T,
     ): T = readerStateMutex.mutex.withLock {
         val account = credentials.currentCredentials()?.steamId
@@ -28,8 +27,7 @@ class CloudPendingEvidencePruner @Inject constructor(
             CloudReaderIdentity(it, settings.cloudReaderGeneration.first())
         }
         val validatedIdentity = evidenceIdentity?.takeIf { it == activeIdentity }
-        val pruningIdentity = if (evidenceSupplied) validatedIdentity else activeIdentity
-        block(validatedIdentity, pruningIdentity)
+        block(validatedIdentity, activeIdentity)
     }
 
     suspend fun afterBaseline(identity: CloudReaderIdentity?, appId: Long, baselineAt: Long) {
