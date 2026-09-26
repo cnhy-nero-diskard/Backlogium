@@ -20,6 +20,18 @@ interface SessionDao {
     suspend fun update(session: Session)
 
     /**
+     * Update a session unless it would violate the unique open-session key.
+     *
+     * Used when applying an Extend that may have been derived before the target session was
+     * closed. If a newer session for the same game is already open, SQLite leaves this row
+     * unchanged instead of aborting the write.
+     *
+     * @return the number of rows updated; zero means no row was updated, including a conflict.
+     */
+    @Update(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun updateUnlessConflictingOpenSession(session: Session): Int
+
+    /**
      * Opens a session for [appId] only when no open session already exists.
      *
      * This is the enforcement point for "at most one open session per game" (auditfix-session-

@@ -1205,6 +1205,16 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
         if (index >= 0) store[index] = session
     }
 
+    override suspend fun updateUnlessConflictingOpenSession(session: Session): Int {
+        if (session.open && store.any { it.id != session.id && it.appId == session.appId && it.open }) {
+            return 0
+        }
+        val index = store.indexOfFirst { it.id == session.id }
+        if (index < 0) return 0
+        store[index] = session
+        return 1
+    }
+
     override suspend fun deleteById(id: Long) {
         store.removeAll { it.id == id }
     }

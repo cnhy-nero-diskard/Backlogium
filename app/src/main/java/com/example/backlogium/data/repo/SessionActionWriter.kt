@@ -144,7 +144,7 @@ class SessionActionWriter @Inject constructor(
                         val endAt = maxOf(it.endAt ?: it.startAt, action.endAt)
                         val minutes = maxOf(it.minutes, action.minutes)
                         if (endAt != it.endAt || minutes != it.minutes || !it.open) {
-                            sessionDao.update(
+                            val updated = sessionDao.updateUnlessConflictingOpenSession(
                                 it.copy(
                                     minutes = minutes,
                                     endAt = endAt,
@@ -159,11 +159,13 @@ class SessionActionWriter @Inject constructor(
                                     ),
                                 ),
                             )
-                            effective += action.copy(
-                                minutes = minutes,
-                                endAt = endAt,
-                                addedMinutes = minutes - it.minutes,
-                            )
+                            if (updated > 0) {
+                                effective += action.copy(
+                                    minutes = minutes,
+                                    endAt = endAt,
+                                    addedMinutes = minutes - it.minutes,
+                                )
+                            }
                         }
                     }
                 }

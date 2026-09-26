@@ -46,6 +46,8 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
         timingInformedSteamPlay: TimingInformedSteamPlayState,
     ): Long = 0L
     override suspend fun update(session: Session) = Unit
+    override suspend fun updateUnlessConflictingOpenSession(session: Session): Int =
+        if (sessions.any { it.id == session.id }) 1 else 0
     override suspend fun deleteById(id: Long) = Unit
     override suspend fun getOpenSession(appId: Long): Session? = null
     override suspend fun getAllOpenSessions(): List<Session> = emptyList()
