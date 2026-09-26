@@ -263,11 +263,11 @@ class CloudCatchUpDeviceExerciseTest {
                 .assertIsDisplayed()
             composeRule.onNodeWithText("Got it").performClick()
             composeRule.onNodeWithText("Cloud activity").performClick()
-            composeRule.onNodeWithText("Recovered play · 1 facts").performScrollTo().assertIsDisplayed()
-            composeRule.onNodeWithText("Cloud-timed Steam play · 1 facts").performScrollTo().assertIsDisplayed()
+            composeRule.onNodeWithText("Recovered play · 1 contribution").performScrollTo().assertIsDisplayed()
+            composeRule.onNodeWithText("Cloud-timed Steam play · 1 contribution").performScrollTo().assertIsDisplayed()
             composeRule.onNodeWithText("Reader request failed", substring = true)
                 .performScrollTo().assertIsDisplayed()
-            composeRule.onNodeWithText("The latest known observation is over a day old.").performScrollTo().assertIsDisplayed()
+            composeRule.onNodeWithText("The latest observation is over a day old.").performScrollTo().assertIsDisplayed()
 
             // Without a reader the same persisted session and minutes remain visible, but its
             // cloud-specific entry/mark are suppressed rather than treated as local loss.

@@ -16,25 +16,34 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.annotation.PluralsRes
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.R
 import com.example.backlogium.data.repo.ContributionState
 import com.example.backlogium.data.repo.CloudReadSummary
 import com.example.backlogium.data.repo.CloudReadSummaryOutcome
 import com.example.backlogium.ui.util.UiFormat
+import kotlinx.coroutines.delay
 
 @Composable
 fun CloudActivityScreen(viewModel: HistoryViewModel, onBack: () -> Unit) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    LaunchedEffect(viewModel) { viewModel.refreshStatusTime() }
+    RefreshCloudStatusTimeOnResume(viewModel::refreshStatusTime)
     CloudActivityContent(
         state = state,
+        onStatusTimeRefresh = viewModel::refreshStatusTime,
         onOpenSession = { item ->
             viewModel.revealSession(item)
             onBack()
@@ -44,11 +53,23 @@ fun CloudActivityScreen(viewModel: HistoryViewModel, onBack: () -> Unit) {
 }
 
 @Composable
+internal fun RefreshCloudStatusTimeOnResume(onRefresh: () -> Unit) {
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME, onEvent = onRefresh)
+}
+
+@Composable
 internal fun CloudActivityContent(
     state: HistoryUiState,
     onOpenSession: (HistoryContribution) -> Unit = {},
     onBack: () -> Unit = {},
+    onStatusTimeRefresh: () -> Unit = {},
 ) {
+    LaunchedEffect(state.cloudReadSummary.latestObservationAt, state.statusNow) {
+        val untilStale = observationMillisUntilStale(state.cloudReadSummary, state.statusNow)
+            ?: return@LaunchedEffect
+        delay(untilStale)
+        onStatusTimeRefresh()
+    }
     val activity = historyCloudActivity(state.days, state.cloudReaderConfigured)
     val loadingDescription = stringResource(R.string.history_cloud_loading)
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
@@ -83,8 +104,8 @@ internal fun CloudActivityContent(
                     }
                 }
                 if (activity.hasContributions) {
-                    cloudGroup(R.string.history_cloud_recovered_facts, activity.recovered, onOpenSession)
-                    cloudGroup(R.string.history_cloud_timed_facts, activity.timed, onOpenSession)
+                    cloudGroup(CloudContributionGroup.RECOVERED, activity.recovered, onOpenSession)
+                    cloudGroup(CloudContributionGroup.TIMED, activity.timed, onOpenSession)
                 } else {
                     item(key = "cloud-activity-empty") {
                         Text(
@@ -103,7 +124,15 @@ internal fun CloudActivityContent(
 }
 
 internal fun observationOlderThanDay(summary: CloudReadSummary, now: Long): Boolean =
-    summary.latestObservationAt?.let { now - it > 24L * 60 * 60 * 1000 } ?: false
+    summary.latestObservationAt?.let { now - it > OBSERVATION_STALE_AFTER_MILLIS } ?: false
+
+internal fun observationMillisUntilStale(summary: CloudReadSummary, now: Long): Long? {
+    val latestObservationAt = summary.latestObservationAt ?: return null
+    val elapsed = (now - latestObservationAt).coerceAtLeast(0L)
+    return (OBSERVATION_STALE_AFTER_MILLIS + 1L - elapsed).takeIf { it > 0L }
+}
+
+private const val OBSERVATION_STALE_AFTER_MILLIS = 24L * 60L * 60L * 1000L
 
 @Composable
 private fun CloudReaderStatus(summary: CloudReadSummary, now: Long) {
@@ -139,16 +168,17 @@ private fun CloudReaderStatus(summary: CloudReadSummary, now: Long) {
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.cloudGroup(
-    titleRes: Int,
+    group: CloudContributionGroup,
     entries: List<HistoryContribution>,
     onOpen: (HistoryContribution) -> Unit,
 ) {
     item {
-        Text(stringResource(titleRes, entries.size), style = MaterialTheme.typography.titleMedium,
+        Text(pluralStringResource(group.countResource, entries.size, entries.size),
+            style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(top = 24.dp, bottom = 8.dp))
     }
-    items(entries, key = { "$titleRes-${it.session.id}-${it.date}" }) { item ->
-        val partial = if (titleRes == R.string.history_cloud_recovered_facts) {
+    items(entries, key = { "${group.name}-${it.session.id}-${it.date}" }) { item ->
+        val partial = if (group == CloudContributionGroup.RECOVERED) {
             item.session.cloudContribution.recoveredSharedPlay == ContributionState.PARTIAL
         } else {
             item.session.cloudContribution.timingInformedSteamPlay == ContributionState.PARTIAL
@@ -159,8 +189,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.cloudGroup(
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(item.game.name, style = MaterialTheme.typography.bodyLarge)
                 Text(stringResource(when {
-                    titleRes == R.string.history_cloud_recovered_facts && partial -> R.string.history_cloud_recovered_partial
-                    titleRes == R.string.history_cloud_recovered_facts -> R.string.history_cloud_recovered
+                    group == CloudContributionGroup.RECOVERED && partial -> R.string.history_cloud_recovered_partial
+                    group == CloudContributionGroup.RECOVERED -> R.string.history_cloud_recovered
                     partial -> R.string.history_cloud_timed_partial
                     else -> R.string.history_cloud_timed
                 }), style = MaterialTheme.typography.labelMedium)
@@ -171,4 +201,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.cloudGroup(
             }
         }
     }
+}
+
+private enum class CloudContributionGroup(@param:PluralsRes val countResource: Int) {
+    RECOVERED(R.plurals.history_cloud_recovered_contributions),
+    TIMED(R.plurals.history_cloud_timed_contributions),
 }

@@ -36,8 +36,20 @@ class CloudContributionLocaleTest {
             resources.getString(R.string.settings_cloud_routine_48h),
         )
         assertEquals(
-            "Recovered play · 2 facts",
-            resources.getString(R.string.history_cloud_recovered_facts, 2),
+            "Recovered play · 1 contribution",
+            resources.getQuantityString(R.plurals.history_cloud_recovered_contributions, 1, 1),
+        )
+        assertEquals(
+            "Recovered play · 2 contributions",
+            resources.getQuantityString(R.plurals.history_cloud_recovered_contributions, 2, 2),
+        )
+        assertEquals(
+            "Cloud-timed Steam play · 1 contribution",
+            resources.getQuantityString(R.plurals.history_cloud_timed_contributions, 1, 1),
+        )
+        assertEquals(
+            "Cloud-timed Steam play · 2 contributions",
+            resources.getQuantityString(R.plurals.history_cloud_timed_contributions, 2, 2),
         )
     }
 }

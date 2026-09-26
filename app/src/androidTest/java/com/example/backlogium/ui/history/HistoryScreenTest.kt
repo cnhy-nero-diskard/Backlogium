@@ -1,10 +1,13 @@
 package com.example.backlogium.ui.history
 
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasStateDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -14,7 +17,13 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.backlogium.data.repo.CloudReadSummary
 import com.example.backlogium.data.repo.CloudReadSummaryOutcome
 import com.example.backlogium.data.repo.ContributionState
@@ -94,14 +103,14 @@ class HistoryScreenTest {
 
         composeRule.onNodeWithText("Cloud activity").assertIsDisplayed().performClick()
         composeRule.onNodeWithText("Back to History").assertIsDisplayed()
-        composeRule.onNodeWithText("Loaded History window:", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("History loaded:", substring = true).assertIsDisplayed()
         composeRule.onNodeWithText(
-            "No cloud-assisted sessions are recorded in this loaded History window.",
+            "No cloud contributions are recorded in this loaded History window.",
         ).assertIsDisplayed()
-        composeRule.onNodeWithText("Reader and observation status").assertIsDisplayed()
+        composeRule.onNodeWithText("Reader status").assertIsDisplayed()
         composeRule.onNodeWithText("Reader request failed", substring = true)
             .performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Recovered play · 0 facts").assertDoesNotExist()
+        composeRule.onNodeWithText("Recovered play · 0 contributions").assertDoesNotExist()
         composeRule.onNodeWithText("Back to History").performClick()
         composeRule.onNodeWithText("No history yet").assertIsDisplayed()
     }
@@ -121,6 +130,146 @@ class HistoryScreenTest {
         composeRule.onNodeWithText("Back to History").assertIsDisplayed().performClick()
         composeRule.onNodeWithContentDescription("Loading cloud activity").assertIsDisplayed()
         composeRule.runOnIdle { assertEquals(1, backClicks) }
+    }
+
+    @Test
+    fun observationFreshnessRefreshesAtTheStaleBoundaryWithoutAReaderRequest() {
+        val observationAt = 1_000L
+        val oneDay = 24L * 60L * 60L * 1000L
+        val state = mutableStateOf(
+            HistoryUiState(
+                loading = false,
+                configured = true,
+                today = TODAY,
+                cloudReaderConfigured = true,
+                cloudReadSummary = CloudReadSummary(latestObservationAt = observationAt),
+                statusNow = observationAt + oneDay,
+            ),
+        )
+        val refreshCount = mutableIntStateOf(0)
+
+        composeRule.setContent {
+            BacklogiumTheme {
+                CloudActivityContent(
+                    state = state.value,
+                    onStatusTimeRefresh = {
+                        refreshCount.intValue++
+                        state.value = state.value.copy(statusNow = state.value.statusNow + 1L)
+                    },
+                )
+            }
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000) { refreshCount.intValue > 0 }
+        composeRule.runOnIdle {
+            assertEquals(1, refreshCount.intValue)
+            assertEquals(true, observationOlderThanDay(state.value.cloudReadSummary, state.value.statusNow))
+        }
+    }
+
+    @Test
+    fun appResumeRefreshesObservationAgeWithoutReadingCloudHistory() {
+        val observationAt = 1_000L
+        val oneDay = 24L * 60L * 60L * 1000L
+        val state = mutableStateOf(
+            HistoryUiState(
+                loading = false,
+                configured = true,
+                today = TODAY,
+                cloudReaderConfigured = true,
+                cloudReadSummary = CloudReadSummary(latestObservationAt = observationAt),
+                statusNow = observationAt + oneDay - 60L * 60L * 1000L,
+            ),
+        )
+        val refreshCount = mutableIntStateOf(0)
+        val advanceClock = mutableStateOf(false)
+        val lifecycleOwner = TestHistoryLifecycleOwner()
+
+        composeRule.setContent {
+            CompositionLocalProvider(LocalLifecycleOwner provides lifecycleOwner) {
+                BacklogiumTheme {
+                    RefreshCloudStatusTimeOnResume {
+                        refreshCount.intValue++
+                        if (advanceClock.value) {
+                            state.value = state.value.copy(statusNow = observationAt + oneDay + 1L)
+                        }
+                    }
+                    CloudActivityContent(state = state.value)
+                }
+            }
+        }
+        composeRule.runOnUiThread {
+            lifecycleOwner.registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+            lifecycleOwner.registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+            lifecycleOwner.registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        }
+        composeRule.waitForIdle()
+        val refreshesBeforeResume = composeRule.runOnIdle { refreshCount.intValue }
+        composeRule.runOnIdle { advanceClock.value = true }
+        composeRule.runOnUiThread {
+            lifecycleOwner.registry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+            lifecycleOwner.registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000) { refreshCount.intValue > refreshesBeforeResume }
+        composeRule.runOnIdle {
+            assertEquals(true, observationOlderThanDay(state.value.cloudReadSummary, state.value.statusNow))
+        }
+    }
+
+    @Test
+    fun cloudActivityCountsAndActionsRemainLegibleAtLargeFontScale() {
+        val recovered = HistorySessionUi(
+            id = 81L,
+            startAt = 1_758_432_000_000L,
+            minutes = 35,
+            open = false,
+            cloudContribution = SessionCloudContribution(recoveredSharedPlay = ContributionState.FULL),
+        )
+        val timed = HistorySessionUi(
+            id = 82L,
+            startAt = 1_758_432_000_000L,
+            minutes = 20,
+            open = false,
+            cloudContribution = SessionCloudContribution(timingInformedSteamPlay = ContributionState.PARTIAL),
+        )
+        val state = HistoryUiState(
+            loading = false,
+            configured = true,
+            today = TODAY,
+            days = listOf(day("2026-09-20").copy(
+                games = listOf(
+                    game(appId = 81L, name = "Accessible target", session = recovered),
+                    game(appId = 82L, name = "Timed target", session = timed),
+                ),
+            )),
+            cloudReaderConfigured = true,
+            cloudReadSummary = CloudReadSummary(latestObservationAt = 1L),
+            statusNow = 24L * 60L * 60L * 1000L + 2L,
+        )
+
+        composeRule.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale = 2f)) {
+                BacklogiumTheme {
+                    CloudActivityContent(state = state)
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Back to History").assertIsDisplayed()
+        composeRule.onNodeWithText("Recovered play · 1 contribution")
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Cloud-timed Steam play · 1 contribution")
+            .performScrollTo().assertIsDisplayed()
+        val accessibleItem = composeRule.onNodeWithText("Accessible target")
+        accessibleItem.performScrollTo().assertIsDisplayed()
+        accessibleItem.assert(hasClickAction())
+        composeRule.onNodeWithText("The latest observation is over a day old.")
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(
+            "Reader success does not confirm current poller health. Missing observations do not mean no play.",
+        ).performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -326,5 +475,10 @@ class HistoryScreenTest {
 
     private companion object {
         const val TODAY = "2026-09-21"
+    }
+
+    private class TestHistoryLifecycleOwner : LifecycleOwner {
+        val registry = LifecycleRegistry(this)
+        override val lifecycle: Lifecycle get() = registry
     }
 }
