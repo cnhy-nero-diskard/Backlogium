@@ -8,6 +8,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasStateDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -16,7 +17,10 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.backlogium.data.repo.CloudReadSummary
 import com.example.backlogium.data.repo.CloudReadSummaryOutcome
+import com.example.backlogium.data.repo.ContributionState
+import com.example.backlogium.data.repo.SessionCloudContribution
 import com.example.backlogium.ui.theme.BacklogiumTheme
+import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -160,6 +164,132 @@ class HistoryScreenTest {
         playtimeNodes[1].performScrollTo().assertIsDisplayed()
     }
 
+    @Test
+    fun revealExpandsAndShowsExactDistantSessionAndReportsChangedTarget() {
+        val targetDate = LocalDate.parse(TODAY).minusDays(20).toString()
+        val targetSession = HistorySessionUi(
+            id = 991L,
+            startAt = 1_758_432_000_000L,
+            minutes = 91,
+            open = false,
+            cloudContribution = SessionCloudContribution(recoveredSharedPlay = ContributionState.FULL),
+        )
+        val days = (0..20).map { offset ->
+            val date = LocalDate.parse(TODAY).minusDays(offset.toLong()).toString()
+            when (offset) {
+                0 -> day(date, game(appId = 200L, name = "Today's game"))
+                1 -> day(date, game(appId = 201L, name = "First earlier game"))
+                2 -> day(date, game(appId = 202L, name = "Second earlier game"))
+                20 -> day(date, game(appId = 991L, name = "Distant target", session = targetSession))
+                else -> day(date)
+            }
+        }
+        val state = HistoryUiState(
+            loading = false,
+            configured = true,
+            today = TODAY,
+            days = days,
+            cloudReaderConfigured = true,
+        )
+        val reveal = mutableStateOf<HistoryReveal?>(null)
+
+        composeRule.setContent {
+            BacklogiumTheme {
+                HistoryContent(
+                    state = state,
+                    reveal = reveal.value,
+                    onRevealHandled = { reveal.value = null },
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(historyDayTestTag(TODAY)).assert(hasStateDescription("Expanded"))
+        listOf(1, 2).forEach { offset ->
+            val date = LocalDate.parse(TODAY).minusDays(offset.toLong()).toString()
+            composeRule.onNodeWithTag(historyDayTestTag(date)).performScrollTo().performClick()
+            composeRule.onNodeWithTag(historyDayTestTag(date)).assert(hasStateDescription("Expanded"))
+        }
+        composeRule.onNodeWithTag(historySessionTestTag(targetSession.id)).assertDoesNotExist()
+
+        composeRule.runOnIdle {
+            reveal.value = HistoryReveal(targetDate, 991L, targetSession.id)
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag(historyDayTestTag(targetDate))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag(TAG_HISTORY_REVEAL_UNAVAILABLE).assertDoesNotExist()
+        composeRule.onNodeWithText("Distant target").assertIsDisplayed()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag(historySessionTestTag(targetSession.id))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag(historySessionTestTag(targetSession.id)).assertIsDisplayed()
+
+        composeRule.runOnIdle {
+            reveal.value = HistoryReveal(targetDate, 991L, targetSession.id + 1)
+        }
+        composeRule.onNodeWithTag(TAG_HISTORY_REVEAL_UNAVAILABLE).assertIsDisplayed()
+        composeRule.onNodeWithText(
+            "That cloud-assisted session is no longer in the loaded History window.",
+        ).assertIsDisplayed()
+    }
+
+    @Test
+    fun cloudActivityItemReturnsToItsVisibleHistorySession() {
+        val targetSession = HistorySessionUi(
+            id = 72L,
+            startAt = 1_758_432_000_000L,
+            minutes = 34,
+            open = false,
+            cloudContribution = SessionCloudContribution(recoveredSharedPlay = ContributionState.PARTIAL),
+        )
+        val state = HistoryUiState(
+            loading = false,
+            configured = true,
+            today = TODAY,
+            days = listOf(day("2026-09-20", game(
+                appId = 72L,
+                name = "Activity target",
+                session = targetSession,
+            ))),
+            cloudReaderConfigured = true,
+        )
+        val showingHistory = mutableStateOf(true)
+        val reveal = mutableStateOf<HistoryReveal?>(null)
+
+        composeRule.setContent {
+            BacklogiumTheme {
+                if (showingHistory.value) {
+                    HistoryContent(
+                        state = state,
+                        onOpenCloudActivity = { showingHistory.value = false },
+                        reveal = reveal.value,
+                        onRevealHandled = { reveal.value = null },
+                    )
+                } else {
+                    CloudActivityContent(
+                        state = state,
+                        onOpenSession = { item ->
+                            reveal.value = HistoryReveal(item.date, item.game.appId, item.session.id)
+                            showingHistory.value = true
+                        },
+                        onBack = { showingHistory.value = true },
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Cloud activity").performClick()
+        composeRule.onNodeWithText("Activity target").performScrollTo().performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag(historySessionTestTag(targetSession.id))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag(historySessionTestTag(targetSession.id)).assertIsDisplayed()
+    }
+
     private fun setContent(state: HistoryUiState) {
         composeRule.setContent {
             BacklogiumTheme {
@@ -177,19 +307,21 @@ class HistoryScreenTest {
         achievements = HistoryAchievements(iconUrls = emptyList(), overflowCount = 0),
     )
 
-    private fun game() = HistoryGameGroup(
-        appId = 42L,
-        name = "Test Game",
-        iconUrl = "",
-        minutesPlayed = 45,
-        sessions = listOf(
-            HistorySessionUi(
-                id = 1L,
-                startAt = 1_758_432_000_000L,
-                minutes = 45,
-                open = false,
-            ),
+    private fun game(
+        appId: Long = 42L,
+        name: String = "Test Game",
+        session: HistorySessionUi = HistorySessionUi(
+            id = 1L,
+            startAt = 1_758_432_000_000L,
+            minutes = 45,
+            open = false,
         ),
+    ) = HistoryGameGroup(
+        appId = appId,
+        name = name,
+        iconUrl = "",
+        minutesPlayed = session.minutes,
+        sessions = listOf(session),
     )
 
     private companion object {

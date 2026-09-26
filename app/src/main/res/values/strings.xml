@@ -464,6 +464,7 @@
     <string name="history_cloud_open_session">View session in History</string>
     <string name="history_cloud_activity">Cloud activity</string>
     <string name="history_cloud_back">Back to History</string>
+    <string name="history_cloud_session_unavailable">That cloud-assisted session is no longer in the loaded History window.</string>
     <string name="history_cloud_window_scope">Loaded History window: %1$s – %2$s</string>
     <string name="history_cloud_no_contributions">No cloud-assisted sessions are recorded in this loaded History window.</string>
     <string name="history_cloud_loading">Loading cloud activity</string>

@@ -73,6 +73,7 @@ import compose.icons.tablericons.Cloud
 internal const val TAG_HISTORY_MEASUREMENT_HELP = "history-measurement-help"
 internal const val TAG_HISTORY_LOADING = "history-loading"
 internal const val TAG_HISTORY_CLOUD_MARK = "history-cloud-mark"
+internal const val TAG_HISTORY_REVEAL_UNAVAILABLE = "history-reveal-unavailable"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -123,6 +124,7 @@ internal fun HistoryContent(
     var expandedGames by remember { mutableStateOf<Set<Pair<String, Long>>>(emptySet()) }
     var autoExpandedDate by remember { mutableStateOf<String?>(null) }
     var showMeasurementHelp by remember { mutableStateOf(false) }
+    var revealUnavailable by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     LaunchedEffect(state.today) {
@@ -145,97 +147,120 @@ internal fun HistoryContent(
     val sections = historySections(state.days, state.today)
     LaunchedEffect(reveal, state.days) {
         val target = reveal ?: return@LaunchedEffect
-        if (state.days.none { it.date == target.date }) return@LaunchedEffect
-        expandedDays = expandedDays + target.date
+        val targetExists = state.days.any { day ->
+            day.date == target.date && day.games.any { game ->
+                game.appId == target.appId && game.sessions.any { it.id == target.sessionId }
+            }
+        }
+        if (!targetExists) {
+            revealUnavailable = true
+            onRevealHandled()
+            return@LaunchedEffect
+        }
+
+        revealUnavailable = false
+        val expandedDaysForTarget = expandedDays + target.date
+        expandedDays = expandedDaysForTarget
         expandedGames = expandedGames + (target.date to target.appId)
         withFrameNanos { }
-        val dayIndex = 1 + (if (state.cloudReaderConfigured) 1 else 0) +
-            if (sections.today?.date == target.date) 1 else {
-                (if (sections.today != null) 1 + (if (sections.today.date in expandedDays) 1 else 0) else 0) +
-                    1 + sections.earlier.takeWhile { it.date != target.date }.sumOf { earlier ->
-                    1 + (if (earlier.date in expandedDays) 1 else 0)
-                }
-            }
+        val dayIndex = historyVisibleItemKeys(state, expandedDaysForTarget)
+            .indexOf(historyDayItemKey(target.date))
+        if (dayIndex < 0) {
+            revealUnavailable = true
+            onRevealHandled()
+            return@LaunchedEffect
+        }
         listState.scrollToItem(dayIndex)
     }
 
-    LazyColumn(
-        state = listState,
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-    ) {
-        item(key = "history-heading") {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(R.string.history_title),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    onClick = { showMeasurementHelp = true },
-                    modifier = Modifier.testTag(TAG_HISTORY_MEASUREMENT_HELP),
-                ) {
-                    Text(stringResource(R.string.history_measurement_help_action))
-                }
-            }
+    Column(modifier = Modifier.fillMaxSize()) {
+        if (revealUnavailable) {
+            Text(
+                stringResource(R.string.history_cloud_session_unavailable),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
+                    .testTag(TAG_HISTORY_REVEAL_UNAVAILABLE),
+            )
         }
-
-        if (state.cloudReaderConfigured) {
-            item(key = "cloud-activity") {
-                TextButton(onClick = onOpenCloudActivity, modifier = Modifier.fillMaxWidth()) {
-                    Icon(TablerIcons.Cloud, contentDescription = null)
-                    Text(stringResource(R.string.history_cloud_activity), modifier = Modifier.padding(start = 8.dp))
-                }
-            }
-        }
-
-        if (state.days.isEmpty()) {
-            item(key = "history-empty") {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+        ) {
+            item(key = "history-heading") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        stringResource(R.string.history_empty_title),
-                        style = MaterialTheme.typography.titleLarge,
-                        textAlign = TextAlign.Center,
+                        text = stringResource(R.string.history_title),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
                     )
-                    Text(
-                        stringResource(R.string.history_empty_message),
-                        style = MaterialTheme.typography.bodyMedium,
-                        textAlign = TextAlign.Center,
-                    )
+                    TextButton(
+                        onClick = { showMeasurementHelp = true },
+                        modifier = Modifier.testTag(TAG_HISTORY_MEASUREMENT_HELP),
+                    ) {
+                        Text(stringResource(R.string.history_measurement_help_action))
+                    }
                 }
-            }
-        } else {
-            sections.today?.let { day ->
-                item(key = "today-heading") {
-                    SectionHeader(stringResource(R.string.history_today_section))
-                }
-                dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame,
-                    state.cloudReaderConfigured, reveal, onRevealHandled)
             }
 
-            if (sections.earlier.isNotEmpty()) {
-                item(key = "earlier-history-heading") {
-                    SectionHeader(stringResource(R.string.history_earlier_section))
+            if (state.cloudReaderConfigured) {
+                item(key = "cloud-activity") {
+                    TextButton(onClick = onOpenCloudActivity, modifier = Modifier.fillMaxWidth()) {
+                        Icon(TablerIcons.Cloud, contentDescription = null)
+                        Text(stringResource(R.string.history_cloud_activity), modifier = Modifier.padding(start = 8.dp))
+                    }
                 }
             }
-            sections.earlier.forEach { day ->
-                dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame,
-                    state.cloudReaderConfigured, reveal, onRevealHandled)
-            }
-        }
 
-        item(key = "load-older") {
-            TextButton(onClick = onLoadOlder, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.history_load_older))
+            if (state.days.isEmpty()) {
+                item(key = "history-empty") {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.history_empty_title),
+                            style = MaterialTheme.typography.titleLarge,
+                            textAlign = TextAlign.Center,
+                        )
+                        Text(
+                            stringResource(R.string.history_empty_message),
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
+            } else {
+                sections.today?.let { day ->
+                    item(key = "today-heading") {
+                        SectionHeader(stringResource(R.string.history_today_section))
+                    }
+                    dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame,
+                        state.cloudReaderConfigured, reveal, onRevealHandled)
+                }
+
+                if (sections.earlier.isNotEmpty()) {
+                    item(key = "earlier-history-heading") {
+                        SectionHeader(stringResource(R.string.history_earlier_section))
+                    }
+                }
+                sections.earlier.forEach { day ->
+                    dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame,
+                        state.cloudReaderConfigured, reveal, onRevealHandled)
+                }
+            }
+
+            item(key = "load-older") {
+                TextButton(onClick = onLoadOlder, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.history_load_older))
+                }
             }
         }
     }
@@ -275,6 +300,38 @@ internal fun HistoryContent(
 internal fun shouldAutoExpandHistoryDate(today: String, autoExpandedDate: String?): Boolean =
     today.isNotEmpty() && today != autoExpandedDate
 
+/** The ordered keys mirror the top-level LazyColumn slots used below, including expanded day blocks. */
+internal fun historyVisibleItemKeys(
+    state: HistoryUiState,
+    expandedDays: Set<String>,
+): List<String> = buildList {
+    add("history-heading")
+    if (state.cloudReaderConfigured) add("cloud-activity")
+    if (state.days.isEmpty()) {
+        add("history-empty")
+    } else {
+        val sections = historySections(state.days, state.today)
+        sections.today?.let { day ->
+            add("today-heading")
+            add(historyDayItemKey(day.date))
+            if (day.date in expandedDays && day.games.isNotEmpty()) add(historyGamesItemKey(day.date))
+        }
+        if (sections.earlier.isNotEmpty()) {
+            add("earlier-history-heading")
+            sections.earlier.forEach { day ->
+                add(historyDayItemKey(day.date))
+                if (day.date in expandedDays && day.games.isNotEmpty()) add(historyGamesItemKey(day.date))
+            }
+        }
+    }
+    add("load-older")
+}
+
+private fun historyDayItemKey(date: String) = "day-$date"
+private fun historyGamesItemKey(date: String) = "games-$date"
+internal fun historyDayTestTag(date: String) = "history-day-$date"
+internal fun historySessionTestTag(sessionId: Long) = "history-session-$sessionId"
+
 /** One day's rows: its header, then (if expanded) a single connected block of its games. */
 private fun LazyListScope.dayItems(
     day: HistoryDayGroup,
@@ -289,7 +346,7 @@ private fun LazyListScope.dayItems(
     val dayExpanded = day.date in expandedDays
     val expandable = day.games.isNotEmpty()
 
-    item(key = "day-${day.date}") {
+    item(key = historyDayItemKey(day.date)) {
         DayHeaderRow(
             day = day,
             expanded = dayExpanded,
@@ -300,7 +357,7 @@ private fun LazyListScope.dayItems(
 
     if (!dayExpanded || !expandable) return
 
-    item(key = "games-${day.date}") {
+    item(key = historyGamesItemKey(day.date)) {
         DayGamesBlock(
             date = day.date,
             games = day.games,
@@ -367,6 +424,7 @@ private fun DayHeaderRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 4.dp, bottom = if (connected) 0.dp else 4.dp)
+            .testTag(historyDayTestTag(day.date))
             .let { modifier ->
                 modifier
                     .semantics(mergeDescendants = true) {
@@ -639,7 +697,8 @@ private fun HistorySessionRow(
         stringResource(R.string.history_cloud_both_facts, markLabel[0], markLabel[1])
     } else markLabel.singleOrNull().orEmpty()
     Row(verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().bringIntoViewRequester(bringIntoViewRequester)) {
+        modifier = Modifier.fillMaxWidth().bringIntoViewRequester(bringIntoViewRequester)
+            .testTag(historySessionTestTag(session.id))) {
         Text(
             text = sessionLabel(session),
             style = MaterialTheme.typography.bodySmall,
