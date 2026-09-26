@@ -142,8 +142,10 @@ class CloudPresenceRepositoryTest {
 
         assertNull(settings.cloudRoutineState.first().policy)
         assertEquals(before + 1L, settings.cloudReaderGeneration.first())
-        assertEquals(CloudRoutineAdmission.UNAVAILABLE,
-            repo.admitRoutineWork(ACCOUNT, before))
+        assertEquals(
+            CloudRoutineAttempt.NotAdmitted(CloudRoutineAdmission.UNAVAILABLE),
+            repo.runRoutineCatchUp(ACCOUNT, before, consume = {}),
+        )
     }
     @Test
     fun everyCursorAdvancingPathRetainsEvidenceBeforeItsPosition() = runBlocking {
@@ -726,7 +728,7 @@ class CloudPresenceRepositoryTest {
     }
 
     @Test
-    fun staleRoutineAdmissionNeverConsumesCooldownBeforePromotionRecoveryCommits() = runBlocking {
+    fun staleRoutineAttemptNeverConsumesCooldownBeforePromotionRecoveryCommits() = runBlocking {
         val api = FakeCloudPresenceApi(answer = sampleResponse())
         val store = FakeCloudCredentialsStore(CloudCredentials("https://old.example.com/read", "old-secret"))
         val settings = FakeSettingsRepository()
@@ -762,7 +764,7 @@ class CloudPresenceRepositoryTest {
         // untouched.
         evidence.failNextClear = true
         try {
-            restarted.admitRoutineWork(ACCOUNT, 1L)
+            restarted.runRoutineCatchUp(ACCOUNT, 1L, consume = {})
             org.junit.Assert.fail("admission must not proceed when recovery still fails")
         } catch (_: IllegalStateException) {
             // No admission was recorded and the persisted cooldown is untouched.
@@ -773,7 +775,10 @@ class CloudPresenceRepositoryTest {
         // The retry completes the promotion to generation 2 and then refuses the stale
         // generation-1 job, still without recording an admission: zero pages read, zero
         // cooldown consumed for the replacement reader.
-        assertEquals(CloudRoutineAdmission.UNAVAILABLE, restarted.admitRoutineWork(ACCOUNT, 1L))
+        assertEquals(
+            CloudRoutineAttempt.NotAdmitted(CloudRoutineAdmission.UNAVAILABLE),
+            restarted.runRoutineCatchUp(ACCOUNT, 1L, consume = {}),
+        )
 
         assertEquals(2L, settings.cloudReaderGeneration.first())
         assertNull(settings.cloudReaderPromotionTarget.first())
@@ -781,6 +786,96 @@ class CloudPresenceRepositoryTest {
         assertEquals(1234L, routine.lastAdmittedAt)
         assertEquals(2L, routine.orderingWatermark)
         assertEquals(2L, routine.lastAdmissionWatermark)
+    }
+
+    @Test
+    fun staleRoutineWorkAfterReplacementDoesNotCreateCooldownForNewReader() = runBlocking {
+        val api = FakeCloudPresenceApi(answer = sampleResponse())
+        val settings = FakeSettingsRepository()
+        settings.initializeCloudRoutinePolicy()
+        val oldEndpoint = "https://old.example.com/read"
+        val store = FakeCloudCredentialsStore(CloudCredentials(oldEndpoint, "old-secret"))
+        val repository = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT)
+        val oldGeneration = settings.cloudReaderGeneration.first()
+
+        assertEquals(
+            CloudConfigurationResult.Saved,
+            repository.verifyAndSave("https://new.example.com/read", "new-secret"),
+        )
+        assertEquals(CloudCredentials("https://new.example.com/read", "new-secret"), store.credentials)
+        assertEquals(oldGeneration + 1L, settings.cloudReaderGeneration.first())
+        val replacementState = settings.cloudRoutineState.first()
+        val requestsAfterPromotion = api.requests.size
+        assertNull(replacementState.lastAdmittedAt)
+
+        // An enqueued A/g worker that reaches the repository after B's promotion is rejected
+        // before it can write an admission or issue a routine page request.
+        assertEquals(
+            CloudRoutineAttempt.NotAdmitted(CloudRoutineAdmission.UNAVAILABLE),
+            repository.runRoutineCatchUp(ACCOUNT, oldGeneration, consume = {}),
+        )
+        assertEquals(replacementState, settings.cloudRoutineState.first())
+        assertEquals(requestsAfterPromotion, api.requests.size)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun routineAdmissionAndFirstPageStaySerializedWithEndpointPromotion() = runTest {
+        val oldEndpoint = "https://old.example.com/read"
+        val newEndpoint = "https://new.example.com/read"
+        val pageEntered = CompletableDeferred<Unit>()
+        val releasePage = CompletableDeferred<CloudPresenceResponseDto>()
+        val requests = mutableListOf<Pair<String, String?>>()
+        val api = object : CloudPresenceApi {
+            override suspend fun read(
+                endpoint: String,
+                authorization: String,
+                position: String?,
+            ): CloudPresenceResponseDto {
+                requests += endpoint to position
+                return if (endpoint == oldEndpoint) {
+                    pageEntered.complete(Unit)
+                    releasePage.await()
+                } else {
+                    sampleResponse()
+                }
+            }
+        }
+        val settings = FakeSettingsRepository()
+        settings.initializeCloudRoutinePolicy()
+        val store = FakeCloudCredentialsStore(CloudCredentials(oldEndpoint, "old-secret"))
+        val repository = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT)
+        val generation = settings.cloudReaderGeneration.first()
+
+        val routine = async {
+            repository.runRoutineCatchUp(ACCOUNT, generation, consume = {})
+        }
+        pageEntered.await()
+        val admittedAt = settings.cloudRoutineState.first().lastAdmittedAt
+        assertEquals(FixedTimeProvider().nowMillis(), admittedAt)
+
+        // Promotion must wait for the routine read sequence lock: it cannot replace A after
+        // admission but before A's first page has been consumed.
+        val replacement = async {
+            repository.verifyAndSave(newEndpoint, "new-secret")
+        }
+        runCurrent()
+        assertFalse(replacement.isCompleted)
+        assertEquals(CloudCredentials(oldEndpoint, "old-secret"), store.credentials)
+        assertEquals(generation, settings.cloudReaderGeneration.first())
+        assertEquals(listOf(oldEndpoint to null), requests)
+
+        releasePage.complete(sampleResponse())
+        assertEquals(
+            CloudRoutineAttempt.Admitted(
+                FixedTimeProvider().nowMillis(),
+                CloudCatchUpResult.Complete(1, 1, noNewData = false),
+            ),
+            routine.await(),
+        )
+        assertEquals(CloudConfigurationResult.Saved, replacement.await())
+        assertEquals(CloudCredentials(newEndpoint, "new-secret"), store.credentials)
+        assertEquals(generation + 1L, settings.cloudReaderGeneration.first())
     }
 
     @Test

@@ -50,6 +50,11 @@ sealed interface CloudCatchUpResult {
     data object Unavailable : CloudCatchUpResult
 }
 
+sealed interface CloudRoutineAttempt {
+    data class NotAdmitted(val admission: CloudRoutineAdmission) : CloudRoutineAttempt
+    data class Admitted(val at: Long, val outcome: CloudCatchUpResult) : CloudRoutineAttempt
+}
+
 enum class CloudReadFailure {
     UNREACHABLE,
     REJECTED_CREDENTIAL,
@@ -364,27 +369,41 @@ class CloudPresenceRepository @Inject constructor(
     }
 
     /**
-     * Verify identity at work start; DataStore arbitrates coincident trigger admissions.
-     *
-     * Recovery-aware: an interrupted promotion/removal is finished or abandoned before the
-     * identity check, so admission can never mutate cooldown state on behalf of a stale
-     * generation that recovery is about to retire — a job tagged with the pre-promotion
-     * generation would otherwise consume the new reader's cooldown without reading a page.
-     * Holds [cloudReadSequenceMutex] like every other read path, so the recovery cannot
-     * interleave with a drain or verification; a recovery failure propagates and no
-     * admission is recorded.
+     * Recovery, identity validation, admission, and the complete routine catch-up are one
+     * serialized operation. In particular, endpoint promotion cannot land after this reader has
+     * consumed its cooldown but before its first page is read. [onAdmitted] runs under the
+     * sequence lock so the worker can still record a failed outcome if a later persistence step
+     * throws.
      */
-    suspend fun admitRoutineWork(account: String, generation: Long): CloudRoutineAdmission =
-        cloudReadSequenceMutex.withLock {
-            recoverStagedPromotionLocked()
-            cloudStateMutex.withLock {
-                if (credentialsProvider.currentCredentials()?.steamId != account ||
-                    credentialsStore.readCloudCredentials() == null ||
-                    settings.cloudReaderGeneration.first() != generation
-                ) return@withLock CloudRoutineAdmission.UNAVAILABLE
-                settings.admitCloudRoutine(time.nowMillis())
+    suspend fun runRoutineCatchUp(
+        account: String,
+        generation: Long,
+        consume: suspend (CloudPresenceSnapshot) -> Unit,
+        onAdmitted: (Long) -> Unit = {},
+    ): CloudRoutineAttempt = cloudReadSequenceMutex.withLock {
+        recoverStagedPromotionLocked()
+        val (admission, admittedAt) = cloudStateMutex.withLock {
+            if (credentialsProvider.currentCredentials()?.steamId != account ||
+                credentialsStore.readCloudCredentials() == null ||
+                settings.cloudReaderGeneration.first() != generation
+            ) {
+                CloudRoutineAdmission.UNAVAILABLE to null
+            } else {
+                val at = time.nowMillis()
+                val result = settings.admitCloudRoutine(at)
+                result to if (result == CloudRoutineAdmission.ADMITTED) at else null
             }
         }
+        if (admission != CloudRoutineAdmission.ADMITTED) {
+            return@withLock CloudRoutineAttempt.NotAdmitted(admission)
+        }
+        val at = checkNotNull(admittedAt)
+        onAdmitted(at)
+        CloudRoutineAttempt.Admitted(
+            at = at,
+            outcome = readRoutineCatchUpLocked(account, generation, consume),
+        )
+    }
 
     suspend fun verifyAndSave(
         endpoint: String,
@@ -562,39 +581,48 @@ class CloudPresenceRepository @Inject constructor(
         consume: suspend (CloudPresenceSnapshot) -> Unit,
     ): CloudCatchUpResult = cloudReadSequenceMutex.withLock {
         recoverStagedPromotionLocked()
-        val account = credentialsProvider.currentCredentials()?.steamId ?: return@withLock CloudCatchUpResult.Unavailable
-        if (credentialsStore.readCloudCredentials() == null) return@withLock CloudCatchUpResult.Unavailable
+        readRoutineCatchUpLocked(expectedAccount, expectedGeneration, consume)
+    }
+
+    /** Caller holds [cloudReadSequenceMutex], after staged promotion recovery. */
+    private suspend fun readRoutineCatchUpLocked(
+        expectedAccount: String?,
+        expectedGeneration: Long?,
+        consume: suspend (CloudPresenceSnapshot) -> Unit,
+    ): CloudCatchUpResult {
+        val account = credentialsProvider.currentCredentials()?.steamId ?: return CloudCatchUpResult.Unavailable
+        if (credentialsStore.readCloudCredentials() == null) return CloudCatchUpResult.Unavailable
         val generation = settings.cloudReaderGeneration.first()
         if ((expectedAccount != null && account != expectedAccount) ||
             (expectedGeneration != null && generation != expectedGeneration)
-        ) return@withLock CloudCatchUpResult.Unavailable
+        ) return CloudCatchUpResult.Unavailable
         var transitions = 0
-        repeat(MAX_ROUTINE_PAGES) { page ->
+        for (page in 0 until MAX_ROUTINE_PAGES) {
             if (credentialsProvider.currentCredentials()?.steamId != account ||
                 settings.cloudReaderGeneration.first() != generation
-            ) return@withLock CloudCatchUpResult.Failed(page, transitions, CloudReadFailure.ACCOUNT_MISMATCH)
+            ) return CloudCatchUpResult.Failed(page, transitions, CloudReadFailure.ACCOUNT_MISMATCH)
             val result = try {
                 readPage(CloudReadTrigger.ROUTINE, consume)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                return@withLock CloudCatchUpResult.Failed(page, transitions, CloudReadFailure.UNUSABLE_RESPONSE)
+                return CloudCatchUpResult.Failed(page, transitions, CloudReadFailure.UNUSABLE_RESPONSE)
             }
             when (result) {
                 is CloudReadResult.Success -> {
                     transitions += result.snapshot.observationCount
                     if (!result.snapshot.hasMore) {
-                        return@withLock CloudCatchUpResult.Complete(
+                        return CloudCatchUpResult.Complete(
                             page + 1, transitions, noNewData = transitions == 0,
                         )
                     }
                 }
                 is CloudReadResult.Failed ->
-                    return@withLock CloudCatchUpResult.Failed(page, transitions, result.failure)
-                else -> return@withLock CloudCatchUpResult.Unavailable
+                    return CloudCatchUpResult.Failed(page, transitions, result.failure)
+                else -> return CloudCatchUpResult.Unavailable
             }
         }
-        CloudCatchUpResult.Partial(MAX_ROUTINE_PAGES, transitions)
+        return CloudCatchUpResult.Partial(MAX_ROUTINE_PAGES, transitions)
     }
 
     /**
