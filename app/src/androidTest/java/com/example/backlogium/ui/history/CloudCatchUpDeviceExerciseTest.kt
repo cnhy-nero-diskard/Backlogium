@@ -1,19 +1,36 @@
 package com.example.backlogium.ui.history
 
+import android.content.ContentValues
+import android.content.Context
+import android.graphics.Bitmap
+import android.provider.MediaStore
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.Density
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.credentials.CloudCredentials
 import com.example.backlogium.data.credentials.CloudCredentialsStore
@@ -31,7 +48,11 @@ import com.example.backlogium.data.repo.CloudCatchUpResult
 import com.example.backlogium.data.repo.CloudPresenceRepository
 import com.example.backlogium.data.repo.CloudReadFailure
 import com.example.backlogium.data.repo.CloudReadResult
+import com.example.backlogium.data.repo.CloudReadSummary
+import com.example.backlogium.data.repo.CloudReadSummaryOutcome
 import com.example.backlogium.data.repo.CloudReadTrigger
+import com.example.backlogium.data.repo.CloudRoutineAdmission
+import com.example.backlogium.data.repo.CloudRoutineAttempt
 import com.example.backlogium.data.repo.CloudRoutinePolicy
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.CredentialsState
@@ -155,11 +176,21 @@ class CloudCatchUpDeviceExerciseTest {
 
             api.installMultiPageFixture(firstCursor)
             val generation = settings.cloudReaderGeneration.first()
-            val partial = repository.readRoutineCatchUp(
-                expectedAccount = account,
-                expectedGeneration = generation,
+            val beforeAdmission = api.calls.size
+            assertEquals(
+                CloudRoutineAttempt.NotAdmitted(CloudRoutineAdmission.SATISFIED_BY_READ),
+                repository.runRoutineCatchUp(account, generation, consume = {}),
+            )
+            assertEquals("a newer terminal manual read should satisfy one opportunity", beforeAdmission,
+                api.calls.size)
+
+            val partialAttempt = repository.runRoutineCatchUp(
+                account = account,
+                generation = generation,
                 consume = {},
             )
+            assertTrue(partialAttempt is CloudRoutineAttempt.Admitted)
+            val partial = (partialAttempt as CloudRoutineAttempt.Admitted).outcome
             assertEquals(CloudCatchUpResult.Partial(4, 8), partial)
             val partialCursor = settings.cloudReadPosition.first()
             assertEquals("2026-09-23T12:40:00Z", partialCursor)
@@ -183,14 +214,78 @@ class CloudCatchUpDeviceExerciseTest {
                     next = "2026-09-23T13:00:00Z",
                 )
             }
-            val complete = repository.readRoutineCatchUp(
-                expectedAccount = account,
-                expectedGeneration = generation,
+            val resumedAttempt = repository.runRoutineCatchUp(
+                account = account,
+                generation = generation,
                 consume = {},
             )
+            assertTrue(resumedAttempt is CloudRoutineAttempt.Admitted)
+            val complete = (resumedAttempt as CloudRoutineAttempt.Admitted).outcome
             assertEquals(CloudCatchUpResult.Complete(1, 2, false), complete)
             assertEquals(beforeResume + 1, api.calls.size)
             assertEquals("2026-09-23T13:00:00Z", settings.cloudReadPosition.first())
+
+            // Manual only is a persisted policy, not an unconfigured-reader sentinel. It blocks
+            // routine admission before and after recreating both repositories, but leaves manual
+            // Read now and the existing cooldown/cursors intact when a cadence is re-enabled.
+            val lastRoutineAttempt = checkNotNull(settings.cloudRoutineState.first().lastAdmittedAt)
+            assertEquals(time.now, lastRoutineAttempt)
+            val completedCursor = settings.cloudReadPosition.first()
+            val ingestPosition = settings.cloudIngestPosition.first()
+            settings.setCloudRoutinePolicy(CloudRoutinePolicy.OFF_MANUAL_ONLY)
+            assertEquals(CloudRoutinePolicy.OFF_MANUAL_ONLY, settings.cloudRoutineState.first().policy)
+
+            val callsBeforeOffAttempt = api.calls.size
+            assertEquals(
+                CloudRoutineAttempt.NotAdmitted(CloudRoutineAdmission.UNAVAILABLE),
+                repository.runRoutineCatchUp(account, generation, consume = {}),
+            )
+            assertEquals(callsBeforeOffAttempt, api.calls.size)
+
+            val restartedSettings = DataStoreSettingsRepository(SettingsDataStore(context))
+            val restartedRepository = CloudPresenceRepository(
+                api, credentialsStore, FixedCredentialsProvider(account), restartedSettings,
+                database.cloudReadDao(),
+                RoomCloudPendingEvidence(database.pendingCloudEvidenceDao(), database.gameDao(),
+                    RoomDatabaseTransactionScope(database)), time,
+            )
+            restartedRepository.refreshConfiguration()
+            assertNotNull(restartedRepository.configuration.first())
+            val afterRestart = restartedSettings.cloudRoutineState.first()
+            assertEquals(CloudRoutinePolicy.OFF_MANUAL_ONLY, afterRestart.policy)
+            assertEquals(lastRoutineAttempt, afterRestart.lastAdmittedAt)
+            assertEquals(completedCursor, restartedSettings.cloudReadPosition.first())
+            assertEquals(ingestPosition, restartedSettings.cloudIngestPosition.first())
+
+            assertEquals(
+                CloudRoutineAttempt.NotAdmitted(CloudRoutineAdmission.UNAVAILABLE),
+                restartedRepository.runRoutineCatchUp(account, generation, consume = {}),
+            )
+            assertEquals(callsBeforeOffAttempt, api.calls.size)
+
+            api.onRead = { position ->
+                assertEquals(completedCursor, position)
+                page(
+                    transitions = emptyList(),
+                    start = "2026-09-25T13:00:00Z",
+                    end = "2026-09-25T13:10:00Z",
+                    readAt = "2026-09-25T13:10:00Z",
+                    next = "2026-09-25T13:10:00Z",
+                )
+            }
+            assertTrue(restartedRepository.read(CloudReadTrigger.SETTINGS_MANUAL) is CloudReadResult.Success)
+            val manualReadCursor = "2026-09-25T13:10:00Z"
+            assertEquals(manualReadCursor, restartedSettings.cloudReadPosition.first())
+            assertEquals(CloudRoutinePolicy.OFF_MANUAL_ONLY, restartedSettings.cloudRoutineState.first().policy)
+
+            restartedSettings.setCloudRoutinePolicy(CloudRoutinePolicy.DAILY)
+            val reenabled = restartedSettings.cloudRoutineState.first()
+            assertEquals(CloudRoutinePolicy.DAILY, reenabled.policy)
+            assertEquals(lastRoutineAttempt, reenabled.lastAdmittedAt)
+            assertEquals(manualReadCursor, restartedSettings.cloudReadPosition.first())
+            assertEquals(CloudRoutineAdmission.COOLDOWN,
+                restartedSettings.admitCloudRoutine(lastRoutineAttempt + 60L * 60_000L))
+            assertEquals(lastRoutineAttempt, restartedSettings.cloudRoutineState.first().lastAdmittedAt)
 
             // Catch-up only acquires evidence. It must not replace Steam's minute ledger or
             // the already recorded two-fact contribution on the realistic local History row.
@@ -286,6 +381,225 @@ class CloudCatchUpDeviceExerciseTest {
         } finally {
             store.clearAccountDerivedState()
             database.close()
+        }
+    }
+
+    @Test
+    fun configuredEmptyHistoryWithFailedStaleReaderFitsCompactDarkAndLargeTextViews() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val now = Instant.parse("2026-09-26T12:00:00Z").toEpochMilli()
+        val state = HistoryUiState(
+            loading = false,
+            configured = true,
+            today = "2026-09-26",
+            windowStartDate = "2026-08-27",
+            cloudReaderConfigured = true,
+            cloudReadSummary = CloudReadSummary(
+                lastAttemptAt = now - 60 * 60_000L,
+                lastTrigger = CloudReadTrigger.SETTINGS_MANUAL,
+                lastOutcome = CloudReadSummaryOutcome.FAILED,
+                lastFailure = CloudReadFailure.UNREACHABLE,
+                lastSuccessAt = now - 48 * 60 * 60_000L,
+                latestObservationAt = now - 72 * 60 * 60_000L,
+            ),
+            statusNow = now,
+        )
+        val showingHistory = mutableStateOf(true)
+        val darkTheme = mutableStateOf(false)
+        val fontScale = mutableFloatStateOf(1f)
+        composeRule.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(
+                LocalDensity provides Density(density.density, fontScale = fontScale.floatValue),
+            ) {
+                BacklogiumTheme(darkTheme = darkTheme.value) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background,
+                    ) {
+                        if (showingHistory.value) {
+                            HistoryContent(state, onOpenCloudActivity = { showingHistory.value = false })
+                        } else {
+                            CloudActivityContent(state, onBack = { showingHistory.value = true })
+                        }
+                    }
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("No history yet").assertIsDisplayed()
+        composeRule.onNodeWithText("Cloud activity").assertIsDisplayed()
+        captureScreenshot("history-empty-compact.png", context)
+
+        composeRule.onNodeWithText("Cloud activity").performClick()
+        composeRule.onNodeWithText("Back to History").assertIsDisplayed()
+        composeRule.onNodeWithText("History loaded:", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText(
+            "No cloud contributions are recorded in this loaded History window.",
+        ).assertIsDisplayed()
+        captureScreenshot("cloud-activity-empty-compact.png", context)
+        composeRule.onNodeWithText("Reader status").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Reader request failed", substring = true)
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("The latest observation is over a day old.")
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Recovered play · 0 contributions").assertDoesNotExist()
+
+        composeRule.runOnIdle { darkTheme.value = true }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("No cloud contributions are recorded in this loaded History window.")
+            .performScrollTo().assertIsDisplayed()
+        captureScreenshot("cloud-activity-empty-dark.png", context)
+
+        composeRule.runOnIdle {
+            darkTheme.value = false
+            fontScale.floatValue = 2f
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Back to History").assertIsDisplayed()
+        composeRule.onNodeWithText("No cloud contributions are recorded in this loaded History window.")
+            .performScrollTo().assertIsDisplayed()
+        captureScreenshot("cloud-activity-empty-large-font.png", context)
+        composeRule.onNodeWithText("Reader request failed", substring = true)
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("The latest observation is over a day old.")
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(
+            "Reader success does not confirm current poller health. Missing observations do not mean no play.",
+        ).performScrollTo().assertIsDisplayed()
+        captureScreenshot("cloud-activity-empty-large-font-status.png", context)
+
+        composeRule.onNodeWithText("Back to History").performClick()
+        composeRule.onNodeWithText("No history yet").assertIsDisplayed()
+    }
+
+    @Test
+    fun cloudActivityRevealsAnInitiallyUncomposedDistantEarlierSessionOnDevice() {
+        val today = LocalDate.parse("2026-09-26")
+        val targetDate = today.minusDays(20).toString()
+        val targetSession = HistorySessionUi(
+            id = 991L,
+            startAt = Instant.parse("2026-09-06T10:30:00Z").toEpochMilli(),
+            minutes = 91,
+            open = false,
+            cloudContribution = SessionCloudContribution(recoveredSharedPlay = ContributionState.FULL),
+        )
+        val targetGame = HistoryGameGroup(
+            appId = 991L,
+            name = "Distant target",
+            iconUrl = "",
+            minutesPlayed = targetSession.minutes,
+            sessions = listOf(targetSession),
+        )
+        val days = (0..20).map { offset ->
+            val date = today.minusDays(offset.toLong()).toString()
+            val games = when (offset) {
+                0, 1, 2 -> {
+                    val session = HistorySessionUi(
+                        id = 10_000L + offset,
+                        startAt = Instant.parse("$date" + "T08:00:00Z").toEpochMilli(),
+                        minutes = 10,
+                        open = false,
+                    )
+                    listOf(HistoryGameGroup(
+                        appId = 200L + offset,
+                        name = if (offset == 0) "Today game" else "Earlier day $offset game",
+                        iconUrl = "",
+                        minutesPlayed = session.minutes,
+                        sessions = listOf(session),
+                    ))
+                }
+                20 -> listOf(targetGame)
+                else -> emptyList()
+            }
+            HistoryDayGroup(
+                date = date,
+                minutesPlayed = games.sumOf { it.minutesPlayed },
+                goalMinutesPlayed = 0,
+                questMet = games.isNotEmpty(),
+                games = games,
+                achievements = HistoryAchievements(emptyList(), 0),
+            )
+        }
+        val state = HistoryUiState(
+            loading = false,
+            configured = true,
+            days = days,
+            today = today.toString(),
+            windowStartDate = days.last().date,
+            cloudReaderConfigured = true,
+            statusNow = Instant.parse("2026-09-26T12:00:00Z").toEpochMilli(),
+        )
+        val showingHistory = mutableStateOf(true)
+        val reveal = mutableStateOf<HistoryReveal?>(null)
+        composeRule.setContent {
+            BacklogiumTheme {
+                if (showingHistory.value) {
+                    HistoryContent(
+                        state = state,
+                        onOpenCloudActivity = { showingHistory.value = false },
+                        reveal = reveal.value,
+                        onRevealHandled = { reveal.value = null },
+                    )
+                } else {
+                    CloudActivityContent(
+                        state = state,
+                        onOpenSession = { item ->
+                            reveal.value = HistoryReveal(item.date, item.game.appId, item.session.id)
+                            showingHistory.value = true
+                        },
+                        onBack = { showingHistory.value = true },
+                    )
+                }
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(historyDayTestTag(today.toString()))
+            .assert(androidx.compose.ui.test.hasStateDescription("Expanded"))
+        (1..2).forEach { offset ->
+            val precedingDate = today.minusDays(offset.toLong()).toString()
+            composeRule.onNodeWithTag(historyDayTestTag(precedingDate))
+                .performScrollTo().performClick()
+            composeRule.onNodeWithTag(historyDayTestTag(precedingDate))
+                .assert(androidx.compose.ui.test.hasStateDescription("Expanded"))
+        }
+        composeRule.onNodeWithTag(historySessionTestTag(targetSession.id)).assertDoesNotExist()
+
+        composeRule.onNodeWithText("Cloud activity").performScrollTo().performClick()
+        composeRule.onNodeWithText("Distant target").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag(historySessionTestTag(targetSession.id))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag(TAG_HISTORY_REVEAL_UNAVAILABLE).assertDoesNotExist()
+        composeRule.onNodeWithTag(historyDayTestTag(targetDate))
+            .assert(androidx.compose.ui.test.hasStateDescription("Expanded"))
+        composeRule.onNodeWithText("Distant target").assertIsDisplayed()
+        composeRule.onNodeWithTag(historySessionTestTag(targetSession.id)).assertIsDisplayed()
+    }
+
+    private fun captureScreenshot(name: String, context: Context) {
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "backlogium-$name")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/BacklogiumTestCaptures")
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+        val uri = checkNotNull(context.contentResolver.insert(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            values,
+        ))
+        val bitmap = composeRule.onRoot().captureToImage().asAndroidBitmap()
+        try {
+            checkNotNull(context.contentResolver.openOutputStream(uri)).use { output ->
+                assertTrue("failed to write screenshot $name",
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, output))
+            }
+        } finally {
+            context.contentResolver.update(uri, ContentValues().apply {
+                put(MediaStore.Images.Media.IS_PENDING, 0)
+            }, null, null)
         }
     }
 
