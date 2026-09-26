@@ -9,6 +9,9 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import com.example.backlogium.gamification.RuleConfig
+import com.example.backlogium.data.repo.CloudReadSummaryOutcome
+import com.example.backlogium.data.repo.CloudRoutinePolicy
+import com.example.backlogium.data.repo.CloudRoutineState
 import com.example.backlogium.ui.settings.RuleDraft
 import com.example.backlogium.ui.settings.RuleField
 import com.example.backlogium.ui.settings.SettingsActions
@@ -149,6 +152,54 @@ class SettingsScreenTest {
         composeRule.onNodeWithText(RuleField.XP_PER_MINUTE.label).assertExists()
         composeRule.onNodeWithText(RuleField.LEVEL_BASE.label).assertExists()
         composeRule.onNodeWithText(RuleField.LEGENDARY_ACHIEVEMENT_XP.label).assertExists()
+    }
+
+    @Test
+    fun manualOnlyKeepsReaderAndManualReadAvailableAndReenabledCadenceShowsEligibility() {
+        val policy = androidx.compose.runtime.mutableStateOf(CloudRoutinePolicy.OFF_MANUAL_ONLY)
+        val routine = CloudRoutineState(
+            policy = CloudRoutinePolicy.OFF_MANUAL_ONLY,
+            lastAdmittedAt = 1_758_000_000_000L,
+            lastOutcome = CloudReadSummaryOutcome.FAILED,
+        )
+        val settings = state(advancedExpanded = false).copy(
+            cloudEndpoint = "https://reader.example.com/read",
+            cloudRoutine = routine,
+        )
+        val changedPolicies = mutableListOf<CloudRoutinePolicy>()
+        composeRule.setContent {
+            SettingsDetailScreen(
+                group = SettingsGroup.DATA_PRIVACY,
+                state = settings.copy(cloudRoutine = routine.copy(policy = policy.value)),
+                actions = noopActions().copy(onCloudRoutinePolicyChanged = {
+                    changedPolicies += it
+                    policy.value = it
+                }),
+            )
+        }
+
+        composeRule.onNodeWithText("Read now").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Off · Manual only").performScrollTo().assertIsDisplayed().performClick()
+        assertEquals(CloudRoutinePolicy.OFF_MANUAL_ONLY, changedPolicies.last())
+        assertEquals("https://reader.example.com/read", settings.cloudEndpoint)
+        composeRule.onNodeWithText(
+            "Automatic is the initial policy when a reader is first verified.", substring = true,
+        ).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Routine catch-up is off.", substring = true)
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Last routine attempt:", substring = true)
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Next eligible after", substring = true).assertDoesNotExist()
+
+        composeRule.onNodeWithText("How routine catch-up works").performScrollTo().performClick()
+        composeRule.onNodeWithText("manual Read now", substring = true)
+            .performScrollTo().assertIsDisplayed()
+
+        composeRule.onNodeWithText("At least 24 hours apart").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        assertEquals(CloudRoutinePolicy.DAILY, policy.value)
+        composeRule.onNodeWithText("Next eligible after", substring = true)
+            .performScrollTo().assertIsDisplayed()
     }
 
     private fun state(advancedExpanded: Boolean) = SettingsUiState(

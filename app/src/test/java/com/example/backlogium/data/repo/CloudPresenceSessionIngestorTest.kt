@@ -7,6 +7,8 @@ import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.domain.CloudCoverageState
 import com.example.backlogium.domain.CloudPresenceCurrentState
 import com.example.backlogium.domain.CloudPresenceInterval
@@ -70,6 +72,7 @@ class CloudPresenceSessionIngestorTest {
         assertEquals(120_000L, stored.endAt)
         assertEquals(2, stored.minutes)
         assertFalse(stored.open)
+        assertEquals(RecoveredSharedPlayState.FULL, stored.recoveredSharedPlay)
         assertEquals("120000", settings.cloudIngestPosition.first())
     }
 
@@ -127,6 +130,7 @@ class CloudPresenceSessionIngestorTest {
         assertEquals(1, stored.size)
         assertEquals(20, stored.single().minutes)
         assertFalse(stored.single().open)
+        assertEquals(RecoveredSharedPlayState.PARTIAL, stored.single().recoveredSharedPlay)
     }
 
     @Test
@@ -178,6 +182,7 @@ class CloudPresenceSessionIngestorTest {
         assertEquals(600_000L, stored.endAt)
         assertEquals(10, stored.minutes)
         assertTrue(stored.open)
+        assertEquals(RecoveredSharedPlayState.NONE, stored.recoveredSharedPlay)
     }
 
     @Test
@@ -658,6 +663,7 @@ class CloudPresenceSessionIngestorTest {
         assertFalse(retry.wrote)
         assertEquals(1, database.sessionDao().getAll().size)
         assertEquals(2, database.sessionDao().getAll().single().minutes)
+        assertEquals(RecoveredSharedPlayState.FULL, database.sessionDao().getAll().single().recoveredSharedPlay)
     }
 
     @Test
@@ -680,6 +686,7 @@ class CloudPresenceSessionIngestorTest {
         assertFalse(result.wrote)
         assertEquals(1, database.sessionDao().getAll().size)
         assertEquals(2, database.sessionDao().getAll().single().minutes)
+        assertEquals(RecoveredSharedPlayState.NONE, database.sessionDao().getAll().single().recoveredSharedPlay)
         assertEquals(2, database.dailyProgressDao().getByDate(LocalDate.of(1970, 1, 1).toString())!!.minutesPlayed)
         assertNull(database.playerProfileDao().get())
     }
@@ -708,10 +715,68 @@ class CloudPresenceSessionIngestorTest {
         assertEquals(120_000L, recovered.endAt)
         assertEquals(2, recovered.minutes)
         assertFalse(recovered.open)
+        assertEquals(RecoveredSharedPlayState.FULL, recovered.recoveredSharedPlay)
         val newer = database.sessionDao().getAll().first { it.startAt == 600_000L }
         assertEquals(720_000L, newer.endAt)
         assertEquals(2, newer.minutes)
         assertEquals(4, database.dailyProgressDao().getByDate(LocalDate.of(1970, 1, 1).toString())!!.minutesPlayed)
+    }
+
+    @Test
+    fun paginatedCatchUpAfterRestartCreditsSharedMinutesOnce() = runTest {
+        database.gameDao().upsert(sharedGame())
+        val settings = FakeSettingsRepository()
+        val initial = ingestor(settings)
+        var firstAttemptMinutes = 0
+        repeat(4) { page ->
+            val start = page * 20L * MINUTE
+            val snapshot = snapshot(startAt = start, endAt = start + 2L * MINUTE).copy(
+                hasMore = true, nextPosition = (start + 2L * MINUTE).toString(),
+            )
+            firstAttemptMinutes += initial.ingest(snapshot).creditedMinutes
+        }
+        assertEquals(8, firstAttemptMinutes)
+
+        val restarted = ingestor(settings)
+        val last = snapshot(startAt = 80L * MINUTE, endAt = 82L * MINUTE).copy(
+            nextPosition = (82L * MINUTE).toString(),
+        )
+        assertEquals(2, restarted.ingest(last).creditedMinutes)
+        assertEquals(0, restarted.ingest(last).creditedMinutes)
+        assertEquals(10, database.sessionDao().getAll().sumOf { it.minutes })
+    }
+
+    @Test
+    fun rejectedCoverageDoesNotMarkARecoveredSession() = runTest {
+        database.gameDao().upsert(sharedGame())
+        val rejected = snapshot(endAt = 120_000L).copy(
+            intervals = snapshot(endAt = 120_000L).intervals.map {
+                it.copy(coverage = CloudCoverageState.UNKNOWN)
+            },
+        )
+
+        val result = ingestor(FakeSettingsRepository()).ingest(rejected)
+
+        assertEquals(0, result.creditedMinutes)
+        assertTrue(database.sessionDao().getAll().isEmpty())
+    }
+
+    @Test
+    fun creditedCloudExtensionPreservesIndependentTimingFact() = runTest {
+        database.gameDao().upsert(sharedGame())
+        database.sessionDao().insert(
+            Session(
+                appId = 440L, startAt = 0L, endAt = 600_000L, minutes = 10, open = true,
+                timingInformedSteamPlay = TimingInformedSteamPlayState.FULL,
+            ),
+        )
+
+        val result = ingestor(FakeSettingsRepository()).ingest(snapshot(endAt = 1_200_000L))
+        val stored = database.sessionDao().getAll().single()
+
+        assertEquals(10, result.creditedMinutes)
+        assertEquals(RecoveredSharedPlayState.PARTIAL, stored.recoveredSharedPlay)
+        assertEquals(TimingInformedSteamPlayState.PARTIAL, stored.timingInformedSteamPlay)
     }
 
     @Test

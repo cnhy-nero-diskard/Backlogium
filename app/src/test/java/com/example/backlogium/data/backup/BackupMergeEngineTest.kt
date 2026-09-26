@@ -28,6 +28,8 @@ import com.example.backlogium.data.local.entity.HltbDataOrigin
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.FakeHiddenGameDao
@@ -465,6 +467,37 @@ class BackupMergeEngineTest {
         val all = harness.sessionDao.getAll()
         assertEquals(1, all.size)
         assertEquals(25, all.single().minutes)
+    }
+
+    @Test fun v1AbsencePreservesLocalFactsAndInsertsUnknownButV2ReplacesBothIndependently() = runTest {
+        val existing = Session(appId = 1L, startAt = 1_000L, endAt = 2_000L, minutes = 10,
+            open = false, recoveredSharedPlay = RecoveredSharedPlayState.FULL,
+            timingInformedSteamPlay = TimingInformedSteamPlayState.PARTIAL)
+        val harness = newEngine(games = mutableMapOf(1L to testGame(1L)), sessions = mutableListOf(existing))
+        val matching = BackupSession(1L, 1_000L.toIso8601(), 2_000L.toIso8601(), 25)
+        val inserted = BackupSession(1L, 5_000L.toIso8601(), 6_000L.toIso8601(), 15)
+
+        harness.engine.merge(baseFile(sessions = listOf(matching, inserted)), RuleConfig())
+        val afterLegacy = harness.sessionDao.getAll()
+        assertEquals(2, afterLegacy.size)
+        assertEquals(25, afterLegacy.first { it.startAt == 1_000L }.minutes)
+        assertEquals(RecoveredSharedPlayState.FULL, afterLegacy.first { it.startAt == 1_000L }.recoveredSharedPlay)
+        assertEquals(TimingInformedSteamPlayState.PARTIAL, afterLegacy.first { it.startAt == 1_000L }.timingInformedSteamPlay)
+        assertEquals(RecoveredSharedPlayState.UNKNOWN, afterLegacy.first { it.startAt == 5_000L }.recoveredSharedPlay)
+        assertEquals(TimingInformedSteamPlayState.UNKNOWN, afterLegacy.first { it.startAt == 5_000L }.timingInformedSteamPlay)
+
+        harness.engine.merge(baseFile(sessions = listOf(matching.copy(
+            cloudContribution = BackupCloudContribution(BackupContributionState.UNKNOWN, BackupContributionState.FULL),
+        ), inserted.copy(
+            cloudContribution = BackupCloudContribution(BackupContributionState.PARTIAL, BackupContributionState.FULL),
+        ))).copy(formatVersion = 2), RuleConfig())
+        val afterV2 = harness.sessionDao.getAll()
+        assertEquals(2, afterV2.size)
+        assertEquals(RecoveredSharedPlayState.UNKNOWN, afterV2.first { it.startAt == 1_000L }.recoveredSharedPlay)
+        assertEquals(TimingInformedSteamPlayState.FULL, afterV2.first { it.startAt == 1_000L }.timingInformedSteamPlay)
+        assertEquals(RecoveredSharedPlayState.PARTIAL, afterV2.first { it.startAt == 5_000L }.recoveredSharedPlay)
+        assertEquals(TimingInformedSteamPlayState.FULL, afterV2.first { it.startAt == 5_000L }.timingInformedSteamPlay)
+        assertEquals(listOf(25, 15), afterV2.sortedBy { it.startAt }.map { it.minutes })
     }
 
     /**
@@ -1143,20 +1176,43 @@ private class FakeExcludedSharedGameDao : ExcludedSharedGameDao {
 private class FakeSessionDao(private val store: MutableList<Session>) : SessionDao {
     private var nextId = (store.maxOfOrNull { it.id } ?: 0L) + 1
 
+    override suspend fun insertOpenSessionIfAbsent(session: Session): Long {
+        if (store.any { it.appId == session.appId && it.open }) return -1L
+        return insert(session)
+    }
+
     override suspend fun insert(session: Session): Long {
         val withId = session.copy(id = nextId++)
         store += withId
         return withId.id
     }
 
-    override suspend fun tryOpenSession(appId: Long, startAt: Long, endAt: Long?, minutes: Int): Long {
+    override suspend fun tryOpenSession(
+        appId: Long, startAt: Long, endAt: Long?, minutes: Int,
+        recoveredSharedPlay: RecoveredSharedPlayState,
+        timingInformedSteamPlay: TimingInformedSteamPlayState,
+    ): Long {
         if (store.any { it.appId == appId && it.open }) return -1L
-        return insert(Session(appId = appId, startAt = startAt, endAt = endAt, minutes = minutes, open = true))
+        return insert(Session(
+            appId = appId, startAt = startAt, endAt = endAt, minutes = minutes, open = true,
+            recoveredSharedPlay = recoveredSharedPlay,
+            timingInformedSteamPlay = timingInformedSteamPlay,
+        ))
     }
 
     override suspend fun update(session: Session) {
         val index = store.indexOfFirst { it.id == session.id }
         if (index >= 0) store[index] = session
+    }
+
+    override suspend fun updateUnlessConflictingOpenSession(session: Session): Int {
+        if (session.open && store.any { it.id != session.id && it.appId == session.appId && it.open }) {
+            return 0
+        }
+        val index = store.indexOfFirst { it.id == session.id }
+        if (index < 0) return 0
+        store[index] = session
+        return 1
     }
 
     override suspend fun deleteById(id: Long) {

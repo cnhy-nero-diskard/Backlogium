@@ -1,6 +1,7 @@
 package com.example.backlogium.data.backup
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.EncodeDefault
 
 /**
  * The app's full export/import format (add-backup-restore): a single versioned JSON file
@@ -16,7 +17,9 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class BackupFile(
-    val formatVersion: Int = CURRENT_FORMAT_VERSION,
+    /** Legacy default decodes omitted v1 versions; the export mapper explicitly writes v2. */
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    val formatVersion: Int = 1,
     val exportedAt: String,
     val identity: BackupIdentity,
     val ruleConfig: BackupRuleConfig,
@@ -40,7 +43,7 @@ data class BackupFile(
     val hiddenGames: List<BackupHiddenGame> = emptyList(),
 ) {
     companion object {
-        const val CURRENT_FORMAT_VERSION = 1
+        const val CURRENT_FORMAT_VERSION = 2
     }
 }
 
@@ -111,6 +114,17 @@ data class BackupSession(
     val startAt: String,
     val endAt: String?,
     val minutes: Int,
+    /** Null only for a v1 session; v2 exports always carry both independent states. */
+    val cloudContribution: BackupCloudContribution? = null,
+)
+
+@Serializable
+enum class BackupContributionState { UNKNOWN, NONE, FULL, PARTIAL }
+
+@Serializable
+data class BackupCloudContribution(
+    val recoveredSharedPlay: BackupContributionState,
+    val timingInformedSteamPlay: BackupContributionState,
 )
 
 @Serializable

@@ -2,6 +2,12 @@ package com.example.backlogium.domain
 
 import java.math.BigInteger
 
+/** Identifies the cloud reader generation that produced placement evidence. */
+data class CloudReaderIdentity(
+    val account: String,
+    val readerGeneration: Long,
+)
+
 /**
  * Places a Steam playtime delta against cloud-observed intervals.
  *
@@ -18,6 +24,7 @@ object CloudPresencePlaytimePlacement {
 
     data class Input(
         val intervals: List<CloudPresenceInterval>,
+        val readerIdentity: CloudReaderIdentity? = null,
     )
 
     /** Whether a stale playtime estimate is long enough to justify an optional cloud read. */

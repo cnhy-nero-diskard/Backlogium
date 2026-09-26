@@ -25,7 +25,11 @@ import androidx.room.PrimaryKey
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("appId"), Index("appId", "startAt", "endAt")],
+    indices = [
+        Index("appId"),
+        Index("appId", "startAt", "endAt"),
+        Index(value = ["openAppId"], unique = true),
+    ],
 )
 data class Session(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
@@ -34,4 +38,17 @@ data class Session(
     val endAt: Long? = null,
     val minutes: Int,
     val open: Boolean,
+    val recoveredSharedPlay: RecoveredSharedPlayState? = RecoveredSharedPlayState.NONE,
+    val timingInformedSteamPlay: TimingInformedSteamPlayState? = TimingInformedSteamPlayState.NONE,
+    /**
+     * Nullable unique key: open rows use appId; closed rows use null, allowing natural-key
+     * duplicates.
+     */
+    val openAppId: Long? = if (open) appId else null,
 )
+
+/** Null denotes a row written before contribution evidence existed. */
+enum class RecoveredSharedPlayState { UNKNOWN, NONE, FULL, PARTIAL }
+
+/** Independent of recovery: Steam remains authoritative for the counted minutes. */
+enum class TimingInformedSteamPlayState { UNKNOWN, NONE, FULL, PARTIAL }

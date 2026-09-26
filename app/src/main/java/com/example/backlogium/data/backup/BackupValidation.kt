@@ -48,6 +48,17 @@ object BackupValidator {
 
     fun validate(file: BackupFile): BackupValidationResult {
         val problems = mutableListOf<BackupValidationProblem>()
+        if (file.formatVersion !in 1..BackupFile.CURRENT_FORMAT_VERSION) {
+            problems += BackupValidationProblem("file", 0, "unsupported formatVersion ${file.formatVersion}")
+        }
+        file.sessions.forEachIndexed { index, session ->
+            if (file.formatVersion == 1 && session.cloudContribution != null) {
+                problems += BackupValidationProblem("session", index, "v1 cannot contain cloudContribution")
+            }
+            if (file.formatVersion == 2 && session.cloudContribution == null) {
+                problems += BackupValidationProblem("session", index, "v2 requires cloudContribution")
+            }
+        }
         val gameAppIds = file.games.mapTo(mutableSetOf()) { it.appId }
         val collectionIds = file.collections.mapTo(mutableSetOf()) { it.id }
 

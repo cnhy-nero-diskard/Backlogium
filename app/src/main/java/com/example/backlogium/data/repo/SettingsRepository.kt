@@ -165,6 +165,90 @@ interface SettingsRepository : SessionEndOutbox {
 
     suspend fun clearCloudReadPosition() = Unit
 
+    val cloudReaderGeneration: Flow<Long>
+        get() = flowOf(0L)
+
+    /**
+     * Fence and abandon any staged replacement in one durable edit: advance the generation and
+     * clear the promotion marker together, so a crash between the two can never leave a marker
+     * behind a newer generation for recovery to misread. Old test doubles default to no fence.
+     */
+    suspend fun abandonCloudReaderPromotion(): Long = 0L
+
+    /**
+     * Durable staged-replacement marker: non-null target generation while an endpoint
+     * replacement's credential+generation promotion is mid-commit or its post-commit
+     * cleanup has not finished. Old implementations always report no promotion.
+     */
+    val cloudReaderPromotionTarget: Flow<Long?>
+        get() = flowOf(null)
+
+    suspend fun markCloudReaderPromotion(target: Long) = Unit
+
+    /**
+     * Sets the persisted generation to the staged target, leaving the marker in place so a
+     * death before the post-commit cleanup completes still leaves a recovery signal. Returns
+     * the target, or null when no promotion was marked.
+     */
+    suspend fun finishCloudReaderPromotion(): Long? = null
+
+    suspend fun clearCloudReaderPromotion() = Unit
+
+    /**
+     * Durable removal marker: non-null fence target while a removal's credential clear has
+     * committed but its post-credential Settings cleanup has not finished. Recovery consumes it
+     * before a later verification can inherit the removed reader's policy/cooldown. Old
+     * implementations always report no removal in flight.
+     */
+    val cloudReaderRemovalTarget: Flow<Long?>
+        get() = flowOf(null)
+
+    /**
+     * Record the removal's fence target before its credential-clear commit point, so recovery
+     * can finish an interrupted removal's post-credential cleanup without double-advancing the
+     * generation. Returns the recorded target.
+     */
+    suspend fun markCloudReaderRemoval(): Long = 0L
+
+    suspend fun clearCloudReaderRemoval() = Unit
+
+    /** Null until a verified reader is initialized or an existing reader is reconciled. */
+    val cloudRoutineState: Flow<CloudRoutineState>
+        get() = flowOf(CloudRoutineState())
+
+    /** Idempotent: preserves preference, cooldown, and ordering on endpoint replacement. */
+    suspend fun initializeCloudRoutinePolicy(): CloudRoutineState = CloudRoutineState()
+
+    suspend fun setCloudRoutinePolicy(policy: CloudRoutinePolicy) = Unit
+
+    suspend fun clearCloudRoutinePolicy() = Unit
+
+    /** Called when a routine job actually begins, not when offline work is enqueued. */
+    suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState = CloudRoutineState()
+
+    suspend fun recordCloudRoutineOutcome(admittedAt: Long, outcome: CloudReadSummaryOutcome) = Unit
+
+    suspend fun recordCloudOtherRead(terminal: Boolean) = Unit
+
+    /** Transactionally decide one opportunity across all routine triggers. */
+    suspend fun admitCloudRoutine(at: Long): CloudRoutineAdmission = CloudRoutineAdmission.UNAVAILABLE
+
+    val cloudReadSummary: Flow<CloudReadSummary>
+        get() = flowOf(CloudReadSummary())
+
+    suspend fun recordCloudReadSummary(
+        at: Long,
+        trigger: CloudReadTrigger,
+        outcome: CloudReadSummaryOutcome,
+        failure: CloudReadFailure? = null,
+        observedAt: Long? = null,
+        hasMore: Boolean? = null,
+        windowStart: Long? = null,
+        windowEnd: Long? = null,
+    ) = Unit
+
+    suspend fun clearCloudReadSummary() = Unit
+
     /** Durable watermark for cloud intervals already folded into presence sessions. */
     val cloudIngestPosition: Flow<String?>
         get() = flowOf(null)
@@ -328,6 +412,59 @@ class DataStoreSettingsRepository @Inject constructor(
         settings.setCloudReadPosition(position)
 
     override suspend fun clearCloudReadPosition() = settings.clearCloudReadPosition()
+
+    override val cloudReaderGeneration: Flow<Long> = settings.cloudReaderGenerationFlow
+
+    override suspend fun abandonCloudReaderPromotion(): Long = settings.abandonCloudReaderPromotion()
+
+    override val cloudReaderPromotionTarget: Flow<Long?> = settings.cloudReaderPromotionTargetFlow
+
+    override suspend fun markCloudReaderPromotion(target: Long) =
+        settings.markCloudReaderPromotion(target)
+
+    override suspend fun finishCloudReaderPromotion(): Long? = settings.finishCloudReaderPromotion()
+
+    override suspend fun clearCloudReaderPromotion() = settings.clearCloudReaderPromotion()
+
+    override val cloudReaderRemovalTarget: Flow<Long?> = settings.cloudReaderRemovalTargetFlow
+
+    override suspend fun markCloudReaderRemoval(): Long = settings.markCloudReaderRemoval()
+
+    override suspend fun clearCloudReaderRemoval() = settings.clearCloudReaderRemoval()
+
+    override val cloudRoutineState: Flow<CloudRoutineState> = settings.cloudRoutineStateFlow
+
+    override suspend fun initializeCloudRoutinePolicy(): CloudRoutineState =
+        settings.initializeCloudRoutinePolicy()
+
+    override suspend fun setCloudRoutinePolicy(policy: CloudRoutinePolicy) =
+        settings.setCloudRoutinePolicy(policy)
+
+    override suspend fun clearCloudRoutinePolicy() = settings.clearCloudRoutinePolicy()
+
+    override suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState =
+        settings.recordCloudRoutineAdmission(at)
+
+    override suspend fun recordCloudRoutineOutcome(admittedAt: Long, outcome: CloudReadSummaryOutcome) =
+        settings.recordCloudRoutineOutcome(admittedAt, outcome)
+
+    override suspend fun recordCloudOtherRead(terminal: Boolean) =
+        settings.recordCloudOtherRead(terminal)
+
+    override suspend fun admitCloudRoutine(at: Long): CloudRoutineAdmission =
+        settings.admitCloudRoutine(at)
+
+    override val cloudReadSummary: Flow<CloudReadSummary> = settings.cloudReadSummaryFlow
+
+    override suspend fun recordCloudReadSummary(
+        at: Long, trigger: CloudReadTrigger, outcome: CloudReadSummaryOutcome,
+        failure: CloudReadFailure?, observedAt: Long?, hasMore: Boolean?,
+        windowStart: Long?, windowEnd: Long?,
+    ) = settings.recordCloudReadSummary(
+        at, trigger, outcome, failure, observedAt, hasMore, windowStart, windowEnd,
+    )
+
+    override suspend fun clearCloudReadSummary() = settings.clearCloudReadSummary()
 
     override val cloudIngestPosition: Flow<String?> = settings.cloudIngestPositionFlow
 

@@ -23,9 +23,18 @@ import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.VersionedRuleConfig
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.domain.librarySortDirectionOrNull
 import com.example.backlogium.domain.librarySortKeyOrNull
 import com.example.backlogium.data.repo.CloudPresenceRefilingBackup
+import com.example.backlogium.data.repo.CloudRoutinePolicy
+import com.example.backlogium.data.repo.CloudRoutineState
+import com.example.backlogium.data.repo.CloudRoutineAdmission
+import com.example.backlogium.data.repo.CloudReadSummary
+import com.example.backlogium.data.repo.CloudReadSummaryOutcome
+import com.example.backlogium.data.repo.CloudReadTrigger
+import com.example.backlogium.data.repo.CloudReadFailure
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -98,6 +107,39 @@ class SettingsDataStore @Inject constructor(
         val LIVE_MONITOR_ENABLED = booleanPreferencesKey("live_monitor_enabled")
         val LIVE_MONITORING_AVAILABILITY = stringPreferencesKey("live_monitoring_availability")
         val CLOUD_READ_POSITION = stringPreferencesKey("cloud_read_position")
+        val CLOUD_READER_GENERATION = longPreferencesKey("cloud_reader_generation")
+        /**
+         * Write-ahead marker for an endpoint replacement whose credential+generation promotion
+         * has not finished. Absent means no promotion is in flight; the target generation is the
+         * value the reader generation is set to when the promotion commits.
+         */
+        val CLOUD_READER_PROMOTION_TARGET = longPreferencesKey("cloud_reader_promotion_target")
+        /**
+         * Write-ahead marker for a reader removal whose credential-clear commit point has landed
+         * but whose post-credential cleanup (generation fence, pending evidence, routine policy
+         * and cooldown, cursors, and read summary) has not finished. The value is the fence
+         * target generation the removal must leave the reader generation at or past, computed
+         * before the credential clear so recovery can tell whether the fence already ran.
+         * Absent means no removal is mid-cleanup.
+         */
+        val CLOUD_READER_REMOVAL_TARGET = longPreferencesKey("cloud_reader_removal_target")
+        val CLOUD_ROUTINE_POLICY = stringPreferencesKey("cloud_routine_policy")
+        val CLOUD_ROUTINE_LAST_ADMITTED_AT = longPreferencesKey("cloud_routine_last_admitted_at")
+        val CLOUD_ROUTINE_LAST_OUTCOME = stringPreferencesKey("cloud_routine_last_outcome")
+        val CLOUD_ROUTINE_ORDER = longPreferencesKey("cloud_routine_order")
+        val CLOUD_ROUTINE_LAST_ADMISSION_ORDER = longPreferencesKey("cloud_routine_last_admission_order")
+        val CLOUD_ROUTINE_OTHER_READ_ORDER = longPreferencesKey("cloud_routine_other_read_order")
+        val CLOUD_ROUTINE_OTHER_READ_TERMINAL = booleanPreferencesKey("cloud_routine_other_read_terminal")
+        val CLOUD_ROUTINE_CONSUMED_READ_ORDER = longPreferencesKey("cloud_routine_consumed_read_order")
+        val CLOUD_SUMMARY_ATTEMPT_AT = longPreferencesKey("cloud_summary_attempt_at")
+        val CLOUD_SUMMARY_TRIGGER = stringPreferencesKey("cloud_summary_trigger")
+        val CLOUD_SUMMARY_OUTCOME = stringPreferencesKey("cloud_summary_outcome")
+        val CLOUD_SUMMARY_FAILURE = stringPreferencesKey("cloud_summary_failure")
+        val CLOUD_SUMMARY_SUCCESS_AT = longPreferencesKey("cloud_summary_success_at")
+        val CLOUD_SUMMARY_OBSERVED_AT = longPreferencesKey("cloud_summary_observed_at")
+        val CLOUD_SUMMARY_HAS_MORE = booleanPreferencesKey("cloud_summary_has_more")
+        val CLOUD_SUMMARY_WINDOW_START = longPreferencesKey("cloud_summary_window_start")
+        val CLOUD_SUMMARY_WINDOW_END = longPreferencesKey("cloud_summary_window_end")
         val RULE_CONFIG_VERSION = longPreferencesKey("rule_config_version")
 
         /**
@@ -470,6 +512,270 @@ class SettingsDataStore @Inject constructor(
         }
     }
 
+    val cloudReaderGenerationFlow: Flow<Long> =
+        context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_READER_GENERATION] ?: 0L }
+
+    /**
+     * Fence and abandon any staged replacement in one transaction. Removal and account-change
+     * paths advance the reader generation and clear the promotion marker in the same edit, so a
+     * process death between the two can never persist a newer generation behind a surviving
+     * marker: recovery would otherwise read a marker the newer generation has already fenced
+     * and either finish the fenced promotion (resurrecting the replacement) or write the older
+     * marker back, decreasing the generation. When a promotion is marked, the generation is
+     * advanced past the marked target as well, because the staged page is bound to that target
+     * generation and landing exactly on it would let a marker-less restart inherit the
+     * abandoned page as the active reader's own evidence.
+     */
+    suspend fun abandonCloudReaderPromotion(): Long {
+        var next = 0L
+        context.dataStore.edit { prefs ->
+            next = nextGenerationAfter(prefs)
+            prefs[Keys.CLOUD_READER_GENERATION] = next
+            prefs.remove(Keys.CLOUD_READER_PROMOTION_TARGET)
+        }
+        return next
+    }
+
+    /**
+     * The fence target a removal/account-change would leave the reader generation at: one past
+     * the persisted generation, or past a marked promotion's target when one survives, so the
+     * abandoned staged page can never land exactly on the active generation.
+     */
+    private fun nextGenerationAfter(prefs: Preferences): Long =
+        maxOf(
+            (prefs[Keys.CLOUD_READER_GENERATION] ?: 0L) + 1L,
+            (prefs[Keys.CLOUD_READER_PROMOTION_TARGET] ?: 0L) + 1L,
+        )
+
+    val cloudReaderRemovalTargetFlow: Flow<Long?> =
+        context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_READER_REMOVAL_TARGET] }
+
+    /**
+     * Record the removal's fence target before its credential-clear commit point, so recovery
+     * can finish an interrupted removal's post-credential cleanup without double-advancing the
+     * generation. The target is recomputed by [abandonCloudReaderPromotion] from the same
+     * inputs, so a caller that records it and then fences without interleaving other writes
+     * lands the generation exactly on the recorded value and recovery can skip the fence.
+     */
+    suspend fun markCloudReaderRemoval(): Long {
+        var target = 0L
+        context.dataStore.edit { prefs ->
+            target = nextGenerationAfter(prefs)
+            prefs[Keys.CLOUD_READER_REMOVAL_TARGET] = target
+        }
+        return target
+    }
+
+    suspend fun clearCloudReaderRemoval() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.CLOUD_READER_REMOVAL_TARGET)
+        }
+    }
+
+    val cloudReaderPromotionTargetFlow: Flow<Long?> =
+        context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_READER_PROMOTION_TARGET] }
+
+    suspend fun markCloudReaderPromotion(target: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CLOUD_READER_PROMOTION_TARGET] = target
+        }
+    }
+
+    /**
+     * Commit the staged replacement's generation: set the persisted reader generation to the
+     * staged target and leave the marker in place. Returns the target, or null when no promotion
+     * was marked, so recovery can resume the same step idempotently after process death. The
+     * marker deliberately survives this edit because the post-commit cleanup (retiring the old
+     * generation's evidence and clearing the old reader's watermark and summary) runs after it:
+     * clearing the marker here would let a process death between the two leave the durable
+     * generation promoted while the old reader's state survives with no recovery signal left.
+     * Callers remove the marker with [clearCloudReaderPromotion] once every cleanup step has
+     * completed; re-running this when the generation already equals the target changes nothing
+     * and still returns the target.
+     */
+    suspend fun finishCloudReaderPromotion(): Long? {
+        var target: Long? = null
+        context.dataStore.edit { prefs ->
+            val marked = prefs[Keys.CLOUD_READER_PROMOTION_TARGET]
+            if (marked != null) {
+                prefs[Keys.CLOUD_READER_GENERATION] = marked
+                target = marked
+            }
+        }
+        return target
+    }
+
+    suspend fun clearCloudReaderPromotion() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.CLOUD_READER_PROMOTION_TARGET)
+        }
+    }
+
+    val cloudRoutineStateFlow: Flow<CloudRoutineState> = context.dataStore.data.map(::cloudRoutineState)
+
+    /** One transaction makes reconciliation safe against simultaneous startup and verification. */
+    suspend fun initializeCloudRoutinePolicy(): CloudRoutineState {
+        lateinit var result: CloudRoutineState
+        context.dataStore.edit { prefs ->
+            if (prefs[Keys.CLOUD_ROUTINE_POLICY] == null) {
+                prefs[Keys.CLOUD_ROUTINE_POLICY] = CloudRoutinePolicy.AUTOMATIC.name
+                // Seed the comparison order even if the existing reader has never run a routine job.
+                val order = (prefs[Keys.CLOUD_ROUTINE_ORDER] ?: 0L) + 1L
+                prefs[Keys.CLOUD_ROUTINE_ORDER] = order
+                prefs[Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER] = order
+            }
+            result = cloudRoutineState(prefs)
+        }
+        return result
+    }
+
+    suspend fun setCloudRoutinePolicy(policy: CloudRoutinePolicy) {
+        context.dataStore.edit { prefs ->
+            // Only a verified reader initializes the policy; changing it never resets cooldown.
+            if (prefs[Keys.CLOUD_ROUTINE_POLICY] != null) prefs[Keys.CLOUD_ROUTINE_POLICY] = policy.name
+        }
+    }
+
+    suspend fun clearCloudRoutinePolicy() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.CLOUD_ROUTINE_POLICY)
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT)
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_OUTCOME)
+            prefs.remove(Keys.CLOUD_ROUTINE_ORDER)
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER)
+            prefs.remove(Keys.CLOUD_ROUTINE_OTHER_READ_ORDER)
+            prefs.remove(Keys.CLOUD_ROUTINE_OTHER_READ_TERMINAL)
+            prefs.remove(Keys.CLOUD_ROUTINE_CONSUMED_READ_ORDER)
+        }
+    }
+
+    suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState {
+        lateinit var result: CloudRoutineState
+        context.dataStore.edit { prefs ->
+            check(prefs[Keys.CLOUD_ROUTINE_POLICY] != null) { "Cloud reader has no routine policy" }
+            val order = (prefs[Keys.CLOUD_ROUTINE_ORDER] ?: 0L) + 1L
+            prefs[Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT] = at
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_OUTCOME)
+            prefs[Keys.CLOUD_ROUTINE_ORDER] = order
+            prefs[Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER] = order
+            result = cloudRoutineState(prefs)
+        }
+        return result
+    }
+
+    suspend fun recordCloudOtherRead(terminal: Boolean) {
+        context.dataStore.edit { prefs ->
+            if (prefs[Keys.CLOUD_ROUTINE_POLICY] == null) return@edit
+            val order = (prefs[Keys.CLOUD_ROUTINE_ORDER] ?: 0L) + 1L
+            prefs[Keys.CLOUD_ROUTINE_ORDER] = order
+            prefs[Keys.CLOUD_ROUTINE_OTHER_READ_ORDER] = order
+            prefs[Keys.CLOUD_ROUTINE_OTHER_READ_TERMINAL] = terminal
+        }
+    }
+
+    suspend fun admitCloudRoutine(at: Long): CloudRoutineAdmission {
+        var result = CloudRoutineAdmission.UNAVAILABLE
+        context.dataStore.edit { prefs ->
+            val state = cloudRoutineState(prefs)
+            val policy = state.policy ?: return@edit
+            if (!policy.routineEnabled) {
+                result = CloudRoutineAdmission.UNAVAILABLE
+                return@edit
+            }
+            val previous = state.lastAdmittedAt
+            if (previous != null && at - previous < checkNotNull(policy.minimumGapHours) * 3_600_000L) {
+                result = CloudRoutineAdmission.COOLDOWN
+                return@edit
+            }
+            if (state.latestOtherReadTerminal &&
+                state.latestOtherReadWatermark > state.lastAdmissionWatermark &&
+                state.latestOtherReadWatermark > state.consumedOtherReadWatermark
+            ) {
+                prefs[Keys.CLOUD_ROUTINE_CONSUMED_READ_ORDER] = state.latestOtherReadWatermark
+                result = CloudRoutineAdmission.SATISFIED_BY_READ
+                return@edit
+            }
+            val order = state.orderingWatermark + 1L
+            prefs[Keys.CLOUD_ROUTINE_ORDER] = order
+            prefs[Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER] = order
+            prefs[Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT] = at
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_OUTCOME)
+            result = CloudRoutineAdmission.ADMITTED
+        }
+        return result
+    }
+
+    private fun cloudRoutineState(prefs: Preferences): CloudRoutineState = CloudRoutineState(
+        policy = prefs[Keys.CLOUD_ROUTINE_POLICY]?.let { CloudRoutinePolicy.valueOf(it) },
+        lastAdmittedAt = prefs[Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT],
+        lastOutcome = prefs[Keys.CLOUD_ROUTINE_LAST_OUTCOME]?.let { CloudReadSummaryOutcome.valueOf(it) },
+        orderingWatermark = prefs[Keys.CLOUD_ROUTINE_ORDER] ?: 0L,
+        lastAdmissionWatermark = prefs[Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER] ?: 0L,
+        latestOtherReadWatermark = prefs[Keys.CLOUD_ROUTINE_OTHER_READ_ORDER] ?: 0L,
+        latestOtherReadTerminal = prefs[Keys.CLOUD_ROUTINE_OTHER_READ_TERMINAL] ?: false,
+        consumedOtherReadWatermark = prefs[Keys.CLOUD_ROUTINE_CONSUMED_READ_ORDER] ?: 0L,
+    )
+
+    suspend fun recordCloudRoutineOutcome(admittedAt: Long, outcome: CloudReadSummaryOutcome) {
+        context.dataStore.edit { prefs ->
+            if (prefs[Keys.CLOUD_ROUTINE_POLICY] != null &&
+                prefs[Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT] == admittedAt
+            ) prefs[Keys.CLOUD_ROUTINE_LAST_OUTCOME] = outcome.name
+        }
+    }
+
+    val cloudReadSummaryFlow: Flow<CloudReadSummary> = context.dataStore.data.map { prefs ->
+        CloudReadSummary(
+            lastAttemptAt = prefs[Keys.CLOUD_SUMMARY_ATTEMPT_AT],
+            lastTrigger = prefs[Keys.CLOUD_SUMMARY_TRIGGER]?.let(CloudReadTrigger::valueOf),
+            lastOutcome = prefs[Keys.CLOUD_SUMMARY_OUTCOME]?.let(CloudReadSummaryOutcome::valueOf),
+            lastFailure = prefs[Keys.CLOUD_SUMMARY_FAILURE]?.let(CloudReadFailure::valueOf),
+            lastSuccessAt = prefs[Keys.CLOUD_SUMMARY_SUCCESS_AT],
+            latestObservationAt = prefs[Keys.CLOUD_SUMMARY_OBSERVED_AT],
+            lastSuccessHasMore = prefs[Keys.CLOUD_SUMMARY_HAS_MORE],
+            lastSuccessWindowStart = prefs[Keys.CLOUD_SUMMARY_WINDOW_START],
+            lastSuccessWindowEnd = prefs[Keys.CLOUD_SUMMARY_WINDOW_END],
+        )
+    }
+
+    suspend fun recordCloudReadSummary(
+        at: Long, trigger: CloudReadTrigger, outcome: CloudReadSummaryOutcome,
+        failure: CloudReadFailure?, observedAt: Long?, hasMore: Boolean?,
+        windowStart: Long?, windowEnd: Long?,
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CLOUD_SUMMARY_ATTEMPT_AT] = at
+            prefs[Keys.CLOUD_SUMMARY_TRIGGER] = trigger.name
+            prefs[Keys.CLOUD_SUMMARY_OUTCOME] = outcome.name
+            if (failure == null) prefs.remove(Keys.CLOUD_SUMMARY_FAILURE)
+            else prefs[Keys.CLOUD_SUMMARY_FAILURE] = failure.name
+            if (outcome != CloudReadSummaryOutcome.FAILED) {
+                prefs[Keys.CLOUD_SUMMARY_SUCCESS_AT] = at
+                // A successful read with no observation does not mean there was no play, and
+                // must not erase the last known observation watermark.
+                if (observedAt != null) prefs[Keys.CLOUD_SUMMARY_OBSERVED_AT] =
+                    maxOf(observedAt, prefs[Keys.CLOUD_SUMMARY_OBSERVED_AT] ?: observedAt)
+                if (hasMore != null) prefs[Keys.CLOUD_SUMMARY_HAS_MORE] = hasMore
+                if (windowStart != null) prefs[Keys.CLOUD_SUMMARY_WINDOW_START] = windowStart
+                if (windowEnd != null) prefs[Keys.CLOUD_SUMMARY_WINDOW_END] = windowEnd
+            }
+        }
+    }
+
+    suspend fun clearCloudReadSummary() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.CLOUD_SUMMARY_ATTEMPT_AT)
+            prefs.remove(Keys.CLOUD_SUMMARY_TRIGGER)
+            prefs.remove(Keys.CLOUD_SUMMARY_OUTCOME)
+            prefs.remove(Keys.CLOUD_SUMMARY_FAILURE)
+            prefs.remove(Keys.CLOUD_SUMMARY_SUCCESS_AT)
+            prefs.remove(Keys.CLOUD_SUMMARY_OBSERVED_AT)
+            prefs.remove(Keys.CLOUD_SUMMARY_HAS_MORE)
+            prefs.remove(Keys.CLOUD_SUMMARY_WINDOW_START)
+            prefs.remove(Keys.CLOUD_SUMMARY_WINDOW_END)
+        }
+    }
+
     /** Durable cloud-session ingest watermark; account changes clear it with the read watermark. */
     val cloudIngestPositionFlow: Flow<String?> =
         context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_INGEST_POSITION] }
@@ -730,6 +1036,25 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
             prefs.remove(Keys.CLOUD_READ_POSITION)
             prefs.remove(Keys.CLOUD_INGEST_POSITION)
+            prefs.remove(Keys.CLOUD_READER_PROMOTION_TARGET)
+            prefs.remove(Keys.CLOUD_READER_REMOVAL_TARGET)
+            prefs.remove(Keys.CLOUD_ROUTINE_POLICY)
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT)
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_OUTCOME)
+            prefs.remove(Keys.CLOUD_ROUTINE_ORDER)
+            prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMISSION_ORDER)
+            prefs.remove(Keys.CLOUD_ROUTINE_OTHER_READ_ORDER)
+            prefs.remove(Keys.CLOUD_ROUTINE_OTHER_READ_TERMINAL)
+            prefs.remove(Keys.CLOUD_ROUTINE_CONSUMED_READ_ORDER)
+            prefs.remove(Keys.CLOUD_SUMMARY_ATTEMPT_AT)
+            prefs.remove(Keys.CLOUD_SUMMARY_TRIGGER)
+            prefs.remove(Keys.CLOUD_SUMMARY_OUTCOME)
+            prefs.remove(Keys.CLOUD_SUMMARY_FAILURE)
+            prefs.remove(Keys.CLOUD_SUMMARY_SUCCESS_AT)
+            prefs.remove(Keys.CLOUD_SUMMARY_OBSERVED_AT)
+            prefs.remove(Keys.CLOUD_SUMMARY_HAS_MORE)
+            prefs.remove(Keys.CLOUD_SUMMARY_WINDOW_START)
+            prefs.remove(Keys.CLOUD_SUMMARY_WINDOW_END)
             prefs.remove(Keys.CLOUD_REFILE_APPLIED)
             prefs.remove(Keys.CLOUD_REFILE_BACKUP)
             prefs.remove(Keys.CLOUD_REFILE_CREATED_IDS)
@@ -912,7 +1237,7 @@ data class PendingSessionEnd(
     val steamId: String,
 )
 
-/** `id|appId|startAt|endAt-or-dash|minutes|open` for an exact refile reversal. */
+/** Legacy six-column backups decode as unknown; new backups preserve both facts verbatim. */
 private fun encodeCloudPresenceRefilingSession(session: Session): String = listOf(
     session.id.toString(),
     session.appId.toString(),
@@ -920,11 +1245,13 @@ private fun encodeCloudPresenceRefilingSession(session: Session): String = listO
     session.endAt?.toString() ?: "-",
     session.minutes.toString(),
     session.open.toString(),
+    session.recoveredSharedPlay?.name ?: "-",
+    session.timingInformedSteamPlay?.name ?: "-",
 ).joinToString("|")
 
 private fun decodeCloudPresenceRefilingSession(raw: String): Session? {
-    val parts = raw.split('|', limit = 6)
-    if (parts.size != 6) return null
+    val parts = raw.split('|', limit = 8)
+    if (parts.size != 6 && parts.size != 8) return null
     val id = parts[0].toLongOrNull() ?: return null
     val appId = parts[1].toLongOrNull() ?: return null
     val startAt = parts[2].toLongOrNull() ?: return null
@@ -935,8 +1262,17 @@ private fun decodeCloudPresenceRefilingSession(raw: String): Session? {
         "false" -> false
         else -> return null
     }
-    return Session(id, appId, startAt, endAt, minutes, open)
+    val recovered = if (parts.size == 6 || parts[6] == "-") null else {
+        enumValueOrNull<RecoveredSharedPlayState>(parts[6]) ?: return null
+    }
+    val timing = if (parts.size == 6 || parts[7] == "-") null else {
+        enumValueOrNull<TimingInformedSteamPlayState>(parts[7]) ?: return null
+    }
+    return Session(id, appId, startAt, endAt, minutes, open, recovered, timing)
 }
+
+private inline fun <reified T : Enum<T>> enumValueOrNull(value: String): T? =
+    enumValues<T>().firstOrNull { it.name == value }
 
 /** `date|minutesPlayed|goalMinutesPlayed|questMet` for exact daily-progress reversal. */
 private fun encodeCloudPresenceRefilingDailyProgress(day: DailyProgress): String =

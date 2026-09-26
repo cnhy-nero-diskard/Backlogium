@@ -2,6 +2,8 @@ package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -19,6 +21,15 @@ data class PlaySession(
     val minutes: Int,
     val open: Boolean,
     val endAt: Long? = null,
+    val cloudContribution: SessionCloudContribution = SessionCloudContribution(),
+)
+
+/** A fact is unknown for migrated rows, not evidence of an absence of cloud contribution. */
+enum class ContributionState { UNKNOWN, NONE, FULL, PARTIAL }
+
+data class SessionCloudContribution(
+    val recoveredSharedPlay: ContributionState = ContributionState.UNKNOWN,
+    val timingInformedSteamPlay: ContributionState = ContributionState.UNKNOWN,
 )
 
 /**
@@ -127,4 +138,14 @@ private fun Session.toDomain() = PlaySession(
     minutes = minutes,
     open = open,
     endAt = endAt,
+    cloudContribution = SessionCloudContribution(
+        recoveredSharedPlay = recoveredSharedPlay.toDomain(),
+        timingInformedSteamPlay = timingInformedSteamPlay.toDomain(),
+    ),
 )
+
+private fun RecoveredSharedPlayState?.toDomain(): ContributionState =
+    this?.let { ContributionState.valueOf(it.name) } ?: ContributionState.UNKNOWN
+
+private fun TimingInformedSteamPlayState?.toDomain(): ContributionState =
+    this?.let { ContributionState.valueOf(it.name) } ?: ContributionState.UNKNOWN

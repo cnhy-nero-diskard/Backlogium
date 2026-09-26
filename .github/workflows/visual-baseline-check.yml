@@ -1,0 +1,52 @@
+name: Visual baseline check
+
+# The visual-regression job already fails when a rendered screen stops matching its golden, so this
+# does not duplicate that pixel check. It answers the question the pixel check cannot: does this pull
+# request edit a screen the goldens render and re-record nothing? Commit 1eda51d5 changed what the
+# empty History screenshot draws, the golden was not re-recorded, and the branch published four
+# consecutive red runs before anyone noticed -- each one costing a full Gradle round-trip to
+# diagnose. Nothing in that change's task list mentioned re-recording, so the omission had nothing
+# to be caught by. This check runs in seconds, before Gradle, and names the remedy.
+on:
+  pull_request:
+    # labeled/unlabeled are included so adding or removing the acknowledgement label re-runs the
+    # check instead of leaving a stale verdict on the pull request.
+    types: [opened, edited, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Tracked Roborazzi baselines stay current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The base commit is needed to diff against; a shallow clone cannot produce the merge base.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Collect the changed paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed.txt"
+
+      # The path list arrives through a file and the labels through the environment, so neither
+      # repository content nor pull-request metadata can be interpreted as shell syntax. Labels are
+      # newline-joined because GitHub does not permit a newline in a label name, which makes the
+      # separator unambiguous.
+      - name: Audit baseline currency
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, '\n') }}
+        run: |
+          set -euo pipefail
+          python scripts/check_visual_baseline.py check \
+            --changed-file "$RUNNER_TEMP/changed.txt" \
+            --labels "$PR_LABELS"

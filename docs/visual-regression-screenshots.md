@@ -69,3 +69,31 @@ baselines in `app/src/test/snapshots/` and actual/compare images plus reports un
 CI runs compilation and verification only. It never runs a record task. On failure, the named
 `roborazzi-visual-regression-*` artifact contains the tracked expected snapshots and generated
 comparison outputs for review.
+
+## The baseline currency check
+
+`verifyRoborazziDebug` fails when a rendered screen stops matching its golden. That check cannot
+tell you the change was *supposed* to alter the pixels, and it costs a full Gradle round-trip to
+discover. A separate `Visual baseline check` workflow therefore asks the cheaper question first: does
+the pull request edit a screen the goldens render while re-recording nothing?
+
+```
+python scripts/check_visual_baseline.py check --changed-file <(git diff --name-only BASE...HEAD)
+```
+
+It fails only when a fixture-rendered source changed and no file under
+`app/src/test/snapshots/` changed with it. Two things keep it from firing on most pull requests:
+
+- It is scoped to the composables `MainScreenshotFixtureHost` actually renders — the five screen
+  packages, the shared `ui/components`, `ui/theme`, `res/values/strings.xml`, and the two fixture
+  files themselves. Adding a fixture-rendered screen means adding one entry to
+  `FIXTURE_RENDERED_SOURCES` in `scripts/check_visual_baseline.py` and nothing else.
+- Where a covered directory changes without moving a pixel, label the pull request
+  `no-golden-change`. That downgrades the failure to a warning rather than editing the scope, so the
+  list stays a statement about the fixtures instead of a judgement about each change. Removing the
+  label re-runs the check.
+
+A copy-only edit to `strings.xml` counts as visual, because it moves rendered pixels. A pull request
+that regenerates the whole suite satisfies the gate on any recorded baseline, because
+`recordRoborazziDebug` always re-records every matching test.
+

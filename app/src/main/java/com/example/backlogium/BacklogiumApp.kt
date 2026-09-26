@@ -16,11 +16,13 @@ import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.backup.SnapshotStore
 import com.example.backlogium.data.diagnostics.DiagnosticHistoryMigration
 import com.example.backlogium.data.repo.AccountChangeCoordinator
+import com.example.backlogium.data.repo.CloudPresenceRepository
 import com.example.backlogium.data.steamassets.SteamAssetInterceptor
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.domain.DailyProgressBackfillUseCase
 import com.example.backlogium.domain.PendingImportRecomputeUseCase
 import com.example.backlogium.work.PostPlaySyncScheduler
+import com.example.backlogium.work.CloudRoutineScheduler
 import com.example.backlogium.work.PresenceServiceStarter
 import com.example.backlogium.work.SyncScheduler
 import com.example.backlogium.work.UpdateScheduler
@@ -96,6 +98,9 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
     lateinit var postPlaySyncScheduler: PostPlaySyncScheduler
 
     @Inject
+    lateinit var cloudRoutineScheduler: CloudRoutineScheduler
+
+    @Inject
     lateinit var settings: SettingsRepository
 
     @Inject
@@ -112,6 +117,9 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
 
     @Inject
     lateinit var accountChangeCoordinator: AccountChangeCoordinator
+
+    @Inject
+    lateinit var cloudPresence: CloudPresenceRepository
 
     @Inject
     @ApplicationScope
@@ -148,6 +156,18 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
                 .onFailure { Timber.e(it, "Account-change recovery failed; sync remains unscheduled") }
                 .isSuccess
             if (!ready) return@launch
+
+            // Routine work must not be exposed until promotion/removal recovery has
+            // succeeded: a job admitted against the pre-promotion generation before recovery
+            // commits would consume the new reader's cooldown without reading a page. On
+            // failure, skip scheduling for this launch; the next startup retries the
+            // idempotent reconciliation.
+            val routineReady = runCatching { cloudPresence.reconcileRoutinePolicy() }
+                .onFailure { Timber.e(it, "Cloud routine policy reconciliation failed") }
+                .isSuccess
+            if (routineReady) {
+                cloudRoutineScheduler.observeConfiguration()
+            }
 
             // Start after account recovery so a durable session-end handoff cannot schedule work
             // against an account reset that is still incomplete. The outbox replays anything

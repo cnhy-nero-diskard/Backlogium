@@ -1,6 +1,8 @@
 package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -8,7 +10,10 @@ import org.junit.Test
 class CloudPresencePlaytimeRefilingRuleTest {
     @Test
     fun splitPlacementKeepsEachGameTotalExact() {
-        val original = session(appId = GAME, startAt = 0L, endAt = 1_000L, minutes = 10)
+        val original = session(appId = GAME, startAt = 0L, endAt = 1_000L, minutes = 10).copy(
+            recoveredSharedPlay = RecoveredSharedPlayState.PARTIAL,
+            timingInformedSteamPlay = TimingInformedSteamPlayState.UNKNOWN,
+        )
 
         val refiles = cloudPresenceSessionRefiles(
             sessions = listOf(original),
@@ -22,6 +27,10 @@ class CloudPresencePlaytimeRefilingRuleTest {
         assertEquals(1, refiles.size)
         assertEquals(10, refiles.single().replacement.sumOf { it.minutes })
         assertEquals(listOf(5, 5), refiles.single().replacement.map { it.minutes })
+        assertTrue(refiles.single().replacement.all {
+            it.recoveredSharedPlay == RecoveredSharedPlayState.PARTIAL &&
+                it.timingInformedSteamPlay == TimingInformedSteamPlayState.FULL
+        })
     }
 
     @Test

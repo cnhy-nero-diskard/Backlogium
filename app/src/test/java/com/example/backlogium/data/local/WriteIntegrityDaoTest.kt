@@ -639,6 +639,78 @@ class WriteIntegrityDaoTest {
     }
 
     @Test
+    fun staleExtendDoesNotReopenSessionWhenANewerSessionIsAlreadyOpen() = runBlocking {
+        database.gameDao().upsert(sharedGame(appId = 730L))
+        database.sessionDao().insert(
+            Session(appId = 730L, startAt = 1_000L, endAt = 1_200L, minutes = 5, open = false),
+        )
+        database.sessionDao().insert(
+            Session(appId = 730L, startAt = 2_000L, endAt = 2_100L, minutes = 2, open = true),
+        )
+
+        // The Extend was derived from the first session before a later observation closed it and
+        // opened the second. Applying it must be a stale no-op, not a unique-key exception or a
+        // reopening of the old row.
+        val effective = writer().applySessionActions(
+            listOf(
+                SessionDiffer.SessionAction.Extend(
+                    appId = 730L,
+                    startAt = 1_000L,
+                    minutes = 10,
+                    endAt = 1_500L,
+                    addedMinutes = 5,
+                ),
+            ),
+        )
+
+        assertTrue(effective.isEmpty())
+        val sessions = database.sessionDao().getAll()
+        assertEquals(2, sessions.size)
+        assertEquals(1, sessions.count { it.open })
+        val stale = sessions.single { it.startAt == 1_000L }
+        assertFalse(stale.open)
+        assertNull(stale.openAppId)
+        assertEquals(5, stale.minutes)
+        val current = sessions.single { it.startAt == 2_000L }
+        assertTrue(current.open)
+        assertEquals(2_100L, current.endAt)
+        assertEquals(2, current.minutes)
+    }
+
+    @Test
+    fun historicalBackfillWhileSessionIsOpenWritesTheBackfillAsClosed() = runBlocking {
+        database.gameDao().upsert(sharedGame(appId = 730L))
+        database.sessionDao().insert(
+            Session(appId = 730L, startAt = 2_000L, endAt = 2_500L, minutes = 20, open = true),
+        )
+
+        writer().applySessionActions(
+            listOf(
+                SessionDiffer.SessionAction.Open(
+                    appId = 730L,
+                    startAt = 1_000L,
+                    endAt = 1_500L,
+                    minutes = 10,
+                ),
+                SessionDiffer.SessionAction.Close(
+                    appId = 730L,
+                    startAt = 1_000L,
+                    endAt = 1_500L,
+                ),
+            ),
+        )
+
+        val sessions = database.sessionDao().getAll()
+        assertEquals(2, sessions.size)
+        assertEquals(1, sessions.count { it.open })
+        val backfill = sessions.single { it.startAt == 1_000L }
+        assertFalse(backfill.open)
+        assertEquals(1_500L, backfill.endAt)
+        assertEquals(10, backfill.minutes)
+        assertTrue(sessions.single { it.startAt == 2_000L }.open)
+    }
+
+    @Test
     fun partiallyNoOpBatchCreditsOnlyWhatActuallyWrote() = runBlocking {
         database.gameDao().upsert(sharedGame(appId = 730L))
         database.sessionDao().insert(
@@ -873,7 +945,7 @@ class WriteIntegrityDaoTest {
 
                     is SessionDiffer.SessionAction.Close ->
                         database.sessionDao().getOpenSession(action.appId)?.let {
-                            database.sessionDao().update(it.copy(open = false, endAt = action.endAt))
+                        database.sessionDao().update(it.copy(open = false, openAppId = null, endAt = action.endAt))
                         }
                 }
             }

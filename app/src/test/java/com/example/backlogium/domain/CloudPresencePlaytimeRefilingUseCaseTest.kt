@@ -8,6 +8,8 @@ import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.data.repo.CloudPresenceRefilingBackup
 import com.example.backlogium.data.repo.DataStoreSettingsRepository
 import com.example.backlogium.data.repo.SettingsRepository
@@ -92,6 +94,8 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
                     endAt = originalEnd,
                     minutes = 30,
                     open = false,
+                    recoveredSharedPlay = RecoveredSharedPlayState.PARTIAL,
+                    timingInformedSteamPlay = TimingInformedSteamPlayState.PARTIAL,
                 ),
             )
             database.playerProfileDao().upsert(PlayerProfile(longestStreak = 7))
@@ -127,6 +131,14 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             assertEquals(setOf("2026-07-25", "2026-07-26"), applied.datesAffected)
             assertEquals(beforeMinutes, database.sessionDao().getAll().sumOf { it.minutes })
             assertNotEquals(beforeSessions, database.sessionDao().getAll())
+            assertEquals(
+                RecoveredSharedPlayState.PARTIAL,
+                database.sessionDao().getAll().single().recoveredSharedPlay,
+            )
+            assertEquals(
+                TimingInformedSteamPlayState.FULL,
+                database.sessionDao().getAll().single().timingInformedSteamPlay,
+            )
             assertTrue(database.dailyProgressDao().getByDate("2026-07-26") != null)
             assertEquals(setOf(LocalDate.of(2026, 7, 24)), marks.read().pendingQuestDates)
             assertEquals(7, database.playerProfileDao().get()!!.longestStreak)

@@ -43,7 +43,7 @@ The system SHALL retain, for each session it writes or changes using cloud obser
 
 ### Requirement: Configured readers catch up routinely without excessive automatic reads
 
-Once a cloud reader has been successfully configured, the system SHALL offer a default Automatic catch-up policy with a daily background opportunity and a play-end opportunity. It SHALL also offer bounded routine minimum-gap choices of 12 hours, 24 hours, and 48 hours. Automatic SHALL use a 12-hour minimum gap with a daily background opportunity. A chosen minimum gap SHALL apply across the routine background and play-end triggers together; a routine read SHALL NOT start before it is eligible. The chosen interval is a minimum gap, not an exact execution time or a guarantee that a phone without network will catch up.
+Once a cloud reader has been successfully configured, the system SHALL offer a default Automatic catch-up policy with a daily background opportunity and a play-end opportunity. It SHALL also offer bounded routine minimum-gap choices of 12 hours, 24 hours, and 48 hours, plus a persisted Off / Manual only policy distinct from an absent, uninitialized preference. Automatic SHALL use a 12-hour minimum gap with a daily background opportunity. A chosen minimum gap SHALL apply across the routine background and play-end triggers together; a routine read SHALL NOT start before it is eligible. While Off / Manual only is selected, neither trigger SHALL schedule or admit a new routine read, pending routine work SHALL be cancelled, and an in-flight routine read SHALL stop safely without rolling back already committed page effects. Disabling or re-enabling routine reads SHALL NOT clear the last admitted attempt, read cursor, reader configuration, or ingest position; re-enabling SHALL use the existing admission cooldown rather than create an immediate burst. A verified endpoint replacement for the same account SHALL preserve an explicit Off selection. Only a truly uninitialized policy MAY be initialized to Automatic on first verification or upgrade. The chosen interval is a minimum gap, not an exact execution time or a guarantee that a phone without network will catch up.
 
 Manual reads and existing cloud reads needed by the Steam sync or targeted playtime path to place delayed play SHALL remain available independently of that routine minimum gap. The system SHALL use persisted, monotonically ordered watermarks for routine admissions and successful reads by other paths; freshness SHALL NOT be inferred from an elapsed-time window. The latest successful read by another path SHALL satisfy at most the next pending routine opportunity only when it reached the end of unread history and its terminal-completion watermark is strictly later than the watermark of the latest admitted routine attempt (or the initial reader-verification watermark before any routine attempt). Once used to satisfy an opportunity, that completion watermark SHALL be consumed so the same read cannot suppress a later opportunity. A successful read completed at or before the latest routine-admission watermark, or a latest successful read that left unread history, SHALL NOT suppress catch-up. The configured preference SHALL NOT alter the cloud poller's own one-minute observation schedule.
 
@@ -87,6 +87,19 @@ Manual reads and existing cloud reads needed by the Steam sync or targeted playt
 #### Scenario: Manual read during cooldown
 - **WHEN** the player selects Read now during a routine minimum-gap period
 - **THEN** that request remains available and is not refused on account of the routine preference
+
+#### Scenario: Reader stays connected without routine catch-up
+- **WHEN** the player selects Off / Manual only
+- **THEN** periodic and play-end routine opportunities do not enqueue or admit a new routine read, pending routine work is cancelled, and the connected reader remains available for manual and accuracy-driven reads
+- **AND** an already in-flight routine attempt stops at a safe boundary without discarding committed page effects
+
+#### Scenario: Routine catch-up is re-enabled
+- **WHEN** the player selects an enabled cadence after Off / Manual only
+- **THEN** routine opportunities resume under the selected cadence and persisted last-admission cooldown, without a request burst or loss of cursor or ingest state
+
+#### Scenario: Explicit Off is not an uninitialized policy
+- **WHEN** an app restarts, upgrades, or replaces a verified endpoint for the same account with Off / Manual only saved
+- **THEN** reconciliation preserves that selection instead of initializing Automatic
 
 #### Scenario: Existing configured reader is reconciled after upgrade
 - **WHEN** an app starts or upgrades with a previously verified reader but no persisted routine policy
