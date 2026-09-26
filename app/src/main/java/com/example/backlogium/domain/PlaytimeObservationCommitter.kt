@@ -5,8 +5,9 @@ import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
-import com.example.backlogium.data.repo.SessionActionWriter
 import com.example.backlogium.data.repo.CloudPendingEvidencePruner
+import com.example.backlogium.data.repo.SessionActionWriter
+import com.example.backlogium.domain.CloudPresencePlaytimePlacement.Input
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -62,6 +63,28 @@ class PlaytimeObservationCommitter @Inject constructor(
     }
 
     /**
+     * Validate placement evidence and hold the reader-promotion fence across the caller's Room
+     * transaction. The transaction must start inside this block so the lock order stays reader
+     * state -> Room, matching cloud ingestion and promotion.
+     */
+    suspend fun <T> withValidatedPlacement(
+        placement: Input?,
+        block: suspend (validatedPlacement: Input?, pruningIdentity: CloudReaderIdentity?) -> T,
+    ): T {
+        val pruner = pendingEvidencePruner
+            ?: return block(placement, placement?.readerIdentity)
+        return pruner.withValidatedEvidence(
+            evidenceIdentity = placement?.readerIdentity,
+            evidenceSupplied = placement != null,
+        ) { validatedIdentity, pruningIdentity ->
+            val validatedPlacement = placement?.takeIf {
+                validatedIdentity != null && it.readerIdentity == validatedIdentity
+            }
+            block(validatedPlacement, pruningIdentity)
+        }
+    }
+
+    /**
      * Must be called inside the caller's database transaction — the freshness of the baselines read
      * here is the whole double-count story, and it only holds if the read and the write share one
      * transaction.
@@ -78,6 +101,7 @@ class PlaytimeObservationCommitter @Inject constructor(
         observedPlayAt: Long,
         syncedAt: Long,
         placement: CloudPresencePlaytimePlacement.Input? = null,
+        pruningIdentity: CloudReaderIdentity? = null,
     ): Commit {
         val lastSyncAt = profileDao.get()?.lastSyncAt ?: 0L
         val polls = observed.map { SessionDiffer.PollGame(it.appId, it.playtimeForever) }
@@ -121,12 +145,22 @@ class PlaytimeObservationCommitter @Inject constructor(
             )
         }
 
-        val actions = if (placement == null) {
+        // In production the worker supplies placement only through withValidatedPlacement,
+        // which holds the reader-promotion fence until this transaction completes. Keep the
+        // identity check here too, so evidence cannot be paired with a different prune target.
+        val acceptedPlacement = if (pendingEvidencePruner == null) {
+            placement
+        } else {
+            placement?.takeIf {
+                it.readerIdentity != null && it.readerIdentity == pruningIdentity
+            }
+        }
+        val actions = if (acceptedPlacement == null) {
             diff.actions
         } else {
             CloudPresencePlaytimePlacement.replacePositiveActions(
                 actions = diff.actions,
-                input = placement,
+                input = acceptedPlacement,
                 periodStartAt = lastSyncAt.coerceAtMost(observedPlayAt),
                 periodEndAt = observedPlayAt,
                 priorOpenSessionsByAppId = priorOpenSessions,
@@ -135,7 +169,7 @@ class PlaytimeObservationCommitter @Inject constructor(
 
         // Mark only rows whose persisted actions actually differ from Steam's unaided estimate.
         // Merely consulting a reader (or accepting an identical suggestion) is not attribution.
-        val timingInformedKeys = if (placement == null || actions == diff.actions) emptySet() else {
+        val timingInformedKeys = if (acceptedPlacement == null || actions == diff.actions) emptySet() else {
             (actions - diff.actions.toSet()).mapTo(mutableSetOf()) { it.appId to it.startAt }
         }
 
@@ -176,7 +210,7 @@ class PlaytimeObservationCommitter @Inject constructor(
             // Even a zero-delta successful baseline makes closed evidence ending by this
             // observation ineligible for future windows. The caller's Room transaction ties
             // retirement to the session and Steam baseline commit (including rollback).
-            pendingEvidencePruner?.afterBaseline(game.appId, syncedAt)
+            pendingEvidencePruner?.afterBaseline(pruningIdentity, game.appId, syncedAt)
         }
 
         val goalIds = existingGames.values.filter { it.isGoal }.mapTo(mutableSetOf()) { it.appId }

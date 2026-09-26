@@ -13,6 +13,7 @@ import com.example.backlogium.domain.CloudPresenceCurrentState
 import com.example.backlogium.domain.CloudPresenceInterval
 import com.example.backlogium.domain.CloudPresenceReconstruction
 import com.example.backlogium.domain.CloudPresenceTransition
+import com.example.backlogium.domain.CloudReaderIdentity
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.work.CloudRoutineWorkCancellation
 import java.time.Instant
@@ -85,6 +86,7 @@ data class CloudPresenceSnapshot(
     val observationCount: Int,
     val nextPosition: String?,
     val hasMore: Boolean,
+    val readerIdentity: CloudReaderIdentity? = null,
 )
 
 sealed interface CloudConfigurationResult {
@@ -122,6 +124,7 @@ class CloudPresenceRepository @Inject constructor(
     private val pendingEvidence: CloudPendingEvidence,
     private val time: TimeProvider,
     private val routineWorkCanceller: CloudRoutineWorkCancellation? = null,
+    private val readerStateMutex: CloudReaderStateMutex = CloudReaderStateMutex(),
 ) {
     /** Compatibility constructor for existing read-protocol tests without a Room evidence store. */
     internal constructor(
@@ -143,7 +146,7 @@ class CloudPresenceRepository @Inject constructor(
     private val accountGeneration = AtomicLong(0)
     // Serializes post-fetch persistence against invalidation/removal. The fetch itself
     // stays outside the lock so an account switch never blocks on the network.
-    private val cloudStateMutex = Mutex()
+    private val cloudStateMutex = readerStateMutex.mutex
     // Serializes every read sharing the durable cloudReadPosition: a single page read
     // against the historical drain's reset plus paginated drain, and against a successful
     // verification's promotion. The drain resets the watermark and then advances it page
@@ -663,7 +666,9 @@ class CloudPresenceRepository @Inject constructor(
                     ?.takeIf { boundary ->
                         result.parsed.transitions.firstOrNull()?.at?.let { boundary.at < it } == true
                     }
-                val snapshot = result.parsed.toSnapshot(opening)
+                val snapshot = result.parsed.toSnapshot(opening).copy(
+                    readerIdentity = CloudReaderIdentity(account, start.readerGeneration),
+                )
                 // The consumer runs under the same account-state mutex and before the read
                 // watermark advances. A failed ingest therefore leaves the cloud window retryable
                 // instead of moving the acquisition cursor past uncommitted derived state.

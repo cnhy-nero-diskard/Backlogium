@@ -8,6 +8,7 @@ import com.example.backlogium.data.credentials.CloudCredentialsStore
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.dao.CloudReadDao
 import com.example.backlogium.data.local.entity.CloudReadRecord
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.data.remote.CloudPresenceApi
 import com.example.backlogium.data.remote.dto.CloudPresenceCurrentDto
 import com.example.backlogium.data.remote.dto.CloudPresenceResponseDto
@@ -16,6 +17,7 @@ import com.example.backlogium.domain.CloudCoverageState
 import com.example.backlogium.domain.CloudPresenceInterval
 import com.example.backlogium.domain.CloudPresencePlaytimePlacement
 import com.example.backlogium.domain.CloudPresenceReconstruction
+import com.example.backlogium.domain.CloudReaderIdentity
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.FakeSettingsRepository
 import com.example.backlogium.domain.GamificationUpdater
@@ -142,7 +144,9 @@ class CloudPresencePlacementReaderTest {
         val observed = listOf(PlaytimeObservationCommitter.ObservedGame(10L, "Owned", "", 130, 0))
         try {
             database.withTransaction {
-                committer.commit(observed, endAt, endAt, CloudPresencePlaytimePlacement.Input(combined.intervals))
+                committer.commit(observed, endAt, endAt,
+                    CloudPresencePlaytimePlacement.Input(combined.intervals, combined.readerIdentity),
+                    pruningIdentity = combined.readerIdentity)
                 error("simulate failed Steam baseline commit")
             }
         } catch (_: IllegalStateException) {
@@ -153,7 +157,8 @@ class CloudPresencePlacementReaderTest {
 
         val committed = database.withTransaction {
             val result = committer.commit(observed, endAt, endAt,
-                CloudPresencePlaytimePlacement.Input(combined.intervals))
+                CloudPresencePlaytimePlacement.Input(combined.intervals, combined.readerIdentity),
+                pruningIdentity = combined.readerIdentity)
             database.playerProfileDao().updateSyncStatus(endAt, null)
             result
         }
@@ -214,7 +219,8 @@ class CloudPresencePlacementReaderTest {
         try {
             database.withTransaction {
                 committer.commit(observed, endAt, endAt,
-                    CloudPresencePlaytimePlacement.Input(firstRead.intervals))
+                    CloudPresencePlaytimePlacement.Input(firstRead.intervals, firstRead.readerIdentity),
+                    pruningIdentity = firstRead.readerIdentity)
                 error("simulate failed Steam commit")
             }
         } catch (_: IllegalStateException) { /* Room rolled back the baseline and prune. */ }
@@ -233,7 +239,9 @@ class CloudPresencePlacementReaderTest {
         assertEquals(Instant.parse(opening).toEpochMilli(),
             retry.intervals.first { it.appId == 10L }.startAt)
         database.withTransaction {
-            committer.commit(observed, endAt, endAt, CloudPresencePlaytimePlacement.Input(retry.intervals))
+            committer.commit(observed, endAt, endAt,
+                CloudPresencePlaytimePlacement.Input(retry.intervals, retry.readerIdentity),
+                pruningIdentity = retry.readerIdentity)
             database.playerProfileDao().updateSyncStatus(endAt, null)
         }
         val sessions = database.sessionDao().getAll().filter { it.appId == 10L }
@@ -304,7 +312,9 @@ class CloudPresencePlacementReaderTest {
         val firstEvidence = placement.read(CloudReadTrigger.SYNC, Instant.parse(start).toEpochMilli(), firstAt)!!
         database.withTransaction {
             committer.commit(listOf(PlaytimeObservationCommitter.ObservedGame(10L, "Owned", "", 120, 0)),
-                firstAt, firstAt, CloudPresencePlaytimePlacement.Input(firstEvidence.intervals))
+                firstAt, firstAt,
+                CloudPresencePlaytimePlacement.Input(firstEvidence.intervals, firstEvidence.readerIdentity),
+                pruningIdentity = firstEvidence.readerIdentity)
             database.playerProfileDao().updateSyncStatus(firstAt, null)
         }
         assertEquals(1, evidence.intervals(ACCOUNT, 0L).count { it.appId == 10L })
@@ -314,7 +324,9 @@ class CloudPresencePlacementReaderTest {
         val secondCommit = database.withTransaction {
             val commit = committer.commit(
                 listOf(PlaytimeObservationCommitter.ObservedGame(10L, "Owned", "", 140, 0)),
-                secondAt, secondAt, CloudPresencePlaytimePlacement.Input(secondEvidence.intervals),
+                secondAt, secondAt,
+                CloudPresencePlaytimePlacement.Input(secondEvidence.intervals, secondEvidence.readerIdentity),
+                pruningIdentity = secondEvidence.readerIdentity,
             )
             database.playerProfileDao().updateSyncStatus(secondAt, null)
             commit
@@ -353,13 +365,15 @@ class CloudPresencePlacementReaderTest {
         )
         val at50 = origin + 50 * minute
         val at80 = origin + 80 * minute
-        database.withTransaction {
-            val result = committer.commit(
-                listOf(PlaytimeObservationCommitter.ObservedGame(10L, "Owned", "", 100, 0)),
-                at50, at50,
-            )
-            assertFalse(result.recordedPlay)
-            database.playerProfileDao().updateSyncStatus(at50, null)
+        committer.withValidatedPlacement(null) { _, pruningIdentity ->
+            database.withTransaction {
+                val result = committer.commit(
+                    listOf(PlaytimeObservationCommitter.ObservedGame(10L, "Owned", "", 100, 0)),
+                    at50, at50, pruningIdentity = pruningIdentity,
+                )
+                assertFalse(result.recordedPlay)
+                database.playerProfileDao().updateSyncStatus(at50, null)
+            }
         }
         assertEquals(listOf(future.startAt), dao.intervals(ACCOUNT, 0L).map { it.startAt })
 
@@ -375,10 +389,14 @@ class CloudPresencePlacementReaderTest {
         }, settings, pending)
         val snapshot = placement.read(CloudReadTrigger.SYNC, at50, at80)!!
         assertEquals(listOf(future.startAt), snapshot.intervals.filter { it.appId == 10L }.map { it.startAt })
-        database.withTransaction {
-            committer.commit(listOf(PlaytimeObservationCommitter.ObservedGame(10L, "Owned", "", 100, 0)),
-                at80, at80)
-            database.playerProfileDao().updateSyncStatus(at80, null)
+        committer.withValidatedPlacement(null) { _, pruningIdentity ->
+            database.withTransaction {
+                committer.commit(
+                    listOf(PlaytimeObservationCommitter.ObservedGame(10L, "Owned", "", 100, 0)),
+                    at80, at80, pruningIdentity = pruningIdentity,
+                )
+                database.playerProfileDao().updateSyncStatus(at80, null)
+            }
         }
         assertTrue(dao.intervals(ACCOUNT, 0L).none { it.appId == 10L })
     }
@@ -566,6 +584,91 @@ class CloudPresencePlacementReaderTest {
         assertTrue(result != null)
         assertFalse(result!!.hasMore)
         assertEquals(periodEnd - 60_000L, result.windowEnd)
+    }
+
+    @Test
+    fun periodicCommitRejectsPlacementFromReaderGenerationPromotedAfterAcquisition() = runBlocking {
+        val startAt = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
+        val placementStart = startAt + 60L * 60 * 1_000
+        val placementEnd = placementStart + 30L * 60 * 1_000
+        val endAt = Instant.parse("2026-09-18T00:00:00Z").toEpochMilli()
+        val opening = Instant.ofEpochMilli(placementStart).toString()
+        val closing = Instant.ofEpochMilli(placementEnd).toString()
+        val terminal = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(
+                CloudPresenceTransitionDto(v = 3, t = opening, gameid = "10", gameName = "Owned", personastate = 1),
+                CloudPresenceTransitionDto(v = 3, t = closing, gameid = "20", gameName = "Other", personastate = 1,
+                    prevLastObservedAt = Instant.ofEpochMilli(placementEnd - 60_000L).toString()),
+            ),
+            current = CloudPresenceCurrentDto(v = 2, lastObservedAt = Instant.ofEpochMilli(endAt).toString(),
+                gameid = "20", gameName = "Other", personastate = 1),
+            nextPosition = closing,
+            hasMore = false,
+            windowStart = Instant.ofEpochMilli(startAt).toString(),
+            windowEnd = Instant.ofEpochMilli(endAt).toString(),
+            readAt = Instant.ofEpochMilli(endAt + 60_000L).toString(),
+        )
+        val settings = FakeSettingsRepository()
+        val pending = RoomCloudPendingEvidence(
+            database.pendingCloudEvidenceDao(), database.gameDao(), RoomDatabaseTransactionScope(database),
+        )
+        database.gameDao().upsert(Game(10L, "Owned", "", 100, 0, 100))
+        database.playerProfileDao().insertIfMissing()
+        database.playerProfileDao().updateSyncStatus(startAt, null)
+        val placementReader = readerPair(
+            FakeCloudPresenceApi { position ->
+                assertNull(position)
+                terminal
+            },
+            settings,
+            pending,
+        ).second
+
+        val acquired = placementReader.read(CloudReadTrigger.SYNC, startAt, endAt)!!
+        assertEquals(CloudReaderIdentity(ACCOUNT, 0L), acquired.readerIdentity)
+        // Verification promotes the replacement reader and retains its closed interval before
+        // this worker reaches the Steam transaction.
+        settings.simulateLegacyGenerationAdvance()
+        val replacement = acquired.intervals.single { it.appId == 10L }.copy(
+            startAt = placementStart + 60L * 60 * 1_000,
+            endAt = placementEnd + 60L * 60 * 1_000,
+        )
+        pending.retain(ACCOUNT, 1L, startAt, listOf(replacement), null)
+
+        val committer = PlaytimeObservationCommitter(
+            gameDao = database.gameDao(), sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(), profileDao = database.playerProfileDao(),
+            hiddenGameDao = database.hiddenGameDao(), differ = SessionDiffer(),
+            time = FixedTimeProvider(), sessionActionWriter = SessionActionWriter(
+                database.sessionDao(), database.dailyProgressDao(), database.hiddenGameDao(), FixedTimeProvider(),
+            ),
+            pendingEvidencePruner = CloudPendingEvidencePruner(
+                database.pendingCloudEvidenceDao(), FakeCredentials(ACCOUNT), settings,
+            ),
+        )
+        val commit = committer.withValidatedPlacement(
+            CloudPresencePlaytimePlacement.Input(acquired.intervals, acquired.readerIdentity),
+        ) { validatedPlacement, pruningIdentity ->
+            database.withTransaction {
+                val result = committer.commit(
+                    observed = listOf(PlaytimeObservationCommitter.ObservedGame(10L, "Owned", "", 130, 0)),
+                    observedPlayAt = endAt,
+                    syncedAt = endAt,
+                    placement = validatedPlacement,
+                    pruningIdentity = pruningIdentity,
+                )
+                database.playerProfileDao().updateSyncStatus(endAt, null)
+                result
+            }
+        }
+
+        val session = database.sessionDao().getAll().single { it.appId == 10L }
+        assertEquals(30, commit.playedDeltaByAppId[10L])
+        assertEquals(30, session.minutes)
+        assertEquals(TimingInformedSteamPlayState.NONE, session.timingInformedSteamPlay)
+        assertTrue(session.startAt != placementStart)
+        assertEquals(1, database.pendingCloudEvidenceDao().intervals(ACCOUNT, 1L).size)
     }
 
     @Test
