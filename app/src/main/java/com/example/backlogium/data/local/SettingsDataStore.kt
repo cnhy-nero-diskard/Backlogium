@@ -678,8 +678,12 @@ class SettingsDataStore @Inject constructor(
         context.dataStore.edit { prefs ->
             val state = cloudRoutineState(prefs)
             val policy = state.policy ?: return@edit
+            if (!policy.routineEnabled) {
+                result = CloudRoutineAdmission.UNAVAILABLE
+                return@edit
+            }
             val previous = state.lastAdmittedAt
-            if (previous != null && at - previous < policy.minimumGapHours * 3_600_000L) {
+            if (previous != null && at - previous < checkNotNull(policy.minimumGapHours) * 3_600_000L) {
                 result = CloudRoutineAdmission.COOLDOWN
                 return@edit
             }

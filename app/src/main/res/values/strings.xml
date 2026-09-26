@@ -487,6 +487,7 @@
     <string name="settings_cloud_routine_12h">At least 12 hours apart</string>
     <string name="settings_cloud_routine_daily">At least 24 hours apart</string>
     <string name="settings_cloud_routine_48h">At least 48 hours apart</string>
+    <string name="settings_cloud_routine_manual_only">Off · Manual only</string>
     <string name="settings_cloud_routine_explanation">Automatic has a daily background opportunity and can also catch up after play ends, with at least 12 hours between routine starts. Other choices set the minimum gap for both opportunities. These limits apply only to routine phone reads, not the cloud poller’s minute observations, manual Read now, or cloud evidence reads needed to place Steam minutes. They do not cap all cloud requests.</string>
     <string name="settings_cloud_routine_last_attempt">Last routine attempt: %1$s · %2$s</string>
     <string name="settings_cloud_routine_no_attempt">No routine attempt recorded yet.</string>

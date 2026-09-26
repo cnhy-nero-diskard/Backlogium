@@ -25,6 +25,11 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -40,6 +45,7 @@ class CloudRoutineScheduler @Inject constructor(
     @ApplicationScope private val scope: CoroutineScope,
 ) {
     private val manager: WorkManager get() = WorkManager.getInstance(context)
+    private val routineWorkMutex = Mutex()
 
     /** Observes local configuration only; a policy change updates periodic work without a read. */
     fun observeConfiguration() {
@@ -50,14 +56,16 @@ class CloudRoutineScheduler @Inject constructor(
                     }
                     .distinctUntilChanged()
                     .collect { (configuration, policy, generation) ->
-                        if (configuration == null || policy == null) {
-                            manager.cancelUniqueWork(CloudRoutineCatchUpWorker.PERIODIC_NAME)
-                        } else {
-                            val account = credentials.currentCredentials()?.steamId
-                            if (account == null) {
-                                manager.cancelUniqueWork(CloudRoutineCatchUpWorker.PERIODIC_NAME)
+                        routineWorkMutex.withLock {
+                            if (configuration == null || policy?.routineEnabled != true) {
+                                cancelRoutineWorkAtPageBoundary(manager)
                             } else {
-                                ensurePeriodicOpportunity(account, generation, policy)
+                                val account = credentials.currentCredentials()?.steamId
+                                if (account == null) {
+                                    cancelRoutineWorkAtPageBoundary(manager)
+                                } else {
+                                    ensurePeriodicOpportunity(account, generation, policy)
+                                }
                             }
                         }
                     }
@@ -78,22 +86,30 @@ class CloudRoutineScheduler @Inject constructor(
     suspend fun enqueueAfterPlayEnd(end: PlaySessionEnd) {
         if (credentials.currentCredentials()?.steamId != end.steamId ||
             cloudCredentials.readCloudCredentials() == null ||
-            settings.cloudRoutineState.first().policy == null
+            settings.cloudRoutineState.first().policy?.routineEnabled != true
         ) return
         enqueueOpportunity(end.steamId, settings.cloudReaderGeneration.first())
     }
 
     /** Unique one-time work absorbs duplicate opportunities, including one already running. */
     suspend fun enqueueOpportunity(account: String, generation: Long) {
-        enqueueOneTime(manager, account, generation)
+        routineWorkMutex.withLock {
+            if (credentials.currentCredentials()?.steamId != account ||
+                cloudCredentials.readCloudCredentials() == null ||
+                settings.cloudReaderGeneration.first() != generation ||
+                settings.cloudRoutineState.first().policy?.routineEnabled != true
+            ) return
+            enqueueOneTime(manager, account, generation)
+        }
     }
 
     companion object {
         internal suspend fun enqueuePeriodic(
             manager: WorkManager, account: String, generation: Long, policy: CloudRoutinePolicy,
         ) {
+            val periodicHours = policy.periodicHours ?: return
             val request = PeriodicWorkRequestBuilder<CloudRoutineCatchUpWorker>(
-                policy.periodicHours, TimeUnit.HOURS,
+                periodicHours, TimeUnit.HOURS,
             )
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setInputData(workDataOf(
@@ -117,6 +133,24 @@ class CloudRoutineScheduler @Inject constructor(
             manager.enqueueUniqueWork(
                 CloudRoutineCatchUpWorker.ONE_TIME_NAME, ExistingWorkPolicy.KEEP, request,
             ).await()
+        }
+
+        /**
+         * Do not cancel a running worker mid-page. Its repository observes the persisted Off
+         * policy at the next page boundary; once it is idle, cancellation removes any queued
+         * one-time or periodic work so it cannot survive a disable/restart race.
+         */
+        internal suspend fun cancelRoutineWorkAtPageBoundary(manager: WorkManager) = coroutineScope {
+            listOf(
+                CloudRoutineCatchUpWorker.ONE_TIME_NAME,
+                CloudRoutineCatchUpWorker.PERIODIC_NAME,
+            ).map { name ->
+                async {
+                    manager.getWorkInfosForUniqueWorkFlow(name)
+                        .first { work -> work.none { it.state == androidx.work.WorkInfo.State.RUNNING } }
+                    manager.cancelUniqueWork(name).await()
+                }
+            }.awaitAll()
         }
     }
 }

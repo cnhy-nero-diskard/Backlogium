@@ -129,4 +129,39 @@ class CloudRoutineSettingsTest {
             first.clearAccountDerivedState()
         }
     }
+
+    @Test
+    fun manualOnlySurvivesRestartAndReenableKeepsCooldownAndCursors() = runTest {
+        val context = RuntimeEnvironment.getApplication()
+        val first = SettingsDataStore(context)
+        first.clearAccountDerivedState()
+        try {
+            first.setCloudReadPosition("read-cursor")
+            first.setCloudIngestPosition("ingest-cursor")
+            first.initializeCloudRoutinePolicy()
+            first.recordCloudRoutineAdmission(42L)
+            first.setCloudRoutinePolicy(CloudRoutinePolicy.OFF_MANUAL_ONLY)
+
+            assertEquals(
+                CloudRoutineAdmission.UNAVAILABLE,
+                first.admitCloudRoutine(42L + 72L * 3_600_000L),
+            )
+            val restarted = SettingsDataStore(context)
+            val disabled = restarted.initializeCloudRoutinePolicy()
+            assertEquals(CloudRoutinePolicy.OFF_MANUAL_ONLY, disabled.policy)
+            assertEquals(42L, disabled.lastAdmittedAt)
+
+            restarted.setCloudRoutinePolicy(CloudRoutinePolicy.DAILY)
+            val reenabled = restarted.cloudRoutineStateFlow.first()
+            assertEquals(CloudRoutinePolicy.DAILY, reenabled.policy)
+            assertEquals(42L, reenabled.lastAdmittedAt)
+            assertEquals(CloudRoutineAdmission.COOLDOWN, restarted.admitCloudRoutine(
+                42L + 12L * 3_600_000L,
+            ))
+            assertEquals("read-cursor", restarted.cloudReadPositionFlow.first())
+            assertEquals("ingest-cursor", restarted.cloudIngestPositionFlow.first())
+        } finally {
+            first.clearAccountDerivedState()
+        }
+    }
 }

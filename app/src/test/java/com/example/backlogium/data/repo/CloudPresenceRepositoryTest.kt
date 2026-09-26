@@ -98,11 +98,11 @@ class CloudPresenceRepositoryTest {
 
         assertEquals(CloudRoutinePolicy.AUTOMATIC, initial.reconcileRoutinePolicy()?.policy)
         assertEquals(1L, settings.cloudRoutineState.first().lastAdmissionWatermark)
-        settings.setCloudRoutinePolicy(CloudRoutinePolicy.EVERY_48_HOURS)
+        settings.setCloudRoutinePolicy(CloudRoutinePolicy.OFF_MANUAL_ONLY)
         settings.recordCloudRoutineAdmission(1234L)
         val restarted = repository(api, store, FakeCloudReadDao(), settings, ACCOUNT)
 
-        assertEquals(CloudRoutinePolicy.EVERY_48_HOURS, restarted.reconcileRoutinePolicy()?.policy)
+        assertEquals(CloudRoutinePolicy.OFF_MANUAL_ONLY, restarted.reconcileRoutinePolicy()?.policy)
         assertEquals(1234L, settings.cloudRoutineState.first().lastAdmittedAt)
         assertEquals(2L, settings.cloudRoutineState.first().orderingWatermark)
         assertEquals("existing-read", settings.cloudReadPosition.first())
@@ -121,14 +121,54 @@ class CloudPresenceRepositoryTest {
         assertEquals(CloudConfigurationResult.Saved,
             repo.verifyAndSave("https://reader.example.com/read", "secret"))
         assertEquals(CloudRoutinePolicy.AUTOMATIC, settings.cloudRoutineState.first().policy)
-        settings.setCloudRoutinePolicy(CloudRoutinePolicy.DAILY)
+        settings.setCloudRoutinePolicy(CloudRoutinePolicy.OFF_MANUAL_ONLY)
         settings.recordCloudRoutineAdmission(1234L)
         assertEquals(CloudConfigurationResult.Saved,
             repo.verifyAndSave("https://replacement.example.com/read", "secret"))
 
-        assertEquals(CloudRoutinePolicy.DAILY, settings.cloudRoutineState.first().policy)
+        assertEquals(CloudRoutinePolicy.OFF_MANUAL_ONLY, settings.cloudRoutineState.first().policy)
         assertEquals(1234L, settings.cloudRoutineState.first().lastAdmittedAt)
         assertEquals(2L, settings.cloudRoutineState.first().lastAdmissionWatermark)
+    }
+
+    @Test
+    fun disablingDuringAReadFinishesTheCommittedPageAndStopsBeforeTheNextRequest() = runTest {
+        val enteredConsume = CompletableDeferred<Unit>()
+        val finishPage = CompletableDeferred<Unit>()
+        val api = FakeCloudPresenceApi(answer = sampleResponse(
+            nextPosition = "2026-09-15T00:20:00Z", hasMore = true,
+        ))
+        val settings = FakeSettingsRepository()
+        val repo = repository(
+            api,
+            FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret")),
+            FakeCloudReadDao(),
+            settings,
+            ACCOUNT,
+        )
+        repo.reconcileRoutinePolicy()
+        val generation = settings.cloudReaderGeneration.first()
+
+        val attempt = async {
+            repo.runRoutineCatchUp(ACCOUNT, generation, consume = {
+                enteredConsume.complete(Unit)
+                finishPage.await()
+            })
+        }
+        enteredConsume.await()
+        settings.setCloudRoutinePolicy(CloudRoutinePolicy.OFF_MANUAL_ONLY)
+        finishPage.complete(Unit)
+
+        assertEquals(
+            CloudRoutineAttempt.Admitted(1_750_000_000_000L, CloudCatchUpResult.Partial(1, 1)),
+            attempt.await(),
+        )
+        assertEquals(1, api.requests.size)
+        assertTrue(settings.cloudReadPosition.first() != null)
+        assertEquals(
+            CloudRoutineAdmission.UNAVAILABLE,
+            settings.admitCloudRoutine(1_750_000_000_000L + 48L * 3_600_000L),
+        )
     }
 
     @Test

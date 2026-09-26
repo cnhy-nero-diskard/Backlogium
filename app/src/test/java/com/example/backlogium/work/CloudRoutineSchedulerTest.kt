@@ -86,4 +86,17 @@ class CloudRoutineSchedulerTest {
         assertTrue(workManager.getWorkInfosForUniqueWork(CloudRoutineCatchUpWorker.PERIODIC_NAME)
             .get().all { it.state == WorkInfo.State.CANCELLED })
     }
+
+    @Test
+    fun manualOnlyCancelsQueuedPeriodicAndPlayEndWork() = runTest {
+        CloudRoutineScheduler.enqueuePeriodic(workManager, "account", 3L, CloudRoutinePolicy.AUTOMATIC)
+        CloudRoutineScheduler.enqueueOneTime(workManager, "account", 3L)
+
+        CloudRoutineScheduler.cancelRoutineWorkAtPageBoundary(workManager)
+
+        assertTrue(workManager.getWorkInfosForUniqueWork(CloudRoutineCatchUpWorker.ONE_TIME_NAME)
+            .get().all { it.state == WorkInfo.State.CANCELLED })
+        assertTrue(workManager.getWorkInfosForUniqueWork(CloudRoutineCatchUpWorker.PERIODIC_NAME)
+            .get().all { it.state == WorkInfo.State.CANCELLED })
+    }
 }

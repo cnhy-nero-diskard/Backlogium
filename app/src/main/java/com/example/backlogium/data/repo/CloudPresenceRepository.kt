@@ -596,6 +596,13 @@ class CloudPresenceRepository @Inject constructor(
         ) return CloudCatchUpResult.Unavailable
         var transitions = 0
         for (page in 0 until MAX_ROUTINE_PAGES) {
+            if (settings.cloudRoutineState.first().policy == CloudRoutinePolicy.OFF_MANUAL_ONLY) {
+                // Finish the current page's effects and cursor before observing Off here. This
+                // boundary check lets a disabled routine attempt stop without dropping committed
+                // page effects or starting another request.
+                return if (page == 0) CloudCatchUpResult.Unavailable
+                else CloudCatchUpResult.Partial(page, transitions)
+            }
             if (credentialsProvider.currentCredentials()?.steamId != account ||
                 settings.cloudReaderGeneration.first() != generation
             ) return CloudCatchUpResult.Failed(page, transitions, CloudReadFailure.ACCOUNT_MISMATCH)

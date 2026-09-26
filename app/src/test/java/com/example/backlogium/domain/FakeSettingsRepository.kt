@@ -179,8 +179,9 @@ internal class FakeSettingsRepository : SettingsRepository {
     override suspend fun admitCloudRoutine(at: Long): CloudRoutineAdmission {
         val state = routine.value
         val policy = state.policy ?: return CloudRoutineAdmission.UNAVAILABLE
+        if (!policy.routineEnabled) return CloudRoutineAdmission.UNAVAILABLE
         if (state.lastAdmittedAt != null &&
-            at - state.lastAdmittedAt < policy.minimumGapHours * 3_600_000L
+            at - state.lastAdmittedAt < checkNotNull(policy.minimumGapHours) * 3_600_000L
         ) return CloudRoutineAdmission.COOLDOWN
         if (state.latestOtherReadTerminal &&
             state.latestOtherReadWatermark > state.lastAdmissionWatermark &&

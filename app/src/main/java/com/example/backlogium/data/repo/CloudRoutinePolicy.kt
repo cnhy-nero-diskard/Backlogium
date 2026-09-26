@@ -1,11 +1,14 @@
 package com.example.backlogium.data.repo
 
 /** Minimum gaps apply to routine reads only; manual and accuracy-driven reads are independent. */
-enum class CloudRoutinePolicy(val minimumGapHours: Long, val periodicHours: Long) {
+enum class CloudRoutinePolicy(val minimumGapHours: Long?, val periodicHours: Long?) {
     AUTOMATIC(12, 24),
     EVERY_12_HOURS(12, 12),
     DAILY(24, 24),
     EVERY_48_HOURS(48, 48),
+    OFF_MANUAL_ONLY(null, null);
+
+    val routineEnabled: Boolean get() = minimumGapHours != null && periodicHours != null
 }
 
 data class CloudRoutineState(

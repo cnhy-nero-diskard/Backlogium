@@ -978,6 +978,7 @@ private fun CloudRoutineControls(
             CloudRoutinePolicy.EVERY_12_HOURS -> R.string.settings_cloud_routine_12h
             CloudRoutinePolicy.DAILY -> R.string.settings_cloud_routine_daily
             CloudRoutinePolicy.EVERY_48_HOURS -> R.string.settings_cloud_routine_48h
+            CloudRoutinePolicy.OFF_MANUAL_ONLY -> R.string.settings_cloud_routine_manual_only
         })
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -1006,8 +1007,9 @@ private fun CloudRoutineControls(
     Text(stringResource(R.string.history_cloud_last_success,
         state.cloudReadSummary.lastSuccessAt?.let(UiFormat::dateTime) ?:
             stringResource(R.string.history_cloud_unknown)), style = MaterialTheme.typography.bodySmall)
-    if (routine.policy != null && attempt != null) {
-        val next = attempt + routine.policy.minimumGapHours * 60L * 60L * 1000L
+    val minimumGapHours = routine.policy?.minimumGapHours
+    if (minimumGapHours != null && attempt != null) {
+        val next = attempt + minimumGapHours * 60L * 60L * 1000L
         Text(stringResource(R.string.settings_cloud_routine_eligible, UiFormat.dateTime(next)),
             style = MaterialTheme.typography.bodySmall)
     }
