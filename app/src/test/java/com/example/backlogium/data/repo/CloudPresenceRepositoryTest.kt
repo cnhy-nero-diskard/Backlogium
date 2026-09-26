@@ -13,7 +13,9 @@ import com.example.backlogium.domain.CloudCoverageState
 import com.example.backlogium.domain.CloudPresenceInterval
 import com.example.backlogium.domain.CloudPresenceTransition
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.work.CloudRoutineWorkCancellation
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
@@ -875,6 +877,94 @@ class CloudPresenceRepositoryTest {
         )
         assertEquals(CloudConfigurationResult.Saved, replacement.await())
         assertEquals(CloudCredentials(newEndpoint, "new-secret"), store.credentials)
+        assertEquals(generation + 1L, settings.cloudReaderGeneration.first())
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun promotionCannotCancelAnAdmittedRoutineBeforeItsFirstPageCommits() = runTest {
+        val oldEndpoint = "https://old.example.com/read"
+        val newEndpoint = "https://new.example.com/read"
+        val verificationEntered = CompletableDeferred<Unit>()
+        val releaseVerification = CompletableDeferred<CloudPresenceResponseDto>()
+        val pageEntered = CompletableDeferred<Unit>()
+        val releasePage = CompletableDeferred<CloudPresenceResponseDto>()
+        val requests = mutableListOf<Pair<String, String?>>()
+        val api = object : CloudPresenceApi {
+            override suspend fun read(
+                endpoint: String,
+                authorization: String,
+                position: String?,
+            ): CloudPresenceResponseDto {
+                requests += endpoint to position
+                return if (endpoint == oldEndpoint) {
+                    pageEntered.complete(Unit)
+                    releasePage.await()
+                } else {
+                    verificationEntered.complete(Unit)
+                    releaseVerification.await()
+                }
+            }
+        }
+        val settings = FakeSettingsRepository()
+        settings.initializeCloudRoutinePolicy()
+        val store = FakeCloudCredentialsStore(CloudCredentials(oldEndpoint, "old-secret"))
+        var routine: Deferred<CloudRoutineAttempt>? = null
+        val cancellationRequests = mutableListOf<Boolean>()
+        val canceller = CloudRoutineWorkCancellation { removePeriodic ->
+            cancellationRequests += removePeriodic
+            // Model WorkManager stopping the active CoroutineWorker if cancellation is
+            // requested while its admitted page is still in flight.
+            routine?.cancel()
+        }
+        val repository = repository(
+            api, store, FakeCloudReadDao(), settings, ACCOUNT,
+            routineWorkCanceller = canceller,
+        )
+        val generation = settings.cloudReaderGeneration.first()
+
+        // Verification passes its recovery boundary and starts the network fetch first,
+        // then the routine is admitted and holds the sequence lock on page 1.
+        val replacement = async {
+            repository.verifyAndSave(newEndpoint, "new-secret")
+        }
+        verificationEntered.await()
+
+        val routineJob = async {
+            repository.runRoutineCatchUp(ACCOUNT, generation, consume = {})
+        }
+        routine = routineJob
+        pageEntered.await()
+        val admittedAt = settings.cloudRoutineState.first().lastAdmittedAt
+        assertEquals(FixedTimeProvider().nowMillis(), admittedAt)
+
+        // Let the replacement's fetch complete while the admitted routine still owns
+        // the sequence lock, the production ordering that exposed pre-lock cancellation.
+        releaseVerification.complete(sampleResponse())
+        runCurrent()
+
+        // Cancellation cannot run across the admission/page lock gap: the replacement is
+        // still waiting, and the routine remains active with zero committed pages so far.
+        assertFalse(replacement.isCompleted)
+        assertTrue(routineJob.isActive)
+        assertTrue(cancellationRequests.isEmpty())
+        assertEquals(listOf(newEndpoint to null, oldEndpoint to null), requests)
+
+        releasePage.complete(sampleResponse())
+        assertEquals(
+            CloudRoutineAttempt.Admitted(
+                FixedTimeProvider().nowMillis(),
+                CloudCatchUpResult.Complete(1, 1, noNewData = false),
+            ),
+            routineJob.await(),
+        )
+        assertEquals(CloudConfigurationResult.Saved, replacement.await())
+
+        // Promotion's cancellation is now advisory cleanup after the admitted page has
+        // committed, so its cooldown is retained for the replacement without losing a page.
+        assertEquals(listOf(false), cancellationRequests)
+        assertEquals(admittedAt, settings.cloudRoutineState.first().lastAdmittedAt)
+        assertEquals(listOf(newEndpoint to null, oldEndpoint to null), requests)
         assertEquals(generation + 1L, settings.cloudReaderGeneration.first())
     }
 
@@ -2283,6 +2373,7 @@ class CloudPresenceRepositoryTest {
         settings: FakeSettingsRepository = FakeSettingsRepository(),
         steamId: String?,
         pending: CloudPendingEvidence? = null,
+        routineWorkCanceller: CloudRoutineWorkCancellation? = null,
     ): CloudPresenceRepository = CloudPresenceRepository(
         api = api,
         credentialsStore = store,
@@ -2291,6 +2382,7 @@ class CloudPresenceRepositoryTest {
         cloudReadDao = records,
         pendingEvidence = pending ?: MemoryEvidence(),
         time = FixedTimeProvider(),
+        routineWorkCanceller = routineWorkCanceller,
     )
 
     private class MemoryEvidence : CloudPendingEvidence {

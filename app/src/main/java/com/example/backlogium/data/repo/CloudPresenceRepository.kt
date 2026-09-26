@@ -14,7 +14,7 @@ import com.example.backlogium.domain.CloudPresenceInterval
 import com.example.backlogium.domain.CloudPresenceReconstruction
 import com.example.backlogium.domain.CloudPresenceTransition
 import com.example.backlogium.domain.TimeProvider
-import com.example.backlogium.work.CloudRoutineWorkCanceller
+import com.example.backlogium.work.CloudRoutineWorkCancellation
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
@@ -121,7 +121,7 @@ class CloudPresenceRepository @Inject constructor(
     private val cloudReadDao: CloudReadDao,
     private val pendingEvidence: CloudPendingEvidence,
     private val time: TimeProvider,
-    private val routineWorkCanceller: CloudRoutineWorkCanceller? = null,
+    private val routineWorkCanceller: CloudRoutineWorkCancellation? = null,
 ) {
     /** Compatibility constructor for existing read-protocol tests without a Room evidence store. */
     internal constructor(
@@ -438,13 +438,6 @@ class CloudPresenceRepository @Inject constructor(
             // never blocks verification's network; only promotion waits for the terminal
             // watermark, and drains wait for promotion.
             is RemoteReadResult.Success -> {
-                // Cancel queued/running routine work as soon as the replacement has answered;
-                // the serialized promotion below still waits for any active page to finish.
-                val stillCurrent = cloudStateMutex.withLock {
-                    generationAtStart == accountGeneration.get() &&
-                        credentialsProvider.currentCredentials()?.steamId == account
-                }
-                if (stillCurrent) routineWorkCanceller?.cancelOldReaderWork(removePeriodic = false)
                 cloudReadSequenceMutex.withLock { cloudStateMutex.withLock {
                     val current = credentialsProvider.currentCredentials()?.steamId
                     if (generationAtStart != accountGeneration.get() || current != account) {
@@ -518,6 +511,8 @@ class CloudPresenceRepository @Inject constructor(
                         // replacement's own. A failed ingest also leaves the page retryable,
                         // since the read position has not advanced.
                         consume(snapshot)
+                        // Cancel only after acquiring the sequence lock: an admitted routine
+                        // must finish its page commits before this advisory cleanup can stop it.
                         routineWorkCanceller?.cancelOldReaderWork(removePeriodic = false)
                         settings.clearCloudReadPosition()
                         settings.clearCloudReadSummary()

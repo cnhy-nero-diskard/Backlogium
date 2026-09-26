@@ -53,6 +53,8 @@ import com.example.backlogium.work.setup.FirstRunSetupGateway
 import com.example.backlogium.work.setup.SetupCoordinator
 import com.example.backlogium.work.PostPlayWorkEnqueuer
 import com.example.backlogium.work.WorkManagerPostPlayWorkEnqueuer
+import com.example.backlogium.work.CloudRoutineWorkCancellation
+import com.example.backlogium.work.CloudRoutineWorkCanceller
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -71,6 +73,12 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindTimeProvider(impl: SystemTimeProvider): TimeProvider
+
+    @Binds
+    @Singleton
+    abstract fun bindCloudRoutineWorkCancellation(
+        impl: CloudRoutineWorkCanceller,
+    ): CloudRoutineWorkCancellation
 
     @Binds
     @Singleton
