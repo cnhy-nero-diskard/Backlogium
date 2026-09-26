@@ -464,6 +464,9 @@
     <string name="history_cloud_open_session">View session in History</string>
     <string name="history_cloud_activity">Cloud activity</string>
     <string name="history_cloud_back">Back to History</string>
+    <string name="history_cloud_window_scope">Loaded History window: %1$s – %2$s</string>
+    <string name="history_cloud_no_contributions">No cloud-assisted sessions are recorded in this loaded History window.</string>
+    <string name="history_cloud_loading">Loading cloud activity</string>
     <string name="history_cloud_recovered_facts">Recovered play · %1$d facts</string>
     <string name="history_cloud_timed_facts">Cloud-timed Steam play · %1$d facts</string>
     <string name="history_cloud_activity_overlap">A session may appear in both groups. Counts describe contributions, not separate sessions.</string>

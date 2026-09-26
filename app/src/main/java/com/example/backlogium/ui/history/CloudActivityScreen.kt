@@ -2,10 +2,12 @@ package com.example.backlogium.ui.history
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
@@ -18,6 +20,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.R
@@ -46,22 +50,54 @@ internal fun CloudActivityContent(
     onBack: () -> Unit = {},
 ) {
     val activity = historyCloudActivity(state.days, state.cloudReaderConfigured)
-    if (state.loading) {
-        CircularProgressIndicator()
-        return
-    }
-    LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-        item {
-            TextButton(onClick = onBack) { Text(stringResource(R.string.history_cloud_back)) }
-            Text(stringResource(R.string.history_cloud_activity), style = MaterialTheme.typography.headlineSmall)
-            Text(stringResource(R.string.history_cloud_activity_overlap),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        cloudGroup(R.string.history_cloud_recovered_facts, activity.recovered, onOpenSession)
-        cloudGroup(R.string.history_cloud_timed_facts, activity.timed, onOpenSession)
-        if (state.cloudReaderConfigured) {
-            item { CloudReaderStatus(state.cloudReadSummary, state.statusNow) }
+    val loadingDescription = stringResource(R.string.history_cloud_loading)
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+        TextButton(onClick = onBack) { Text(stringResource(R.string.history_cloud_back)) }
+        if (state.loading) {
+            Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    modifier = Modifier.semantics {
+                        contentDescription = loadingDescription
+                    },
+                )
+            }
+        } else if (state.cloudReaderConfigured) {
+            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                item(key = "cloud-activity-heading") {
+                    Text(stringResource(R.string.history_cloud_activity),
+                        style = MaterialTheme.typography.headlineSmall)
+                    if (state.windowStartDate.isNotBlank() && state.today.isNotBlank()) {
+                        Text(
+                            stringResource(
+                                R.string.history_cloud_window_scope,
+                                formatHistoryDate(state.windowStartDate),
+                                formatHistoryDate(state.today),
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    if (activity.hasContributions) {
+                        Text(stringResource(R.string.history_cloud_activity_overlap),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (activity.hasContributions) {
+                    cloudGroup(R.string.history_cloud_recovered_facts, activity.recovered, onOpenSession)
+                    cloudGroup(R.string.history_cloud_timed_facts, activity.timed, onOpenSession)
+                } else {
+                    item(key = "cloud-activity-empty") {
+                        Text(
+                            stringResource(R.string.history_cloud_no_contributions),
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+                        )
+                    }
+                }
+                item(key = "cloud-reader-status") {
+                    CloudReaderStatus(state.cloudReadSummary, state.statusNow)
+                }
+            }
         }
     }
 }

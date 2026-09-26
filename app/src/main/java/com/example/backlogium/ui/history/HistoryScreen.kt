@@ -51,6 +51,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -116,14 +117,6 @@ internal fun HistoryContent(
         return
     }
 
-    if (state.days.isEmpty()) {
-        EmptyState(
-            title = stringResource(R.string.history_empty_title),
-            message = stringResource(R.string.history_empty_message),
-        )
-        return
-    }
-
     // Transient — resets on navigation away, per the regroup-history design: this is a lens onto
     // the data, not a saved preference.
     var expandedDays by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -150,14 +143,13 @@ internal fun HistoryContent(
     }
 
     val sections = historySections(state.days, state.today)
-    val activity = historyCloudActivity(state.days, state.cloudReaderConfigured)
     LaunchedEffect(reveal, state.days) {
         val target = reveal ?: return@LaunchedEffect
         if (state.days.none { it.date == target.date }) return@LaunchedEffect
         expandedDays = expandedDays + target.date
         expandedGames = expandedGames + (target.date to target.appId)
         withFrameNanos { }
-        val dayIndex = 1 + (if (activity.hasContributions) 1 else 0) +
+        val dayIndex = 1 + (if (state.cloudReaderConfigured) 1 else 0) +
             if (sections.today?.date == target.date) 1 else {
                 (if (sections.today != null) 1 + (if (sections.today.date in expandedDays) 1 else 0) else 0) +
                     1 + sections.earlier.takeWhile { it.date != target.date }.sumOf { earlier ->
@@ -193,7 +185,7 @@ internal fun HistoryContent(
             }
         }
 
-        if (activity.hasContributions) {
+        if (state.cloudReaderConfigured) {
             item(key = "cloud-activity") {
                 TextButton(onClick = onOpenCloudActivity, modifier = Modifier.fillMaxWidth()) {
                     Icon(TablerIcons.Cloud, contentDescription = null)
@@ -202,22 +194,43 @@ internal fun HistoryContent(
             }
         }
 
-        sections.today?.let { day ->
-            item(key = "today-heading") {
-                SectionHeader(stringResource(R.string.history_today_section))
+        if (state.days.isEmpty()) {
+            item(key = "history-empty") {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.history_empty_title),
+                        style = MaterialTheme.typography.titleLarge,
+                        textAlign = TextAlign.Center,
+                    )
+                    Text(
+                        stringResource(R.string.history_empty_message),
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
-            dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame,
-                state.cloudReaderConfigured, reveal, onRevealHandled)
-        }
+        } else {
+            sections.today?.let { day ->
+                item(key = "today-heading") {
+                    SectionHeader(stringResource(R.string.history_today_section))
+                }
+                dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame,
+                    state.cloudReaderConfigured, reveal, onRevealHandled)
+            }
 
-        if (sections.earlier.isNotEmpty()) {
-            item(key = "earlier-history-heading") {
-                SectionHeader(stringResource(R.string.history_earlier_section))
+            if (sections.earlier.isNotEmpty()) {
+                item(key = "earlier-history-heading") {
+                    SectionHeader(stringResource(R.string.history_earlier_section))
+                }
             }
-        }
-        sections.earlier.forEach { day ->
-            dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame,
-                state.cloudReaderConfigured, reveal, onRevealHandled)
+            sections.earlier.forEach { day ->
+                dayItems(day, expandedDays, expandedGames, toggleDay, toggleGame,
+                    state.cloudReaderConfigured, reveal, onRevealHandled)
+            }
         }
 
         item(key = "load-older") {

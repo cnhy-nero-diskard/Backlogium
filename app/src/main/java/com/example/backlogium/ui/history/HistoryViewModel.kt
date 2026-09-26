@@ -27,6 +27,8 @@ data class HistoryUiState(
     val days: List<HistoryDayGroup> = emptyList(),
     /** Today's local date (ISO), so the screen can expand it by default without its own clock. */
     val today: String = "",
+    /** First included local date for the currently loaded History window. */
+    val windowStartDate: String = "",
     val cloudReaderConfigured: Boolean = false,
     val cloudReadSummary: CloudReadSummary = CloudReadSummary(),
     val statusNow: Long = 0L,
@@ -66,6 +68,7 @@ class HistoryViewModel @Inject constructor(
     val uiState: StateFlow<HistoryUiState> = combine(windowDays, currentDate.currentDate, ::Pair)
         .flatMapLatest { (window, today) ->
             val cutoff = historyWindowCutoffMillis(window, today, time.zone())
+            val windowStartDate = today.minusDays((window - 1).toLong()).toString()
             combine(
                 sessionRepository.sessionsSince(cutoff),
                 gameRepository.library,
@@ -84,6 +87,7 @@ class HistoryViewModel @Inject constructor(
                         zone = time.zone(),
                     ),
                     today = today.toString(),
+                    windowStartDate = windowStartDate,
                 )
             }.combine(cloudPresence.configuration) { state, reader ->
                 state.copy(cloudReaderConfigured = reader != null)
