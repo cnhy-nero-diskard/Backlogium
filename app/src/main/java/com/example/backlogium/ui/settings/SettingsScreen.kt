@@ -970,6 +970,7 @@ private fun CloudRoutineControls(
     state: SettingsUiState,
     onPolicyChanged: (CloudRoutinePolicy) -> Unit,
 ) {
+    var showRoutineDetails by remember { mutableStateOf(false) }
     val routine = state.cloudRoutine
     Text(stringResource(R.string.settings_cloud_routine_title), style = MaterialTheme.typography.titleSmall)
     CloudRoutinePolicy.entries.forEach { policy ->
@@ -990,8 +991,23 @@ private fun CloudRoutineControls(
             Text(label, modifier = Modifier.padding(start = 8.dp))
         }
     }
-    Text(stringResource(R.string.settings_cloud_routine_explanation),
+    Text(stringResource(R.string.settings_cloud_routine_summary),
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (routine.policy == CloudRoutinePolicy.OFF_MANUAL_ONLY) {
+        Text(stringResource(R.string.settings_cloud_routine_off_status),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    TextButton(onClick = { showRoutineDetails = !showRoutineDetails }) {
+        Text(stringResource(if (showRoutineDetails) {
+            R.string.settings_cloud_routine_details_hide
+        } else {
+            R.string.settings_cloud_routine_details_show
+        }))
+    }
+    if (showRoutineDetails) {
+        Text(stringResource(R.string.settings_cloud_routine_details),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
     val attempt = routine.lastAdmittedAt
     Text(if (attempt != null) {
         stringResource(R.string.settings_cloud_routine_last_attempt, UiFormat.dateTime(attempt),

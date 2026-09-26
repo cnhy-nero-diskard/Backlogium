@@ -491,7 +491,11 @@
     <string name="settings_cloud_routine_daily">At least 24 hours apart</string>
     <string name="settings_cloud_routine_48h">At least 48 hours apart</string>
     <string name="settings_cloud_routine_manual_only">Off · Manual only</string>
-    <string name="settings_cloud_routine_explanation">Automatic has a daily background opportunity and can also catch up after play ends, with at least 12 hours between routine starts. Other choices set the minimum gap for both opportunities. These limits apply only to routine phone reads, not the cloud poller’s minute observations, manual Read now, or cloud evidence reads needed to place Steam minutes. They do not cap all cloud requests.</string>
+    <string name="settings_cloud_routine_summary">Automatic is the initial policy when a reader is first verified. These choices limit routine reads from this phone only.</string>
+    <string name="settings_cloud_routine_off_status">Routine catch-up is off. The reader stays connected; Read now and reads needed to place Steam minutes remain available.</string>
+    <string name="settings_cloud_routine_details_show">How routine catch-up works</string>
+    <string name="settings_cloud_routine_details_hide">Hide routine catch-up details</string>
+    <string name="settings_cloud_routine_details">Automatic offers one daily background opportunity and play-end catch-ups, with at least 12 hours between routine starts. Other enabled choices set that minimum gap. They do not limit the cloud poller’s minute observations, manual Read now, or reads needed to place Steam-reported minutes. Background work depends on connectivity and device scheduling; eligibility is not an execution-time promise.</string>
     <string name="settings_cloud_routine_last_attempt">Last routine attempt: %1$s · %2$s</string>
     <string name="settings_cloud_routine_no_attempt">No routine attempt recorded yet.</string>
     <string name="settings_cloud_routine_no_outcome">No outcome recorded</string>
