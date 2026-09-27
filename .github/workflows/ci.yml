@@ -24,6 +24,9 @@ jobs:
       - name: Run unit tests
         run: ./gradlew test
 
+      - name: Compile release Kotlin
+        run: ./gradlew :app:compileReleaseKotlin
+
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v4
