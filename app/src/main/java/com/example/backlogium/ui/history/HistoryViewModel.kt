@@ -8,6 +8,8 @@ import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.SessionRepository
+import com.example.backlogium.data.repo.CloudPresenceRepository
+import com.example.backlogium.data.repo.CloudReadSummary
 import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -25,7 +27,14 @@ data class HistoryUiState(
     val days: List<HistoryDayGroup> = emptyList(),
     /** Today's local date (ISO), so the screen can expand it by default without its own clock. */
     val today: String = "",
+    /** First included local date for the currently loaded History window. */
+    val windowStartDate: String = "",
+    val cloudReaderConfigured: Boolean = false,
+    val cloudReadSummary: CloudReadSummary = CloudReadSummary(),
+    val statusNow: Long = 0L,
 )
+
+data class HistoryReveal(val date: String, val appId: Long, val sessionId: Long)
 
 @HiltViewModel
 class HistoryViewModel @Inject constructor(
@@ -36,7 +45,22 @@ class HistoryViewModel @Inject constructor(
     private val credentials: CredentialsRepository,
     private val time: TimeProvider,
     private val currentDate: CurrentDateProvider,
+    private val cloudPresence: CloudPresenceRepository,
 ) : ViewModel() {
+
+    private val revealState = MutableStateFlow<HistoryReveal?>(null)
+    val reveal: StateFlow<HistoryReveal?> = revealState
+    private val statusTimeMillis = MutableStateFlow(time.nowMillis())
+
+    fun revealSession(item: HistoryContribution) {
+        revealState.value = HistoryReveal(item.date, item.game.appId, item.session.id)
+    }
+
+    fun clearReveal() { revealState.value = null }
+
+    fun refreshStatusTime() {
+        statusTimeMillis.value = time.nowMillis()
+    }
 
     /**
      * How many trailing calendar days are in view. Transient (not persisted): the screen opens
@@ -49,6 +73,7 @@ class HistoryViewModel @Inject constructor(
     val uiState: StateFlow<HistoryUiState> = combine(windowDays, currentDate.currentDate, ::Pair)
         .flatMapLatest { (window, today) ->
             val cutoff = historyWindowCutoffMillis(window, today, time.zone())
+            val windowStartDate = today.minusDays((window - 1).toLong()).toString()
             combine(
                 sessionRepository.sessionsSince(cutoff),
                 gameRepository.library,
@@ -67,7 +92,14 @@ class HistoryViewModel @Inject constructor(
                         zone = time.zone(),
                     ),
                     today = today.toString(),
+                    windowStartDate = windowStartDate,
                 )
+            }.combine(cloudPresence.configuration) { state, reader ->
+                state.copy(cloudReaderConfigured = reader != null)
+            }.combine(cloudPresence.readSummary) { state, summary ->
+                state.copy(cloudReadSummary = summary)
+            }.combine(statusTimeMillis) { state, now ->
+                state.copy(statusNow = now)
             }
         }
         .stateIn(

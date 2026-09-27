@@ -34,19 +34,39 @@ History SHALL display a restrained cloud mark only beside a session for which a 
 
 ### Requirement: History offers a focused Cloud activity explanation when relevant
 
-When the visible History period includes a recorded cloud contribution, History SHALL offer a compact Cloud activity entry leading to a detail view. That detail SHALL lead with the sessions actually recovered or timed using cloud evidence in the same period, link back to the affected play, and then explain reader success, observation freshness where known, and any partial or unknown coverage. A session with both facts MAY appear in both groups; group counts SHALL describe contribution facts rather than imply that the groups are disjoint session sets. It SHALL use local stored contribution evidence to render offline, avoid presenting missing observations as proof of no play, and leave raw per-interval comparison in Diagnostics. Hidden games SHALL be excluded from its counts, names, and links.
+While the cloud reader is configured, History SHALL offer a compact Cloud activity entry even if the loaded History window contains no play or no cloud contribution. The detail SHALL label its scope as the currently loaded History window, not all past activity. It SHALL either explain that no cloud-assisted sessions are present in that window or lead with the sessions actually recovered or timed using cloud evidence in it, then explain reader success, observation freshness where known, and any partial or unknown coverage. A session with both facts MAY appear in both groups; localized group counts SHALL correctly distinguish singular from plural contribution facts and SHALL NOT imply that the groups are disjoint session sets. Opening an activity item SHALL expand and visibly reveal its specific day, game, and session in History, including an earlier day after Today has expanded; if the item is no longer in the loaded window, History SHALL give a clear non-silent fallback rather than appear to jump to an unrelated row. The detail SHALL use local stored contribution evidence to render offline, avoid presenting missing observations as proof of no play, and leave raw per-interval comparison in Diagnostics. Hidden games SHALL be excluded from its counts, names, and links.
 
 #### Scenario: Relevant history has contributions
 - **WHEN** the visible History period contains one or more visible sessions with proven cloud contributions
 - **THEN** a quiet Cloud activity entry and a detail explaining those contributions are available
 
 #### Scenario: No contribution in the visible period
-- **WHEN** the visible History period has no eligible session with a recorded cloud contribution
-- **THEN** no Cloud activity entry occupies History
+- **WHEN** the reader is configured and the loaded History window has no eligible session with a recorded cloud contribution, including an otherwise empty History
+- **THEN** the Cloud activity entry remains reachable and the detail explains that no cloud-assisted session is present in the loaded window while still showing stored reader status and its limits
+
+#### Scenario: Loaded window is widened
+- **WHEN** the player loads older History days and opens Cloud activity
+- **THEN** its scope and contribution groups reflect the currently loaded window without implying that older, unloaded play has been checked
+
+#### Scenario: Open an older contributed session
+- **WHEN** the player selects an activity item for an earlier day while Today or other earlier days are expanded
+- **THEN** History reveals the exact session visibly rather than stopping on a section heading or a preceding day
+
+#### Scenario: Selected session no longer appears
+- **WHEN** an activity item becomes unavailable in the loaded History window before its target is revealed
+- **THEN** History gives an understandable fallback and does not silently clear the requested jump
+
+#### Scenario: One contribution fact in a group
+- **WHEN** a group contains exactly one contribution fact
+- **THEN** its localized count uses singular wording and still explains any overlap between groups
 
 #### Scenario: Detail has no network
 - **WHEN** the player opens Cloud activity offline
 - **THEN** the affected sessions and stored read status remain readable without waiting for a network request
+
+#### Scenario: Detail is loading or uses larger text
+- **WHEN** the detail is loading or the player uses larger system text or a screen reader
+- **THEN** a Back action remains available, progress is presented in context, and group labels and session actions remain legible and operable
 
 #### Scenario: Partial evidence
 - **WHEN** the available observation window is incomplete or its coverage is unknown
@@ -59,3 +79,7 @@ When the visible History period includes a recorded cloud contribution, History 
 #### Scenario: Reader has failed since its last success
 - **WHEN** a recent reader attempt failed after a prior success
 - **THEN** the detail preserves the last known contributions, distinguishes the failed attempt from the prior success, and does not present either as a live poller-health guarantee
+
+#### Scenario: Observation ages while detail stays open
+- **WHEN** the newest known observation becomes stale while Cloud activity remains on screen or the app resumes
+- **THEN** its freshness warning reflects the current time without requiring another reader request

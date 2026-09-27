@@ -68,8 +68,7 @@ class SnapshotStore @Inject constructor(
     fun read(fileName: String): BackupFile? {
         val target = File(dir, fileName)
         if (!target.isFile) return null
-        return runCatching { json.decodeFromString(BackupFile.serializer(), target.readText()) }
-            .getOrNull()
+        return BackupVersionedDecoder.decode(json, target)
     }
 
     /** Delete one retained snapshot, refusing path-like names that did not come from [list]. */

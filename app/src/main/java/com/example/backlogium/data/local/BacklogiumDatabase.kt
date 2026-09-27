@@ -22,6 +22,7 @@ import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.HltbDatasetDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.dao.PendingCloudEvidenceDao
 import com.example.backlogium.data.local.dao.SteamAssetDao
 import com.example.backlogium.data.local.dao.SteamReviewCacheDao
 import com.example.backlogium.data.local.dao.WishlistDao
@@ -40,6 +41,8 @@ import com.example.backlogium.data.local.entity.HltbDatasetMapping
 import com.example.backlogium.data.local.entity.HltbDatasetState
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.PendingCloudInterval
+import com.example.backlogium.data.local.entity.PendingCloudBoundary
 import com.example.backlogium.data.local.entity.WishlistItem
 import com.example.backlogium.data.local.entity.WishlistPriceObservation
 import com.example.backlogium.data.local.entity.PresenceDecision
@@ -67,6 +70,8 @@ import com.example.backlogium.data.local.entity.SyncRun
         RequestTotal::class,
         PresenceDecision::class,
         CloudReadRecord::class,
+        PendingCloudInterval::class,
+        PendingCloudBoundary::class,
         Collection::class,
         CollectionMember::class,
         GameGenreCache::class,
@@ -79,7 +84,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         HiddenGame::class,
         SteamReviewCache::class,
     ],
-    version = 36,
+    version = 39,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -92,6 +97,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun hltbDatasetDao(): HltbDatasetDao
     abstract fun achievementDao(): AchievementDao
     abstract fun cloudReadDao(): CloudReadDao
+    abstract fun pendingCloudEvidenceDao(): PendingCloudEvidenceDao
     abstract fun diagnosticsDao(): DiagnosticsDao
     abstract fun collectionDao(): CollectionDao
     abstract fun gameGenreCacheDao(): GameGenreCacheDao
@@ -862,6 +868,58 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 )
             }
         }
+        /** v36 -> v37: legacy sessions have unknown, not absent, cloud contribution evidence. */
+        val MIGRATION_36_37 = object : Migration(36, 37) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `sessions` ADD COLUMN `recoveredSharedPlay` TEXT")
+                db.execSQL("ALTER TABLE `sessions` ADD COLUMN `timingInformedSteamPlay` TEXT")
+            }
+        }
+
+        /** v37 -> v38: persist account-bound pending intervals and cross-page boundaries. */
+        val MIGRATION_37_38 = object : Migration(37, 38) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `pending_cloud_intervals` (" +
+                        "`account` TEXT NOT NULL, `generation` INTEGER NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, `startAt` INTEGER NOT NULL, `endAt` INTEGER, " +
+                        "`ongoing` INTEGER NOT NULL, `coverage` TEXT NOT NULL, " +
+                        "`observedUntil` INTEGER, `coverageLapseFrom` INTEGER, " +
+                        "`coverageLapseRecoveredAt` INTEGER, `mayHaveStartedBefore` INTEGER NOT NULL, " +
+                        "`gameName` TEXT, `windowStart` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`account`, `generation`, `appId`, `startAt`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `pending_cloud_boundaries` (" +
+                        "`account` TEXT NOT NULL, `generation` INTEGER NOT NULL, `at` INTEGER NOT NULL, " +
+                        "`appId` INTEGER, `gameName` TEXT, `personastate` INTEGER, " +
+                        "`previousLastObservedAt` INTEGER, `previousCoverageLapseFrom` INTEGER, " +
+                        "`previousCoverageLapseRecoveredAt` INTEGER, `schemaVersion` INTEGER, " +
+                        "PRIMARY KEY(`account`, `generation`))",
+                )
+            }
+        }
+
+        /** v38 -> v39: enforce one open session per game without constraining closed natural keys. */
+        val MIGRATION_38_39 = object : Migration(38, 39) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `sessions` ADD COLUMN `openAppId` INTEGER")
+                // Keep the most recently inserted row open if an older database already contains
+                // duplicates; retain every row, closing only the stale open copies.
+                db.execSQL(
+                    "UPDATE `sessions` SET `open` = 0 WHERE `open` = 1 AND EXISTS (" +
+                        "SELECT 1 FROM `sessions` AS `newer` " +
+                        "WHERE `newer`.`appId` = `sessions`.`appId` " +
+                        "AND `newer`.`open` = 1 AND `newer`.`id` > `sessions`.`id`)",
+                )
+                db.execSQL("UPDATE `sessions` SET `openAppId` = `appId` WHERE `open` = 1")
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_sessions_openAppId` " +
+                        "ON `sessions` (`openAppId`)",
+                )
+            }
+        }
+
         private fun SupportSQLiteDatabase.hasColumn(table: String, column: String): Boolean {
             query("PRAGMA table_info(`$table`)").use { cursor ->
                 val nameIndex = cursor.getColumnIndex("name")

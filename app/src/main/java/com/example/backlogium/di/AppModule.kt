@@ -6,6 +6,8 @@ import com.example.backlogium.data.backup.BackupExportGateway
 import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
+import com.example.backlogium.data.repo.CloudPendingEvidence
+import com.example.backlogium.data.repo.RoomCloudPendingEvidence
 import com.example.backlogium.data.repo.AccountChangeCoordinator
 import com.example.backlogium.data.repo.AccountChangeGateway
 import com.example.backlogium.data.repo.CredentialsProvider
@@ -51,6 +53,8 @@ import com.example.backlogium.work.setup.FirstRunSetupGateway
 import com.example.backlogium.work.setup.SetupCoordinator
 import com.example.backlogium.work.PostPlayWorkEnqueuer
 import com.example.backlogium.work.WorkManagerPostPlayWorkEnqueuer
+import com.example.backlogium.work.CloudRoutineWorkCancellation
+import com.example.backlogium.work.CloudRoutineWorkCanceller
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -69,6 +73,12 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindTimeProvider(impl: SystemTimeProvider): TimeProvider
+
+    @Binds
+    @Singleton
+    abstract fun bindCloudRoutineWorkCancellation(
+        impl: CloudRoutineWorkCanceller,
+    ): CloudRoutineWorkCancellation
 
     @Binds
     @Singleton
@@ -165,6 +175,9 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindDatabaseTransactionScope(impl: RoomDatabaseTransactionScope): DatabaseTransactionScope
+
+    @Binds
+    abstract fun bindCloudPendingEvidence(impl: RoomCloudPendingEvidence): CloudPendingEvidence
 
     @Binds
     @Singleton

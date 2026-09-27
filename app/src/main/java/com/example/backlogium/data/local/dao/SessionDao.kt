@@ -2,10 +2,12 @@ package com.example.backlogium.data.local.dao
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
-import androidx.room.Transaction
 import androidx.room.Update
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -18,33 +20,53 @@ interface SessionDao {
     suspend fun update(session: Session)
 
     /**
+     * Update a session unless it would violate the unique open-session key.
+     *
+     * Used when applying an Extend that may have been derived before the target session was
+     * closed. If a newer session for the same game is already open, SQLite leaves this row
+     * unchanged instead of aborting the write.
+     *
+     * @return the number of rows updated; zero means no row was updated, including a conflict.
+     */
+    @Update(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun updateUnlessConflictingOpenSession(session: Session): Int
+
+    /**
      * Opens a session for [appId] only when no open session already exists.
      *
      * This is the enforcement point for "at most one open session per game" (auditfix-session-
-     * ledger-integrity, #116). The check and insert run inside one Room transaction, so two callers
-     * racing from an empty state cannot both pass the guard. The loser must fold its observation into
-     * the session that won, via [getOpenSession], rather than losing it.
+     * ledger-integrity, #116). A unique nullable key makes the insert itself atomic; a competing
+     * insert is ignored and the caller can fold its observation into the session that won via
+     * [getOpenSession], rather than losing it.
      *
      * Deliberately leaves the `(appId, startAt, endAt)` natural key non-unique: the backup/restore
-     * merge engine must tolerate a real-world collision among closed sessions. This needs no schema
-     * migration and enforces only the open-session invariant at the write boundary.
+     * merge engine must tolerate a real-world collision among closed sessions. Closed rows have a
+     * null open key, so the unique index enforces only the open-session invariant.
      *
      * @return the new row's id if this call opened the session, or -1 if a concurrent caller
-     *   already holds one open and nothing was inserted.
+     *   already holds one open and the unique open key rejected this insert.
      */
-    @Transaction
-    suspend fun tryOpenSession(appId: Long, startAt: Long, endAt: Long?, minutes: Int): Long {
-        if (getOpenSession(appId) != null) return -1L
-        return insert(
-            Session(
-                appId = appId,
-                startAt = startAt,
-                endAt = endAt,
-                minutes = minutes,
-                open = true,
-            ),
-        )
-    }
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertOpenSessionIfAbsent(session: Session): Long
+
+    suspend fun tryOpenSession(
+        appId: Long,
+        startAt: Long,
+        endAt: Long?,
+        minutes: Int,
+        recoveredSharedPlay: RecoveredSharedPlayState = RecoveredSharedPlayState.NONE,
+        timingInformedSteamPlay: TimingInformedSteamPlayState = TimingInformedSteamPlayState.NONE,
+    ): Long = insertOpenSessionIfAbsent(
+        Session(
+            appId = appId,
+            startAt = startAt,
+            endAt = endAt,
+            minutes = minutes,
+            open = true,
+            recoveredSharedPlay = recoveredSharedPlay,
+            timingInformedSteamPlay = timingInformedSteamPlay,
+        ),
+    )
 
     @Query("SELECT * FROM sessions WHERE appId = :appId AND open = 1 LIMIT 1")
     suspend fun getOpenSession(appId: Long): Session?

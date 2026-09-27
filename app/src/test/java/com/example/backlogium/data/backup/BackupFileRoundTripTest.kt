@@ -1,7 +1,11 @@
 package com.example.backlogium.data.backup
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 /**
@@ -78,6 +82,45 @@ class BackupFileRoundTripTest {
         val decoded = json.decodeFromString(BackupFile.serializer(), encoded)
 
         assertEquals(original, decoded)
+    }
+
+    @Test
+    fun v2ExplicitlyWritesVersionAndEveryContributionStateWithoutCredentialsOrCursor() {
+        val v2 = BackupFile(
+            formatVersion = 2, exportedAt = "2026-07-01T00:00:00Z",
+            identity = BackupIdentity("76561198000000000"),
+            ruleConfig = BackupRuleConfig(1, 100, 30, "ANY_GAME", 2, 5, 10, 20, 40, 80),
+            games = emptyList(), achievements = emptyList(),
+            sessions = listOf(
+                BackupSession(440, "2026-07-01T00:00:00Z", null, 10,
+                    BackupCloudContribution(BackupContributionState.UNKNOWN, BackupContributionState.UNKNOWN)),
+                BackupSession(440, "2026-07-02T00:00:00Z", null, 20,
+                    BackupCloudContribution(BackupContributionState.FULL, BackupContributionState.PARTIAL)),
+                BackupSession(440, "2026-07-03T00:00:00Z", null, 30,
+                    BackupCloudContribution(BackupContributionState.NONE, BackupContributionState.NONE)),
+                BackupSession(440, "2026-07-04T00:00:00Z", null, 40,
+                    BackupCloudContribution(BackupContributionState.PARTIAL, BackupContributionState.FULL)),
+            ), dailyProgress = emptyList(), hltbData = emptyList(),
+            librarySortPrefs = BackupLibrarySortPrefs("NAME", "PLAYTIME"),
+            playerProfile = BackupPlayerProfile(0, 1, 0, 0, false),
+            computed = BackupComputed(emptyList(), emptyList()),
+        )
+        val encoded = json.encodeToString(BackupFile.serializer(), v2)
+        val root = json.parseToJsonElement(encoded).jsonObject
+        assertEquals("2", root.getValue("formatVersion").jsonPrimitive.content)
+        val contributions = root.getValue("sessions").jsonArray.map {
+            it.jsonObject.getValue("cloudContribution").jsonObject
+        }
+        assertEquals("UNKNOWN", contributions[0].getValue("recoveredSharedPlay").jsonPrimitive.content)
+        assertEquals("UNKNOWN", contributions[0].getValue("timingInformedSteamPlay").jsonPrimitive.content)
+        assertEquals("FULL", contributions[1].getValue("recoveredSharedPlay").jsonPrimitive.content)
+        assertEquals("PARTIAL", contributions[1].getValue("timingInformedSteamPlay").jsonPrimitive.content)
+        assertFalse(encoded.contains("secret"))
+        assertFalse(encoded.contains("cloudReadPosition"))
+        assertFalse(encoded.contains("pendingCloud"))
+        assertEquals(v2, json.decodeFromString(BackupFile.serializer(), encoded))
+        assertEquals(listOf(10, 20, 30, 40), json.decodeFromString(BackupFile.serializer(), encoded)
+            .sessions.map { it.minutes })
     }
 
     @Test

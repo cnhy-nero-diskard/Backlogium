@@ -2,6 +2,7 @@ package com.example.backlogium.work
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.withTransaction
 import androidx.work.Configuration
 import androidx.work.ListenableWorker
 import androidx.work.WorkInfo
@@ -18,6 +19,8 @@ import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.PendingCloudInterval
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.dto.CurrentPlayersResponse
 import com.example.backlogium.data.remote.dto.GameSchemaResponse
@@ -33,6 +36,8 @@ import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.dto.StoreItemsResponse
 import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.data.repo.CredentialsProvider
+import com.example.backlogium.data.repo.CloudPendingEvidencePruner
+import com.example.backlogium.data.repo.CloudReaderStateMutex
 import com.example.backlogium.data.repo.CloudPresencePlacementReader
 import com.example.backlogium.data.repo.CloudPresenceSnapshot
 import com.example.backlogium.data.repo.CloudReadTrigger
@@ -47,6 +52,8 @@ import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.CloudCoverageState
 import com.example.backlogium.domain.CloudPresenceInterval
 import com.example.backlogium.domain.CloudPresencePlaytimePlacement
+import com.example.backlogium.domain.CloudReaderIdentity
+import com.example.backlogium.domain.FakeSettingsRepository
 import com.example.backlogium.domain.PlaytimeObservationCommitter
 import com.example.backlogium.domain.PostPlayGenerations
 import com.example.backlogium.domain.SessionDiffer
@@ -99,6 +106,7 @@ class PostPlaySyncWorkerTest {
     private lateinit var scheduler: PostPlaySyncScheduler
     private lateinit var time: FakeTimeProvider
     private lateinit var schedulerScope: CoroutineScope
+    private lateinit var cloudSettings: FakeSettingsRepository
 
     @Before
     fun setUp() {
@@ -109,6 +117,7 @@ class PostPlaySyncWorkerTest {
         )
         workManager = WorkManager.getInstance(context)
         credentials = FakeCredentialsProvider()
+        cloudSettings = FakeSettingsRepository()
         accountChangeMarker = AccountChangeMarkerStore(context)
         db = Room.inMemoryDatabaseBuilder(context, BacklogiumDatabase::class.java)
             .allowMainThreadQueries()
@@ -200,6 +209,7 @@ class PostPlaySyncWorkerTest {
                 observationCount = 1,
                 nextPosition = null,
                 hasMore = false,
+                readerIdentity = CloudReaderIdentity(credentials.steamId, 0L),
             )
         }
 
@@ -279,6 +289,7 @@ class PostPlaySyncWorkerTest {
                 observationCount = 1,
                 nextPosition = null,
                 hasMore = false,
+                readerIdentity = CloudReaderIdentity(credentials.steamId, 0L),
             )
         }
 
@@ -288,6 +299,135 @@ class PostPlaySyncWorkerTest {
         assertEquals(30, session.minutes)
         assertEquals(oldStart, session.startAt)
         assertEquals(30, db.dailyProgressDao().getByDate("2026-07-26")?.minutesPlayed)
+    }
+
+    @Test
+    fun `post-play rejects stale placement and retires replacement evidence before periodic delta`() = runTest {
+        val longGapStart = sessionEndAt - 2L * 60 * 60 * 1_000
+        val placementStart = longGapStart + 60L * 60 * 1_000
+        val placementEnd = placementStart + 30L * 60 * 1_000
+        seedLibrary(playtime = 100, syncAt = longGapStart)
+        generations.set(APP_ID, 1L)
+        steamApi.answer = observation(playtimeForever = 130)
+        val pendingDao = db.pendingCloudEvidenceDao()
+        pendingDao.upsert(
+            PendingCloudInterval(
+                account = credentials.steamId,
+                generation = 1L,
+                appId = APP_ID,
+                startAt = placementStart,
+                endAt = placementEnd,
+                ongoing = false,
+                coverage = CloudCoverageState.CONTINUOUS.name,
+                observedUntil = null,
+                coverageLapseFrom = null,
+                coverageLapseRecoveredAt = null,
+                mayHaveStartedBefore = false,
+                gameName = "Portal",
+                windowStart = longGapStart,
+            ),
+        )
+        val reader = CloudPresencePlacementReader { _, _, _ ->
+            // The returned A/g snapshot has already been acquired when verification promotes B/g+1.
+            val staleSnapshot = CloudPresenceSnapshot(
+                windowStart = longGapStart,
+                windowEnd = sessionEndAt,
+                readAt = sessionEndAt,
+                intervals = listOf(
+                    CloudPresenceInterval(
+                        appId = APP_ID,
+                        gameName = "Portal",
+                        startAt = placementStart,
+                        endAt = placementEnd,
+                        ongoing = false,
+                        coverage = CloudCoverageState.CONTINUOUS,
+                        observedUntil = null,
+                        coverageLapseFrom = null,
+                        coverageLapseRecoveredAt = null,
+                        mayHaveStartedBefore = false,
+                    ),
+                ),
+                current = null,
+                observationCount = 1,
+                nextPosition = null,
+                hasMore = false,
+                readerIdentity = CloudReaderIdentity(credentials.steamId, 0L),
+            )
+            cloudSettings.simulateLegacyGenerationAdvance()
+            staleSnapshot
+        }
+
+        runAttempt(attempt = 0, placementReader = reader)
+
+        val session = db.sessionDao().getAll().single()
+        assertEquals(30, session.minutes)
+        assertEquals(TimingInformedSteamPlayState.NONE, session.timingInformedSteamPlay)
+        assertTrue(session.startAt != placementStart)
+        assertEquals(1L, cloudSettings.cloudReaderGeneration.first())
+        assertTrue(
+            "the committed post-play baseline retires the replacement reader's earlier interval",
+            pendingDao.intervals(credentials.steamId, 1L).none { it.appId == APP_ID },
+        )
+        assertEquals(
+            "post-play does not advance the periodic window",
+            longGapStart,
+            db.playerProfileDao().get()?.lastSyncAt,
+        )
+
+        // The next periodic poll still has a t0-based placement window, but its evidence snapshot
+        // can no longer contain B/g+1's interval ending before the t1 post-play baseline.
+        val periodicAt = sessionEndAt + 60L * 60 * 1_000
+        val remainingBIntervals = pendingDao.intervals(credentials.steamId, 1L).map { interval ->
+            CloudPresenceInterval(
+                appId = interval.appId,
+                gameName = interval.gameName,
+                startAt = interval.startAt,
+                endAt = interval.endAt,
+                ongoing = interval.ongoing,
+                coverage = CloudCoverageState.valueOf(interval.coverage),
+                observedUntil = interval.observedUntil,
+                coverageLapseFrom = interval.coverageLapseFrom,
+                coverageLapseRecoveredAt = interval.coverageLapseRecoveredAt,
+                mayHaveStartedBefore = interval.mayHaveStartedBefore,
+            )
+        }
+        val periodicCommitter = committer()
+        val periodicCommit = periodicCommitter.withValidatedPlacement(
+            CloudPresencePlaytimePlacement.Input(
+                intervals = remainingBIntervals,
+                readerIdentity = CloudReaderIdentity(credentials.steamId, 1L),
+            ),
+        ) { validatedPlacement, pruningIdentity ->
+            db.withTransaction {
+                val commit = periodicCommitter.commit(
+                    observed = listOf(
+                        PlaytimeObservationCommitter.ObservedGame(
+                            appId = APP_ID,
+                            name = "Portal",
+                            iconUrl = "",
+                            playtimeForever = 150,
+                            playtime2Weeks = 150,
+                        ),
+                    ),
+                    observedPlayAt = periodicAt,
+                    syncedAt = periodicAt,
+                    placement = validatedPlacement,
+                    pruningIdentity = pruningIdentity,
+                )
+                db.playerProfileDao().updateSyncStatus(lastSyncAt = periodicAt, lastSyncError = null)
+                commit
+            }
+        }
+
+        assertEquals(20, periodicCommit.playedDeltaByAppId[APP_ID])
+        val sessionsAfterPeriodic = db.sessionDao().getAll().filter { it.appId == APP_ID }
+        assertEquals(1, sessionsAfterPeriodic.size)
+        assertEquals(
+            "later minutes remain on the unaided t0-based session",
+            longGapStart,
+            sessionsAfterPeriodic.single().startAt,
+        )
+        assertEquals(50, sessionsAfterPeriodic.single().minutes)
     }
 
     @Test
@@ -610,6 +750,12 @@ class PostPlaySyncWorkerTest {
             dailyProgressDao = db.dailyProgressDao(),
             hiddenGameDao = db.hiddenGameDao(),
             time = time,
+        ),
+        pendingEvidencePruner = CloudPendingEvidencePruner(
+            dao = db.pendingCloudEvidenceDao(),
+            credentials = credentials,
+            settings = cloudSettings,
+            readerStateMutex = CloudReaderStateMutex(),
         ),
     )
 

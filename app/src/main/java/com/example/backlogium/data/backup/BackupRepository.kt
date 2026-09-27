@@ -11,10 +11,9 @@ import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.InputStream
+import java.io.File
 import kotlinx.coroutines.flow.first
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.decodeFromStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -64,33 +63,34 @@ class BackupRepository @Inject constructor(
      * checked first, but a resolver-reported size is metadata, not a guarantee — the read itself
      * is bounded so an absent or understated size cannot defeat the limit (tasks.md 4.2).
      *
-     * Decoding streams straight off the [java.io.InputStream] rather than materializing the file.
-     * Buffering it would have cost a `ByteArrayOutputStream`, its `toByteArray()` copy, and a
-     * UTF-16 `String` roughly twice the file's size — several multiples of the limit in peak heap
-     * before the object graph even exists, which made the cap a file-size bound rather than a
-     * memory-safety one.
+     * Stage a bounded copy in private cache for two streaming passes: version/provenance preflight
+     * and typed decode. Neither pass materializes the entire JSON as a string or object tree, and
+     * the temporary copy is removed even when either pass fails.
      */
-    @OptIn(ExperimentalSerializationApi::class)
     suspend fun parseFrom(uri: Uri): ParsedBackup {
         val reportedSize = context.contentResolver.querySize(uri)
         if (reportedSize != null && reportedSize > MAX_IMPORT_BYTES) {
             return ParsedBackup.TooLarge(MAX_IMPORT_BYTES, reportedSize)
         }
         val stream = context.contentResolver.openInputStream(uri) ?: return ParsedBackup.InvalidFormat
-        val decoded = stream.use { raw ->
-            val bounded = BoundedInputStream(raw, MAX_IMPORT_BYTES)
-            runCatching { json.decodeFromStream(BackupFile.serializer(), bounded) }
-        }
-        val file = decoded.getOrElse { failure ->
-            // The bound is enforced mid-read, so an oversized file surfaces here rather than as a
-            // size check on an already-materialized payload.
+        val temporary = File.createTempFile("backup-import-", ".json", context.cacheDir)
+        try {
+            val failure = runCatching {
+                stream.use { raw ->
+                    BoundedInputStream(raw, MAX_IMPORT_BYTES).use { bounded ->
+                        temporary.outputStream().use { bounded.copyTo(it) }
+                    }
+                }
+            }.exceptionOrNull()
             if (failure is StreamLimitExceededException) {
                 return ParsedBackup.TooLarge(MAX_IMPORT_BYTES, failure.bytesReadAtLeast)
             }
-            return ParsedBackup.InvalidFormat
+            if (failure != null) return ParsedBackup.InvalidFormat
+            val file = BackupVersionedDecoder.decode(json, temporary) ?: return ParsedBackup.InvalidFormat
+            return file.toParsedResult()
+        } finally {
+            temporary.delete()
         }
-        if (file.formatVersion != BackupFile.CURRENT_FORMAT_VERSION) return ParsedBackup.InvalidFormat
-        return file.toParsedResult()
     }
 
     /** Read and validate a retained automatic snapshot by its [SnapshotMeta.fileName]. */
@@ -116,6 +116,7 @@ class BackupRepository @Inject constructor(
 
     /** Merge a validated file into the local database — the one import/restore code path. */
     suspend fun importBackup(file: BackupFile) {
+        require(BackupValidator.validate(file) is BackupValidationResult.Valid) { "Invalid backup" }
         derivedStateWrites.withLock {
             val rules = settings.ruleConfigWithVersionFlow.first()
             // The merge's authoritative hidden-set replacement must share the visibility ordering

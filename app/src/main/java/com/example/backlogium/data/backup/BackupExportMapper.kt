@@ -101,6 +101,7 @@ class BackupExportMapper @Inject constructor(
         val steamId64 = steamId64FromCredentials ?: profile.steamId
 
         return BackupFile(
+            formatVersion = BackupFile.CURRENT_FORMAT_VERSION,
             exportedAt = time.nowMillis().toIso8601(),
             identity = BackupIdentity(steamId64 = steamId64),
             ruleConfig = config.toBackup(),
@@ -265,6 +266,12 @@ private fun Session.toBackup() = BackupSession(
     startAt = startAt.toIso8601(),
     endAt = endAt?.toIso8601(),
     minutes = minutes,
+    cloudContribution = BackupCloudContribution(
+        recoveredSharedPlay = BackupContributionState.valueOf(
+            (recoveredSharedPlay?.name ?: BackupContributionState.UNKNOWN.name)),
+        timingInformedSteamPlay = BackupContributionState.valueOf(
+            (timingInformedSteamPlay?.name ?: BackupContributionState.UNKNOWN.name)),
+    ),
 )
 
 private fun DailyProgress.toBackup() = BackupDailyProgress(

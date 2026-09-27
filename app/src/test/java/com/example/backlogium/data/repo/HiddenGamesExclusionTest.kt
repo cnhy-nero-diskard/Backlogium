@@ -6,6 +6,8 @@ import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import kotlinx.coroutines.flow.first
@@ -112,6 +114,42 @@ class HiddenGamesExclusionTest {
     }
 
     @After fun tearDown() = db.close()
+
+    @Test fun sessionRepositoryProjectsIndependentContributionFacts() = runTest {
+        val states = listOf(
+            null to null,
+            RecoveredSharedPlayState.NONE to TimingInformedSteamPlayState.NONE,
+            RecoveredSharedPlayState.FULL to TimingInformedSteamPlayState.PARTIAL,
+            RecoveredSharedPlayState.PARTIAL to TimingInformedSteamPlayState.FULL,
+            RecoveredSharedPlayState.UNKNOWN to TimingInformedSteamPlayState.UNKNOWN,
+        )
+        states.forEachIndexed { index, (recovered, timing) ->
+            db.sessionDao().insert(
+                session(visibleAppId, startAt = 10_000L + index * 1_000L, minutes = 1).copy(
+                    recoveredSharedPlay = recovered,
+                    timingInformedSteamPlay = timing,
+                ),
+            )
+        }
+
+        val contributions = sessions.sessionsSince(10_000L).first()
+            .associate { it.startAt to it.cloudContribution }
+        assertEquals(5, contributions.size)
+        assertEquals(SessionCloudContribution(), contributions[10_000L])
+        assertEquals(
+            SessionCloudContribution(ContributionState.NONE, ContributionState.NONE),
+            contributions[11_000L],
+        )
+        assertEquals(
+            SessionCloudContribution(ContributionState.FULL, ContributionState.PARTIAL),
+            contributions[12_000L],
+        )
+        assertEquals(
+            SessionCloudContribution(ContributionState.PARTIAL, ContributionState.FULL),
+            contributions[13_000L],
+        )
+        assertEquals(SessionCloudContribution(), contributions[14_000L])
+    }
 
     @Test
     fun library_omitsHiddenGame_andRestoresItOnUnhide() = runTest {

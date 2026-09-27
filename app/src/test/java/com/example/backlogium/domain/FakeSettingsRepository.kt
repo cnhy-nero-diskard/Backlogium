@@ -4,6 +4,13 @@ import com.example.backlogium.data.local.AcquiredGamesAnnouncement
 import com.example.backlogium.data.local.AutoSnapshotSettings
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.data.repo.CloudRoutinePolicy
+import com.example.backlogium.data.repo.CloudRoutineState
+import com.example.backlogium.data.repo.CloudRoutineAdmission
+import com.example.backlogium.data.repo.CloudReadSummary
+import com.example.backlogium.data.repo.CloudReadSummaryOutcome
+import com.example.backlogium.data.repo.CloudReadTrigger
+import com.example.backlogium.data.repo.CloudReadFailure
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -65,13 +72,147 @@ internal class FakeSettingsRepository : SettingsRepository {
     }
 
     private val cloudPosition = MutableStateFlow<String?>(null)
+    var failNextCloudReadPosition = false
     override val cloudReadPosition: Flow<String?> = cloudPosition
     override suspend fun setCloudReadPosition(position: String) {
+        if (failNextCloudReadPosition) {
+            failNextCloudReadPosition = false
+            error("simulated cursor persistence failure")
+        }
         cloudPosition.value = position
     }
     override suspend fun clearCloudReadPosition() {
         cloudPosition.value = null
     }
+
+    private val readerGeneration = MutableStateFlow(0L)
+    override val cloudReaderGeneration: Flow<Long> = readerGeneration
+
+    private val promotionTarget = MutableStateFlow<Long?>(null)
+    var failNextPromotionMark = false
+    var failNextPromotionFinish = false
+    var failNextPromotionAbandon = false
+    override val cloudReaderPromotionTarget: Flow<Long?> = promotionTarget
+    override suspend fun markCloudReaderPromotion(target: Long) {
+        if (failNextPromotionMark) {
+            failNextPromotionMark = false
+            error("simulated promotion marker failure")
+        }
+        promotionTarget.value = target
+    }
+    override suspend fun finishCloudReaderPromotion(): Long? {
+        if (failNextPromotionFinish) {
+            failNextPromotionFinish = false
+            error("simulated promotion finish failure")
+        }
+        val target = promotionTarget.value ?: return null
+        readerGeneration.value = target
+        // Mirrors SettingsDataStore: the marker survives the generation commit and is removed
+        // by clearCloudReaderPromotion once the post-commit cleanup has run, so a death between
+        // the two still leaves a recoverable promotion.
+        return target
+    }
+    override suspend fun clearCloudReaderPromotion() {
+        promotionTarget.value = null
+    }
+    override suspend fun abandonCloudReaderPromotion(): Long {
+        if (failNextPromotionAbandon) {
+            failNextPromotionAbandon = false
+            error("simulated removal fence failure")
+        }
+        // Mirrors SettingsDataStore: one edit advances the generation past any marked target
+        // and clears the marker, so a death cannot leave a marker behind a newer generation.
+        val next = maxOf(readerGeneration.value + 1L, (promotionTarget.value ?: 0L) + 1L)
+        readerGeneration.value = next
+        promotionTarget.value = null
+        return next
+    }
+
+    private val removalTarget = MutableStateFlow<Long?>(null)
+    override val cloudReaderRemovalTarget: Flow<Long?> = removalTarget
+    override suspend fun markCloudReaderRemoval(): Long {
+        // Mirrors SettingsDataStore: records the same fence target abandon would compute, so
+        // recovery can skip the fence when the interrupted removal already ran it.
+        val target = maxOf(readerGeneration.value + 1L, (promotionTarget.value ?: 0L) + 1L)
+        removalTarget.value = target
+        return target
+    }
+    override suspend fun clearCloudReaderRemoval() {
+        removalTarget.value = null
+    }
+
+    /** Simulates the pre-atomic fencing edit that advanced the generation without clearing the marker. */
+    fun simulateLegacyGenerationAdvance(): Long = ++readerGeneration.value
+
+    private val routine = MutableStateFlow(CloudRoutineState())
+    override val cloudRoutineState: Flow<CloudRoutineState> = routine
+    override suspend fun initializeCloudRoutinePolicy(): CloudRoutineState {
+        if (routine.value.policy == null) {
+            routine.value = CloudRoutineState(
+                policy = CloudRoutinePolicy.AUTOMATIC,
+                orderingWatermark = routine.value.orderingWatermark + 1,
+                lastAdmissionWatermark = routine.value.orderingWatermark + 1,
+            )
+        }
+        return routine.value
+    }
+    override suspend fun setCloudRoutinePolicy(policy: CloudRoutinePolicy) {
+        if (routine.value.policy != null) routine.value = routine.value.copy(policy = policy)
+    }
+    override suspend fun clearCloudRoutinePolicy() { routine.value = CloudRoutineState() }
+    override suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState {
+        check(routine.value.policy != null)
+        val next = routine.value.orderingWatermark + 1
+        routine.value = routine.value.copy(
+            lastAdmittedAt = at, orderingWatermark = next, lastAdmissionWatermark = next,
+        )
+        return routine.value
+    }
+    override suspend fun recordCloudOtherRead(terminal: Boolean) {
+        if (routine.value.policy == null) return
+        val next = routine.value.orderingWatermark + 1
+        routine.value = routine.value.copy(
+            orderingWatermark = next, latestOtherReadWatermark = next,
+            latestOtherReadTerminal = terminal,
+        )
+    }
+    override suspend fun admitCloudRoutine(at: Long): CloudRoutineAdmission {
+        val state = routine.value
+        val policy = state.policy ?: return CloudRoutineAdmission.UNAVAILABLE
+        if (!policy.routineEnabled) return CloudRoutineAdmission.UNAVAILABLE
+        if (state.lastAdmittedAt != null &&
+            at - state.lastAdmittedAt < checkNotNull(policy.minimumGapHours) * 3_600_000L
+        ) return CloudRoutineAdmission.COOLDOWN
+        if (state.latestOtherReadTerminal &&
+            state.latestOtherReadWatermark > state.lastAdmissionWatermark &&
+            state.latestOtherReadWatermark > state.consumedOtherReadWatermark
+        ) {
+            routine.value = state.copy(consumedOtherReadWatermark = state.latestOtherReadWatermark)
+            return CloudRoutineAdmission.SATISFIED_BY_READ
+        }
+        recordCloudRoutineAdmission(at)
+        return CloudRoutineAdmission.ADMITTED
+    }
+
+    private val readSummaryState = MutableStateFlow(CloudReadSummary())
+    override val cloudReadSummary: Flow<CloudReadSummary> = readSummaryState
+    override suspend fun recordCloudReadSummary(
+        at: Long, trigger: CloudReadTrigger, outcome: CloudReadSummaryOutcome,
+        failure: CloudReadFailure?, observedAt: Long?, hasMore: Boolean?,
+        windowStart: Long?, windowEnd: Long?,
+    ) {
+        val prior = readSummaryState.value
+        readSummaryState.value = prior.copy(
+            lastAttemptAt = at, lastTrigger = trigger, lastOutcome = outcome,
+            lastFailure = failure,
+            lastSuccessAt = if (outcome == CloudReadSummaryOutcome.FAILED) prior.lastSuccessAt else at,
+            latestObservationAt = listOfNotNull(prior.latestObservationAt, observedAt).maxOrNull(),
+            lastSuccessHasMore = if (outcome == CloudReadSummaryOutcome.FAILED) prior.lastSuccessHasMore else hasMore,
+            lastSuccessWindowStart = if (outcome == CloudReadSummaryOutcome.FAILED) prior.lastSuccessWindowStart else windowStart,
+            lastSuccessWindowEnd = if (outcome == CloudReadSummaryOutcome.FAILED) prior.lastSuccessWindowEnd else windowEnd,
+        )
+    }
+    override suspend fun clearCloudReadSummary() { readSummaryState.value = CloudReadSummary() }
 
     private val cloudIngestCursor = MutableStateFlow<String?>(null)
     override val cloudIngestPosition: Flow<String?> = cloudIngestCursor

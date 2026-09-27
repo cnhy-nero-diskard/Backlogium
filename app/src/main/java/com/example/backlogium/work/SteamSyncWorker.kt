@@ -19,7 +19,6 @@ import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.repo.AchievementLibraryFetch
 import com.example.backlogium.data.repo.CloudPresencePlacementReader
 import com.example.backlogium.data.repo.readOrNull
-import com.example.backlogium.data.repo.CloudPresenceSnapshot
 import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamIconMapper
@@ -28,6 +27,7 @@ import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.CloudPresencePlaytimePlacement
+import com.example.backlogium.domain.CloudReaderIdentity
 import com.example.backlogium.domain.LibraryRecency
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.PlaytimeObservationCommitter
@@ -331,6 +331,9 @@ class SteamSyncWorker @AssistedInject constructor(
         } else {
             null
         }
+        val placement = placementSnapshot?.let {
+            CloudPresencePlaytimePlacement.Input(it.intervals, it.readerIdentity)
+        }
 
         // Achievement requests are part of fetch, never the Room commit. Their payload is merged
         // below only after the raw playtime transaction has acquired its database boundary.
@@ -378,17 +381,20 @@ class SteamSyncWorker @AssistedInject constructor(
                 if (!isAccountActive(steamId)) {
                     null
                 } else {
-                    database.withTransaction {
-                        commitRawPoll(
-                            games = games,
-                            steamId = steamId,
-                            steamLevel = steamLevel,
-                            summary = summary,
-                            now = now,
-                            placementSnapshot = placementSnapshot,
-                            achievementFetch = achievementFetch,
-                            scope = scope,
-                        )
+                    committer.withValidatedPlacement(placement) { validatedPlacement, pruningIdentity ->
+                        database.withTransaction {
+                            commitRawPoll(
+                                games = games,
+                                steamId = steamId,
+                                steamLevel = steamLevel,
+                                summary = summary,
+                                now = now,
+                                placement = validatedPlacement,
+                                pruningIdentity = pruningIdentity,
+                                achievementFetch = achievementFetch,
+                                scope = scope,
+                            )
+                        }
                     }
                 }
             }
@@ -483,7 +489,8 @@ class SteamSyncWorker @AssistedInject constructor(
         steamLevel: Int,
         summary: com.example.backlogium.data.remote.dto.PlayerSummaryDto?,
         now: Long,
-        placementSnapshot: CloudPresenceSnapshot?,
+        placement: CloudPresencePlaytimePlacement.Input?,
+        pruningIdentity: CloudReaderIdentity?,
         achievementFetch: AchievementLibraryFetch,
         scope: SyncRunRecorder.RunScope,
     ): Set<Long> {
@@ -527,7 +534,8 @@ class SteamSyncWorker @AssistedInject constructor(
             },
             observedPlayAt = now,
             syncedAt = now,
-            placement = placementSnapshot?.let { CloudPresencePlaytimePlacement.Input(it.intervals) },
+            placement = placement,
+            pruningIdentity = pruningIdentity,
         )
         committed.clockRollbacks.forEach { scope.recordClockRollback() }
 

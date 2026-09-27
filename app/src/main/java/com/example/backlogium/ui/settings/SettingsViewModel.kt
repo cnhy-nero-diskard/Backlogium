@@ -17,6 +17,9 @@ import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.HiddenGamesRepository
 import com.example.backlogium.data.repo.CloudConfigurationResult
 import com.example.backlogium.data.repo.CloudPresenceRepository
+import com.example.backlogium.data.repo.CloudRoutinePolicy
+import com.example.backlogium.data.repo.CloudRoutineState
+import com.example.backlogium.data.repo.CloudReadSummary
 import com.example.backlogium.data.repo.CloudPresenceSessionIngestor
 import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.data.repo.CloudReadFailure
@@ -58,6 +61,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -204,6 +208,8 @@ data class SettingsUiState(
     val cloudLastFailure: CloudReadFailure? = null,
     val cloudHealthy: Boolean? = null,
     val cloudBusy: Boolean = false,
+    val cloudRoutine: CloudRoutineState = CloudRoutineState(),
+    val cloudReadSummary: CloudReadSummary = CloudReadSummary(),
     val cloudMessage: SettingsText? = null,
     val cloudMessageSeverity: SettingsResultSeverity? = null,
     val cloudPresenceRefilingApplied: Boolean = false,
@@ -554,6 +560,10 @@ class SettingsViewModel @Inject constructor(
             cloudLastFailure = cloud.lastFailure,
             cloudHealthy = cloud.healthy,
         )
+    }.combine(settings.cloudRoutineState) { state, routine ->
+        state.copy(cloudRoutine = routine)
+    }.combine(cloudPresence.readSummary) { state, summary ->
+        state.copy(cloudReadSummary = summary)
     }.combine(combine(cloudBusy, cloudMessage) { busy, message -> busy to message }) { state, local ->
         state.copy(
             cloudBusy = local.first,
@@ -613,6 +623,12 @@ class SettingsViewModel @Inject constructor(
             } finally {
                 cloudBusy.value = false
             }
+        }
+    }
+
+    fun setCloudRoutinePolicy(policy: CloudRoutinePolicy) {
+        viewModelScope.launch {
+            if (cloudPresence.configuration.first() != null) settings.setCloudRoutinePolicy(policy)
         }
     }
 

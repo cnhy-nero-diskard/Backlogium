@@ -4,6 +4,8 @@ import com.example.backlogium.data.repo.AchievementUnlockSummary
 import com.example.backlogium.data.repo.DayProgress
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.PlaySession
+import com.example.backlogium.data.repo.ContributionState
+import com.example.backlogium.data.repo.SessionCloudContribution
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -19,6 +21,25 @@ import java.time.ZonedDateTime
  * A fixed UTC zone keeps every case deterministic regardless of the host machine's timezone.
  */
 class HistoryGroupingTest {
+
+    @Test
+    fun sessionGroupingPreservesBothFactsWithoutMarkingUnknownOrKnownNone() {
+        val dual = session(id = 1, appId = 10, startAt = atUtc(2026, 7, 25, 12, 0), minutes = 25)
+            .copy(cloudContribution = SessionCloudContribution(
+                recoveredSharedPlay = ContributionState.PARTIAL,
+                timingInformedSteamPlay = ContributionState.FULL,
+            ))
+        val legacy = dual.copy(id = 2, cloudContribution = SessionCloudContribution())
+        val ordinary = dual.copy(id = 3, cloudContribution = SessionCloudContribution(
+            ContributionState.NONE, ContributionState.NONE,
+        ))
+        val days = groupHistory(listOf(dual, legacy, ordinary), listOf(game(10, "Owned")),
+            emptyList(), emptyList(), zone)
+        val sessions = days.single().games.single().sessions
+        assertEquals(dual.cloudContribution, sessions.first().cloudContribution)
+        assertTrue(sessions.first().cloudContribution.hasRecordedContribution())
+        assertTrue(sessions.drop(1).none { it.cloudContribution.hasRecordedContribution() })
+    }
 
     private val zone = ZoneId.of("UTC")
 

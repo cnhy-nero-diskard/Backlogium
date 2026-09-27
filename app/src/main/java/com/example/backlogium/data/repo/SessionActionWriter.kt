@@ -5,6 +5,8 @@ import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.domain.SessionDiffer
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.attributeDailyProgress
@@ -45,7 +47,11 @@ class SessionActionWriter @Inject constructor(
      *   contributes nothing here, so crediting this list cannot double-count it even when a later
      *   action in the same batch still writes.
      */
-    suspend fun applySessionActions(actions: List<SessionDiffer.SessionAction>): List<SessionDiffer.SessionAction> {
+    suspend fun applySessionActions(
+        actions: List<SessionDiffer.SessionAction>,
+        recoveredFromCloud: Boolean = false,
+        timingInformedSessionKeys: Set<Pair<Long, Long>> = emptySet(),
+    ): List<SessionDiffer.SessionAction> {
         val effective = mutableListOf<SessionDiffer.SessionAction>()
         for ((index, action) in actions.withIndex()) {
             when (action) {
@@ -55,19 +61,45 @@ class SessionActionWriter @Inject constructor(
                         startAt = action.startAt,
                         endAt = action.endAt,
                         minutes = action.minutes,
+                        recoveredSharedPlay = if (recoveredFromCloud && action.addedMinutes > 0) {
+                            RecoveredSharedPlayState.FULL
+                        } else {
+                            RecoveredSharedPlayState.NONE
+                        },
+                        timingInformedSteamPlay = if (action.appId to action.startAt in timingInformedSessionKeys) {
+                            TimingInformedSteamPlayState.FULL
+                        } else {
+                            TimingInformedSteamPlayState.NONE
+                        },
                     )
+                    val historicalClose = if (opened == -1L) {
+                        historicalBackfillClose(actions, index, action)
+                    } else {
+                        null
+                    }
                     if (opened != -1L) {
                         effective += action
-                    } else if (isHistoricalBackfill(actions, index, action)) {
-                        // Historical backfill while a newer session is still open: a separate
-                        // closed-to-be row, not a merge into the live one.
+                    } else if (historicalClose != null) {
+                        // Historical backfill while a newer session is still open: persist the
+                        // completed interval closed, so even the intermediate write respects the
+                        // database's one-open-session index.
                         sessionDao.insert(
                             Session(
                                 appId = action.appId,
                                 startAt = action.startAt,
-                                endAt = action.endAt,
+                                endAt = historicalClose.endAt,
                                 minutes = action.minutes,
-                                open = true,
+                                open = false,
+                                recoveredSharedPlay = if (recoveredFromCloud && action.addedMinutes > 0) {
+                                    RecoveredSharedPlayState.FULL
+                                } else {
+                                    RecoveredSharedPlayState.NONE
+                                },
+                                timingInformedSteamPlay = if (action.appId to action.startAt in timingInformedSessionKeys) {
+                                    TimingInformedSteamPlayState.FULL
+                                } else {
+                                    TimingInformedSteamPlayState.NONE
+                                },
                             ),
                         )
                         effective += action
@@ -88,6 +120,13 @@ class SessionActionWriter @Inject constructor(
                                     startAt = minOf(it.startAt, action.startAt),
                                     minutes = it.minutes + action.addedMinutes,
                                     endAt = maxOf(it.endAt ?: it.startAt, action.endAt),
+                                    recoveredSharedPlay = it.recoveryAfter(
+                                        recoveredFromCloud, action.addedMinutes,
+                                    ),
+                                    timingInformedSteamPlay = it.timingAfter(
+                                        action.appId to action.startAt in timingInformedSessionKeys,
+                                        action.addedMinutes,
+                                    ),
                                 ),
                             )
                             effective += action
@@ -105,18 +144,28 @@ class SessionActionWriter @Inject constructor(
                         val endAt = maxOf(it.endAt ?: it.startAt, action.endAt)
                         val minutes = maxOf(it.minutes, action.minutes)
                         if (endAt != it.endAt || minutes != it.minutes || !it.open) {
-                            sessionDao.update(
+                            val updated = sessionDao.updateUnlessConflictingOpenSession(
                                 it.copy(
                                     minutes = minutes,
                                     endAt = endAt,
                                     open = true,
+                                    openAppId = it.appId,
+                                    recoveredSharedPlay = it.recoveryAfter(
+                                        recoveredFromCloud, minutes - it.minutes,
+                                    ),
+                                    timingInformedSteamPlay = it.timingAfter(
+                                        action.appId to action.startAt in timingInformedSessionKeys,
+                                        minutes - it.minutes,
+                                    ),
                                 ),
                             )
-                            effective += action.copy(
-                                minutes = minutes,
-                                endAt = endAt,
-                                addedMinutes = minutes - it.minutes,
-                            )
+                            if (updated > 0) {
+                                effective += action.copy(
+                                    minutes = minutes,
+                                    endAt = endAt,
+                                    addedMinutes = minutes - it.minutes,
+                                )
+                            }
                         }
                     }
                 }
@@ -127,7 +176,9 @@ class SessionActionWriter @Inject constructor(
                     sessionDao.getAll()
                         .firstOrNull { it.appId == action.appId && it.open && it.startAt == action.startAt }
                         ?.let {
-                        sessionDao.update(it.copy(open = false, endAt = action.endAt))
+                        sessionDao.update(
+                            it.copy(open = false, openAppId = null, endAt = action.endAt),
+                        )
                         effective += action
                     }
             }
@@ -151,33 +202,63 @@ class SessionActionWriter @Inject constructor(
     suspend fun apply(
         actions: List<SessionDiffer.SessionAction>,
         goalAppIds: Set<Long>,
+        recoveredFromCloud: Boolean = false,
     ): List<SessionDiffer.SessionAction> {
         if (actions.isEmpty()) return emptyList()
         return transaction.run {
-            val effective = applySessionActions(actions)
+            val effective = applySessionActions(actions, recoveredFromCloud)
             if (effective.isNotEmpty()) creditDailyProgress(effective, goalAppIds)
             effective
         }
     }
 
-    private suspend fun isHistoricalBackfill(
+    private fun Session.recoveryAfter(cloud: Boolean, addedMinutes: Int): RecoveredSharedPlayState? {
+        if (addedMinutes <= 0) return recoveredSharedPlay
+        if (!cloud) return if (recoveredSharedPlay == RecoveredSharedPlayState.FULL) {
+            RecoveredSharedPlayState.PARTIAL
+        } else {
+            recoveredSharedPlay
+        }
+        return when {
+            minutes == 0 -> RecoveredSharedPlayState.FULL
+            recoveredSharedPlay == RecoveredSharedPlayState.FULL -> RecoveredSharedPlayState.FULL
+            else -> RecoveredSharedPlayState.PARTIAL
+        }
+    }
+
+    private fun Session.timingAfter(informed: Boolean, addedMinutes: Int): TimingInformedSteamPlayState? {
+        if (addedMinutes <= 0) return timingInformedSteamPlay
+        if (!informed) return if (timingInformedSteamPlay == TimingInformedSteamPlayState.FULL) {
+            TimingInformedSteamPlayState.PARTIAL
+        } else {
+            timingInformedSteamPlay
+        }
+        return if (minutes == 0 || timingInformedSteamPlay == TimingInformedSteamPlayState.FULL) {
+            TimingInformedSteamPlayState.FULL
+        } else {
+            TimingInformedSteamPlayState.PARTIAL
+        }
+    }
+
+    private suspend fun historicalBackfillClose(
         actions: List<SessionDiffer.SessionAction>,
         index: Int,
         action: SessionDiffer.SessionAction.Open,
-    ): Boolean {
+    ): SessionDiffer.SessionAction.Close? {
         val earliestOpenStart = sessionDao.getAll()
             .asSequence()
             .filter { it.appId == action.appId && it.open }
             .minOfOrNull { it.startAt }
-            ?: return false
-        if (action.endAt >= earliestOpenStart) return false
+            ?: return null
+        if (action.endAt >= earliestOpenStart) return null
         // Only a closed-to-be row takes the separate path. A live Open with no following Close
         // is the concurrent-observation race (#116), which must still merge even when it happens
         // to sort earlier.
-        return actions.subList(index + 1, actions.size).any {
-            it is SessionDiffer.SessionAction.Close &&
+        return actions.subList(index + 1, actions.size)
+            .filterIsInstance<SessionDiffer.SessionAction.Close>()
+            .firstOrNull {
                 it.appId == action.appId &&
-                it.startAt == action.startAt
-        }
+                    it.startAt == action.startAt
+            }
     }
 }

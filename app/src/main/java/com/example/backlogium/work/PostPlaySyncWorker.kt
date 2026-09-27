@@ -16,7 +16,6 @@ import com.example.backlogium.data.repo.PlaytimeObservation
 import com.example.backlogium.data.repo.RecentPlaytimeRepository
 import com.example.backlogium.data.repo.CloudPresencePlacementReader
 import com.example.backlogium.data.repo.readOrNull
-import com.example.backlogium.data.repo.CloudPresenceSnapshot
 import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.domain.CloudPresencePlaytimePlacement
 import com.example.backlogium.domain.PlaytimeObservationCommitter
@@ -164,7 +163,9 @@ class PostPlaySyncWorker @AssistedInject constructor(
                     steamId = steamId,
                     observed = observation,
                     scope = scope,
-                    placementSnapshot = placementSnapshot,
+                    placement = placementSnapshot?.let {
+                        CloudPresencePlaytimePlacement.Input(it.intervals, it.readerIdentity)
+                    },
                 )
                 outcome = if (recorded == null) {
                     // Refused: a newer session end took this game over while the fetch was in
@@ -256,7 +257,7 @@ class PostPlaySyncWorker @AssistedInject constructor(
         steamId: String,
         observed: PlaytimeObservation,
         scope: SyncRunRecorder.RunScope,
-        placementSnapshot: CloudPresenceSnapshot?,
+        placement: CloudPresencePlaytimePlacement.Input?,
     ): Boolean? {
         val recordedPlay = syncCoordinator.withLock {
             if (!isAccountActive(steamId)) {
@@ -264,29 +265,32 @@ class PostPlaySyncWorker @AssistedInject constructor(
             } else {
                 generations.ifActive(appId, generation) {
                     withContext(NonCancellable) {
-                        database.withTransaction {
-                            val commit = committer.commit(
-                                observed = listOf(
-                                    PlaytimeObservationCommitter.ObservedGame(
-                                        appId = observed.appId,
-                                        name = observed.name,
-                                        // This endpoint carries no icon, and blank leaves the stored one
-                                        // alone. Steam owns the field; the next periodic poll sets it.
-                                        iconUrl = "",
-                                        playtimeForever = observed.playtimeForever,
-                                        playtime2Weeks = observed.playtime2Weeks,
+                        committer.withValidatedPlacement(placement) { validatedPlacement, pruningIdentity ->
+                            database.withTransaction {
+                                val commit = committer.commit(
+                                    observed = listOf(
+                                        PlaytimeObservationCommitter.ObservedGame(
+                                            appId = observed.appId,
+                                            name = observed.name,
+                                            // This endpoint carries no icon, and blank leaves the stored one
+                                            // alone. Steam owns the field; the next periodic poll sets it.
+                                            iconUrl = "",
+                                            playtimeForever = observed.playtimeForever,
+                                            playtime2Weeks = observed.playtime2Weeks,
+                                        ),
                                     ),
-                                ),
-                                // The session end this schedule was triggered by, not this attempt's own
-                                // clock: attempt four runs eight minutes after the play, and recording it
-                                // eight minutes late would make one game's history disagree with itself
-                                // depending on which attempt happened to see the increase.
-                                observedPlayAt = sessionEndAt,
-                                syncedAt = time.nowMillis(),
-                                placement = placementSnapshot?.let { CloudPresencePlaytimePlacement.Input(it.intervals) },
-                            )
-                            commit.clockRollbacks.forEach { scope.recordClockRollback() }
-                            commit.recordedPlay
+                                    // The session end this schedule was triggered by, not this attempt's own
+                                    // clock: attempt four runs eight minutes after the play, and recording it
+                                    // eight minutes late would make one game's history disagree with itself
+                                    // depending on which attempt happened to see the increase.
+                                    observedPlayAt = sessionEndAt,
+                                    syncedAt = time.nowMillis(),
+                                    placement = validatedPlacement,
+                                    pruningIdentity = pruningIdentity,
+                                )
+                                commit.clockRollbacks.forEach { scope.recordClockRollback() }
+                                commit.recordedPlay
+                            }
                         }
                     }
                 }

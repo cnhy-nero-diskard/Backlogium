@@ -4,6 +4,8 @@ import com.example.backlogium.data.repo.AchievementUnlockSummary
 import com.example.backlogium.data.repo.DayProgress
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.PlaySession
+import com.example.backlogium.data.repo.SessionCloudContribution
+import com.example.backlogium.data.repo.ContributionState
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -23,7 +25,35 @@ data class HistorySessionUi(
     val startAt: Long,
     val minutes: Int,
     val open: Boolean,
+    val cloudContribution: SessionCloudContribution = SessionCloudContribution(),
 )
+
+internal fun SessionCloudContribution.hasRecordedContribution(): Boolean =
+    recoveredSharedPlay == ContributionState.FULL || recoveredSharedPlay == ContributionState.PARTIAL ||
+        timingInformedSteamPlay == ContributionState.FULL || timingInformedSteamPlay == ContributionState.PARTIAL
+
+data class HistoryContribution(val date: String, val game: HistoryGameGroup, val session: HistorySessionUi)
+
+data class HistoryCloudActivity(
+    val recovered: List<HistoryContribution>,
+    val timed: List<HistoryContribution>,
+) {
+    val hasContributions: Boolean get() = recovered.isNotEmpty() || timed.isNotEmpty()
+}
+
+/** A dual-fact session appears in both lists; only already visible games are included. */
+fun historyCloudActivity(days: List<HistoryDayGroup>, readerConfigured: Boolean): HistoryCloudActivity {
+    if (!readerConfigured) return HistoryCloudActivity(emptyList(), emptyList())
+    val visible = days.flatMap { day -> day.games.flatMap { game ->
+        game.sessions.map { session -> HistoryContribution(day.date, game, session) }
+    } }
+    return HistoryCloudActivity(
+        recovered = visible.filter { it.session.cloudContribution.recoveredSharedPlay == ContributionState.FULL ||
+            it.session.cloudContribution.recoveredSharedPlay == ContributionState.PARTIAL },
+        timed = visible.filter { it.session.cloudContribution.timingInformedSteamPlay == ContributionState.FULL ||
+            it.session.cloudContribution.timingInformedSteamPlay == ContributionState.PARTIAL },
+    )
+}
 
 /** A game played on a given day, holding that day's sessions for that game. */
 data class HistoryGameGroup(
@@ -140,6 +170,7 @@ fun groupHistory(
                             startAt = it.startAt,
                             minutes = it.minutes,
                             open = it.open,
+                            cloudContribution = it.cloudContribution,
                         )
                     },
                 )

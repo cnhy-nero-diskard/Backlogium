@@ -99,6 +99,16 @@ interaction, filtering, sorting, density changes, and newly added controls need 
 declaration. Haptics are reserved for the small set of earned or committed moments named by the
 shared vocabulary, and never replace the visible result.
 
+**A screen the goldens render and a re-recorded baseline ship together.** Editing `ui/home`,
+`ui/library`, `ui/history`, `ui/analytics`, `ui/settings`, `ui/components`, `ui/theme`,
+`res/values/strings.xml`, or a screenshot fixture changes pixels the tracked Roborazzi baselines
+assert on. Re-record in the same change, or label the pull request `no-golden-change` when the edit
+provably cannot move a rendered pixel — never in a later fix-up commit. The `Visual baseline check`
+workflow enforces this; `docs/visual-regression-screenshots.md` has the record and verify commands.
+A stale golden is not a cosmetic problem: it is the reason a branch can publish four consecutive red
+runs before anyone looks, each costing a Gradle round-trip to diagnose.
+
+
 **The on-device engine is the sole author of derived values.** Sessions, playtime,
 XP, streaks, and levels are computed on the phone, in `:gamification`. The cloud
 poller records raw observations and derives nothing. Two independent session

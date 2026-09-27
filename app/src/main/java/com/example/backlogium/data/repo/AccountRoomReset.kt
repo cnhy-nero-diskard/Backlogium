@@ -30,6 +30,9 @@ class AccountRoomReset @Inject constructor(
             // would leave the previous account's success visible as Healthy in Settings and
             // its intervals visible in Diagnostics until the new account reads.
             database.cloudReadDao().deleteAll()
+            // Pending placement evidence is account-bound, even when no reader is configured.
+            database.pendingCloudEvidenceDao().deleteAllIntervals()
+            database.pendingCloudEvidenceDao().deleteAllBoundaries()
             database.gameDao().deleteAll()
             // Which shared games were removed is a decision about one person's borrowed library;
             // carrying it to another account would silently refuse to admit their games.

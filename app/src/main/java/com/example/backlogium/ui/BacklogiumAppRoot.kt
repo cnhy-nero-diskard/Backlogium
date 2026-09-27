@@ -45,6 +45,8 @@ import com.example.backlogium.ui.diagnostics.DiagnosticsScreen
 import com.example.backlogium.ui.gamedetail.GameDetailScreen
 import com.example.backlogium.ui.gapplan.GapPlanScreen
 import com.example.backlogium.ui.history.HistoryScreen
+import com.example.backlogium.ui.history.CloudActivityScreen
+import com.example.backlogium.ui.history.HistoryViewModel
 import com.example.backlogium.ui.home.HomeRoute
 import com.example.backlogium.ui.library.LibraryScreen
 import com.example.backlogium.ui.navigation.Destination
@@ -111,6 +113,7 @@ private const val ROUTE_COLLECTIONS = "collections"
  * route means a plan built from either entry point is the same plan.
  */
 private const val ROUTE_GAP_PLAN = "gap_plan"
+private const val ROUTE_CLOUD_ACTIVITY = "cloud_activity"
 
 /** Route for a read-only derived collection detail surface. */
 private const val ROUTE_SMART_COLLECTION = "smart_collection/{collectionId}"
@@ -193,7 +196,7 @@ fun BacklogiumAppRoot(
                 AnimatedVisibility(
                     visible = !fullDestinationGameDetailPresented &&
                         !onCollectionScreen &&
-                        !settingsDetailPresented,
+                        !settingsDetailPresented && currentDestination?.route != ROUTE_CLOUD_ACTIVITY,
                     enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                     exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                 ) {
@@ -260,7 +263,16 @@ fun BacklogiumAppRoot(
                         onOpenGameDetail = { appId -> navController.navigate(gameDetailRoute(appId)) },
                     )
                 }
-                composable(Destination.HISTORY.route) { HistoryScreen() }
+                composable(Destination.HISTORY.route) {
+                    HistoryScreen(onOpenCloudActivity = { navController.navigate(ROUTE_CLOUD_ACTIVITY) })
+                }
+                composable(ROUTE_CLOUD_ACTIVITY) {
+                    val historyEntry = remember(it) { navController.getBackStackEntry(Destination.HISTORY.route) }
+                    CloudActivityScreen(
+                        viewModel = hiltViewModel<HistoryViewModel>(historyEntry),
+                        onBack = { navController.popBackStack() },
+                    )
+                }
                 composable(Destination.ANALYTICS.route) { AnalyticsScreen() }
                 navigation(
                     startDestination = SettingsRoutes.OVERVIEW,
