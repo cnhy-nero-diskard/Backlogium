@@ -39,12 +39,11 @@ jobs:
           git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed.txt"
 
       # The path list arrives through a file and the labels through the environment, so neither
-      # repository content nor pull-request metadata can be interpreted as shell syntax. Labels are
-      # newline-joined because GitHub does not permit a newline in a label name, which makes the
-      # separator unambiguous.
+      # repository content nor pull-request metadata can be interpreted as shell syntax. Keep labels
+      # as JSON so the value round-trips losslessly through the workflow expression and Python.
       - name: Audit baseline currency
         env:
-          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, '\n') }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
           set -euo pipefail
           python scripts/check_visual_baseline.py check \

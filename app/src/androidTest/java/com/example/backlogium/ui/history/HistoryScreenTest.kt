@@ -53,6 +53,7 @@ class HistoryScreenTest {
         )
 
         composeRule.onNodeWithText("Today").assertIsDisplayed()
+        composeRule.onNodeWithText("Quest met").assertIsDisplayed()
         composeRule.onNodeWithText("Earlier history").performScrollTo().assertIsDisplayed()
 
         composeRule.onNodeWithTag(TAG_HISTORY_MEASUREMENT_HELP).performClick()

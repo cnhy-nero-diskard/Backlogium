@@ -1,10 +1,16 @@
+import contextlib
+import io
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from check_visual_baseline import (
     NO_CHANGE_LABEL,
     check_visual_baseline,
     is_fixture_input,
     is_golden,
+    main,
     normalize_path,
 )
 
@@ -102,6 +108,36 @@ class CheckVisualBaselineTest(unittest.TestCase):
         self.assertEqual(1, len(errors))
         self.assertIn("and 32 more", errors[0])
         self.assertLessEqual(errors[0].count("File"), 8)
+
+
+class WorkflowLabelSerializationTest(unittest.TestCase):
+    def test_workflow_json_round_trip_preserves_acknowledgement_among_multiple_labels(self):
+        workflow = Path(__file__).parents[1] / ".github/workflows/visual-baseline-check.yml"
+        self.assertIn(
+            "PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}",
+            workflow.read_text(encoding="utf-8"),
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            changed_file = Path(temporary_directory) / "changed.txt"
+            changed_file.write_text(f"{HISTORY_SCREEN}\n", encoding="utf-8")
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                result = main(
+                    [
+                        "check",
+                        "--changed-file",
+                        str(changed_file),
+                        "--labels",
+                        json.dumps(["chore", NO_CHANGE_LABEL]),
+                    ]
+                )
+
+        self.assertEqual(0, result)
+        self.assertIn("tracked Roborazzi baselines are current", stdout.getvalue())
+        self.assertIn(NO_CHANGE_LABEL, stderr.getvalue())
+        self.assertNotIn("ERROR:", stderr.getvalue())
 
 
 if __name__ == "__main__":

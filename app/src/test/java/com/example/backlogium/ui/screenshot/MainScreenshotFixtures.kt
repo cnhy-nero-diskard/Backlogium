@@ -128,7 +128,12 @@ internal fun MainScreenshotFixtureHost(fixture: MainScreenshotFixture) {
             )
             MainFixtureKind.HISTORY_POPULATED -> HistoryContent(populatedHistoryState())
             MainFixtureKind.HISTORY_EMPTY -> HistoryContent(
-                HistoryUiState(loading = false, configured = true, today = FIXED_TODAY.toString()),
+                HistoryUiState(
+                    loading = false,
+                    configured = true,
+                    today = FIXED_TODAY.toString(),
+                    cloudReaderConfigured = true,
+                ),
             )
             MainFixtureKind.ANALYTICS_POPULATED -> AnalyticsContent(analyticsState())
             MainFixtureKind.ANALYTICS_SELECTED_DAY -> AnalyticsContent(analyticsState(selectedDay = true))
@@ -411,6 +416,7 @@ private fun populatedHistoryState(): HistoryUiState {
         configured = true,
         days = listOf(todayGroup, earlierGroup),
         today = FIXED_TODAY.toString(),
+        cloudReaderConfigured = true,
     )
 }
 

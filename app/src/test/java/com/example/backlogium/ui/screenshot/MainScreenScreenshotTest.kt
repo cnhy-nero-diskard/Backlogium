@@ -1,5 +1,7 @@
 package com.example.backlogium.ui.screenshot
 
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onNodeWithText
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.LooperMode
@@ -141,6 +143,7 @@ internal class MainScreenScreenshotStandardTest : MainScreenshotTestBase() {
     @Test
     fun historyEmptyDarkStandardBaseline() {
         captureFixture("alternatives/history/empty/dark/standard.png", MainFixtureKind.HISTORY_EMPTY, darkTheme = true)
+        composeRule.onNodeWithText("Cloud activity").assertIsDisplayed()
     }
 
     @Test

@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -190,30 +191,36 @@ internal fun HistoryContent(
                 .padding(horizontal = 20.dp, vertical = 16.dp),
         ) {
             item(key = "history-heading") {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = stringResource(R.string.history_title),
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(
-                        onClick = { showMeasurementHelp = true },
-                        modifier = Modifier.testTag(TAG_HISTORY_MEASUREMENT_HELP),
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(stringResource(R.string.history_measurement_help_action))
+                        Text(
+                            text = stringResource(R.string.history_title),
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(
+                            onClick = { showMeasurementHelp = true },
+                            modifier = Modifier.testTag(TAG_HISTORY_MEASUREMENT_HELP),
+                        ) {
+                            Text(stringResource(R.string.history_measurement_help_action))
+                        }
                     }
-                }
-            }
-
-            if (state.cloudReaderConfigured) {
-                item(key = "cloud-activity") {
-                    TextButton(onClick = onOpenCloudActivity, modifier = Modifier.fillMaxWidth()) {
-                        Icon(TablerIcons.Cloud, contentDescription = null)
-                        Text(stringResource(R.string.history_cloud_activity), modifier = Modifier.padding(start = 8.dp))
+                    if (state.cloudReaderConfigured) {
+                        TextButton(
+                            onClick = onOpenCloudActivity,
+                            modifier = Modifier.align(Alignment.Start),
+                            contentPadding = PaddingValues(horizontal = 0.dp),
+                        ) {
+                            Icon(TablerIcons.Cloud, contentDescription = null)
+                            Text(
+                                stringResource(R.string.history_cloud_activity),
+                                modifier = Modifier.padding(start = 8.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -306,7 +313,6 @@ internal fun historyVisibleItemKeys(
     expandedDays: Set<String>,
 ): List<String> = buildList {
     add("history-heading")
-    if (state.cloudReaderConfigured) add("cloud-activity")
     if (state.days.isEmpty()) {
         add("history-empty")
     } else {
@@ -450,6 +456,11 @@ private fun DayHeaderRow(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                val questColor = if (day.questMet) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         formatHistoryDate(day.date),
@@ -461,23 +472,32 @@ private fun DayHeaderRow(
                         text = daySummary(day),
                         style = MaterialTheme.typography.bodySmall,
                     )
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (expandable) {
+                    Row(
+                        modifier = Modifier.padding(top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Icon(
-                            imageVector = if (expanded) TablerIcons.ChevronUp else TablerIcons.ChevronDown,
+                            imageVector = if (day.questMet) TablerIcons.CircleCheck else TablerIcons.CircleMinus,
                             contentDescription = null,
+                            tint = questColor,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Text(
+                            text = stringResource(
+                                if (day.questMet) R.string.history_quest_met else R.string.history_quest_not_met,
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp),
                         )
                     }
+                }
+                if (expandable) {
                     Icon(
-                        imageVector = if (day.questMet) TablerIcons.CircleCheck else TablerIcons.CircleMinus,
+                        imageVector = if (expanded) TablerIcons.ChevronUp else TablerIcons.ChevronDown,
                         contentDescription = null,
-                        tint = if (day.questMet) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        modifier = Modifier.size(24.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.size(18.dp),
                     )
                 }
             }

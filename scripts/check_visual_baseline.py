@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import codecs
+import json
 import sys
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -163,7 +164,12 @@ def read_path_list(path: Path) -> list[str]:
 
 def _check_command(args: argparse.Namespace) -> int:
     changed = read_path_list(Path(args.changed_file))
-    labels = (args.labels or "").splitlines()
+    try:
+        labels = json.loads(args.labels)
+    except json.JSONDecodeError as error:
+        raise ValueError("--labels must be a JSON array of label names") from error
+    if not isinstance(labels, list) or not all(isinstance(label, str) for label in labels):
+        raise ValueError("--labels must be a JSON array of label names")
     errors, warnings = check_visual_baseline(changed=changed, labels=labels)
     for warning in warnings:
         print(f"WARNING: {warning}", file=sys.stderr)
@@ -182,10 +188,9 @@ def build_parser() -> argparse.ArgumentParser:
     check = subparsers.add_parser(
         "check", help="audit one pull request's Roborazzi baseline currency before it merges"
     )
-    # The path list arrives through a file and the labels through the environment, so neither
-    # repository content nor pull-request metadata can be interpreted as shell syntax.
+    # The path list arrives through a file and labels arrive as a JSON array through the environment.
     check.add_argument("--changed-file", required=True)
-    check.add_argument("--labels", default="")
+    check.add_argument("--labels", default="[]")
     check.set_defaults(handler=_check_command)
     return parser
 
