@@ -41,6 +41,56 @@ class HistoryGroupingTest {
         assertTrue(sessions.drop(1).none { it.cloudContribution.hasRecordedContribution() })
     }
 
+    @Test
+    fun loadOlderShowsDatedCloudTimedPlayAndKeepsItDistinctFromDeviceRecordedPlay() {
+        val today = LocalDate.of(2026, 8, 1)
+        val ordinary = session(
+            id = 30,
+            appId = 10,
+            startAt = atUtc(2026, 6, 15, 12, 0),
+            minutes = 20,
+        ).copy(cloudContribution = SessionCloudContribution(
+            recoveredSharedPlay = ContributionState.NONE,
+            timingInformedSteamPlay = ContributionState.NONE,
+        ))
+        val transferred = ordinary.copy(
+            id = 31,
+            startAt = atUtc(2026, 6, 15, 13, 0),
+            minutes = 25,
+            cloudContribution = SessionCloudContribution(
+                recoveredSharedPlay = ContributionState.NONE,
+                timingInformedSteamPlay = ContributionState.FULL,
+            ),
+        )
+        val sessions = listOf(ordinary, transferred)
+        val initialCutoff = historyWindowCutoffMillis(30, today, zone)
+        val olderWindowDays = nextHistoryWindowDays(30)
+        val expandedCutoff = historyWindowCutoffMillis(olderWindowDays, today, zone)
+
+        assertEquals(60, olderWindowDays)
+        assertTrue(sessions.none { it.startAt >= initialCutoff })
+
+        val visibleAfterLoadOlder = sessions.filter { it.startAt >= expandedCutoff }
+        val days = groupHistory(
+            sessions = visibleAfterLoadOlder,
+            games = listOf(game(10, "Owned")),
+            dailyProgress = emptyList(),
+            achievementUnlocks = emptyList(),
+            zone = zone,
+        )
+        val day = days.single()
+        assertEquals("2026-06-15", day.date)
+        assertEquals(listOf(30L, 31L), day.games.single().sessions.map { it.id })
+        assertEquals(
+            ContributionState.FULL,
+            day.games.single().sessions.last().cloudContribution.timingInformedSteamPlay,
+        )
+
+        val activity = historyCloudActivity(days, readerConfigured = true)
+        assertTrue(activity.recovered.isEmpty())
+        assertEquals(listOf(31L), activity.timed.map { it.session.id })
+    }
+
     private val zone = ZoneId.of("UTC")
 
     @Test

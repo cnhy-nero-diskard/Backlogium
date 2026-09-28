@@ -21,6 +21,14 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 
+private const val HISTORY_WINDOW_STEP_DAYS = 30
+
+/** The next History window size used by the explicit “Load older” action. */
+internal fun nextHistoryWindowDays(currentWindowDays: Int): Int {
+    require(currentWindowDays > 0) { "currentWindowDays must be positive" }
+    return currentWindowDays + HISTORY_WINDOW_STEP_DAYS
+}
+
 data class HistoryUiState(
     val loading: Boolean = true,
     val configured: Boolean = true,
@@ -108,13 +116,12 @@ class HistoryViewModel @Inject constructor(
             initialValue = HistoryUiState(),
         )
 
-    /** Widen the window by another [WINDOW_STEP_DAYS] days, appending older days to the list. */
+    /** Widen the window by another 30 days, appending older days to the list. */
     fun loadOlder() {
-        windowDays.value += WINDOW_STEP_DAYS
+        windowDays.value = nextHistoryWindowDays(windowDays.value)
     }
 
     private companion object {
         const val INITIAL_WINDOW_DAYS = 30
-        const val WINDOW_STEP_DAYS = 30
     }
 }
