@@ -33,4 +33,4 @@
 
 ## 5. Cross-cutting verification
 
-- [ ] 5.1 Run `openspec validate choose-cloud-presence-refile-range --strict`, `npm run build` and functions tests, and relevant Android unit/migration tests; verify a configured user's earliest-retained choice reaches completion in bounded batches, then dates only eligible pre-cutoff imported Steam minutes in History while default first reads, combined credited minutes, reversal and ordinary placement remain unchanged.
+- [x] 5.1 Run `openspec validate choose-cloud-presence-refile-range --strict`, `npm run build` and functions tests, and relevant Android unit/migration tests; verify a configured user's earliest-retained choice reaches completion in bounded batches, then dates only eligible pre-cutoff imported Steam minutes in History while default first reads, combined credited minutes, reversal and ordinary placement remain unchanged.
