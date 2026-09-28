@@ -422,6 +422,7 @@ internal fun DataPrivacySettingsContent(state: SettingsUiState, actions: Setting
     HistoryImportCard(
         imported = state.historyImported,
         importing = state.isImportingHistory,
+        cloudTransferApplied = state.cloudPresenceTransferApplied,
         onImport = actions.onImportHistory,
         onReset = actions.onResetHistoryImport,
     )
@@ -1665,6 +1666,7 @@ private fun MismatchImportDialog(
 private fun HistoryImportCard(
     imported: Boolean,
     importing: Boolean,
+    cloudTransferApplied: Boolean,
     onImport: () -> Unit,
     onReset: () -> Unit,
 ) {
@@ -1693,10 +1695,17 @@ private fun HistoryImportCard(
                     text = stringResource(R.string.settings_history_imported_description),
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (cloudTransferApplied) {
+                    Text(
+                        text = stringResource(R.string.settings_history_reset_cloud_refile_required),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 TextButton(
                     onClick = { showResetConfirm = true },
-                    enabled = !importing,
+                    enabled = historyImportResetEnabled(imported, importing, cloudTransferApplied),
                 ) {
                     if (importing) {
                         CircularProgressIndicator(

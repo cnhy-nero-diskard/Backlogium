@@ -180,6 +180,7 @@
     <string name="settings_import">Import</string>
     <string name="settings_history_reset_title">Reset imported history?</string>
     <string name="settings_history_reset_message">This removes imported past playtime from your XP; your level drops back to reflect tracked playtime only. Streaks and tracked sessions are kept, and you can import again afterward.</string>
+    <string name="settings_history_reset_cloud_refile_required">Undo the cloud history re-file in Cloud presence before resetting this import.</string>
     <string name="settings_reset">Reset</string>
     <string name="settings_apply_rules_title">Apply new rules?</string>
     <string name="settings_apply_rules_message">Every day you have recorded is re-evaluated under the new rules.</string>

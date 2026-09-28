@@ -326,6 +326,12 @@ data class SettingsGroupSummary(
     val loading: Boolean = false,
 )
 
+internal fun historyImportResetEnabled(
+    imported: Boolean,
+    importing: Boolean,
+    cloudTransferApplied: Boolean,
+): Boolean = imported && !importing && !cloudTransferApplied
+
 /** Blocking always wins over in-progress, which wins over a recommendation, then quiet health. */
 fun settingsAttention(
     blocking: Boolean,

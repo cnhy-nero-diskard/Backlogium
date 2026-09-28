@@ -43,9 +43,8 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             RuntimeEnvironment.getApplication(),
             BacklogiumDatabase::class.java,
         ).allowMainThreadQueries().build()
-        val realSettings = DataStoreSettingsRepository(
-            SettingsDataStore(RuntimeEnvironment.getApplication()),
-        )
+        val settingsDataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val realSettings = DataStoreSettingsRepository(settingsDataStore)
         val marks = InMemoryProgressMarksStore(ProgressMarks(lastCelebratedLevel = 1, initialized = true))
         val updater = GamificationUpdater(
             sessionDao = database.sessionDao(),
@@ -58,6 +57,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             progressMarksStore = marks,
         )
         val failingSettings = FailOnceOnHistoricalBackup(realSettings)
+        val derivedStateWrites = DerivedStateWriteCoordinator()
         fun useCase(settings: SettingsRepository) = CloudPresencePlaytimeRefilingUseCase(
             gameDao = database.gameDao(),
             sessionDao = database.sessionDao(),
@@ -68,8 +68,17 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             gamificationUpdater = updater,
             time = FixedTime,
             syncCoordinator = com.example.backlogium.work.SteamSyncCoordinator(),
-            derivedStateWrites = DerivedStateWriteCoordinator(),
+            derivedStateWrites = derivedStateWrites,
             transaction = RoomDatabaseTransactionScope(database),
+        )
+        val historyReset = PlaytimeBackfillUseCase(
+            gameDao = database.gameDao(),
+            sessionDao = database.sessionDao(),
+            playerProfileDao = database.playerProfileDao(),
+            settings = settingsDataStore,
+            gamificationUpdater = updater,
+            time = FixedTime,
+            derivedStateWrites = derivedStateWrites,
         )
         val fromAt = utc("2026-07-25T00:00:00Z")
         val throughAt = utc("2026-07-26T12:00:00Z")
@@ -193,6 +202,9 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             assertEquals(CloudPresenceRefilingOperation.APPLIED, applied.operation)
             assertEquals(1, applied.sessionsRefiled)
             assertTrue(realSettings.cloudPresenceRefilingApplied.first())
+            assertEquals(PlaytimeBackfillResetResult.BLOCKED_BY_CLOUD_TRANSFER, historyReset.reset())
+            assertTrue(database.playerProfileDao().get()!!.playtimeBackfilled)
+            assertEquals(0, database.gameDao().getById(GAME)!!.backfillMinutes)
             val gameAfter = database.gameDao().getById(GAME)!!
             val sessionsAfter = database.sessionDao().getAll()
             val trackedAfter = database.sessionDao().trackedMinutesByGame().single().minutes
@@ -314,6 +326,10 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
                 useCase(realSettings).reverse().operation,
             )
             assertEquals(17, database.gameDao().getById(GAME)!!.backfillMinutes)
+            assertEquals(afterRoomReverse, database.sessionDao().getAll())
+            assertEquals(PlaytimeBackfillResetResult.RESET, historyReset.reset())
+            assertEquals(0, database.gameDao().getById(GAME)!!.backfillMinutes)
+            assertFalse(database.playerProfileDao().get()!!.playtimeBackfilled)
             assertEquals(afterRoomReverse, database.sessionDao().getAll())
         } finally {
             realSettings.clearCloudPresenceRefiling()

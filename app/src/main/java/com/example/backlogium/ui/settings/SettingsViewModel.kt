@@ -44,6 +44,7 @@ import com.example.backlogium.data.updates.UpdateCheckResult
 import com.example.backlogium.domain.CloudPresencePlaytimeRefilingUseCase
 import com.example.backlogium.domain.CloudPresenceRefilingOperation
 import com.example.backlogium.domain.CloudPresenceRefilingResult
+import com.example.backlogium.domain.PlaytimeBackfillResetResult
 import com.example.backlogium.domain.UpdateRuleConfigUseCase
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
@@ -216,6 +217,7 @@ data class SettingsUiState(
     val cloudPresenceRefilingBusy: Boolean = false,
     val cloudPresenceRefilingMessage: SettingsText? = null,
     val cloudPresenceRefilingMessageSeverity: SettingsResultSeverity? = null,
+    val cloudPresenceTransferApplied: Boolean = false,
     val lastSyncAt: Long = 0L,
     val lastSyncError: String? = null,
     val isSyncing: Boolean = false,
@@ -431,6 +433,12 @@ class SettingsViewModel @Inject constructor(
         state.copy(liveMonitorEnabled = monitorEnabled)
     }.combine(settings.cloudPresenceRefilingApplied) { state, applied ->
         state.copy(cloudPresenceRefilingApplied = applied)
+    }.combine(
+        combine(settings.cloudPresenceRefilingApplied, settings.cloudPresenceRefilingReceipt) { applied, receipt ->
+            applied && receipt?.transferredMinutesByAppId?.any { it.minutes > 0 } == true
+        },
+    ) { state, transferApplied ->
+        state.copy(cloudPresenceTransferApplied = transferApplied)
     }.combine(syncScheduler.genreEnrichmentStatus) { state, genreStatus ->
         state.copy(genreEnrichmentStatus = genreStatus)
     }.combine(profileRepository.reconciliationInProgress) { state, reconciling ->
@@ -1005,7 +1013,11 @@ class SettingsViewModel @Inject constructor(
     fun importSteamHistory() = runHistoryOp { profileRepository.importSteamHistory() }
 
     /** Undo a prior import so it can be run again (recovery / opt-out). */
-    fun resetHistoryImport() = runHistoryOp { profileRepository.resetSteamHistoryImport() }
+    fun resetHistoryImport() = runHistoryOp {
+        if (profileRepository.resetSteamHistoryImport() == PlaytimeBackfillResetResult.BLOCKED_BY_CLOUD_TRANSFER) {
+            _toastMessages.tryEmit(SettingsText(R.string.settings_history_reset_cloud_refile_required))
+        }
+    }
 
     // Serialize import/reset behind one in-flight flag so the buttons show progress and
     // concurrent taps can't overlap.
