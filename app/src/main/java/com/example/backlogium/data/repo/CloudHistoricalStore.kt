@@ -24,6 +24,12 @@ interface CloudHistoricalStore {
         boundaries: List<CloudHistoricalBoundary>,
         progress: CloudHistoricalOperation,
     ): CloudHistoricalOperation?
+    suspend fun deleteUnappliedOperations()
+    suspend fun deleteUnappliedOperationsNotMatching(
+        account: String,
+        readerGeneration: Long,
+        endpointIdentity: String,
+    )
 }
 
 @Singleton
@@ -54,6 +60,14 @@ class RoomCloudHistoricalStore @Inject constructor(
         boundaries: List<CloudHistoricalBoundary>,
         progress: CloudHistoricalOperation,
     ): CloudHistoricalOperation? = dao.commitPage(previous, intervals, boundaries, progress)
+
+    override suspend fun deleteUnappliedOperations() = dao.deleteUnappliedOperations()
+
+    override suspend fun deleteUnappliedOperationsNotMatching(
+        account: String,
+        readerGeneration: Long,
+        endpointIdentity: String,
+    ) = dao.deleteUnappliedOperationsNotMatching(account, readerGeneration, endpointIdentity)
 }
 
 /** Keeps legacy protocol-only repository tests independent of a Room database. */
@@ -73,4 +87,10 @@ internal object EmptyCloudHistoricalStore : CloudHistoricalStore {
         boundaries: List<CloudHistoricalBoundary>,
         progress: CloudHistoricalOperation,
     ): CloudHistoricalOperation? = null
+    override suspend fun deleteUnappliedOperations() = Unit
+    override suspend fun deleteUnappliedOperationsNotMatching(
+        account: String,
+        readerGeneration: Long,
+        endpointIdentity: String,
+    ) = Unit
 }

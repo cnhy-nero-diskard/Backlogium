@@ -134,6 +134,9 @@ interface CloudHistoricalDao {
     @Query("DELETE FROM cloud_historical_operations")
     suspend fun deleteAllOperations()
 
+    @Query("DELETE FROM cloud_historical_operations WHERE state IN ('ACQUIRING', 'COMPLETE')")
+    suspend fun deleteUnappliedOperations()
+
     @Query(
         "DELETE FROM cloud_historical_operations WHERE (account != :account " +
             "OR readerGeneration != :readerGeneration OR endpointIdentity != :endpointIdentity) " +

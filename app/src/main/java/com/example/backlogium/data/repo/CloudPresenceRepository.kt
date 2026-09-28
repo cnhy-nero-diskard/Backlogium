@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.yield
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -136,6 +137,15 @@ sealed interface CloudHistoricalBatchResult {
     data object OperationNotFound : CloudHistoricalBatchResult
     data object Unconfigured : CloudHistoricalBatchResult
     data object NoSteamAccount : CloudHistoricalBatchResult
+}
+
+sealed interface CloudHistoricalApplyGuardResult<out T> {
+    data class Ready<T>(val operation: CloudHistoricalOperation, val value: T) : CloudHistoricalApplyGuardResult<T>
+    data object OperationNotFound : CloudHistoricalApplyGuardResult<Nothing>
+    data object AcquisitionIncomplete : CloudHistoricalApplyGuardResult<Nothing>
+    data object Unconfigured : CloudHistoricalApplyGuardResult<Nothing>
+    data object NoSteamAccount : CloudHistoricalApplyGuardResult<Nothing>
+    data object StaleIdentity : CloudHistoricalApplyGuardResult<Nothing>
 }
 
 data class CloudPresenceHistoricalRange(
@@ -650,6 +660,7 @@ class CloudPresenceRepository @Inject constructor(
                             CloudHistoricalBatchStopReason.PAGE_LIMIT,
                         )
                     }
+                    yield()
                     if (monotonicNowNanos() - startedAtNanos >= timeBudgetNanos) {
                         return CloudHistoricalBatchResult.Partial(
                             operation,
@@ -683,6 +694,38 @@ class CloudPresenceRepository @Inject constructor(
                 CloudHistoricalPageResult.Unconfigured -> return CloudHistoricalBatchResult.Unconfigured
                 CloudHistoricalPageResult.NoSteamAccount -> return CloudHistoricalBatchResult.NoSteamAccount
             }
+        }
+    }
+
+    /**
+     * Runs application of a completed stage only while its captured account, reader generation,
+     * and endpoint are still active. The caller must acquire the Steam-sync and derived-write
+     * locks before entering; this method then takes the read-sequence and reader-state locks in
+     * the established order and holds both until the application block returns.
+     */
+    suspend fun <T> withCurrentHistoricalOperationForApply(
+        operationId: String,
+        apply: suspend (CloudHistoricalOperation) -> T,
+    ): CloudHistoricalApplyGuardResult<T> = cloudReadSequenceMutex.withLock {
+        recoverStagedPromotionLocked()
+        cloudStateMutex.withLock {
+            val operation = historicalStore.operation(operationId)
+                ?: return@withLock CloudHistoricalApplyGuardResult.OperationNotFound
+            if (!operation.acquisitionComplete || operation.state != CloudHistoricalStates.COMPLETE) {
+                return@withLock CloudHistoricalApplyGuardResult.AcquisitionIncomplete
+            }
+            val credentials = credentialsStore.readCloudCredentials()
+                ?: return@withLock CloudHistoricalApplyGuardResult.Unconfigured
+            val account = credentialsProvider.currentCredentials()?.steamId
+                ?: return@withLock CloudHistoricalApplyGuardResult.NoSteamAccount
+            val endpointIdentity = normalizeEndpoint(credentials.endpoint)
+            if (account != operation.account ||
+                settings.cloudReaderGeneration.first() != operation.readerGeneration ||
+                endpointIdentity != operation.endpointIdentity
+            ) {
+                return@withLock CloudHistoricalApplyGuardResult.StaleIdentity
+            }
+            CloudHistoricalApplyGuardResult.Ready(operation, apply(operation))
         }
     }
 
@@ -755,6 +798,12 @@ class CloudPresenceRepository @Inject constructor(
                         pendingEvidence.clearExcept(account, settings.cloudReaderGeneration.first())
                     }
                 }
+                runCatching {
+                    clearUnappliedHistoricalForCurrentReader(
+                        account,
+                        settings.cloudReaderGeneration.first(),
+                    )
+                }
                 return@withLock
             }
             val account = credentialsProvider.currentCredentials()?.steamId ?: return@withLock
@@ -768,6 +817,7 @@ class CloudPresenceRepository @Inject constructor(
                 // best-effort; the refusal itself does not depend on it.
                 if (staged != null) credentialsStore.clearStagedCloudCredentials()
                 runCatching { pendingEvidence.clearExcept(account, generationBefore) }
+                runCatching { clearUnappliedHistoricalForCurrentReader(account, generationBefore) }
                 settings.clearCloudReaderPromotion()
                 return@withLock
             }
@@ -779,6 +829,7 @@ class CloudPresenceRepository @Inject constructor(
                 // promotion effects (generation commit, ingest-cursor clear, work re-cancel,
                 // routine-policy init) for a reader that was being removed.
                 runCatching { pendingEvidence.clearExcept(account, generationBefore) }
+                historicalStore.deleteUnappliedOperations()
                 settings.clearCloudReaderPromotion()
                 return@withLock
             }
@@ -798,6 +849,7 @@ class CloudPresenceRepository @Inject constructor(
             // a death between the generation commit and this cleanup, so it stays until every
             // step below has run; the final clear retires it.
             pendingEvidence.clearExcept(account, target)
+            clearUnappliedHistoricalForCurrentReader(account, target)
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = false)
             settings.clearCloudReadPosition()
             settings.clearCloudReadSummary()
@@ -845,6 +897,7 @@ class CloudPresenceRepository @Inject constructor(
                 settings.abandonCloudReaderPromotion()
             }
             pendingEvidence.clear()
+            historicalStore.deleteUnappliedOperations()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
             settings.clearCloudReadPosition()
             settings.clearCloudIngestPosition()
@@ -984,6 +1037,11 @@ class CloudPresenceRepository @Inject constructor(
                         // Only now that the credential+generation promotion is durably
                         // committed is the old generation's evidence retired.
                         pendingEvidence.clearExcept(account, readerGeneration)
+                        clearUnappliedHistoricalExcept(
+                            account,
+                            readerGeneration,
+                            normalizedEndpoint,
+                        )
                         // The ingest is part of the committed promotion: it runs only after
                         // the marker and the credential+generation commit, and before the
                         // read watermark advances below, so its derived sessions and ingest
@@ -1044,6 +1102,41 @@ class CloudPresenceRepository @Inject constructor(
                 )
                 result.failure.toConfigurationResult()
             }
+        }
+    }
+
+    private suspend fun clearUnappliedHistoricalForCurrentReader(
+        account: String?,
+        readerGeneration: Long,
+    ) {
+        val endpointIdentity = credentialsStore.readCloudCredentials()
+            ?.endpoint
+            ?.let(::normalizeEndpoint)
+        if (account == null || endpointIdentity == null) {
+            historicalStore.deleteUnappliedOperations()
+        } else {
+            historicalStore.deleteUnappliedOperationsNotMatching(
+                account,
+                readerGeneration,
+                endpointIdentity,
+            )
+        }
+    }
+
+    private suspend fun clearUnappliedHistoricalExcept(
+        account: String,
+        readerGeneration: Long,
+        endpoint: String,
+    ) {
+        val endpointIdentity = normalizeEndpoint(endpoint)
+        if (endpointIdentity == null) {
+            historicalStore.deleteUnappliedOperations()
+        } else {
+            historicalStore.deleteUnappliedOperationsNotMatching(
+                account,
+                readerGeneration,
+                endpointIdentity,
+            )
         }
     }
 
@@ -1368,6 +1461,7 @@ class CloudPresenceRepository @Inject constructor(
             credentialsStore.clearAllCloudCredentials()
             settings.abandonCloudReaderPromotion()
             pendingEvidence.clear()
+            historicalStore.deleteUnappliedOperations()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
             settings.clearCloudReadPosition()
             settings.clearCloudIngestPosition()
@@ -1400,6 +1494,7 @@ class CloudPresenceRepository @Inject constructor(
             settings.abandonCloudReaderPromotion()
             credentialsStore.clearStagedCloudCredentials()
             pendingEvidence.clear()
+            historicalStore.deleteUnappliedOperations()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
             snapshotState.value = null
             settings.clearCloudReadPosition()
@@ -1432,6 +1527,7 @@ class CloudPresenceRepository @Inject constructor(
             settings.abandonCloudReaderPromotion()
             credentialsStore.clearStagedCloudCredentials()
             pendingEvidence.clear()
+            historicalStore.deleteUnappliedOperations()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
             snapshotState.value = null
             settings.clearCloudReadPosition()
@@ -1444,6 +1540,7 @@ class CloudPresenceRepository @Inject constructor(
                 settings.abandonCloudReaderPromotion()
                 credentialsStore.clearStagedCloudCredentials()
                 pendingEvidence.clear()
+                historicalStore.deleteUnappliedOperations()
                 routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
                 snapshotState.value = null
                 settings.clearCloudReadPosition()
