@@ -29,7 +29,7 @@ interface QuerySnapshotLike {
 }
 
 interface QueryLike {
-  where(field: string, operator: ">" | ">=", value: unknown): QueryLike;
+  where(field: string, operator: ">" | ">=" | "<" | "<=", value: unknown): QueryLike;
   orderBy(field: string, direction: "asc" | "desc"): QueryLike;
   startAfter(value: unknown): QueryLike;
   limit(value: number): QueryLike;
@@ -41,7 +41,7 @@ interface CollectionLike {
     get(): Promise<DocumentSnapshotLike>;
     collection(name: string): CollectionLike;
   };
-  where(field: string, operator: ">" | ">=", value: unknown): QueryLike;
+  where(field: string, operator: ">" | ">=" | "<" | "<=", value: unknown): QueryLike;
   orderBy(field: string, direction: "asc" | "desc"): QueryLike;
 }
 
@@ -98,6 +98,7 @@ export interface PresenceReadCurrentState {
 export interface PresenceReadResponse {
   readonly account: string;
   readonly transitions: readonly PresenceReadTransition[];
+  readonly predecessor?: PresenceReadTransition | null;
   readonly current: PresenceReadCurrentState | null;
   readonly nextPosition: string | null;
   readonly hasMore: boolean;
@@ -153,6 +154,30 @@ function queryValue(request: RequestLike, name: string): string | undefined {
   const value = request.query?.[name];
   if (Array.isArray(value)) return typeof value[0] === "string" ? value[0] : undefined;
   return typeof value === "string" ? value : undefined;
+}
+
+interface StrictQueryParameter {
+  readonly present: boolean;
+  readonly value?: string | null;
+}
+
+function strictQueryParameter(request: RequestLike, name: string): StrictQueryParameter {
+  const raw = request.query?.[name];
+  if (raw === undefined) return { present: false };
+  return {
+    present: true,
+    value: typeof raw === "string" ? raw : null,
+  };
+}
+
+function strictUtcInstant(value: string | null | undefined): Date | undefined {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+    return undefined;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value
+    ? undefined
+    : parsed;
 }
 
 function parsePosition(request: RequestLike): Date | undefined | null {
@@ -232,7 +257,33 @@ export async function servePresenceRead(
     return;
   }
 
-  if (queryValue(request, "mode") === "range") {
+  const modeParameter = strictQueryParameter(request, "mode");
+  const fromParameter = strictQueryParameter(request, "from");
+  const throughParameter = strictQueryParameter(request, "through");
+  const positionParameter = strictQueryParameter(request, "position");
+  if (
+    (modeParameter.present && modeParameter.value === null)
+    || (fromParameter.present && fromParameter.value === null)
+    || (throughParameter.present && throughParameter.value === null)
+    || (positionParameter.present && positionParameter.value === null)
+  ) {
+    response.status(400).json({ error: "invalid_range" });
+    return;
+  }
+
+  const mode = modeParameter.value;
+  if (mode !== undefined && mode !== "range") {
+    response.status(400).json({ error: "invalid_mode" });
+    return;
+  }
+
+  const hasHistoricalBounds = fromParameter.present || throughParameter.present;
+  if (mode === "range" && (hasHistoricalBounds || positionParameter.present)) {
+    response.status(400).json({ error: "conflicting_range_parameters" });
+    return;
+  }
+
+  if (mode === "range") {
     safeLog.registerSensitive(expectedToken, steamId);
     try {
       // Capture the server-side end before starting either lookup. The returned current
@@ -254,9 +305,15 @@ export async function servePresenceRead(
       const currentObservedAt = currentState?.lastObservedAt
         ? new Date(currentState.lastObservedAt).getTime()
         : Number.NaN;
+      const candidateCurrentStart = currentState?.since ?? currentState?.lastObservedAt;
+      const candidateCurrentStartAt = candidateCurrentStart
+        ? new Date(candidateCurrentStart).getTime()
+        : Number.NaN;
       const currentEvidenceStart = !Number.isNaN(currentObservedAt)
         && currentObservedAt <= readAt.getTime()
-        ? (currentState?.since ?? currentState?.lastObservedAt)
+        && !Number.isNaN(candidateCurrentStartAt)
+        && candidateCurrentStartAt <= readAt.getTime()
+        ? candidateCurrentStart
         : undefined;
       const result: PresenceRangeMetadataResponse = {
         mode: "range",
@@ -276,7 +333,36 @@ export async function servePresenceRead(
     return;
   }
 
-  const parsedPosition = parsePosition(request);
+  let historicalFrom: Date | undefined;
+  let historicalThrough: Date | undefined;
+  let historicalPosition: Date | undefined;
+  if (hasHistoricalBounds) {
+    if (!fromParameter.present || !throughParameter.present) {
+      response.status(400).json({ error: "invalid_range" });
+      return;
+    }
+    historicalFrom = strictUtcInstant(fromParameter.value);
+    historicalThrough = strictUtcInstant(throughParameter.value);
+    historicalPosition = positionParameter.present
+      ? strictUtcInstant(positionParameter.value)
+      : undefined;
+    if (
+      !historicalFrom
+      || !historicalThrough
+      || (positionParameter.present && !historicalPosition)
+      || historicalFrom.getTime() > historicalThrough.getTime()
+      || historicalThrough.getTime() > Date.now()
+      || (historicalPosition !== undefined && (
+        historicalPosition.getTime() < historicalFrom.getTime()
+        || historicalPosition.getTime() > historicalThrough.getTime()
+      ))
+    ) {
+      response.status(400).json({ error: "invalid_range" });
+      return;
+    }
+  }
+
+  const parsedPosition = hasHistoricalBounds ? historicalPosition : parsePosition(request);
   if (parsedPosition === null) {
     response.status(400).json({ error: "invalid_position" });
     return;
@@ -290,19 +376,42 @@ export async function servePresenceRead(
     // A single cutoff drives both the Firestore lower bound and the reported window
     // start: computing them from separate Date.now() calls would let the two drift,
     // and a stale current document must not reintroduce evidence from outside it.
-    const windowStartDate = position ?? new Date(Date.now() - FIRST_READ_WINDOW_MILLIS);
-    const query = player.collection(PRESENCE)
-      .where("t", position ? ">" : ">=", Timestamp.fromDate(windowStartDate))
-      .orderBy("t", "asc");
-    const resumedQuery = position ? query.startAfter(Timestamp.fromDate(position)) : query;
-    const [currentSnapshot, transitionsSnapshot] = await Promise.all([
+    const windowStartDate = historicalFrom
+      ?? position
+      ?? new Date(Date.now() - FIRST_READ_WINDOW_MILLIS);
+    const presence = player.collection(PRESENCE);
+    const query = historicalFrom && historicalThrough
+      ? presence
+        .where(
+          "t",
+          historicalPosition ? ">" : ">=",
+          Timestamp.fromDate(historicalPosition ?? historicalFrom),
+        )
+        .where("t", "<=", Timestamp.fromDate(historicalThrough))
+        .orderBy("t", "asc")
+      : presence
+        .where("t", position ? ">" : ">=", Timestamp.fromDate(windowStartDate))
+        .orderBy("t", "asc");
+    const resumedQuery = !historicalFrom && position
+      ? query.startAfter(Timestamp.fromDate(position))
+      : query;
+    const predecessorQuery = historicalFrom && !historicalPosition
+      ? presence
+        .where("t", "<", Timestamp.fromDate(historicalFrom))
+        .orderBy("t", "desc")
+        .limit(1)
+        .get()
+      : Promise.resolve({ docs: [] } as QuerySnapshotLike);
+    const startedAt = historicalFrom ? new Date() : undefined;
+    const [currentSnapshot, transitionsSnapshot, predecessorSnapshot] = await Promise.all([
       player.get(),
       resumedQuery.limit(MAX_RESPONSE_TRANSITIONS + 1).get(),
+      predecessorQuery,
     ]);
     const all = transitionsSnapshot.docs.map((document) => transition(document.data()));
     const hasMore = all.length > MAX_RESPONSE_TRANSITIONS;
     const transitions = all.slice(0, MAX_RESPONSE_TRANSITIONS);
-    const readAt = new Date();
+    const readAt = startedAt ?? new Date();
     const lastTransition = transitions.at(-1)?.t;
     const storedCurrent = current(
       currentSnapshot.exists ? currentSnapshot.data() : undefined,
@@ -313,15 +422,26 @@ export async function servePresenceRead(
     const currentObservedAt = storedCurrent?.lastObservedAt
       ? new Date(storedCurrent.lastObservedAt).getTime()
       : Number.NaN;
-    const currentState = Number.isNaN(currentObservedAt) || currentObservedAt >= windowStartDate.getTime()
-      ? storedCurrent
+    const currentState = historicalFrom && historicalThrough
+      ? (!Number.isNaN(currentObservedAt)
+        && currentObservedAt >= historicalFrom.getTime()
+        && currentObservedAt <= historicalThrough.getTime()
+        ? storedCurrent
+        : null)
+      : (Number.isNaN(currentObservedAt) || currentObservedAt >= windowStartDate.getTime()
+        ? storedCurrent
+        : null);
+    const predecessor = historicalFrom && !historicalPosition && predecessorSnapshot.docs[0]
+      ? transition(predecessorSnapshot.docs[0].data())
       : null;
     // An incomplete page must not claim the full window: when more transitions remain,
     // the window ends at the last returned transition so the page cannot masquerade as
     // complete evidence. The client resumes from nextPosition for the remainder.
     const candidateWindowEnd = hasMore
       ? (lastTransition ?? readAt.toISOString())
-      : (currentState?.lastObservedAt ?? lastTransition ?? readAt.toISOString());
+      : (currentState?.lastObservedAt
+        ?? lastTransition
+        ?? (historicalFrom ? historicalFrom.toISOString() : readAt.toISOString()));
     const windowStart = windowStartDate.toISOString();
     // Belt and braces: the reported window never runs backward, even if the caller
     // resumes from a future position.
@@ -329,6 +449,7 @@ export async function servePresenceRead(
     const result: PresenceReadResponse = {
       account: steamId,
       transitions,
+      ...(historicalFrom && !historicalPosition ? { predecessor } : {}),
       current: currentState,
       nextPosition: lastTransition ?? position?.toISOString() ?? null,
       hasMore,

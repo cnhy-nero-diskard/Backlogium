@@ -15,7 +15,7 @@ interface QuerySnapshot {
 }
 
 interface Query {
-  where(field: string, operator: ">" | ">=", value: unknown): Query;
+  where(field: string, operator: ">" | ">=" | "<" | "<=", value: unknown): Query;
   orderBy(field: string, direction: "asc" | "desc"): Query;
   startAfter(value: unknown): Query;
   limit(value: number): Query;
@@ -30,7 +30,7 @@ interface DocumentReference {
 
 interface CollectionReference {
   doc(id: string): DocumentReference;
-  where(field: string, operator: ">" | ">=", value: unknown): Query;
+  where(field: string, operator: ">" | ">=" | "<" | "<=", value: unknown): Query;
   orderBy(field: string, direction: "asc" | "desc"): Query;
 }
 
@@ -275,7 +275,7 @@ class FakeCollectionReference implements CollectionReference {
     return new FakeDocumentReference(this.firestore, `${this.path}/${id}`);
   }
 
-  where(field: string, operator: ">" | ">=", value: unknown): Query {
+  where(field: string, operator: ">" | ">=" | "<" | "<=", value: unknown): Query {
     return new FakeQuery(this.firestore, this.path).where(field, operator, value);
   }
 
@@ -299,11 +299,11 @@ class FakeDocumentReference implements DocumentReference {
   }
 }
 class FakeQuery implements Query {
-  private readonly filter?: {
+  private readonly filters: readonly {
     readonly field: string;
-    readonly operator: ">" | ">=";
+    readonly operator: ">" | ">=" | "<" | "<=";
     readonly value: unknown;
-  };
+  }[];
   private readonly ordering?: {
     readonly field: string;
     readonly direction: "asc" | "desc";
@@ -314,11 +314,11 @@ class FakeQuery implements Query {
   constructor(
     private readonly firestore: FakeFirestore,
     private readonly path: string,
-    filter?: {
+    filters: readonly {
       readonly field: string;
-      readonly operator: ">" | ">=";
+      readonly operator: ">" | ">=" | "<" | "<=";
       readonly value: unknown;
-    },
+    }[] = [],
     ordering?: {
       readonly field: string;
       readonly direction: "asc" | "desc";
@@ -326,17 +326,17 @@ class FakeQuery implements Query {
     after?: unknown,
     maxResults?: number,
   ) {
-    this.filter = filter;
+    this.filters = filters;
     this.ordering = ordering;
     this.after = after;
     this.maxResults = maxResults;
   }
 
-  where(field: string, operator: ">" | ">=", value: unknown): Query {
+  where(field: string, operator: ">" | ">=" | "<" | "<=", value: unknown): Query {
     return new FakeQuery(
       this.firestore,
       this.path,
-      { field, operator, value },
+      [...this.filters, { field, operator, value }],
       this.ordering,
       this.after,
       this.maxResults,
@@ -347,7 +347,7 @@ class FakeQuery implements Query {
     return new FakeQuery(
       this.firestore,
       this.path,
-      this.filter,
+      this.filters,
       { field, direction },
       this.after,
       this.maxResults,
@@ -358,7 +358,7 @@ class FakeQuery implements Query {
     return new FakeQuery(
       this.firestore,
       this.path,
-      this.filter,
+      this.filters,
       this.ordering,
       value,
       this.maxResults,
@@ -369,7 +369,7 @@ class FakeQuery implements Query {
     return new FakeQuery(
       this.firestore,
       this.path,
-      this.filter,
+      this.filters,
       this.ordering,
       this.after,
       value,
@@ -414,10 +414,16 @@ class FakeQuery implements Query {
   }
 
   private matchesFilter(data: Record<string, unknown>): boolean {
-    if (!this.filter) return true;
-    const actual = valueMillis(data[this.filter.field]);
-    const expected = valueMillis(this.filter.value);
-    return this.filter.operator === ">" ? actual > expected : actual >= expected;
+    return this.filters.every((filter) => {
+      const actual = valueMillis(data[filter.field]);
+      const expected = valueMillis(filter.value);
+      switch (filter.operator) {
+        case ">": return actual > expected;
+        case ">=": return actual >= expected;
+        case "<": return actual < expected;
+        case "<=": return actual <= expected;
+      }
+    });
   }
 
   private matchesAfter(data: Record<string, unknown>): boolean {
