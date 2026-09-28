@@ -15,7 +15,7 @@
 
 ## 3. One-time placement, imported-minute transfer and receipt
 
-- [ ] 3.1 Define and test a timezone-aware default rolling-31-day/custom-local-date range and separately confirmed pre-data cutoff instant; verify invalid/ambiguous DST choices, midnight, earliest-day, no-outside-range, and refusal to infer a cutoff from the first session.
+- [x] 3.1 Define and test a timezone-aware default rolling-31-day/custom-local-date range and separately confirmed pre-data cutoff instant; verify invalid/ambiguous DST choices, midnight, earliest-day, no-outside-range, and refusal to infer a cutoff from the first session.
 - [ ] 3.2 Preserve existing-session date-only placement and make it disjoint from pre-data allocation; verify selected-range clipping, no session overlap, unchanged totals and exact undo for users who decline transfer or never imported Steam history.
 - [ ] 3.3 Build a pure per-owned-game pre-data allocation rule using safe full-minute cloud-observed slots before the cutoff, rejecting unknown/gapped/already-counted evidence and capping conversion by the current imported balance; verify deterministic newest-first budget exhaustion, day-boundary splits, per-game caps, and untouched leftover import in unit tests.
 - [ ] 3.4 Commit the offset decrease and new dated session rows atomically with the existing re-file mutations and a durable Room apply journal; verify tracked rises exactly as imported falls, unchanged per-game combined minutes/XP/levels, provenance on new History rows, and replay after process death without duplication.

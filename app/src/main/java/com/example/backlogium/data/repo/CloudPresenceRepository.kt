@@ -381,7 +381,6 @@ class CloudPresenceRepository @Inject constructor(
             return@withLock CloudHistoricalStartResult.NoAvailableRange
         }
         if (selectedStartAt > effectiveStartAt ||
-            effectiveStartAt < metadata.earliestObservedAt ||
             effectiveStartAt > metadata.readAt || selectedStartAt > metadata.readAt
         ) {
             return@withLock CloudHistoricalStartResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
