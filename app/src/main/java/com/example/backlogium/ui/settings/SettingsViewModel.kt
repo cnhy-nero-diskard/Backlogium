@@ -21,6 +21,7 @@ import com.example.backlogium.data.repo.CloudRoutinePolicy
 import com.example.backlogium.data.repo.CloudRoutineState
 import com.example.backlogium.data.repo.CloudReadSummary
 import com.example.backlogium.data.repo.CloudPresenceSessionIngestor
+import com.example.backlogium.data.repo.CloudPresenceRangeLookupResult
 import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.data.repo.CloudReadFailure
 import com.example.backlogium.data.repo.CloudReadResult
@@ -44,7 +45,9 @@ import com.example.backlogium.data.updates.UpdateCheckResult
 import com.example.backlogium.domain.CloudPresencePlaytimeRefilingUseCase
 import com.example.backlogium.domain.CloudPresenceRefilingOperation
 import com.example.backlogium.domain.CloudPresenceRefilingResult
+import com.example.backlogium.domain.CloudPresenceHistoricalStartChoice
 import com.example.backlogium.domain.PlaytimeBackfillResetResult
+import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.UpdateRuleConfigUseCase
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
@@ -70,6 +73,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
+import java.time.LocalDateTime
 import javax.inject.Inject
 
 /**
@@ -218,6 +223,7 @@ data class SettingsUiState(
     val cloudPresenceRefilingMessage: SettingsText? = null,
     val cloudPresenceRefilingMessageSeverity: SettingsResultSeverity? = null,
     val cloudPresenceTransferApplied: Boolean = false,
+    val cloudHistoricalRangeControls: CloudHistoricalRangeControls = CloudHistoricalRangeControls(),
     val lastSyncAt: Long = 0L,
     val lastSyncError: String? = null,
     val isSyncing: Boolean = false,
@@ -322,6 +328,7 @@ class SettingsViewModel @Inject constructor(
     private val cloudPresence: CloudPresenceRepository,
     private val cloudPresenceIngestor: CloudPresenceSessionIngestor,
     private val cloudPresenceRefiling: CloudPresencePlaytimeRefilingUseCase,
+    private val time: TimeProvider,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -355,6 +362,7 @@ class SettingsViewModel @Inject constructor(
     private val cloudMessage = MutableStateFlow<SettingsActionFeedback?>(null)
     private val cloudRefilingBusy = MutableStateFlow(false)
     private val cloudRefilingMessage = MutableStateFlow<SettingsActionFeedback?>(null)
+    private val cloudHistoricalRangeControls = MutableStateFlow(CloudHistoricalRangeControls())
     // The account detail can be disposed by Back while WorkManager keeps syncing, so attribution
     // belongs to this graph-scoped state holder rather than the detail composable.
     private val manualSyncFeedback = ManualSyncFeedbackTracker()
@@ -371,6 +379,15 @@ class SettingsViewModel @Inject constructor(
     init {
         refreshSnapshots()
         viewModelScope.launch { cloudPresence.refreshConfiguration() }
+        viewModelScope.launch {
+            profileRepository.profile.collect { profile ->
+                if (profile != null && !profile.playtimeBackfilled) {
+                    cloudHistoricalRangeControls.update {
+                        it.copy(transferPreDataPlay = false, cutoffLocalDateTime = null)
+                    }
+                }
+            }
+        }
         viewModelScope.launch {
             combine(profileRepository.syncInProgress, profileRepository.profile) { syncing, profile ->
                 syncing to profile?.lastSyncError
@@ -584,6 +601,15 @@ class SettingsViewModel @Inject constructor(
             cloudPresenceRefilingMessage = local.second?.message,
             cloudPresenceRefilingMessageSeverity = local.second?.severity,
         )
+    }.combine(cloudHistoricalRangeControls) { state, controls ->
+        state.copy(
+            cloudHistoricalRangeControls = resolveCloudHistoricalRangeControls(
+                controls = controls,
+                historyImported = state.historyImported,
+                nowAt = time.nowMillis(),
+                zone = time.zone(),
+            ),
+        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -638,6 +664,80 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             if (cloudPresence.configuration.first() != null) settings.setCloudRoutinePolicy(policy)
         }
+    }
+
+    /** Explicitly refresh the authenticated range bound; this never drains transition pages. */
+    fun refreshCloudHistoricalRange() {
+        if (cloudBusy.value || cloudRefilingBusy.value || uiState.value.cloudPresenceRefilingApplied) return
+        viewModelScope.launch {
+            cloudHistoricalRangeControls.update {
+                it.copy(
+                    lookupStatus = CloudHistoricalRangeLookupStatus.LOADING,
+                    metadata = null,
+                    lookupFailure = null,
+                )
+            }
+            // A local configuration check avoids even issuing the metadata HTTP request when
+            // the reader has not been configured. The lookup itself repeats this guard.
+            if (cloudPresence.configuration.first() == null) {
+                cloudHistoricalRangeControls.update {
+                    it.copy(lookupStatus = CloudHistoricalRangeLookupStatus.UNCONFIGURED)
+                }
+                return@launch
+            }
+            val refreshed = when (val result = cloudPresence.lookupRangeMetadata()) {
+                CloudPresenceRangeLookupResult.Unconfigured ->
+                    cloudHistoricalRangeControls.value.copy(
+                        lookupStatus = CloudHistoricalRangeLookupStatus.UNCONFIGURED,
+                        metadata = null,
+                    )
+                CloudPresenceRangeLookupResult.NoSteamAccount ->
+                    cloudHistoricalRangeControls.value.copy(
+                        lookupStatus = CloudHistoricalRangeLookupStatus.NO_STEAM_ACCOUNT,
+                        metadata = null,
+                    )
+                is CloudPresenceRangeLookupResult.Failed ->
+                    cloudHistoricalRangeControls.value.copy(
+                        lookupStatus = CloudHistoricalRangeLookupStatus.FAILED,
+                        metadata = null,
+                        lookupFailure = result.failure,
+                    )
+                is CloudPresenceRangeLookupResult.Success ->
+                    cloudHistoricalRangeControls.value.copy(
+                        lookupStatus = if (result.metadata.earliestObservedAt == null) {
+                            CloudHistoricalRangeLookupStatus.EMPTY
+                        } else {
+                            CloudHistoricalRangeLookupStatus.AVAILABLE
+                        },
+                        metadata = result.metadata,
+                        lookupFailure = null,
+                    )
+            }
+            cloudHistoricalRangeControls.value = refreshed
+        }
+    }
+
+    fun setCloudHistoricalStartChoice(choice: CloudPresenceHistoricalStartChoice) {
+        cloudHistoricalRangeControls.update { it.copy(startChoice = choice) }
+    }
+
+    fun setCloudHistoricalStartDate(date: LocalDate?) {
+        cloudHistoricalRangeControls.update { it.copy(customStartDate = date) }
+    }
+
+    fun setCloudHistoricalTransfer(enabled: Boolean) {
+        if (enabled && !uiState.value.historyImported) return
+        cloudHistoricalRangeControls.update {
+            it.copy(
+                transferPreDataPlay = enabled,
+                cutoffLocalDateTime = if (enabled) it.cutoffLocalDateTime else null,
+            )
+        }
+    }
+
+    fun setCloudHistoricalCutoff(cutoff: LocalDateTime?) {
+        if (!uiState.value.historyImported || !cloudHistoricalRangeControls.value.transferPreDataPlay) return
+        cloudHistoricalRangeControls.update { it.copy(cutoffLocalDateTime = cutoff) }
     }
 
     fun removeCloudPresence() {
