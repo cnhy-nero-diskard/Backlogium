@@ -178,6 +178,9 @@ class CloudPresenceReadOnlyGuaranteeTest {
             endpoint: String,
             authorization: String,
             position: String?,
+            mode: String?,
+            from: String?,
+            through: String?,
         ): CloudPresenceResponseDto {
             requests += Request(endpoint, authorization, position)
             failWith?.let { throw it }

@@ -17,6 +17,8 @@ import com.example.backlogium.domain.CloudReaderIdentity
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.work.CloudRoutineWorkCancellation
 import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -68,6 +70,24 @@ data class CloudPresenceConfiguration(
     val maskedToken: String,
 )
 
+data class CloudPresenceRangeMetadata(
+    val account: String,
+    val earliestObservedAt: Long?,
+    val current: CloudPresenceCurrentState?,
+    val readAt: Long,
+)
+
+data class CloudPresenceHistoricalRange(
+    val fromAt: Long,
+    val throughAt: Long,
+    val positionAt: Long? = null,
+) {
+    init {
+        require(fromAt <= throughAt)
+        require(positionAt == null || positionAt in fromAt..throughAt)
+    }
+}
+
 data class CloudReadStatus(
     val configured: Boolean,
     val lastAttemptAt: Long?,
@@ -107,6 +127,13 @@ sealed interface CloudReadResult {
     data object NoSteamAccount : CloudReadResult
     data class Success(val snapshot: CloudPresenceSnapshot) : CloudReadResult
     data class Failed(val failure: CloudReadFailure) : CloudReadResult
+}
+
+sealed interface CloudPresenceRangeLookupResult {
+    data object Unconfigured : CloudPresenceRangeLookupResult
+    data object NoSteamAccount : CloudPresenceRangeLookupResult
+    data class Success(val metadata: CloudPresenceRangeMetadata) : CloudPresenceRangeLookupResult
+    data class Failed(val failure: CloudReadFailure) : CloudPresenceRangeLookupResult
 }
 
 /**
@@ -200,6 +227,60 @@ class CloudPresenceRepository @Inject constructor(
     suspend fun refreshConfiguration() {
         cloudStateMutex.withLock {
             configurationState.value = credentialsStore.readCloudCredentials()?.toConfiguration()
+        }
+    }
+
+    /** Authenticated, cursor-independent lookup of the earliest retained cloud evidence. */
+    suspend fun lookupRangeMetadata(): CloudPresenceRangeLookupResult {
+        val start = cloudStateMutex.withLock {
+            RangeMetadataStart(
+                credentials = credentialsStore.readCloudCredentials(),
+                account = credentialsProvider.currentCredentials()?.steamId,
+                generation = accountGeneration.get(),
+                readerGeneration = settings.cloudReaderGeneration.first(),
+            )
+        }
+        val credentials = start.credentials ?: return CloudPresenceRangeLookupResult.Unconfigured
+        val account = start.account ?: return CloudPresenceRangeLookupResult.NoSteamAccount
+        val response = try {
+            api.read(
+                endpoint = credentials.endpoint,
+                authorization = "Bearer " + credentials.token.trim(),
+                position = null,
+                mode = "range",
+                from = null,
+                through = null,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (http: HttpException) {
+            return CloudPresenceRangeLookupResult.Failed(
+                when {
+                    http.code() == 401 || http.code() == 403 -> CloudReadFailure.REJECTED_CREDENTIAL
+                    http.isUnusableResponse() -> CloudReadFailure.UNUSABLE_RESPONSE
+                    else -> CloudReadFailure.UNREACHABLE
+                },
+            )
+        } catch (_: SerializationException) {
+            return CloudPresenceRangeLookupResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+        } catch (_: Exception) {
+            return CloudPresenceRangeLookupResult.Failed(CloudReadFailure.UNREACHABLE)
+        }
+        if (response.account?.trim() != account) {
+            return CloudPresenceRangeLookupResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
+        }
+        val metadata = runCatching { response.toRangeMetadata(account) }
+            .getOrElse { return CloudPresenceRangeLookupResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE) }
+        return cloudStateMutex.withLock {
+            if (start.generation != accountGeneration.get() ||
+                credentialsProvider.currentCredentials()?.steamId != account ||
+                settings.cloudReaderGeneration.first() != start.readerGeneration ||
+                credentialsStore.readCloudCredentials() != credentials
+            ) {
+                CloudPresenceRangeLookupResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
+            } else {
+                CloudPresenceRangeLookupResult.Success(metadata)
+            }
         }
     }
 
@@ -983,6 +1064,13 @@ class CloudPresenceRepository @Inject constructor(
         val readerGeneration: Long,
     )
 
+    private data class RangeMetadataStart(
+        val credentials: CloudCredentials?,
+        val account: String?,
+        val generation: Long,
+        val readerGeneration: Long,
+    )
+
     private suspend fun persistVerifiedConfiguration(
         credentials: CloudCredentials,
         trigger: CloudReadTrigger,
@@ -1017,9 +1105,13 @@ class CloudPresenceRepository @Inject constructor(
         token: String,
         expectedAccount: String,
         position: String?,
+        mode: String? = null,
+        from: String? = null,
+        through: String? = null,
+        requestedRange: CloudPresenceHistoricalRange? = null,
     ): RemoteReadResult {
         val response = try {
-            api.read(endpoint, "Bearer " + token.trim(), position)
+            api.read(endpoint, "Bearer " + token.trim(), position, mode, from, through)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (http: HttpException) {
@@ -1041,7 +1133,7 @@ class CloudPresenceRepository @Inject constructor(
         if (account != expectedAccount) {
             return RemoteReadResult.AccountMismatch(account)
         }
-        return runCatching { response.toParsedRead(expectedAccount) }
+        return runCatching { response.toParsedRead(expectedAccount, requestedRange) }
             .fold(
                 onSuccess = { RemoteReadResult.Success(it) },
                 onFailure = { RemoteReadResult.Failure(CloudReadFailure.UNUSABLE_RESPONSE) },
@@ -1103,6 +1195,7 @@ class CloudPresenceRepository @Inject constructor(
         val readAt: Long,
         val nextPosition: String?,
         val hasMore: Boolean,
+        val predecessor: CloudPresenceTransition? = null,
     ) {
         fun toSnapshot(openingBoundary: CloudPresenceTransition? = null): CloudPresenceSnapshot {
             // An incomplete page covers only its returned transitions: combining the page's
@@ -1197,13 +1290,82 @@ private enum class CloudReadOutcome {
     UNUSABLE_RESPONSE,
 }
 
-private fun CloudPresenceResponseDto.toParsedRead(expectedAccount: String): CloudPresenceRepository.ParsedCloudRead {
-    val windowStart = requiredInstant(windowStart)
-    val windowEnd = requiredInstant(windowEnd)
-    val readAt = requiredInstant(readAt)
-    val parsedTransitions = transitions.map { it.toDomainTransition() }
-    val serverPosition = nextPosition?.trim()?.takeIf { it.isNotBlank() }?.also { requiredInstant(it) }
+internal fun CloudPresenceResponseDto.toRangeMetadata(
+    expectedAccount: String,
+): CloudPresenceRangeMetadata {
+    val actualAccount = requiredAccount(account)
+    if (actualAccount != expectedAccount) error("Cloud range metadata account does not match")
+    if (mode != "range" || transitions.isNotEmpty() || predecessor != null || hasMore || nextPosition != null) {
+        error("Cloud reader returned an invalid range metadata response")
+    }
+    val readAt = requiredStrictUtcInstant(readAt)
+    val earliest = earliestObservedAt?.let(::requiredStrictUtcInstant)
+    if (earliest != null && earliest > readAt) {
+        error("Cloud reader returned range metadata beyond its read time")
+    }
+    val parsedCurrent = current?.toStrictDomainCurrent()
+    val usableCurrent = parsedCurrent?.takeIf { state ->
+        val observedAt = state.observedAt ?: return@takeIf false
+        observedAt <= readAt && (state.since == null || state.since <= observedAt)
+    }
+    if (earliest == null && usableCurrent != null) {
+        error("Cloud reader omitted available current-only range evidence")
+    }
+    return CloudPresenceRangeMetadata(
+        account = actualAccount,
+        earliestObservedAt = earliest,
+        current = usableCurrent,
+        readAt = readAt,
+    )
+}
+
+internal fun CloudPresenceResponseDto.toParsedRead(
+    expectedAccount: String,
+    requestedRange: CloudPresenceHistoricalRange? = null,
+): CloudPresenceRepository.ParsedCloudRead {
+    val actualAccount = requiredAccount(account)
+    if (actualAccount != expectedAccount) error("Cloud reader account does not match")
+    if (mode != null) error("Cloud reader returned an unexpected response mode")
+    val windowStart = if (requestedRange == null) requiredInstant(windowStart)
+    else requiredStrictUtcInstant(windowStart)
+    val windowEnd = if (requestedRange == null) requiredInstant(windowEnd)
+    else requiredStrictUtcInstant(windowEnd)
+    val readAt = if (requestedRange == null) requiredInstant(readAt)
+    else requiredStrictUtcInstant(readAt)
+    val parsedTransitions = transitions.map { transition ->
+        if (requestedRange != null) transition.validateStrictUtcFields()
+        transition.toDomainTransition()
+    }
+    val serverPosition = nextPosition?.let { raw ->
+        if (requestedRange != null) {
+            requiredStrictUtcInstant(raw)
+            raw
+        } else {
+            raw.trim().takeIf { it.isNotBlank() }?.also { requiredInstant(it) }
+        }
+    }
     if (hasMore && serverPosition == null) error("Cloud reader returned more data without a position")
+    val parsedPredecessor = predecessor?.let { transition ->
+        if (requestedRange == null) error("Cloud reader returned an unexpected predecessor")
+        transition.validateStrictUtcFields()
+        transition.toDomainTransition()
+    }
+    val parsedCurrent = if (requestedRange == null) current?.toDomainCurrent()
+    else current?.toStrictDomainCurrent()
+
+    if (requestedRange != null) {
+        validateHistoricalResponse(
+            requestedRange = requestedRange,
+            windowStart = windowStart,
+            windowEnd = windowEnd,
+            readAt = readAt,
+            transitions = parsedTransitions,
+            current = parsedCurrent,
+            predecessor = parsedPredecessor,
+            serverPosition = serverPosition,
+            hasMore = hasMore,
+        )
+    }
     // Preserve one transition of overlap across pages: resuming strictly after the last
     // transition would drop the interval it opens (t250 -> t251), since page 1 reconstructs
     // only through t249 -> t250 and page 2 only from t251 onward. Persisting the second-last
@@ -1212,20 +1374,87 @@ private fun CloudPresenceResponseDto.toParsedRead(expectedAccount: String): Clou
     // second-last instant is strictly before the last and re-fetches exactly one transition.
     val resumePosition = if (hasMore && parsedTransitions.size >= 2) {
         val ordered = parsedTransitions.sortedBy { it.at }
-        Instant.ofEpochMilli(ordered[ordered.size - 2].at).toString()
+        if (requestedRange != null) {
+            formatCloudPresenceUtcInstant(ordered[ordered.size - 2].at)
+        } else {
+            Instant.ofEpochMilli(ordered[ordered.size - 2].at).toString()
+        }
     } else {
         serverPosition
     }
     return CloudPresenceRepository.ParsedCloudRead(
-        account = expectedAccount,
+        account = actualAccount,
         transitions = parsedTransitions,
-        current = current?.toDomainCurrent(),
+        current = parsedCurrent,
         windowStart = windowStart,
         windowEnd = windowEnd,
         readAt = readAt,
         nextPosition = resumePosition,
         hasMore = hasMore,
+        predecessor = parsedPredecessor,
     )
+}
+
+private fun validateHistoricalResponse(
+    requestedRange: CloudPresenceHistoricalRange,
+    windowStart: Long,
+    windowEnd: Long,
+    readAt: Long,
+    transitions: List<CloudPresenceTransition>,
+    current: CloudPresenceCurrentState?,
+    predecessor: CloudPresenceTransition?,
+    serverPosition: String?,
+    hasMore: Boolean,
+) {
+    val fromAt = requestedRange.fromAt
+    val throughAt = requestedRange.throughAt
+    if (windowStart != fromAt || windowEnd !in fromAt..throughAt || readAt < throughAt) {
+        error("Cloud reader returned a page outside the requested range")
+    }
+    if (transitions.size > MAX_HISTORICAL_RESPONSE_TRANSITIONS) {
+        error("Cloud reader returned too many historical transitions")
+    }
+    if (transitions.zipWithNext().any { (before, after) -> before.at >= after.at }) {
+        error("Cloud reader returned unordered historical transitions")
+    }
+    val lowerExclusive = requestedRange.positionAt
+    if (transitions.any { transition ->
+            transition.at < fromAt || transition.at > throughAt ||
+                (lowerExclusive != null && transition.at <= lowerExclusive)
+        }
+    ) {
+        error("Cloud reader returned a transition outside the requested range")
+    }
+    if (current != null) {
+        val observedAt = current.observedAt ?: error("Cloud reader returned current state without an observation")
+        if (observedAt !in fromAt..throughAt) {
+            error("Cloud reader returned current state outside the requested range")
+        }
+    }
+    if (predecessor != null && (
+            requestedRange.positionAt != null || predecessor.at >= fromAt
+        )
+    ) {
+        error("Cloud reader returned an invalid historical predecessor")
+    }
+    val expectedPositionAt = transitions.lastOrNull()?.at ?: requestedRange.positionAt
+    val actualPositionAt = serverPosition?.let(::requiredStrictUtcInstant)
+    if (actualPositionAt != expectedPositionAt) {
+        error("Cloud reader returned an invalid historical position")
+    }
+    if (hasMore && (
+            transitions.size != MAX_HISTORICAL_RESPONSE_TRANSITIONS ||
+                transitions.lastOrNull()?.at != windowEnd
+        )
+    ) {
+        error("Cloud reader returned an invalid historical continuation page")
+    }
+    if (!hasMore && transitions.lastOrNull()?.at?.let { windowEnd < it } == true) {
+        error("Cloud reader ended its evidence before the final transition")
+    }
+    if (current?.observedAt?.let { windowEnd < it } == true) {
+        error("Cloud reader ended its evidence before the current observation")
+    }
 }
 
 private fun CloudPresenceTransitionDto.toDomainTransition() = CloudPresenceTransition(
@@ -1250,6 +1479,21 @@ private fun CloudPresenceCurrentDto.toDomainCurrent() = CloudPresenceCurrentStat
     schemaVersion = v,
 )
 
+private fun CloudPresenceCurrentDto.toStrictDomainCurrent(): CloudPresenceCurrentState {
+    listOf(lastObservedAt, coverageLapseFrom, coverageLapseRecoveredAt, since, updatedAt)
+        .forEach { raw -> if (raw != null) requiredStrictUtcInstant(raw) }
+    return toDomainCurrent()
+}
+
+private fun CloudPresenceTransitionDto.validateStrictUtcFields() {
+    requiredStrictUtcInstant(t)
+    listOf(prevLastObservedAt, prevCoverageLapseFrom, prevCoverageLapseRecoveredAt)
+        .forEach { raw -> if (raw != null) requiredStrictUtcInstant(raw) }
+}
+
+private fun requiredAccount(raw: String?): String =
+    raw?.trim()?.takeIf { it.isNotEmpty() } ?: error("Cloud reader omitted its account")
+
 private fun requiredInstant(raw: String?): Long {
     val value = raw?.trim()?.takeIf { it.isNotEmpty() } ?: error("Cloud reader omitted a timestamp")
     return Instant.parse(value).toEpochMilli()
@@ -1260,11 +1504,27 @@ private fun optionalInstant(raw: String?): Long? {
     return Instant.parse(raw.trim()).toEpochMilli()
 }
 
+private fun requiredStrictUtcInstant(raw: String?): Long {
+    val value = raw ?: error("Cloud reader omitted a strict UTC timestamp")
+    if (!FULL_UTC_INSTANT.matches(value)) error("Cloud reader returned a malformed UTC timestamp")
+    return runCatching { Instant.parse(value).toEpochMilli() }
+        .getOrElse { error("Cloud reader returned a malformed UTC timestamp") }
+}
+
 private fun parseAppId(raw: String?): Long? {
     if (raw.isNullOrBlank()) return null
     return raw.trim().toLongOrNull()?.takeIf { it >= 0L }
         ?: error("Cloud reader returned a non-numeric app id")
 }
+
+private const val MAX_HISTORICAL_RESPONSE_TRANSITIONS = 250
+private val FULL_UTC_INSTANT = Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z")
+private val CLOUD_PRESENCE_UTC_FORMATTER = DateTimeFormatter
+    .ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'")
+    .withZone(ZoneOffset.UTC)
+
+internal fun formatCloudPresenceUtcInstant(at: Long): String =
+    CLOUD_PRESENCE_UTC_FORMATTER.format(Instant.ofEpochMilli(at))
 
 @Serializable
 private data class CloudErrorBody(val error: String? = null)

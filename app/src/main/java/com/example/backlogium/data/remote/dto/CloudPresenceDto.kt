@@ -4,8 +4,11 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class CloudPresenceResponseDto(
+    val mode: String? = null,
     val account: String? = null,
+    val earliestObservedAt: String? = null,
     val transitions: List<CloudPresenceTransitionDto> = emptyList(),
+    val predecessor: CloudPresenceTransitionDto? = null,
     val current: CloudPresenceCurrentDto? = null,
     val nextPosition: String? = null,
     val hasMore: Boolean = false,

@@ -30,11 +30,13 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import retrofit2.HttpException
 import retrofit2.Response
 import java.time.LocalDate
+import java.time.Instant
 import java.time.ZoneId
 
 class CloudPresenceRepositoryTest {
@@ -873,6 +875,9 @@ class CloudPresenceRepositoryTest {
                 endpoint: String,
                 authorization: String,
                 position: String?,
+                mode: String?,
+                from: String?,
+                through: String?,
             ): CloudPresenceResponseDto {
                 requests += endpoint to position
                 return if (endpoint == oldEndpoint) {
@@ -935,6 +940,9 @@ class CloudPresenceRepositoryTest {
                 endpoint: String,
                 authorization: String,
                 position: String?,
+                mode: String?,
+                from: String?,
+                through: String?,
             ): CloudPresenceResponseDto {
                 requests += endpoint to position
                 return if (endpoint == oldEndpoint) {
@@ -1416,6 +1424,50 @@ class CloudPresenceRepositoryTest {
     }
 
     @Test
+    fun rangeMetadataLookupUsesOptInModeWithoutMovingOrdinaryCursor() = runBlocking {
+        val api = FakeCloudPresenceApi(
+            answer = CloudPresenceResponseDto(
+                mode = "range",
+                account = ACCOUNT,
+                earliestObservedAt = "2026-09-14T00:00:00.000Z",
+                readAt = "2026-09-15T00:00:00.000Z",
+            ),
+        )
+        val store = FakeCloudCredentialsStore(
+            CloudCredentials("https://reader.example.com/read", "secret"),
+        )
+        val records = FakeCloudReadDao()
+        val settings = FakeSettingsRepository().apply {
+            setCloudReadPosition("ordinary-read-position")
+        }
+        val repository = repository(api, store, records, settings, ACCOUNT)
+
+        val result = repository.lookupRangeMetadata()
+
+        assertTrue(result is CloudPresenceRangeLookupResult.Success)
+        assertEquals("range", api.requests.single().mode)
+        assertNull(api.requests.single().position)
+        assertNull(api.requests.single().from)
+        assertNull(api.requests.single().through)
+        assertEquals("ordinary-read-position", settings.cloudReadPosition.first())
+        assertTrue(records.records.value.isEmpty())
+    }
+
+    @Test
+    fun rangeMetadataLookupDoesNotCallAnUnconfiguredReader() = runBlocking {
+        val api = FakeCloudPresenceApi()
+        val repository = repository(
+            api,
+            FakeCloudCredentialsStore(),
+            FakeCloudReadDao(),
+            steamId = ACCOUNT,
+        )
+
+        assertEquals(CloudPresenceRangeLookupResult.Unconfigured, repository.lookupRangeMetadata())
+        assertTrue(api.requests.isEmpty())
+    }
+
+    @Test
     fun endpointValidationRejectsNonHttpsAndQueryCredentials() = runBlocking {
         assertNull(CloudPresenceRepository.normalizeEndpoint("http://reader.example.com/read"))
         assertNull(CloudPresenceRepository.normalizeEndpoint("https://user:secret@reader.example.com/read"))
@@ -1458,6 +1510,9 @@ class CloudPresenceRepositoryTest {
             repository.verifyAndSave("https://reader.example.com/read/", " reader-secret "),
         )
         assertEquals(null, api.requests[0].position)
+        assertNull(api.requests[0].mode)
+        assertNull(api.requests[0].from)
+        assertNull(api.requests[0].through)
         assertEquals(CloudCredentials("https://reader.example.com/read", "reader-secret"), store.credentials)
         assertEquals("2026-09-15T00:20:00Z", settings.cloudReadPosition.first())
         // An incomplete page carries no trailing interval: the latest current state sits
@@ -1502,6 +1557,178 @@ class CloudPresenceRepositoryTest {
         )
         assertNull(store.credentials)
         assertEquals(CloudReadFailure.UNUSABLE_RESPONSE.name, records.records.value.single().outcome)
+    }
+
+    @Test
+    fun legacyReadResponseStillParsesWithoutHistoricalFields() {
+        val parsed = sampleResponse().toParsedRead(ACCOUNT)
+
+        assertEquals(ACCOUNT, parsed.account)
+        assertEquals(1, parsed.transitions.size)
+        assertNull(parsed.predecessor)
+    }
+
+    @Test
+    fun rangeMetadataParsesEarliestEvidenceAndOnlyUsableFrozenCurrentState() {
+        val metadata = CloudPresenceResponseDto(
+            mode = "range",
+            account = ACCOUNT,
+            earliestObservedAt = "2026-09-15T00:00:00.000Z",
+            current = CloudPresenceCurrentDto(
+                lastObservedAt = "2026-09-15T00:10:00.000Z",
+                since = "2026-09-15T00:05:00.000Z",
+                gameid = "10",
+            ),
+            readAt = "2026-09-15T00:11:00.000Z",
+        ).toRangeMetadata(ACCOUNT)
+
+        assertEquals(ACCOUNT, metadata.account)
+        assertEquals(Instant.parse("2026-09-15T00:00:00.000Z").toEpochMilli(), metadata.earliestObservedAt)
+        assertEquals(Instant.parse("2026-09-15T00:10:00.000Z").toEpochMilli(), metadata.current?.observedAt)
+        assertEquals(Instant.parse("2026-09-15T00:11:00.000Z").toEpochMilli(), metadata.readAt)
+    }
+
+    @Test
+    fun rangeMetadataDoesNotExposeCurrentStateObservedAfterItsFrozenReadTime() {
+        val metadata = CloudPresenceResponseDto(
+            mode = "range",
+            account = ACCOUNT,
+            earliestObservedAt = null,
+            current = CloudPresenceCurrentDto(
+                lastObservedAt = "2026-09-15T00:12:00.000Z",
+                since = "2026-09-15T00:10:00.000Z",
+                gameid = "10",
+            ),
+            readAt = "2026-09-15T00:11:00.000Z",
+        ).toRangeMetadata(ACCOUNT)
+
+        assertNull(metadata.earliestObservedAt)
+        assertNull(metadata.current)
+    }
+
+    @Test
+    fun rangeMetadataRejectsWrongModeAccountAndFutureLowerBound() {
+        val valid = CloudPresenceResponseDto(
+            mode = "range",
+            account = ACCOUNT,
+            earliestObservedAt = "2026-09-15T00:12:00.000Z",
+            readAt = "2026-09-15T00:11:00.000Z",
+        )
+
+        assertThrows(IllegalStateException::class.java) {
+            valid.copy(mode = null).toRangeMetadata(ACCOUNT)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            valid.toRangeMetadata(OTHER_ACCOUNT)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            valid.toRangeMetadata(ACCOUNT)
+        }
+    }
+
+    @Test
+    fun historicalPageParsesOnlyMatchingRangeAndRetainsRawPredecessor() {
+        val from = "2026-09-15T00:00:00.000Z"
+        val through = "2026-09-15T00:20:00.000Z"
+        val predecessorAt = "2026-09-14T23:59:00.000Z"
+        val range = CloudPresenceHistoricalRange(
+            fromAt = Instant.parse(from).toEpochMilli(),
+            throughAt = Instant.parse(through).toEpochMilli(),
+        )
+        val parsed = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(CloudPresenceTransitionDto(v = 3, t = from, gameid = "10")),
+            predecessor = CloudPresenceTransitionDto(
+                v = 3,
+                t = predecessorAt,
+                prevLastObservedAt = "2026-09-14T23:58:00.000Z",
+                prevCoverageLapseFrom = "2026-09-14T23:58:30.000Z",
+                prevCoverageLapseRecoveredAt = "2026-09-14T23:58:50.000Z",
+                gameid = "20",
+            ),
+            current = CloudPresenceCurrentDto(
+                lastObservedAt = through,
+                since = from,
+                gameid = "10",
+            ),
+            nextPosition = from,
+            hasMore = false,
+            windowStart = from,
+            windowEnd = through,
+            readAt = "2026-09-15T00:20:01.000Z",
+        ).toParsedRead(ACCOUNT, range)
+
+        assertEquals(Instant.parse(predecessorAt).toEpochMilli(), parsed.predecessor?.at)
+        assertEquals(range.fromAt, parsed.windowStart)
+        assertEquals(range.throughAt, parsed.windowEnd)
+        assertEquals(from, parsed.nextPosition)
+    }
+
+    @Test
+    fun historicalContinuationKeepsFullUtcMillisecondsInItsOverlapPosition() {
+        val fromAt = Instant.parse("2026-09-15T00:00:00.000Z").toEpochMilli()
+        val transitions = (0 until 250).map { index ->
+            CloudPresenceTransitionDto(
+                v = 3,
+                t = formatCloudPresenceUtcInstant(fromAt + index * 1_000L),
+                gameid = "10",
+            )
+        }
+        val lastAt = fromAt + 249_000L
+        val throughAt = fromAt + 300_000L
+        val range = CloudPresenceHistoricalRange(fromAt, throughAt)
+
+        val parsed = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = transitions,
+            nextPosition = transitions.last().t,
+            hasMore = true,
+            windowStart = formatCloudPresenceUtcInstant(fromAt),
+            windowEnd = formatCloudPresenceUtcInstant(lastAt),
+            readAt = formatCloudPresenceUtcInstant(throughAt + 1_000L),
+        ).toParsedRead(ACCOUNT, range)
+
+        assertEquals(transitions[transitions.lastIndex - 1].t, parsed.nextPosition)
+        assertTrue(parsed.nextPosition!!.matches(Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z")))
+    }
+
+    @Test
+    fun historicalPageRejectsMalformedPositionsAndOutOfRangeIdentityOrEvidence() {
+        val from = "2026-09-15T00:00:00.000Z"
+        val through = "2026-09-15T00:20:00.000Z"
+        val range = CloudPresenceHistoricalRange(
+            fromAt = Instant.parse(from).toEpochMilli(),
+            throughAt = Instant.parse(through).toEpochMilli(),
+        )
+        val valid = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = listOf(CloudPresenceTransitionDto(v = 3, t = from, gameid = "10")),
+            nextPosition = from,
+            hasMore = false,
+            windowStart = from,
+            windowEnd = through,
+            readAt = "2026-09-15T00:20:01.000Z",
+        )
+
+        assertThrows(IllegalStateException::class.java) {
+            valid.copy(nextPosition = "not-a-position").toParsedRead(ACCOUNT, range)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            valid.copy(nextPosition = "2026-09-15T00:21:00.000Z").toParsedRead(ACCOUNT, range)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            valid.copy(account = OTHER_ACCOUNT).toParsedRead(ACCOUNT, range)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            valid.copy(windowStart = "2026-09-14T23:59:00.000Z").toParsedRead(ACCOUNT, range)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            valid.copy(transitions = listOf(CloudPresenceTransitionDto(
+                v = 3,
+                t = "2026-09-15T00:21:00.000Z",
+                gameid = "10",
+            ))).toParsedRead(ACCOUNT, range)
+        }
     }
 
     @Test
@@ -1730,6 +1957,9 @@ class CloudPresenceRepositoryTest {
                 endpoint: String,
                 authorization: String,
                 position: String?,
+                mode: String?,
+                from: String?,
+                through: String?,
             ): CloudPresenceResponseDto {
                 requests += position
                 return if (position == null) page1 else page2
@@ -1848,6 +2078,9 @@ class CloudPresenceRepositoryTest {
                 endpoint: String,
                 authorization: String,
                 position: String?,
+                mode: String?,
+                from: String?,
+                through: String?,
             ): CloudPresenceResponseDto {
                 requests += position
                 return when (position) {
@@ -1998,6 +2231,9 @@ class CloudPresenceRepositoryTest {
                 endpoint: String,
                 authorization: String,
                 position: String?,
+                mode: String?,
+                from: String?,
+                through: String?,
             ): CloudPresenceResponseDto {
                 requests += endpoint to position
                 if (endpoint == newEndpoint) return verificationPage
@@ -2476,7 +2712,14 @@ class CloudPresenceRepositoryTest {
         var answer: CloudPresenceResponseDto = sampleResponse(),
         var failure: Throwable? = null,
     ) : CloudPresenceApi {
-        data class Request(val endpoint: String, val authorization: String, val position: String?)
+        data class Request(
+            val endpoint: String,
+            val authorization: String,
+            val position: String?,
+            val mode: String? = null,
+            val from: String? = null,
+            val through: String? = null,
+        )
 
         val requests = mutableListOf<Request>()
 
@@ -2484,8 +2727,11 @@ class CloudPresenceRepositoryTest {
             endpoint: String,
             authorization: String,
             position: String?,
+            mode: String?,
+            from: String?,
+            through: String?,
         ): CloudPresenceResponseDto {
-            requests += Request(endpoint, authorization, position)
+            requests += Request(endpoint, authorization, position, mode, from, through)
             failure?.let { throw it }
             return answer
         }
@@ -2501,8 +2747,11 @@ class CloudPresenceRepositoryTest {
             endpoint: String,
             authorization: String,
             position: String?,
+            mode: String?,
+            from: String?,
+            through: String?,
         ): CloudPresenceResponseDto {
-            requests += FakeCloudPresenceApi.Request(endpoint, authorization, position)
+            requests += FakeCloudPresenceApi.Request(endpoint, authorization, position, mode, from, through)
             entered.complete(Unit)
             return gate.await()
         }

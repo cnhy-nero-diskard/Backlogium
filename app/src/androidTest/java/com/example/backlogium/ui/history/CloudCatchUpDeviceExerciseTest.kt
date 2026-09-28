@@ -645,6 +645,9 @@ class CloudCatchUpDeviceExerciseTest {
             endpoint: String,
             authorization: String,
             position: String?,
+            mode: String?,
+            from: String?,
+            through: String?,
         ): CloudPresenceResponseDto {
             calls += ReaderCall(endpoint, authorization, position)
             return onRead(position)
