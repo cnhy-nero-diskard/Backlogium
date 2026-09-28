@@ -83,6 +83,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
                     playtimeForever = 130,
                     playtime2Weeks = 0,
                     lastPlaytime = 130,
+                    backfillMinutes = 60,
                     isGoal = true,
                     source = GameSource.STEAM_OWNED,
                 ),
@@ -108,6 +109,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
 
             val beforeSessions = database.sessionDao().getAll()
             val beforeDays = database.dailyProgressDao().getAllOrdered()
+            val beforeGame = database.gameDao().getAll().single()
             val beforeMinutes = beforeSessions.sumOf { it.minutes }
             val intervals = listOf(
                 CloudPresenceInterval(
@@ -123,13 +125,22 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
                     mayHaveStartedBefore = false,
                 ),
             )
+            val range = CloudPresenceHistoricalSelection(
+                choice = CloudPresenceHistoricalStartChoice.CUSTOM_LOCAL_DATE,
+                selectedStartAt = presenceStart,
+                effectiveStartAt = presenceStart,
+                throughAt = presenceEnd,
+                zoneId = "UTC",
+            )
 
-            val applied = useCase.apply(intervals)
+            val applied = useCase.apply(intervals, range)
 
             assertEquals(CloudPresenceRefilingOperation.APPLIED, applied.operation)
             assertEquals(1, applied.sessionsRefiled)
             assertEquals(setOf("2026-07-25", "2026-07-26"), applied.datesAffected)
             assertEquals(beforeMinutes, database.sessionDao().getAll().sumOf { it.minutes })
+            // No pre-data cutoff was confirmed, so the date-only re-file leaves imported play alone.
+            assertEquals(beforeGame, database.gameDao().getAll().single())
             assertNotEquals(beforeSessions, database.sessionDao().getAll())
             assertEquals(
                 RecoveredSharedPlayState.PARTIAL,
@@ -143,7 +154,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             assertEquals(setOf(LocalDate.of(2026, 7, 24)), marks.read().pendingQuestDates)
             assertEquals(7, database.playerProfileDao().get()!!.longestStreak)
 
-            val repeated = useCase.apply(intervals)
+            val repeated = useCase.apply(intervals, range)
             assertEquals(CloudPresenceRefilingOperation.NO_OP, repeated.operation)
 
             val reversed = useCase.reverse()
@@ -151,6 +162,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             assertEquals(CloudPresenceRefilingOperation.REVERSED, reversed.operation)
             assertEquals(beforeSessions, database.sessionDao().getAll())
             assertEquals(beforeDays, database.dailyProgressDao().getAllOrdered())
+            assertEquals(beforeGame, database.gameDao().getAll().single())
             assertEquals(beforeMinutes, database.sessionDao().getAll().sumOf { it.minutes })
             assertFalse(database.dailyProgressDao().getByDate("2026-07-26") != null)
             assertFalse(settings.cloudPresenceRefilingApplied.first())

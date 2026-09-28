@@ -9,6 +9,58 @@ import org.junit.Test
 
 class CloudPresencePlaytimeRefilingRuleTest {
     @Test
+    fun selectedRangeClipsSessionPlacementWithoutOverlapOrMinuteChanges() {
+        val original = session(appId = GAME, startAt = 0L, endAt = 100L, minutes = 10)
+        val selection = CloudPresenceHistoricalSelection(
+            choice = CloudPresenceHistoricalStartChoice.CUSTOM_LOCAL_DATE,
+            selectedStartAt = 20L,
+            effectiveStartAt = 20L,
+            throughAt = 80L,
+            zoneId = "UTC",
+        )
+
+        val refiles = cloudPresenceSessionRefiles(
+            sessions = listOf(original),
+            ownedAppIds = setOf(GAME),
+            intervals = listOf(
+                interval(startAt = 0L, endAt = 50L),
+                interval(startAt = 50L, endAt = 100L),
+            ),
+            range = selection,
+        )
+
+        assertEquals(1, refiles.size)
+        val replacement = refiles.single().replacement
+        assertEquals(listOf(5, 5), replacement.map { it.minutes })
+        assertEquals(original.minutes, replacement.sumOf { it.minutes })
+        assertEquals(listOf(20L, 50L), replacement.map { it.startAt })
+        assertEquals(listOf(50L, 80L), replacement.map { it.endAt })
+        assertTrue(replacement.all { it.startAt >= selection.effectiveStartAt && it.endAt!! <= selection.throughAt })
+        assertTrue(replacement.zipWithNext().all { (first, next) -> first.endAt!! <= next.startAt })
+    }
+
+    @Test
+    fun sessionWithNoTimeInsideSelectedRangeIsNotChanged() {
+        val outside = session(appId = GAME, startAt = 0L, endAt = 10L, minutes = 10)
+        val selection = CloudPresenceHistoricalSelection(
+            choice = CloudPresenceHistoricalStartChoice.CUSTOM_LOCAL_DATE,
+            selectedStartAt = 20L,
+            effectiveStartAt = 20L,
+            throughAt = 80L,
+            zoneId = "UTC",
+        )
+
+        val refiles = cloudPresenceSessionRefiles(
+            sessions = listOf(outside),
+            ownedAppIds = setOf(GAME),
+            intervals = listOf(interval(startAt = 0L, endAt = 100L)),
+            range = selection,
+        )
+
+        assertTrue(refiles.isEmpty())
+    }
+
+    @Test
     fun splitPlacementKeepsEachGameTotalExact() {
         val original = session(appId = GAME, startAt = 0L, endAt = 1_000L, minutes = 10).copy(
             recoveredSharedPlay = RecoveredSharedPlayState.PARTIAL,

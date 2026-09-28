@@ -36,16 +36,21 @@ internal fun cloudPresenceSessionRefiles(
     sessions: List<Session>,
     ownedAppIds: Set<Long>,
     intervals: List<CloudPresenceInterval>,
+    range: CloudPresenceHistoricalSelection? = null,
 ): List<CloudPresenceSessionRefile> = sessions
     .asSequence()
     .filter { it.appId in ownedAppIds && !it.open && it.endAt != null && it.minutes > 0 }
     .mapNotNull { original ->
+        val originalEndAt = original.endAt ?: return@mapNotNull null
+        val periodStartAt = maxOf(original.startAt, range?.effectiveStartAt ?: Long.MIN_VALUE)
+        val periodEndAt = minOf(originalEndAt, range?.throughAt ?: Long.MAX_VALUE)
+        if (periodEndAt <= periodStartAt) return@mapNotNull null
         val replacement = CloudPresencePlaytimePlacement.place(
             CloudPresencePlaytimePlacement.Request(
                 appId = original.appId,
                 diffedMinutes = original.minutes,
-                periodStartAt = original.startAt,
-                periodEndAt = original.endAt ?: return@mapNotNull null,
+                periodStartAt = periodStartAt,
+                periodEndAt = periodEndAt,
                 intervals = intervals,
             ),
         )
@@ -91,7 +96,10 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
     private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
 ) {
 
-    suspend fun apply(intervals: List<CloudPresenceInterval>): CloudPresenceRefilingResult =
+    suspend fun apply(
+        intervals: List<CloudPresenceInterval>,
+        range: CloudPresenceHistoricalSelection? = null,
+    ): CloudPresenceRefilingResult =
         syncCoordinator.withLock {
             if (settings.cloudPresenceRefilingApplied.first()) {
                 return@withLock CloudPresenceRefilingResult(CloudPresenceRefilingOperation.NO_OP)
@@ -100,7 +108,7 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
             derivedStateWrites.withLock {
                 val inProgress = settings.cloudPresenceRefilingBackup()
                 if (inProgress == null) {
-                    val changes = findChanges(intervals)
+                    val changes = findChanges(intervals, range)
                     val originals = changes.map { it.original }
                     val dailyBefore =
                         if (changes.isEmpty()) emptyList() else dailyProgressDao.getAllOrdered()
@@ -133,7 +141,7 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                 if (inProgress.sessions.isEmpty()) {
                     // No prior mutation could have happened without originals: re-evaluate fresh
                     // rather than preserving an empty backup that would hide new evidence.
-                    val changes = findChanges(intervals)
+                    val changes = findChanges(intervals, range)
                     val originals = changes.map { it.original }
                     val dailyBefore =
                         if (changes.isEmpty()) emptyList() else dailyProgressDao.getAllOrdered()
@@ -173,7 +181,7 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                     // The Room commit never landed (or rolled back): no mutation to preserve,
                     // so discarding the stale backup for a fresh diff is safe and also picks
                     // up any intervals that arrived between attempts.
-                    val changes = findChanges(intervals)
+                    val changes = findChanges(intervals, range)
                     val originals = changes.map { it.original }
                     val dailyBefore =
                         if (changes.isEmpty()) emptyList() else dailyProgressDao.getAllOrdered()
@@ -215,6 +223,7 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                     inProgress.sessions,
                     ownedIds,
                     intervals,
+                    range,
                 ).associateBy { it.original.id }
                 val originalIds = inProgress.sessions.map { it.id }.toSet()
                 val currentSessions = sessionDao.getAll()
@@ -362,13 +371,16 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
         )
     }
 
-    private suspend fun findChanges(intervals: List<CloudPresenceInterval>): List<Change> {
+    private suspend fun findChanges(
+        intervals: List<CloudPresenceInterval>,
+        range: CloudPresenceHistoricalSelection?,
+    ): List<Change> {
         val ownedIds = gameDao.getAll()
             .asSequence()
             .filter { it.source == GameSource.STEAM_OWNED }
             .map { it.appId }
             .toSet()
-        return cloudPresenceSessionRefiles(sessionDao.getAll(), ownedIds, intervals)
+        return cloudPresenceSessionRefiles(sessionDao.getAll(), ownedIds, intervals, range)
             .map { change -> Change(change.original, change.replacement) }
     }
 
