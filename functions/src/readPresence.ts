@@ -106,6 +106,14 @@ export interface PresenceReadResponse {
   readonly readAt: string;
 }
 
+export interface PresenceRangeMetadataResponse {
+  readonly mode: "range";
+  readonly account: string;
+  readonly earliestObservedAt: string | null;
+  readonly current: PresenceReadCurrentState | null;
+  readonly readAt: string;
+}
+
 function asDate(value: unknown): Date | undefined {
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? undefined : value;
@@ -221,6 +229,50 @@ export async function servePresenceRead(
   if (!steamId.trim()) {
     safeLog.error("Presence read is not configured");
     response.status(503).json({ error: "unavailable" });
+    return;
+  }
+
+  if (queryValue(request, "mode") === "range") {
+    safeLog.registerSensitive(expectedToken, steamId);
+    try {
+      // Capture the server-side end before starting either lookup. The returned current
+      // snapshot is therefore frozen for this metadata response and callers can reject
+      // it if its observation falls after readAt.
+      const readAt = new Date();
+      const db = firestore ?? (getFirestore() as unknown as FirestoreLike);
+      const player = db.collection(PLAYERS).doc(steamId);
+      const [currentSnapshot, oldestSnapshot] = await Promise.all([
+        player.get(),
+        player.collection(PRESENCE).orderBy("t", "asc").limit(1).get(),
+      ]);
+      const currentState = current(
+        currentSnapshot.exists ? currentSnapshot.data() : undefined,
+      );
+      const oldestTransition = oldestSnapshot.docs[0]
+        ? transition(oldestSnapshot.docs[0].data()).t
+        : undefined;
+      const currentObservedAt = currentState?.lastObservedAt
+        ? new Date(currentState.lastObservedAt).getTime()
+        : Number.NaN;
+      const currentEvidenceStart = !Number.isNaN(currentObservedAt)
+        && currentObservedAt <= readAt.getTime()
+        ? (currentState?.since ?? currentState?.lastObservedAt)
+        : undefined;
+      const result: PresenceRangeMetadataResponse = {
+        mode: "range",
+        account: steamId,
+        earliestObservedAt: oldestTransition ?? currentEvidenceStart ?? null,
+        current: currentState,
+        readAt: readAt.toISOString(),
+      };
+      safeLog.info("presence range metadata ok", {
+        hasOldest: result.earliestObservedAt !== null,
+      });
+      response.status(200).json(result);
+    } catch (error) {
+      safeLog.error("Presence range metadata failed", { reason: String(error) });
+      response.status(500).json({ error: "unusable_response" });
+    }
     return;
   }
 

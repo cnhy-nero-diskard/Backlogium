@@ -123,6 +123,94 @@ describe("servePresenceRead", () => {
     expect(firestore.readCount).toBe(0);
   });
 
+  it("returns the oldest retained transition and a frozen current snapshot for range metadata", async () => {
+    const firestore = new FakeFirestore();
+    seedPresence(firestore);
+    const captured = response();
+
+    await servePresenceRead(
+      request("Bearer secret", { mode: "range" }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect(captured.statusCode).toBe(200);
+    expect(captured.body).toMatchObject({
+      mode: "range",
+      account: steamId,
+      earliestObservedAt: "2025-01-01T00:00:00.000Z",
+      current: { lastObservedAt: secondAt.toISOString() },
+    });
+    expect(new Date((captured.body as { readAt: string }).readAt).getTime()).toBeGreaterThan(0);
+    expect(firestore.readCount).toBe(2);
+  });
+
+  it("uses the current-only evidence start when no transition is retained", async () => {
+    const firestore = new FakeFirestore();
+    firestore.seed("players/" + steamId, {
+      v: 3,
+      since: firstAt,
+      lastObservedAt: secondAt,
+      personastate: 1,
+      gameid: "440",
+      gameName: "Team Fortress 2",
+    });
+    const captured = response();
+
+    await servePresenceRead(
+      request("Bearer secret", { mode: "range" }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect(captured.statusCode).toBe(200);
+    expect(captured.body).toMatchObject({
+      earliestObservedAt: firstAt.toISOString(),
+      current: { since: firstAt.toISOString(), lastObservedAt: secondAt.toISOString() },
+    });
+    expect(firestore.readCount).toBe(2);
+  });
+
+  it("reports an empty range when neither transitions nor usable current evidence exist", async () => {
+    const firestore = new FakeFirestore();
+    const captured = response();
+
+    await servePresenceRead(
+      request("Bearer secret", { mode: "range" }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect(captured.statusCode).toBe(200);
+    expect(captured.body).toMatchObject({
+      earliestObservedAt: null,
+      current: null,
+    });
+    expect(firestore.readCount).toBe(2);
+  });
+
+  it("rejects unauthenticated range metadata without reading Firestore", async () => {
+    const firestore = new FakeFirestore();
+    const captured = response();
+
+    await servePresenceRead(
+      request(undefined, { mode: "range" }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect(captured.statusCode).toBe(401);
+    expect(firestore.readCount).toBe(0);
+  });
+
   it("rejects malformed resume positions before reading Firestore", async () => {
     const firestore = new FakeFirestore();
     const captured = response();

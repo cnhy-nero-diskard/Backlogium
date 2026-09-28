@@ -1,6 +1,6 @@
 ## 1. Bounded server contract
 
-- [ ] 1.1 Add authenticated `mode=range` metadata with oldest retained evidence, frozen-current inputs and server `readAt`; verify FakeFirestore tests for oldest/current-only/empty accounts and zero reads on unauthorized requests.
+- [x] 1.1 Add authenticated `mode=range` metadata with oldest retained evidence, frozen-current inputs and server `readAt`; verify FakeFirestore tests for oldest/current-only/empty accounts and zero reads on unauthorized requests.
 - [ ] 1.2 Add strict historical `from`/`through`/`position` validation and fixed-end 250-transition paging while preserving positionless 31-day reads; verify malformed/future/conflicting inputs use no Firestore reads and default reads stay bounded.
 - [ ] 1.3 Add first-page predecessor boundary and honest terminal current/window handling without altering raw coverage fields; verify start-boundary, stale-current, fixed-end and pagination tests in `readPresence.test.ts`.
 - [ ] 1.4 Extend `FakeFirestore` for the required two-sided timestamp predicates and reverse oldest/predecessor queries; verify query tests and `npm run build` plus the functions test suite.
