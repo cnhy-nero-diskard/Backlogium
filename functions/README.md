@@ -100,27 +100,93 @@ whose location is permanent.
 
 ## Cloud reader
 
-`readPresence` is an HTTPS function in `asia-southeast1` with one active
-instance and request concurrency of one. Call it with:
+`readPresence` is an HTTPS function in `asia-southeast1`, with one active
+instance, request concurrency of one, and a 45-second timeout. Every request
+uses `Authorization: Bearer <reader-token>`. Firestore rules remain deny-all;
+the Admin SDK is the only datastore boundary.
+
+### Ordinary bounded reads
 
 ~~~
-Authorization: Bearer <reader-token>
 GET https://<region>-<project>.cloudfunctions.net/readPresence
 GET .../readPresence?position=<previous-nextPosition>
 ~~~
 
-The first request reads only the recent bounded window (31 days) and returns at
-most 250 transitions. Later requests resume strictly after `position`; the
-response's `nextPosition` is the only read watermark. The response contains the
-raw transition coverage timestamps, the current state, the account assertion,
-the returned window, and a `hasMore` flag. It does not contain sessions,
-playtime, XP, streaks, or daily progress.
+A positionless first read starts at the rolling recent 31-day boundary, not at
+the oldest retained transition. It returns at most 250 transitions (the query
+uses one lookahead row). Later reads resume strictly after `position`; the
+response's `nextPosition` is the cursor. Responses also contain raw transition
+coverage timestamps, the current state when it belongs to the window, the
+account assertion, `windowStart`, `windowEnd`, server `readAt`, and `hasMore`.
+Ordinary reads do not drain older history; they retain their existing recent
+window and cursor behavior.
+
+### Available-range metadata
+
+~~~
+GET .../readPresence?mode=range
+~~~
+
+This authenticated lookup returns no transitions. Its response contains
+`mode: "range"`, `account`, `earliestObservedAt`, `current`, and server `readAt`.
+`earliestObservedAt` is the oldest retained transition when one exists; if the
+transition log is empty, it may use a usable current-state `since` or
+`lastObservedAt`. A truly empty or unusable record returns `null`. This is the
+earliest retained evidence, not a claim of continuous observation. The lookup
+reads at most the player document and one oldest-transition query result (plus
+any applicable Firestore query minimum charge).
+
+### Explicit historical pages
+
+~~~
+GET .../readPresence?from=2025-01-01T00:00:00.000Z&through=2025-02-01T00:00:00.000Z
+GET .../readPresence?from=2025-01-01T00:00:00.000Z&through=2025-02-01T00:00:00.000Z&position=<nextPosition>
+~~~
+
+`from` and `through` are required together and must be strict full UTC instants
+(`YYYY-MM-DDTHH:mm:ss.sssZ`). The fixed `through` end cannot be in the future;
+`from` cannot be after it, and a resume `position` must stay inside the range.
+These bounds cannot be combined with `mode=range`. Invalid range parameters are
+rejected before any Firestore read.
+
+The first page selects transitions with `t >= from` and `t <= through`, and
+includes at most one predecessor transition (`t < from`) for boundary
+reconstruction. Resume pages select strictly after `position` and no later than
+the same fixed `through`. Each response contains at most 250 transitions; a
+lookahead row determines `hasMore`. The response includes `nextPosition`, the
+raw coverage fields, `current` only when its observation is within the selected
+range, the optional first-page `predecessor`, and the actual page
+`windowStart`/`windowEnd` rather than a promise that every minute was covered.
+No response contains sessions, playtime, XP, streaks, or daily progress.
+
+The Android client stages explicit history separately from its ordinary cursor.
+One user-started acquisition batch is capped at 50 pages and about 30 seconds;
+partial progress is durable and another user action is required to continue.
+The app never applies an incomplete range. Only after full acquisition and a
+separate confirmation may it re-date existing sessions or transfer eligible,
+pre-cutoff minutes from a previously imported owned-game Steam balance into
+dated History sessions. This is a conservative timing attribution, not a drain
+of every retained transition or a guarantee that all old Steam play is
+recoverable.
+
+### Read-cost envelope
+
+Authentication failures perform zero Firestore reads. A normal page reads at
+most one player document and 251 transition query results (250 returned plus
+the lookahead). A historical first page can add one predecessor-result query;
+including applicable per-query minimums, the design budget is at most about
+254 billed document reads for that page. A 50-page manual batch is bounded at
+roughly 12,650 document reads, plus any applicable query-minimum charges and
+one predecessor lookup. The metadata lookup is a separate, bounded request.
+There is no constant whole-history cap: the earliest retained date remains
+selectable, so total cost grows with the finite number of retained transitions.
+Every incremental batch requires a user action; the endpoint has no bulk drain
+or automatic multi-page loop.
 
 Missing, malformed, or mismatched bearer credentials are rejected before any
-Firestore read. If the server-side reader secret is absent, every request is
+Firestore read. If the server-side reader secret is absent, requests are
 rejected. The endpoint emits only count/outcome metadata; it never logs the
-Steam account, app ID, or game title. Firestore rules remain unchanged and
-deny-all.
+Steam account, app ID, or game title.
 
 ## Logs
 

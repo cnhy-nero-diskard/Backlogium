@@ -29,7 +29,7 @@
 - [x] 4.2 Show a confirmation with selected/effective start, fixed end, player-asserted cutoff, imported-balance ceiling, uncertainty/coverage caveat, and disclosure that dates/quests/streaks and tracked/imported classification may change but XP/levels/Steam totals will not; verify Settings disclosure tests and no action before confirmation.
 - [x] 4.3 Show selected range/cutoff and page/transition progress during bounded acquisition, explicit Continue on partial/failure, and durable applied/evidenced range, existing-session changes, newly dated minutes and remaining imported balance (including zero changes) afterward; verify Settings feedback across restart and reverse.
 - [x] 4.4 Verify History displays the new dated sessions after Load older, with timing provenance distinct from device-recorded sessions, and game detail, Library/collection totals and XP reflect the reclassified tracked/imported minutes without double count; keep the tracked/0-imported distinction visible when a balance is exhausted, covered by History and game-detail projection tests.
-- [ ] 4.5 Refresh stale `README.md` cloud/roadmap text, `docs/architecture-map.md` reader path and `functions/README.md` metadata/history API and cost envelope; verify the docs distinguish re-dating existing sessions from pre-data imported-minute transfer and never claim ordinary reads drain all history.
+- [x] 4.5 Refresh stale `README.md` cloud/roadmap text, `docs/architecture-map.md` reader path and `functions/README.md` metadata/history API and cost envelope; verify the docs distinguish re-dating existing sessions from pre-data imported-minute transfer and never claim ordinary reads drain all history.
 
 ## 5. Cross-cutting verification
 

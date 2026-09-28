@@ -74,11 +74,12 @@ collection-entity boundary breach documented in the root README.
 ```text
 +------------------------------ Android local state ----------------------+
 |                                                                         |
-|  Room database (schema version 15)                                     |
+|  Room database (schema version 41)                                     |
 |    games                 sessions              daily_progress            |
 |    player_profile       hltb_data              achievements              |
 |    game_achievement_sync                         collections             |
 |    collection_members   game_genre_cache                               |
+|    cloud_historical_operations / intervals / boundaries / journals    |
 |    sync_runs            request_breakdowns       presence_decisions     |
 |                                                                         |
 |  DataStore / Keystore                                                    |
@@ -135,8 +136,11 @@ snapshots. A restore also queues a deferred achievement reconciliation pass.
                                      HltbRepository -> Room
 ```
 
-The Android client is usable without the cloud path. It currently does not read
-the Firestore presence log.
+The Android client is usable without the cloud path. For configured readers,
+Settings uses the authenticated `readPresence` HTTPS endpoint rather than direct
+Firestore access. Ordinary reads retain their bounded recent-window behavior;
+historical access requires an explicit range and remains separate from the
+ordinary read cursor.
 
 ## Scheduling and background flows
 
@@ -219,19 +223,24 @@ stops returning are tombstoned during reconciliation rather than deleted.
 ## Independent cloud writer
 
 ```text
-+-------------------+       +--------------------------+       +-------------+
-| Steam Web API     | ----> | Firebase scheduled       | ----> | Firestore   |
-| presence endpoint |       | pollPresence (1/min)     |       | players/{id}|
-+-------------------+       | Node 22 / TypeScript     |       | /presence   |
-                            | Admin SDK                |       | transitions |
-                            +--------------------------+       +-------------+
+Steam Web API -> Firebase pollPresence (scheduled, 1/min) --Admin SDK writes--> Firestore
+Android Settings -> CloudPresenceRepository --Bearer HTTPS--> readPresence --Admin SDK query--> Firestore
 ```
 
 The function writes the current observation and append-only state transitions;
-it does not calculate sessions, playtime, streaks, or XP. `firestore.rules`
-currently denies client reads and writes, so this path is intentionally a
-separate writer with no Android consumer yet. See
-[`functions/README.md`](../functions/README.md) for deployment and monitoring.
+it does not calculate sessions, playtime, streaks, or XP. The separate
+`readPresence` HTTPS function checks its bearer token before any Firestore read;
+`firestore.rules` continues to deny direct client reads and writes. A positionless
+first read remains limited to 31 days. The opt-in `mode=range` lookup returns the
+earliest retained evidence, a current-state snapshot, and server `readAt`; explicit
+`from`/`through` requests return at most 250 transitions per page with a fixed end.
+The app stages historical pages durably and requires explicit continuation after
+each bounded batch. It only re-files after the chosen range is complete, and only
+an independent user-confirmed cutoff can authorize transfer of eligible minutes
+from an already-imported owned-game balance. Re-dating existing sessions and
+transferring pre-data imported minutes are separate effects; neither changes the
+combined credited minutes, XP, levels, or Steam totals. See
+[`functions/README.md`](../functions/README.md) for API bounds and the cost envelope.
 
 ## Repository map
 
@@ -245,13 +254,13 @@ Backlogium/
 |   |-- di/          Hilt providers and bindings
 |   `-- MainActivity.kt / BacklogiumApp.kt
 |-- gamification/    standalone XP and rarity calculations
-|-- functions/       TypeScript Firebase presence poller; outside Gradle
+|-- functions/       TypeScript Firebase presence poller and bounded reader; outside Gradle
 |-- openspec/specs/  canonical product and behavior requirements
 |-- openspec/changes/active implementation plans and verification notes
 `-- docs/            forward-facing UI and architecture references
 ```
 
 Implemented product surfaces are summarized in the root
-[README](../README.md). The remaining product roadmap is the app-side Firestore
-backfill and an OBS Browser Source overlay; the cloud writer currently exists to
-make those future consumers possible.
+[README](../README.md). The app-side bounded reader and confirmed historical
+re-file are implemented. Remaining cloud-facing product work is the OBS Browser
+Source overlay.
