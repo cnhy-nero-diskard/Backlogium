@@ -3,6 +3,10 @@ package com.example.backlogium.data.repo
 import com.example.backlogium.data.credentials.CloudCredentials
 import com.example.backlogium.data.credentials.CloudCredentialsStore
 import com.example.backlogium.data.local.dao.CloudReadDao
+import com.example.backlogium.data.local.entity.CloudHistoricalBoundary
+import com.example.backlogium.data.local.entity.CloudHistoricalInterval
+import com.example.backlogium.data.local.entity.CloudHistoricalOperation
+import com.example.backlogium.data.local.entity.CloudHistoricalStates
 import com.example.backlogium.data.local.entity.CloudReadRecord
 import com.example.backlogium.data.remote.CloudPresenceApi
 import com.example.backlogium.data.remote.dto.CloudPresenceCurrentDto
@@ -1451,6 +1455,187 @@ class CloudPresenceRepositoryTest {
         assertNull(api.requests.single().through)
         assertEquals("ordinary-read-position", settings.cloudReadPosition.first())
         assertTrue(records.records.value.isEmpty())
+        val metadata = (result as CloudPresenceRangeLookupResult.Success).metadata
+        assertEquals(0L, metadata.readerGeneration)
+        assertEquals("https://reader.example.com/read", metadata.endpointIdentity)
+        assertEquals(0L, metadata.accountGeneration)
+    }
+
+    @Test
+    fun historicalAcquisitionOverlapsPagesWithoutAdvancingOrdinaryCursor() = runTest {
+        val fromAt = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
+        val throughAt = Instant.parse("2026-09-15T00:00:00Z").toEpochMilli()
+        val api = FakeCloudPresenceApi(answer = historicalMetadataResponse(fromAt, throughAt))
+        val settings = FakeSettingsRepository().apply {
+            setCloudReadPosition("ordinary-cursor")
+        }
+        val evidence = MemoryEvidence()
+        val stage = MemoryCloudHistoricalStore()
+        val repo = repository(
+            api = api,
+            store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret")),
+            records = FakeCloudReadDao(),
+            settings = settings,
+            steamId = ACCOUNT,
+            pending = evidence,
+            historicalStore = stage,
+        )
+        val metadata = (repo.lookupRangeMetadata() as CloudPresenceRangeLookupResult.Success).metadata
+        val operation = (repo.beginHistoricalAcquisition(fromAt, fromAt, metadata) as
+            CloudHistoricalStartResult.Started).operation
+
+        val firstTransitions = historicalTransitions(fromAt, count = 250, firstIndex = 0)
+        api.answer = historicalPageResponse(fromAt, throughAt, firstTransitions, hasMore = true)
+        val firstPage = repo.acquireHistoricalPage(operation.operationId) { }
+        assertTrue(firstPage is CloudHistoricalPageResult.Success)
+        val afterFirst = (firstPage as CloudHistoricalPageResult.Success).operation
+        assertEquals(1, afterFirst.pagesFetched)
+        assertEquals(250, afterFirst.transitionsFetched)
+        assertEquals(fromAt + 248 * 60_000L, afterFirst.lastPositionAt)
+        assertEquals(249, stage.intervals(operation.operationId).size)
+        assertEquals(operation.operationId, repo.currentHistoricalOperation()?.operationId)
+
+        val secondTransitions = historicalTransitions(fromAt, count = 250, firstIndex = 249)
+        api.answer = historicalPageResponse(fromAt, throughAt, secondTransitions, hasMore = false)
+        val secondPage = repo.acquireHistoricalPage(operation.operationId) { }
+        assertTrue(secondPage is CloudHistoricalPageResult.Success)
+        val completed = (secondPage as CloudHistoricalPageResult.Success).operation
+
+        assertTrue(completed.acquisitionComplete)
+        assertEquals(CloudHistoricalStates.COMPLETE, completed.state)
+        assertEquals(2, completed.pagesFetched)
+        assertEquals(500, completed.transitionsFetched)
+        assertEquals(498, stage.intervals(operation.operationId).size)
+        assertEquals(498, evidence.rows[ACCOUNT to 0L]?.size)
+        assertEquals(operation.operationId, repo.currentHistoricalOperation()?.operationId)
+        assertEquals("ordinary-cursor", settings.cloudReadPosition.first())
+        assertEquals(fromAt + 248 * 60_000L, api.requests[2].position?.let(::requiredInstantForTest))
+        assertEquals(formatCloudPresenceUtcInstant(fromAt), api.requests[2].from)
+        assertEquals(formatCloudPresenceUtcInstant(throughAt), api.requests[2].through)
+    }
+
+    @Test
+    fun historicalEffectsAndCheckpointFailuresLeaveThePageRetryable() = runTest {
+        val fromAt = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
+        val throughAt = Instant.parse("2026-09-15T00:00:00Z").toEpochMilli()
+        val api = FakeCloudPresenceApi(answer = historicalMetadataResponse(fromAt, throughAt))
+        val settings = FakeSettingsRepository().apply { setCloudReadPosition("ordinary-cursor") }
+        val evidence = MemoryEvidence()
+        val stage = MemoryCloudHistoricalStore()
+        val repo = repository(
+            api = api,
+            store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret")),
+            records = FakeCloudReadDao(),
+            settings = settings,
+            steamId = ACCOUNT,
+            pending = evidence,
+            historicalStore = stage,
+        )
+        val metadata = (repo.lookupRangeMetadata() as CloudPresenceRangeLookupResult.Success).metadata
+        val operation = (repo.beginHistoricalAcquisition(fromAt, fromAt, metadata) as
+            CloudHistoricalStartResult.Started).operation
+        api.answer = historicalPageResponse(
+            fromAt, throughAt,
+            historicalTransitions(fromAt, count = 2, firstIndex = 0),
+            hasMore = false,
+        )
+
+        val failedConsumer = repo.acquireHistoricalPage(operation.operationId) { error("ingest failed") }
+        assertEquals(CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE), failedConsumer)
+        assertEquals(0, stage.operation(operation.operationId)?.pagesFetched)
+        assertTrue(stage.intervals(operation.operationId).isEmpty())
+        assertEquals(0, evidence.writes)
+
+        evidence.failNextRetain = true
+        val failedEvidence = repo.acquireHistoricalPage(operation.operationId) { }
+        assertEquals(CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE), failedEvidence)
+        assertEquals(0, stage.operation(operation.operationId)?.pagesFetched)
+        assertTrue(stage.intervals(operation.operationId).isEmpty())
+
+        val ingestedSnapshots = mutableSetOf<String>()
+        val events = mutableListOf<String>()
+        evidence.events = events
+        stage.events = events
+        var consumeCalls = 0
+        val idempotentConsume: suspend (CloudPresenceSnapshot) -> Unit = { snapshot ->
+            consumeCalls++
+            events += "ingest"
+            val marker = snapshot.intervals.joinToString { it.startAt.toString() }
+            ingestedSnapshots += marker
+        }
+        stage.failNextCommit = true
+        val failedCheckpoint = repo.acquireHistoricalPage(operation.operationId, idempotentConsume)
+        assertEquals(CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE), failedCheckpoint)
+        assertEquals(0, stage.operation(operation.operationId)?.pagesFetched)
+        assertTrue(stage.intervals(operation.operationId).isEmpty())
+        assertEquals(1, evidence.rows[ACCOUNT to 0L]?.size)
+        assertEquals(listOf("ingest", "evidence", "checkpoint"), events)
+
+        events.clear()
+        val replayed = repo.acquireHistoricalPage(operation.operationId, idempotentConsume)
+        assertTrue(replayed is CloudHistoricalPageResult.Success)
+        assertEquals(listOf("ingest", "evidence", "checkpoint"), events)
+        assertEquals(2, consumeCalls)
+        assertEquals(1, ingestedSnapshots.size)
+        assertEquals(1, stage.operation(operation.operationId)?.pagesFetched)
+        assertEquals(1, stage.intervals(operation.operationId).size)
+        assertEquals(1, evidence.rows[ACCOUNT to 0L]?.size)
+        assertEquals("ordinary-cursor", settings.cloudReadPosition.first())
+    }
+
+    @Test
+    fun historicalAcquisitionUsesTheCurrentStateFrozenAtConfirmation() = runTest {
+        val fromAt = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
+        val throughAt = Instant.parse("2026-09-15T00:00:00Z").toEpochMilli()
+        val frozenObservedAt = throughAt - 120_000L
+        val frozenSince = fromAt + 60_000L
+        val api = FakeCloudPresenceApi(
+            answer = historicalMetadataResponse(fromAt, throughAt).copy(
+                current = CloudPresenceCurrentDto(
+                    v = 2,
+                    lastObservedAt = formatCloudPresenceUtcInstant(frozenObservedAt),
+                    since = formatCloudPresenceUtcInstant(frozenSince),
+                    gameid = "440",
+                    gameName = "Frozen Game",
+                    personastate = 1,
+                ),
+            ),
+        )
+        val stage = MemoryCloudHistoricalStore()
+        val repo = repository(
+            api = api,
+            store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret")),
+            records = FakeCloudReadDao(),
+            settings = FakeSettingsRepository(),
+            steamId = ACCOUNT,
+            historicalStore = stage,
+        )
+        val metadata = (repo.lookupRangeMetadata() as CloudPresenceRangeLookupResult.Success).metadata
+        val operation = (repo.beginHistoricalAcquisition(fromAt, fromAt, metadata) as
+            CloudHistoricalStartResult.Started).operation
+
+        val laterObservedAt = throughAt - 60_000L
+        api.answer = historicalPageResponse(fromAt, throughAt, transitions = emptyList(), hasMore = false)
+            .copy(
+                current = CloudPresenceCurrentDto(
+                    v = 2,
+                    lastObservedAt = formatCloudPresenceUtcInstant(laterObservedAt),
+                    since = formatCloudPresenceUtcInstant(frozenSince),
+                    gameid = "440",
+                    gameName = "Moved Current Game",
+                    personastate = 1,
+                ),
+            )
+
+        val result = repo.acquireHistoricalPage(operation.operationId) { }
+        assertTrue(result is CloudHistoricalPageResult.Success)
+        val success = result as CloudHistoricalPageResult.Success
+        assertEquals(frozenObservedAt, success.snapshot.current?.observedAt)
+        assertEquals("Frozen Game", success.snapshot.current?.gameName)
+        val interval = stage.intervals(operation.operationId).single()
+        assertEquals(frozenSince, interval.startAt)
+        assertEquals(frozenObservedAt, interval.endAt)
+        assertTrue(interval.ongoing)
     }
 
     @Test
@@ -2650,6 +2835,7 @@ class CloudPresenceRepositoryTest {
         steamId: String?,
         pending: CloudPendingEvidence? = null,
         routineWorkCanceller: CloudRoutineWorkCancellation? = null,
+        historicalStore: CloudHistoricalStore = EmptyCloudHistoricalStore,
     ): CloudPresenceRepository = CloudPresenceRepository(
         api = api,
         credentialsStore = store,
@@ -2659,10 +2845,75 @@ class CloudPresenceRepositoryTest {
         pendingEvidence = pending ?: MemoryEvidence(),
         time = FixedTimeProvider(),
         routineWorkCanceller = routineWorkCanceller,
+        historicalStore = historicalStore,
     )
+
+    private class MemoryCloudHistoricalStore : CloudHistoricalStore {
+        private val operations = mutableMapOf<String, CloudHistoricalOperation>()
+        private val stagedIntervals = mutableMapOf<String, MutableMap<Pair<Long, Long>, CloudHistoricalInterval>>()
+        private val stagedBoundaries = mutableMapOf<Pair<String, String>, CloudHistoricalBoundary>()
+        var failNextCommit = false
+        var events: MutableList<String>? = null
+
+        override suspend fun insertOperation(operation: CloudHistoricalOperation): Boolean {
+            if (operation.operationId in operations) return false
+            operations[operation.operationId] = operation
+            return true
+        }
+
+        override suspend fun operation(operationId: String): CloudHistoricalOperation? = operations[operationId]
+
+        override suspend fun operationForIdentity(
+            account: String,
+            readerGeneration: Long,
+            endpointIdentity: String,
+            state: String,
+        ): CloudHistoricalOperation? = operations.values.firstOrNull { operation ->
+            operation.account == account && operation.readerGeneration == readerGeneration &&
+                operation.endpointIdentity == endpointIdentity && operation.state == state
+        }
+
+        override suspend fun boundary(operationId: String, kind: String): CloudHistoricalBoundary? =
+            stagedBoundaries[operationId to kind]
+
+        fun intervals(operationId: String): List<CloudHistoricalInterval> =
+            stagedIntervals[operationId].orEmpty().values.sortedWith(compareBy({ it.startAt }, { it.appId }))
+
+        override suspend fun commitPage(
+            previous: CloudHistoricalOperation,
+            intervals: List<CloudHistoricalInterval>,
+            boundaries: List<CloudHistoricalBoundary>,
+            progress: CloudHistoricalOperation,
+        ): CloudHistoricalOperation? {
+            events?.add("checkpoint")
+            if (failNextCommit) {
+                failNextCommit = false
+                error("simulated historical checkpoint failure")
+            }
+            val current = operations[previous.operationId] ?: return null
+            if (current.account != previous.account || current.readerGeneration != previous.readerGeneration ||
+                current.endpointIdentity != previous.endpointIdentity ||
+                current.pagesFetched != previous.pagesFetched || current.lastPositionAt != previous.lastPositionAt
+            ) return null
+            val rows = stagedIntervals.getOrPut(previous.operationId) { mutableMapOf() }
+            intervals.forEach { interval ->
+                val key = interval.appId to interval.startAt
+                val existing = rows[key]
+                if (existing == null || existing.ongoing || !interval.ongoing) rows[key] = interval
+            }
+            boundaries.forEach { boundary ->
+                val key = previous.operationId to boundary.kind
+                val existing = stagedBoundaries[key]
+                if (existing == null || boundary.at >= existing.at) stagedBoundaries[key] = boundary
+            }
+            operations[previous.operationId] = progress
+            return progress
+        }
+    }
 
     private class MemoryEvidence : CloudPendingEvidence {
         var writes = 0
+        var events: MutableList<String>? = null
         var failNextRetain = false
         var failNextClear = false
         val boundaries = mutableMapOf<Pair<String, Long>, CloudPresenceTransition>()
@@ -2675,6 +2926,7 @@ class CloudPresenceRepositoryTest {
             account: String, generation: Long, windowStart: Long,
             intervals: List<CloudPresenceInterval>, lastTransition: CloudPresenceTransition?,
         ) {
+            events?.add("evidence")
             if (failNextRetain) {
                 failNextRetain = false
                 error("simulated evidence write failure")
@@ -2879,6 +3131,44 @@ class CloudPresenceRepositoryTest {
     private companion object {
         const val ACCOUNT = "76561198000000001"
         const val OTHER_ACCOUNT = "76561198000000002"
+
+        fun historicalMetadataResponse(fromAt: Long, throughAt: Long) = CloudPresenceResponseDto(
+            mode = "range",
+            account = ACCOUNT,
+            earliestObservedAt = formatCloudPresenceUtcInstant(fromAt),
+            readAt = formatCloudPresenceUtcInstant(throughAt),
+        )
+
+        fun historicalTransitions(fromAt: Long, count: Int, firstIndex: Int) =
+            (0 until count).map { index ->
+                val at = fromAt + (firstIndex + index) * 60_000L
+                val timestamp = formatCloudPresenceUtcInstant(at)
+                CloudPresenceTransitionDto(
+                    v = 2,
+                    t = timestamp,
+                    prevLastObservedAt = timestamp,
+                    personastate = 1,
+                    gameid = "440",
+                    gameName = "Owned Game",
+                )
+            }
+
+        fun historicalPageResponse(
+            fromAt: Long,
+            throughAt: Long,
+            transitions: List<CloudPresenceTransitionDto>,
+            hasMore: Boolean,
+        ) = CloudPresenceResponseDto(
+            account = ACCOUNT,
+            transitions = transitions,
+            nextPosition = transitions.lastOrNull()?.t,
+            hasMore = hasMore,
+            windowStart = formatCloudPresenceUtcInstant(fromAt),
+            windowEnd = if (hasMore) transitions.last().t else formatCloudPresenceUtcInstant(throughAt),
+            readAt = formatCloudPresenceUtcInstant(throughAt),
+        )
+
+        fun requiredInstantForTest(raw: String): Long = Instant.parse(raw).toEpochMilli()
 
         fun sampleResponseFor(gameId: String) = sampleResponse().copy(
             transitions = listOf(

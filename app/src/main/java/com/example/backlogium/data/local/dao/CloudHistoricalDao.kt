@@ -54,6 +54,38 @@ interface CloudHistoricalDao {
         updatedAt: Long,
     ): Int
 
+    /** Effects are retained before this call; interval, boundary and position commit together. */
+    @Transaction
+    suspend fun commitPage(
+        previous: CloudHistoricalOperation,
+        intervals: List<CloudHistoricalInterval>,
+        boundaries: List<CloudHistoricalBoundary>,
+        progress: CloudHistoricalOperation,
+    ): CloudHistoricalOperation? {
+        require(previous.operationId == progress.operationId)
+        require(previous.account == progress.account)
+        require(previous.readerGeneration == progress.readerGeneration)
+        require(previous.endpointIdentity == progress.endpointIdentity)
+        val updated = updateProgress(
+            operationId = previous.operationId,
+            account = previous.account,
+            readerGeneration = previous.readerGeneration,
+            endpointIdentity = previous.endpointIdentity,
+            lastPositionAt = progress.lastPositionAt,
+            pagesFetched = progress.pagesFetched,
+            transitionsFetched = progress.transitionsFetched,
+            coveredStartAt = progress.coveredStartAt,
+            coveredEndAt = progress.coveredEndAt,
+            acquisitionComplete = progress.acquisitionComplete,
+            state = progress.state,
+            updatedAt = progress.updatedAt,
+        )
+        if (updated != 1) return null
+        intervals.forEach { upsertInterval(it) }
+        boundaries.forEach { upsertBoundary(it) }
+        return operation(previous.operationId)
+    }
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertInterval(interval: CloudHistoricalInterval)
 
