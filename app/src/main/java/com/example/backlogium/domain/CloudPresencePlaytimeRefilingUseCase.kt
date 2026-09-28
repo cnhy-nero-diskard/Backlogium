@@ -114,6 +114,17 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
     private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
 ) {
 
+    /** Current per-owned-game upper bounds shown before the player confirms a transfer. */
+    suspend fun currentImportedBalanceCeiling(): List<CloudPresenceRefilingGameMinutes> {
+        if (playerProfileDao.get()?.playtimeBackfilled != true) return emptyList()
+        return gameDao.getAll()
+            .asSequence()
+            .filter { it.source == GameSource.STEAM_OWNED && it.backfillMinutes > 0 }
+            .map { CloudPresenceRefilingGameMinutes(it.appId, it.backfillMinutes) }
+            .sortedBy { it.appId }
+            .toList()
+    }
+
     suspend fun apply(
         intervals: List<CloudPresenceInterval>,
         range: CloudPresenceHistoricalSelection? = null,
@@ -315,12 +326,27 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
      */
     suspend fun applyHistorical(
         operation: CloudHistoricalOperation,
+    ): CloudPresenceRefilingResult = applyHistorical(operation) { apply -> apply(operation) }
+
+    /** Applies while the caller verifies the active reader identity under the established lock order. */
+    suspend fun applyHistorical(
+        operation: CloudHistoricalOperation,
+        withCurrentOperation: suspend (
+            suspend (CloudHistoricalOperation) -> CloudPresenceRefilingResult,
+        ) -> CloudPresenceRefilingResult,
     ): CloudPresenceRefilingResult = syncCoordinator.withLock {
         derivedStateWrites.withLock {
+            withCurrentOperation(::applyHistoricalGuarded)
+        }
+    }
+
+    private suspend fun applyHistoricalGuarded(
+        operation: CloudHistoricalOperation,
+    ): CloudPresenceRefilingResult {
             val existingJournal = cloudHistoricalDao.journal(operation.operationId)
             val alreadyApplied = settings.cloudPresenceRefilingApplied.first()
             if (existingJournal?.state == CloudHistoricalStates.JOURNAL_REVERSED) {
-                return@withLock CloudPresenceRefilingResult(CloudPresenceRefilingOperation.NO_OP)
+                return CloudPresenceRefilingResult(CloudPresenceRefilingOperation.NO_OP)
             }
             if (existingJournal != null && existingJournal.state !in setOf(
                     CloudHistoricalStates.JOURNAL_APPLY_COMMITTED,
@@ -330,7 +356,7 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                 error("Cloud historical apply journal is in an unsupported state")
             }
             if (alreadyApplied && existingJournal?.state != CloudHistoricalStates.JOURNAL_APPLY_COMMITTED) {
-                return@withLock CloudPresenceRefilingResult(CloudPresenceRefilingOperation.NO_OP)
+                return CloudPresenceRefilingResult(CloudPresenceRefilingOperation.NO_OP)
             }
 
             val payload = if (existingJournal != null) {
@@ -343,7 +369,7 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                 }
             } else {
                 if (alreadyApplied) {
-                    return@withLock CloudPresenceRefilingResult(CloudPresenceRefilingOperation.NO_OP)
+                    return CloudPresenceRefilingResult(CloudPresenceRefilingOperation.NO_OP)
                 }
                 transaction.run {
                     // Recheck under the Room transaction: only a complete, fixed operation can
@@ -480,8 +506,7 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                 }
             }
 
-            finishHistoricalApply(payload)
-        }
+            return finishHistoricalApply(payload)
     }
 
     suspend fun reverse(): CloudPresenceRefilingResult = syncCoordinator.withLock {

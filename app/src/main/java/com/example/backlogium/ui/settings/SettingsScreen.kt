@@ -67,6 +67,8 @@ import com.example.backlogium.data.repo.CloudReadSummaryOutcome
 import com.example.backlogium.domain.CloudPresenceHistoricalStartChoice
 import com.example.backlogium.domain.CloudPresenceHistoricalRangeResolution
 import com.example.backlogium.domain.CloudPresencePreDataCutoffResolution
+import com.example.backlogium.data.local.entity.CloudHistoricalOperation
+import com.example.backlogium.data.repo.CloudPresenceRefilingReceipt
 import androidx.compose.ui.semantics.Role
 import com.example.backlogium.data.updates.AppUpdateState
 import com.example.backlogium.gamification.QuestMode
@@ -91,6 +93,7 @@ import kotlinx.coroutines.flow.collect
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.Instant
 import java.time.ZoneId
 
 /**
@@ -214,6 +217,9 @@ internal fun SettingsGraphScreen(
                 onCloudHistoricalStartDateChanged = viewModel::setCloudHistoricalStartDate,
                 onCloudHistoricalTransferChanged = viewModel::setCloudHistoricalTransfer,
                 onCloudHistoricalCutoffChanged = viewModel::setCloudHistoricalCutoff,
+                onConfirmCloudPresenceRefiling = viewModel::confirmCloudPresenceRefiling,
+                onCancelCloudPresenceRefilingConfirmation = viewModel::cancelCloudPresenceRefilingConfirmation,
+                onContinueCloudPresenceRefiling = viewModel::continueCloudPresenceRefiling,
             )
         }
         SettingsGraphSession(state = state, actions = actions)
@@ -300,6 +306,9 @@ data class SettingsActions(
     val onCloudHistoricalStartDateChanged: (LocalDate?) -> Unit = {},
     val onCloudHistoricalTransferChanged: (Boolean) -> Unit = {},
     val onCloudHistoricalCutoffChanged: (LocalDateTime?) -> Unit = {},
+    val onConfirmCloudPresenceRefiling: () -> Unit = {},
+    val onCancelCloudPresenceRefilingConfirmation: () -> Unit = {},
+    val onContinueCloudPresenceRefiling: () -> Unit = {},
 )
 
 /** The stateless half: renders [state] and raises [actions]. */
@@ -796,7 +805,9 @@ internal const val CLOUD_PRESENCE_DISCLOSURE =
         "It never imports Steam lifetime playtime or invents unobserved time."
 
 internal const val CLOUD_PRESENCE_REFILING_DISCLOSURE =
-    "Dates, quests, and streaks may change. Experience, levels, and total playtime will not."
+    "Dates, daily quests, and streaks may change. If you opt in, already-imported playtime can move " +
+        "from imported to dated tracked sessions. Experience, levels, combined credited minutes, and " +
+        "total Steam playtime will not change."
 
 @Composable
 private fun CloudPresenceCard(
@@ -856,9 +867,24 @@ private fun CloudPresenceCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (!state.cloudPresenceRefilingApplied) {
-                    CloudHistoricalRangeControlsCard(state, actions)
+                    val historicalOperation = state.cloudHistoricalRangeControls.operation
+                    if (historicalOperation == null) {
+                        CloudHistoricalRangeControlsCard(state, actions)
+                    } else {
+                        CloudHistoricalProgressCard(
+                            operation = historicalOperation,
+                            status = state.cloudHistoricalRangeControls.acquisitionStatus,
+                            pagesThisBatch = state.cloudHistoricalRangeControls.lastBatchPages,
+                            transitionsThisBatch = state.cloudHistoricalRangeControls.lastBatchTransitions,
+                            busy = state.cloudPresenceRefilingBusy,
+                            onContinue = actions.onContinueCloudPresenceRefiling,
+                        )
+                    }
                 }
                 if (state.cloudPresenceRefilingApplied) {
+                    state.cloudPresenceRefilingReceipt?.let { receipt ->
+                        CloudHistoricalReceiptCard(receipt = receipt)
+                    }
                     OutlinedButton(
                         onClick = actions.onReverseCloudPresenceRefiling,
                         enabled = !state.cloudBusy && !state.cloudPresenceRefilingBusy,
@@ -874,19 +900,26 @@ private fun CloudPresenceCard(
                         )
                     }
                 } else {
-                    Button(
-                        onClick = actions.onRefileCloudPresence,
-                        enabled = !state.cloudBusy && !state.cloudPresenceRefilingBusy,
-                    ) {
-                        Text(
-                            stringResource(
-                                if (state.cloudPresenceRefilingBusy) {
-                                    R.string.settings_cloud_refiling
-                                } else {
-                                    R.string.settings_cloud_refile_play
-                                },
-                            ),
-                        )
+                    val controls = state.cloudHistoricalRangeControls
+                    val canReview = controls.selection != null &&
+                        (!controls.transferPreDataPlay ||
+                            controls.cutoffResolution is CloudPresencePreDataCutoffResolution.Confirmed) &&
+                        controls.operation == null
+                    if (controls.operation == null) {
+                        Button(
+                            onClick = actions.onRefileCloudPresence,
+                            enabled = !state.cloudBusy && !state.cloudPresenceRefilingBusy && canReview,
+                        ) {
+                            Text(
+                                stringResource(
+                                    if (state.cloudPresenceRefilingBusy) {
+                                        R.string.settings_cloud_refiling
+                                    } else {
+                                        R.string.settings_cloud_range_review
+                                    },
+                                ),
+                            )
+                        }
                     }
                 }
                 state.cloudPresenceRefilingMessage?.let { message ->
@@ -899,6 +932,61 @@ private fun CloudPresenceCard(
                             MaterialTheme.colorScheme.error
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+                state.cloudHistoricalRangeControls.pendingConfirmation?.let { confirmation ->
+                    AlertDialog(
+                        onDismissRequest = actions.onCancelCloudPresenceRefilingConfirmation,
+                        title = { Text(stringResource(R.string.settings_cloud_range_confirmation_title)) },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    stringResource(
+                                        R.string.settings_cloud_range_confirmation_selected,
+                                        historicalInstant(confirmation.selection.selectedStartAt, confirmation.selection.zoneId),
+                                        historicalInstant(confirmation.selection.effectiveStartAt, confirmation.selection.zoneId),
+                                        historicalInstant(confirmation.selection.throughAt, confirmation.selection.zoneId),
+                                    ),
+                                )
+                                if (confirmation.confirmedCutoffAt != null) {
+                                    Text(
+                                        stringResource(
+                                            R.string.settings_cloud_range_confirmation_cutoff,
+                                            historicalInstant(confirmation.confirmedCutoffAt, confirmation.selection.zoneId),
+                                        ),
+                                    )
+                                }
+                                if (confirmation.selection.choice == CloudPresenceHistoricalStartChoice.CUSTOM_LOCAL_DATE &&
+                                    confirmation.selection.selectedStartAt != confirmation.selection.effectiveStartAt
+                                ) {
+                                    Text(stringResource(R.string.settings_cloud_range_confirmation_clipped))
+                                }
+                                if (confirmation.confirmedCutoffAt != null) {
+                                    Text(
+                                        stringResource(
+                                            R.string.settings_cloud_range_confirmation_imported_ceiling,
+                                            confirmation.importedBalanceCeilingMinutes,
+                                        ),
+                                    )
+                                }
+                                Text(stringResource(R.string.settings_cloud_range_confirmation_coverage))
+                                Text(stringResource(R.string.settings_cloud_range_confirmation_disclosure))
+                                Text(stringResource(R.string.settings_cloud_range_confirmation_batches))
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = actions.onConfirmCloudPresenceRefiling,
+                                enabled = !state.cloudBusy && !state.cloudPresenceRefilingBusy,
+                            ) {
+                                Text(stringResource(R.string.settings_cloud_range_confirmation_confirm))
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = actions.onCancelCloudPresenceRefilingConfirmation) {
+                                Text(stringResource(R.string.settings_cloud_range_confirmation_cancel))
+                            }
                         },
                     )
                 }
@@ -1198,6 +1286,149 @@ private fun CloudHistoricalRangeControlsCard(
         }
     }
 }
+
+@Composable
+private fun CloudHistoricalProgressCard(
+    operation: CloudHistoricalOperation,
+    status: CloudHistoricalAcquisitionStatus,
+    pagesThisBatch: Int,
+    transitionsThisBatch: Int,
+    busy: Boolean,
+    onContinue: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        HorizontalDivider()
+        Text(stringResource(R.string.settings_cloud_range_progress_title), style = MaterialTheme.typography.titleSmall)
+        Text(
+            stringResource(
+                R.string.settings_cloud_range_progress_selected,
+                historicalInstant(operation.selectedStartAt, operation.zoneId),
+                historicalInstant(operation.fromAt, operation.zoneId),
+                historicalInstant(operation.throughAt, operation.zoneId),
+            ),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        operation.confirmedCutoffAt?.let { cutoff ->
+            Text(
+                stringResource(
+                    R.string.settings_cloud_range_confirmation_cutoff,
+                    historicalInstant(cutoff, operation.zoneId),
+                ),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Text(
+            stringResource(
+                R.string.settings_cloud_range_progress_totals,
+                operation.pagesFetched,
+                operation.transitionsFetched,
+                operation.coveredStartAt?.let { historicalInstant(it, operation.zoneId) }
+                    ?: stringResource(R.string.settings_cloud_range_progress_not_covered),
+                operation.coveredEndAt?.let { historicalInstant(it, operation.zoneId) }
+                    ?: stringResource(R.string.settings_cloud_range_progress_not_covered),
+            ),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        when (status) {
+            CloudHistoricalAcquisitionStatus.STARTING -> Text(stringResource(R.string.settings_cloud_range_starting))
+            CloudHistoricalAcquisitionStatus.RUNNING -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text(
+                        stringResource(R.string.settings_cloud_range_running, pagesThisBatch, transitionsThisBatch),
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
+            CloudHistoricalAcquisitionStatus.PARTIAL -> Text(
+                stringResource(R.string.settings_cloud_range_partial, pagesThisBatch, transitionsThisBatch),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            CloudHistoricalAcquisitionStatus.FAILED -> Text(
+                stringResource(R.string.settings_cloud_range_failed_continue),
+                color = MaterialTheme.colorScheme.error,
+            )
+            CloudHistoricalAcquisitionStatus.READY -> Text(stringResource(R.string.settings_cloud_range_ready_apply))
+            CloudHistoricalAcquisitionStatus.APPLYING -> Text(stringResource(R.string.settings_cloud_range_applying))
+            CloudHistoricalAcquisitionStatus.APPLY_FAILED -> Text(
+                stringResource(R.string.settings_cloud_range_apply_failed),
+                color = MaterialTheme.colorScheme.error,
+            )
+            CloudHistoricalAcquisitionStatus.APPLIED -> Unit
+            CloudHistoricalAcquisitionStatus.IDLE -> Text(stringResource(R.string.settings_cloud_range_partial, 0, 0))
+        }
+        if (status in setOf(
+                CloudHistoricalAcquisitionStatus.PARTIAL,
+                CloudHistoricalAcquisitionStatus.FAILED,
+                CloudHistoricalAcquisitionStatus.READY,
+                CloudHistoricalAcquisitionStatus.APPLY_FAILED,
+            )
+        ) {
+            Button(onClick = onContinue, enabled = !busy) {
+                Text(
+                    stringResource(
+                        if (operation.acquisitionComplete) {
+                            R.string.settings_cloud_range_apply_complete
+                        } else {
+                            R.string.settings_cloud_range_continue
+                        },
+                    ),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CloudHistoricalReceiptCard(receipt: CloudPresenceRefilingReceipt) {
+    val summary = receipt.toSettingsSummary()
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(stringResource(R.string.settings_cloud_range_receipt_title), style = MaterialTheme.typography.titleSmall)
+        Text(
+            stringResource(
+                R.string.settings_cloud_range_progress_selected,
+                historicalInstant(summary.selectedStartAt, summary.zoneId),
+                historicalInstant(summary.effectiveStartAt, summary.zoneId),
+                historicalInstant(summary.throughAt, summary.zoneId),
+            ),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        summary.confirmedCutoffAt?.let { cutoff ->
+            Text(
+                stringResource(
+                    R.string.settings_cloud_range_confirmation_cutoff,
+                    historicalInstant(cutoff, summary.zoneId),
+                ),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Text(
+            stringResource(
+                R.string.settings_cloud_range_receipt_coverage,
+                summary.coveredStartAt?.let { historicalInstant(it, summary.zoneId) }
+                    ?: stringResource(R.string.settings_cloud_range_progress_not_covered),
+                summary.coveredEndAt?.let { historicalInstant(it, summary.zoneId) }
+                    ?: stringResource(R.string.settings_cloud_range_progress_not_covered),
+            ),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            stringResource(
+                R.string.settings_cloud_range_receipt_counts,
+                summary.pagesFetched,
+                summary.transitionsFetched,
+                summary.sessionsRefiled,
+                summary.datesAffected,
+                summary.transferredMinutes,
+                summary.remainingImportedMinutes,
+            ),
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+private fun historicalInstant(epochMillis: Long, zoneId: String): String =
+    Instant.ofEpochMilli(epochMillis).atZone(ZoneId.of(zoneId)).toString()
 
 @Composable
 private fun CloudRoutineControls(

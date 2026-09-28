@@ -1,13 +1,18 @@
 package com.example.backlogium.ui.settings
 
 import com.example.backlogium.data.repo.CloudPresenceRangeMetadata
+import com.example.backlogium.data.repo.CloudPresenceRefilingGameMinutes
+import com.example.backlogium.data.repo.CloudPresenceRefilingReceipt
+import com.example.backlogium.data.local.entity.CloudHistoricalOperation
 import com.example.backlogium.domain.CloudPresenceHistoricalRangeResolution
+import com.example.backlogium.domain.CloudPresenceHistoricalRangeRules
 import com.example.backlogium.domain.CloudPresenceHistoricalStartChoice
 import com.example.backlogium.domain.CloudPresencePreDataCutoffResolution
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -126,6 +131,86 @@ class CloudHistoricalRangeControlsTest {
         )
     }
 
+    @Test
+    fun historicalAcquisitionDoesNotStartWithoutExplicitConfirmation() = runTest {
+        var startCalls = 0
+
+        val started = runAfterCloudHistoricalConfirmation(confirmation = null) {
+            startCalls++
+        }
+
+        assertFalse(started)
+        assertEquals(0, startCalls)
+    }
+
+    @Test
+    fun confirmationCarriesFixedRangeCutoffAndPerGameImportedCeiling() = runTest {
+        val throughAt = instant("2025-04-20T12:00:00Z")
+        val selection = CloudPresenceHistoricalRangeRules.recent31Days(throughAt, ZoneId.of("UTC"))
+        val confirmation = CloudHistoricalRefilingConfirmation(
+            metadata = metadata(earliest = instant("2025-01-01T00:00:00Z"), readAt = throughAt),
+            selection = selection,
+            confirmedCutoffAt = instant("2025-04-10T12:00:00Z"),
+            importedBalanceCeiling = listOf(
+                CloudPresenceRefilingGameMinutes(appId = 440L, minutes = 75),
+                CloudPresenceRefilingGameMinutes(appId = 570L, minutes = 25),
+            ),
+        )
+        var received: CloudHistoricalRefilingConfirmation? = null
+
+        val started = runAfterCloudHistoricalConfirmation(confirmation) { received = it }
+
+        assertTrue(started)
+        assertEquals(confirmation.selection.throughAt, received?.selection?.throughAt)
+        assertEquals(confirmation.confirmedCutoffAt, received?.confirmedCutoffAt)
+        assertEquals(100L, received?.importedBalanceCeilingMinutes)
+    }
+
+    @Test
+    fun restoredHistoricalOperationRequiresAnExplicitContinueOrApply() {
+        val incomplete = historicalOperation(acquisitionComplete = false)
+        val complete = historicalOperation(acquisitionComplete = true)
+
+        assertEquals(CloudHistoricalAcquisitionStatus.PARTIAL, incomplete.toSettingsAcquisitionStatus())
+        assertEquals(CloudHistoricalAcquisitionStatus.READY, complete.toSettingsAcquisitionStatus())
+    }
+
+    @Test
+    fun durableZeroChangeReceiptStillReportsItsRangeAndRemainingImport() {
+        val receipt = CloudPresenceRefilingReceipt(
+            operationId = "operation",
+            account = "76561198000000001",
+            startChoice = "CUSTOM_LOCAL_DATE",
+            selectedStartAt = 10L,
+            effectiveStartAt = 20L,
+            throughAt = 300L,
+            coveredStartAt = 25L,
+            coveredEndAt = 280L,
+            confirmedCutoffAt = 250L,
+            zoneId = "UTC",
+            pagesFetched = 3,
+            transitionsFetched = 17,
+            sessionsRefiled = 0,
+            datesAffected = emptyList(),
+            createdSessionIds = emptyList(),
+            transferredMinutesByAppId = emptyList(),
+            remainingImportedMinutesByAppId = listOf(
+                CloudPresenceRefilingGameMinutes(appId = 440L, minutes = 95),
+            ),
+        )
+
+        val summary = receipt.toSettingsSummary()
+
+        assertEquals(10L, summary.selectedStartAt)
+        assertEquals(20L, summary.effectiveStartAt)
+        assertEquals(300L, summary.throughAt)
+        assertEquals(25L, summary.coveredStartAt)
+        assertEquals(280L, summary.coveredEndAt)
+        assertEquals(0, summary.sessionsRefiled)
+        assertEquals(0L, summary.transferredMinutes)
+        assertEquals(95L, summary.remainingImportedMinutes)
+    }
+
     private fun controls(metadata: CloudPresenceRangeMetadata) = CloudHistoricalRangeControls(
         lookupStatus = if (metadata.earliestObservedAt == null) {
             CloudHistoricalRangeLookupStatus.EMPTY
@@ -143,4 +228,20 @@ class CloudHistoricalRangeControlsTest {
     )
 
     private fun instant(value: String): Long = Instant.parse(value).toEpochMilli()
+
+    private fun historicalOperation(acquisitionComplete: Boolean) = CloudHistoricalOperation(
+        operationId = "operation",
+        account = "76561198000000001",
+        readerGeneration = 4L,
+        endpointIdentity = "https://reader.example",
+        selectedStartAt = 10L,
+        fromAt = 20L,
+        throughAt = 300L,
+        pagesFetched = 3,
+        transitionsFetched = 17,
+        acquisitionComplete = acquisitionComplete,
+        state = if (acquisitionComplete) "COMPLETE" else "ACQUIRING",
+        createdAt = 1L,
+        updatedAt = 2L,
+    )
 }

@@ -369,6 +369,9 @@ class CloudPresenceRepository @Inject constructor(
         selectedStartAt: Long,
         effectiveStartAt: Long,
         metadata: CloudPresenceRangeMetadata,
+        startChoice: String = "RECENT_31_DAYS",
+        zoneId: String = "UTC",
+        confirmedCutoffAt: Long? = null,
     ): CloudHistoricalStartResult = cloudStateMutex.withLock {
         val credentials = credentialsStore.readCloudCredentials()
             ?: return@withLock CloudHistoricalStartResult.Unconfigured
@@ -382,6 +385,11 @@ class CloudPresenceRepository @Inject constructor(
         }
         if (selectedStartAt > effectiveStartAt ||
             effectiveStartAt > metadata.readAt || selectedStartAt > metadata.readAt
+        ) {
+            return@withLock CloudHistoricalStartResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+        }
+        if (confirmedCutoffAt != null &&
+            (confirmedCutoffAt <= effectiveStartAt || confirmedCutoffAt > metadata.readAt)
         ) {
             return@withLock CloudHistoricalStartResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
         }
@@ -419,9 +427,12 @@ class CloudPresenceRepository @Inject constructor(
             account = account,
             readerGeneration = metadata.readerGeneration,
             endpointIdentity = endpointIdentity,
+            startChoice = startChoice,
+            zoneId = zoneId,
             selectedStartAt = selectedStartAt,
             fromAt = effectiveStartAt,
             throughAt = metadata.readAt,
+            confirmedCutoffAt = confirmedCutoffAt,
             frozenCurrentObservedAt = frozenCurrent?.observedAt,
             frozenCurrentAppId = frozenCurrent?.appId,
             frozenCurrentGameName = frozenCurrent?.gameName,
@@ -604,6 +615,7 @@ class CloudPresenceRepository @Inject constructor(
      */
     suspend fun acquireHistoricalBatch(
         operationId: String,
+        onProgress: suspend (CloudHistoricalOperation, Int, Int) -> Unit = { _, _, _ -> },
         consume: suspend (CloudPresenceSnapshot) -> Unit,
     ): CloudHistoricalBatchResult = acquireHistoricalBatchWithLimits(
         operationId = operationId,
@@ -611,6 +623,7 @@ class CloudPresenceRepository @Inject constructor(
         timeBudgetNanos = MAX_HISTORICAL_BATCH_NANOS,
         monotonicNowNanos = System::nanoTime,
         consume = consume,
+        onProgress = onProgress,
     )
 
     internal suspend fun acquireHistoricalBatchWithLimits(
@@ -618,6 +631,7 @@ class CloudPresenceRepository @Inject constructor(
         pageLimit: Int,
         timeBudgetNanos: Long,
         monotonicNowNanos: () -> Long,
+        onProgress: suspend (CloudHistoricalOperation, Int, Int) -> Unit = { _, _, _ -> },
         consume: suspend (CloudPresenceSnapshot) -> Unit,
     ): CloudHistoricalBatchResult {
         require(pageLimit in 1..MAX_HISTORICAL_BATCH_PAGES)
@@ -646,6 +660,7 @@ class CloudPresenceRepository @Inject constructor(
                     operation = page.operation
                     pagesFetched++
                     transitionsFetched += page.snapshot.observationCount
+                    onProgress(operation, pagesFetched, transitionsFetched)
                     if (operation.acquisitionComplete) {
                         return CloudHistoricalBatchResult.Complete(
                             operation, pagesFetched, transitionsFetched,

@@ -26,7 +26,9 @@ class CloudPresenceDisclosureTest {
     }
 
     @Test fun refileDisclosureLimitsItsImpactToAttribution() {
-        assertTrue(CLOUD_PRESENCE_REFILING_DISCLOSURE.contains("Dates, quests, and streaks may change"))
-        assertTrue(CLOUD_PRESENCE_REFILING_DISCLOSURE.contains("Experience, levels, and total playtime will not"))
+        assertTrue(CLOUD_PRESENCE_REFILING_DISCLOSURE.contains("Dates, daily quests, and streaks may change"))
+        assertTrue(CLOUD_PRESENCE_REFILING_DISCLOSURE.contains("imported to dated tracked sessions"))
+        assertTrue(CLOUD_PRESENCE_REFILING_DISCLOSURE.contains("Experience, levels, combined credited minutes"))
+        assertTrue(CLOUD_PRESENCE_REFILING_DISCLOSURE.contains("total Steam playtime will not change"))
     }
 }

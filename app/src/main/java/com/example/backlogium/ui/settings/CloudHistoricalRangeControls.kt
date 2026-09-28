@@ -1,7 +1,10 @@
 package com.example.backlogium.ui.settings
 
 import com.example.backlogium.data.repo.CloudPresenceRangeMetadata
+import com.example.backlogium.data.repo.CloudPresenceRefilingGameMinutes
+import com.example.backlogium.data.repo.CloudPresenceRefilingReceipt
 import com.example.backlogium.data.repo.CloudReadFailure
+import com.example.backlogium.data.local.entity.CloudHistoricalOperation
 import com.example.backlogium.domain.CloudPresenceHistoricalRangeResolution
 import com.example.backlogium.domain.CloudPresenceHistoricalRangeRules
 import com.example.backlogium.domain.CloudPresenceHistoricalSelection
@@ -32,9 +35,82 @@ data class CloudHistoricalRangeControls(
     val cutoffLocalDateTime: LocalDateTime? = null,
     val cutoffResolution: CloudPresencePreDataCutoffResolution =
         CloudPresencePreDataCutoffResolution.NotConfirmed,
+    val pendingConfirmation: CloudHistoricalRefilingConfirmation? = null,
+    val operation: CloudHistoricalOperation? = null,
+    val acquisitionStatus: CloudHistoricalAcquisitionStatus = CloudHistoricalAcquisitionStatus.IDLE,
+    val lastBatchPages: Int = 0,
+    val lastBatchTransitions: Int = 0,
+    val acquisitionFailure: CloudReadFailure? = null,
 ) {
     val selection: CloudPresenceHistoricalSelection?
         get() = (rangeResolution as? CloudPresenceHistoricalRangeResolution.Ready)?.selection
+}
+
+data class CloudHistoricalRefilingConfirmation(
+    val metadata: CloudPresenceRangeMetadata,
+    val selection: CloudPresenceHistoricalSelection,
+    val confirmedCutoffAt: Long?,
+    val importedBalanceCeiling: List<CloudPresenceRefilingGameMinutes>,
+) {
+    val importedBalanceCeilingMinutes: Long
+        get() = importedBalanceCeiling.sumOf { it.minutes.toLong() }
+}
+
+internal fun CloudHistoricalOperation.toSettingsAcquisitionStatus(): CloudHistoricalAcquisitionStatus =
+    if (acquisitionComplete) CloudHistoricalAcquisitionStatus.READY else CloudHistoricalAcquisitionStatus.PARTIAL
+
+internal data class CloudHistoricalReceiptSummary(
+    val selectedStartAt: Long,
+    val effectiveStartAt: Long,
+    val throughAt: Long,
+    val coveredStartAt: Long?,
+    val coveredEndAt: Long?,
+    val confirmedCutoffAt: Long?,
+    val zoneId: String,
+    val pagesFetched: Int,
+    val transitionsFetched: Int,
+    val sessionsRefiled: Int,
+    val datesAffected: Int,
+    val transferredMinutes: Long,
+    val remainingImportedMinutes: Long,
+)
+
+internal fun CloudPresenceRefilingReceipt.toSettingsSummary() = CloudHistoricalReceiptSummary(
+    selectedStartAt = selectedStartAt,
+    effectiveStartAt = effectiveStartAt,
+    throughAt = throughAt,
+    coveredStartAt = coveredStartAt,
+    coveredEndAt = coveredEndAt,
+    confirmedCutoffAt = confirmedCutoffAt,
+    zoneId = zoneId,
+    pagesFetched = pagesFetched,
+    transitionsFetched = transitionsFetched,
+    sessionsRefiled = sessionsRefiled,
+    datesAffected = datesAffected.size,
+    transferredMinutes = transferredMinutesByAppId.sumOf { it.minutes.toLong() },
+    remainingImportedMinutes = remainingImportedMinutesByAppId.sumOf { it.minutes.toLong() },
+)
+
+enum class CloudHistoricalAcquisitionStatus {
+    IDLE,
+    STARTING,
+    RUNNING,
+    PARTIAL,
+    FAILED,
+    READY,
+    APPLYING,
+    APPLY_FAILED,
+    APPLIED,
+}
+
+/** The only path into historical start/acquisition is an explicit dialog confirmation. */
+internal suspend fun runAfterCloudHistoricalConfirmation(
+    confirmation: CloudHistoricalRefilingConfirmation?,
+    action: suspend (CloudHistoricalRefilingConfirmation) -> Unit,
+): Boolean {
+    if (confirmation == null) return false
+    action(confirmation)
+    return true
 }
 
 /** Resolve the form against the latest server end and the device's current local-time rules. */

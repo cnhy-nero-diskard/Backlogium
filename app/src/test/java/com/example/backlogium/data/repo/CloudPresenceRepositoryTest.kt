@@ -1463,6 +1463,52 @@ class CloudPresenceRepositoryTest {
     }
 
     @Test
+    fun historicalOperationPersistsTheConfirmedRangeZoneAndCutoff() = runTest {
+        val effectiveStartAt = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
+        val selectedStartAt = effectiveStartAt - 60_000L
+        val throughAt = Instant.parse("2026-09-15T00:00:00Z").toEpochMilli()
+        val api = FakeCloudPresenceApi(answer = historicalMetadataResponse(effectiveStartAt, throughAt))
+        val stage = MemoryCloudHistoricalStore()
+        val repo = repository(
+            api = api,
+            store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret")),
+            records = FakeCloudReadDao(),
+            settings = FakeSettingsRepository(),
+            steamId = ACCOUNT,
+            historicalStore = stage,
+        )
+        val metadata = (repo.lookupRangeMetadata() as CloudPresenceRangeLookupResult.Success).metadata
+        val cutoffAt = throughAt - 10_000L
+
+        val started = repo.beginHistoricalAcquisition(
+            selectedStartAt = selectedStartAt,
+            effectiveStartAt = effectiveStartAt,
+            metadata = metadata,
+            startChoice = "CUSTOM_LOCAL_DATE",
+            zoneId = "America/Los_Angeles",
+            confirmedCutoffAt = cutoffAt,
+        ) as CloudHistoricalStartResult.Started
+
+        assertEquals(selectedStartAt, started.operation.selectedStartAt)
+        assertEquals(effectiveStartAt, started.operation.fromAt)
+        assertEquals(throughAt, started.operation.throughAt)
+        assertEquals("CUSTOM_LOCAL_DATE", started.operation.startChoice)
+        assertEquals("America/Los_Angeles", started.operation.zoneId)
+        assertEquals(cutoffAt, started.operation.confirmedCutoffAt)
+        assertEquals(
+            CloudHistoricalStartResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE),
+            repo.beginHistoricalAcquisition(
+                selectedStartAt = selectedStartAt,
+                effectiveStartAt = effectiveStartAt,
+                metadata = metadata,
+                startChoice = "CUSTOM_LOCAL_DATE",
+                zoneId = "America/Los_Angeles",
+                confirmedCutoffAt = throughAt + 1,
+            ),
+        )
+    }
+
+    @Test
     fun historicalAcquisitionOverlapsPagesWithoutAdvancingOrdinaryCursor() = runTest {
         val fromAt = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
         val throughAt = Instant.parse("2026-09-15T00:00:00Z").toEpochMilli()
@@ -1739,6 +1785,7 @@ class CloudPresenceRepositoryTest {
             hasMore = true,
         )
         var now = 0L
+        val progress = mutableListOf<Triple<Int, Int, Int>>()
 
         val result = repo.acquireHistoricalBatchWithLimits(
             operationId = operation.operationId,
@@ -1746,6 +1793,9 @@ class CloudPresenceRepositoryTest {
             timeBudgetNanos = 1L,
             monotonicNowNanos = { ++now },
             consume = {},
+            onProgress = { saved, pages, transitions ->
+                progress += Triple(saved.pagesFetched, pages, transitions)
+            },
         )
 
         assertTrue(result is CloudHistoricalBatchResult.Partial)
@@ -1753,6 +1803,7 @@ class CloudPresenceRepositoryTest {
         assertEquals(CloudHistoricalBatchStopReason.TIME_LIMIT, result.stopReason)
         assertEquals(1, result.pagesFetched)
         assertEquals(1, result.operation.pagesFetched)
+        assertEquals(listOf(Triple(1, 1, 250)), progress)
         assertFalse(result.operation.acquisitionComplete)
         assertEquals(2, api.requests.size) // metadata lookup plus one acquired page
     }
