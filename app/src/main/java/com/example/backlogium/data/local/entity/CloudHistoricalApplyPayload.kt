@@ -15,8 +15,12 @@ data class CloudHistoricalApplyPayload(
     val selectedStartAt: Long,
     val effectiveStartAt: Long,
     val throughAt: Long,
+    val coveredStartAt: Long? = null,
+    val coveredEndAt: Long? = null,
     val zoneId: String,
     val confirmedCutoffAt: Long?,
+    val pagesFetched: Int = 0,
+    val transitionsFetched: Int = 0,
     val originalSessions: List<CloudHistoricalSessionSnapshot>,
     /** Actual replacement rows, including the original ids retained by first-row updates. */
     val replacementSessions: List<CloudHistoricalSessionSnapshot>,

@@ -114,17 +114,37 @@ class SettingsRepositoryTest {
             minutes = 12,
             open = false,
         )
+        val receipt = CloudPresenceRefilingReceipt(
+            operationId = "operation-1",
+            account = "account-a",
+            startChoice = "CUSTOM_LOCAL_DATE",
+            selectedStartAt = 100L,
+            effectiveStartAt = 200L,
+            throughAt = 500L,
+            coveredStartAt = 220L,
+            coveredEndAt = 480L,
+            confirmedCutoffAt = 300L,
+            zoneId = "America/Los_Angeles",
+            pagesFetched = 2,
+            transitionsFetched = 251,
+            sessionsRefiled = 1,
+            datesAffected = listOf("2026-07-25", "2026-07-26"),
+            createdSessionIds = listOf(8L, 9L),
+            transferredMinutesByAppId = listOf(CloudPresenceRefilingGameMinutes(440L, 12)),
+            remainingImportedMinutesByAppId = listOf(CloudPresenceRefilingGameMinutes(440L, 3)),
+        )
         try {
-            repository.setCloudPresenceRefilingBackup(
-                CloudPresenceRefilingBackup(listOf(original), setOf(8L, 9L)),
+            repository.completeCloudPresenceRefiling(
+                backup = CloudPresenceRefilingBackup(listOf(original), setOf(8L, 9L)),
+                receipt = receipt,
             )
-            repository.setCloudPresenceRefilingApplied(true)
 
             assertTrue(repository.cloudPresenceRefilingApplied.first())
             assertEquals(
                 CloudPresenceRefilingBackup(listOf(original), setOf(8L, 9L)),
                 repository.cloudPresenceRefilingBackup(),
             )
+            assertEquals(receipt, repository.cloudPresenceRefilingReceipt.first())
         } finally {
             repository.clearCloudPresenceRefiling()
         }

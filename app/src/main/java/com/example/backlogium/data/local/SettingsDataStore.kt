@@ -28,6 +28,7 @@ import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.domain.librarySortDirectionOrNull
 import com.example.backlogium.domain.librarySortKeyOrNull
 import com.example.backlogium.data.repo.CloudPresenceRefilingBackup
+import com.example.backlogium.data.repo.CloudPresenceRefilingReceipt
 import com.example.backlogium.data.repo.CloudRoutinePolicy
 import com.example.backlogium.data.repo.CloudRoutineState
 import com.example.backlogium.data.repo.CloudRoutineAdmission
@@ -42,10 +43,14 @@ import java.time.LocalDate
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
+private val cloudPresenceRefilingReceiptJson = Json { ignoreUnknownKeys = true }
 
 /**
  * App settings backed by Preferences DataStore: the tunable gamification [RuleConfig], plus the
@@ -160,6 +165,7 @@ class SettingsDataStore @Inject constructor(
         val CLOUD_REFILE_CREATED_IDS = stringSetPreferencesKey("cloud_presence_refiling_created_ids")
         val CLOUD_REFILE_DAILY_BACKUP = stringSetPreferencesKey("cloud_presence_refiling_daily_backup")
         val CLOUD_REFILE_DAILY_CREATED_DATES = stringSetPreferencesKey("cloud_presence_refiling_daily_created_dates")
+        val CLOUD_REFILE_RECEIPT = stringPreferencesKey("cloud_presence_refiling_receipt")
 
         // Progress-event presentation state, not user-editable settings. These marks are the
         // durable acknowledgement baseline and intentionally live in DataStore, not Room.
@@ -797,6 +803,11 @@ class SettingsDataStore @Inject constructor(
         prefs[Keys.CLOUD_REFILE_APPLIED] ?: false
     }
 
+    val cloudPresenceRefilingReceiptFlow: Flow<CloudPresenceRefilingReceipt?> =
+        context.dataStore.data.map { prefs ->
+            prefs[Keys.CLOUD_REFILE_RECEIPT]?.let(::decodeCloudPresenceRefilingReceipt)
+        }
+
     suspend fun setCloudPresenceRefilingApplied(applied: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.CLOUD_REFILE_APPLIED] = applied
@@ -824,31 +835,60 @@ class SettingsDataStore @Inject constructor(
 
     suspend fun setCloudPresenceRefilingBackup(backup: CloudPresenceRefilingBackup) {
         context.dataStore.edit { prefs ->
-            if (backup.sessions.isEmpty()) {
-                prefs.remove(Keys.CLOUD_REFILE_BACKUP)
-            } else {
-                prefs[Keys.CLOUD_REFILE_BACKUP] =
-                    backup.sessions.mapTo(mutableSetOf(), ::encodeCloudPresenceRefilingSession)
-            }
-            if (backup.createdSessionIds.isEmpty()) {
-                prefs.remove(Keys.CLOUD_REFILE_CREATED_IDS)
-            } else {
-                prefs[Keys.CLOUD_REFILE_CREATED_IDS] =
-                    backup.createdSessionIds.mapTo(mutableSetOf(), Long::toString)
-            }
-            if (backup.dailyProgress.isEmpty()) {
-                prefs.remove(Keys.CLOUD_REFILE_DAILY_BACKUP)
-            } else {
-                prefs[Keys.CLOUD_REFILE_DAILY_BACKUP] =
-                    backup.dailyProgress.mapTo(mutableSetOf(), ::encodeCloudPresenceRefilingDailyProgress)
-            }
-            if (backup.createdDailyProgressDates.isEmpty()) {
-                prefs.remove(Keys.CLOUD_REFILE_DAILY_CREATED_DATES)
-            } else {
-                prefs[Keys.CLOUD_REFILE_DAILY_CREATED_DATES] = backup.createdDailyProgressDates
-            }
+            prefs.writeCloudPresenceRefilingBackup(backup)
         }
     }
+
+    suspend fun setCloudPresenceRefilingReceipt(receipt: CloudPresenceRefilingReceipt) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CLOUD_REFILE_RECEIPT] = cloudPresenceRefilingReceiptJson.encodeToString(receipt)
+        }
+    }
+
+    /** Store undo data, immutable outcome and its one-time marker in a single Preferences edit. */
+    suspend fun completeCloudPresenceRefiling(
+        backup: CloudPresenceRefilingBackup,
+        receipt: CloudPresenceRefilingReceipt,
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs.writeCloudPresenceRefilingBackup(backup)
+            prefs[Keys.CLOUD_REFILE_RECEIPT] = cloudPresenceRefilingReceiptJson.encodeToString(receipt)
+            prefs[Keys.CLOUD_REFILE_APPLIED] = true
+        }
+    }
+
+    private fun MutablePreferences.writeCloudPresenceRefilingBackup(backup: CloudPresenceRefilingBackup) {
+        if (backup.sessions.isEmpty()) {
+            remove(Keys.CLOUD_REFILE_BACKUP)
+        } else {
+            this[Keys.CLOUD_REFILE_BACKUP] =
+                backup.sessions.mapTo(mutableSetOf(), ::encodeCloudPresenceRefilingSession)
+        }
+        if (backup.createdSessionIds.isEmpty()) {
+            remove(Keys.CLOUD_REFILE_CREATED_IDS)
+        } else {
+            this[Keys.CLOUD_REFILE_CREATED_IDS] =
+                backup.createdSessionIds.mapTo(mutableSetOf(), Long::toString)
+        }
+        if (backup.dailyProgress.isEmpty()) {
+            remove(Keys.CLOUD_REFILE_DAILY_BACKUP)
+        } else {
+            this[Keys.CLOUD_REFILE_DAILY_BACKUP] =
+                backup.dailyProgress.mapTo(mutableSetOf(), ::encodeCloudPresenceRefilingDailyProgress)
+        }
+        if (backup.createdDailyProgressDates.isEmpty()) {
+            remove(Keys.CLOUD_REFILE_DAILY_CREATED_DATES)
+        } else {
+            this[Keys.CLOUD_REFILE_DAILY_CREATED_DATES] = backup.createdDailyProgressDates
+        }
+    }
+
+    private fun decodeCloudPresenceRefilingReceipt(encoded: String): CloudPresenceRefilingReceipt =
+        cloudPresenceRefilingReceiptJson.decodeFromString<CloudPresenceRefilingReceipt>(encoded).also {
+            require(it.version == CloudPresenceRefilingReceipt.CURRENT_VERSION) {
+                "Unsupported cloud presence re-file receipt version ${it.version}"
+            }
+        }
 
     suspend fun clearCloudPresenceRefiling() {
         context.dataStore.edit { prefs ->
@@ -857,6 +897,7 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.CLOUD_REFILE_CREATED_IDS)
             prefs.remove(Keys.CLOUD_REFILE_DAILY_BACKUP)
             prefs.remove(Keys.CLOUD_REFILE_DAILY_CREATED_DATES)
+            prefs.remove(Keys.CLOUD_REFILE_RECEIPT)
         }
     }
 

@@ -17,6 +17,7 @@ import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.domain.SmartCollectionVisibility
 import com.example.backlogium.domain.VersionedRuleConfig
 import com.example.backlogium.gamification.RuleConfig
+import kotlinx.serialization.Serializable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -264,7 +265,23 @@ interface SettingsRepository : SessionEndOutbox {
     /** Durable originals and rows created by the refile, used for an exact reversal. */
     suspend fun cloudPresenceRefilingBackup(): CloudPresenceRefilingBackup? = null
 
+    /** Immutable outcome of the applied historical operation; absent for legacy re-files. */
+    val cloudPresenceRefilingReceipt: Flow<CloudPresenceRefilingReceipt?>
+        get() = flowOf(null)
+
     suspend fun setCloudPresenceRefilingBackup(backup: CloudPresenceRefilingBackup) = Unit
+
+    suspend fun setCloudPresenceRefilingReceipt(receipt: CloudPresenceRefilingReceipt) = Unit
+
+    /** Persist undo data, receipt and completion marker as one DataStore edit. */
+    suspend fun completeCloudPresenceRefiling(
+        backup: CloudPresenceRefilingBackup,
+        receipt: CloudPresenceRefilingReceipt,
+    ) {
+        setCloudPresenceRefilingBackup(backup)
+        setCloudPresenceRefilingReceipt(receipt)
+        setCloudPresenceRefilingApplied(true)
+    }
 
     suspend fun setCloudPresenceRefilingApplied(applied: Boolean) = Unit
 
@@ -302,6 +319,39 @@ data class CloudPresenceRefilingBackup(
     val createdSessionIds: Set<Long> = emptySet(),
     val dailyProgress: List<DailyProgress> = emptyList(),
     val createdDailyProgressDates: Set<String> = emptySet(),
+)
+
+/** Durable user-facing outcome, captured from the immutable Room journal rather than live Steam data. */
+@Serializable
+data class CloudPresenceRefilingReceipt(
+    val version: Int = CURRENT_VERSION,
+    val operationId: String,
+    val account: String,
+    val startChoice: String,
+    val selectedStartAt: Long,
+    val effectiveStartAt: Long,
+    val throughAt: Long,
+    val coveredStartAt: Long?,
+    val coveredEndAt: Long?,
+    val confirmedCutoffAt: Long?,
+    val zoneId: String,
+    val pagesFetched: Int,
+    val transitionsFetched: Int,
+    val sessionsRefiled: Int,
+    val datesAffected: List<String>,
+    val createdSessionIds: List<Long>,
+    val transferredMinutesByAppId: List<CloudPresenceRefilingGameMinutes>,
+    val remainingImportedMinutesByAppId: List<CloudPresenceRefilingGameMinutes>,
+) {
+    companion object {
+        const val CURRENT_VERSION = 1
+    }
+}
+
+@Serializable
+data class CloudPresenceRefilingGameMinutes(
+    val appId: Long,
+    val minutes: Int,
 )
 
 /** The only production implementation: a thin pass-through to Preferences DataStore. */
@@ -479,8 +529,19 @@ class DataStoreSettingsRepository @Inject constructor(
     override suspend fun cloudPresenceRefilingBackup(): CloudPresenceRefilingBackup? =
         settings.cloudPresenceRefilingBackup()
 
+    override val cloudPresenceRefilingReceipt: Flow<CloudPresenceRefilingReceipt?> =
+        settings.cloudPresenceRefilingReceiptFlow
+
     override suspend fun setCloudPresenceRefilingBackup(backup: CloudPresenceRefilingBackup) =
         settings.setCloudPresenceRefilingBackup(backup)
+
+    override suspend fun setCloudPresenceRefilingReceipt(receipt: CloudPresenceRefilingReceipt) =
+        settings.setCloudPresenceRefilingReceipt(receipt)
+
+    override suspend fun completeCloudPresenceRefiling(
+        backup: CloudPresenceRefilingBackup,
+        receipt: CloudPresenceRefilingReceipt,
+    ) = settings.completeCloudPresenceRefiling(backup, receipt)
 
     override suspend fun setCloudPresenceRefilingApplied(applied: Boolean) =
         settings.setCloudPresenceRefilingApplied(applied)

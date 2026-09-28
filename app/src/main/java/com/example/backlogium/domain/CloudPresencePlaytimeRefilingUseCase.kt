@@ -22,6 +22,8 @@ import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.data.local.entity.toCloudHistoricalSnapshot
 import com.example.backlogium.data.local.entity.toSession
 import com.example.backlogium.data.repo.CloudPresenceRefilingBackup
+import com.example.backlogium.data.repo.CloudPresenceRefilingGameMinutes
+import com.example.backlogium.data.repo.CloudPresenceRefilingReceipt
 import com.example.backlogium.data.repo.SettingsRepository
 import java.time.Instant
 import java.time.ZoneId
@@ -437,8 +439,12 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                         selectedStartAt = savedOperation.selectedStartAt,
                         effectiveStartAt = savedOperation.fromAt,
                         throughAt = savedOperation.throughAt,
+                        coveredStartAt = savedOperation.coveredStartAt,
+                        coveredEndAt = savedOperation.coveredEndAt,
                         zoneId = savedOperation.zoneId,
                         confirmedCutoffAt = savedOperation.confirmedCutoffAt,
+                        pagesFetched = savedOperation.pagesFetched,
+                        transitionsFetched = savedOperation.transitionsFetched,
                         originalSessions = changes.map { it.original.toCloudHistoricalSnapshot() },
                         replacementSessions = replacementSnapshots,
                         createdSessions = createdSnapshots,
@@ -524,6 +530,8 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
     private suspend fun finishHistoricalApply(
         payload: CloudHistoricalApplyPayload,
     ): CloudPresenceRefilingResult {
+        val savedOperation = cloudHistoricalDao.operation(payload.operationId)
+            ?: error("Cloud historical operation disappeared before receipt persistence")
         val originals = payload.originalSessions.map(CloudHistoricalSessionSnapshot::toSession)
         val createdIds = payload.createdSessions.map { it.id }.toSet()
         val dailyBefore = payload.dailyProgressBefore.map { day ->
@@ -536,35 +544,52 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
         }
         val hasLedgerChanges = originals.isNotEmpty() || createdIds.isNotEmpty()
 
-        settings.setCloudPresenceRefilingBackup(
-            CloudPresenceRefilingBackup(
-                sessions = originals,
-                createdSessionIds = createdIds,
-                dailyProgress = dailyBefore,
-            ),
-        )
         val recomputedDates = if (hasLedgerChanges) recompute() else emptySet()
         val createdDailyDates = if (hasLedgerChanges) {
             dailyProgressDao.getAllOrdered().map { it.date }.toSet() - dailyBefore.map { it.date }.toSet()
         } else {
             emptySet()
         }
-        settings.setCloudPresenceRefilingBackup(
+        val affectedDates = (payload.datesAffected.toSet() + recomputedDates).toSortedSet().toList()
+        settings.completeCloudPresenceRefiling(
             CloudPresenceRefilingBackup(
                 sessions = originals,
                 createdSessionIds = createdIds,
                 dailyProgress = dailyBefore,
                 createdDailyProgressDates = createdDailyDates,
             ),
+            CloudPresenceRefilingReceipt(
+                operationId = payload.operationId,
+                account = payload.account,
+                startChoice = payload.startChoice,
+                selectedStartAt = payload.selectedStartAt,
+                effectiveStartAt = payload.effectiveStartAt,
+                throughAt = payload.throughAt,
+                coveredStartAt = payload.coveredStartAt ?: savedOperation.coveredStartAt,
+                coveredEndAt = payload.coveredEndAt ?: savedOperation.coveredEndAt,
+                confirmedCutoffAt = payload.confirmedCutoffAt,
+                zoneId = payload.zoneId,
+                pagesFetched = payload.pagesFetched.takeIf { it > 0 } ?: savedOperation.pagesFetched,
+                transitionsFetched = payload.transitionsFetched.takeIf { it > 0 }
+                    ?: savedOperation.transitionsFetched,
+                sessionsRefiled = payload.sessionsRefiled,
+                datesAffected = affectedDates,
+                createdSessionIds = createdIds.sorted(),
+                transferredMinutesByAppId = payload.transferredMinutesByAppId.map { delta ->
+                    CloudPresenceRefilingGameMinutes(delta.appId, delta.minutes)
+                },
+                remainingImportedMinutesByAppId = payload.remainingImportedMinutesByAppId.map { balance ->
+                    CloudPresenceRefilingGameMinutes(balance.appId, balance.minutes)
+                },
+            ),
         )
-        settings.setCloudPresenceRefilingApplied(true)
 
         finalizeHistoricalJournal(payload)
 
         return CloudPresenceRefilingResult(
             operation = CloudPresenceRefilingOperation.APPLIED,
             sessionsRefiled = payload.sessionsRefiled,
-            datesAffected = payload.datesAffected.toSet() + recomputedDates,
+            datesAffected = affectedDates.toSet(),
         )
     }
 

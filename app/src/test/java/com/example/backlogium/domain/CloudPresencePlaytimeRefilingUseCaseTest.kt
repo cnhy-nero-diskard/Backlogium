@@ -24,6 +24,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -172,9 +173,17 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             val journalAfterInterruption = database.cloudHistoricalDao().journal(operation.operationId)!!
             assertEquals(CloudHistoricalStates.JOURNAL_APPLY_COMMITTED, journalAfterInterruption.state)
             assertFalse(realSettings.cloudPresenceRefilingApplied.first())
+            assertNull(realSettings.cloudPresenceRefilingReceipt.first())
+            assertEquals(22, database.gameDao().getById(GAME)!!.playtimeForever)
             assertEquals(22, database.sessionDao().trackedMinutesByGame().single().minutes)
             assertEquals(0, database.gameDao().getById(GAME)!!.backfillMinutes)
             assertEquals(22, database.sessionDao().getAll().sumOf { it.minutes })
+
+            // Simulate a later Steam response during the crash window. Recovery must finish the
+            // recorded 12-minute transfer rather than recomputing it from this newer total.
+            database.gameDao().getById(GAME)!!.let { latest ->
+                database.gameDao().upsert(latest.copy(playtimeForever = 35, lastPlaytime = 35))
+            }
 
             val applied = useCase(realSettings).applyHistorical(operation)
 
@@ -184,7 +193,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             val gameAfter = database.gameDao().getById(GAME)!!
             val sessionsAfter = database.sessionDao().getAll()
             val trackedAfter = database.sessionDao().trackedMinutesByGame().single().minutes
-            assertEquals(gameBefore.playtimeForever, gameAfter.playtimeForever)
+            assertEquals(35, gameAfter.playtimeForever)
             assertEquals(creditedBefore, trackedAfter + gameAfter.backfillMinutes)
             assertEquals(trackedBefore + 12, trackedAfter)
             assertEquals(gameBefore.backfillMinutes - 12, gameAfter.backfillMinutes)
@@ -205,6 +214,26 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
                 database.cloudHistoricalDao().journal(operation.operationId)!!.state)
             assertEquals(CloudHistoricalStates.APPLIED,
                 database.cloudHistoricalDao().operation(operation.operationId)!!.state)
+            assertEquals(2, database.cloudHistoricalDao().intervals(operation.operationId).size)
+            val receipt = realSettings.cloudPresenceRefilingReceipt.first()!!
+            assertEquals(operation.selectedStartAt, receipt.selectedStartAt)
+            assertEquals(operation.fromAt, receipt.effectiveStartAt)
+            assertEquals(operation.throughAt, receipt.throughAt)
+            assertEquals(operation.coveredStartAt, receipt.coveredStartAt)
+            assertEquals(operation.coveredEndAt, receipt.coveredEndAt)
+            assertEquals(cutoffAt, receipt.confirmedCutoffAt)
+            assertEquals(operation.startChoice, receipt.startChoice)
+            assertEquals(operation.zoneId, receipt.zoneId)
+            assertEquals(operation.pagesFetched, receipt.pagesFetched)
+            assertEquals(operation.transitionsFetched, receipt.transitionsFetched)
+            assertEquals(1, receipt.sessionsRefiled)
+            assertEquals(12, receipt.transferredMinutesByAppId.single().minutes)
+            assertEquals(0, receipt.remainingImportedMinutesByAppId.single().minutes)
+            assertEquals(1, receipt.createdSessionIds.size)
+            assertEquals(
+                receipt.createdSessionIds.toSet(),
+                realSettings.cloudPresenceRefilingBackup()!!.createdSessionIds,
+            )
 
             val sessionsBeforeReplay = database.sessionDao().getAll()
             val replay = useCase(realSettings).applyHistorical(operation)
@@ -213,6 +242,91 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             assertEquals(0, database.gameDao().getById(GAME)!!.backfillMinutes)
         } finally {
             realSettings.clearCloudPresenceRefiling()
+            database.close()
+        }
+    }
+
+    @Test
+    fun historicalZeroChangeApplyStillPersistsReceiptAndRetainsCompletedStage() = runTest {
+        val database = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(),
+            BacklogiumDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        val settings = DataStoreSettingsRepository(
+            SettingsDataStore(RuntimeEnvironment.getApplication()),
+        )
+        val updater = GamificationUpdater(
+            sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(),
+            playerProfileDao = database.playerProfileDao(),
+            hltbDataDao = database.hltbDataDao(),
+            achievementDao = database.achievementDao(),
+            gameDao = database.gameDao(),
+            hiddenGameDao = database.hiddenGameDao(),
+            progressMarksStore = InMemoryProgressMarksStore(),
+        )
+        val useCase = CloudPresencePlaytimeRefilingUseCase(
+            gameDao = database.gameDao(),
+            sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(),
+            playerProfileDao = database.playerProfileDao(),
+            cloudHistoricalDao = database.cloudHistoricalDao(),
+            settings = settings,
+            gamificationUpdater = updater,
+            time = FixedTime,
+            syncCoordinator = com.example.backlogium.work.SteamSyncCoordinator(),
+            derivedStateWrites = DerivedStateWriteCoordinator(),
+            transaction = RoomDatabaseTransactionScope(database),
+        )
+        val fromAt = utc("2026-07-01T00:00:00Z")
+        val throughAt = utc("2026-07-26T12:00:00Z")
+        val operation = CloudHistoricalOperation(
+            operationId = "historical-zero-change-test",
+            account = "76561198000000001",
+            readerGeneration = 6,
+            endpointIdentity = "https://presence.example.test/readPresence",
+            startChoice = CloudPresenceHistoricalStartChoice.RECENT_31_DAYS.name,
+            zoneId = "UTC",
+            selectedStartAt = fromAt,
+            fromAt = fromAt,
+            throughAt = throughAt,
+            coveredStartAt = null,
+            coveredEndAt = null,
+            pagesFetched = 1,
+            transitionsFetched = 0,
+            acquisitionComplete = true,
+            state = CloudHistoricalStates.COMPLETE,
+            createdAt = 1,
+            updatedAt = 1,
+        )
+
+        try {
+            settings.clearCloudPresenceRefiling()
+            check(database.cloudHistoricalDao().insertOperation(operation) != -1L)
+
+            val result = useCase.applyHistorical(operation)
+
+            assertEquals(CloudPresenceRefilingOperation.APPLIED, result.operation)
+            assertEquals(0, result.sessionsRefiled)
+            assertTrue(result.datesAffected.isEmpty())
+            assertTrue(settings.cloudPresenceRefilingApplied.first())
+            val receipt = settings.cloudPresenceRefilingReceipt.first()!!
+            assertEquals(operation.operationId, receipt.operationId)
+            assertEquals(fromAt, receipt.selectedStartAt)
+            assertEquals(fromAt, receipt.effectiveStartAt)
+            assertEquals(throughAt, receipt.throughAt)
+            assertNull(receipt.coveredStartAt)
+            assertNull(receipt.coveredEndAt)
+            assertEquals(0, receipt.sessionsRefiled)
+            assertTrue(receipt.createdSessionIds.isEmpty())
+            assertTrue(receipt.transferredMinutesByAppId.isEmpty())
+            assertTrue(receipt.remainingImportedMinutesByAppId.isEmpty())
+            assertEquals(CloudHistoricalStates.APPLIED,
+                database.cloudHistoricalDao().operation(operation.operationId)!!.state)
+            assertEquals(CloudHistoricalStates.JOURNAL_APPLIED,
+                database.cloudHistoricalDao().journal(operation.operationId)!!.state)
+        } finally {
+            settings.clearCloudPresenceRefiling()
             database.close()
         }
     }
@@ -688,12 +802,15 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
     ) : SettingsRepository by delegate {
         private var failed = false
 
-        override suspend fun setCloudPresenceRefilingBackup(backup: CloudPresenceRefilingBackup) {
+        override suspend fun completeCloudPresenceRefiling(
+            backup: CloudPresenceRefilingBackup,
+            receipt: com.example.backlogium.data.repo.CloudPresenceRefilingReceipt,
+        ) {
             if (!failed) {
                 failed = true
                 throw RuntimeException("injected historical marker failure")
             }
-            delegate.setCloudPresenceRefilingBackup(backup)
+            delegate.completeCloudPresenceRefiling(backup, receipt)
         }
     }
 
