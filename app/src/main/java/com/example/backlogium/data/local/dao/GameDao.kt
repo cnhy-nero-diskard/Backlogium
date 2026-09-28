@@ -230,6 +230,14 @@ interface GameDao {
     )
     suspend fun decrementImportedBalanceIfEnough(appId: Long, minutes: Int): Int
 
+    /** Restore only a historical re-file's transferred delta to the current owned-game balance. */
+    @Query(
+        "UPDATE games SET backfillMinutes = backfillMinutes + :minutes " +
+            "WHERE appId = :appId AND source = 'STEAM_OWNED' " +
+            "AND :minutes > 0 AND backfillMinutes <= 2147483647 - :minutes",
+    )
+    suspend fun restoreImportedBalanceDelta(appId: Long, minutes: Int): Int
+
     /**
      * Persist per-game backfill offsets in a single transaction so the one-time import is
      * applied atomically (either all games get their frozen offset, or none do).

@@ -19,7 +19,9 @@ import com.example.backlogium.data.repo.SettingsRepository
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -158,6 +160,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
                 ),
             )
             updater.recompute(FixedTime.today(), RecomputeSource.BACKFILL)
+            val originalSession = database.sessionDao().getAll().single()
             val profileBefore = database.playerProfileDao().get()!!
             val gameBefore = database.gameDao().getById(GAME)!!
             val trackedBefore = database.sessionDao().trackedMinutesByGame().single().minutes
@@ -240,6 +243,78 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             assertEquals(CloudPresenceRefilingOperation.NO_OP, replay.operation)
             assertEquals(sessionsBeforeReplay, database.sessionDao().getAll())
             assertEquals(0, database.gameDao().getById(GAME)!!.backfillMinutes)
+
+            val laterStart = utc("2026-07-27T10:00:00Z")
+            val laterSessionId = database.sessionDao().insert(
+                Session(
+                    appId = GAME,
+                    startAt = laterStart,
+                    endAt = utc("2026-07-27T10:20:00Z"),
+                    minutes = 20,
+                    open = false,
+                ),
+            )
+            database.gameDao().getById(GAME)!!.let { latest ->
+                // Simulate independent changes after apply. Undo must add its recorded 12-minute
+                // delta to the current balance, not overwrite it with the old absolute balance.
+                database.gameDao().upsert(
+                    latest.copy(
+                        name = "Portal renamed",
+                        playtimeForever = 44,
+                        lastPlaytime = 44,
+                        backfillMinutes = 5,
+                    ),
+                )
+            }
+            val reverseSettings = FailAroundHistoricalReverseCleanup(realSettings)
+
+            try {
+                useCase(FailOnHistoricalReverseRecompute(realSettings)).reverse()
+                fail("Expected the simulated interruption after the Room reversal commit")
+            } catch (expected: RuntimeException) {
+                assertEquals("injected failure during historical reverse recompute", expected.message)
+            }
+
+            assertEquals(CloudHistoricalStates.JOURNAL_REVERSE_COMMITTED,
+                database.cloudHistoricalDao().journal(operation.operationId)!!.state)
+            assertEquals(CloudHistoricalStates.REVERSING,
+                database.cloudHistoricalDao().operation(operation.operationId)!!.state)
+            assertTrue(realSettings.cloudPresenceRefilingApplied.first())
+            val afterRoomReverse = database.sessionDao().getAll()
+            assertEquals(2, afterRoomReverse.size)
+            assertTrue(afterRoomReverse.any { it == originalSession })
+            assertTrue(afterRoomReverse.any { it.id == laterSessionId && it.minutes == 20 })
+            val gameAfterReverse = database.gameDao().getById(GAME)!!
+            assertEquals("Portal renamed", gameAfterReverse.name)
+            assertEquals(44, gameAfterReverse.playtimeForever)
+            assertEquals(17, gameAfterReverse.backfillMinutes)
+            assertEquals(47, afterRoomReverse.sumOf { it.minutes } + gameAfterReverse.backfillMinutes)
+
+            try {
+                useCase(reverseSettings).reverse()
+                fail("Expected the simulated interruption before DataStore cleanup")
+            } catch (expected: RuntimeException) {
+                assertEquals("injected failure before historical cleanup", expected.message)
+            }
+            assertEquals(CloudHistoricalStates.JOURNAL_REVERSED,
+                database.cloudHistoricalDao().journal(operation.operationId)!!.state)
+            assertEquals(CloudHistoricalStates.REVERSED,
+                database.cloudHistoricalDao().operation(operation.operationId)!!.state)
+            assertTrue(realSettings.cloudPresenceRefilingApplied.first())
+
+            try {
+                useCase(reverseSettings).reverse()
+                fail("Expected the simulated interruption after DataStore cleanup")
+            } catch (expected: RuntimeException) {
+                assertEquals("injected failure after historical cleanup", expected.message)
+            }
+            assertFalse(realSettings.cloudPresenceRefilingApplied.first())
+            assertEquals(
+                CloudPresenceRefilingOperation.NO_OP,
+                useCase(realSettings).reverse().operation,
+            )
+            assertEquals(17, database.gameDao().getById(GAME)!!.backfillMinutes)
+            assertEquals(afterRoomReverse, database.sessionDao().getAll())
         } finally {
             realSettings.clearCloudPresenceRefiling()
             database.close()
@@ -811,6 +886,32 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
                 throw RuntimeException("injected historical marker failure")
             }
             delegate.completeCloudPresenceRefiling(backup, receipt)
+        }
+    }
+
+    private class FailAroundHistoricalReverseCleanup(
+        private val delegate: SettingsRepository,
+    ) : SettingsRepository by delegate {
+        private var clearCalls = 0
+
+        override suspend fun clearCloudPresenceRefiling() {
+            clearCalls += 1
+            when (clearCalls) {
+                1 -> throw RuntimeException("injected failure before historical cleanup")
+                2 -> {
+                    delegate.clearCloudPresenceRefiling()
+                    throw RuntimeException("injected failure after historical cleanup")
+                }
+                else -> delegate.clearCloudPresenceRefiling()
+            }
+        }
+    }
+
+    private class FailOnHistoricalReverseRecompute(
+        private val delegate: SettingsRepository,
+    ) : SettingsRepository by delegate {
+        override val ruleConfigWithVersion: Flow<VersionedRuleConfig> = flow {
+            throw RuntimeException("injected failure during historical reverse recompute")
         }
     }
 

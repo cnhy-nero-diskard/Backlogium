@@ -132,6 +132,12 @@ interface CloudHistoricalDao {
     suspend fun journal(operationId: String): CloudHistoricalJournal?
 
     @Query(
+        "SELECT * FROM cloud_historical_journals WHERE state = 'REVERSE_COMMITTED' " +
+            "ORDER BY updatedAt DESC LIMIT 1",
+    )
+    suspend fun reverseCommittedJournal(): CloudHistoricalJournal?
+
+    @Query(
         "UPDATE cloud_historical_operations SET state = :state, updatedAt = :updatedAt " +
             "WHERE operationId = :operationId AND account = :account " +
             "AND readerGeneration = :readerGeneration AND endpointIdentity = :endpointIdentity " +
