@@ -106,6 +106,38 @@ sealed interface CloudHistoricalPageResult {
     data object NoSteamAccount : CloudHistoricalPageResult
 }
 
+enum class CloudHistoricalBatchStopReason {
+    PAGE_LIMIT,
+    TIME_LIMIT,
+}
+
+sealed interface CloudHistoricalBatchResult {
+    data class Complete(
+        val operation: CloudHistoricalOperation,
+        val pagesFetched: Int,
+        val transitionsFetched: Int,
+    ) : CloudHistoricalBatchResult
+
+    /** A successful, durable partial batch that requires a separate explicit continuation. */
+    data class Partial(
+        val operation: CloudHistoricalOperation,
+        val pagesFetched: Int,
+        val transitionsFetched: Int,
+        val stopReason: CloudHistoricalBatchStopReason,
+    ) : CloudHistoricalBatchResult
+
+    data class Failed(
+        val operation: CloudHistoricalOperation?,
+        val pagesFetched: Int,
+        val transitionsFetched: Int,
+        val failure: CloudReadFailure,
+    ) : CloudHistoricalBatchResult
+
+    data object OperationNotFound : CloudHistoricalBatchResult
+    data object Unconfigured : CloudHistoricalBatchResult
+    data object NoSteamAccount : CloudHistoricalBatchResult
+}
+
 data class CloudPresenceHistoricalRange(
     val fromAt: Long,
     val throughAt: Long,
@@ -553,6 +585,103 @@ class CloudPresenceRepository @Inject constructor(
                 } catch (_: Exception) {
                     CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
                 }
+            }
+        }
+    }
+
+    /**
+     * Performs one user-initiated batch. Every page releases the shared read sequence before the
+     * next page, and a capped batch returns durable progress for an explicit later continuation.
+     */
+    suspend fun acquireHistoricalBatch(
+        operationId: String,
+        consume: suspend (CloudPresenceSnapshot) -> Unit,
+    ): CloudHistoricalBatchResult = acquireHistoricalBatchWithLimits(
+        operationId = operationId,
+        pageLimit = MAX_HISTORICAL_BATCH_PAGES,
+        timeBudgetNanos = MAX_HISTORICAL_BATCH_NANOS,
+        monotonicNowNanos = System::nanoTime,
+        consume = consume,
+    )
+
+    internal suspend fun acquireHistoricalBatchWithLimits(
+        operationId: String,
+        pageLimit: Int,
+        timeBudgetNanos: Long,
+        monotonicNowNanos: () -> Long,
+        consume: suspend (CloudPresenceSnapshot) -> Unit,
+    ): CloudHistoricalBatchResult {
+        require(pageLimit in 1..MAX_HISTORICAL_BATCH_PAGES)
+        require(timeBudgetNanos in 1L..MAX_HISTORICAL_BATCH_NANOS)
+        val initial = historicalStore.operation(operationId)
+            ?: return CloudHistoricalBatchResult.OperationNotFound
+        if (initial.acquisitionComplete) {
+            return CloudHistoricalBatchResult.Complete(initial, pagesFetched = 0, transitionsFetched = 0)
+        }
+        if (initial.state != CloudHistoricalStates.ACQUIRING) {
+            return CloudHistoricalBatchResult.Failed(
+                operation = initial,
+                pagesFetched = 0,
+                transitionsFetched = 0,
+                failure = CloudReadFailure.UNUSABLE_RESPONSE,
+            )
+        }
+
+        val startedAtNanos = monotonicNowNanos()
+        var operation = initial
+        var pagesFetched = 0
+        var transitionsFetched = 0
+        while (true) {
+            when (val page = acquireHistoricalPage(operationId, consume)) {
+                is CloudHistoricalPageResult.Success -> {
+                    operation = page.operation
+                    pagesFetched++
+                    transitionsFetched += page.snapshot.observationCount
+                    if (operation.acquisitionComplete) {
+                        return CloudHistoricalBatchResult.Complete(
+                            operation, pagesFetched, transitionsFetched,
+                        )
+                    }
+                    if (pagesFetched >= pageLimit) {
+                        return CloudHistoricalBatchResult.Partial(
+                            operation,
+                            pagesFetched,
+                            transitionsFetched,
+                            CloudHistoricalBatchStopReason.PAGE_LIMIT,
+                        )
+                    }
+                    if (monotonicNowNanos() - startedAtNanos >= timeBudgetNanos) {
+                        return CloudHistoricalBatchResult.Partial(
+                            operation,
+                            pagesFetched,
+                            transitionsFetched,
+                            CloudHistoricalBatchStopReason.TIME_LIMIT,
+                        )
+                    }
+                }
+                is CloudHistoricalPageResult.Failed -> return CloudHistoricalBatchResult.Failed(
+                    operation = historicalStore.operation(operationId) ?: operation,
+                    pagesFetched = pagesFetched,
+                    transitionsFetched = transitionsFetched,
+                    failure = page.failure,
+                )
+                CloudHistoricalPageResult.OperationNotFound ->
+                    return CloudHistoricalBatchResult.OperationNotFound
+                CloudHistoricalPageResult.AlreadyComplete -> {
+                    val latest = historicalStore.operation(operationId) ?: operation
+                    return if (latest.acquisitionComplete) {
+                        CloudHistoricalBatchResult.Complete(latest, pagesFetched, transitionsFetched)
+                    } else {
+                        CloudHistoricalBatchResult.Failed(
+                            latest,
+                            pagesFetched,
+                            transitionsFetched,
+                            CloudReadFailure.UNUSABLE_RESPONSE,
+                        )
+                    }
+                }
+                CloudHistoricalPageResult.Unconfigured -> return CloudHistoricalBatchResult.Unconfigured
+                CloudHistoricalPageResult.NoSteamAccount -> return CloudHistoricalBatchResult.NoSteamAccount
             }
         }
     }
@@ -1541,6 +1670,8 @@ class CloudPresenceRepository @Inject constructor(
         // Bounds a re-file drain so a server that keeps reporting more never hangs the caller:
         // exceeding it surfaces as a failure rather than applying a partial history.
         private const val MAX_REFILE_PAGES = 50
+        private const val MAX_HISTORICAL_BATCH_PAGES = 50
+        private const val MAX_HISTORICAL_BATCH_NANOS = 30_000_000_000L
         private const val MAX_ROUTINE_PAGES = 4
 
         fun normalizeEndpoint(raw: String): String? {

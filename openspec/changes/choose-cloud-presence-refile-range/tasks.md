@@ -10,7 +10,7 @@
 - [x] 2.1 Extend Retrofit/DTO and strict response parsing for metadata and historical pages, including range/identity validation; verify repository protocol tests cover old responses, new fields and malformed positions.
 - [x] 2.2 Introduce a Room-backed historical operation, interval stage, boundary, progress, apply/undo journal and identity binding with a schema migration; verify `MigrationTest.kt`-style old-database upgrade and idempotent replay/upsert tests.
 - [x] 2.3 Add independent historical page acquisition to `CloudPresenceRepository`, with the sequence mutex per page, owned-game pending-evidence retention and shared-game ingest before checkpoint commit; verify repository tests for overlaps, failed effects, failed checkpoint, and an unchanged ordinary cursor.
-- [ ] 2.4 Implement a 50-page/30-second user-initiated batch that stops with durable progress and explicit continuation, not partial apply or automatic retry; verify a >50-page test completes over multiple invocations and a killed/restarted attempt resumes the same fixed range.
+- [x] 2.4 Implement a 50-page/30-second user-initiated batch that stops with durable progress and explicit continuation, not partial apply or automatic retry; verify a >50-page test completes over multiple invocations and a killed/restarted attempt resumes the same fixed range.
 - [ ] 2.5 Fence historical fetch/commit/application by Steam account, reader generation and endpoint identity, and clear staged history on removal, replacement, account change and account Room reset; verify interleaving tests with routine catch-up, placement, verification promotion and invalidation.
 
 ## 3. One-time placement, imported-minute transfer and receipt
