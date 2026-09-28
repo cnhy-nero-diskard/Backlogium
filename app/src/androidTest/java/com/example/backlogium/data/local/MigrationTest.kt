@@ -94,6 +94,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_36_37,
         BacklogiumDatabase.MIGRATION_37_38,
         BacklogiumDatabase.MIGRATION_38_39,
+        BacklogiumDatabase.MIGRATION_39_40,
     )
 
     @Test
@@ -221,6 +222,69 @@ class MigrationTest {
                 ).use { cursor ->
                     assertTrue(cursor.moveToFirst())
                     assertEquals(3, cursor.getInt(0))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun v39ToV40_addsIdentityBoundHistoricalTablesWithoutChangingExistingRows() {
+        val databaseName = "migration-v39-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 39)
+        try {
+            database.execSQL(
+                "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                    "lastPlaytime, isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+                    "firstSeenAt, lastPlayedAt, returnedToPlayAt, manualSharedMinutes) VALUES " +
+                    "(440, 'Game', '', 90, 0, 90, 0, NULL, 1700000000000, 7, 'STEAM_OWNED', " +
+                    "1700000000000, NULL, NULL, 0)",
+            )
+            database.execSQL(
+                "INSERT INTO sessions (id, appId, startAt, endAt, minutes, open, openAppId, " +
+                    "recoveredSharedPlay, timingInformedSteamPlay) VALUES " +
+                    "(9, 440, 1700000000000, 1700005400000, 90, 0, NULL, NULL, NULL)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName, 40, true, BacklogiumDatabase.MIGRATION_39_40,
+            )
+            try {
+                migrated.query(
+                    "SELECT name, playtimeForever, backfillMinutes FROM games WHERE appId = 440",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("Game", cursor.getString(0))
+                    assertEquals(90, cursor.getInt(1))
+                    assertEquals(7, cursor.getInt(2))
+                    assertFalse(cursor.moveToNext())
+                }
+                migrated.query(
+                    "SELECT minutes, open, startAt FROM sessions WHERE id = 9",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(90, cursor.getInt(0))
+                    assertEquals(0, cursor.getInt(1))
+                    assertEquals(1700000000000L, cursor.getLong(2))
+                    assertFalse(cursor.moveToNext())
+                }
+                listOf(
+                    "cloud_historical_operations",
+                    "cloud_historical_intervals",
+                    "cloud_historical_boundaries",
+                    "cloud_historical_journals",
+                ).forEach { table ->
+                    migrated.query("SELECT COUNT(*) FROM `$table`").use { cursor ->
+                        assertTrue(cursor.moveToFirst())
+                        assertEquals("$table starts empty on upgrade", 0, cursor.getInt(0))
+                    }
                 }
             } finally {
                 migrated.close()

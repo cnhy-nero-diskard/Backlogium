@@ -23,6 +23,7 @@ import com.example.backlogium.data.local.dao.HltbDatasetDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.dao.PendingCloudEvidenceDao
+import com.example.backlogium.data.local.dao.CloudHistoricalDao
 import com.example.backlogium.data.local.dao.SteamAssetDao
 import com.example.backlogium.data.local.dao.SteamReviewCacheDao
 import com.example.backlogium.data.local.dao.WishlistDao
@@ -43,6 +44,10 @@ import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.PendingCloudInterval
 import com.example.backlogium.data.local.entity.PendingCloudBoundary
+import com.example.backlogium.data.local.entity.CloudHistoricalBoundary
+import com.example.backlogium.data.local.entity.CloudHistoricalInterval
+import com.example.backlogium.data.local.entity.CloudHistoricalJournal
+import com.example.backlogium.data.local.entity.CloudHistoricalOperation
 import com.example.backlogium.data.local.entity.WishlistItem
 import com.example.backlogium.data.local.entity.WishlistPriceObservation
 import com.example.backlogium.data.local.entity.PresenceDecision
@@ -83,8 +88,12 @@ import com.example.backlogium.data.local.entity.SyncRun
         WishlistPriceObservation::class,
         HiddenGame::class,
         SteamReviewCache::class,
+        CloudHistoricalOperation::class,
+        CloudHistoricalInterval::class,
+        CloudHistoricalBoundary::class,
+        CloudHistoricalJournal::class,
     ],
-    version = 39,
+    version = 40,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -98,6 +107,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun achievementDao(): AchievementDao
     abstract fun cloudReadDao(): CloudReadDao
     abstract fun pendingCloudEvidenceDao(): PendingCloudEvidenceDao
+    abstract fun cloudHistoricalDao(): CloudHistoricalDao
     abstract fun diagnosticsDao(): DiagnosticsDao
     abstract fun collectionDao(): CollectionDao
     abstract fun gameGenreCacheDao(): GameGenreCacheDao
@@ -916,6 +926,92 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE UNIQUE INDEX IF NOT EXISTS `index_sessions_openAppId` " +
                         "ON `sessions` (`openAppId`)",
+                )
+            }
+        }
+
+        /** v39 -> v40: durable, identity-bound historical cloud acquisition and apply journal. */
+        val MIGRATION_39_40 = object : Migration(39, 40) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `cloud_historical_operations` (" +
+                        "`operationId` TEXT NOT NULL, `account` TEXT NOT NULL, " +
+                        "`readerGeneration` INTEGER NOT NULL, `endpointIdentity` TEXT NOT NULL, " +
+                        "`selectedStartAt` INTEGER NOT NULL, `fromAt` INTEGER NOT NULL, " +
+                        "`throughAt` INTEGER NOT NULL, `confirmedCutoffAt` INTEGER, " +
+                        "`frozenCurrentObservedAt` INTEGER, `frozenCurrentAppId` INTEGER, " +
+                        "`frozenCurrentGameName` TEXT, `frozenCurrentPersonastate` INTEGER, " +
+                        "`frozenCurrentSince` INTEGER, `frozenCurrentCoverageLapseFrom` INTEGER, " +
+                        "`frozenCurrentCoverageLapseRecoveredAt` INTEGER, " +
+                        "`frozenCurrentSchemaVersion` INTEGER, `lastPositionAt` INTEGER, " +
+                        "`pagesFetched` INTEGER NOT NULL, `transitionsFetched` INTEGER NOT NULL, " +
+                        "`coveredStartAt` INTEGER, `coveredEndAt` INTEGER, " +
+                        "`acquisitionComplete` INTEGER NOT NULL, `state` TEXT NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`operationId`))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_cloud_historical_operations_account_readerGeneration_endpointIdentity_state` " +
+                        "ON `cloud_historical_operations` (`account`, `readerGeneration`, `endpointIdentity`, `state`)",
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "`index_cloud_historical_operations_operationId_account_readerGeneration_endpointIdentity` " +
+                        "ON `cloud_historical_operations` (`operationId`, `account`, `readerGeneration`, `endpointIdentity`)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `cloud_historical_intervals` (" +
+                        "`operationId` TEXT NOT NULL, `account` TEXT NOT NULL, " +
+                        "`readerGeneration` INTEGER NOT NULL, `endpointIdentity` TEXT NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, `startAt` INTEGER NOT NULL, `endAt` INTEGER, " +
+                        "`ongoing` INTEGER NOT NULL, `coverage` TEXT NOT NULL, " +
+                        "`observedUntil` INTEGER, `coverageLapseFrom` INTEGER, " +
+                        "`coverageLapseRecoveredAt` INTEGER, " +
+                        "`mayHaveStartedBefore` INTEGER NOT NULL, `gameName` TEXT, " +
+                        "`windowStart` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`operationId`, `appId`, `startAt`), " +
+                        "FOREIGN KEY(`operationId`, `account`, `readerGeneration`, `endpointIdentity`) " +
+                        "REFERENCES `cloud_historical_operations`(`operationId`, `account`, `readerGeneration`, `endpointIdentity`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_cloud_historical_intervals_operationId_account_readerGeneration_endpointIdentity` " +
+                        "ON `cloud_historical_intervals` (`operationId`, `account`, `readerGeneration`, `endpointIdentity`)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `cloud_historical_boundaries` (" +
+                        "`operationId` TEXT NOT NULL, `account` TEXT NOT NULL, " +
+                        "`readerGeneration` INTEGER NOT NULL, `endpointIdentity` TEXT NOT NULL, " +
+                        "`kind` TEXT NOT NULL, `at` INTEGER NOT NULL, `appId` INTEGER, " +
+                        "`gameName` TEXT, `personastate` INTEGER, `previousLastObservedAt` INTEGER, " +
+                        "`previousCoverageLapseFrom` INTEGER, " +
+                        "`previousCoverageLapseRecoveredAt` INTEGER, `schemaVersion` INTEGER, " +
+                        "PRIMARY KEY(`operationId`, `kind`), " +
+                        "FOREIGN KEY(`operationId`, `account`, `readerGeneration`, `endpointIdentity`) " +
+                        "REFERENCES `cloud_historical_operations`(`operationId`, `account`, `readerGeneration`, `endpointIdentity`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_cloud_historical_boundaries_operationId_account_readerGeneration_endpointIdentity` " +
+                        "ON `cloud_historical_boundaries` (`operationId`, `account`, `readerGeneration`, `endpointIdentity`)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `cloud_historical_journals` (" +
+                        "`operationId` TEXT NOT NULL, `account` TEXT NOT NULL, " +
+                        "`readerGeneration` INTEGER NOT NULL, `endpointIdentity` TEXT NOT NULL, " +
+                        "`state` TEXT NOT NULL, `payloadVersion` INTEGER NOT NULL, `payloadJson` TEXT NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, PRIMARY KEY(`operationId`), " +
+                        "FOREIGN KEY(`operationId`, `account`, `readerGeneration`, `endpointIdentity`) " +
+                        "REFERENCES `cloud_historical_operations`(`operationId`, `account`, `readerGeneration`, `endpointIdentity`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_cloud_historical_journals_operationId_account_readerGeneration_endpointIdentity` " +
+                        "ON `cloud_historical_journals` (`operationId`, `account`, `readerGeneration`, `endpointIdentity`)",
                 )
             }
         }

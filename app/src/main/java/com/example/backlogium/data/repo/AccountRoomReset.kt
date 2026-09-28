@@ -33,6 +33,8 @@ class AccountRoomReset @Inject constructor(
             // Pending placement evidence is account-bound, even when no reader is configured.
             database.pendingCloudEvidenceDao().deleteAllIntervals()
             database.pendingCloudEvidenceDao().deleteAllBoundaries()
+            // Historical staging and its apply/undo journal belong to the old Steam identity.
+            database.cloudHistoricalDao().deleteAllOperations()
             database.gameDao().deleteAll()
             // Which shared games were removed is a decision about one person's borrowed library;
             // carrying it to another account would silently refuse to admit their games.
