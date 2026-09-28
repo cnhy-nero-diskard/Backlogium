@@ -2,15 +2,29 @@ package com.example.backlogium.domain
 
 import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.backup.PassThroughTransactionScope
+import com.example.backlogium.data.local.dao.CloudHistoricalDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.entity.CloudHistoricalApplyPayload
+import com.example.backlogium.data.local.entity.CloudHistoricalApplyPayloadCodec
+import com.example.backlogium.data.local.entity.CloudHistoricalDailyProgressSnapshot
+import com.example.backlogium.data.local.entity.CloudHistoricalGameMinutes
+import com.example.backlogium.data.local.entity.CloudHistoricalJournal
+import com.example.backlogium.data.local.entity.CloudHistoricalOperation
+import com.example.backlogium.data.local.entity.CloudHistoricalSessionSnapshot
+import com.example.backlogium.data.local.entity.CloudHistoricalStates
+import com.example.backlogium.data.local.entity.CloudHistoricalInterval
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
+import com.example.backlogium.data.local.entity.toCloudHistoricalSnapshot
+import com.example.backlogium.data.local.entity.toSession
 import com.example.backlogium.data.repo.CloudPresenceRefilingBackup
 import com.example.backlogium.data.repo.SettingsRepository
 import java.time.Instant
+import java.time.ZoneId
 import javax.inject.Inject
 import kotlinx.coroutines.flow.first
 
@@ -88,6 +102,8 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
     private val gameDao: GameDao,
     private val sessionDao: SessionDao,
     private val dailyProgressDao: DailyProgressDao,
+    private val playerProfileDao: PlayerProfileDao,
+    private val cloudHistoricalDao: CloudHistoricalDao,
     private val settings: SettingsRepository,
     private val gamificationUpdater: GamificationUpdater,
     private val time: TimeProvider,
@@ -290,6 +306,178 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
             }
         }
 
+    /**
+     * Atomically applies a fully-acquired historical operation. The Room journal and the session
+     * and imported-balance writes commit together; the DataStore marker is finalized afterward and
+     * can be safely completed from the immutable Room payload after process death.
+     */
+    suspend fun applyHistorical(
+        operation: CloudHistoricalOperation,
+    ): CloudPresenceRefilingResult = syncCoordinator.withLock {
+        derivedStateWrites.withLock {
+            val existingJournal = cloudHistoricalDao.journal(operation.operationId)
+            val alreadyApplied = settings.cloudPresenceRefilingApplied.first()
+            if (existingJournal?.state == CloudHistoricalStates.JOURNAL_REVERSED) {
+                return@withLock CloudPresenceRefilingResult(CloudPresenceRefilingOperation.NO_OP)
+            }
+            if (existingJournal != null && existingJournal.state !in setOf(
+                    CloudHistoricalStates.JOURNAL_APPLY_COMMITTED,
+                    CloudHistoricalStates.JOURNAL_APPLIED,
+                )
+            ) {
+                error("Cloud historical apply journal is in an unsupported state")
+            }
+            if (alreadyApplied && existingJournal?.state != CloudHistoricalStates.JOURNAL_APPLY_COMMITTED) {
+                return@withLock CloudPresenceRefilingResult(CloudPresenceRefilingOperation.NO_OP)
+            }
+
+            val payload = if (existingJournal != null) {
+                CloudHistoricalApplyPayloadCodec.decode(existingJournal.payloadJson).also { saved ->
+                    require(saved.operationId == operation.operationId &&
+                        saved.account == operation.account &&
+                        existingJournal.readerGeneration == operation.readerGeneration &&
+                        existingJournal.endpointIdentity == operation.endpointIdentity
+                    ) { "Cloud historical journal does not match the requested operation" }
+                }
+            } else {
+                if (alreadyApplied) {
+                    return@withLock CloudPresenceRefilingResult(CloudPresenceRefilingOperation.NO_OP)
+                }
+                transaction.run {
+                    // Recheck under the Room transaction: only a complete, fixed operation can
+                    // supply evidence to this all-or-nothing ledger commit.
+                    val savedOperation = cloudHistoricalDao.operation(operation.operationId)
+                        ?: error("Cloud historical operation no longer exists")
+                    require(savedOperation.sameApplyIdentity(operation)) {
+                        "Cloud historical operation identity changed before apply"
+                    }
+                    require(savedOperation.acquisitionComplete &&
+                        savedOperation.state == CloudHistoricalStates.COMPLETE
+                    ) { "Cloud historical acquisition is not complete" }
+
+                    val stagedIntervals = cloudHistoricalDao.intervals(operation.operationId)
+                        .mapNotNull { staged -> staged.toPresenceInterval() }
+                    val sessionsBefore = sessionDao.getAll()
+                    val ownedGames = gameDao.getAll().filter { it.source == GameSource.STEAM_OWNED }
+                    val ownedIds = ownedGames.map { it.appId }.toSet()
+                    val selection = savedOperation.toSelection()
+                    val changes = cloudPresenceSessionRefiles(
+                        sessions = sessionsBefore,
+                        ownedAppIds = ownedIds,
+                        intervals = stagedIntervals,
+                        range = selection,
+                    )
+                    val changedOriginalIds = changes.map { it.original.id }.toSet()
+                    val replacementRows = changes.flatMap { change ->
+                        change.replacement.mapIndexed { index, replacement ->
+                            replacement.copy(id = if (index == 0) change.original.id else 0L)
+                        }
+                    }
+
+                    val profile = playerProfileDao.get()
+                    val importedBefore = ownedGames.associate { it.appId to it.backfillMinutes }
+                    val canTransfer = profile?.playtimeBackfilled == true &&
+                        savedOperation.confirmedCutoffAt != null
+                    val allocation = if (canTransfer) {
+                        CloudPresencePreDataAllocationRule.allocate(
+                            intervals = stagedIntervals,
+                            ownedAppIds = ownedIds,
+                            importedMinutesByAppId = importedBefore,
+                            existingSessions = sessionsBefore.filter { it.id !in changedOriginalIds },
+                            refiledSessions = replacementRows,
+                            selection = selection,
+                            cutoffAt = checkNotNull(savedOperation.confirmedCutoffAt),
+                        )
+                    } else {
+                        CloudPresencePreDataAllocation(
+                            sessions = emptyList(),
+                            transferredMinutesByAppId = emptyMap(),
+                            remainingImportedMinutesByAppId = importedBefore,
+                        )
+                    }
+
+                    val dailyBefore = if (changes.isNotEmpty() || allocation.sessions.isNotEmpty()) {
+                        dailyProgressDao.getAllOrdered()
+                    } else {
+                        emptyList()
+                    }
+                    val replacementSnapshots = mutableListOf<CloudHistoricalSessionSnapshot>()
+                    val createdSnapshots = mutableListOf<CloudHistoricalSessionSnapshot>()
+                    for (change in changes) {
+                        val rows = change.replacement
+                        val first = rows.first().copy(id = change.original.id)
+                        sessionDao.update(first)
+                        replacementSnapshots += first.toCloudHistoricalSnapshot()
+                        rows.drop(1).forEach { split ->
+                            val inserted = split.copy(id = 0L)
+                            val id = sessionDao.insert(inserted)
+                            val stored = inserted.copy(id = id)
+                            replacementSnapshots += stored.toCloudHistoricalSnapshot()
+                            createdSnapshots += stored.toCloudHistoricalSnapshot()
+                        }
+                    }
+                    allocation.transferredMinutesByAppId.toSortedMap().forEach { (appId, minutes) ->
+                        check(gameDao.decrementImportedBalanceIfEnough(appId, minutes) == 1) {
+                            "Imported balance changed before historical apply for game $appId"
+                        }
+                    }
+                    allocation.sessions.forEach { session ->
+                        val inserted = session.copy(id = 0L)
+                        val id = sessionDao.insert(inserted)
+                        createdSnapshots += inserted.copy(id = id).toCloudHistoricalSnapshot()
+                    }
+
+                    val dates = (changes.flatMap { change ->
+                        listOf(change.original) + change.replacement
+                    } + allocation.sessions).map { it.localDate(selection.zoneId) }.toSortedSet()
+                    val payload = CloudHistoricalApplyPayload(
+                        operationId = savedOperation.operationId,
+                        account = savedOperation.account,
+                        startChoice = savedOperation.startChoice,
+                        selectedStartAt = savedOperation.selectedStartAt,
+                        effectiveStartAt = savedOperation.fromAt,
+                        throughAt = savedOperation.throughAt,
+                        zoneId = savedOperation.zoneId,
+                        confirmedCutoffAt = savedOperation.confirmedCutoffAt,
+                        originalSessions = changes.map { it.original.toCloudHistoricalSnapshot() },
+                        replacementSessions = replacementSnapshots,
+                        createdSessions = createdSnapshots,
+                        transferredMinutesByAppId = allocation.transferredMinutesByAppId
+                            .toSortedMap().map { (appId, minutes) ->
+                                CloudHistoricalGameMinutes(appId, minutes)
+                            },
+                        remainingImportedMinutesByAppId = allocation.remainingImportedMinutesByAppId
+                            .toSortedMap().map { (appId, minutes) ->
+                                CloudHistoricalGameMinutes(appId, minutes)
+                            },
+                        dailyProgressBefore = dailyBefore.map { day ->
+                            CloudHistoricalDailyProgressSnapshot(
+                                day.date, day.minutesPlayed, day.goalMinutesPlayed, day.questMet,
+                            )
+                        },
+                        sessionsRefiled = changes.size,
+                        datesAffected = dates.toList(),
+                    )
+                    cloudHistoricalDao.upsertJournal(
+                        CloudHistoricalJournal(
+                            operationId = savedOperation.operationId,
+                            account = savedOperation.account,
+                            readerGeneration = savedOperation.readerGeneration,
+                            endpointIdentity = savedOperation.endpointIdentity,
+                            state = CloudHistoricalStates.JOURNAL_APPLY_COMMITTED,
+                            payloadVersion = CloudHistoricalApplyPayload.CURRENT_VERSION,
+                            payloadJson = CloudHistoricalApplyPayloadCodec.encode(payload),
+                            updatedAt = time.nowMillis(),
+                        ),
+                    )
+                    payload
+                }
+            }
+
+            finishHistoricalApply(payload)
+        }
+    }
+
     suspend fun reverse(): CloudPresenceRefilingResult = syncCoordinator.withLock {
         if (!settings.cloudPresenceRefilingApplied.first()) {
             return@withLock CloudPresenceRefilingResult(CloudPresenceRefilingOperation.NO_OP)
@@ -330,6 +518,87 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                 sessionsRefiled = backup.sessions.size,
                 datesAffected = affectedDates + recomputedDates,
             )
+        }
+    }
+
+    private suspend fun finishHistoricalApply(
+        payload: CloudHistoricalApplyPayload,
+    ): CloudPresenceRefilingResult {
+        val originals = payload.originalSessions.map(CloudHistoricalSessionSnapshot::toSession)
+        val createdIds = payload.createdSessions.map { it.id }.toSet()
+        val dailyBefore = payload.dailyProgressBefore.map { day ->
+            DailyProgress(
+                date = day.date,
+                minutesPlayed = day.minutesPlayed,
+                goalMinutesPlayed = day.goalMinutesPlayed,
+                questMet = day.questMet,
+            )
+        }
+        val hasLedgerChanges = originals.isNotEmpty() || createdIds.isNotEmpty()
+
+        settings.setCloudPresenceRefilingBackup(
+            CloudPresenceRefilingBackup(
+                sessions = originals,
+                createdSessionIds = createdIds,
+                dailyProgress = dailyBefore,
+            ),
+        )
+        val recomputedDates = if (hasLedgerChanges) recompute() else emptySet()
+        val createdDailyDates = if (hasLedgerChanges) {
+            dailyProgressDao.getAllOrdered().map { it.date }.toSet() - dailyBefore.map { it.date }.toSet()
+        } else {
+            emptySet()
+        }
+        settings.setCloudPresenceRefilingBackup(
+            CloudPresenceRefilingBackup(
+                sessions = originals,
+                createdSessionIds = createdIds,
+                dailyProgress = dailyBefore,
+                createdDailyProgressDates = createdDailyDates,
+            ),
+        )
+        settings.setCloudPresenceRefilingApplied(true)
+
+        finalizeHistoricalJournal(payload)
+
+        return CloudPresenceRefilingResult(
+            operation = CloudPresenceRefilingOperation.APPLIED,
+            sessionsRefiled = payload.sessionsRefiled,
+            datesAffected = payload.datesAffected.toSet() + recomputedDates,
+        )
+    }
+
+    private suspend fun finalizeHistoricalJournal(payload: CloudHistoricalApplyPayload) = transaction.run {
+        val savedOperation = cloudHistoricalDao.operation(payload.operationId)
+            ?: error("Cloud historical operation disappeared after apply")
+        val journal = cloudHistoricalDao.journal(payload.operationId)
+            ?: error("Cloud historical apply journal disappeared after apply")
+        require(journal.account == payload.account &&
+            CloudHistoricalApplyPayloadCodec.decode(journal.payloadJson) == payload
+        ) { "Cloud historical apply journal changed before finalization" }
+        if (journal.state == CloudHistoricalStates.JOURNAL_APPLY_COMMITTED) {
+            cloudHistoricalDao.upsertJournal(
+                journal.copy(state = CloudHistoricalStates.JOURNAL_APPLIED, updatedAt = time.nowMillis()),
+            )
+        } else {
+            require(journal.state == CloudHistoricalStates.JOURNAL_APPLIED) {
+                "Cloud historical apply journal is not recoverable"
+            }
+        }
+        when (savedOperation.state) {
+            CloudHistoricalStates.COMPLETE -> check(
+                cloudHistoricalDao.updateOperationState(
+                    operationId = savedOperation.operationId,
+                    account = savedOperation.account,
+                    readerGeneration = savedOperation.readerGeneration,
+                    endpointIdentity = savedOperation.endpointIdentity,
+                    expectedState = CloudHistoricalStates.COMPLETE,
+                    state = CloudHistoricalStates.APPLIED,
+                    updatedAt = time.nowMillis(),
+                ) == 1,
+            ) { "Cloud historical operation could not be marked applied" }
+            CloudHistoricalStates.APPLIED -> Unit
+            else -> error("Cloud historical operation state changed before finalization")
         }
     }
 
@@ -418,6 +687,45 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
 
     private fun dateOf(session: Session): String =
         Instant.ofEpochMilli(session.startAt).atZone(time.zone()).toLocalDate().toString()
+
+    private fun Session.localDate(zoneId: String): String =
+        Instant.ofEpochMilli(startAt).atZone(ZoneId.of(zoneId)).toLocalDate().toString()
+
+    private fun CloudHistoricalOperation.toSelection(): CloudPresenceHistoricalSelection =
+        CloudPresenceHistoricalSelection(
+            choice = CloudPresenceHistoricalStartChoice.valueOf(startChoice),
+            selectedStartAt = selectedStartAt,
+            effectiveStartAt = fromAt,
+            throughAt = throughAt,
+            zoneId = zoneId,
+        )
+
+    private fun CloudHistoricalInterval.toPresenceInterval(): CloudPresenceInterval =
+        CloudPresenceInterval(
+            appId = appId,
+            gameName = gameName,
+            startAt = startAt,
+            endAt = endAt,
+            ongoing = ongoing,
+            coverage = runCatching { CloudCoverageState.valueOf(coverage) }
+                .getOrDefault(CloudCoverageState.UNKNOWN),
+            observedUntil = observedUntil,
+            coverageLapseFrom = coverageLapseFrom,
+            coverageLapseRecoveredAt = coverageLapseRecoveredAt,
+            mayHaveStartedBefore = mayHaveStartedBefore,
+        )
+
+    private fun CloudHistoricalOperation.sameApplyIdentity(other: CloudHistoricalOperation): Boolean =
+        operationId == other.operationId &&
+            account == other.account &&
+            readerGeneration == other.readerGeneration &&
+            endpointIdentity == other.endpointIdentity &&
+            startChoice == other.startChoice &&
+            zoneId == other.zoneId &&
+            selectedStartAt == other.selectedStartAt &&
+            fromAt == other.fromAt &&
+            throughAt == other.throughAt &&
+            confirmedCutoffAt == other.confirmedCutoffAt
 
     private data class Change(
         val original: Session,

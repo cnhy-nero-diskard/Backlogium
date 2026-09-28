@@ -3,6 +3,7 @@ package com.example.backlogium.data.local.entity
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import androidx.room.ColumnInfo
 
 /** Immutable identity and fixed range plus the durable acquisition checkpoint. */
 @Entity(
@@ -18,6 +19,10 @@ data class CloudHistoricalOperation(
     val readerGeneration: Long,
     /** Normalized endpoint URL only; credentials are never copied into Room. */
     val endpointIdentity: String,
+    @ColumnInfo(defaultValue = "'RECENT_31_DAYS'")
+    val startChoice: String = "RECENT_31_DAYS",
+    @ColumnInfo(defaultValue = "'UTC'")
+    val zoneId: String = "UTC",
     val selectedStartAt: Long,
     val fromAt: Long,
     val throughAt: Long,

@@ -1096,6 +1096,12 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
     override suspend fun setBackfillMinutes(appId: Long, minutes: Int) {
         store[appId]?.let { store[appId] = it.copy(backfillMinutes = minutes) }
     }
+    override suspend fun decrementImportedBalanceIfEnough(appId: Long, minutes: Int): Int {
+        val game = store[appId]?.takeIf { it.source == GameSource.STEAM_OWNED } ?: return 0
+        if (minutes <= 0 || game.backfillMinutes < minutes) return 0
+        store[appId] = game.copy(backfillMinutes = game.backfillMinutes - minutes)
+        return 1
+    }
     override suspend fun setRecencyFromBackup(appId: Long, firstSeenAt: Long?, lastPlayedAt: Long?, returnedToPlayAt: Long?) {
         store[appId]?.let { store[appId] = it.copy(firstSeenAt = firstSeenAt ?: it.firstSeenAt, lastPlayedAt = lastPlayedAt ?: it.lastPlayedAt, returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt) }
     }

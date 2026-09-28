@@ -131,6 +131,22 @@ interface CloudHistoricalDao {
     @Query("SELECT * FROM cloud_historical_journals WHERE operationId = :operationId")
     suspend fun journal(operationId: String): CloudHistoricalJournal?
 
+    @Query(
+        "UPDATE cloud_historical_operations SET state = :state, updatedAt = :updatedAt " +
+            "WHERE operationId = :operationId AND account = :account " +
+            "AND readerGeneration = :readerGeneration AND endpointIdentity = :endpointIdentity " +
+            "AND acquisitionComplete = 1 AND state = :expectedState",
+    )
+    suspend fun updateOperationState(
+        operationId: String,
+        account: String,
+        readerGeneration: Long,
+        endpointIdentity: String,
+        expectedState: String,
+        state: String,
+        updatedAt: Long,
+    ): Int
+
     @Query("DELETE FROM cloud_historical_operations")
     suspend fun deleteAllOperations()
 

@@ -95,6 +95,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_37_38,
         BacklogiumDatabase.MIGRATION_38_39,
         BacklogiumDatabase.MIGRATION_39_40,
+        BacklogiumDatabase.MIGRATION_40_41,
     )
 
     @Test
@@ -1615,6 +1616,49 @@ class MigrationTest {
     }
 
     private data class ColumnInfo(val name: String, val type: String, val notNull: Boolean, val pk: Int)
+
+    @Test
+    fun v40ToV41AddsHistoricalStartChoiceAndTimezoneWithSafeDefaults() {
+        val databaseName = "migration-v40-${System.nanoTime()}"
+        val previous = migrationTestHelper.createDatabase(databaseName, 40)
+        try {
+            previous.execSQL(
+                "INSERT INTO cloud_historical_operations " +
+                    "(operationId, account, readerGeneration, endpointIdentity, selectedStartAt, " +
+                    "fromAt, throughAt, pagesFetched, transitionsFetched, acquisitionComplete, " +
+                    "state, createdAt, updatedAt) VALUES " +
+                    "('history-v40', '76561198000000001', 2, " +
+                    "'https://presence.example.test/readPresence', 10, 10, 20, 1, 3, 1, " +
+                    "'COMPLETE', 1, 2)",
+            )
+        } finally {
+            previous.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                41,
+                true,
+                BacklogiumDatabase.MIGRATION_40_41,
+            )
+            try {
+                migrated.query(
+                    "SELECT operationId, startChoice, zoneId FROM cloud_historical_operations",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("history-v40", cursor.getString(0))
+                    assertEquals("RECENT_31_DAYS", cursor.getString(1))
+                    assertEquals("UTC", cursor.getString(2))
+                    assertFalse(cursor.moveToNext())
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
 
     private fun assertTableInfo(database: SupportSQLiteDatabase, table: String, expected: List<ColumnInfo>) {
         val actual = mutableListOf<ColumnInfo>()

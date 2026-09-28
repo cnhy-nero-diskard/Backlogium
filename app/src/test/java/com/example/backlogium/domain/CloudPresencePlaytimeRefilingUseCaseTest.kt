@@ -6,6 +6,9 @@ import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.CloudHistoricalInterval
+import com.example.backlogium.data.local.entity.CloudHistoricalOperation
+import com.example.backlogium.data.local.entity.CloudHistoricalStates
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
@@ -30,6 +33,189 @@ import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class CloudPresencePlaytimeRefilingUseCaseTest {
+
+    @Test
+    fun historicalApplyAtomicallyTransfersImportedMinutesAndReplaysFromRoomJournal() = runTest {
+        val database = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(),
+            BacklogiumDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        val realSettings = DataStoreSettingsRepository(
+            SettingsDataStore(RuntimeEnvironment.getApplication()),
+        )
+        val marks = InMemoryProgressMarksStore(ProgressMarks(lastCelebratedLevel = 1, initialized = true))
+        val updater = GamificationUpdater(
+            sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(),
+            playerProfileDao = database.playerProfileDao(),
+            hltbDataDao = database.hltbDataDao(),
+            achievementDao = database.achievementDao(),
+            gameDao = database.gameDao(),
+            hiddenGameDao = database.hiddenGameDao(),
+            progressMarksStore = marks,
+        )
+        val failingSettings = FailOnceOnHistoricalBackup(realSettings)
+        fun useCase(settings: SettingsRepository) = CloudPresencePlaytimeRefilingUseCase(
+            gameDao = database.gameDao(),
+            sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(),
+            playerProfileDao = database.playerProfileDao(),
+            cloudHistoricalDao = database.cloudHistoricalDao(),
+            settings = settings,
+            gamificationUpdater = updater,
+            time = FixedTime,
+            syncCoordinator = com.example.backlogium.work.SteamSyncCoordinator(),
+            derivedStateWrites = DerivedStateWriteCoordinator(),
+            transaction = RoomDatabaseTransactionScope(database),
+        )
+        val fromAt = utc("2026-07-25T00:00:00Z")
+        val throughAt = utc("2026-07-26T12:00:00Z")
+        val cutoffAt = utc("2026-07-26T11:00:00Z")
+        val operation = CloudHistoricalOperation(
+            operationId = "historical-apply-test",
+            account = "76561198000000001",
+            readerGeneration = 5,
+            endpointIdentity = "https://presence.example.test/readPresence",
+            startChoice = CloudPresenceHistoricalStartChoice.CUSTOM_LOCAL_DATE.name,
+            zoneId = "UTC",
+            selectedStartAt = fromAt,
+            fromAt = fromAt,
+            throughAt = throughAt,
+            confirmedCutoffAt = cutoffAt,
+            pagesFetched = 1,
+            transitionsFetched = 2,
+            coveredStartAt = fromAt,
+            coveredEndAt = throughAt,
+            acquisitionComplete = true,
+            state = CloudHistoricalStates.COMPLETE,
+            createdAt = 1,
+            updatedAt = 1,
+        )
+
+        try {
+            realSettings.clearCloudPresenceRefiling()
+            database.gameDao().upsert(
+                Game(
+                    appId = GAME,
+                    name = "Portal",
+                    iconUrl = "",
+                    playtimeForever = 22,
+                    playtime2Weeks = 0,
+                    lastPlaytime = 22,
+                    backfillMinutes = 12,
+                    source = GameSource.STEAM_OWNED,
+                ),
+            )
+            database.playerProfileDao().upsert(PlayerProfile(playtimeBackfilled = true))
+            database.sessionDao().insert(
+                Session(
+                    appId = GAME,
+                    startAt = utc("2026-07-25T23:50:00Z"),
+                    endAt = utc("2026-07-26T00:10:00Z"),
+                    minutes = 10,
+                    open = false,
+                    recoveredSharedPlay = RecoveredSharedPlayState.PARTIAL,
+                ),
+            )
+            check(database.cloudHistoricalDao().insertOperation(operation) != -1L)
+            database.cloudHistoricalDao().insertInterval(
+                CloudHistoricalInterval(
+                    operationId = operation.operationId,
+                    account = operation.account,
+                    readerGeneration = operation.readerGeneration,
+                    endpointIdentity = operation.endpointIdentity,
+                    appId = GAME,
+                    startAt = utc("2026-07-26T00:00:00Z"),
+                    endAt = utc("2026-07-26T00:10:00Z"),
+                    ongoing = false,
+                    coverage = "CONTINUOUS",
+                    observedUntil = null,
+                    coverageLapseFrom = null,
+                    coverageLapseRecoveredAt = null,
+                    mayHaveStartedBefore = false,
+                    gameName = "Portal",
+                    windowStart = fromAt,
+                ),
+            )
+            database.cloudHistoricalDao().insertInterval(
+                CloudHistoricalInterval(
+                    operationId = operation.operationId,
+                    account = operation.account,
+                    readerGeneration = operation.readerGeneration,
+                    endpointIdentity = operation.endpointIdentity,
+                    appId = GAME,
+                    startAt = utc("2026-07-25T22:00:00Z"),
+                    endAt = utc("2026-07-25T22:20:00Z"),
+                    ongoing = false,
+                    coverage = "CONTINUOUS",
+                    observedUntil = null,
+                    coverageLapseFrom = null,
+                    coverageLapseRecoveredAt = null,
+                    mayHaveStartedBefore = false,
+                    gameName = "Portal",
+                    windowStart = fromAt,
+                ),
+            )
+            updater.recompute(FixedTime.today(), RecomputeSource.BACKFILL)
+            val profileBefore = database.playerProfileDao().get()!!
+            val gameBefore = database.gameDao().getById(GAME)!!
+            val trackedBefore = database.sessionDao().trackedMinutesByGame().single().minutes
+            val creditedBefore = trackedBefore + gameBefore.backfillMinutes
+
+            try {
+                useCase(failingSettings).applyHistorical(operation)
+                fail("Expected the simulated process interruption after the Room commit")
+            } catch (expected: RuntimeException) {
+                assertEquals("injected historical marker failure", expected.message)
+            }
+
+            val journalAfterInterruption = database.cloudHistoricalDao().journal(operation.operationId)!!
+            assertEquals(CloudHistoricalStates.JOURNAL_APPLY_COMMITTED, journalAfterInterruption.state)
+            assertFalse(realSettings.cloudPresenceRefilingApplied.first())
+            assertEquals(22, database.sessionDao().trackedMinutesByGame().single().minutes)
+            assertEquals(0, database.gameDao().getById(GAME)!!.backfillMinutes)
+            assertEquals(22, database.sessionDao().getAll().sumOf { it.minutes })
+
+            val applied = useCase(realSettings).applyHistorical(operation)
+
+            assertEquals(CloudPresenceRefilingOperation.APPLIED, applied.operation)
+            assertEquals(1, applied.sessionsRefiled)
+            assertTrue(realSettings.cloudPresenceRefilingApplied.first())
+            val gameAfter = database.gameDao().getById(GAME)!!
+            val sessionsAfter = database.sessionDao().getAll()
+            val trackedAfter = database.sessionDao().trackedMinutesByGame().single().minutes
+            assertEquals(gameBefore.playtimeForever, gameAfter.playtimeForever)
+            assertEquals(creditedBefore, trackedAfter + gameAfter.backfillMinutes)
+            assertEquals(trackedBefore + 12, trackedAfter)
+            assertEquals(gameBefore.backfillMinutes - 12, gameAfter.backfillMinutes)
+            assertEquals(creditedBefore, sessionsAfter.sumOf { it.minutes } + gameAfter.backfillMinutes)
+            assertEquals(profileBefore.totalXp, database.playerProfileDao().get()!!.totalXp)
+            assertEquals(profileBefore.level, database.playerProfileDao().get()!!.level)
+            assertEquals(2, sessionsAfter.size)
+            assertTrue(
+                sessionsAfter.any { session ->
+                    session.startAt == utc("2026-07-25T22:08:00Z") &&
+                        session.endAt == utc("2026-07-25T22:20:00Z") &&
+                        session.minutes == 12 &&
+                        session.timingInformedSteamPlay == TimingInformedSteamPlayState.FULL &&
+                        session.recoveredSharedPlay == RecoveredSharedPlayState.NONE
+                },
+            )
+            assertEquals(CloudHistoricalStates.JOURNAL_APPLIED,
+                database.cloudHistoricalDao().journal(operation.operationId)!!.state)
+            assertEquals(CloudHistoricalStates.APPLIED,
+                database.cloudHistoricalDao().operation(operation.operationId)!!.state)
+
+            val sessionsBeforeReplay = database.sessionDao().getAll()
+            val replay = useCase(realSettings).applyHistorical(operation)
+            assertEquals(CloudPresenceRefilingOperation.NO_OP, replay.operation)
+            assertEquals(sessionsBeforeReplay, database.sessionDao().getAll())
+            assertEquals(0, database.gameDao().getById(GAME)!!.backfillMinutes)
+        } finally {
+            realSettings.clearCloudPresenceRefiling()
+            database.close()
+        }
+    }
 
     @Test
     fun applyAndReverseRestoresTheLedgerExactlyAndCanBeOfferedAgain() = runTest {
@@ -61,6 +247,8 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             gameDao = database.gameDao(),
             sessionDao = database.sessionDao(),
             dailyProgressDao = database.dailyProgressDao(),
+            playerProfileDao = database.playerProfileDao(),
+            cloudHistoricalDao = database.cloudHistoricalDao(),
             settings = settings,
             gamificationUpdater = updater,
             time = FixedTime,
@@ -215,6 +403,8 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             gameDao = database.gameDao(),
             sessionDao = database.sessionDao(),
             dailyProgressDao = database.dailyProgressDao(),
+            playerProfileDao = database.playerProfileDao(),
+            cloudHistoricalDao = database.cloudHistoricalDao(),
             settings = failing,
             gamificationUpdater = updater,
             time = FixedTime,
@@ -360,6 +550,8 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             gameDao = database.gameDao(),
             sessionDao = database.sessionDao(),
             dailyProgressDao = database.dailyProgressDao(),
+            playerProfileDao = database.playerProfileDao(),
+            cloudHistoricalDao = database.cloudHistoricalDao(),
             settings = settings,
             gamificationUpdater = updater,
             time = FixedTime,
@@ -487,6 +679,20 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
         override suspend fun setCloudPresenceRefilingBackup(backup: CloudPresenceRefilingBackup) {
             backupWrites += 1
             if (backupWrites == 2) throw RuntimeException("injected post-commit failure")
+            delegate.setCloudPresenceRefilingBackup(backup)
+        }
+    }
+
+    private class FailOnceOnHistoricalBackup(
+        private val delegate: SettingsRepository,
+    ) : SettingsRepository by delegate {
+        private var failed = false
+
+        override suspend fun setCloudPresenceRefilingBackup(backup: CloudPresenceRefilingBackup) {
+            if (!failed) {
+                failed = true
+                throw RuntimeException("injected historical marker failure")
+            }
             delegate.setCloudPresenceRefilingBackup(backup)
         }
     }

@@ -93,7 +93,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         CloudHistoricalBoundary::class,
         CloudHistoricalJournal::class,
     ],
-    version = 40,
+    version = 41,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -1012,6 +1012,20 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS " +
                         "`index_cloud_historical_journals_operationId_account_readerGeneration_endpointIdentity` " +
                         "ON `cloud_historical_journals` (`operationId`, `account`, `readerGeneration`, `endpointIdentity`)",
+                )
+            }
+        }
+
+        /** v40 -> v41: retain the confirmed start-choice context for historical apply/receipt. */
+        val MIGRATION_40_41 = object : Migration(40, 41) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `cloud_historical_operations` " +
+                        "ADD COLUMN `startChoice` TEXT NOT NULL DEFAULT 'RECENT_31_DAYS'",
+                )
+                db.execSQL(
+                    "ALTER TABLE `cloud_historical_operations` " +
+                        "ADD COLUMN `zoneId` TEXT NOT NULL DEFAULT 'UTC'",
                 )
             }
         }
