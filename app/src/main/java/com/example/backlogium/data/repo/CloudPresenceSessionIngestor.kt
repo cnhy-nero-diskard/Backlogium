@@ -30,8 +30,10 @@ data class CloudPresenceIngestResult(
  * Feeds acquired cloud intervals into the existing presence session mechanism.
  *
  * This class owns the decision to ingest, but not a second session ledger: actions still pass
- * through [SessionActionWriter], and the watermark advances only after the derived write and its
- * silent recompute complete. The process-local mutex also makes two UI reads share one fold.
+ * through [SessionActionWriter], and the ordinary watermark advances only after the derived write
+ * and its silent recompute complete. Historical pages deliberately bypass that global watermark;
+ * their per-operation page checkpoint lives with [CloudHistoricalStore]. The process-local mutex
+ * also makes concurrent reads share one fold.
  */
 @Singleton
 class CloudPresenceSessionIngestor @Inject constructor(
@@ -45,17 +47,31 @@ class CloudPresenceSessionIngestor @Inject constructor(
 ) {
     private val mutex = Mutex()
 
-    /** Consume a snapshot once, retaining the prior cursor when any write fails. */
+    /** Consume an ordinary snapshot once, retaining the prior cursor when any write fails. */
     suspend fun ingest(snapshot: CloudPresenceSnapshot): CloudPresenceIngestResult = mutex.withLock {
+        ingestLocked(snapshot, advanceOrdinaryWatermark = true)
+    }
+
+    /** Consume a historical page without reading or moving the ordinary ingest watermark. */
+    suspend fun ingestHistorical(snapshot: CloudPresenceSnapshot): CloudPresenceIngestResult = mutex.withLock {
+        ingestLocked(snapshot, advanceOrdinaryWatermark = false)
+    }
+
+    private suspend fun ingestLocked(
+        snapshot: CloudPresenceSnapshot,
+        advanceOrdinaryWatermark: Boolean,
+    ): CloudPresenceIngestResult {
         val position = snapshot.ingestPosition()
-        val storedAt = settings.cloudIngestPosition.first()?.let(::positionAt)
-        if (storedAt != null && position.at <= storedAt) {
-            return@withLock CloudPresenceIngestResult(
-                processed = false,
-                wrote = false,
-                actionCount = 0,
-                creditedMinutes = 0,
-            )
+        if (advanceOrdinaryWatermark) {
+            val storedAt = settings.cloudIngestPosition.first()?.let(::positionAt)
+            if (storedAt != null && position.at <= storedAt) {
+                return CloudPresenceIngestResult(
+                    processed = false,
+                    wrote = false,
+                    actionCount = 0,
+                    creditedMinutes = 0,
+                )
+            }
         }
 
         val games = gameDao.getAll()
@@ -120,8 +136,8 @@ class CloudPresenceSessionIngestor @Inject constructor(
         val effective = sessionActionWriter.apply(allActions, goalIds, recoveredFromCloud = true)
         val wrote = effective.isNotEmpty()
         if (wrote) recompute()
-        settings.setCloudIngestPosition(position.raw)
-        CloudPresenceIngestResult(
+        if (advanceOrdinaryWatermark) settings.setCloudIngestPosition(position.raw)
+        return CloudPresenceIngestResult(
             processed = true,
             wrote = wrote,
             actionCount = allActions.size,

@@ -33,7 +33,8 @@ interface CloudHistoricalDao {
 
     @Query(
         "UPDATE cloud_historical_operations SET lastPositionAt = :lastPositionAt, " +
-            "pagesFetched = :pagesFetched, transitionsFetched = :transitionsFetched, " +
+            "pagesFetched = :pagesFetched, lastIngestedPageNumber = :lastIngestedPageNumber, " +
+            "transitionsFetched = :transitionsFetched, " +
             "coveredStartAt = :coveredStartAt, coveredEndAt = :coveredEndAt, " +
             "acquisitionComplete = :acquisitionComplete, state = :state, updatedAt = :updatedAt " +
             "WHERE operationId = :operationId AND account = :account " +
@@ -46,12 +47,33 @@ interface CloudHistoricalDao {
         endpointIdentity: String,
         lastPositionAt: Long?,
         pagesFetched: Int,
+        lastIngestedPageNumber: Int,
         transitionsFetched: Int,
         coveredStartAt: Long?,
         coveredEndAt: Long?,
         acquisitionComplete: Boolean,
         state: String,
         updatedAt: Long,
+    ): Int
+
+    /** Persist shared-game page effects before the separate historical page checkpoint. */
+    @Query(
+        "UPDATE cloud_historical_operations SET lastIngestedPageNumber = :pageNumber " +
+            "WHERE operationId = :operationId AND account = :account " +
+            "AND readerGeneration = :readerGeneration AND endpointIdentity = :endpointIdentity " +
+            "AND pagesFetched = :expectedPagesFetched " +
+            "AND lastIngestedPageNumber = :expectedLastIngestedPageNumber " +
+            "AND :pageNumber = :expectedPagesFetched + 1 " +
+            "AND acquisitionComplete = 0 AND state = 'ACQUIRING'",
+    )
+    suspend fun markPageIngested(
+        operationId: String,
+        account: String,
+        readerGeneration: Long,
+        endpointIdentity: String,
+        expectedPagesFetched: Int,
+        expectedLastIngestedPageNumber: Int,
+        pageNumber: Int,
     ): Int
 
     /** Effects are retained before this call; interval, boundary and position commit together. */
@@ -73,6 +95,7 @@ interface CloudHistoricalDao {
             endpointIdentity = previous.endpointIdentity,
             lastPositionAt = progress.lastPositionAt,
             pagesFetched = progress.pagesFetched,
+            lastIngestedPageNumber = progress.lastIngestedPageNumber,
             transitionsFetched = progress.transitionsFetched,
             coveredStartAt = progress.coveredStartAt,
             coveredEndAt = progress.coveredEndAt,

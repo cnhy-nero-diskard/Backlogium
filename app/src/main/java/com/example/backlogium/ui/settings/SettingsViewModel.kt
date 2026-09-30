@@ -1035,7 +1035,7 @@ class SettingsViewModel @Inject constructor(
         }
         when (val result = cloudPresence.acquireHistoricalBatch(
             operationId = operationId,
-            consume = cloudPresenceIngestor::ingest,
+            consume = cloudPresenceIngestor::ingestHistorical,
             onProgress = { operation, pages, transitions ->
                 cloudHistoricalRangeControls.update {
                     it.copy(

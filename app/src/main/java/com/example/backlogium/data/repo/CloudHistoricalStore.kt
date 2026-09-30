@@ -24,6 +24,7 @@ interface CloudHistoricalStore {
         boundaries: List<CloudHistoricalBoundary>,
         progress: CloudHistoricalOperation,
     ): CloudHistoricalOperation?
+    suspend fun markPageIngested(previous: CloudHistoricalOperation, pageNumber: Int): Boolean
     suspend fun deleteUnappliedOperations()
     suspend fun deleteUnappliedOperationsNotMatching(
         account: String,
@@ -61,6 +62,17 @@ class RoomCloudHistoricalStore @Inject constructor(
         progress: CloudHistoricalOperation,
     ): CloudHistoricalOperation? = dao.commitPage(previous, intervals, boundaries, progress)
 
+    override suspend fun markPageIngested(previous: CloudHistoricalOperation, pageNumber: Int): Boolean =
+        dao.markPageIngested(
+            operationId = previous.operationId,
+            account = previous.account,
+            readerGeneration = previous.readerGeneration,
+            endpointIdentity = previous.endpointIdentity,
+            expectedPagesFetched = previous.pagesFetched,
+            expectedLastIngestedPageNumber = previous.lastIngestedPageNumber,
+            pageNumber = pageNumber,
+        ) == 1
+
     override suspend fun deleteUnappliedOperations() = dao.deleteUnappliedOperations()
 
     override suspend fun deleteUnappliedOperationsNotMatching(
@@ -87,6 +99,7 @@ internal object EmptyCloudHistoricalStore : CloudHistoricalStore {
         boundaries: List<CloudHistoricalBoundary>,
         progress: CloudHistoricalOperation,
     ): CloudHistoricalOperation? = null
+    override suspend fun markPageIngested(previous: CloudHistoricalOperation, pageNumber: Int) = false
     override suspend fun deleteUnappliedOperations() = Unit
     override suspend fun deleteUnappliedOperationsNotMatching(
         account: String,

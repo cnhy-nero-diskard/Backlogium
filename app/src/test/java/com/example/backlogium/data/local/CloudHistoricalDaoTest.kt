@@ -58,6 +58,19 @@ class CloudHistoricalDaoTest {
     fun progressAndApplyUndoJournalSurviveReadsAndAreIdentityScoped() = runTest {
         val operation = operation()
         dao.insertOperation(operation)
+        assertEquals(
+            1,
+            dao.markPageIngested(
+                operationId = OPERATION_ID,
+                account = ACCOUNT,
+                readerGeneration = GENERATION,
+                endpointIdentity = ENDPOINT,
+                expectedPagesFetched = 0,
+                expectedLastIngestedPageNumber = 0,
+                pageNumber = 1,
+            ),
+        )
+        assertEquals(1, dao.operation(OPERATION_ID)?.lastIngestedPageNumber)
 
         assertEquals(
             1,
@@ -68,6 +81,7 @@ class CloudHistoricalDaoTest {
                 endpointIdentity = ENDPOINT,
                 lastPositionAt = 25,
                 pagesFetched = 2,
+                lastIngestedPageNumber = 2,
                 transitionsFetched = 500,
                 coveredStartAt = 10,
                 coveredEndAt = 25,
@@ -78,6 +92,7 @@ class CloudHistoricalDaoTest {
         )
         val saved = dao.operation(OPERATION_ID)!!
         assertEquals(2, saved.pagesFetched)
+        assertEquals(2, saved.lastIngestedPageNumber)
         assertEquals(500, saved.transitionsFetched)
         assertEquals(25L, saved.lastPositionAt)
         assertEquals(25L, saved.coveredEndAt)

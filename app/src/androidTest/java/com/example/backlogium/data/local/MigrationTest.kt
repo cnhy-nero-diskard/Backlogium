@@ -96,6 +96,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_38_39,
         BacklogiumDatabase.MIGRATION_39_40,
         BacklogiumDatabase.MIGRATION_40_41,
+        BacklogiumDatabase.MIGRATION_41_42,
     )
 
     @Test
@@ -1650,6 +1651,50 @@ class MigrationTest {
                     assertEquals("history-v40", cursor.getString(0))
                     assertEquals("RECENT_31_DAYS", cursor.getString(1))
                     assertEquals("UTC", cursor.getString(2))
+                    assertFalse(cursor.moveToNext())
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun v41ToV42AddsHistoricalIngestCheckpointWithSafeDefault() {
+        val databaseName = "migration-v41-${System.nanoTime()}"
+        val previous = migrationTestHelper.createDatabase(databaseName, 41)
+        try {
+            previous.execSQL(
+                "INSERT INTO cloud_historical_operations " +
+                    "(operationId, account, readerGeneration, endpointIdentity, selectedStartAt, " +
+                    "fromAt, throughAt, pagesFetched, transitionsFetched, acquisitionComplete, " +
+                    "state, createdAt, updatedAt) VALUES " +
+                    "('history-v41', '76561198000000001', 2, " +
+                    "'https://presence.example.test/readPresence', 10, 10, 20, 1, 3, 0, " +
+                    "'ACQUIRING', 1, 2)",
+            )
+        } finally {
+            previous.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                42,
+                true,
+                BacklogiumDatabase.MIGRATION_41_42,
+            )
+            try {
+                migrated.query(
+                    "SELECT operationId, pagesFetched, lastIngestedPageNumber " +
+                        "FROM cloud_historical_operations",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("history-v41", cursor.getString(0))
+                    assertEquals(1, cursor.getInt(1))
+                    assertEquals(0, cursor.getInt(2))
                     assertFalse(cursor.moveToNext())
                 }
             } finally {

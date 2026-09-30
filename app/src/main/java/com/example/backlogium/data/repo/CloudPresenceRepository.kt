@@ -557,6 +557,10 @@ class CloudPresenceRepository @Inject constructor(
                 val snapshot = fixedRead.toSnapshot(openingBoundary).copy(
                     readerIdentity = CloudReaderIdentity(operation.account, operation.readerGeneration),
                 )
+                val pageNumber = operation.pagesFetched + 1
+                if (operation.lastIngestedPageNumber > pageNumber) {
+                    return@withLock CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+                }
                 val stagedIntervals = snapshot.intervals.map { interval ->
                     interval.toHistoricalEntity(operation)
                 }
@@ -571,6 +575,7 @@ class CloudPresenceRepository @Inject constructor(
                 val progress = operation.copy(
                     lastPositionAt = parsed.nextPosition?.let(::requiredStrictUtcInstant) ?: operation.lastPositionAt,
                     pagesFetched = operation.pagesFetched + 1,
+                    lastIngestedPageNumber = maxOf(operation.lastIngestedPageNumber, pageNumber),
                     transitionsFetched = operation.transitionsFetched + parsed.transitions.size,
                     coveredStartAt = listOfNotNull(
                         operation.coveredStartAt,
@@ -585,7 +590,14 @@ class CloudPresenceRepository @Inject constructor(
                 )
 
                 try {
-                    consume(snapshot)
+                    if (operation.lastIngestedPageNumber < pageNumber) {
+                        consume(snapshot)
+                        if (!historicalStore.markPageIngested(operation, pageNumber)) {
+                            return@withLock CloudHistoricalPageResult.Failed(
+                                CloudReadFailure.UNUSABLE_RESPONSE,
+                            )
+                        }
+                    }
                     pendingEvidence.retain(
                         operation.account,
                         operation.readerGeneration,

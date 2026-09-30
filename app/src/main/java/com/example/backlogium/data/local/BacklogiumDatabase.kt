@@ -93,7 +93,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         CloudHistoricalBoundary::class,
         CloudHistoricalJournal::class,
     ],
-    version = 41,
+    version = 42,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -1026,6 +1026,16 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE `cloud_historical_operations` " +
                         "ADD COLUMN `zoneId` TEXT NOT NULL DEFAULT 'UTC'",
+                )
+            }
+        }
+
+        /** v41 -> v42: checkpoint shared-game historical ingest independently per page. */
+        val MIGRATION_41_42 = object : Migration(41, 42) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `cloud_historical_operations` " +
+                        "ADD COLUMN `lastIngestedPageNumber` INTEGER NOT NULL DEFAULT 0",
                 )
             }
         }

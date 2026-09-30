@@ -37,6 +37,9 @@ data class CloudHistoricalOperation(
     val frozenCurrentSchemaVersion: Int? = null,
     val lastPositionAt: Long? = null,
     val pagesFetched: Int = 0,
+    /** Latest page whose shared-game ingest completed, even if its page checkpoint did not. */
+    @ColumnInfo(defaultValue = "0")
+    val lastIngestedPageNumber: Int = 0,
     val transitionsFetched: Int = 0,
     val coveredStartAt: Long? = null,
     val coveredEndAt: Long? = null,

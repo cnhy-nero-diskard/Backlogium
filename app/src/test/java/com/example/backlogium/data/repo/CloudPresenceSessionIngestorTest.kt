@@ -77,6 +77,31 @@ class CloudPresenceSessionIngestorTest {
     }
 
     @Test
+    fun historicalPageBypassesNewerOrdinaryWatermarkAndReplayDoesNotDuplicateSharedPlay() = runTest {
+        database.gameDao().upsert(sharedGame())
+        val settings = FakeSettingsRepository().apply {
+            setCloudIngestPosition("900000")
+        }
+        val ingestor = ingestor(settings)
+        val historicalPage = snapshot(endAt = 120_000L)
+
+        val first = ingestor.ingestHistorical(historicalPage)
+        val replay = ingestor.ingestHistorical(historicalPage)
+
+        assertTrue(first.processed)
+        assertTrue(first.wrote)
+        assertTrue(replay.processed)
+        assertFalse(replay.wrote)
+        assertEquals("900000", settings.cloudIngestPosition.first())
+        val stored = database.sessionDao().getAll().single()
+        assertEquals(440L, stored.appId)
+        assertEquals(0L, stored.startAt)
+        assertEquals(120_000L, stored.endAt)
+        assertEquals(2, stored.minutes)
+        assertEquals(RecoveredSharedPlayState.FULL, stored.recoveredSharedPlay)
+    }
+
+    @Test
     fun nonterminalPagePersistsTheServerPositionRatherThanWindowEnd() = runTest {
         database.gameDao().upsert(sharedGame())
         val settings = FakeSettingsRepository()

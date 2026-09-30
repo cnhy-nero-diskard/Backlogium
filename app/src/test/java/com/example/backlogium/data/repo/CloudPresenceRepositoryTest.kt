@@ -1,21 +1,30 @@
 package com.example.backlogium.data.repo
 
+import androidx.room.Room
+import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.credentials.CloudCredentials
 import com.example.backlogium.data.credentials.CloudCredentialsStore
+import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.dao.CloudReadDao
 import com.example.backlogium.data.local.entity.CloudHistoricalBoundary
 import com.example.backlogium.data.local.entity.CloudHistoricalInterval
 import com.example.backlogium.data.local.entity.CloudHistoricalOperation
 import com.example.backlogium.data.local.entity.CloudHistoricalStates
 import com.example.backlogium.data.local.entity.CloudReadRecord
+import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.remote.CloudPresenceApi
 import com.example.backlogium.data.remote.dto.CloudPresenceCurrentDto
 import com.example.backlogium.data.remote.dto.CloudPresenceResponseDto
 import com.example.backlogium.data.remote.dto.CloudPresenceTransitionDto
-import com.example.backlogium.domain.FakeSettingsRepository
 import com.example.backlogium.domain.CloudCoverageState
 import com.example.backlogium.domain.CloudPresenceInterval
 import com.example.backlogium.domain.CloudPresenceTransition
+import com.example.backlogium.domain.DerivedStateWriteCoordinator
+import com.example.backlogium.domain.FakeHiddenGameDao
+import com.example.backlogium.domain.FakeSettingsRepository
+import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.GameSource
+import com.example.backlogium.domain.InMemoryProgressMarksStore
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.work.CloudRoutineWorkCancellation
 import kotlinx.coroutines.CompletableDeferred
@@ -38,12 +47,16 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import retrofit2.HttpException
 import retrofit2.Response
 import java.time.LocalDate
 import java.time.Instant
 import java.time.ZoneId
 
+@RunWith(RobolectricTestRunner::class)
 class CloudPresenceRepositoryTest {
     @Test
     fun offlineReopenUsesStoredReaderOutcomeRatherThanAnInMemorySnapshot() = runBlocking {
@@ -1566,7 +1579,11 @@ class CloudPresenceRepositoryTest {
         val fromAt = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
         val throughAt = Instant.parse("2026-09-15T00:00:00Z").toEpochMilli()
         val api = FakeCloudPresenceApi(answer = historicalMetadataResponse(fromAt, throughAt))
-        val settings = FakeSettingsRepository().apply { setCloudReadPosition("ordinary-cursor") }
+        val newerOrdinaryIngestPosition = (throughAt + 1L).toString()
+        val settings = FakeSettingsRepository().apply {
+            setCloudReadPosition("ordinary-cursor")
+            setCloudIngestPosition(newerOrdinaryIngestPosition)
+        }
         val evidence = MemoryEvidence()
         val stage = MemoryCloudHistoricalStore()
         val repo = repository(
@@ -1587,47 +1604,70 @@ class CloudPresenceRepositoryTest {
             hasMore = false,
         )
 
-        val failedConsumer = repo.acquireHistoricalPage(operation.operationId) { error("ingest failed") }
-        assertEquals(CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE), failedConsumer)
-        assertEquals(0, stage.operation(operation.operationId)?.pagesFetched)
-        assertTrue(stage.intervals(operation.operationId).isEmpty())
-        assertEquals(0, evidence.writes)
+        val database = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(),
+            BacklogiumDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        database.gameDao().upsert(sharedGame())
+        val ingestor = sessionIngestor(database, settings)
 
-        evidence.failNextRetain = true
-        val failedEvidence = repo.acquireHistoricalPage(operation.operationId) { }
-        assertEquals(CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE), failedEvidence)
-        assertEquals(0, stage.operation(operation.operationId)?.pagesFetched)
-        assertTrue(stage.intervals(operation.operationId).isEmpty())
+        try {
+            val failedConsumer = repo.acquireHistoricalPage(operation.operationId) { error("ingest failed") }
+            assertEquals(CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE), failedConsumer)
+            assertEquals(0, stage.operation(operation.operationId)?.pagesFetched)
+            assertEquals(0, stage.operation(operation.operationId)?.lastIngestedPageNumber)
+            assertTrue(stage.intervals(operation.operationId).isEmpty())
+            assertEquals(0, evidence.writes)
 
-        val ingestedSnapshots = mutableSetOf<String>()
-        val events = mutableListOf<String>()
-        evidence.events = events
-        stage.events = events
-        var consumeCalls = 0
-        val idempotentConsume: suspend (CloudPresenceSnapshot) -> Unit = { snapshot ->
-            consumeCalls++
-            events += "ingest"
-            val marker = snapshot.intervals.joinToString { it.startAt.toString() }
-            ingestedSnapshots += marker
+            val events = mutableListOf<String>()
+            evidence.events = events
+            stage.events = events
+            var consumeCalls = 0
+            val ingestResults = mutableListOf<CloudPresenceIngestResult>()
+            val idempotentConsume: suspend (CloudPresenceSnapshot) -> Unit = { snapshot ->
+                consumeCalls++
+                events += "ingest"
+                ingestResults += ingestor.ingestHistorical(snapshot)
+            }
+            evidence.failNextRetain = true
+            val failedEvidence = repo.acquireHistoricalPage(operation.operationId, idempotentConsume)
+            assertEquals(CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE), failedEvidence)
+            assertEquals(0, stage.operation(operation.operationId)?.pagesFetched)
+            assertEquals(1, stage.operation(operation.operationId)?.lastIngestedPageNumber)
+            assertTrue(stage.intervals(operation.operationId).isEmpty())
+            assertTrue(ingestResults.single().wrote)
+            assertEquals(newerOrdinaryIngestPosition, settings.cloudIngestPosition.first())
+            val firstWrite = database.sessionDao().getAll().single()
+            assertEquals(440L, firstWrite.appId)
+            assertEquals(GameSource.FAMILY_SHARED, database.gameDao().getById(440L)?.source)
+
+            events.clear()
+            stage.failNextCommit = true
+            val failedCheckpoint = repo.acquireHistoricalPage(operation.operationId, idempotentConsume)
+            assertEquals(CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE), failedCheckpoint)
+            assertEquals(0, stage.operation(operation.operationId)?.pagesFetched)
+            assertEquals(1, stage.operation(operation.operationId)?.lastIngestedPageNumber)
+            assertTrue(stage.intervals(operation.operationId).isEmpty())
+            assertEquals(1, evidence.rows[ACCOUNT to 0L]?.size)
+            assertEquals(listOf("evidence", "checkpoint"), events)
+
+            events.clear()
+            val replayed = repo.acquireHistoricalPage(operation.operationId, idempotentConsume)
+            assertTrue(replayed is CloudHistoricalPageResult.Success)
+            assertEquals(listOf("evidence", "checkpoint"), events)
+            assertEquals(1, consumeCalls)
+            assertEquals(1, ingestResults.size)
+            assertEquals(1, database.sessionDao().getAll().size)
+            assertEquals(firstWrite.minutes, database.sessionDao().getAll().single().minutes)
+            assertEquals(newerOrdinaryIngestPosition, settings.cloudIngestPosition.first())
+            assertEquals(1, stage.operation(operation.operationId)?.pagesFetched)
+            assertEquals(1, stage.operation(operation.operationId)?.lastIngestedPageNumber)
+            assertEquals(1, stage.intervals(operation.operationId).size)
+            assertEquals(1, evidence.rows[ACCOUNT to 0L]?.size)
+            assertEquals("ordinary-cursor", settings.cloudReadPosition.first())
+        } finally {
+            database.close()
         }
-        stage.failNextCommit = true
-        val failedCheckpoint = repo.acquireHistoricalPage(operation.operationId, idempotentConsume)
-        assertEquals(CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE), failedCheckpoint)
-        assertEquals(0, stage.operation(operation.operationId)?.pagesFetched)
-        assertTrue(stage.intervals(operation.operationId).isEmpty())
-        assertEquals(1, evidence.rows[ACCOUNT to 0L]?.size)
-        assertEquals(listOf("ingest", "evidence", "checkpoint"), events)
-
-        events.clear()
-        val replayed = repo.acquireHistoricalPage(operation.operationId, idempotentConsume)
-        assertTrue(replayed is CloudHistoricalPageResult.Success)
-        assertEquals(listOf("ingest", "evidence", "checkpoint"), events)
-        assertEquals(2, consumeCalls)
-        assertEquals(1, ingestedSnapshots.size)
-        assertEquals(1, stage.operation(operation.operationId)?.pagesFetched)
-        assertEquals(1, stage.intervals(operation.operationId).size)
-        assertEquals(1, evidence.rows[ACCOUNT to 0L]?.size)
-        assertEquals("ordinary-cursor", settings.cloudReadPosition.first())
     }
 
     @Test
@@ -3336,6 +3376,44 @@ class CloudPresenceRepositoryTest {
         historicalStore = historicalStore,
     )
 
+    private fun sessionIngestor(
+        database: BacklogiumDatabase,
+        settings: FakeSettingsRepository,
+    ) = CloudPresenceSessionIngestor(
+        gameDao = database.gameDao(),
+        sessionDao = database.sessionDao(),
+        sessionActionWriter = SessionActionWriter(
+            sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(),
+            hiddenGameDao = database.hiddenGameDao(),
+            time = FixedTimeProvider(),
+            transaction = RoomDatabaseTransactionScope(database),
+        ),
+        gamificationUpdater = GamificationUpdater(
+            sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(),
+            playerProfileDao = database.playerProfileDao(),
+            hltbDataDao = database.hltbDataDao(),
+            achievementDao = database.achievementDao(),
+            gameDao = database.gameDao(),
+            hiddenGameDao = FakeHiddenGameDao(),
+            progressMarksStore = InMemoryProgressMarksStore(),
+        ),
+        settings = settings,
+        derivedStateWrites = DerivedStateWriteCoordinator(),
+        time = FixedTimeProvider(),
+    )
+
+    private fun sharedGame() = Game(
+        appId = 440L,
+        name = "Shared",
+        iconUrl = "",
+        playtimeForever = 0,
+        playtime2Weeks = 0,
+        lastPlaytime = 0,
+        source = GameSource.FAMILY_SHARED,
+    )
+
     private class MemoryCloudHistoricalStore : CloudHistoricalStore {
         private val operations = mutableMapOf<String, CloudHistoricalOperation>()
         private val stagedIntervals = mutableMapOf<String, MutableMap<Pair<Long, Long>, CloudHistoricalInterval>>()
@@ -3396,6 +3474,19 @@ class CloudPresenceRepositoryTest {
             }
             operations[previous.operationId] = progress
             return progress
+        }
+
+        override suspend fun markPageIngested(previous: CloudHistoricalOperation, pageNumber: Int): Boolean {
+            val current = operations[previous.operationId] ?: return false
+            if (current.account != previous.account || current.readerGeneration != previous.readerGeneration ||
+                current.endpointIdentity != previous.endpointIdentity ||
+                current.pagesFetched != previous.pagesFetched ||
+                current.lastIngestedPageNumber != previous.lastIngestedPageNumber ||
+                pageNumber != previous.pagesFetched + 1 || current.acquisitionComplete ||
+                current.state != CloudHistoricalStates.ACQUIRING
+            ) return false
+            operations[previous.operationId] = current.copy(lastIngestedPageNumber = pageNumber)
+            return true
         }
 
         override suspend fun deleteUnappliedOperations() {
