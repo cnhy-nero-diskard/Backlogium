@@ -135,7 +135,10 @@ class CloudPresenceSessionIngestor @Inject constructor(
         )
         val effective = sessionActionWriter.apply(allActions, goalIds, recoveredFromCloud = true)
         val wrote = effective.isNotEmpty()
-        if (wrote) recompute()
+        // A historical page can commit its ledger effects and then fail during recompute. Its
+        // retry is idempotent at the writer, so `wrote` is false even though derived state still
+        // needs repair before the repository advances the page checkpoint.
+        if (wrote || !advanceOrdinaryWatermark) recompute()
         if (advanceOrdinaryWatermark) settings.setCloudIngestPosition(position.raw)
         return CloudPresenceIngestResult(
             processed = true,
