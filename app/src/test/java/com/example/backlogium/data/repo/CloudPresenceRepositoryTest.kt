@@ -1479,6 +1479,65 @@ class CloudPresenceRepositoryTest {
     }
 
     @Test
+    fun historicalPagesStageLegacyTransitionEstimatesWhileOrdinaryReadsKeepUnknownCoverage() = runTest {
+        val fromAt = Instant.parse("2026-08-06T10:00:00Z").toEpochMilli()
+        val throughAt = fromAt + 20 * 60_000L
+        val api = FakeCloudPresenceApi(answer = historicalMetadataResponse(fromAt, throughAt))
+        val stage = MemoryCloudHistoricalStore()
+        val settings = FakeSettingsRepository().apply { setCloudReadPosition("ordinary-cursor") }
+        val repo = repository(
+            api = api,
+            store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret")),
+            records = FakeCloudReadDao(), settings = settings, steamId = ACCOUNT,
+            historicalStore = stage,
+        )
+        val metadata = (repo.lookupRangeMetadata() as CloudPresenceRangeLookupResult.Success).metadata
+        val operation = (repo.beginHistoricalAcquisition(fromAt, fromAt, metadata) as
+            CloudHistoricalStartResult.Started).operation
+        api.answer = historicalPageResponse(fromAt, throughAt, listOf(
+            CloudPresenceTransitionDto(v = 1, t = formatCloudPresenceUtcInstant(fromAt), gameid = "440"),
+            CloudPresenceTransitionDto(v = 1, t = formatCloudPresenceUtcInstant(fromAt + 10 * 60_000L)),
+        ), hasMore = false)
+        val result = repo.acquireHistoricalPage(operation.operationId) { } as CloudHistoricalPageResult.Success
+        assertEquals(CloudCoverageState.LEGACY_TRANSITIONS, result.snapshot.intervals.single().coverage)
+        assertEquals("LEGACY_TRANSITIONS", stage.intervals(operation.operationId).single().coverage)
+        assertEquals(CloudCoverageState.UNKNOWN, api.answer.toParsedRead(ACCOUNT).toSnapshot().intervals.single().coverage)
+        assertEquals("ordinary-cursor", settings.cloudReadPosition.first())
+    }
+
+    @Test
+    fun discardedHistoricalReadAllowsNewDatesWithoutMovingOrdinaryCursor() = runTest {
+        val fromAt = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
+        val throughAt = Instant.parse("2026-09-15T00:00:00Z").toEpochMilli()
+        val api = FakeCloudPresenceApi(answer = historicalMetadataResponse(fromAt, throughAt))
+        val stage = MemoryCloudHistoricalStore()
+        val settings = FakeSettingsRepository().apply { setCloudReadPosition("ordinary-cursor") }
+        val repo = repository(
+            api = api,
+            store = FakeCloudCredentialsStore(CloudCredentials("https://reader.example.com/read", "secret")),
+            records = FakeCloudReadDao(), settings = settings, steamId = ACCOUNT,
+            historicalStore = stage,
+        )
+        val metadata = (repo.lookupRangeMetadata() as CloudPresenceRangeLookupResult.Success).metadata
+        val first = (repo.beginHistoricalAcquisition(fromAt, fromAt, metadata) as
+            CloudHistoricalStartResult.Started).operation
+        api.answer = historicalPageResponse(
+            fromAt, throughAt, historicalTransitions(fromAt, count = 250, firstIndex = 0), hasMore = true,
+        )
+        assertTrue(repo.acquireHistoricalPage(first.operationId) { } is CloudHistoricalPageResult.Success)
+
+        assertTrue(repo.discardHistoricalAcquisition(first.operationId))
+        assertNull(repo.currentHistoricalOperation())
+        assertTrue(stage.intervals(first.operationId).isEmpty())
+        val newStart = fromAt + 60_000L
+        val second = repo.beginHistoricalAcquisition(newStart, newStart, metadata) as
+            CloudHistoricalStartResult.Started
+        assertEquals(newStart, second.operation.fromAt)
+        assertTrue(first.operationId != second.operation.operationId)
+        assertEquals("ordinary-cursor", settings.cloudReadPosition.first())
+    }
+
+    @Test
     fun historicalOperationPersistsTheConfirmedRangeZoneAndCutoff() = runTest {
         val effectiveStartAt = Instant.parse("2026-09-14T00:00:00Z").toEpochMilli()
         val selectedStartAt = effectiveStartAt - 60_000L
@@ -2505,6 +2564,11 @@ class CloudPresenceRepositoryTest {
         val parsed = CloudPresenceResponseDto(
             account = ACCOUNT,
             transitions = transitions,
+            current = CloudPresenceCurrentDto(
+                lastObservedAt = formatCloudPresenceUtcInstant(throughAt),
+                since = formatCloudPresenceUtcInstant(fromAt),
+                gameid = "10",
+            ),
             nextPosition = transitions.last().t,
             hasMore = true,
             windowStart = formatCloudPresenceUtcInstant(fromAt),
@@ -2513,6 +2577,9 @@ class CloudPresenceRepositoryTest {
         ).toParsedRead(ACCOUNT, range)
 
         assertEquals(transitions[transitions.lastIndex - 1].t, parsed.nextPosition)
+        val snapshot = parsed.toSnapshot()
+        assertEquals(lastAt, snapshot.windowEnd)
+        assertTrue(snapshot.intervals.none { (it.endAt ?: throughAt) > lastAt })
         assertTrue(parsed.nextPosition!!.matches(Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z")))
     }
 
@@ -3605,6 +3672,15 @@ class CloudPresenceRepositoryTest {
 
         override suspend fun deleteUnappliedOperations() {
             removeOperations { it.state == CloudHistoricalStates.ACQUIRING || it.state == CloudHistoricalStates.COMPLETE }
+        }
+
+        override suspend fun deleteUnappliedOperation(operationId: String): Boolean {
+            val operation = operations[operationId] ?: return false
+            if (operation.state !in setOf(CloudHistoricalStates.ACQUIRING, CloudHistoricalStates.COMPLETE)) {
+                return false
+            }
+            removeOperations { it.operationId == operationId }
+            return true
         }
 
         override suspend fun deleteUnappliedOperationsNotMatching(
