@@ -182,6 +182,15 @@ interface CloudHistoricalDao {
     @Query("DELETE FROM cloud_historical_operations WHERE state IN ('ACQUIRING', 'COMPLETE')")
     suspend fun deleteUnappliedOperations()
 
+    /** Discard read staging only; never remove an operation whose apply has started. */
+    @Query(
+        "DELETE FROM cloud_historical_operations WHERE operationId = :operationId " +
+            "AND state IN ('ACQUIRING', 'COMPLETE') " +
+            "AND NOT EXISTS (SELECT 1 FROM cloud_historical_journals " +
+            "WHERE operationId = :operationId)",
+    )
+    suspend fun deleteUnappliedOperation(operationId: String): Int
+
     @Query(
         "DELETE FROM cloud_historical_operations WHERE (account != :account " +
             "OR readerGeneration != :readerGeneration OR endpointIdentity != :endpointIdentity) " +

@@ -470,6 +470,20 @@ class CloudPresenceRepository @Inject constructor(
         )
     }
 
+    /** Release an unapplied range so the player can choose new dates, serialized against apply. */
+    suspend fun discardHistoricalAcquisition(operationId: String): Boolean =
+        cloudReadSequenceMutex.withLock {
+            cloudStateMutex.withLock {
+                val operation = historicalStore.operation(operationId) ?: return@withLock false
+                val credentials = credentialsStore.readCloudCredentials() ?: return@withLock false
+                if (credentialsProvider.currentCredentials()?.steamId != operation.account ||
+                    settings.cloudReaderGeneration.first() != operation.readerGeneration ||
+                    normalizeEndpoint(credentials.endpoint) != operation.endpointIdentity
+                ) return@withLock false
+                historicalStore.deleteUnappliedOperation(operationId)
+            }
+        }
+
     /** Fetches and commits exactly one historical page under the shared per-page read sequence. */
     suspend fun acquireHistoricalPage(
         operationId: String,

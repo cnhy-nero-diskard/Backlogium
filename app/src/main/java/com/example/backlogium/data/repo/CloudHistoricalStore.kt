@@ -26,6 +26,7 @@ interface CloudHistoricalStore {
     ): CloudHistoricalOperation?
     suspend fun markPageIngested(previous: CloudHistoricalOperation, pageNumber: Int): Boolean
     suspend fun deleteUnappliedOperations()
+    suspend fun deleteUnappliedOperation(operationId: String): Boolean
     suspend fun deleteUnappliedOperationsNotMatching(
         account: String,
         readerGeneration: Long,
@@ -75,6 +76,9 @@ class RoomCloudHistoricalStore @Inject constructor(
 
     override suspend fun deleteUnappliedOperations() = dao.deleteUnappliedOperations()
 
+    override suspend fun deleteUnappliedOperation(operationId: String): Boolean =
+        dao.deleteUnappliedOperation(operationId) == 1
+
     override suspend fun deleteUnappliedOperationsNotMatching(
         account: String,
         readerGeneration: Long,
@@ -101,6 +105,7 @@ internal object EmptyCloudHistoricalStore : CloudHistoricalStore {
     ): CloudHistoricalOperation? = null
     override suspend fun markPageIngested(previous: CloudHistoricalOperation, pageNumber: Int) = false
     override suspend fun deleteUnappliedOperations() = Unit
+    override suspend fun deleteUnappliedOperation(operationId: String) = false
     override suspend fun deleteUnappliedOperationsNotMatching(
         account: String,
         readerGeneration: Long,

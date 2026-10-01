@@ -149,6 +149,9 @@
     <string name="settings_cloud_range_applying">Applying the complete range…</string>
     <string name="settings_cloud_range_apply_failed">The complete range is saved, but applying it did not finish. No partial range was applied; explicitly retry the completed apply.</string>
     <string name="settings_cloud_range_continue">Continue historical read</string>
+    <string name="settings_cloud_range_change_dates">Change dates</string>
+    <string name="settings_cloud_range_change_dates_description">Discards saved read progress so you can choose another range or cutoff. Existing sessions and imported minutes are kept.</string>
+    <string name="settings_cloud_range_discard_failed">Could not discard this read. If applying has already started, finish or undo the re-file first.</string>
     <string name="settings_cloud_range_apply_complete">Apply complete range</string>
     <string name="settings_cloud_range_receipt_title">Applied historical re-file</string>
     <string name="settings_cloud_range_receipt_coverage">Actually evidenced: %1$s to %2$s. This is not a claim of continuous coverage.</string>

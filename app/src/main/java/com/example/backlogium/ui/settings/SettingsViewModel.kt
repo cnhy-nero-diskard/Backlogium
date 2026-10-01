@@ -994,6 +994,43 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun changeCloudPresenceRefilingDates() {
+        if (cloudBusy.value || cloudRefilingBusy.value || uiState.value.cloudPresenceRefilingApplied) return
+        val operation = cloudHistoricalRangeControls.value.operation ?: return
+        cloudBusy.value = true
+        cloudRefilingBusy.value = true
+        viewModelScope.launch {
+            try {
+                if (cloudPresence.discardHistoricalAcquisition(operation.operationId)) {
+                    cloudHistoricalRangeControls.update {
+                        it.copy(
+                            operation = null,
+                            pendingConfirmation = null,
+                            acquisitionStatus = CloudHistoricalAcquisitionStatus.IDLE,
+                            acquisitionFailure = null,
+                            lastBatchPages = 0,
+                            lastBatchTransitions = 0,
+                        )
+                    }
+                    cloudRefilingMessage.value = null
+                } else {
+                    cloudRefilingMessage.value = SettingsActionFeedback.error(
+                        SettingsText(R.string.settings_cloud_range_discard_failed),
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                cloudRefilingMessage.value = SettingsActionFeedback.error(
+                    SettingsText(R.string.settings_cloud_range_discard_failed),
+                )
+            } finally {
+                cloudBusy.value = false
+                cloudRefilingBusy.value = false
+            }
+        }
+    }
+
     fun continueCloudPresenceRefiling() {
         if (cloudBusy.value || cloudRefilingBusy.value || uiState.value.cloudPresenceRefilingApplied) return
         val operation = cloudHistoricalRangeControls.value.operation ?: return

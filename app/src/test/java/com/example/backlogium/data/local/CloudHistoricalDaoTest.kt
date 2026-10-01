@@ -120,6 +120,41 @@ class CloudHistoricalDaoTest {
     }
 
     @Test
+    fun discardUnappliedRangeRemovesOnlyItsStaging() = runTest {
+        dao.insertOperation(operation())
+        dao.upsertInterval(interval(endAt = 30, ongoing = true))
+        dao.upsertBoundary(boundary(at = 30))
+        dao.insertOperation(operation().copy(operationId = "other-range"))
+
+        assertEquals(1, dao.deleteUnappliedOperation(OPERATION_ID))
+        assertNull(dao.operation(OPERATION_ID))
+        assertTrue(dao.intervals(OPERATION_ID).isEmpty())
+        assertNull(dao.boundary(OPERATION_ID, CloudHistoricalStates.BOUNDARY_LAST_TRANSITION))
+        assertEquals("other-range", dao.operation("other-range")?.operationId)
+        assertEquals(0, dao.deleteUnappliedOperation(OPERATION_ID))
+    }
+
+    @Test
+    fun discardRefusesAppliedOperationsAndAnyApplyJournal() = runTest {
+        dao.insertOperation(operation().copy(state = CloudHistoricalStates.APPLIED))
+        assertEquals(0, dao.deleteUnappliedOperation(OPERATION_ID))
+        val completed = operation().copy(
+            operationId = "completed-range", state = CloudHistoricalStates.COMPLETE,
+            acquisitionComplete = true,
+        )
+        dao.insertOperation(completed)
+        dao.upsertJournal(CloudHistoricalJournal(
+            operationId = completed.operationId, account = ACCOUNT,
+            readerGeneration = GENERATION, endpointIdentity = ENDPOINT,
+            state = CloudHistoricalStates.JOURNAL_APPLY_COMMITTED,
+            payloadJson = "{}", updatedAt = 31,
+        ))
+        assertEquals(0, dao.deleteUnappliedOperation(completed.operationId))
+        assertEquals(completed, dao.operation(completed.operationId))
+        assertTrue(dao.journal(completed.operationId) != null)
+    }
+
+    @Test
     fun childRowsCannotBeStagedUnderAnotherAccountOrEndpoint() = runTest {
         dao.insertOperation(operation())
 

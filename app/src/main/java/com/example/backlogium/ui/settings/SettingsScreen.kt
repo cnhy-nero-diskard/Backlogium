@@ -68,6 +68,7 @@ import com.example.backlogium.domain.CloudPresenceHistoricalStartChoice
 import com.example.backlogium.domain.CloudPresenceHistoricalRangeResolution
 import com.example.backlogium.domain.CloudPresencePreDataCutoffResolution
 import com.example.backlogium.data.local.entity.CloudHistoricalOperation
+import com.example.backlogium.data.local.entity.CloudHistoricalStates
 import com.example.backlogium.data.repo.CloudPresenceRefilingReceipt
 import androidx.compose.ui.semantics.Role
 import com.example.backlogium.data.updates.AppUpdateState
@@ -220,6 +221,7 @@ internal fun SettingsGraphScreen(
                 onConfirmCloudPresenceRefiling = viewModel::confirmCloudPresenceRefiling,
                 onCancelCloudPresenceRefilingConfirmation = viewModel::cancelCloudPresenceRefilingConfirmation,
                 onContinueCloudPresenceRefiling = viewModel::continueCloudPresenceRefiling,
+                onChangeCloudPresenceRefilingDates = viewModel::changeCloudPresenceRefilingDates,
             )
         }
         SettingsGraphSession(state = state, actions = actions)
@@ -309,6 +311,7 @@ data class SettingsActions(
     val onConfirmCloudPresenceRefiling: () -> Unit = {},
     val onCancelCloudPresenceRefilingConfirmation: () -> Unit = {},
     val onContinueCloudPresenceRefiling: () -> Unit = {},
+    val onChangeCloudPresenceRefilingDates: () -> Unit = {},
 )
 
 /** The stateless half: renders [state] and raises [actions]. */
@@ -878,6 +881,7 @@ private fun CloudPresenceCard(
                             transitionsThisBatch = state.cloudHistoricalRangeControls.lastBatchTransitions,
                             busy = state.cloudPresenceRefilingBusy,
                             onContinue = actions.onContinueCloudPresenceRefiling,
+                            onChangeDates = actions.onChangeCloudPresenceRefilingDates,
                         )
                     }
                 }
@@ -1295,6 +1299,7 @@ private fun CloudHistoricalProgressCard(
     transitionsThisBatch: Int,
     busy: Boolean,
     onContinue: () -> Unit,
+    onChangeDates: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         HorizontalDivider()
@@ -1375,6 +1380,16 @@ private fun CloudHistoricalProgressCard(
                     ),
                 )
             }
+        }
+        if (operation.state in setOf(CloudHistoricalStates.ACQUIRING, CloudHistoricalStates.COMPLETE)) {
+            TextButton(onClick = onChangeDates, enabled = !busy) {
+                Text(stringResource(R.string.settings_cloud_range_change_dates))
+            }
+            Text(
+                stringResource(R.string.settings_cloud_range_change_dates_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
