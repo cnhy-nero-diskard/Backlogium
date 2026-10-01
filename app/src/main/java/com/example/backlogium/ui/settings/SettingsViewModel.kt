@@ -79,6 +79,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.Instant
 import javax.inject.Inject
 
 /**
@@ -1172,6 +1173,7 @@ class SettingsViewModel @Inject constructor(
 
     fun reverseCloudPresenceRefiling() {
         if (cloudBusy.value || cloudRefilingBusy.value) return
+        val receipt = uiState.value.cloudPresenceRefilingReceipt
         viewModelScope.launch {
             cloudRefilingBusy.value = true
             cloudRefilingMessage.value = null
@@ -1183,6 +1185,17 @@ class SettingsViewModel @Inject constructor(
                     if (result.operation == CloudPresenceRefilingOperation.REVERSED) {
                         cloudHistoricalRangeControls.update {
                             it.copy(
+                                startChoice = receipt?.let { saved ->
+                                    runCatching { CloudPresenceHistoricalStartChoice.valueOf(saved.startChoice) }
+                                        .getOrDefault(it.startChoice)
+                                } ?: it.startChoice,
+                                customStartDate = receipt?.let { saved ->
+                                    Instant.ofEpochMilli(saved.selectedStartAt).atZone(time.zone()).toLocalDate()
+                                } ?: it.customStartDate,
+                                transferPreDataPlay = receipt?.confirmedCutoffAt != null || it.transferPreDataPlay,
+                                cutoffLocalDateTime = receipt?.confirmedCutoffAt?.let { cutoff ->
+                                    Instant.ofEpochMilli(cutoff).atZone(time.zone()).toLocalDateTime()
+                                } ?: it.cutoffLocalDateTime,
                                 operation = null,
                                 pendingConfirmation = null,
                                 acquisitionStatus = CloudHistoricalAcquisitionStatus.IDLE,
