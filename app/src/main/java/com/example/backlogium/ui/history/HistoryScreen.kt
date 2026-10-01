@@ -266,8 +266,18 @@ internal fun HistoryContent(
             }
 
             item(key = "load-older") {
-                TextButton(onClick = onLoadOlder, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.history_load_older))
+                if (state.hasOlderHistory) {
+                    TextButton(onClick = onLoadOlder, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.history_load_older))
+                    }
+                } else if (state.days.isNotEmpty()) {
+                    Text(
+                        stringResource(R.string.history_all_loaded),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    )
                 }
             }
         }

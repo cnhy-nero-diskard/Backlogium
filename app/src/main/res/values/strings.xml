@@ -577,6 +577,7 @@
     <string name="history_today_section">Today</string>
     <string name="history_earlier_section">Earlier history</string>
     <string name="history_load_older">Load older</string>
+    <string name="history_all_loaded">All recorded history loaded</string>
     <string name="history_steam_not_configured">Steam not configured</string>
     <string name="history_steam_not_configured_message">Connect your Steam account from Settings to track sessions.</string>
     <string name="history_empty_title">No history yet</string>

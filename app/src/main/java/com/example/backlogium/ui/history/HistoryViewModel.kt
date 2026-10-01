@@ -37,6 +37,7 @@ data class HistoryUiState(
     val today: String = "",
     /** First included local date for the currently loaded History window. */
     val windowStartDate: String = "",
+    val hasOlderHistory: Boolean = false,
     val cloudReaderConfigured: Boolean = false,
     val cloudReadSummary: CloudReadSummary = CloudReadSummary(),
     val statusNow: Long = 0L,
@@ -83,12 +84,15 @@ class HistoryViewModel @Inject constructor(
             val cutoff = historyWindowCutoffMillis(window, today, time.zone())
             val windowStartDate = today.minusDays((window - 1).toLong()).toString()
             combine(
-                sessionRepository.sessionsSince(cutoff),
+                sessionRepository.sessionsSince(cutoff).combine(sessionRepository.earliestSessionStart) {
+                    sessions, earliest -> sessions to earliest
+                },
                 gameRepository.library,
                 profileRepository.dailyProgress,
                 achievementRepository.unlockedSince(cutoff),
                 credentials.credentialsStateFlow,
-            ) { sessions, games, dailyProgress, achievements, credState ->
+            ) { sessionWindow, games, dailyProgress, achievements, credState ->
+                val (sessions, earliestSessionAt) = sessionWindow
                 HistoryUiState(
                     loading = false,
                     configured = credState is CredentialsState.Configured,
@@ -98,9 +102,14 @@ class HistoryViewModel @Inject constructor(
                         dailyProgress = dailyProgress,
                         achievementUnlocks = achievements,
                         zone = time.zone(),
+                        windowStartDate = windowStartDate,
+                        windowEndDate = today.toString(),
                     ),
                     today = today.toString(),
                     windowStartDate = windowStartDate,
+                    hasOlderHistory = historyHasOlderRecords(
+                        windowStartDate, earliestSessionAt, dailyProgress, time.zone(),
+                    ),
                 )
             }.combine(cloudPresence.configuration) { state, reader ->
                 state.copy(cloudReaderConfigured = reader != null)
