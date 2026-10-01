@@ -10,6 +10,7 @@ import com.example.backlogium.domain.CloudPresenceHistoricalRangeRules
 import com.example.backlogium.domain.CloudPresenceHistoricalSelection
 import com.example.backlogium.domain.CloudPresenceHistoricalStartChoice
 import com.example.backlogium.domain.CloudPresencePreDataCutoffResolution
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -44,6 +45,36 @@ data class CloudHistoricalRangeControls(
 ) {
     val selection: CloudPresenceHistoricalSelection?
         get() = (rangeResolution as? CloudPresenceHistoricalRangeResolution.Ready)?.selection
+}
+
+/** Restore the confirmed form choices in the timezone in which the receipt recorded them. */
+internal fun CloudHistoricalRangeControls.restoreAfterCloudHistoricalReversal(
+    receipt: CloudPresenceRefilingReceipt?,
+): CloudHistoricalRangeControls {
+    val savedZone = receipt?.let { saved ->
+        runCatching { ZoneId.of(saved.zoneId) }.getOrNull()
+    }
+    return copy(
+        startChoice = receipt?.let { saved ->
+            runCatching { CloudPresenceHistoricalStartChoice.valueOf(saved.startChoice) }
+                .getOrDefault(startChoice)
+        } ?: startChoice,
+        customStartDate = receipt?.let { saved ->
+            savedZone?.let { zone ->
+                Instant.ofEpochMilli(saved.selectedStartAt).atZone(zone).toLocalDate()
+            }
+        } ?: customStartDate,
+        transferPreDataPlay = receipt?.confirmedCutoffAt != null || transferPreDataPlay,
+        cutoffLocalDateTime = receipt?.confirmedCutoffAt?.let { cutoff ->
+            savedZone?.let { zone -> Instant.ofEpochMilli(cutoff).atZone(zone).toLocalDateTime() }
+        } ?: cutoffLocalDateTime,
+        operation = null,
+        pendingConfirmation = null,
+        acquisitionStatus = CloudHistoricalAcquisitionStatus.IDLE,
+        lastBatchPages = 0,
+        lastBatchTransitions = 0,
+        acquisitionFailure = null,
+    )
 }
 
 data class CloudHistoricalRefilingConfirmation(

@@ -12,9 +12,11 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.util.TimeZone
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -209,6 +211,81 @@ class CloudHistoricalRangeControlsTest {
         assertEquals(0, summary.sessionsRefiled)
         assertEquals(0L, summary.transferredMinutes)
         assertEquals(95L, summary.remainingImportedMinutes)
+    }
+
+    @Test
+    fun reversalRestoresConfirmedLocalChoicesInTheReceiptZoneAfterDeviceZoneChanges() {
+        val previousTimeZone = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("Asia/Tokyo"))
+            val confirmedZone = ZoneId.systemDefault()
+            val confirmedStartDate = LocalDate.parse("2025-03-01")
+            val confirmedCutoff = LocalDateTime.parse("2025-03-15T12:45:00")
+            val selection = (
+                CloudPresenceHistoricalRangeRules.customLocalDate(
+                    selectedDate = confirmedStartDate,
+                    nowAt = instant("2025-03-20T00:00:00Z"),
+                    throughAt = instant("2025-04-01T00:00:00Z"),
+                    zone = confirmedZone,
+                    earliestObservedAt = instant("2025-01-01T00:00:00Z"),
+                ) as CloudPresenceHistoricalRangeResolution.Ready
+            ).selection
+            val confirmedCutoffAt = (
+                CloudPresenceHistoricalRangeRules.confirmedPreDataCutoff(
+                    localDateTime = confirmedCutoff,
+                    zone = confirmedZone,
+                    selection = selection,
+                ) as CloudPresencePreDataCutoffResolution.Confirmed
+            ).cutoffAt
+            val receipt = CloudPresenceRefilingReceipt(
+                operationId = "operation",
+                account = "76561198000000001",
+                startChoice = CloudPresenceHistoricalStartChoice.CUSTOM_LOCAL_DATE.name,
+                selectedStartAt = selection.selectedStartAt,
+                effectiveStartAt = selection.effectiveStartAt,
+                throughAt = selection.throughAt,
+                coveredStartAt = null,
+                coveredEndAt = null,
+                confirmedCutoffAt = confirmedCutoffAt,
+                zoneId = selection.zoneId,
+                pagesFetched = 1,
+                transitionsFetched = 1,
+                sessionsRefiled = 1,
+                datesAffected = emptyList(),
+                createdSessionIds = emptyList(),
+                transferredMinutesByAppId = emptyList(),
+                remainingImportedMinutesByAppId = emptyList(),
+            )
+            val controlsBeforeReversal = CloudHistoricalRangeControls(
+                startChoice = CloudPresenceHistoricalStartChoice.RECENT_31_DAYS,
+                customStartDate = LocalDate.parse("2025-02-01"),
+                transferPreDataPlay = false,
+                cutoffLocalDateTime = null,
+            )
+
+            // The receipt contains these confirmed Tokyo choices; reversal happens after travel.
+            TimeZone.setDefault(TimeZone.getTimeZone("America/Los_Angeles"))
+            val deviceZone = ZoneId.systemDefault()
+            val restored = controlsBeforeReversal.restoreAfterCloudHistoricalReversal(receipt)
+
+            assertNotEquals(confirmedZone, deviceZone)
+            assertNotEquals(
+                confirmedStartDate,
+                Instant.ofEpochMilli(receipt.selectedStartAt).atZone(deviceZone).toLocalDate(),
+            )
+            assertNotEquals(
+                confirmedCutoff,
+                Instant.ofEpochMilli(checkNotNull(receipt.confirmedCutoffAt))
+                    .atZone(deviceZone)
+                    .toLocalDateTime(),
+            )
+            assertEquals(CloudPresenceHistoricalStartChoice.CUSTOM_LOCAL_DATE, restored.startChoice)
+            assertEquals(confirmedStartDate, restored.customStartDate)
+            assertTrue(restored.transferPreDataPlay)
+            assertEquals(confirmedCutoff, restored.cutoffLocalDateTime)
+        } finally {
+            TimeZone.setDefault(previousTimeZone)
+        }
     }
 
     private fun controls(metadata: CloudPresenceRangeMetadata) = CloudHistoricalRangeControls(

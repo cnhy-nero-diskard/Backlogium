@@ -79,7 +79,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.LocalDateTime
-import java.time.Instant
 import javax.inject.Inject
 
 /**
@@ -1184,25 +1183,7 @@ class SettingsViewModel @Inject constructor(
                     val result = cloudPresenceRefiling.reverse()
                     if (result.operation == CloudPresenceRefilingOperation.REVERSED) {
                         cloudHistoricalRangeControls.update {
-                            it.copy(
-                                startChoice = receipt?.let { saved ->
-                                    runCatching { CloudPresenceHistoricalStartChoice.valueOf(saved.startChoice) }
-                                        .getOrDefault(it.startChoice)
-                                } ?: it.startChoice,
-                                customStartDate = receipt?.let { saved ->
-                                    Instant.ofEpochMilli(saved.selectedStartAt).atZone(time.zone()).toLocalDate()
-                                } ?: it.customStartDate,
-                                transferPreDataPlay = receipt?.confirmedCutoffAt != null || it.transferPreDataPlay,
-                                cutoffLocalDateTime = receipt?.confirmedCutoffAt?.let { cutoff ->
-                                    Instant.ofEpochMilli(cutoff).atZone(time.zone()).toLocalDateTime()
-                                } ?: it.cutoffLocalDateTime,
-                                operation = null,
-                                pendingConfirmation = null,
-                                acquisitionStatus = CloudHistoricalAcquisitionStatus.IDLE,
-                                lastBatchPages = 0,
-                                lastBatchTransitions = 0,
-                                acquisitionFailure = null,
-                            )
+                            it.restoreAfterCloudHistoricalReversal(receipt)
                         }
                         _hapticIntents.tryEmit(HapticIntent.Confirm)
                     }
