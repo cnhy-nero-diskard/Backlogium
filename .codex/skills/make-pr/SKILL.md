@@ -66,7 +66,18 @@ invent a release-note requirement that the repository has not defined.
    concise conventional title when the repository uses conventional prefixes.
 2. Run the smallest relevant project checks for the changed files when practical. Report the
    exact commands and results. Never mark a template checkbox based on an intended or inferred
-   check.
+   check. When the change can move a rendered pixel — anything under a path listed in
+   `FIXTURE_RENDERED_SOURCES` in `scripts/check_visual_baseline.py`, including
+   `app/src/main/res/values/strings.xml` — first run the baseline-currency pre-check, the
+   same gate the `Visual baseline check` workflow runs:
+   `python scripts/check_visual_baseline.py check --changed-file <(git diff --name-only
+   <merge-base>...HEAD) --labels '[]'`. If it fails, do not create the PR yet: report that
+   `:app:verifyRoborazziDebug` will compare new pixels against stale goldens, and that the
+   remedy is re-recording (`:app:recordRoborazziDebug`, verify, commit the changed PNGs
+   under `app/src/test/snapshots/` — see `docs/visual-regression-screenshots.md`) or, when
+   the edit provably cannot move a pixel, the `no-golden-change` label. Re-recording means
+   committing, so only do it when the user explicitly authorizes that step; otherwise stop
+   after reporting.
 3. Assemble the completed body in a temporary file outside the repository. Prefer an explicit
    `gh pr create --body-file` call so the filled template is the body that GitHub receives; do not
    rely on an interactive editor or an unverified default template. Remove the temporary file
