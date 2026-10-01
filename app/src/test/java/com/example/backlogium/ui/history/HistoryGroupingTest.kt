@@ -41,7 +41,95 @@ class HistoryGroupingTest {
         assertTrue(sessions.drop(1).none { it.cloudContribution.hasRecordedContribution() })
     }
 
+    @Test
+    fun loadOlderShowsDatedCloudTimedPlayAndKeepsItDistinctFromDeviceRecordedPlay() {
+        val today = LocalDate.of(2026, 8, 1)
+        val ordinary = session(
+            id = 30,
+            appId = 10,
+            startAt = atUtc(2026, 6, 15, 12, 0),
+            minutes = 20,
+        ).copy(cloudContribution = SessionCloudContribution(
+            recoveredSharedPlay = ContributionState.NONE,
+            timingInformedSteamPlay = ContributionState.NONE,
+        ))
+        val transferred = ordinary.copy(
+            id = 31,
+            startAt = atUtc(2026, 6, 15, 13, 0),
+            minutes = 25,
+            cloudContribution = SessionCloudContribution(
+                recoveredSharedPlay = ContributionState.NONE,
+                timingInformedSteamPlay = ContributionState.FULL,
+            ),
+        )
+        val sessions = listOf(ordinary, transferred)
+        val initialCutoff = historyWindowCutoffMillis(30, today, zone)
+        val olderWindowDays = nextHistoryWindowDays(30)
+        val expandedCutoff = historyWindowCutoffMillis(olderWindowDays, today, zone)
+
+        assertEquals(60, olderWindowDays)
+        assertTrue(sessions.none { it.startAt >= initialCutoff })
+
+        val visibleAfterLoadOlder = sessions.filter { it.startAt >= expandedCutoff }
+        val days = groupHistory(
+            sessions = visibleAfterLoadOlder,
+            games = listOf(game(10, "Owned")),
+            dailyProgress = emptyList(),
+            achievementUnlocks = emptyList(),
+            zone = zone,
+        )
+        val day = days.single()
+        assertEquals("2026-06-15", day.date)
+        assertEquals(listOf(30L, 31L), day.games.single().sessions.map { it.id })
+        assertEquals(
+            ContributionState.FULL,
+            day.games.single().sessions.last().cloudContribution.timingInformedSteamPlay,
+        )
+
+        val activity = historyCloudActivity(days, readerConfigured = true)
+        assertTrue(activity.recovered.isEmpty())
+        assertEquals(listOf(31L), activity.timed.map { it.session.id })
+    }
+
     private val zone = ZoneId.of("UTC")
+
+    @Test
+    fun olderQuestRowsAppearWithTheirSessionsOnlyAfterLoadingTheirWindow() {
+        val oldSession = session(1, appId = 10, startAt = atUtc(2026, 8, 24, 12, 0), minutes = 162)
+        val recentSession = session(2, appId = 10, startAt = atUtc(2026, 9, 2, 12, 0), minutes = 182)
+        val progress = listOf(
+            DayProgress("2026-08-24", 162, 0, true),
+            DayProgress("2026-09-02", 182, 0, true),
+        )
+        val initial = groupHistory(
+            sessions = listOf(recentSession), games = listOf(game(10, "Game")),
+            dailyProgress = progress, achievementUnlocks = emptyList(), zone = zone,
+            windowStartDate = "2026-09-02", windowEndDate = "2026-10-01",
+        )
+        assertEquals(listOf("2026-09-02"), initial.map { it.date })
+        assertEquals(182, initial.single().minutesPlayed)
+        assertTrue(historyHasOlderRecords("2026-09-02", oldSession.startAt, progress, zone))
+
+        val older = groupHistory(
+            sessions = listOf(oldSession, recentSession), games = listOf(game(10, "Game")),
+            dailyProgress = progress, achievementUnlocks = emptyList(), zone = zone,
+            windowStartDate = "2026-08-03", windowEndDate = "2026-10-01",
+        )
+        assertEquals(162, older.last().minutesPlayed)
+        assertTrue(older.last().questMet)
+        assertTrue(!historyHasOlderRecords("2026-08-03", oldSession.startAt, progress, zone))
+    }
+
+    @Test
+    fun olderAvailabilityIncludesSessionOnlyAndProgressOnlyDatesButExcludesLoadedBoundary() {
+        val oldStart = atUtc(2026, 8, 6, 12, 0)
+        assertTrue(historyHasOlderRecords("2026-09-02", oldStart, emptyList(), zone))
+        assertTrue(historyHasOlderRecords(
+            "2026-09-02", null, listOf(DayProgress("2026-08-06", 0, 0, false)), zone,
+        ))
+        assertTrue(!historyHasOlderRecords("2026-08-06", oldStart, emptyList(), zone))
+        assertTrue(!historyHasOlderRecords("2026-08-06", null, emptyList(), zone))
+    }
 
     @Test
     fun midnightCrossingSession_landsOnItsStartDay() {

@@ -21,6 +21,14 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 
+private const val HISTORY_WINDOW_STEP_DAYS = 30
+
+/** The next History window size used by the explicit “Load older” action. */
+internal fun nextHistoryWindowDays(currentWindowDays: Int): Int {
+    require(currentWindowDays > 0) { "currentWindowDays must be positive" }
+    return currentWindowDays + HISTORY_WINDOW_STEP_DAYS
+}
+
 data class HistoryUiState(
     val loading: Boolean = true,
     val configured: Boolean = true,
@@ -29,6 +37,7 @@ data class HistoryUiState(
     val today: String = "",
     /** First included local date for the currently loaded History window. */
     val windowStartDate: String = "",
+    val hasOlderHistory: Boolean = false,
     val cloudReaderConfigured: Boolean = false,
     val cloudReadSummary: CloudReadSummary = CloudReadSummary(),
     val statusNow: Long = 0L,
@@ -75,12 +84,15 @@ class HistoryViewModel @Inject constructor(
             val cutoff = historyWindowCutoffMillis(window, today, time.zone())
             val windowStartDate = today.minusDays((window - 1).toLong()).toString()
             combine(
-                sessionRepository.sessionsSince(cutoff),
+                sessionRepository.sessionsSince(cutoff).combine(sessionRepository.earliestSessionStart) {
+                    sessions, earliest -> sessions to earliest
+                },
                 gameRepository.library,
                 profileRepository.dailyProgress,
                 achievementRepository.unlockedSince(cutoff),
                 credentials.credentialsStateFlow,
-            ) { sessions, games, dailyProgress, achievements, credState ->
+            ) { sessionWindow, games, dailyProgress, achievements, credState ->
+                val (sessions, earliestSessionAt) = sessionWindow
                 HistoryUiState(
                     loading = false,
                     configured = credState is CredentialsState.Configured,
@@ -90,9 +102,14 @@ class HistoryViewModel @Inject constructor(
                         dailyProgress = dailyProgress,
                         achievementUnlocks = achievements,
                         zone = time.zone(),
+                        windowStartDate = windowStartDate,
+                        windowEndDate = today.toString(),
                     ),
                     today = today.toString(),
                     windowStartDate = windowStartDate,
+                    hasOlderHistory = historyHasOlderRecords(
+                        windowStartDate, earliestSessionAt, dailyProgress, time.zone(),
+                    ),
                 )
             }.combine(cloudPresence.configuration) { state, reader ->
                 state.copy(cloudReaderConfigured = reader != null)
@@ -108,13 +125,12 @@ class HistoryViewModel @Inject constructor(
             initialValue = HistoryUiState(),
         )
 
-    /** Widen the window by another [WINDOW_STEP_DAYS] days, appending older days to the list. */
+    /** Widen the window by another 30 days, appending older days to the list. */
     fun loadOlder() {
-        windowDays.value += WINDOW_STEP_DAYS
+        windowDays.value = nextHistoryWindowDays(windowDays.value)
     }
 
     private companion object {
         const val INITIAL_WINDOW_DAYS = 30
-        const val WINDOW_STEP_DAYS = 30
     }
 }

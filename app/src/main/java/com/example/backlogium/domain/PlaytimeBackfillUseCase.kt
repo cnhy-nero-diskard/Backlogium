@@ -8,6 +8,12 @@ import com.example.backlogium.data.local.entity.PlayerProfile
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
+enum class PlaytimeBackfillResetResult {
+    RESET,
+    BLOCKED_BY_CLOUD_TRANSFER,
+    NO_OP,
+}
+
 /**
  * One-time, opt-in import of historical Steam playtime into XP (add-playtime-backfill).
  *
@@ -67,13 +73,20 @@ class PlaytimeBackfillUseCase @Inject constructor(
      * an add, so re-importing is safe and restores the prior result). Tracked sessions, daily
      * progress, and streaks are untouched.
      */
-    suspend fun reset() = derivedStateWrites.withLock {
-        val profile = playerProfileDao.get()
-        if (profile != null) {
-            gameDao.applyBackfill(gameDao.getAll().associate { it.appId to 0 })
-            playerProfileDao.updatePlaytimeBackfilled(false)
-            recompute()
+    suspend fun reset(): PlaytimeBackfillResetResult = derivedStateWrites.withLock {
+        val refilingApplied = settings.cloudPresenceRefilingAppliedFlow.first()
+        val receipt = settings.cloudPresenceRefilingReceiptFlow.first()
+        if (refilingApplied && receipt?.transferredMinutesByAppId?.any { it.minutes > 0 } == true) {
+            return@withLock PlaytimeBackfillResetResult.BLOCKED_BY_CLOUD_TRANSFER
         }
+
+        val profile = playerProfileDao.get()
+        if (profile == null) return@withLock PlaytimeBackfillResetResult.NO_OP
+
+        gameDao.applyBackfill(gameDao.getAll().associate { it.appId to 0 })
+        playerProfileDao.updatePlaytimeBackfilled(false)
+        recompute()
+        PlaytimeBackfillResetResult.RESET
     }
 
     private suspend fun recompute() {

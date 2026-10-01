@@ -88,6 +88,8 @@ data class GameSummaryUi(
     val playtimeMinutes: Int = 0,
     /** Frozen historical playtime from the opt-in import; 0 when nothing was imported. */
     val importedMinutes: Int = 0,
+    /** True while an applied cloud re-file has transferred this game's imported minutes to History. */
+    val importedHistoryTransferApplied: Boolean = false,
     /** Minutes from sessions this app tracked itself. */
     val trackedMinutes: Int = 0,
     /**
@@ -135,11 +137,9 @@ data class GameSummaryUi(
         get() = mainStoryMinutes != null || mainExtraMinutes != null ||
             completionistMinutes != null || allStylesMinutes != null
 
-    /**
-     * Whether the playtime is worth splitting. Only meaningful once history was imported — with no
-     * backfill the split is just the total restated.
-     */
-    val showPlaytimeSplit: Boolean get() = importedMinutes > 0
+    /** Keep the classification visible after a transfer exhausts this game's imported balance. */
+    val showPlaytimeSplit: Boolean
+        get() = importedMinutes > 0 || importedHistoryTransferApplied
 
     /**
      * The playtime figure to lead with. Steam reports no lifetime total for a family-shared game,
@@ -240,18 +240,36 @@ class GameDetailViewModel @Inject constructor(
     private val hidePreviewing = MutableStateFlow(false)
     private val hideEffect = MutableStateFlow<VisibilityChangeEffect?>(null)
 
+    private val importedHistoryTransferAppIds = combine(
+        settings.cloudPresenceRefilingApplied,
+        settings.cloudPresenceRefilingReceipt,
+    ) { applied, receipt ->
+        if (!applied) {
+            emptySet()
+        } else {
+            receipt?.transferredMinutesByAppId.orEmpty()
+                .filter { it.minutes > 0 }
+                .mapTo(mutableSetOf()) { it.appId }
+        }
+    }
+
     private val content = appIdState
         .filterNotNull()
         .distinctUntilChanged()
         .flatMapLatest { appId ->
             combine(
                 combine(
-                    gameRepository.library,
-                    achievementRepository.observeForGame(appId),
-                    sessionRepository.trackedMinutesByGame,
-                    sessionRepository.latestSessionAtByGame,
-                ) { games, achievements, trackedByGame, latestByGame ->
-                    DetailLocalInputs(games, achievements, trackedByGame, latestByGame)
+                    combine(
+                        gameRepository.library,
+                        achievementRepository.observeForGame(appId),
+                        sessionRepository.trackedMinutesByGame,
+                        sessionRepository.latestSessionAtByGame,
+                    ) { games, achievements, trackedByGame, latestByGame ->
+                        DetailLocalInputs(games, achievements, trackedByGame, latestByGame)
+                    },
+                    importedHistoryTransferAppIds,
+                ) { inputs, transferredAppIds ->
+                    inputs.copy(importedHistoryTransferAppIds = transferredAppIds)
                 },
                 settings.ruleConfig,
                 settings.liveMonitorEnabled,
@@ -265,8 +283,9 @@ class GameDetailViewModel @Inject constructor(
                     inputs.latestByGame[appId],
                     config,
                     liveMonitorEnabled,
+                    importedHistoryTransferApplied = appId in inputs.importedHistoryTransferAppIds,
                     cloudPresenceConfigured = cloudConfiguration != null,
-                    appId in hidden,
+                    hidden = appId in hidden,
                 )
             }
         }
@@ -472,6 +491,7 @@ private data class DetailLocalInputs(
     val achievements: List<GameAchievement>,
     val trackedByGame: Map<Long, Int>,
     val latestByGame: Map<Long, Long>,
+    val importedHistoryTransferAppIds: Set<Long> = emptySet(),
 )
 
 internal data class Content(
@@ -486,6 +506,8 @@ internal data class Content(
     val cloudPresenceConfigured: Boolean = false,
     /** True while this game is hidden — the surface showing it closes rather than emptying out. */
     val hidden: Boolean = false,
+    /** True while an applied cloud transfer has moved this game's imported minutes into sessions. */
+    val importedHistoryTransferApplied: Boolean = false,
 )
 
 /**
@@ -510,6 +532,7 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
         iconUrl = game.iconUrl,
         playtimeMinutes = game.playtimeForever,
         importedMinutes = game.backfillMinutes,
+        importedHistoryTransferApplied = importedHistoryTransferApplied,
         trackedMinutes = trackedMinutes,
         manualMinutes = game.manualSharedMinutes,
         mainStoryMinutes = game.mainStoryMinutes,

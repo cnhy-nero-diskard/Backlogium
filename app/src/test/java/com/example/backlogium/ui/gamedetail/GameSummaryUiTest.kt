@@ -4,6 +4,8 @@ import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.domain.GameSource
 import com.example.backlogium.gamification.RuleConfig
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -69,11 +71,45 @@ class GameSummaryUiTest {
         )
     }
 
+    @Test
+    fun exhaustedImportedBalanceKeepsTheTrackedZeroImportedSplitAndXpUnchanged() {
+        val beforeTransfer = content(
+            source = GameSource.STEAM_OWNED,
+            playtimeForever = 120,
+            backfillMinutes = 120,
+        ).toSummary(rows = emptyList(), activePlayers = null)
+        val afterTransfer = content(
+            source = GameSource.STEAM_OWNED,
+            playtimeForever = 120,
+            trackedMinutes = 120,
+            importedHistoryTransferApplied = true,
+        ).toSummary(rows = emptyList(), activePlayers = null)
+
+        assertEquals(120, afterTransfer.trackedMinutes)
+        assertEquals(0, afterTransfer.importedMinutes)
+        assertTrue(afterTransfer.showPlaytimeSplit)
+        assertEquals(beforeTransfer.headlineMinutes, afterTransfer.headlineMinutes)
+        assertEquals(beforeTransfer.xpContributed, afterTransfer.xpContributed)
+    }
+
+    @Test
+    fun ordinaryTrackedPlayWithoutImportedHistoryDoesNotRestateTheSplit() {
+        val summary = content(
+            source = GameSource.STEAM_OWNED,
+            playtimeForever = 120,
+            trackedMinutes = 120,
+        ).toSummary(rows = emptyList(), activePlayers = null)
+
+        assertFalse(summary.showPlaytimeSplit)
+    }
+
     private fun content(
         source: GameSource,
         playtimeForever: Int = 0,
+        backfillMinutes: Int = 0,
         trackedMinutes: Int = 0,
         manualSharedMinutes: Int = 0,
+        importedHistoryTransferApplied: Boolean = false,
     ) = Content(
         game = LibraryGame(
             appId = 1L,
@@ -81,11 +117,13 @@ class GameSummaryUiTest {
             iconUrl = "",
             playtimeForever = playtimeForever,
             source = source,
+            backfillMinutes = backfillMinutes,
             manualSharedMinutes = manualSharedMinutes,
             completionistMinutes = 600,
         ),
         achievements = emptyList(),
         trackedMinutes = trackedMinutes,
         config = RuleConfig(),
+        importedHistoryTransferApplied = importedHistoryTransferApplied,
     )
 }

@@ -216,6 +216,25 @@ class SmartCollectionsTest {
         )
     }
 
+    @Test
+    fun ownedCollectionPlaytimeDoesNotDoubleCountReclassifiedImportedMinutes() {
+        val beforeTransfer = smartCollectionPlaytimeMinutes(
+            source = GameSource.STEAM_OWNED,
+            steamPlaytimeMinutes = 120,
+            importedPlaytimeMinutes = 120,
+            sessionMinutes = 0,
+        )
+        val afterTransfer = smartCollectionPlaytimeMinutes(
+            source = GameSource.STEAM_OWNED,
+            steamPlaytimeMinutes = 120,
+            importedPlaytimeMinutes = 0,
+            sessionMinutes = 120,
+        )
+
+        assertEquals(120, beforeTransfer)
+        assertEquals(beforeTransfer, afterTransfer)
+    }
+
     /**
      * add-shared-game-playtime-and-filter: `importedPlaytimeMinutes` carries a family-shared
      * game's manual estimate (its `backfillMinutes` is always 0), additive with tracked session

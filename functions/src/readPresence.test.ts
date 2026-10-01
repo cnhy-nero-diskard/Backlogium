@@ -123,6 +123,94 @@ describe("servePresenceRead", () => {
     expect(firestore.readCount).toBe(0);
   });
 
+  it("returns the oldest retained transition and a frozen current snapshot for range metadata", async () => {
+    const firestore = new FakeFirestore();
+    seedPresence(firestore);
+    const captured = response();
+
+    await servePresenceRead(
+      request("Bearer secret", { mode: "range" }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect(captured.statusCode).toBe(200);
+    expect(captured.body).toMatchObject({
+      mode: "range",
+      account: steamId,
+      earliestObservedAt: "2025-01-01T00:00:00.000Z",
+      current: { lastObservedAt: secondAt.toISOString() },
+    });
+    expect(new Date((captured.body as { readAt: string }).readAt).getTime()).toBeGreaterThan(0);
+    expect(firestore.readCount).toBe(2);
+  });
+
+  it("uses the current-only evidence start when no transition is retained", async () => {
+    const firestore = new FakeFirestore();
+    firestore.seed("players/" + steamId, {
+      v: 3,
+      since: firstAt,
+      lastObservedAt: secondAt,
+      personastate: 1,
+      gameid: "440",
+      gameName: "Team Fortress 2",
+    });
+    const captured = response();
+
+    await servePresenceRead(
+      request("Bearer secret", { mode: "range" }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect(captured.statusCode).toBe(200);
+    expect(captured.body).toMatchObject({
+      earliestObservedAt: firstAt.toISOString(),
+      current: { since: firstAt.toISOString(), lastObservedAt: secondAt.toISOString() },
+    });
+    expect(firestore.readCount).toBe(2);
+  });
+
+  it("reports an empty range when neither transitions nor usable current evidence exist", async () => {
+    const firestore = new FakeFirestore();
+    const captured = response();
+
+    await servePresenceRead(
+      request("Bearer secret", { mode: "range" }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect(captured.statusCode).toBe(200);
+    expect(captured.body).toMatchObject({
+      earliestObservedAt: null,
+      current: null,
+    });
+    expect(firestore.readCount).toBe(2);
+  });
+
+  it("rejects unauthenticated range metadata without reading Firestore", async () => {
+    const firestore = new FakeFirestore();
+    const captured = response();
+
+    await servePresenceRead(
+      request(undefined, { mode: "range" }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect(captured.statusCode).toBe(401);
+    expect(firestore.readCount).toBe(0);
+  });
+
   it("rejects malformed resume positions before reading Firestore", async () => {
     const firestore = new FakeFirestore();
     const captured = response();
@@ -138,6 +226,299 @@ describe("servePresenceRead", () => {
     expect(captured.statusCode).toBe(400);
     expect(captured.body).toEqual({ error: "invalid_position" });
     expect(firestore.readCount).toBe(0);
+  });
+
+  it.each([
+    ["a missing through bound", (from: string, through: string) => ({ from })],
+    ["a missing from bound", (from: string, through: string) => ({ through })],
+    ["a non-UTC instant", (from: string, through: string) => ({ from: from.replace("Z", "+00:00"), through })],
+    ["a non-full position instant", (from: string, through: string) => ({ from, through, position: from.slice(0, -5) + "Z" })],
+    ["an impossible calendar date", (_from: string, through: string) => ({ from: "2026-02-30T00:00:00.000Z", through })],
+    ["a reversed range", (from: string, _through: string) => ({ from: new Date(Date.now() - 1_000).toISOString(), through: from })],
+    ["a future end", (from: string) => ({ from, through: new Date(Date.now() + 60_000).toISOString() })],
+    ["a position before the range", (from: string, through: string) => ({ from, through, position: new Date(new Date(from).getTime() - 1).toISOString() })],
+    ["a position after the range", (from: string, through: string) => ({ from, through, position: new Date(new Date(through).getTime() + 1).toISOString() })],
+    ["a range combined with metadata mode", (from: string, through: string) => ({ mode: "range", from, through })],
+    ["an unsupported read mode", () => ({ mode: "history" })],
+  ])("rejects %s before reading Firestore", async (_label, makeQuery) => {
+    const firestore = new FakeFirestore();
+    const captured = response();
+    const through = new Date(Date.now() - 30_000).toISOString();
+    const from = new Date(Date.now() - 90_000).toISOString();
+
+    await servePresenceRead(
+      request("Bearer secret", makeQuery(from, through)),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect(captured.statusCode).toBe(400);
+    expect(firestore.readCount).toBe(0);
+  });
+
+  it("reads an explicit historical page inclusively through its fixed end", async () => {
+    const firestore = new FakeFirestore();
+    const through = new Date(Date.now() - 60_000);
+    const from = new Date(through.getTime() - 2 * 60_000);
+    const outsideBefore = new Date(from.getTime() - 1);
+    const outsideAfter = new Date(through.getTime() + 1);
+    for (const [id, at] of [
+      ["before", outsideBefore],
+      ["from", from],
+      ["through", through],
+      ["after", outsideAfter],
+    ] as const) {
+      firestore.seed("players/" + steamId + "/presence/" + id, {
+        t: at,
+        v: 2,
+        personastate: 1,
+        gameid: "440",
+        gameName: "Team Fortress 2",
+      });
+    }
+    // A current document beyond the confirmed end must not enter this page.
+    firestore.seed("players/" + steamId, {
+      lastObservedAt: outsideAfter,
+      since: from,
+      personastate: 1,
+      gameid: "440",
+      gameName: "Team Fortress 2",
+    });
+    const captured = response();
+
+    await servePresenceRead(
+      request("Bearer secret", { from: from.toISOString(), through: through.toISOString() }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect(captured.statusCode).toBe(200);
+    const body = captured.body as {
+      transitions: Array<{ t: string }>;
+      current: unknown;
+      windowStart: string;
+      windowEnd: string;
+      hasMore: boolean;
+    };
+    expect(body.transitions.map((item) => item.t)).toEqual([
+      from.toISOString(),
+      through.toISOString(),
+    ]);
+    expect(body.current).toBeNull();
+    expect(body.windowStart).toBe(from.toISOString());
+    expect(body.windowEnd).toBe(through.toISOString());
+    expect(body.hasMore).toBe(false);
+  });
+
+  it("caps explicit historical pages at 250 transitions and reports the last returned position", async () => {
+    const firestore = new FakeFirestore();
+    const through = new Date(Date.now() - 60_000);
+    const from = new Date(through.getTime() - (MAX_RESPONSE_TRANSITIONS + 2) * 1_000);
+    for (let index = 0; index < MAX_RESPONSE_TRANSITIONS + 1; index += 1) {
+      const at = new Date(from.getTime() + index * 1_000);
+      firestore.seed("players/" + steamId + "/presence/historical-" + index, {
+        t: at,
+        v: 2,
+        personastate: 1,
+        gameid: "440",
+        gameName: "Team Fortress 2",
+      });
+    }
+    const captured = response();
+
+    await servePresenceRead(
+      request("Bearer secret", { from: from.toISOString(), through: through.toISOString() }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    const body = captured.body as {
+      transitions: Array<{ t: string }>;
+      hasMore: boolean;
+      nextPosition: string;
+      windowEnd: string;
+    };
+    expect(body.transitions).toHaveLength(MAX_RESPONSE_TRANSITIONS);
+    expect(body.hasMore).toBe(true);
+    expect(body.nextPosition).toBe(body.transitions.at(-1)?.t);
+    expect(body.windowEnd).toBe(body.transitions.at(-1)?.t);
+  });
+
+  it("resumes a historical page strictly after its position", async () => {
+    const firestore = new FakeFirestore();
+    const through = new Date(Date.now() - 60_000);
+    const from = new Date(through.getTime() - 3 * 60_000);
+    const first = from;
+    const second = new Date(from.getTime() + 60_000);
+    for (const [id, at] of [["first", first], ["second", second]] as const) {
+      firestore.seed("players/" + steamId + "/presence/" + id, {
+        t: at,
+        v: 2,
+        personastate: 1,
+        gameid: "440",
+        gameName: "Team Fortress 2",
+      });
+    }
+    const captured = response();
+
+    await servePresenceRead(
+      request("Bearer secret", {
+        from: from.toISOString(),
+        through: through.toISOString(),
+        position: first.toISOString(),
+      }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect((captured.body as { transitions: Array<{ t: string }> }).transitions.map((item) => item.t))
+      .toEqual([second.toISOString()]);
+  });
+
+  it("returns only the nearest raw predecessor on a historical first page", async () => {
+    const firestore = new FakeFirestore();
+    const through = new Date(Date.now() - 60_000);
+    const from = new Date(through.getTime() - 3 * 60_000);
+    const older = new Date(from.getTime() - 2 * 60_000);
+    const predecessorAt = new Date(from.getTime() - 30_000);
+    firestore.seed("players/" + steamId + "/presence/older", {
+      t: older,
+      v: 2,
+      personastate: 0,
+      gameid: null,
+      gameName: null,
+    });
+    firestore.seed("players/" + steamId + "/presence/predecessor", {
+      t: predecessorAt,
+      v: 2,
+      prevLastObservedAt: new Date(predecessorAt.getTime() - 60_000),
+      prevCoverageLapseFrom: new Date(predecessorAt.getTime() - 30_000),
+      prevCoverageLapseRecoveredAt: new Date(predecessorAt.getTime() - 10_000),
+      personastate: 1,
+      gameid: "440",
+      gameName: "Team Fortress 2",
+    });
+    firestore.seed("players/" + steamId + "/presence/at-start", {
+      t: from,
+      v: 2,
+      personastate: 0,
+      gameid: null,
+      gameName: null,
+    });
+    const captured = response();
+
+    await servePresenceRead(
+      request("Bearer secret", { from: from.toISOString(), through: through.toISOString() }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect(captured.statusCode).toBe(200);
+    expect(captured.body).toMatchObject({
+      predecessor: {
+        t: predecessorAt.toISOString(),
+        prevLastObservedAt: new Date(predecessorAt.getTime() - 60_000).toISOString(),
+        prevCoverageLapseFrom: new Date(predecessorAt.getTime() - 30_000).toISOString(),
+        prevCoverageLapseRecoveredAt: new Date(predecessorAt.getTime() - 10_000).toISOString(),
+      },
+      transitions: [{ t: from.toISOString() }],
+    });
+    expect(firestore.readCount).toBe(3);
+  });
+
+  it("does not repeat the predecessor lookup on a historical continuation page", async () => {
+    const firestore = new FakeFirestore();
+    const through = new Date(Date.now() - 60_000);
+    const from = new Date(through.getTime() - 3 * 60_000);
+    const position = new Date(from.getTime() + 60_000);
+    const captured = response();
+
+    await servePresenceRead(
+      request("Bearer secret", {
+        from: from.toISOString(),
+        through: through.toISOString(),
+        position: position.toISOString(),
+      }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect(captured.statusCode).toBe(200);
+    expect(captured.body).not.toHaveProperty("predecessor");
+    expect(firestore.readCount).toBe(2);
+  });
+
+  it("uses an in-range terminal current snapshot as the historical evidence end", async () => {
+    const firestore = new FakeFirestore();
+    const through = new Date(Date.now() - 60_000);
+    const from = new Date(through.getTime() - 3 * 60_000);
+    const observedAt = new Date(through.getTime() - 30_000);
+    const since = new Date(from.getTime() - 30_000);
+    firestore.seed("players/" + steamId, {
+      since,
+      lastObservedAt: observedAt,
+      personastate: 1,
+      gameid: "440",
+      gameName: "Team Fortress 2",
+    });
+    const captured = response();
+
+    await servePresenceRead(
+      request("Bearer secret", { from: from.toISOString(), through: through.toISOString() }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect(captured.body).toMatchObject({
+      current: { since: since.toISOString(), lastObservedAt: observedAt.toISOString() },
+      windowStart: from.toISOString(),
+      windowEnd: observedAt.toISOString(),
+      predecessor: null,
+    });
+  });
+
+  it("does not let current-only evidence beyond the fixed end extend an empty page", async () => {
+    const firestore = new FakeFirestore();
+    const through = new Date(Date.now() - 120_000);
+    const from = new Date(through.getTime() - 3 * 60_000);
+    const afterThrough = new Date(through.getTime() + 1);
+    firestore.seed("players/" + steamId, {
+      since: from,
+      lastObservedAt: afterThrough,
+      personastate: 1,
+      gameid: "440",
+      gameName: "Team Fortress 2",
+    });
+    const captured = response();
+
+    await servePresenceRead(
+      request("Bearer secret", { from: from.toISOString(), through: through.toISOString() }),
+      captured,
+      "secret",
+      steamId,
+      firestore,
+    );
+
+    expect(captured.body).toMatchObject({
+      current: null,
+      windowStart: from.toISOString(),
+      windowEnd: from.toISOString(),
+      predecessor: null,
+    });
   });
 
   it("returns a recent bounded window, current state, account, and raw coverage fields", async () => {

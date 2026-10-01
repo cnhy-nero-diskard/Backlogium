@@ -8,8 +8,10 @@ The app is built for day-to-day personal use: connect a Steam account, sync the
 library, review HowLongToBeat matches, organize custom collections, inspect
 analytics, mark Focus games, import pre-install Steam history once, and keep a
 local backup. An independent presence poller records server-side observations to
-Firestore while the phone is asleep; the app itself does not read that data yet,
-and works entirely without it. An OBS overlay remains a roadmap item.
+Firestore while the phone is asleep. Settings can explicitly acquire a bounded,
+user-selected range through an authenticated reader; ordinary cloud reads still
+start with only the recent 31 days. The app works without cloud presence, and an
+OBS overlay remains a roadmap item.
 
 ## Status snapshot — 2026-08-31
 
@@ -38,7 +40,7 @@ resolved matches can be exported as privacy-disclosed contributions to grow shar
 | Offline Steam assets | A manually triggered, one-time asset download (game icons / headers / hero art, profile avatar, achievement icons) stored in app-private storage with an integrity-checked manifest; it never chains off sync or any schedule. |
 | Sync write integrity | A poll's raw persistence (sessions, playtime baselines, daily progress, profile fields) commits as one atomic unit; concurrent polls re-read baselines at commit so an increase is never double-counted; the sync writes only Steam-owned game/profile columns, never app-owned ones; rule-config changes are versioned and compared at commit so derived values can't persist under superseded rules. |
 | Achievement sync | Tiered hot/warm/cold/never selection is merged. Normal sync is bounded; cold-tier reconciliation runs weekly on charging + unmetered network or from the forced Settings action. Reconciliation and the sync's in-line refresh are serialized against each other, and achievements Steam stops returning are tombstoned rather than deleted or left to drift. |
-| Cloud presence | The one-minute Firebase Admin writer and Firestore transition log are implemented. The Android app and OBS do not consume that log yet; client access is denied by the current Firestore rules. |
+| Cloud presence | The one-minute Firebase Admin writer and authenticated bounded reader are implemented. Android can explicitly acquire and re-file a confirmed historical range; Firestore rules still deny direct client reads, and OBS does not consume the log. |
 | Diagnostics & haptics | Sync run records, per-request timing, presence decisions, and rolling request counters (24h / 30d / 365d, surviving run pruning) are recorded and readable in release builds. A single haptics authority owns every platform haptic on the earned/committed moments. Library density/visual and per-list sort-direction refinements shipped. |
 | Verification | Kotlin/JVM tests, Android unit tests, instrumentation tests, compile checks, and function builds are available, including legacy and structured release-note presentation tests. Four hardware-dependent achievement-sync checks remain tracked in [#52](https://github.com/cnhy-nero-diskard/Backlogium/issues/52). |
 
@@ -79,8 +81,16 @@ resolved matches can be exported as privacy-disclosed contributions to grow shar
 - Fully local Room/DataStore persistence. Steam credentials are encrypted at rest
   with an Android Keystore-backed key.
 - A scheduled Cloud Function polling Steam presence every minute and appending game
-  transitions to Firestore, independent of whether the phone is running. Nothing
-  reads that log yet — see [`functions/README.md`](functions/README.md).
+  transitions to Firestore, plus an authenticated reader. Android's ordinary
+  positionless first reads remain limited to 31 days; historical acquisition is
+  explicit, fixed-end, resumable in bounded user-started batches, and cannot be
+  applied until complete. The confirmed re-file can re-date existing sessions and
+  transfer eligible pre-cutoff minutes from an already-imported owned-game
+  balance into dated History sessions. Original v1 transition-only logs use
+  closed game-start/change spans as estimated timing; newer logs retain
+  coverage and gap checks. It does not invent playtime or
+  change combined credited minutes, XP, levels, or Steam totals. See
+  [`functions/README.md`](functions/README.md).
 
 ## Stack
 
@@ -92,9 +102,9 @@ resolved matches can be exported as privacy-disclosed contributions to grow shar
 - **Extra data:** shared HowLongToBeat completion times, with explicit per-game lookup for gaps,
   used to taper playtime XP
 - **Cloud:** Firebase Cloud Functions (Node/TypeScript) on a one-minute schedule,
-  writing a presence log to Firestore in `asia-southeast1`
-- **Not implemented yet:** app-side backfill from the presence log and an OBS
-  Browser Source overlay
+  writing a presence log to Firestore in `asia-southeast1`; an authenticated bounded
+  reader serves metadata and explicitly requested transition pages
+- **Still planned:** OBS Browser Source overlay
 
 ## Architecture
 
@@ -103,20 +113,24 @@ Steam Web API ------------------------\
 GitHub Releases -> shared HLTB dataset ---> Android app (Compose + repositories + Room/DataStore)
 HowLongToBeat -> named-game lookup ---/     |-> WorkManager sync, dataset import, genre enrichment,
                                             |   reconciliation, local backup/restore, gamification
-                                            \-> planned: app-side backfill from the presence log below
+                                             \-> Settings: authenticated, bounded presence reader
 
 Steam Web API ----> Cloud Function (1/min) -> Firestore presence log
                                               \-> planned OBS browser overlay
 ```
 
-The app runs on-device: it pulls from the Steam Web API, applies a shared HowLongToBeat dataset,
-stores data locally, and computes XP locally. Direct HowLongToBeat requests happen only for a game
-the user explicitly names. The app does not depend on the cloud for anything.
+The core app loop runs on-device: it pulls from the Steam Web API, applies a shared HowLongToBeat
+dataset, stores data locally, and computes XP locally. Direct HowLongToBeat requests happen only
+for a game the user explicitly names. The optional historical presence action uses the authenticated
+reader; the rest of the app remains usable without it.
 
-The Cloud Function is a separate, independent writer. It records presence
-observations only — never sessions, playtime, or XP — so that the on-device engine
-remains the single author of derived values. Nothing consumes its output yet; the
-app-side backfill and the browser-source overlay are future work.
+The Cloud Function is a separate, independent writer and reader. The writer records
+presence observations only — never sessions, playtime, or XP. Android reads raw
+transitions only through the authenticated endpoint; a complete, explicitly
+confirmed re-file may use that timing evidence to re-date existing sessions or
+transfer eligible minutes from an already-imported Steam balance. Partial history
+is never applied, and an ordinary first read never drains the retained log. The
+OBS browser-source overlay remains future work.
 
 For the source-oriented view of the layers, data stores, workers, and external
 boundaries, see the [ASCII architecture map](docs/architecture-map.md).
@@ -314,13 +328,14 @@ alongside it, recording observations the phone cannot observe.
 
 Remaining roadmap items:
 
-- App-side backfill: read the Firestore presence log and fill in sessions missed
-  while the phone was asleep or killed. Requires deciding how the app authenticates,
-  since Firestore rules currently deny all client access.
 - Static OBS Browser Source overlay backed by the `players/{steamId}` document.
 - Overlay polish for quest completions, streak milestones, and level-ups.
 - Close the four device-dependent achievement-sync checks tracked in
   [#52](https://github.com/cnhy-nero-diskard/Backlogium/issues/52).
+
+Cloud timing is not a guarantee of continuous observation or a complete recovery
+of every pre-install minute. Historical acquisition is opt-in and bounded per
+batch; only a separate confirmation after full acquisition can apply it.
 
 ## Security Notes
 

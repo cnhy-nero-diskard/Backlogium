@@ -5,6 +5,7 @@ import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.domain.PlaytimeBackfillUseCase
+import com.example.backlogium.domain.PlaytimeBackfillResetResult
 import com.example.backlogium.work.SyncScheduler
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -82,7 +83,7 @@ class ProfileRepository @Inject constructor(
      * Undo a prior history import: clears the frozen offsets and the flag, then recomputes so
      * the import can be offered again. Leaves tracked sessions and streaks intact.
      */
-    suspend fun resetSteamHistoryImport() = playtimeBackfill.reset()
+    suspend fun resetSteamHistoryImport(): PlaytimeBackfillResetResult = playtimeBackfill.reset()
 }
 
 private fun PlayerProfile.toDomain() = PlayerStats(

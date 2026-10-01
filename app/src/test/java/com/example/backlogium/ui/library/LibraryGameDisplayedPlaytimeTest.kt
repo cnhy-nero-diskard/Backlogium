@@ -24,6 +24,17 @@ class LibraryGameDisplayedPlaytimeTest {
     }
 
     @Test
+    fun ownedLibraryAndCollectionPlaytimeStayAtSteamsTotalAfterReclassification() {
+        val game = game(GameSource.STEAM_OWNED, playtimeForever = 120)
+
+        val beforeTransfer = game.displayedPlaytimeMinutes(xp(trackedMinutes = 0))
+        val afterTransfer = game.displayedPlaytimeMinutes(xp(trackedMinutes = 120))
+
+        assertEquals(120, beforeTransfer)
+        assertEquals(beforeTransfer, afterTransfer)
+    }
+
+    @Test
     fun sharedGameShowsTrackedMinutesWhenNoManualEstimate() {
         val game = game(GameSource.FAMILY_SHARED, manualSharedMinutes = 0)
 

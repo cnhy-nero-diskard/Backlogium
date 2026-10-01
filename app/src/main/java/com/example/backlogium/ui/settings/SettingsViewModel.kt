@@ -10,6 +10,7 @@ import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.backup.BackupValidationProblem
 import com.example.backlogium.data.backup.ParsedBackup
 import com.example.backlogium.data.backup.SnapshotMeta
+import com.example.backlogium.data.local.entity.CloudHistoricalOperation
 import com.example.backlogium.data.credentials.maskApiKey
 import com.example.backlogium.data.hltb.HltbContributionExporter
 import com.example.backlogium.data.hltb.HltbContributionPreparation
@@ -21,7 +22,11 @@ import com.example.backlogium.data.repo.CloudRoutinePolicy
 import com.example.backlogium.data.repo.CloudRoutineState
 import com.example.backlogium.data.repo.CloudReadSummary
 import com.example.backlogium.data.repo.CloudPresenceSessionIngestor
-import com.example.backlogium.data.repo.CloudReadTrigger
+import com.example.backlogium.data.repo.CloudPresenceRangeLookupResult
+import com.example.backlogium.data.repo.CloudPresenceRefilingReceipt
+import com.example.backlogium.data.repo.CloudHistoricalBatchResult
+import com.example.backlogium.data.repo.CloudHistoricalStartResult
+import com.example.backlogium.data.repo.CloudHistoricalApplyGuardResult
 import com.example.backlogium.data.repo.CloudReadFailure
 import com.example.backlogium.data.repo.CloudReadResult
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
@@ -44,6 +49,9 @@ import com.example.backlogium.data.updates.UpdateCheckResult
 import com.example.backlogium.domain.CloudPresencePlaytimeRefilingUseCase
 import com.example.backlogium.domain.CloudPresenceRefilingOperation
 import com.example.backlogium.domain.CloudPresenceRefilingResult
+import com.example.backlogium.domain.CloudPresenceHistoricalStartChoice
+import com.example.backlogium.domain.PlaytimeBackfillResetResult
+import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.UpdateRuleConfigUseCase
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
@@ -69,6 +77,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
+import java.time.LocalDateTime
 import javax.inject.Inject
 
 /**
@@ -159,6 +169,18 @@ private fun CloudReadFailure.settingsMessage(): SettingsText = when (this) {
 internal fun CloudPresenceRefilingResult.toSettingsActionFeedback(): SettingsActionFeedback =
     SettingsActionFeedback.success(toSettingsText())
 
+private fun CloudHistoricalOperation.matches(
+    confirmation: CloudHistoricalRefilingConfirmation,
+): Boolean = account == confirmation.metadata.account &&
+    readerGeneration == confirmation.metadata.readerGeneration &&
+    endpointIdentity == confirmation.metadata.endpointIdentity &&
+    selectedStartAt == confirmation.selection.selectedStartAt &&
+    fromAt == confirmation.selection.effectiveStartAt &&
+    throughAt == confirmation.selection.throughAt &&
+    startChoice == confirmation.selection.choice.name &&
+    zoneId == confirmation.selection.zoneId &&
+    confirmedCutoffAt == confirmation.confirmedCutoffAt
+
 private fun CloudPresenceRefilingResult.toSettingsText(): SettingsText = when (operation) {
     CloudPresenceRefilingOperation.APPLIED -> SettingsText(
         R.string.settings_cloud_refiling_applied,
@@ -216,6 +238,9 @@ data class SettingsUiState(
     val cloudPresenceRefilingBusy: Boolean = false,
     val cloudPresenceRefilingMessage: SettingsText? = null,
     val cloudPresenceRefilingMessageSeverity: SettingsResultSeverity? = null,
+    val cloudPresenceTransferApplied: Boolean = false,
+    val cloudPresenceRefilingReceipt: CloudPresenceRefilingReceipt? = null,
+    val cloudHistoricalRangeControls: CloudHistoricalRangeControls = CloudHistoricalRangeControls(),
     val lastSyncAt: Long = 0L,
     val lastSyncError: String? = null,
     val isSyncing: Boolean = false,
@@ -320,6 +345,7 @@ class SettingsViewModel @Inject constructor(
     private val cloudPresence: CloudPresenceRepository,
     private val cloudPresenceIngestor: CloudPresenceSessionIngestor,
     private val cloudPresenceRefiling: CloudPresencePlaytimeRefilingUseCase,
+    private val time: TimeProvider,
 ) : ViewModel() {
 
     // Null until the user touches something: the draft then tracks the edit rather than being
@@ -353,6 +379,7 @@ class SettingsViewModel @Inject constructor(
     private val cloudMessage = MutableStateFlow<SettingsActionFeedback?>(null)
     private val cloudRefilingBusy = MutableStateFlow(false)
     private val cloudRefilingMessage = MutableStateFlow<SettingsActionFeedback?>(null)
+    private val cloudHistoricalRangeControls = MutableStateFlow(CloudHistoricalRangeControls())
     // The account detail can be disposed by Back while WorkManager keeps syncing, so attribution
     // belongs to this graph-scoped state holder rather than the detail composable.
     private val manualSyncFeedback = ManualSyncFeedbackTracker()
@@ -369,6 +396,25 @@ class SettingsViewModel @Inject constructor(
     init {
         refreshSnapshots()
         viewModelScope.launch { cloudPresence.refreshConfiguration() }
+        viewModelScope.launch {
+            cloudPresence.currentHistoricalOperation()?.let { operation ->
+                cloudHistoricalRangeControls.update {
+                    it.copy(
+                        operation = operation,
+                        acquisitionStatus = operation.toSettingsAcquisitionStatus(),
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            profileRepository.profile.collect { profile ->
+                if (profile != null && !profile.playtimeBackfilled) {
+                    cloudHistoricalRangeControls.update {
+                        it.copy(transferPreDataPlay = false, cutoffLocalDateTime = null)
+                    }
+                }
+            }
+        }
         viewModelScope.launch {
             combine(profileRepository.syncInProgress, profileRepository.profile) { syncing, profile ->
                 syncing to profile?.lastSyncError
@@ -431,6 +477,14 @@ class SettingsViewModel @Inject constructor(
         state.copy(liveMonitorEnabled = monitorEnabled)
     }.combine(settings.cloudPresenceRefilingApplied) { state, applied ->
         state.copy(cloudPresenceRefilingApplied = applied)
+    }.combine(settings.cloudPresenceRefilingReceipt) { state, receipt ->
+        state.copy(cloudPresenceRefilingReceipt = receipt)
+    }.combine(
+        combine(settings.cloudPresenceRefilingApplied, settings.cloudPresenceRefilingReceipt) { applied, receipt ->
+            applied && receipt?.transferredMinutesByAppId?.any { it.minutes > 0 } == true
+        },
+    ) { state, transferApplied ->
+        state.copy(cloudPresenceTransferApplied = transferApplied)
     }.combine(syncScheduler.genreEnrichmentStatus) { state, genreStatus ->
         state.copy(genreEnrichmentStatus = genreStatus)
     }.combine(profileRepository.reconciliationInProgress) { state, reconciling ->
@@ -576,6 +630,15 @@ class SettingsViewModel @Inject constructor(
             cloudPresenceRefilingMessage = local.second?.message,
             cloudPresenceRefilingMessageSeverity = local.second?.severity,
         )
+    }.combine(cloudHistoricalRangeControls) { state, controls ->
+        state.copy(
+            cloudHistoricalRangeControls = resolveCloudHistoricalRangeControls(
+                controls = controls,
+                historyImported = state.historyImported,
+                nowAt = time.nowMillis(),
+                zone = time.zone(),
+            ),
+        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -632,6 +695,80 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /** Explicitly refresh the authenticated range bound; this never drains transition pages. */
+    fun refreshCloudHistoricalRange() {
+        if (cloudBusy.value || cloudRefilingBusy.value || uiState.value.cloudPresenceRefilingApplied) return
+        viewModelScope.launch {
+            cloudHistoricalRangeControls.update {
+                it.copy(
+                    lookupStatus = CloudHistoricalRangeLookupStatus.LOADING,
+                    metadata = null,
+                    lookupFailure = null,
+                )
+            }
+            // A local configuration check avoids even issuing the metadata HTTP request when
+            // the reader has not been configured. The lookup itself repeats this guard.
+            if (cloudPresence.configuration.first() == null) {
+                cloudHistoricalRangeControls.update {
+                    it.copy(lookupStatus = CloudHistoricalRangeLookupStatus.UNCONFIGURED)
+                }
+                return@launch
+            }
+            val refreshed = when (val result = cloudPresence.lookupRangeMetadata()) {
+                CloudPresenceRangeLookupResult.Unconfigured ->
+                    cloudHistoricalRangeControls.value.copy(
+                        lookupStatus = CloudHistoricalRangeLookupStatus.UNCONFIGURED,
+                        metadata = null,
+                    )
+                CloudPresenceRangeLookupResult.NoSteamAccount ->
+                    cloudHistoricalRangeControls.value.copy(
+                        lookupStatus = CloudHistoricalRangeLookupStatus.NO_STEAM_ACCOUNT,
+                        metadata = null,
+                    )
+                is CloudPresenceRangeLookupResult.Failed ->
+                    cloudHistoricalRangeControls.value.copy(
+                        lookupStatus = CloudHistoricalRangeLookupStatus.FAILED,
+                        metadata = null,
+                        lookupFailure = result.failure,
+                    )
+                is CloudPresenceRangeLookupResult.Success ->
+                    cloudHistoricalRangeControls.value.copy(
+                        lookupStatus = if (result.metadata.earliestObservedAt == null) {
+                            CloudHistoricalRangeLookupStatus.EMPTY
+                        } else {
+                            CloudHistoricalRangeLookupStatus.AVAILABLE
+                        },
+                        metadata = result.metadata,
+                        lookupFailure = null,
+                    )
+            }
+            cloudHistoricalRangeControls.value = refreshed
+        }
+    }
+
+    fun setCloudHistoricalStartChoice(choice: CloudPresenceHistoricalStartChoice) {
+        cloudHistoricalRangeControls.update { it.copy(startChoice = choice) }
+    }
+
+    fun setCloudHistoricalStartDate(date: LocalDate?) {
+        cloudHistoricalRangeControls.update { it.copy(customStartDate = date) }
+    }
+
+    fun setCloudHistoricalTransfer(enabled: Boolean) {
+        if (enabled && !uiState.value.historyImported) return
+        cloudHistoricalRangeControls.update {
+            it.copy(
+                transferPreDataPlay = enabled,
+                cutoffLocalDateTime = if (enabled) it.cutoffLocalDateTime else null,
+            )
+        }
+    }
+
+    fun setCloudHistoricalCutoff(cutoff: LocalDateTime?) {
+        if (!uiState.value.historyImported || !cloudHistoricalRangeControls.value.transferPreDataPlay) return
+        cloudHistoricalRangeControls.update { it.copy(cutoffLocalDateTime = cutoff) }
+    }
+
     fun removeCloudPresence() {
         if (cloudBusy.value || cloudRefilingBusy.value) return
         viewModelScope.launch {
@@ -642,6 +779,13 @@ class SettingsViewModel @Inject constructor(
                     failureMessage = SettingsText(R.string.settings_cloud_feedback_remove_failed),
                 ) {
                     cloudPresence.removeConfiguration()
+                    cloudHistoricalRangeControls.update {
+                        it.copy(
+                            operation = null,
+                            pendingConfirmation = null,
+                            acquisitionStatus = CloudHistoricalAcquisitionStatus.IDLE,
+                        )
+                    }
                     SettingsActionFeedback.success(SettingsText(R.string.settings_cloud_feedback_removed))
                 }
             } finally {
@@ -651,35 +795,103 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun refileCloudPresence() {
-        if (cloudBusy.value || cloudRefilingBusy.value) return
+        if (cloudBusy.value || cloudRefilingBusy.value || uiState.value.cloudPresenceRefilingApplied) return
+        val current = cloudHistoricalRangeControls.value
+        if (current.pendingConfirmation != null || current.operation != null) return
+        val selected = resolveCloudHistoricalRangeControls(
+            controls = current,
+            historyImported = uiState.value.historyImported,
+            nowAt = time.nowMillis(),
+            zone = time.zone(),
+        )
+        if (selected.selection == null) return
+        if (selected.transferPreDataPlay &&
+            selected.cutoffResolution !is com.example.backlogium.domain.CloudPresencePreDataCutoffResolution.Confirmed
+        ) return
+
         viewModelScope.launch {
             cloudBusy.value = true
             cloudRefilingBusy.value = true
             cloudMessage.value = null
             cloudRefilingMessage.value = null
             try {
-                cloudRefilingMessage.value = settingsCloudActionFeedback(
-                    failureMessage = SettingsText(R.string.settings_cloud_feedback_refile_failed),
-                ) {
-                    when (val read = cloudPresence.readCompleteHistory(
-                        trigger = CloudReadTrigger.SETTINGS_MANUAL,
-                        consume = cloudPresenceIngestor::ingest,
-                    )) {
-                        CloudReadResult.Unconfigured ->
-                            SettingsActionFeedback.error(SettingsText(R.string.settings_cloud_feedback_configure_first))
-                        CloudReadResult.NoSteamAccount ->
-                            SettingsActionFeedback.error(SettingsText(R.string.settings_cloud_feedback_read_account_required))
-                        is CloudReadResult.Failed ->
-                            SettingsActionFeedback.error(read.failure.settingsMessage())
-                        is CloudReadResult.Success -> {
-                            val result = cloudPresenceRefiling.apply(read.snapshot.intervals)
-                            if (result.operation == CloudPresenceRefilingOperation.APPLIED) {
-                                _hapticIntents.tryEmit(HapticIntent.Confirm)
+                when (val refreshed = cloudPresence.lookupRangeMetadata()) {
+                    CloudPresenceRangeLookupResult.Unconfigured -> {
+                        cloudHistoricalRangeControls.update {
+                            it.copy(lookupStatus = CloudHistoricalRangeLookupStatus.UNCONFIGURED, metadata = null)
+                        }
+                        cloudRefilingMessage.value = SettingsActionFeedback.error(
+                            SettingsText(R.string.settings_cloud_feedback_configure_first),
+                        )
+                    }
+                    CloudPresenceRangeLookupResult.NoSteamAccount -> {
+                        cloudHistoricalRangeControls.update {
+                            it.copy(lookupStatus = CloudHistoricalRangeLookupStatus.NO_STEAM_ACCOUNT, metadata = null)
+                        }
+                        cloudRefilingMessage.value = SettingsActionFeedback.error(
+                            SettingsText(R.string.settings_cloud_feedback_read_account_required),
+                        )
+                    }
+                    is CloudPresenceRangeLookupResult.Failed -> {
+                        cloudHistoricalRangeControls.update {
+                            it.copy(
+                                lookupStatus = CloudHistoricalRangeLookupStatus.FAILED,
+                                metadata = null,
+                                lookupFailure = refreshed.failure,
+                            )
+                        }
+                        cloudRefilingMessage.value = SettingsActionFeedback.error(refreshed.failure.settingsMessage())
+                    }
+                    is CloudPresenceRangeLookupResult.Success -> {
+                        val updated = resolveCloudHistoricalRangeControls(
+                            controls = selected.copy(
+                                lookupStatus = if (refreshed.metadata.earliestObservedAt == null) {
+                                    CloudHistoricalRangeLookupStatus.EMPTY
+                                } else {
+                                    CloudHistoricalRangeLookupStatus.AVAILABLE
+                                },
+                                metadata = refreshed.metadata,
+                                pendingConfirmation = null,
+                            ),
+                            historyImported = uiState.value.historyImported,
+                            nowAt = time.nowMillis(),
+                            zone = time.zone(),
+                        )
+                        cloudHistoricalRangeControls.value = updated
+                        val refreshedSelection = updated.selection
+                        val cutoff = (updated.cutoffResolution as? com.example.backlogium.domain.CloudPresencePreDataCutoffResolution.Confirmed)
+                            ?.cutoffAt
+                        if (refreshedSelection == null ||
+                            (updated.transferPreDataPlay && cutoff == null)
+                        ) {
+                            cloudRefilingMessage.value = SettingsActionFeedback.error(
+                                SettingsText(R.string.settings_cloud_range_selection_changed),
+                            )
+                        } else {
+                            val ceiling = if (updated.transferPreDataPlay) {
+                                cloudPresenceRefiling.currentImportedBalanceCeiling()
+                            } else {
+                                emptyList()
                             }
-                            result.toSettingsActionFeedback()
+                            cloudHistoricalRangeControls.update {
+                                it.copy(
+                                    pendingConfirmation = CloudHistoricalRefilingConfirmation(
+                                        metadata = refreshed.metadata,
+                                        selection = refreshedSelection,
+                                        confirmedCutoffAt = cutoff,
+                                        importedBalanceCeiling = ceiling,
+                                    ),
+                                )
+                            }
                         }
                     }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                cloudRefilingMessage.value = SettingsActionFeedback.error(
+                    SettingsText(R.string.settings_cloud_feedback_refile_failed),
+                )
             } finally {
                 cloudBusy.value = false
                 cloudRefilingBusy.value = false
@@ -687,8 +899,280 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun cancelCloudPresenceRefilingConfirmation() {
+        cloudHistoricalRangeControls.update { it.copy(pendingConfirmation = null) }
+    }
+
+    fun confirmCloudPresenceRefiling() {
+        if (cloudBusy.value || cloudRefilingBusy.value || uiState.value.cloudPresenceRefilingApplied) return
+        val confirmation = cloudHistoricalRangeControls.value.pendingConfirmation ?: return
+        cloudBusy.value = true
+        cloudRefilingBusy.value = true
+        cloudRefilingMessage.value = null
+        cloudHistoricalRangeControls.update {
+            it.copy(
+                pendingConfirmation = null,
+                acquisitionStatus = CloudHistoricalAcquisitionStatus.STARTING,
+                acquisitionFailure = null,
+                lastBatchPages = 0,
+                lastBatchTransitions = 0,
+            )
+        }
+        viewModelScope.launch {
+            try {
+                runAfterCloudHistoricalConfirmation(confirmation) { confirmed ->
+                    when (val started = cloudPresence.beginHistoricalAcquisition(
+                        selectedStartAt = confirmed.selection.selectedStartAt,
+                        effectiveStartAt = confirmed.selection.effectiveStartAt,
+                        metadata = confirmed.metadata,
+                        startChoice = confirmed.selection.choice.name,
+                        zoneId = confirmed.selection.zoneId,
+                        confirmedCutoffAt = confirmed.confirmedCutoffAt,
+                    )) {
+                        is CloudHistoricalStartResult.Started -> {
+                            cloudHistoricalRangeControls.update { it.copy(operation = started.operation) }
+                            acquireCloudHistoricalBatch(started.operation.operationId)
+                        }
+                        is CloudHistoricalStartResult.Existing -> {
+                            val operation = started.operation
+                            cloudHistoricalRangeControls.update {
+                                it.copy(
+                                    operation = operation,
+                                    acquisitionStatus = operation.toSettingsAcquisitionStatus(),
+                                )
+                            }
+                            if (operation.matches(confirmed)) {
+                                acquireCloudHistoricalBatch(operation.operationId)
+                            } else {
+                                cloudRefilingMessage.value = SettingsActionFeedback.error(
+                                    SettingsText(R.string.settings_cloud_range_existing_operation),
+                                )
+                            }
+                        }
+                        is CloudHistoricalStartResult.Failed -> {
+                            cloudHistoricalRangeControls.update {
+                                it.copy(
+                                    acquisitionStatus = CloudHistoricalAcquisitionStatus.FAILED,
+                                    acquisitionFailure = started.failure,
+                                )
+                            }
+                            cloudRefilingMessage.value = SettingsActionFeedback.error(started.failure.settingsMessage())
+                        }
+                        CloudHistoricalStartResult.Unconfigured ->
+                            cloudRefilingMessage.value = SettingsActionFeedback.error(
+                                SettingsText(R.string.settings_cloud_feedback_configure_first),
+                            )
+                        CloudHistoricalStartResult.NoSteamAccount ->
+                            cloudRefilingMessage.value = SettingsActionFeedback.error(
+                                SettingsText(R.string.settings_cloud_feedback_read_account_required),
+                            )
+                        CloudHistoricalStartResult.NoAvailableRange ->
+                            cloudRefilingMessage.value = SettingsActionFeedback.error(
+                                SettingsText(R.string.settings_cloud_range_empty),
+                            )
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                cloudHistoricalRangeControls.update {
+                    it.copy(
+                        acquisitionStatus = if (it.operation?.acquisitionComplete == true) {
+                            CloudHistoricalAcquisitionStatus.APPLY_FAILED
+                        } else {
+                            CloudHistoricalAcquisitionStatus.FAILED
+                        },
+                    )
+                }
+                cloudRefilingMessage.value = SettingsActionFeedback.error(
+                    SettingsText(R.string.settings_cloud_feedback_refile_failed),
+                )
+            } finally {
+                cloudBusy.value = false
+                cloudRefilingBusy.value = false
+            }
+        }
+    }
+
+    fun changeCloudPresenceRefilingDates() {
+        if (cloudBusy.value || cloudRefilingBusy.value || uiState.value.cloudPresenceRefilingApplied) return
+        val operation = cloudHistoricalRangeControls.value.operation ?: return
+        cloudBusy.value = true
+        cloudRefilingBusy.value = true
+        viewModelScope.launch {
+            try {
+                if (cloudPresence.discardHistoricalAcquisition(operation.operationId)) {
+                    cloudHistoricalRangeControls.update {
+                        it.copy(
+                            operation = null,
+                            pendingConfirmation = null,
+                            acquisitionStatus = CloudHistoricalAcquisitionStatus.IDLE,
+                            acquisitionFailure = null,
+                            lastBatchPages = 0,
+                            lastBatchTransitions = 0,
+                        )
+                    }
+                    cloudRefilingMessage.value = null
+                } else {
+                    cloudRefilingMessage.value = SettingsActionFeedback.error(
+                        SettingsText(R.string.settings_cloud_range_discard_failed),
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                cloudRefilingMessage.value = SettingsActionFeedback.error(
+                    SettingsText(R.string.settings_cloud_range_discard_failed),
+                )
+            } finally {
+                cloudBusy.value = false
+                cloudRefilingBusy.value = false
+            }
+        }
+    }
+
+    fun continueCloudPresenceRefiling() {
+        if (cloudBusy.value || cloudRefilingBusy.value || uiState.value.cloudPresenceRefilingApplied) return
+        val operation = cloudHistoricalRangeControls.value.operation ?: return
+        viewModelScope.launch {
+            cloudBusy.value = true
+            cloudRefilingBusy.value = true
+            cloudRefilingMessage.value = null
+            try {
+                if (operation.acquisitionComplete) {
+                    applyCompletedCloudHistoricalOperation(operation)
+                } else {
+                    acquireCloudHistoricalBatch(operation.operationId)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                cloudHistoricalRangeControls.update {
+                    it.copy(
+                        acquisitionStatus = if (it.operation?.acquisitionComplete == true) {
+                            CloudHistoricalAcquisitionStatus.APPLY_FAILED
+                        } else {
+                            CloudHistoricalAcquisitionStatus.FAILED
+                        },
+                    )
+                }
+                cloudRefilingMessage.value = SettingsActionFeedback.error(
+                    SettingsText(R.string.settings_cloud_feedback_refile_failed),
+                )
+            } finally {
+                cloudBusy.value = false
+                cloudRefilingBusy.value = false
+            }
+        }
+    }
+
+    private suspend fun acquireCloudHistoricalBatch(operationId: String) {
+        cloudHistoricalRangeControls.update {
+            it.copy(acquisitionStatus = CloudHistoricalAcquisitionStatus.RUNNING, acquisitionFailure = null)
+        }
+        when (val result = cloudPresence.acquireHistoricalBatch(
+            operationId = operationId,
+            consume = cloudPresenceIngestor::ingestHistorical,
+            onProgress = { operation, pages, transitions ->
+                cloudHistoricalRangeControls.update {
+                    it.copy(
+                        operation = operation,
+                        acquisitionStatus = CloudHistoricalAcquisitionStatus.RUNNING,
+                        lastBatchPages = pages,
+                        lastBatchTransitions = transitions,
+                    )
+                }
+            },
+        )) {
+            is CloudHistoricalBatchResult.Partial -> cloudHistoricalRangeControls.update {
+                it.copy(
+                    operation = result.operation,
+                    acquisitionStatus = CloudHistoricalAcquisitionStatus.PARTIAL,
+                    lastBatchPages = result.pagesFetched,
+                    lastBatchTransitions = result.transitionsFetched,
+                    acquisitionFailure = null,
+                )
+            }
+            is CloudHistoricalBatchResult.Failed -> {
+                cloudHistoricalRangeControls.update {
+                    it.copy(
+                        operation = result.operation ?: it.operation,
+                        acquisitionStatus = CloudHistoricalAcquisitionStatus.FAILED,
+                        lastBatchPages = result.pagesFetched,
+                        lastBatchTransitions = result.transitionsFetched,
+                        acquisitionFailure = result.failure,
+                    )
+                }
+                cloudRefilingMessage.value = SettingsActionFeedback.error(result.failure.settingsMessage())
+            }
+            is CloudHistoricalBatchResult.Complete -> {
+                cloudHistoricalRangeControls.update {
+                    it.copy(
+                        operation = result.operation,
+                        acquisitionStatus = CloudHistoricalAcquisitionStatus.READY,
+                        lastBatchPages = result.pagesFetched,
+                        lastBatchTransitions = result.transitionsFetched,
+                    )
+                }
+                applyCompletedCloudHistoricalOperation(result.operation)
+            }
+            CloudHistoricalBatchResult.OperationNotFound -> {
+                cloudHistoricalRangeControls.update {
+                    it.copy(operation = null, acquisitionStatus = CloudHistoricalAcquisitionStatus.FAILED)
+                }
+                cloudRefilingMessage.value = SettingsActionFeedback.error(
+                    SettingsText(R.string.settings_cloud_feedback_refile_failed),
+                )
+            }
+            CloudHistoricalBatchResult.Unconfigured -> {
+                cloudHistoricalRangeControls.update {
+                    it.copy(acquisitionStatus = CloudHistoricalAcquisitionStatus.FAILED)
+                }
+                cloudRefilingMessage.value = SettingsActionFeedback.error(
+                    SettingsText(R.string.settings_cloud_feedback_configure_first),
+                )
+            }
+            CloudHistoricalBatchResult.NoSteamAccount -> {
+                cloudHistoricalRangeControls.update {
+                    it.copy(acquisitionStatus = CloudHistoricalAcquisitionStatus.FAILED)
+                }
+                cloudRefilingMessage.value = SettingsActionFeedback.error(
+                    SettingsText(R.string.settings_cloud_feedback_read_account_required),
+                )
+            }
+        }
+    }
+
+    private suspend fun applyCompletedCloudHistoricalOperation(operation: CloudHistoricalOperation) {
+        cloudHistoricalRangeControls.update {
+            it.copy(operation = operation, acquisitionStatus = CloudHistoricalAcquisitionStatus.APPLYING)
+        }
+        val result = cloudPresenceRefiling.applyHistorical(operation) { apply ->
+            when (val guarded = cloudPresence.withCurrentHistoricalOperationForApply(
+                operation.operationId,
+                apply,
+            )) {
+                is CloudHistoricalApplyGuardResult.Ready -> guarded.value
+                CloudHistoricalApplyGuardResult.OperationNotFound,
+                CloudHistoricalApplyGuardResult.AcquisitionIncomplete,
+                CloudHistoricalApplyGuardResult.Unconfigured,
+                CloudHistoricalApplyGuardResult.NoSteamAccount,
+                CloudHistoricalApplyGuardResult.StaleIdentity,
+                -> error("Historical re-file is no longer valid for the active cloud reader")
+            }
+        }
+        cloudHistoricalRangeControls.update {
+            it.copy(acquisitionStatus = CloudHistoricalAcquisitionStatus.APPLIED)
+        }
+        if (result.operation == CloudPresenceRefilingOperation.APPLIED) {
+            _hapticIntents.tryEmit(HapticIntent.Confirm)
+        }
+        cloudRefilingMessage.value = result.toSettingsActionFeedback()
+    }
+
     fun reverseCloudPresenceRefiling() {
         if (cloudBusy.value || cloudRefilingBusy.value) return
+        val receipt = uiState.value.cloudPresenceRefilingReceipt
         viewModelScope.launch {
             cloudRefilingBusy.value = true
             cloudRefilingMessage.value = null
@@ -698,6 +1182,9 @@ class SettingsViewModel @Inject constructor(
                 ) {
                     val result = cloudPresenceRefiling.reverse()
                     if (result.operation == CloudPresenceRefilingOperation.REVERSED) {
+                        cloudHistoricalRangeControls.update {
+                            it.restoreAfterCloudHistoricalReversal(receipt)
+                        }
                         _hapticIntents.tryEmit(HapticIntent.Confirm)
                     }
                     result.toSettingsActionFeedback()
@@ -1005,7 +1492,11 @@ class SettingsViewModel @Inject constructor(
     fun importSteamHistory() = runHistoryOp { profileRepository.importSteamHistory() }
 
     /** Undo a prior import so it can be run again (recovery / opt-out). */
-    fun resetHistoryImport() = runHistoryOp { profileRepository.resetSteamHistoryImport() }
+    fun resetHistoryImport() = runHistoryOp {
+        if (profileRepository.resetSteamHistoryImport() == PlaytimeBackfillResetResult.BLOCKED_BY_CLOUD_TRANSFER) {
+            _toastMessages.tryEmit(SettingsText(R.string.settings_history_reset_cloud_refile_required))
+        }
+    }
 
     // Serialize import/reset behind one in-flight flag so the buttons show progress and
     // concurrent taps can't overlap.

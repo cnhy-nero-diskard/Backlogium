@@ -996,6 +996,9 @@ class CloudPresencePlacementReaderTest {
             endpoint: String,
             authorization: String,
             position: String?,
+            mode: String?,
+            from: String?,
+            through: String?,
         ): CloudPresenceResponseDto = answer(position)
     }
 

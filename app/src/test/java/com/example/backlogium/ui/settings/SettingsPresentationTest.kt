@@ -39,6 +39,14 @@ class SettingsPresentationTest {
     }
 
     @Test
+    fun steamHistoryResetIsDisabledOnlyWhileAnAppliedCloudTransferNeedsUndo() {
+        assertFalse(historyImportResetEnabled(imported = true, importing = false, cloudTransferApplied = true))
+        assertFalse(historyImportResetEnabled(imported = true, importing = true, cloudTransferApplied = false))
+        assertFalse(historyImportResetEnabled(imported = false, importing = false, cloudTransferApplied = false))
+        assertTrue(historyImportResetEnabled(imported = true, importing = false, cloudTransferApplied = false))
+    }
+
+    @Test
     fun accountSummaryCoversUnconfiguredFailedAndInProgressStates() {
         val unconfigured = settingsGroupSummaries(SettingsUiState(loading = false)).first()
         assertEquals(SettingsAttention.BLOCKING, unconfigured.attention)

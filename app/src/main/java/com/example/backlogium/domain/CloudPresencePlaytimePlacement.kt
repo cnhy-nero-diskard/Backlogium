@@ -201,7 +201,7 @@ object CloudPresencePlaytimePlacement {
         val observedEnd = when (coverage) {
             CloudCoverageState.CONTINUOUS -> rawEnd
             CloudCoverageState.OBSERVED_UNTIL -> observedUntil ?: return null
-            CloudCoverageState.UNKNOWN -> return null
+            CloudCoverageState.UNKNOWN, CloudCoverageState.LEGACY_TRANSITIONS -> return null
         }.coerceAtMost(rawEnd)
         val start = maxOf(startAt, periodStartAt)
         val end = minOf(observedEnd, periodEndAt)

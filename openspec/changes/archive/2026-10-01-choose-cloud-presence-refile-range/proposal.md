@@ -10,6 +10,8 @@ The historical re-file resets the read cursor but its first request still starts
 - Ask the player to confirm the end of their pre-Backlogium period; for Steam-owned games whose historical Steam playtime was already imported, create History sessions only for safely confirmed cloud-observed play **before** that cutoff, drawing each minute from that game's frozen imported balance. Reduce imported minutes by exactly the amount added as dated sessions; leave unobserved or unallocatable history imported and undated. The game detail's tracked/imported split changes, but Steam's total, the combined credited minutes, XP and levels do not.
 - Continue to re-date eligible already-recorded sessions inside the chosen range. Preserve one-time application, exact reversal of both re-dating and transfers, existing disclosures, account/reader fencing, coverage metadata, and Steam-owned pending evidence. Reversal is required before resetting the separate Steam-history import.
 
+- Support original v1 transition-only poller logs as closed, estimated game-start/change spans for explicitly confirmed pre-data imported-minute dating. Modern unknown coverage and recorded gaps remain excluded; ordinary reads and existing-session placement retain their coverage requirements.
+
 ## Capabilities
 
 ### New Capabilities

@@ -4,6 +4,10 @@ import com.example.backlogium.data.credentials.CloudCredentials
 import com.example.backlogium.data.credentials.CloudCredentialsStore
 import com.example.backlogium.data.credentials.maskCredential
 import com.example.backlogium.data.local.dao.CloudReadDao
+import com.example.backlogium.data.local.entity.CloudHistoricalBoundary
+import com.example.backlogium.data.local.entity.CloudHistoricalInterval
+import com.example.backlogium.data.local.entity.CloudHistoricalOperation
+import com.example.backlogium.data.local.entity.CloudHistoricalStates
 import com.example.backlogium.data.local.entity.CloudReadRecord
 import com.example.backlogium.data.remote.CloudPresenceApi
 import com.example.backlogium.data.remote.dto.CloudPresenceCurrentDto
@@ -17,6 +21,9 @@ import com.example.backlogium.domain.CloudReaderIdentity
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.work.CloudRoutineWorkCancellation
 import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -27,6 +34,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.yield
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -67,6 +75,89 @@ data class CloudPresenceConfiguration(
     val endpoint: String,
     val maskedToken: String,
 )
+
+data class CloudPresenceRangeMetadata(
+    val account: String,
+    val earliestObservedAt: Long?,
+    val current: CloudPresenceCurrentState?,
+    val readAt: Long,
+    val readerGeneration: Long? = null,
+    val endpointIdentity: String? = null,
+    val accountGeneration: Long? = null,
+)
+
+sealed interface CloudHistoricalStartResult {
+    data class Started(val operation: CloudHistoricalOperation) : CloudHistoricalStartResult
+    data class Existing(val operation: CloudHistoricalOperation) : CloudHistoricalStartResult
+    data class Failed(val failure: CloudReadFailure) : CloudHistoricalStartResult
+    data object Unconfigured : CloudHistoricalStartResult
+    data object NoSteamAccount : CloudHistoricalStartResult
+    data object NoAvailableRange : CloudHistoricalStartResult
+}
+
+sealed interface CloudHistoricalPageResult {
+    data class Success(
+        val operation: CloudHistoricalOperation,
+        val snapshot: CloudPresenceSnapshot,
+    ) : CloudHistoricalPageResult
+    data class Failed(val failure: CloudReadFailure) : CloudHistoricalPageResult
+    data object OperationNotFound : CloudHistoricalPageResult
+    data object AlreadyComplete : CloudHistoricalPageResult
+    data object Unconfigured : CloudHistoricalPageResult
+    data object NoSteamAccount : CloudHistoricalPageResult
+}
+
+enum class CloudHistoricalBatchStopReason {
+    PAGE_LIMIT,
+    TIME_LIMIT,
+}
+
+sealed interface CloudHistoricalBatchResult {
+    data class Complete(
+        val operation: CloudHistoricalOperation,
+        val pagesFetched: Int,
+        val transitionsFetched: Int,
+    ) : CloudHistoricalBatchResult
+
+    /** A successful, durable partial batch that requires a separate explicit continuation. */
+    data class Partial(
+        val operation: CloudHistoricalOperation,
+        val pagesFetched: Int,
+        val transitionsFetched: Int,
+        val stopReason: CloudHistoricalBatchStopReason,
+    ) : CloudHistoricalBatchResult
+
+    data class Failed(
+        val operation: CloudHistoricalOperation?,
+        val pagesFetched: Int,
+        val transitionsFetched: Int,
+        val failure: CloudReadFailure,
+    ) : CloudHistoricalBatchResult
+
+    data object OperationNotFound : CloudHistoricalBatchResult
+    data object Unconfigured : CloudHistoricalBatchResult
+    data object NoSteamAccount : CloudHistoricalBatchResult
+}
+
+sealed interface CloudHistoricalApplyGuardResult<out T> {
+    data class Ready<T>(val operation: CloudHistoricalOperation, val value: T) : CloudHistoricalApplyGuardResult<T>
+    data object OperationNotFound : CloudHistoricalApplyGuardResult<Nothing>
+    data object AcquisitionIncomplete : CloudHistoricalApplyGuardResult<Nothing>
+    data object Unconfigured : CloudHistoricalApplyGuardResult<Nothing>
+    data object NoSteamAccount : CloudHistoricalApplyGuardResult<Nothing>
+    data object StaleIdentity : CloudHistoricalApplyGuardResult<Nothing>
+}
+
+data class CloudPresenceHistoricalRange(
+    val fromAt: Long,
+    val throughAt: Long,
+    val positionAt: Long? = null,
+) {
+    init {
+        require(fromAt <= throughAt)
+        require(positionAt == null || positionAt in fromAt..throughAt)
+    }
+}
 
 data class CloudReadStatus(
     val configured: Boolean,
@@ -109,6 +200,13 @@ sealed interface CloudReadResult {
     data class Failed(val failure: CloudReadFailure) : CloudReadResult
 }
 
+sealed interface CloudPresenceRangeLookupResult {
+    data object Unconfigured : CloudPresenceRangeLookupResult
+    data object NoSteamAccount : CloudPresenceRangeLookupResult
+    data class Success(val metadata: CloudPresenceRangeMetadata) : CloudPresenceRangeLookupResult
+    data class Failed(val failure: CloudReadFailure) : CloudPresenceRangeLookupResult
+}
+
 /**
  * Cloud presence owns encrypted configuration, the resumable read watermark, and the current
  * in-memory comparison snapshot. Session/progress writes remain delegated to the explicit ingest
@@ -125,6 +223,7 @@ class CloudPresenceRepository @Inject constructor(
     private val time: TimeProvider,
     private val routineWorkCanceller: CloudRoutineWorkCancellation? = null,
     private val readerStateMutex: CloudReaderStateMutex = CloudReaderStateMutex(),
+    private val historicalStore: CloudHistoricalStore = EmptyCloudHistoricalStore,
 ) {
     /** Compatibility constructor for existing read-protocol tests without a Room evidence store. */
     internal constructor(
@@ -203,6 +302,475 @@ class CloudPresenceRepository @Inject constructor(
         }
     }
 
+    /** Authenticated, cursor-independent lookup of the earliest retained cloud evidence. */
+    suspend fun lookupRangeMetadata(): CloudPresenceRangeLookupResult {
+        val start = cloudStateMutex.withLock {
+            RangeMetadataStart(
+                credentials = credentialsStore.readCloudCredentials(),
+                account = credentialsProvider.currentCredentials()?.steamId,
+                generation = accountGeneration.get(),
+                readerGeneration = settings.cloudReaderGeneration.first(),
+            )
+        }
+        val credentials = start.credentials ?: return CloudPresenceRangeLookupResult.Unconfigured
+        val account = start.account ?: return CloudPresenceRangeLookupResult.NoSteamAccount
+        val response = try {
+            api.read(
+                endpoint = credentials.endpoint,
+                authorization = "Bearer " + credentials.token.trim(),
+                position = null,
+                mode = "range",
+                from = null,
+                through = null,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (http: HttpException) {
+            return CloudPresenceRangeLookupResult.Failed(
+                when {
+                    http.code() == 401 || http.code() == 403 -> CloudReadFailure.REJECTED_CREDENTIAL
+                    http.isUnusableResponse() -> CloudReadFailure.UNUSABLE_RESPONSE
+                    else -> CloudReadFailure.UNREACHABLE
+                },
+            )
+        } catch (_: SerializationException) {
+            return CloudPresenceRangeLookupResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+        } catch (_: Exception) {
+            return CloudPresenceRangeLookupResult.Failed(CloudReadFailure.UNREACHABLE)
+        }
+        if (response.account?.trim() != account) {
+            return CloudPresenceRangeLookupResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
+        }
+        val metadata = runCatching { response.toRangeMetadata(account) }
+            .getOrElse { return CloudPresenceRangeLookupResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE) }
+        return cloudStateMutex.withLock {
+            if (start.generation != accountGeneration.get() ||
+                credentialsProvider.currentCredentials()?.steamId != account ||
+                settings.cloudReaderGeneration.first() != start.readerGeneration ||
+                credentialsStore.readCloudCredentials() != credentials
+            ) {
+                CloudPresenceRangeLookupResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
+            } else {
+                val endpointIdentity = normalizeEndpoint(credentials.endpoint)
+                    ?: return@withLock CloudPresenceRangeLookupResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+                CloudPresenceRangeLookupResult.Success(
+                    metadata.copy(
+                        readerGeneration = start.readerGeneration,
+                        endpointIdentity = endpointIdentity,
+                        accountGeneration = start.generation,
+                    ),
+                )
+            }
+        }
+    }
+
+    /** Creates the immutable historical operation from a fresh, identity-bound range lookup. */
+    suspend fun beginHistoricalAcquisition(
+        selectedStartAt: Long,
+        effectiveStartAt: Long,
+        metadata: CloudPresenceRangeMetadata,
+        startChoice: String = "RECENT_31_DAYS",
+        zoneId: String = "UTC",
+        confirmedCutoffAt: Long? = null,
+    ): CloudHistoricalStartResult = cloudStateMutex.withLock {
+        val credentials = credentialsStore.readCloudCredentials()
+            ?: return@withLock CloudHistoricalStartResult.Unconfigured
+        val account = credentialsProvider.currentCredentials()?.steamId
+            ?: return@withLock CloudHistoricalStartResult.NoSteamAccount
+        val endpointIdentity = normalizeEndpoint(credentials.endpoint)
+            ?: return@withLock CloudHistoricalStartResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+
+        if (metadata.earliestObservedAt == null) {
+            return@withLock CloudHistoricalStartResult.NoAvailableRange
+        }
+        if (selectedStartAt > effectiveStartAt ||
+            effectiveStartAt > metadata.readAt || selectedStartAt > metadata.readAt
+        ) {
+            return@withLock CloudHistoricalStartResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+        }
+        if (confirmedCutoffAt != null &&
+            (confirmedCutoffAt <= effectiveStartAt || confirmedCutoffAt > metadata.readAt)
+        ) {
+            return@withLock CloudHistoricalStartResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+        }
+        if (metadata.account != account ||
+            metadata.readerGeneration == null ||
+            metadata.readerGeneration != settings.cloudReaderGeneration.first() ||
+            metadata.endpointIdentity != endpointIdentity ||
+            metadata.accountGeneration == null ||
+            metadata.accountGeneration != accountGeneration.get()
+        ) {
+            return@withLock CloudHistoricalStartResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
+        }
+
+        val existing = historicalStore.operationForIdentity(
+            account = account,
+            readerGeneration = metadata.readerGeneration,
+            endpointIdentity = endpointIdentity,
+            state = CloudHistoricalStates.ACQUIRING,
+        ) ?: historicalStore.operationForIdentity(
+            account = account,
+            readerGeneration = metadata.readerGeneration,
+            endpointIdentity = endpointIdentity,
+            state = CloudHistoricalStates.COMPLETE,
+        )
+        if (existing != null) return@withLock CloudHistoricalStartResult.Existing(existing)
+
+        val frozenCurrent = metadata.current?.takeIf { current ->
+            val observedAt = current.observedAt
+            observedAt != null && observedAt <= metadata.readAt &&
+                (current.since == null || current.since <= observedAt)
+        }
+        val now = time.nowMillis()
+        val operation = CloudHistoricalOperation(
+            operationId = UUID.randomUUID().toString(),
+            account = account,
+            readerGeneration = metadata.readerGeneration,
+            endpointIdentity = endpointIdentity,
+            startChoice = startChoice,
+            zoneId = zoneId,
+            selectedStartAt = selectedStartAt,
+            fromAt = effectiveStartAt,
+            throughAt = metadata.readAt,
+            confirmedCutoffAt = confirmedCutoffAt,
+            frozenCurrentObservedAt = frozenCurrent?.observedAt,
+            frozenCurrentAppId = frozenCurrent?.appId,
+            frozenCurrentGameName = frozenCurrent?.gameName,
+            frozenCurrentPersonastate = frozenCurrent?.personastate,
+            frozenCurrentSince = frozenCurrent?.since,
+            frozenCurrentCoverageLapseFrom = frozenCurrent?.coverageLapseFrom,
+            frozenCurrentCoverageLapseRecoveredAt = frozenCurrent?.coverageLapseRecoveredAt,
+            frozenCurrentSchemaVersion = frozenCurrent?.schemaVersion,
+            createdAt = now,
+            updatedAt = now,
+        )
+        try {
+            if (historicalStore.insertOperation(operation)) {
+                CloudHistoricalStartResult.Started(operation)
+            } else {
+                CloudHistoricalStartResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            CloudHistoricalStartResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+        }
+    }
+
+    /** Returns durable acquisition progress for the currently configured account and reader. */
+    suspend fun currentHistoricalOperation(): CloudHistoricalOperation? = cloudStateMutex.withLock {
+        val credentials = credentialsStore.readCloudCredentials() ?: return@withLock null
+        val account = credentialsProvider.currentCredentials()?.steamId ?: return@withLock null
+        val endpointIdentity = normalizeEndpoint(credentials.endpoint) ?: return@withLock null
+        val readerGeneration = settings.cloudReaderGeneration.first()
+        historicalStore.operationForIdentity(
+            account, readerGeneration, endpointIdentity, CloudHistoricalStates.ACQUIRING,
+        ) ?: historicalStore.operationForIdentity(
+            account, readerGeneration, endpointIdentity, CloudHistoricalStates.COMPLETE,
+        )
+    }
+
+    /** Release an unapplied range so the player can choose new dates, serialized against apply. */
+    suspend fun discardHistoricalAcquisition(operationId: String): Boolean =
+        cloudReadSequenceMutex.withLock {
+            cloudStateMutex.withLock {
+                val operation = historicalStore.operation(operationId) ?: return@withLock false
+                val credentials = credentialsStore.readCloudCredentials() ?: return@withLock false
+                if (credentialsProvider.currentCredentials()?.steamId != operation.account ||
+                    settings.cloudReaderGeneration.first() != operation.readerGeneration ||
+                    normalizeEndpoint(credentials.endpoint) != operation.endpointIdentity
+                ) return@withLock false
+                historicalStore.deleteUnappliedOperation(operationId)
+            }
+        }
+
+    /** Fetches and commits exactly one historical page under the shared per-page read sequence. */
+    suspend fun acquireHistoricalPage(
+        operationId: String,
+        consume: suspend (CloudPresenceSnapshot) -> Unit,
+    ): CloudHistoricalPageResult = cloudReadSequenceMutex.withLock {
+        recoverStagedPromotionLocked()
+        val captureResult = cloudStateMutex.withLock {
+            val operation = historicalStore.operation(operationId)
+                ?: return@withLock HistoricalPageCaptureResult.Rejected(
+                    CloudHistoricalPageResult.OperationNotFound,
+                )
+            if (operation.acquisitionComplete || operation.state != CloudHistoricalStates.ACQUIRING) {
+                return@withLock HistoricalPageCaptureResult.Rejected(
+                    CloudHistoricalPageResult.AlreadyComplete,
+                )
+            }
+            val credentials = credentialsStore.readCloudCredentials()
+                ?: return@withLock HistoricalPageCaptureResult.Rejected(CloudHistoricalPageResult.Unconfigured)
+            val account = credentialsProvider.currentCredentials()?.steamId
+                ?: return@withLock HistoricalPageCaptureResult.Rejected(CloudHistoricalPageResult.NoSteamAccount)
+            val endpointIdentity = normalizeEndpoint(credentials.endpoint)
+                ?: return@withLock HistoricalPageCaptureResult.Rejected(
+                    CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE),
+                )
+            val readerGeneration = settings.cloudReaderGeneration.first()
+            if (account != operation.account || readerGeneration != operation.readerGeneration ||
+                endpointIdentity != operation.endpointIdentity
+            ) {
+                return@withLock HistoricalPageCaptureResult.Rejected(
+                    CloudHistoricalPageResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH),
+                )
+            }
+            HistoricalPageCaptureResult.Ready(
+                HistoricalPageStart(
+                    operation = operation,
+                    credentials = credentials,
+                    accountGeneration = accountGeneration.get(),
+                ),
+            )
+        }
+        if (captureResult is HistoricalPageCaptureResult.Rejected) return@withLock captureResult.result
+        val capture = (captureResult as HistoricalPageCaptureResult.Ready).start
+        val operation = capture.operation
+        val requestedRange = CloudPresenceHistoricalRange(
+            fromAt = operation.fromAt,
+            throughAt = operation.throughAt,
+            positionAt = operation.lastPositionAt,
+        )
+        val remote = fetch(
+            endpoint = capture.credentials.endpoint,
+            token = capture.credentials.token,
+            expectedAccount = operation.account,
+            position = operation.lastPositionAt?.let(::formatCloudPresenceUtcInstant),
+            from = formatCloudPresenceUtcInstant(operation.fromAt),
+            through = formatCloudPresenceUtcInstant(operation.throughAt),
+            requestedRange = requestedRange,
+        )
+        when (remote) {
+            is RemoteReadResult.AccountMismatch ->
+                CloudHistoricalPageResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
+            is RemoteReadResult.Failure -> CloudHistoricalPageResult.Failed(remote.failure)
+            is RemoteReadResult.Success -> cloudStateMutex.withLock {
+                val endpointIdentity = normalizeEndpoint(capture.credentials.endpoint)
+                if (capture.accountGeneration != accountGeneration.get() ||
+                    credentialsProvider.currentCredentials()?.steamId != operation.account ||
+                    settings.cloudReaderGeneration.first() != operation.readerGeneration ||
+                    credentialsStore.readCloudCredentials() != capture.credentials ||
+                    endpointIdentity != operation.endpointIdentity
+                ) {
+                    return@withLock CloudHistoricalPageResult.Failed(CloudReadFailure.ACCOUNT_MISMATCH)
+                }
+
+                val parsed = remote.parsed
+                val priorBoundary = if (operation.lastPositionAt == null) {
+                    parsed.predecessor
+                } else {
+                    historicalStore.boundary(operation.operationId, CloudHistoricalStates.BOUNDARY_LAST_TRANSITION)
+                        ?.toTransition()
+                }
+                val openingBoundary = priorBoundary?.takeIf { boundary ->
+                    parsed.transitions.firstOrNull()?.at?.let { boundary.at < it }
+                        ?: (parsed.current != null)
+                }
+                val fixedRead = parsed.copy(current = operation.frozenCurrent())
+                val snapshot = fixedRead.toSnapshot(
+                    openingBoundary, includeLegacyTransitionEstimates = true,
+                ).copy(
+                    readerIdentity = CloudReaderIdentity(operation.account, operation.readerGeneration),
+                )
+                val pageNumber = operation.pagesFetched + 1
+                if (operation.lastIngestedPageNumber > pageNumber) {
+                    return@withLock CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+                }
+                val stagedIntervals = snapshot.intervals.map { interval ->
+                    interval.toHistoricalEntity(operation)
+                }
+                val stagedBoundaries = buildList {
+                    if (operation.lastPositionAt == null && parsed.predecessor != null) {
+                        add(parsed.predecessor.toHistoricalEntity(operation, CloudHistoricalStates.BOUNDARY_PREDECESSOR))
+                    }
+                    parsed.transitions.maxByOrNull { it.at }?.let { last ->
+                        add(last.toHistoricalEntity(operation, CloudHistoricalStates.BOUNDARY_LAST_TRANSITION))
+                    }
+                }
+                val progress = operation.copy(
+                    lastPositionAt = parsed.nextPosition?.let(::requiredStrictUtcInstant) ?: operation.lastPositionAt,
+                    pagesFetched = operation.pagesFetched + 1,
+                    lastIngestedPageNumber = maxOf(operation.lastIngestedPageNumber, pageNumber),
+                    transitionsFetched = operation.transitionsFetched + parsed.transitions.size,
+                    coveredStartAt = listOfNotNull(
+                        operation.coveredStartAt,
+                        parsed.transitions.minOfOrNull { it.at },
+                        operation.frozenCurrentObservedAt?.takeIf { parsed.transitions.isEmpty() },
+                    ).filter { it >= operation.fromAt }.minOrNull(),
+                    coveredEndAt = maxOf(operation.coveredEndAt ?: Long.MIN_VALUE, snapshot.windowEnd)
+                        .takeIf { it != Long.MIN_VALUE },
+                    acquisitionComplete = !parsed.hasMore,
+                    state = if (parsed.hasMore) CloudHistoricalStates.ACQUIRING else CloudHistoricalStates.COMPLETE,
+                    updatedAt = time.nowMillis(),
+                )
+
+                try {
+                    if (operation.lastIngestedPageNumber < pageNumber) {
+                        consume(snapshot)
+                        if (!historicalStore.markPageIngested(operation, pageNumber)) {
+                            return@withLock CloudHistoricalPageResult.Failed(
+                                CloudReadFailure.UNUSABLE_RESPONSE,
+                            )
+                        }
+                    }
+                    pendingEvidence.retain(
+                        operation.account,
+                        operation.readerGeneration,
+                        operation.fromAt,
+                        snapshot.intervals,
+                        parsed.transitions.maxByOrNull { it.at },
+                    )
+                    val committed = historicalStore.commitPage(
+                        previous = operation,
+                        intervals = stagedIntervals,
+                        boundaries = stagedBoundaries,
+                        progress = progress,
+                    ) ?: return@withLock CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+                    CloudHistoricalPageResult.Success(committed, snapshot)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    CloudHistoricalPageResult.Failed(CloudReadFailure.UNUSABLE_RESPONSE)
+                }
+            }
+        }
+    }
+
+    /**
+     * Performs one user-initiated batch. Every page releases the shared read sequence before the
+     * next page, and a capped batch returns durable progress for an explicit later continuation.
+     */
+    suspend fun acquireHistoricalBatch(
+        operationId: String,
+        onProgress: suspend (CloudHistoricalOperation, Int, Int) -> Unit = { _, _, _ -> },
+        consume: suspend (CloudPresenceSnapshot) -> Unit,
+    ): CloudHistoricalBatchResult = acquireHistoricalBatchWithLimits(
+        operationId = operationId,
+        pageLimit = MAX_HISTORICAL_BATCH_PAGES,
+        timeBudgetNanos = MAX_HISTORICAL_BATCH_NANOS,
+        monotonicNowNanos = System::nanoTime,
+        consume = consume,
+        onProgress = onProgress,
+    )
+
+    internal suspend fun acquireHistoricalBatchWithLimits(
+        operationId: String,
+        pageLimit: Int,
+        timeBudgetNanos: Long,
+        monotonicNowNanos: () -> Long,
+        onProgress: suspend (CloudHistoricalOperation, Int, Int) -> Unit = { _, _, _ -> },
+        consume: suspend (CloudPresenceSnapshot) -> Unit,
+    ): CloudHistoricalBatchResult {
+        require(pageLimit in 1..MAX_HISTORICAL_BATCH_PAGES)
+        require(timeBudgetNanos in 1L..MAX_HISTORICAL_BATCH_NANOS)
+        val initial = historicalStore.operation(operationId)
+            ?: return CloudHistoricalBatchResult.OperationNotFound
+        if (initial.acquisitionComplete) {
+            return CloudHistoricalBatchResult.Complete(initial, pagesFetched = 0, transitionsFetched = 0)
+        }
+        if (initial.state != CloudHistoricalStates.ACQUIRING) {
+            return CloudHistoricalBatchResult.Failed(
+                operation = initial,
+                pagesFetched = 0,
+                transitionsFetched = 0,
+                failure = CloudReadFailure.UNUSABLE_RESPONSE,
+            )
+        }
+
+        val startedAtNanos = monotonicNowNanos()
+        var operation = initial
+        var pagesFetched = 0
+        var transitionsFetched = 0
+        while (true) {
+            when (val page = acquireHistoricalPage(operationId, consume)) {
+                is CloudHistoricalPageResult.Success -> {
+                    operation = page.operation
+                    pagesFetched++
+                    transitionsFetched += page.snapshot.observationCount
+                    onProgress(operation, pagesFetched, transitionsFetched)
+                    if (operation.acquisitionComplete) {
+                        return CloudHistoricalBatchResult.Complete(
+                            operation, pagesFetched, transitionsFetched,
+                        )
+                    }
+                    if (pagesFetched >= pageLimit) {
+                        return CloudHistoricalBatchResult.Partial(
+                            operation,
+                            pagesFetched,
+                            transitionsFetched,
+                            CloudHistoricalBatchStopReason.PAGE_LIMIT,
+                        )
+                    }
+                    yield()
+                    if (monotonicNowNanos() - startedAtNanos >= timeBudgetNanos) {
+                        return CloudHistoricalBatchResult.Partial(
+                            operation,
+                            pagesFetched,
+                            transitionsFetched,
+                            CloudHistoricalBatchStopReason.TIME_LIMIT,
+                        )
+                    }
+                }
+                is CloudHistoricalPageResult.Failed -> return CloudHistoricalBatchResult.Failed(
+                    operation = historicalStore.operation(operationId) ?: operation,
+                    pagesFetched = pagesFetched,
+                    transitionsFetched = transitionsFetched,
+                    failure = page.failure,
+                )
+                CloudHistoricalPageResult.OperationNotFound ->
+                    return CloudHistoricalBatchResult.OperationNotFound
+                CloudHistoricalPageResult.AlreadyComplete -> {
+                    val latest = historicalStore.operation(operationId) ?: operation
+                    return if (latest.acquisitionComplete) {
+                        CloudHistoricalBatchResult.Complete(latest, pagesFetched, transitionsFetched)
+                    } else {
+                        CloudHistoricalBatchResult.Failed(
+                            latest,
+                            pagesFetched,
+                            transitionsFetched,
+                            CloudReadFailure.UNUSABLE_RESPONSE,
+                        )
+                    }
+                }
+                CloudHistoricalPageResult.Unconfigured -> return CloudHistoricalBatchResult.Unconfigured
+                CloudHistoricalPageResult.NoSteamAccount -> return CloudHistoricalBatchResult.NoSteamAccount
+            }
+        }
+    }
+
+    /**
+     * Runs application of a completed stage only while its captured account, reader generation,
+     * and endpoint are still active. The caller must acquire the Steam-sync and derived-write
+     * locks before entering; this method then takes the read-sequence and reader-state locks in
+     * the established order and holds both until the application block returns.
+     */
+    suspend fun <T> withCurrentHistoricalOperationForApply(
+        operationId: String,
+        apply: suspend (CloudHistoricalOperation) -> T,
+    ): CloudHistoricalApplyGuardResult<T> = cloudReadSequenceMutex.withLock {
+        recoverStagedPromotionLocked()
+        cloudStateMutex.withLock {
+            val operation = historicalStore.operation(operationId)
+                ?: return@withLock CloudHistoricalApplyGuardResult.OperationNotFound
+            if (!operation.acquisitionComplete || operation.state != CloudHistoricalStates.COMPLETE) {
+                return@withLock CloudHistoricalApplyGuardResult.AcquisitionIncomplete
+            }
+            val credentials = credentialsStore.readCloudCredentials()
+                ?: return@withLock CloudHistoricalApplyGuardResult.Unconfigured
+            val account = credentialsProvider.currentCredentials()?.steamId
+                ?: return@withLock CloudHistoricalApplyGuardResult.NoSteamAccount
+            val endpointIdentity = normalizeEndpoint(credentials.endpoint)
+            if (account != operation.account ||
+                settings.cloudReaderGeneration.first() != operation.readerGeneration ||
+                endpointIdentity != operation.endpointIdentity
+            ) {
+                return@withLock CloudHistoricalApplyGuardResult.StaleIdentity
+            }
+            CloudHistoricalApplyGuardResult.Ready(operation, apply(operation))
+        }
+    }
+
     /** Startup/upgrade reconciliation is local-only and never moves either cloud cursor. */
     suspend fun reconcileRoutinePolicy(): CloudRoutineState? {
         cloudReadSequenceMutex.withLock { recoverStagedPromotionLocked() }
@@ -272,6 +840,12 @@ class CloudPresenceRepository @Inject constructor(
                         pendingEvidence.clearExcept(account, settings.cloudReaderGeneration.first())
                     }
                 }
+                runCatching {
+                    clearUnappliedHistoricalForCurrentReader(
+                        account,
+                        settings.cloudReaderGeneration.first(),
+                    )
+                }
                 return@withLock
             }
             val account = credentialsProvider.currentCredentials()?.steamId ?: return@withLock
@@ -285,6 +859,7 @@ class CloudPresenceRepository @Inject constructor(
                 // best-effort; the refusal itself does not depend on it.
                 if (staged != null) credentialsStore.clearStagedCloudCredentials()
                 runCatching { pendingEvidence.clearExcept(account, generationBefore) }
+                runCatching { clearUnappliedHistoricalForCurrentReader(account, generationBefore) }
                 settings.clearCloudReaderPromotion()
                 return@withLock
             }
@@ -296,6 +871,7 @@ class CloudPresenceRepository @Inject constructor(
                 // promotion effects (generation commit, ingest-cursor clear, work re-cancel,
                 // routine-policy init) for a reader that was being removed.
                 runCatching { pendingEvidence.clearExcept(account, generationBefore) }
+                historicalStore.deleteUnappliedOperations()
                 settings.clearCloudReaderPromotion()
                 return@withLock
             }
@@ -315,6 +891,7 @@ class CloudPresenceRepository @Inject constructor(
             // a death between the generation commit and this cleanup, so it stays until every
             // step below has run; the final clear retires it.
             pendingEvidence.clearExcept(account, target)
+            clearUnappliedHistoricalForCurrentReader(account, target)
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = false)
             settings.clearCloudReadPosition()
             settings.clearCloudReadSummary()
@@ -362,6 +939,7 @@ class CloudPresenceRepository @Inject constructor(
                 settings.abandonCloudReaderPromotion()
             }
             pendingEvidence.clear()
+            historicalStore.deleteUnappliedOperations()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
             settings.clearCloudReadPosition()
             settings.clearCloudIngestPosition()
@@ -501,6 +1079,11 @@ class CloudPresenceRepository @Inject constructor(
                         // Only now that the credential+generation promotion is durably
                         // committed is the old generation's evidence retired.
                         pendingEvidence.clearExcept(account, readerGeneration)
+                        clearUnappliedHistoricalExcept(
+                            account,
+                            readerGeneration,
+                            normalizedEndpoint,
+                        )
                         // The ingest is part of the committed promotion: it runs only after
                         // the marker and the credential+generation commit, and before the
                         // read watermark advances below, so its derived sessions and ingest
@@ -561,6 +1144,41 @@ class CloudPresenceRepository @Inject constructor(
                 )
                 result.failure.toConfigurationResult()
             }
+        }
+    }
+
+    private suspend fun clearUnappliedHistoricalForCurrentReader(
+        account: String?,
+        readerGeneration: Long,
+    ) {
+        val endpointIdentity = credentialsStore.readCloudCredentials()
+            ?.endpoint
+            ?.let(::normalizeEndpoint)
+        if (account == null || endpointIdentity == null) {
+            historicalStore.deleteUnappliedOperations()
+        } else {
+            historicalStore.deleteUnappliedOperationsNotMatching(
+                account,
+                readerGeneration,
+                endpointIdentity,
+            )
+        }
+    }
+
+    private suspend fun clearUnappliedHistoricalExcept(
+        account: String,
+        readerGeneration: Long,
+        endpoint: String,
+    ) {
+        val endpointIdentity = normalizeEndpoint(endpoint)
+        if (endpointIdentity == null) {
+            historicalStore.deleteUnappliedOperations()
+        } else {
+            historicalStore.deleteUnappliedOperationsNotMatching(
+                account,
+                readerGeneration,
+                endpointIdentity,
+            )
         }
     }
 
@@ -885,6 +1503,7 @@ class CloudPresenceRepository @Inject constructor(
             credentialsStore.clearAllCloudCredentials()
             settings.abandonCloudReaderPromotion()
             pendingEvidence.clear()
+            historicalStore.deleteUnappliedOperations()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
             settings.clearCloudReadPosition()
             settings.clearCloudIngestPosition()
@@ -917,6 +1536,7 @@ class CloudPresenceRepository @Inject constructor(
             settings.abandonCloudReaderPromotion()
             credentialsStore.clearStagedCloudCredentials()
             pendingEvidence.clear()
+            historicalStore.deleteUnappliedOperations()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
             snapshotState.value = null
             settings.clearCloudReadPosition()
@@ -949,6 +1569,7 @@ class CloudPresenceRepository @Inject constructor(
             settings.abandonCloudReaderPromotion()
             credentialsStore.clearStagedCloudCredentials()
             pendingEvidence.clear()
+            historicalStore.deleteUnappliedOperations()
             routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
             snapshotState.value = null
             settings.clearCloudReadPosition()
@@ -961,6 +1582,7 @@ class CloudPresenceRepository @Inject constructor(
                 settings.abandonCloudReaderPromotion()
                 credentialsStore.clearStagedCloudCredentials()
                 pendingEvidence.clear()
+                historicalStore.deleteUnappliedOperations()
                 routineWorkCanceller?.cancelOldReaderWork(removePeriodic = true)
                 snapshotState.value = null
                 settings.clearCloudReadPosition()
@@ -982,6 +1604,24 @@ class CloudPresenceRepository @Inject constructor(
         val generation: Long,
         val readerGeneration: Long,
     )
+
+    private data class RangeMetadataStart(
+        val credentials: CloudCredentials?,
+        val account: String?,
+        val generation: Long,
+        val readerGeneration: Long,
+    )
+
+    private data class HistoricalPageStart(
+        val operation: CloudHistoricalOperation,
+        val credentials: CloudCredentials,
+        val accountGeneration: Long,
+    )
+
+    private sealed interface HistoricalPageCaptureResult {
+        data class Ready(val start: HistoricalPageStart) : HistoricalPageCaptureResult
+        data class Rejected(val result: CloudHistoricalPageResult) : HistoricalPageCaptureResult
+    }
 
     private suspend fun persistVerifiedConfiguration(
         credentials: CloudCredentials,
@@ -1017,9 +1657,13 @@ class CloudPresenceRepository @Inject constructor(
         token: String,
         expectedAccount: String,
         position: String?,
+        mode: String? = null,
+        from: String? = null,
+        through: String? = null,
+        requestedRange: CloudPresenceHistoricalRange? = null,
     ): RemoteReadResult {
         val response = try {
-            api.read(endpoint, "Bearer " + token.trim(), position)
+            api.read(endpoint, "Bearer " + token.trim(), position, mode, from, through)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (http: HttpException) {
@@ -1041,7 +1685,7 @@ class CloudPresenceRepository @Inject constructor(
         if (account != expectedAccount) {
             return RemoteReadResult.AccountMismatch(account)
         }
-        return runCatching { response.toParsedRead(expectedAccount) }
+        return runCatching { response.toParsedRead(expectedAccount, requestedRange) }
             .fold(
                 onSuccess = { RemoteReadResult.Success(it) },
                 onFailure = { RemoteReadResult.Failure(CloudReadFailure.UNUSABLE_RESPONSE) },
@@ -1103,8 +1747,12 @@ class CloudPresenceRepository @Inject constructor(
         val readAt: Long,
         val nextPosition: String?,
         val hasMore: Boolean,
+        val predecessor: CloudPresenceTransition? = null,
     ) {
-        fun toSnapshot(openingBoundary: CloudPresenceTransition? = null): CloudPresenceSnapshot {
+        fun toSnapshot(
+            openingBoundary: CloudPresenceTransition? = null,
+            includeLegacyTransitionEstimates: Boolean = false,
+        ): CloudPresenceSnapshot {
             // An incomplete page covers only its returned transitions: combining the page's
             // prefix with the latest current state would fabricate a tail interval across
             // the omitted transitions, and presenting the server's full-window end would
@@ -1123,7 +1771,10 @@ class CloudPresenceRepository @Inject constructor(
                 windowStart = windowStart,
                 windowEnd = effectiveWindowEnd,
                 readAt = readAt,
-                intervals = CloudPresenceReconstruction.reconstruct(reconstructedTransitions, effectiveCurrent),
+                intervals = CloudPresenceReconstruction.reconstruct(
+                    reconstructedTransitions, effectiveCurrent,
+                    includeLegacyTransitionEstimates = includeLegacyTransitionEstimates,
+                ),
                 current = current,
                 observationCount = transitions.size,
                 nextPosition = nextPosition,
@@ -1164,6 +1815,8 @@ class CloudPresenceRepository @Inject constructor(
         // Bounds a re-file drain so a server that keeps reporting more never hangs the caller:
         // exceeding it surfaces as a failure rather than applying a partial history.
         private const val MAX_REFILE_PAGES = 50
+        private const val MAX_HISTORICAL_BATCH_PAGES = 50
+        private const val MAX_HISTORICAL_BATCH_NANOS = 30_000_000_000L
         private const val MAX_ROUTINE_PAGES = 4
 
         fun normalizeEndpoint(raw: String): String? {
@@ -1189,6 +1842,70 @@ private object EmptyPendingEvidence : CloudPendingEvidence {
     override suspend fun clearExcept(account: String, generation: Long) = Unit
 }
 
+private fun CloudHistoricalOperation.frozenCurrent(): CloudPresenceCurrentState? {
+    val observedAt = frozenCurrentObservedAt ?: return null
+    return CloudPresenceCurrentState(
+        observedAt = observedAt,
+        appId = frozenCurrentAppId,
+        gameName = frozenCurrentGameName,
+        personastate = frozenCurrentPersonastate,
+        since = frozenCurrentSince,
+        coverageLapseFrom = frozenCurrentCoverageLapseFrom,
+        coverageLapseRecoveredAt = frozenCurrentCoverageLapseRecoveredAt,
+        schemaVersion = frozenCurrentSchemaVersion,
+    )
+}
+
+private fun CloudPresenceInterval.toHistoricalEntity(
+    operation: CloudHistoricalOperation,
+) = CloudHistoricalInterval(
+    operationId = operation.operationId,
+    account = operation.account,
+    readerGeneration = operation.readerGeneration,
+    endpointIdentity = operation.endpointIdentity,
+    appId = appId,
+    startAt = startAt,
+    endAt = endAt,
+    ongoing = ongoing,
+    coverage = coverage.name,
+    observedUntil = observedUntil,
+    coverageLapseFrom = coverageLapseFrom,
+    coverageLapseRecoveredAt = coverageLapseRecoveredAt,
+    mayHaveStartedBefore = mayHaveStartedBefore,
+    gameName = gameName,
+    windowStart = operation.fromAt,
+)
+
+private fun CloudPresenceTransition.toHistoricalEntity(
+    operation: CloudHistoricalOperation,
+    kind: String,
+) = CloudHistoricalBoundary(
+    operationId = operation.operationId,
+    account = operation.account,
+    readerGeneration = operation.readerGeneration,
+    endpointIdentity = operation.endpointIdentity,
+    kind = kind,
+    at = at,
+    appId = appId,
+    gameName = gameName,
+    personastate = personastate,
+    previousLastObservedAt = previousLastObservedAt,
+    previousCoverageLapseFrom = previousCoverageLapseFrom,
+    previousCoverageLapseRecoveredAt = previousCoverageLapseRecoveredAt,
+    schemaVersion = schemaVersion,
+)
+
+private fun CloudHistoricalBoundary.toTransition() = CloudPresenceTransition(
+    at = at,
+    appId = appId,
+    gameName = gameName,
+    personastate = personastate,
+    previousLastObservedAt = previousLastObservedAt,
+    previousCoverageLapseFrom = previousCoverageLapseFrom,
+    previousCoverageLapseRecoveredAt = previousCoverageLapseRecoveredAt,
+    schemaVersion = schemaVersion,
+)
+
 private enum class CloudReadOutcome {
     SUCCESS,
     UNREACHABLE,
@@ -1197,13 +1914,82 @@ private enum class CloudReadOutcome {
     UNUSABLE_RESPONSE,
 }
 
-private fun CloudPresenceResponseDto.toParsedRead(expectedAccount: String): CloudPresenceRepository.ParsedCloudRead {
-    val windowStart = requiredInstant(windowStart)
-    val windowEnd = requiredInstant(windowEnd)
-    val readAt = requiredInstant(readAt)
-    val parsedTransitions = transitions.map { it.toDomainTransition() }
-    val serverPosition = nextPosition?.trim()?.takeIf { it.isNotBlank() }?.also { requiredInstant(it) }
+internal fun CloudPresenceResponseDto.toRangeMetadata(
+    expectedAccount: String,
+): CloudPresenceRangeMetadata {
+    val actualAccount = requiredAccount(account)
+    if (actualAccount != expectedAccount) error("Cloud range metadata account does not match")
+    if (mode != "range" || transitions.isNotEmpty() || predecessor != null || hasMore || nextPosition != null) {
+        error("Cloud reader returned an invalid range metadata response")
+    }
+    val readAt = requiredStrictUtcInstant(readAt)
+    val earliest = earliestObservedAt?.let(::requiredStrictUtcInstant)
+    if (earliest != null && earliest > readAt) {
+        error("Cloud reader returned range metadata beyond its read time")
+    }
+    val parsedCurrent = current?.toStrictDomainCurrent()
+    val usableCurrent = parsedCurrent?.takeIf { state ->
+        val observedAt = state.observedAt ?: return@takeIf false
+        observedAt <= readAt && (state.since == null || state.since <= observedAt)
+    }
+    if (earliest == null && usableCurrent != null) {
+        error("Cloud reader omitted available current-only range evidence")
+    }
+    return CloudPresenceRangeMetadata(
+        account = actualAccount,
+        earliestObservedAt = earliest,
+        current = usableCurrent,
+        readAt = readAt,
+    )
+}
+
+internal fun CloudPresenceResponseDto.toParsedRead(
+    expectedAccount: String,
+    requestedRange: CloudPresenceHistoricalRange? = null,
+): CloudPresenceRepository.ParsedCloudRead {
+    val actualAccount = requiredAccount(account)
+    if (actualAccount != expectedAccount) error("Cloud reader account does not match")
+    if (mode != null) error("Cloud reader returned an unexpected response mode")
+    val windowStart = if (requestedRange == null) requiredInstant(windowStart)
+    else requiredStrictUtcInstant(windowStart)
+    val windowEnd = if (requestedRange == null) requiredInstant(windowEnd)
+    else requiredStrictUtcInstant(windowEnd)
+    val readAt = if (requestedRange == null) requiredInstant(readAt)
+    else requiredStrictUtcInstant(readAt)
+    val parsedTransitions = transitions.map { transition ->
+        if (requestedRange != null) transition.validateStrictUtcFields()
+        transition.toDomainTransition()
+    }
+    val serverPosition = nextPosition?.let { raw ->
+        if (requestedRange != null) {
+            requiredStrictUtcInstant(raw)
+            raw
+        } else {
+            raw.trim().takeIf { it.isNotBlank() }?.also { requiredInstant(it) }
+        }
+    }
     if (hasMore && serverPosition == null) error("Cloud reader returned more data without a position")
+    val parsedPredecessor = predecessor?.let { transition ->
+        if (requestedRange == null) error("Cloud reader returned an unexpected predecessor")
+        transition.validateStrictUtcFields()
+        transition.toDomainTransition()
+    }
+    val parsedCurrent = if (requestedRange == null) current?.toDomainCurrent()
+    else current?.toStrictDomainCurrent()
+
+    if (requestedRange != null) {
+        validateHistoricalResponse(
+            requestedRange = requestedRange,
+            windowStart = windowStart,
+            windowEnd = windowEnd,
+            readAt = readAt,
+            transitions = parsedTransitions,
+            current = parsedCurrent,
+            predecessor = parsedPredecessor,
+            serverPosition = serverPosition,
+            hasMore = hasMore,
+        )
+    }
     // Preserve one transition of overlap across pages: resuming strictly after the last
     // transition would drop the interval it opens (t250 -> t251), since page 1 reconstructs
     // only through t249 -> t250 and page 2 only from t251 onward. Persisting the second-last
@@ -1212,20 +1998,89 @@ private fun CloudPresenceResponseDto.toParsedRead(expectedAccount: String): Clou
     // second-last instant is strictly before the last and re-fetches exactly one transition.
     val resumePosition = if (hasMore && parsedTransitions.size >= 2) {
         val ordered = parsedTransitions.sortedBy { it.at }
-        Instant.ofEpochMilli(ordered[ordered.size - 2].at).toString()
+        if (requestedRange != null) {
+            formatCloudPresenceUtcInstant(ordered[ordered.size - 2].at)
+        } else {
+            Instant.ofEpochMilli(ordered[ordered.size - 2].at).toString()
+        }
     } else {
         serverPosition
     }
     return CloudPresenceRepository.ParsedCloudRead(
-        account = expectedAccount,
+        account = actualAccount,
         transitions = parsedTransitions,
-        current = current?.toDomainCurrent(),
+        current = parsedCurrent,
         windowStart = windowStart,
         windowEnd = windowEnd,
         readAt = readAt,
         nextPosition = resumePosition,
         hasMore = hasMore,
+        predecessor = parsedPredecessor,
     )
+}
+
+private fun validateHistoricalResponse(
+    requestedRange: CloudPresenceHistoricalRange,
+    windowStart: Long,
+    windowEnd: Long,
+    readAt: Long,
+    transitions: List<CloudPresenceTransition>,
+    current: CloudPresenceCurrentState?,
+    predecessor: CloudPresenceTransition?,
+    serverPosition: String?,
+    hasMore: Boolean,
+) {
+    val fromAt = requestedRange.fromAt
+    val throughAt = requestedRange.throughAt
+    if (windowStart != fromAt || windowEnd !in fromAt..throughAt || readAt < throughAt) {
+        error("Cloud reader returned a page outside the requested range")
+    }
+    if (transitions.size > MAX_HISTORICAL_RESPONSE_TRANSITIONS) {
+        error("Cloud reader returned too many historical transitions")
+    }
+    if (transitions.zipWithNext().any { (before, after) -> before.at >= after.at }) {
+        error("Cloud reader returned unordered historical transitions")
+    }
+    val lowerExclusive = requestedRange.positionAt
+    if (transitions.any { transition ->
+            transition.at < fromAt || transition.at > throughAt ||
+                (lowerExclusive != null && transition.at <= lowerExclusive)
+        }
+    ) {
+        error("Cloud reader returned a transition outside the requested range")
+    }
+    if (current != null) {
+        val observedAt = current.observedAt ?: error("Cloud reader returned current state without an observation")
+        if (observedAt !in fromAt..throughAt) {
+            error("Cloud reader returned current state outside the requested range")
+        }
+    }
+    if (predecessor != null && (
+            requestedRange.positionAt != null || predecessor.at >= fromAt
+        )
+    ) {
+        error("Cloud reader returned an invalid historical predecessor")
+    }
+    val expectedPositionAt = transitions.lastOrNull()?.at ?: requestedRange.positionAt
+    val actualPositionAt = serverPosition?.let(::requiredStrictUtcInstant)
+    if (actualPositionAt != expectedPositionAt) {
+        error("Cloud reader returned an invalid historical position")
+    }
+    if (hasMore && (
+            transitions.size != MAX_HISTORICAL_RESPONSE_TRANSITIONS ||
+                transitions.lastOrNull()?.at != windowEnd
+        )
+    ) {
+        error("Cloud reader returned an invalid historical continuation page")
+    }
+    if (!hasMore && transitions.lastOrNull()?.at?.let { windowEnd < it } == true) {
+        error("Cloud reader ended its evidence before the final transition")
+    }
+    // On a continuation page, current describes the latest state in the fixed range,
+    // while windowEnd stops at the last returned transition. It is not page coverage.
+    if (!hasMore && current?.observedAt?.let { windowEnd < it } == true) {
+        error("Cloud reader ended its evidence before the current observation")
+    }
 }
 
 private fun CloudPresenceTransitionDto.toDomainTransition() = CloudPresenceTransition(
@@ -1250,6 +2105,21 @@ private fun CloudPresenceCurrentDto.toDomainCurrent() = CloudPresenceCurrentStat
     schemaVersion = v,
 )
 
+private fun CloudPresenceCurrentDto.toStrictDomainCurrent(): CloudPresenceCurrentState {
+    listOf(lastObservedAt, coverageLapseFrom, coverageLapseRecoveredAt, since, updatedAt)
+        .forEach { raw -> if (raw != null) requiredStrictUtcInstant(raw) }
+    return toDomainCurrent()
+}
+
+private fun CloudPresenceTransitionDto.validateStrictUtcFields() {
+    requiredStrictUtcInstant(t)
+    listOf(prevLastObservedAt, prevCoverageLapseFrom, prevCoverageLapseRecoveredAt)
+        .forEach { raw -> if (raw != null) requiredStrictUtcInstant(raw) }
+}
+
+private fun requiredAccount(raw: String?): String =
+    raw?.trim()?.takeIf { it.isNotEmpty() } ?: error("Cloud reader omitted its account")
+
 private fun requiredInstant(raw: String?): Long {
     val value = raw?.trim()?.takeIf { it.isNotEmpty() } ?: error("Cloud reader omitted a timestamp")
     return Instant.parse(value).toEpochMilli()
@@ -1260,11 +2130,27 @@ private fun optionalInstant(raw: String?): Long? {
     return Instant.parse(raw.trim()).toEpochMilli()
 }
 
+private fun requiredStrictUtcInstant(raw: String?): Long {
+    val value = raw ?: error("Cloud reader omitted a strict UTC timestamp")
+    if (!FULL_UTC_INSTANT.matches(value)) error("Cloud reader returned a malformed UTC timestamp")
+    return runCatching { Instant.parse(value).toEpochMilli() }
+        .getOrElse { error("Cloud reader returned a malformed UTC timestamp") }
+}
+
 private fun parseAppId(raw: String?): Long? {
     if (raw.isNullOrBlank()) return null
     return raw.trim().toLongOrNull()?.takeIf { it >= 0L }
         ?: error("Cloud reader returned a non-numeric app id")
 }
+
+private const val MAX_HISTORICAL_RESPONSE_TRANSITIONS = 250
+private val FULL_UTC_INSTANT = Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z")
+private val CLOUD_PRESENCE_UTC_FORMATTER = DateTimeFormatter
+    .ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'")
+    .withZone(ZoneOffset.UTC)
+
+internal fun formatCloudPresenceUtcInstant(at: Long): String =
+    CLOUD_PRESENCE_UTC_FORMATTER.format(Instant.ofEpochMilli(at))
 
 @Serializable
 private data class CloudErrorBody(val error: String? = null)

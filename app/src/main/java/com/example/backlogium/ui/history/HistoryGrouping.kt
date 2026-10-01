@@ -142,6 +142,8 @@ fun groupHistory(
     dailyProgress: List<DayProgress>,
     achievementUnlocks: List<AchievementUnlockSummary>,
     zone: ZoneId = ZoneId.systemDefault(),
+    windowStartDate: String? = null,
+    windowEndDate: String? = null,
 ): List<HistoryDayGroup> {
     val nameById = games.associate { it.appId to it.name }
     val iconById = games.associate { it.appId to it.iconUrl }
@@ -150,7 +152,11 @@ fun groupHistory(
     val sessionsByDate = sessions.groupBy { localDate(it.startAt, zone) }
     val achievementsByDate = achievementUnlocks.groupBy { localDate(it.unlockedAt, zone) }
 
-    val allDates = (sessionsByDate.keys + progressByDate.keys).distinct().sortedDescending()
+    val allDates = (sessionsByDate.keys + progressByDate.keys).distinct()
+        .filter { date ->
+            (windowStartDate == null || date >= windowStartDate) &&
+                (windowEndDate == null || date <= windowEndDate)
+        }.sortedDescending()
 
     return allDates.map { date ->
         val daySessions = sessionsByDate[date].orEmpty()
@@ -198,6 +204,16 @@ fun groupHistory(
         )
     }
 }
+
+/** Older progress rows must not make a bounded session window look fully loaded. */
+internal fun historyHasOlderRecords(
+    windowStartDate: String,
+    earliestSessionAt: Long?,
+    dailyProgress: List<DayProgress>,
+    zone: ZoneId,
+): Boolean =
+    earliestSessionAt?.let { localDate(it, zone) < windowStartDate } == true ||
+        dailyProgress.any { it.date < windowStartDate }
 
 private fun localDate(epochMillis: Long, zone: ZoneId): String =
     Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalDate().toString()

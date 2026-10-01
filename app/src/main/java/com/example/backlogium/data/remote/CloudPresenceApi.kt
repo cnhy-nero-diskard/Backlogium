@@ -13,5 +13,8 @@ interface CloudPresenceApi {
         @Url endpoint: String,
         @Header("Authorization") authorization: String,
         @Query("position") position: String? = null,
+        @Query("mode") mode: String? = null,
+        @Query("from") from: String? = null,
+        @Query("through") through: String? = null,
     ): CloudPresenceResponseDto
 }

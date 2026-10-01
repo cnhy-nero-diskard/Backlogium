@@ -221,7 +221,7 @@ object CloudPresenceSessionIngest {
             CloudCoverageState.CONTINUOUS -> end
             CloudCoverageState.OBSERVED_UNTIL -> observedUntil
                 ?.coerceIn(startAt, end)
-            CloudCoverageState.UNKNOWN -> null
+            CloudCoverageState.UNKNOWN, CloudCoverageState.LEGACY_TRANSITIONS -> null
         }
     }
     const val DEFAULT_GAP_TOLERANCE_MILLIS = PresenceSessionDeriver.DEFAULT_GAP_TOLERANCE_MILLIS
