@@ -2076,7 +2076,9 @@ private fun validateHistoricalResponse(
     if (!hasMore && transitions.lastOrNull()?.at?.let { windowEnd < it } == true) {
         error("Cloud reader ended its evidence before the final transition")
     }
-    if (current?.observedAt?.let { windowEnd < it } == true) {
+    // On a continuation page, current describes the latest state in the fixed range,
+    // while windowEnd stops at the last returned transition. It is not page coverage.
+    if (!hasMore && current?.observedAt?.let { windowEnd < it } == true) {
         error("Cloud reader ended its evidence before the current observation")
     }
 }
