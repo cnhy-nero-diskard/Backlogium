@@ -10,6 +10,45 @@ class CloudPresenceReconstructionTest {
     private val otherGame = 620L
 
     @Test
+    fun closedLegacyGameChangesAreEstimatedOnlyForHistoricalDating() {
+        val transitions = listOf(
+            transition(at = 0, appId = game).copy(schemaVersion = 1),
+            transition(at = 10 * MINUTE, appId = null).copy(schemaVersion = 1),
+        )
+        assertEquals(CloudCoverageState.UNKNOWN,
+            CloudPresenceReconstruction.reconstruct(transitions, null).single().coverage)
+        val historical = CloudPresenceReconstruction.reconstruct(
+            transitions, null, includeLegacyTransitionEstimates = true,
+        ).single()
+        assertEquals(CloudCoverageState.LEGACY_TRANSITIONS, historical.coverage)
+        assertEquals(0L, historical.startAt)
+        assertEquals(10 * MINUTE, historical.endAt)
+        assertFalse(historical.ongoing)
+        assertEquals(null, historical.observedUntil)
+        assertTrue(CloudPresenceReconstruction.reconstruct(
+            transitions.take(1), null, includeLegacyTransitionEstimates = true,
+        ).isEmpty())
+    }
+
+    @Test
+    fun historicalLegacyFallbackDoesNotMaskModernMissingMetadataOrRecordedGaps() {
+        val opening = transition(at = 0, appId = game).copy(schemaVersion = 1)
+        for (version in listOf(null, 2, 3)) {
+            val closing = transition(at = 10 * MINUTE, appId = null).copy(schemaVersion = version)
+            assertEquals(CloudCoverageState.UNKNOWN, CloudPresenceReconstruction.reconstruct(
+                listOf(opening, closing), null, includeLegacyTransitionEstimates = true,
+            ).single().coverage)
+        }
+        val closing = transition(
+            at = 10 * MINUTE, appId = null, previousLastObservedAt = 9 * MINUTE,
+            previousCoverageLapseFrom = MINUTE, previousCoverageLapseRecoveredAt = 8 * MINUTE,
+        ).copy(schemaVersion = 1)
+        assertEquals(CloudCoverageState.OBSERVED_UNTIL, CloudPresenceReconstruction.reconstruct(
+            listOf(opening, closing), null, includeLegacyTransitionEstimates = true,
+        ).single().coverage)
+    }
+
+    @Test
     fun directGameSwitchProducesEarlierGameIntervalWithoutNotPlayingEntry() {
         val intervals = CloudPresenceReconstruction.reconstruct(
             transitions = listOf(

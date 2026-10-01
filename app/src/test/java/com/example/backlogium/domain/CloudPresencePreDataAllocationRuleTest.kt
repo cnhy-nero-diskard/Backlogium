@@ -13,6 +13,43 @@ import org.junit.Test
 
 class CloudPresencePreDataAllocationRuleTest {
     @Test
+    fun legacyEstimatesRespectSelectedRangeCutoffOverlapAndImportedBudget() {
+        val start = instant("2025-06-01T10:00:00Z")
+        val allocation = allocate(
+            intervals = listOf(interval(
+                GAME, start, start + minutes(10), coverage = CloudCoverageState.LEGACY_TRANSITIONS,
+            )),
+            balances = mapOf(GAME to 2),
+            selection = selection(start + minutes(1), start + minutes(10)),
+            cutoffAt = start + minutes(8),
+            existingSessions = listOf(session(GAME, start + minutes(6), start + minutes(8), 2)),
+        )
+        assertEquals(2, allocation.transferredMinutesByAppId[GAME])
+        assertEquals(0, allocation.remainingImportedMinutesByAppId[GAME])
+        assertEquals(start + minutes(4), allocation.sessions.single().startAt)
+        assertEquals(start + minutes(6), allocation.sessions.single().endAt)
+        assertEquals(TimingInformedSteamPlayState.FULL, allocation.sessions.single().timingInformedSteamPlay)
+    }
+
+    @Test
+    fun unclosedLegacyAndRecordedLongGapsStayUndated() {
+        val start = instant("2025-06-01T10:00:00Z")
+        val allocation = allocate(
+            intervals = listOf(
+                interval(GAME, start, start + minutes(10), coverage = CloudCoverageState.LEGACY_TRANSITIONS)
+                    .copy(ongoing = true),
+                interval(GAME, start + minutes(10), start + minutes(20),
+                    coverage = CloudCoverageState.LEGACY_TRANSITIONS,
+                    lapseFrom = start + minutes(11), lapseRecoveredAt = start + minutes(19)),
+            ),
+            balances = mapOf(GAME to 100), selection = selection(start, start + minutes(20)),
+            cutoffAt = start + minutes(20),
+        )
+        assertTrue(allocation.sessions.isEmpty())
+        assertEquals(100, allocation.remainingImportedMinutesByAppId[GAME])
+    }
+
+    @Test
     fun importedBudgetUsesNewestEligibleSlotsFirst() {
         val oldStart = instant("2025-06-01T10:00:00Z")
         val recentStart = instant("2025-06-01T12:00:00Z")

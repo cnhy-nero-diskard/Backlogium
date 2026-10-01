@@ -85,8 +85,10 @@ resolved matches can be exported as privacy-disclosed contributions to grow shar
   positionless first reads remain limited to 31 days; historical acquisition is
   explicit, fixed-end, resumable in bounded user-started batches, and cannot be
   applied until complete. The confirmed re-file can re-date existing sessions and
-  transfer only safely observed, pre-cutoff minutes from an already-imported
-  owned-game balance into dated History sessions. It does not invent playtime or
+  transfer eligible pre-cutoff minutes from an already-imported owned-game
+  balance into dated History sessions. Original v1 transition-only logs use
+  closed game-start/change spans as estimated timing; newer logs retain
+  coverage and gap checks. It does not invent playtime or
   change combined credited minutes, XP, levels, or Steam totals. See
   [`functions/README.md`](functions/README.md).
 

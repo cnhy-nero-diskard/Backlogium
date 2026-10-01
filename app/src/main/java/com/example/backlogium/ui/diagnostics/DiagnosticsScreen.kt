@@ -252,6 +252,7 @@ private fun CloudPresenceComparisonCard(state: CloudDiagnosticsUiState) {
                                 CloudCoverageState.OBSERVED_UNTIL ->
                                     MaterialTheme.colorScheme.tertiary
                                 CloudCoverageState.UNKNOWN -> MaterialTheme.colorScheme.error
+                                CloudCoverageState.LEGACY_TRANSITIONS -> MaterialTheme.colorScheme.onSurfaceVariant
                             },
                         )
                         if (interval.coverageLapseFrom != null && interval.coverageLapseRecoveredAt != null) {
@@ -314,6 +315,7 @@ private fun CloudCoverageState.cloudLabel(): String = when (this) {
     CloudCoverageState.CONTINUOUS -> "continuous"
     CloudCoverageState.OBSERVED_UNTIL -> "observed until last confirmation"
     CloudCoverageState.UNKNOWN -> "unknown"
+    CloudCoverageState.LEGACY_TRANSITIONS -> "estimated from legacy game changes"
 }
 @Composable
 private fun RequestCountersSection(

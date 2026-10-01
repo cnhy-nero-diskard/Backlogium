@@ -554,7 +554,9 @@ class CloudPresenceRepository @Inject constructor(
                         ?: (parsed.current != null)
                 }
                 val fixedRead = parsed.copy(current = operation.frozenCurrent())
-                val snapshot = fixedRead.toSnapshot(openingBoundary).copy(
+                val snapshot = fixedRead.toSnapshot(
+                    openingBoundary, includeLegacyTransitionEstimates = true,
+                ).copy(
                     readerIdentity = CloudReaderIdentity(operation.account, operation.readerGeneration),
                 )
                 val pageNumber = operation.pagesFetched + 1
@@ -1733,7 +1735,10 @@ class CloudPresenceRepository @Inject constructor(
         val hasMore: Boolean,
         val predecessor: CloudPresenceTransition? = null,
     ) {
-        fun toSnapshot(openingBoundary: CloudPresenceTransition? = null): CloudPresenceSnapshot {
+        fun toSnapshot(
+            openingBoundary: CloudPresenceTransition? = null,
+            includeLegacyTransitionEstimates: Boolean = false,
+        ): CloudPresenceSnapshot {
             // An incomplete page covers only its returned transitions: combining the page's
             // prefix with the latest current state would fabricate a tail interval across
             // the omitted transitions, and presenting the server's full-window end would
@@ -1752,7 +1757,10 @@ class CloudPresenceRepository @Inject constructor(
                 windowStart = windowStart,
                 windowEnd = effectiveWindowEnd,
                 readAt = readAt,
-                intervals = CloudPresenceReconstruction.reconstruct(reconstructedTransitions, effectiveCurrent),
+                intervals = CloudPresenceReconstruction.reconstruct(
+                    reconstructedTransitions, effectiveCurrent,
+                    includeLegacyTransitionEstimates = includeLegacyTransitionEstimates,
+                ),
                 current = current,
                 observationCount = transitions.size,
                 nextPosition = nextPosition,

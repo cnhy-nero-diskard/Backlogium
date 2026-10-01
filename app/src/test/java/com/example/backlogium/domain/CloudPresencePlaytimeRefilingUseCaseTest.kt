@@ -159,7 +159,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
                     startAt = utc("2026-07-25T22:00:00Z"),
                     endAt = utc("2026-07-25T22:20:00Z"),
                     ongoing = false,
-                    coverage = "CONTINUOUS",
+                    coverage = "LEGACY_TRANSITIONS",
                     observedUntil = null,
                     coverageLapseFrom = null,
                     coverageLapseRecoveredAt = null,

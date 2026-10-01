@@ -34,3 +34,9 @@
 ## 5. Cross-cutting verification
 
 - [x] 5.1 Run `openspec validate choose-cloud-presence-refile-range --strict`, `npm run build` and functions tests, and relevant Android unit/migration tests; verify a configured user's earliest-retained choice reaches completion in bounded batches, then dates only eligible pre-cutoff imported Steam minutes in History while default first reads, combined credited minutes, reversal and ordinary placement remain unchanged.
+
+## 6. Original poller compatibility
+
+- [x] 6.1 Recognize closed v1 transition-only spans as historical timing estimates while keeping ordinary reads, modern unknown coverage, recorded gaps and unclosed tails unchanged; verify reconstruction and repository staging tests.
+- [x] 6.2 Allocate legacy estimated slots only within the selected range/cutoff and imported budget without session overlap; verify Room apply/replay/undo, combined credited minutes and XP invariants.
+- [x] 6.3 Disclose the estimate in confirmation and documentation, strictly validate the revised artifacts, and install the verified debug build on the connected phone.

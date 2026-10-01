@@ -26,6 +26,8 @@ enum class CloudCoverageState {
     CONTINUOUS,
     OBSERVED_UNTIL,
     UNKNOWN,
+    /** Closed v1 game-change span, estimated only for explicitly selected historical dating. */
+    LEGACY_TRANSITIONS,
 }
 
 data class CloudPresenceInterval(
@@ -54,6 +56,7 @@ object CloudPresenceReconstruction {
         transitions: List<CloudPresenceTransition>,
         current: CloudPresenceCurrentState?,
         tailToleranceMillis: Long = DEFAULT_TAIL_TOLERANCE_MILLIS,
+        includeLegacyTransitionEstimates: Boolean = false,
     ): List<CloudPresenceInterval> {
         if (transitions.isEmpty()) {
             // A resumed read with no new transitions still reports the live state: when the
@@ -100,7 +103,15 @@ object CloudPresenceReconstruction {
                 coverageLapseFrom = closing.previousCoverageLapseFrom,
                 coverageLapseRecoveredAt = closing.previousCoverageLapseRecoveredAt,
                 tailToleranceMillis = tailToleranceMillis,
-            )
+            ).let { decision ->
+                if (includeLegacyTransitionEstimates &&
+                    opening.schemaVersion == 1 && closing.schemaVersion == 1 &&
+                    closing.previousLastObservedAt == null &&
+                    closing.previousCoverageLapseFrom == null &&
+                    closing.previousCoverageLapseRecoveredAt == null &&
+                    closing.at > opening.at
+                ) CoverageDecision(CloudCoverageState.LEGACY_TRANSITIONS, null) else decision
+            }
             val appId = opening.appId
             if (appId != null && closing.at >= opening.at) {
                 intervals += CloudPresenceInterval(

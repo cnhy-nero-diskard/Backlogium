@@ -48,12 +48,18 @@ The system SHALL keep historical acquisition state separate from the ordinary re
 
 ### Requirement: Confirmed pre-data presence can date already-imported Steam play
 
-The system SHALL let the player explicitly confirm the end of the period before Backlogium recorded their play, separate from the chosen cloud range start. Only after the independent Steam-history import was opted into MAY a completed, explicitly confirmed historical re-file transfer Steam-owned game minutes from that game's already-counted imported balance into dated History sessions. The transferred amount SHALL be no greater than both the game's remaining imported minutes and its eligible whole minutes of confirmed, non-overlapping cloud-observed play inside the selected range and before the confirmed pre-data cutoff. Unknown, uncovered, or overlapping spans SHALL remain imported and undated. The transfer SHALL NOT increase or decrease the game's Steam-reported lifetime total, the combined imported-plus-session minutes, XP, or level. Its dated sessions SHALL be distinguishable as timing inferred from cloud observations rather than on-device recorded play.
+The system SHALL let the player explicitly confirm the end of the period before Backlogium recorded their play, separate from the chosen cloud range start. Only after the independent Steam-history import was opted into MAY a completed, explicitly confirmed historical re-file transfer Steam-owned game minutes from that game's already-counted imported balance into dated History sessions. The transferred amount SHALL be no greater than both the game's remaining imported minutes and its eligible non-overlapping whole minutes inside the selected range and before the confirmed pre-data cutoff, using confirmed cloud coverage or closed original v1 transition spans explicitly disclosed as estimated timing. Unknown, uncovered, or overlapping spans SHALL remain imported and undated. The transfer SHALL NOT increase or decrease the game's Steam-reported lifetime total, the combined imported-plus-session minutes, XP, or level. Its dated sessions SHALL be distinguishable as timing inferred from cloud observations rather than on-device recorded play.
 
 #### Scenario: Confirmed old play with an imported balance
 - **WHEN** a player with an already-completed Steam-history import confirms a range and pre-data cutoff containing safe, previously unrecorded observed play for an owned game
 - **THEN** the confirmed number of minutes is written as dated History sessions and subtracted in full from that game's imported balance
 - **AND** its tracked/session minutes rise by the same amount without changing its combined credited minutes, XP, level, or Steam total
+
+#### Scenario: Original transition-only poller history
+- **WHEN** an explicitly confirmed historical read contains a closed interval between two v1 transitions without newer coverage fields
+- **THEN** that span MAY date already-imported owned-game minutes as estimated timing under the same range, cutoff, overlap and balance limits
+- **AND** missing modern coverage, recorded rejected gaps and unclosed legacy tails remain excluded
+- **AND** ordinary reads, shared-game ingest and existing-session placement do not use the legacy estimate
 
 #### Scenario: Transfer uses the whole imported balance
 - **WHEN** eligible confirmed play consumes all of a game's remaining imported minutes

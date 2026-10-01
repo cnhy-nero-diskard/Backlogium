@@ -58,3 +58,13 @@ Stating the limit is load-bearing rather than polite. The natural expectation of
 #### Scenario: Resetting the Steam-history import while a transfer is applied
 - **WHEN** the player requests the separate Steam-history import reset before reversing a cloud pre-data transfer
 - **THEN** Settings explains that they must undo the cloud re-file first instead of silently losing or double-counting transferred minutes
+
+## ADDED Requirements
+
+### Requirement: Disclose original transition-only timing estimates
+
+Historical re-file confirmation SHALL explain that original v1 transition-only logs estimate timing between a game start and the next recorded change without proving uninterrupted polling. Newer logs SHALL continue using their recorded coverage and gap checks.
+
+#### Scenario: Reviewing a historical transfer
+- **WHEN** the player reviews an imported-minute historical re-file
+- **THEN** the confirmation distinguishes legacy game-change timing estimates from newer coverage checks and retains the per-game imported-balance ceiling

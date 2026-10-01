@@ -105,6 +105,12 @@ object CloudPresencePreDataAllocationRule {
             CloudCoverageState.CONTINUOUS -> rawEndAt
             CloudCoverageState.OBSERVED_UNTIL -> observedUntil ?: return emptyList()
             CloudCoverageState.UNKNOWN -> return emptyList()
+            CloudCoverageState.LEGACY_TRANSITIONS -> {
+                if (ongoing || observedUntil != null ||
+                    coverageLapseFrom != null || coverageLapseRecoveredAt != null
+                ) return emptyList()
+                rawEndAt
+            }
         }.coerceAtMost(rawEndAt)
         val start = maxOf(startAt, rangeStartAt)
         val end = minOf(observedEndAt, cutoffAt, throughAt)
