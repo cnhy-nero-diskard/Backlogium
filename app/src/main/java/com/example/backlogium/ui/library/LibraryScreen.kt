@@ -59,6 +59,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -176,7 +177,7 @@ internal fun shouldShowWishlistSection(
             !libraryState.filters.notCoveredOnly && !libraryState.filters.familySharedOnly))
 
 /**
- * Whether Library's transient ViewModel state (selection and filters) resets when the screen's
+ * Whether Library's transient selection resets when the screen's
  * composition disposes. Disposal fires both on an actual navigation-away and on a
  * configuration/activity recreation (rotation, locale/theme change) where the Hilt ViewModel
  * survives — so only a navigation-away clears, and a recreation keeps the active filters.
@@ -221,48 +222,55 @@ fun LibraryScreen(
     wishlistViewModel: WishlistViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val visitFilters by viewModel.visit.filters.collectAsStateWithLifecycle()
+    val generation by viewModel.visit.generation.collectAsStateWithLifecycle()
     val wishlistState by wishlistViewModel.uiState.collectAsStateWithLifecycle()
     val uriHandler = LocalUriHandler.current
 
-    LibraryContent(
-        state = state,
-        wishlistState = wishlistState,
-        actions = LibraryContentActions(
-            onOpenReview = onOpenReview,
-            onOpenGameDetail = onOpenGameDetail,
-            onConsumeNeedsAttention = viewModel::consumeNeedsAttention,
-            onToggleSelection = viewModel::toggleSelection,
-            onClearSelection = viewModel::clearSelection,
-            onClearFilters = viewModel::clearFilters,
-            onRefreshSelection = viewModel::refreshSelection,
-            onSetQuery = viewModel::setQuery,
-            onClearQuery = viewModel::clearQuery,
-            onToggleGenreFilter = viewModel::toggleGenreFilter,
-            onClearGenreFilter = viewModel::clearGenreFilter,
-            onClearGenreFilters = viewModel::clearGenreFilters,
-            onSetNotCoveredOnly = viewModel::setNotCoveredOnly,
-            onSetFamilySharedOnly = viewModel::setFamilySharedOnly,
-            onSetFocusSort = viewModel::setFocusSort,
-            onSetFocusSortDirection = viewModel::setFocusSortDirection,
-            onSetLibrarySort = viewModel::setLibrarySort,
-            onSetLibrarySortDirection = viewModel::setLibrarySortDirection,
-            onSetDensity = viewModel::setDensity,
-            onStopHltbRefresh = viewModel::stopHltbRefresh,
-            onTagGoal = viewModel::tagGoal,
-            onUntagGoal = viewModel::untagGoal,
-            onRefreshGame = viewModel::refreshGame,
-            onClearPicker = viewModel::clearPicker,
-            onChangeMatch = viewModel::changeMatch,
-            onResolveMatch = viewModel::resolveMatch,
-            onUpdatePickerManualLinkInput = viewModel::updatePickerManualLinkInput,
-            onPreviewPickerManualLink = viewModel::previewPickerManualLink,
-            onDismissPickerManualLinkPreview = viewModel::dismissPickerManualLinkPreview,
-            onConfirmPickerManualLink = viewModel::confirmPickerManualLink,
-            onEnterSelectionMode = viewModel::enterSelectionMode,
-            onSetWishlistExpanded = wishlistViewModel::setExpanded,
-            onOpenStore = { uriHandler.openUri(it) },
-        ),
-    )
+    // A saved destination can emit its old state before the repository combine catches up.
+    // Never present that state after expiry, or flash cold-start defaults during a retained visit.
+    if (state.loading || state.filters != visitFilters) return
+    key(generation) {
+        LibraryContent(
+            state = state,
+            wishlistState = wishlistState,
+            actions = LibraryContentActions(
+                onOpenReview = onOpenReview,
+                onOpenGameDetail = onOpenGameDetail,
+                onConsumeNeedsAttention = viewModel::consumeNeedsAttention,
+                onToggleSelection = viewModel::toggleSelection,
+                onClearSelection = viewModel::clearSelection,
+                onClearFilters = viewModel::clearFilters,
+                onRefreshSelection = viewModel::refreshSelection,
+                onSetQuery = viewModel::setQuery,
+                onClearQuery = viewModel::clearQuery,
+                onToggleGenreFilter = viewModel::toggleGenreFilter,
+                onClearGenreFilter = viewModel::clearGenreFilter,
+                onClearGenreFilters = viewModel::clearGenreFilters,
+                onSetNotCoveredOnly = viewModel::setNotCoveredOnly,
+                onSetFamilySharedOnly = viewModel::setFamilySharedOnly,
+                onSetFocusSort = viewModel::setFocusSort,
+                onSetFocusSortDirection = viewModel::setFocusSortDirection,
+                onSetLibrarySort = viewModel::setLibrarySort,
+                onSetLibrarySortDirection = viewModel::setLibrarySortDirection,
+                onSetDensity = viewModel::setDensity,
+                onStopHltbRefresh = viewModel::stopHltbRefresh,
+                onTagGoal = viewModel::tagGoal,
+                onUntagGoal = viewModel::untagGoal,
+                onRefreshGame = viewModel::refreshGame,
+                onClearPicker = viewModel::clearPicker,
+                onChangeMatch = viewModel::changeMatch,
+                onResolveMatch = viewModel::resolveMatch,
+                onUpdatePickerManualLinkInput = viewModel::updatePickerManualLinkInput,
+                onPreviewPickerManualLink = viewModel::previewPickerManualLink,
+                onDismissPickerManualLinkPreview = viewModel::dismissPickerManualLinkPreview,
+                onConfirmPickerManualLink = viewModel::confirmPickerManualLink,
+                onEnterSelectionMode = viewModel::enterSelectionMode,
+                onSetWishlistExpanded = wishlistViewModel::setExpanded,
+                onOpenStore = { uriHandler.openUri(it) },
+            ),
+        )
+    }
 }
 
 /** Callbacks raised by Library's state-driven presentation. */
@@ -357,17 +365,12 @@ internal fun LibraryContent(
         }
     }
 
-    // Selection and filters are transient: leaving the Library drops them, so they can never
-    // outlive the screen that shows them. Composition disposal alone is not "leaving", though:
-    // a configuration/activity recreation (rotation, locale/theme change) also disposes the
-    // composition while the Hilt ViewModel survives, so an unconditional clear would wipe active
-    // filters the user never left. Only reset ViewModel state on an actual navigation-away.
+    // Selection and dialogs keep their screen lifetime. Discovery filters belong to the visit.
     DisposableEffect(Unit) {
         onDispose {
             val recreation = context.findActivity()?.isChangingConfigurations == true
             if (shouldClearLibraryTransientState(recreation)) {
                 actions.onClearSelection()
-                actions.onClearFilters()
             }
             showFilterSheet = false
             showToolsSheet = false

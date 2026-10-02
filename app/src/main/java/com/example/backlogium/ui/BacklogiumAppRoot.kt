@@ -41,6 +41,8 @@ import com.example.backlogium.ui.history.CloudActivityScreen
 import com.example.backlogium.ui.history.HistoryViewModel
 import com.example.backlogium.ui.home.HomeRoute
 import com.example.backlogium.ui.library.LibraryScreen
+import com.example.backlogium.ui.library.LibraryVisitEffects
+import com.example.backlogium.ui.library.LibraryVisitViewModel
 import com.example.backlogium.ui.navigation.Destination
 import com.example.backlogium.ui.navigation.AppBottomNavigation
 import com.example.backlogium.ui.navigation.navigateToSettingsTab
@@ -126,6 +128,8 @@ fun BacklogiumAppRoot(
         openUpdateRequests.collect { updateSheetVisible = true }
     }
     val navController = rememberNavController()
+    val libraryVisitViewModel: LibraryVisitViewModel = hiltViewModel()
+    LibraryVisitEffects(navController, libraryVisitViewModel.visit)
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
     val fullDestinationGameDetailPresented = currentDestination?.route == ROUTE_GAME_DETAIL

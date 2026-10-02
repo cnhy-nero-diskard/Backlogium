@@ -219,6 +219,7 @@ class LibraryViewModel @Inject constructor(
     private val settings: SettingsRepository,
     private val credentials: CredentialsRepository,
     private val liveStatusRepository: LiveStatusRepository,
+    val visit: LibraryVisitState,
 ) : ViewModel() {
 
     /** Per-game manual-lookup state, keyed by appId. Not persisted — cleared on success. */
@@ -237,8 +238,8 @@ class LibraryViewModel @Inject constructor(
      */
     private val needsAttention = MutableStateFlow<Long?>(null)
 
-    /** Transient discovery filters. Cleared by the screen when Library is left. */
-    private val filters = MutableStateFlow(LibraryFilters())
+    /** Shared discovery filters survive destination disposal for the current visit. */
+    private val filters = visit.filters
 
     /** Transient multi-select for the targeted refresh. Never persisted (see [clearSelection]). */
     private val selection = MutableStateFlow<Set<Long>>(emptySet())

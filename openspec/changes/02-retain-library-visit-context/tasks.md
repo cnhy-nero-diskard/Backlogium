@@ -1,13 +1,13 @@
 ## 1. Visit State
 
 - [x] 1.1 Add a process-local, activity-retained Library visit state holder for filters, scroll anchor, absence start, and visit generation; verify its clock decisions at 299,999 ms and 300,000 ms with deterministic checks.
-- [ ] 1.2 Move `LibraryViewModel` discovery filters into the visit state holder and remove filter clearing from screen disposal; verify query, genre, coverage, and Family Shared filters survive a pushed detail/review return while explicit Clear controls still work.
+- [x] 1.2 Move `LibraryViewModel` discovery filters into the visit state holder and remove filter clearing from screen disposal; verify query, genre, coverage, and Family Shared filters survive a pushed detail/review return while explicit Clear controls still work.
 
 ## 2. Departure and Return Events
 
-- [ ] 2.1 Wire the app shell to distinguish Library and its pushed routes from another top-level tab, including detail opened from Home; verify each route transition starts or resumes only the intended Library visit.
-- [ ] 2.2 Observe process background/foreground transitions without replacing an earlier tab-departure timestamp; verify backgrounding from Library, from its detail/review child, and after a tab switch all use the correct start time.
-- [ ] 2.3 Evaluate expiry before Library context is shown, reset filters and visit generation at or after five minutes, and start a new interval after each timely return; verify repeated short departures, exact-threshold expiry, configuration recreation, and a new process.
+- [x] 2.1 Wire the app shell to distinguish Library and its pushed routes from another top-level tab, including detail opened from Home; verify each route transition starts or resumes only the intended Library visit.
+- [x] 2.2 Observe process background/foreground transitions without replacing an earlier tab-departure timestamp; verify backgrounding from Library, from its detail/review child, and after a tab switch all use the correct start time.
+- [x] 2.3 Evaluate expiry before Library context is shown, reset filters and visit generation at or after five minutes, and start a new interval after each timely return; verify repeated short departures, exact-threshold expiry, configuration recreation, and a new process.
 
 ## 3. Scroll Context
 

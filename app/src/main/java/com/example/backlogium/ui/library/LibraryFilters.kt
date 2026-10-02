@@ -7,7 +7,7 @@ import com.example.backlogium.data.repo.HltbMatchState
  * The transient discovery filters used by Library.
  *
  * Density and section sorting deliberately do not belong here: they are independent display
- * preferences and remain persisted while this value is cleared whenever Library is left.
+ * preferences and remain persisted while this value belongs to the process-local Library visit.
  */
 data class LibraryFilters(
     val query: String = "",
