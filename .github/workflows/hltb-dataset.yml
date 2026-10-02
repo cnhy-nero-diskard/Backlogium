@@ -24,7 +24,7 @@ jobs:
           node-version: '22'
 
       - name: Run dataset tooling tests
-        run: node --test tools/hltb-dataset/test/merge.test.mjs
+        run: node --test tools/hltb-dataset/test/*.test.mjs
 
       - name: Validate and regenerate committed dataset
         run: node tools/hltb-dataset/merge.mjs --check tools/hltb-dataset/dataset.json

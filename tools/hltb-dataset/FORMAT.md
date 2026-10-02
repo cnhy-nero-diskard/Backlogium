@@ -81,3 +81,19 @@ byte, including metadata.
 
 The hand-written, canonical two-row example is
 [`test/fixtures/sample-two-row.json`](test/fixtures/sample-two-row.json).
+
+## Partial refresh freshness limitation
+
+Schema v1 has one global `gatheredAt`; it cannot encode an independent observation time for
+each length tuple. A selected-library refresh merges only genuinely observed usable tuples
+(with their original observation times) and reviewed correspondence additions. Failed or
+all-unknown reads retain existing rows and never resubmit retained values as fresh observations.
+The merge increments the dataset version at most once, preserves redundant bytes, and keeps
+its existing timestamp precedence, including rejecting older tuple observations.
+
+When another tuple changes, the global timestamp can advance although many rows were never
+fetched. Existing consumers can consequently assign that age to every imported row. This
+metadata is not evidence of a full-catalog or full-library refresh. The refresh tool keeps
+separate private successful-fetch evidence for stale selection and reports actual checked,
+changed, failed and untouched scope. Per-row ages in the published file and Android consumers
+would require a separate schema/consumer change.

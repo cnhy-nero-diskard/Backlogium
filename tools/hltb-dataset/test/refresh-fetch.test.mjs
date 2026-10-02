@@ -45,6 +45,13 @@ test("structured Android page examples validate seconds, partial lengths, identi
   assert.deepEqual(parseGamePage(page(100, [29, 30, 36000000, 0]), 100).lengths, [0, 1, 600000, null]);
   assert.throws(() => parseGamePage('<script id="__NEXT_DATA__" type="application/json">bad</script>', 1), /malformed-page/);
   assert.equal(parseGamePage(page(100, [60, 0, 0, 0], { game_name: "https://steamcommunity.com/PRIVATE" }), 100).title, null);
+  const live = await readFile(new URL("fixtures/live-page-7231.json", import.meta.url), "utf8");
+  const liveHtml = `<script id="__NEXT_DATA__" type="application/json">${live}</script>`;
+  const parsed = parseGamePage(liveHtml, 7231);
+  assert.equal(parsed.hltbId, 7231); assert.equal(parsed.title, "Portal 2");
+  const seconds = JSON.parse(live).props.pageProps.game.data.game[0];
+  assert.deepEqual(parsed.lengths, ["comp_main", "comp_plus", "comp_100", "comp_all"].map((f) => Math.round(seconds[f] / 60)));
+  assert.throws(() => parseGamePage(liveHtml, 7230), /identity-mismatch/);
 });
 function harness(sequence, tail = []) {
   let time = 10000; const starts = []; let active = 0, maxActive = 0;

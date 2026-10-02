@@ -8,12 +8,13 @@ export class RequestBudget {
     this.sleep = dependencies.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.random = dependencies.random ?? Math.random;
     this.started = this.now(); this.previousElapsed = previous.elapsedMs ?? 0;
-    this.lastStart = -Infinity; this.stopped = null;
+    this.lastStart = previous.lastStart ?? -Infinity; this.stopped = null;
     this.stats = { requests: previous.requests ?? 0, retries: previous.retries ?? 0,
       backoffMs: previous.backoffMs ?? 0, exhausted: false, elapsedMs: this.previousElapsed };
   }
   remaining() { return this.options.maxRunSeconds * 1000 - this.previousElapsed - (this.now() - this.started); }
-  snapshot() { return { ...this.stats, elapsedMs: this.previousElapsed + this.now() - this.started }; }
+  snapshot() { return { ...this.stats, elapsedMs: this.previousElapsed + this.now() - this.started,
+    lastStart: Number.isFinite(this.lastStart) ? this.lastStart : null }; }
   async wait(ms, backoff = false) {
     if (ms >= this.remaining()) { this.stats.exhausted = true; this.stopped = "budget-exhausted"; fail("budget-exhausted"); }
     if (backoff) this.stats.backoffMs += ms;
