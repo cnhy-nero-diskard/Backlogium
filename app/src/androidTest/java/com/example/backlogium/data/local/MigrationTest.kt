@@ -98,6 +98,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_40_41,
         BacklogiumDatabase.MIGRATION_41_42,
         BacklogiumDatabase.MIGRATION_42_43,
+        BacklogiumDatabase.MIGRATION_43_44,
     )
 
     @Test
@@ -127,6 +128,84 @@ class MigrationTest {
             )
             try {
                 migrated.assertRepresentativeData()
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    /**
+     * v43 -> v44: the attributable library-poll evidence table AND the pending-recompute
+     * provenance triple on `player_profile` (stabilize-first-run-setup). Both were authored on an
+     * unreleased branch, so they ship as one additive hop from the only released version (43).
+     * The v43 confirmation columns and every legacy aggregate survive untouched; the new table
+     * starts empty; a synced, imported, nonempty legacy profile keeps its unconfirmed state and
+     * its legacy pending marker keeps no invented source/account/request.
+     */
+    @Test
+    fun v43ToV44_createsAttributablePollEvidenceAndProvenanceWithoutTouchingProfiles() {
+        val databaseName = "migration-v43-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 43)
+        try {
+            database.execSQL(
+                "INSERT INTO player_profile (id, steamId, steamLevel, totalXp, level, currentStreak, " +
+                    "longestStreak, gamificationConfigVersion, lastSyncAt, lastSyncError, " +
+                    "playtimeBackfilled, personaName, avatarUrl, storeRegion, pendingImportRecompute, " +
+                    "lastSuccessfulWishlistReadAt, pendingXpIntegrityCorrection, " +
+                    "confirmedLibrarySteamId, confirmedLibraryAt) VALUES " +
+                    "(0, '76561198000000000', 42, 9876, 8, 3, 12, 5, 1700000050000, NULL, 1, " +
+                    "'Player One', 'avatar-url', 'PH', 1, 1700000060000, 1, NULL, NULL)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                44,
+                true,
+                BacklogiumDatabase.MIGRATION_43_44,
+            )
+            try {
+                assertTableInfo(
+                    migrated,
+                    "library_poll_evidence",
+                    listOf(
+                        ColumnInfo("workIdentity", "TEXT", notNull = true, pk = 1),
+                        ColumnInfo("accountSteamId", "TEXT", notNull = true, pk = 2),
+                        ColumnInfo("outcome", "TEXT", notNull = true, pk = 0),
+                        ColumnInfo("gameCount", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("lastSyncAt", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("refusal", "TEXT", notNull = false, pk = 0),
+                        ColumnInfo("reason", "TEXT", notNull = false, pk = 0),
+                        ColumnInfo("recordedAt", "INTEGER", notNull = true, pk = 0),
+                    ),
+                )
+                migrated.query("SELECT COUNT(*) FROM library_poll_evidence").use { cursor ->
+                    assertTrue("the new table starts empty on upgrade", cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+                migrated.query(
+                    "SELECT steamId, playtimeBackfilled, pendingImportRecompute, lastSyncAt, " +
+                        "confirmedLibrarySteamId, confirmedLibraryAt, " +
+                        "pendingImportRecomputeSource, pendingImportRecomputeSteamId, " +
+                        "pendingImportRecomputeRequestId FROM player_profile WHERE id = 0",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("76561198000000000", cursor.getString(0))
+                    assertEquals(1, cursor.getInt(1))
+                    assertEquals(1, cursor.getInt(2))
+                    assertEquals(1_700_000_050_000L, cursor.getLong(3))
+                    assertTrue("v44 must not infer confirmation for legacy rows", cursor.isNull(4))
+                    assertTrue(cursor.isNull(5))
+                    assertTrue("legacy pending keeps no invented source", cursor.isNull(6))
+                    assertTrue("legacy pending keeps no invented account", cursor.isNull(7))
+                    assertTrue("legacy pending keeps no invented request", cursor.isNull(8))
+                    assertFalse(cursor.moveToNext())
+                }
             } finally {
                 migrated.close()
             }

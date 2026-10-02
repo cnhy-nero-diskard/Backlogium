@@ -11,6 +11,8 @@ import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.local.entity.GameGenreCache
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
+import com.example.backlogium.data.local.entity.LibraryPollEvidenceRecord
+import com.example.backlogium.data.local.entity.LibraryPollOutcomeKind
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.PresenceDecision
 import com.example.backlogium.data.local.entity.RequestBreakdown
@@ -464,7 +466,23 @@ class WriteIntegrityDaoTest {
                 avatarUrl = "old-avatar",
                 storeRegion = "PH",
                 pendingImportRecompute = true,
+                pendingImportRecomputeSource = "BACKFILL",
+                pendingImportRecomputeSteamId = "old-account",
+                pendingImportRecomputeRequestId = "req-old",
                 lastSuccessfulWishlistReadAt = 200L,
+            ),
+        )
+        // One attributable poll outcome for the discarded account: it must not survive.
+        database.libraryPollEvidenceDao().upsert(
+            LibraryPollEvidenceRecord(
+                workIdentity = "run-1",
+                accountSteamId = "old-account",
+                outcome = LibraryPollOutcomeKind.COMMITTED.name,
+                gameCount = 5,
+                lastSyncAt = 100L,
+                refusal = null,
+                reason = null,
+                recordedAt = 100L,
             ),
         )
         database.wishlistDao().upsertItems(
@@ -529,6 +547,11 @@ class WriteIntegrityDaoTest {
         assertNull(profile.storeRegion)
         assertNull(profile.lastSuccessfulWishlistReadAt)
         assertFalse(profile.pendingImportRecompute)
+        assertNull(profile.pendingImportRecomputeSource)
+        assertNull(profile.pendingImportRecomputeSteamId)
+        assertNull(profile.pendingImportRecomputeRequestId)
+        // The previous account's attributable poll outcomes are purged with its owned state.
+        assertTrue(database.libraryPollEvidenceDao().listForAccount("old-account").isEmpty())
         assertTrue(database.wishlistDao().observeItems().first().isEmpty())
         assertTrue(database.wishlistDao().observeLatestPrices().first().isEmpty())
     }

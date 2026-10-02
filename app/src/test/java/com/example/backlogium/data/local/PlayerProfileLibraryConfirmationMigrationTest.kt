@@ -19,29 +19,34 @@ import org.robolectric.RuntimeEnvironment
 import java.io.File
 
 /**
- * Host-side (Robolectric) v42 -> v43 migration coverage for the confirmed-library-baseline fields
- * (stabilize-first-run-setup).
+ * Host-side (Robolectric) v42 -> v44 migration coverage for the confirmed-library-baseline fields,
+ * the attributable library-poll evidence table, and the pending-recompute provenance triple
+ * (stabilize-first-run-setup). Both v43/v44 additions landed on an unreleased branch, so the
+ * host test drives the single `MIGRATION_42_43` + combined `MIGRATION_43_44` pair to the final
+ * v44 schema.
  *
  * `androidx.room:room-testing` is an instrumentation-only dependency in this project, so this test
  * re-implements the host half of what [MigrationTest]'s `MigrationTestHelper` provides: it builds
  * the genuine v42 database by executing the `createSql`/`indices` lifted from the exported
  * `schemas/.../42.json` through a real [FrameworkSQLiteOpenHelperFactory] (Robolectric's native
- * SQLite — no new library), seeds representative legacy data, and then exercises the migration in
+ * SQLite — no new library), seeds representative legacy data, and then exercises the migrations in
  * the two directions that matter:
  *
  * 1. A real Room `open()` driven upgrade, from a v42 database that already carries the
  *    `room_master_table` identity (exactly what an on-device Room v42 install looks like), with
- *    only `MIGRATION_42_43` registered — proving Room's own upgrade path can run and accept it.
- * 2. The migration's SQL applied directly on real SQLite followed by a fresh Room `open()` at v43
+ *    `MIGRATION_42_43` and `MIGRATION_43_44` registered — proving Room's own upgrade path can run
+ *    and accept both hops.
+ * 2. The migrations' SQL applied directly on real SQLite followed by a fresh Room `open()` at v44
  *    with **no** `room_master_table` — which makes `RoomOpenHelper.checkIdentity` fall into its
- *    deep `onValidateSchema` path and compare every table against the compiled v43 entity schemas.
- *    If the migration produced a wrong column, type, nullability, index, or foreign key anywhere,
+ *    deep `onValidateSchema` path and compare every table against the compiled v44 entity schemas.
+ *    If any migration produced a wrong column, type, nullability, index, or foreign key anywhere,
  *    that open throws instead of silently passing (Room 2.8.4 `RoomOpenHelper`).
  *
- * The data assertions are deliberately conservative: they prove the migration never inferred
- * baseline confirmation from `lastSyncAt`, a nonempty `games` table, or `playtimeBackfilled`, and
- * that the imported flag, game backfill offsets, sessions, and cloud historical operation/journal
- * receipt rows (with their v42-only fields) all survive.
+ * The data assertions are deliberately conservative: they prove the migrations never inferred
+ * baseline confirmation from `lastSyncAt`, a nonempty `games` table, or `playtimeBackfilled`, never
+ * invented an import request identity from restored rows, and that the imported flag, game backfill
+ * offsets, sessions, and cloud historical operation/journal receipt rows (with their v42-only
+ * fields) all survive.
  */
 @RunWith(RobolectricTestRunner::class)
 class PlayerProfileLibraryConfirmationMigrationTest {
@@ -211,7 +216,7 @@ class PlayerProfileLibraryConfirmationMigrationTest {
 
     private data class Column(val name: String, val type: String, val notNull: Boolean)
 
-    private fun assertPlayerProfileV43Schema(raw: SupportSQLiteDatabase) {
+    private fun assertPlayerProfileV44Schema(raw: SupportSQLiteDatabase) {
         val columns = mutableListOf<Column>()
         raw.query("PRAGMA table_info(`player_profile`)").use { cursor ->
             val name = cursor.getColumnIndexOrThrow("name")
@@ -222,25 +227,56 @@ class PlayerProfileLibraryConfirmationMigrationTest {
             }
         }
         assertEquals(
-            "v43 player_profile must append exactly the two confirmation columns in order",
+            "v44 player_profile must append the two confirmation columns and the three provenance " +
+                "columns in order",
             listOf(
                 "id", "steamId", "steamLevel", "totalXp", "level", "currentStreak",
                 "longestStreak", "gamificationConfigVersion", "lastSyncAt", "lastSyncError",
                 "playtimeBackfilled", "personaName", "avatarUrl", "storeRegion",
                 "pendingImportRecompute", "lastSuccessfulWishlistReadAt",
                 "pendingXpIntegrityCorrection", "confirmedLibrarySteamId", "confirmedLibraryAt",
+                "pendingImportRecomputeSource", "pendingImportRecomputeSteamId",
+                "pendingImportRecomputeRequestId",
             ),
             columns.map(Column::name),
         )
-        val confirmation = columns.filter { it.name == "confirmedLibrarySteamId" || it.name == "confirmedLibraryAt" }
+        val appended = columns.filter {
+            it.name in setOf(
+                "confirmedLibrarySteamId", "confirmedLibraryAt",
+                "pendingImportRecomputeSource", "pendingImportRecomputeSteamId",
+                "pendingImportRecomputeRequestId",
+            )
+        }
         assertEquals(
             mapOf(
                 "confirmedLibrarySteamId" to "TEXT",
                 "confirmedLibraryAt" to "INTEGER",
+                "pendingImportRecomputeSource" to "TEXT",
+                "pendingImportRecomputeSteamId" to "TEXT",
+                "pendingImportRecomputeRequestId" to "TEXT",
             ),
-            confirmation.associate { it.name to it.type },
+            appended.associate { it.name to it.type },
         )
-        assertTrue("both confirmation columns must be nullable", confirmation.all { !it.notNull })
+        assertTrue("all appended migration columns must be nullable", appended.all { !it.notNull })
+    }
+
+    /**
+     * The provenance triple arrives NULL on every migrated install: a legacy pending marker keeps
+     * its backup-merge meaning and no explicit request identity is invented from restored rows.
+     */
+    private fun assertProvenanceStaysNull(raw: SupportSQLiteDatabase) {
+        raw.query(
+            "SELECT pendingImportRecompute, pendingImportRecomputeSource, " +
+                "pendingImportRecomputeSteamId, pendingImportRecomputeRequestId " +
+                "FROM player_profile WHERE id = 0",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(1, cursor.getInt(0))
+            assertTrue("legacy marker must carry no invented source", cursor.isNull(1))
+            assertTrue("legacy marker must carry no invented account", cursor.isNull(2))
+            assertTrue("legacy marker must carry no invented request", cursor.isNull(3))
+            assertFalse(cursor.moveToNext())
+        }
     }
 
     private fun assertV42DataSurvives(raw: SupportSQLiteDatabase) {
@@ -333,7 +369,8 @@ class PlayerProfileLibraryConfirmationMigrationTest {
 
     /**
      * The genuine on-device upgrade path: a v42 file carrying Room's own identity row, opened with
-     * only [BacklogiumDatabase.MIGRATION_42_43] registered. Room runs the migration itself.
+     * `MIGRATION_42_43` and the combined `MIGRATION_43_44` registered. Room runs the migrations
+     * themselves.
      */
     @Test
     fun v42RoomUpgradePreservesLegacyState() = runBlocking {
@@ -341,7 +378,10 @@ class PlayerProfileLibraryConfirmationMigrationTest {
         seedV42Database(name, includeRoomIdentity = true)
 
         val db = Room.databaseBuilder(context, BacklogiumDatabase::class.java, name)
-            .addMigrations(BacklogiumDatabase.MIGRATION_42_43)
+            .addMigrations(
+                BacklogiumDatabase.MIGRATION_42_43,
+                BacklogiumDatabase.MIGRATION_43_44,
+            )
             .allowMainThreadQueries()
             .build()
         try {
@@ -354,11 +394,15 @@ class PlayerProfileLibraryConfirmationMigrationTest {
             assertTrue(profile.pendingImportRecompute)
             assertNull(profile.confirmedLibrarySteamId)
             assertNull(profile.confirmedLibraryAt)
+            assertNull(profile.pendingImportRecomputeSource)
+            assertNull(profile.pendingImportRecomputeSteamId)
+            assertNull(profile.pendingImportRecomputeRequestId)
 
             val raw = db.openHelper.writableDatabase
-            assertPlayerProfileV43Schema(raw)
+            assertPlayerProfileV44Schema(raw)
             assertV42DataSurvives(raw)
             assertProfileStaysUnconfirmed(raw)
+            assertProvenanceStaysNull(raw)
         } finally {
             db.close()
             context.deleteDatabase(name)
@@ -366,10 +410,10 @@ class PlayerProfileLibraryConfirmationMigrationTest {
     }
 
     /**
-     * The migration's SQL applied directly on real SQLite, followed by Room opening the stamped
-     * v43 file with no identity row — the path where Room runs its deep `onValidateSchema`
-     * comparison of every table against the compiled v43 entity schemas. Any schema drift the
-     * migration introduced fails the open.
+     * The migrations' SQL applied directly on real SQLite, followed by Room opening the stamped
+     * v44 file with no identity row — the path where Room runs its deep `onValidateSchema`
+     * comparison of every table against the compiled v44 entity schemas. Any schema drift the
+     * migrations introduced fails the open.
      */
     @Test
     fun v42SchemaValidationPreservesReceipts() {
@@ -388,7 +432,8 @@ class PlayerProfileLibraryConfirmationMigrationTest {
             // No room_master_table on purpose: with none present, RoomOpenHelper.checkIdentity
             // delegates to onValidateSchema and performs the full TableInfo comparison.
             BacklogiumDatabase.MIGRATION_42_43.migrate(db)
-            db.version = 43
+            BacklogiumDatabase.MIGRATION_43_44.migrate(db)
+            db.version = 44
         } finally {
             helper.close()
         }
@@ -398,15 +443,19 @@ class PlayerProfileLibraryConfirmationMigrationTest {
             .build()
         try {
             val raw = db.openHelper.writableDatabase
-            assertPlayerProfileV43Schema(raw)
+            assertPlayerProfileV44Schema(raw)
             assertV42DataSurvives(raw)
             assertProfileStaysUnconfirmed(raw)
+            assertProvenanceStaysNull(raw)
             runBlocking {
                 val profile = checkNotNull(db.playerProfileDao().get()) {
-                    "deep-validated v43 must still read the seeded profile"
+                    "deep-validated v44 must still read the seeded profile"
                 }
                 assertNull(profile.confirmedLibrarySteamId)
                 assertNull(profile.confirmedLibraryAt)
+                assertNull(profile.pendingImportRecomputeSource)
+                assertNull(profile.pendingImportRecomputeSteamId)
+                assertNull(profile.pendingImportRecomputeRequestId)
             }
         } finally {
             db.close()

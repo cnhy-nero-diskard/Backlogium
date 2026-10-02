@@ -15,6 +15,7 @@ import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.HltbDatasetDao
+import com.example.backlogium.data.local.dao.LibraryPollEvidenceDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.dao.PendingCloudEvidenceDao
@@ -80,6 +81,7 @@ object DatabaseModule {
                 BacklogiumDatabase.MIGRATION_40_41,
                 BacklogiumDatabase.MIGRATION_41_42,
                 BacklogiumDatabase.MIGRATION_42_43,
+                BacklogiumDatabase.MIGRATION_43_44,
             )
             // Never silently replace a user's database when a branch has an unexpected schema
             // version. A real version bump must ship and register its migration; otherwise the
@@ -100,6 +102,10 @@ object DatabaseModule {
 
     @Provides
     fun providePlayerProfileDao(db: BacklogiumDatabase): PlayerProfileDao = db.playerProfileDao()
+
+    @Provides
+    fun provideLibraryPollEvidenceDao(db: BacklogiumDatabase): LibraryPollEvidenceDao =
+        db.libraryPollEvidenceDao()
 
     @Provides
     fun provideHltbDataDao(db: BacklogiumDatabase): HltbDataDao = db.hltbDataDao()

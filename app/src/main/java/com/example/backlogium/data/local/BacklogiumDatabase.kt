@@ -20,6 +20,7 @@ import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.HltbDatasetDao
+import com.example.backlogium.data.local.dao.LibraryPollEvidenceDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.dao.PendingCloudEvidenceDao
@@ -40,6 +41,7 @@ import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDatasetLength
 import com.example.backlogium.data.local.entity.HltbDatasetMapping
 import com.example.backlogium.data.local.entity.HltbDatasetState
+import com.example.backlogium.data.local.entity.LibraryPollEvidenceRecord
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.PendingCloudInterval
@@ -69,6 +71,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         HltbDatasetState::class,
         HltbDatasetMapping::class,
         HltbDatasetLength::class,
+        LibraryPollEvidenceRecord::class,
         Achievement::class,
         SyncRun::class,
         RequestBreakdown::class,
@@ -93,7 +96,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         CloudHistoricalBoundary::class,
         CloudHistoricalJournal::class,
     ],
-    version = 43,
+    version = 44,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -104,6 +107,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun playerProfileDao(): PlayerProfileDao
     abstract fun hltbDataDao(): HltbDataDao
     abstract fun hltbDatasetDao(): HltbDatasetDao
+    abstract fun libraryPollEvidenceDao(): LibraryPollEvidenceDao
     abstract fun achievementDao(): AchievementDao
     abstract fun cloudReadDao(): CloudReadDao
     abstract fun pendingCloudEvidenceDao(): PendingCloudEvidenceDao
@@ -1060,6 +1064,61 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "ALTER TABLE `player_profile` ADD COLUMN `confirmedLibraryAt` INTEGER",
+                )
+            }
+        }
+
+        /**
+         * v43 -> v44: additive only — durable, attributable library-poll operation evidence and
+         * the pending-recompute provenance triple on `player_profile` (stabilize-first-run-setup).
+         *
+         * The new `library_poll_evidence` table stores one latest outcome per admitted work id +
+         * account so a poll's result can be projected onto the exact operation that requested it —
+         * never inferred from scheduler success or the profile's latest error. It starts empty on
+         * every upgrade: legacy finished jobs have no persisted domain outcome and stay historical
+         * rather than being fabricated as successes. Rows are written by the sync worker
+         * (`COMMITTED` inside the accepted raw library transaction; `NOT_PERFORMED`/`FAILED`
+         * outside it, guarded by the account barrier) and purged by account reset.
+         *
+         * `pendingImportRecomputeSource` records whether an unfinished recomputation behind
+         * [PlayerProfile.pendingImportRecompute] came from an explicit history import
+         * (`BACKFILL`) or a backup merge (`RESTORE`); `pendingImportRecomputeSteamId` attributes
+         * it to the account whose raw transaction left the marker; `pendingImportRecomputeRequestId`
+         * carries the opaque explicit-consent identity when the marker is a BACKFILL import.
+         * All three arrive NULL on every existing install — a legacy marker present at upgrade
+         * keeps its prior meaning (a backup merge, presented as RESTORE) and no request identity
+         * is invented from restored rows.
+         *
+         * Both additions were authored together on an unreleased branch, so they ship as one
+         * additive hop: only version 43 was ever released, and no 44/45 install exists to hop from.
+         * No existing table is altered except the three NULL profile columns; the v43 confirmation
+         * columns, imports, offsets, sessions, and cloud receipts are untouched.
+         */
+        val MIGRATION_43_44 = object : Migration(43, 44) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `library_poll_evidence` (" +
+                        "`workIdentity` TEXT NOT NULL, " +
+                        "`accountSteamId` TEXT NOT NULL, " +
+                        "`outcome` TEXT NOT NULL, " +
+                        "`gameCount` INTEGER NOT NULL, " +
+                        "`lastSyncAt` INTEGER NOT NULL, " +
+                        "`refusal` TEXT, " +
+                        "`reason` TEXT, " +
+                        "`recordedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`workIdentity`, `accountSteamId`))",
+                )
+                db.execSQL(
+                    "ALTER TABLE `player_profile` " +
+                        "ADD COLUMN `pendingImportRecomputeSource` TEXT",
+                )
+                db.execSQL(
+                    "ALTER TABLE `player_profile` " +
+                        "ADD COLUMN `pendingImportRecomputeSteamId` TEXT",
+                )
+                db.execSQL(
+                    "ALTER TABLE `player_profile` " +
+                        "ADD COLUMN `pendingImportRecomputeRequestId` TEXT",
                 )
             }
         }

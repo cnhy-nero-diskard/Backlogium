@@ -47,6 +47,28 @@ data class PlayerProfile(
      * atomically with the raw data; cleared by the next completed recompute regardless of source.
      */
     val pendingImportRecompute: Boolean = false,
+    /**
+     * Provenance of the pending recompute behind [pendingImportRecompute]: the name of the
+     * [com.example.backlogium.domain.RecomputeSource] that must present the recovery
+     * (stabilize-first-run-setup, tasks 5.5/5.6). "BACKFILL" marks an explicit Steam-history
+     * import; "RESTORE" (or NULL, which predates this column and can only have been a backup
+     * merge) marks a backup restore. Both are administrative/non-earned, but the recovery and
+     * every marker-clearing derived writer must know which one it is resolving so imported
+     * historical XP is never announced as newly earned play. NULL is the legacy default and
+     * never grants or changes any behavior on its own.
+     */
+    val pendingImportRecomputeSource: String? = null,
+    /**
+     * The account whose raw transaction left the pending marker, paired with
+     * [pendingImportRecomputeSource]. Recovery refuses to recompute a marker owned by a previous
+     * account over the replacement account; the account reset clears the pair with the marker.
+     */
+    val pendingImportRecomputeSteamId: String? = null,
+    /**
+     * The opaque explicit request identity behind a BACKFILL pending marker (the consent the
+     * import was executed under), for full source/request provenance. Null for RESTORE markers.
+     */
+    val pendingImportRecomputeRequestId: String? = null,
     /** The last successful wishlist membership read; null until Steam has answered successfully. */
     val lastSuccessfulWishlistReadAt: Long? = null,
     /**
