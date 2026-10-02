@@ -100,6 +100,8 @@ class FirstRunJourneyCoordinator @Inject constructor(
     }
 
     override suspend fun setupDone(steamId: String): Boolean {
+        // Active-account gate: a stale-account phase can never advance the replacement account's flow.
+        if (activeAccountSteamId() != steamId) return false
         val changed = journeyRepo.transition(
             steamId,
             setOf(FirstRunPhase.SETUP),
@@ -144,6 +146,10 @@ class FirstRunJourneyCoordinator @Inject constructor(
     override suspend fun recoverPendingImport() { historyImport.recoverPending() }
 
     override suspend fun skipHistory(steamId: String): Boolean {
+        // Active-account gate: only the currently active account may exit its own decision.
+        if (activeAccountSteamId() != steamId) return false
+        val current = journeyRepo.current()
+        if (current?.accountSteamId == steamId && current.phase == FirstRunPhase.DEFERRED) return true
         val changed = journeyRepo.transition(
             steamId,
             setOf(FirstRunPhase.HISTORY_CHOICE, FirstRunPhase.IMPORT_REQUESTED),
@@ -154,14 +160,32 @@ class FirstRunJourneyCoordinator @Inject constructor(
     }
 
     override suspend fun finishHistory(steamId: String, requestId: String?): Boolean {
-        val effective = requestId?.takeIf { it.isNotBlank() }
-            ?: journeyRepo.current()?.importRequestId?.takeIf { it.isNotBlank() }
-        val changed = if (effective != null) {
-            journeyRepo.completeImport(steamId, effective)
-        } else {
-            journeyRepo.transition(steamId, setOf(FirstRunPhase.HISTORY_CHOICE), FirstRunPhase.COMPLETE)
+        // Active-account gate: only the currently active account may complete or dismiss its flow;
+        // an old-account phase can never be claimed done for the replacement account.
+        if (activeAccountSteamId() != steamId) return false
+        val current = journeyRepo.current()
+            ?: return false
+        if (current.accountSteamId != steamId) return false
+        // Already complete (the shared coordinator settled it synchronously), or explicitly exited:
+        // the VM may leave the flow — the journey is not owed either way.
+        if (current.phase == FirstRunPhase.COMPLETE || current.phase == FirstRunPhase.DEFERRED) return true
+
+        // Durable eligibility: a decision may only be claimed done when the one-time import is
+        // durably committed AND its recompute is not still pending — never off an old snapshot
+        // whose raw commit or administrative recompute is mid-flight.
+        if (!facts.importBackfilled(steamId) || facts.recomputePending(steamId)) return false
+
+        val changed = when (current.phase) {
+            FirstRunPhase.IMPORT_REQUESTED -> {
+                val effective = requestId?.takeIf { it.isNotBlank() }
+                    ?: current.importRequestId?.takeIf { it.isNotBlank() }
+                effective != null && journeyRepo.completeImport(steamId, effective)
+            }
+            FirstRunPhase.HISTORY_CHOICE ->
+                journeyRepo.transition(steamId, setOf(FirstRunPhase.HISTORY_CHOICE), FirstRunPhase.COMPLETE)
+            else -> false
         }
-        publishOwed()
+        if (changed) publishOwed()
         return changed
     }
 

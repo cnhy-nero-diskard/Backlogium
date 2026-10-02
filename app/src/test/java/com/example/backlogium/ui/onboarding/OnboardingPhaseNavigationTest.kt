@@ -165,6 +165,61 @@ class OnboardingPhaseNavigationTest {
         }
     }
 
+    @Test
+    fun rejectedSkipAndContinueDoNotDismissTheFlow() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        try {
+            val credentials = FakeCredentials(configured = null)
+            val journey = FakeJourney(finishResult = false, skipResult = false)
+            val viewModel = OnboardingViewModel(credentials, FakeBackup(), FakeAccountChange(), journey)
+            advanceUntilIdle()
+            enterCredentialsAndSave(viewModel, credentials)
+            viewModel.onSetupDone()
+            advanceUntilIdle()
+            assertEquals(OnboardingStep.HISTORY_CHOICE, viewModel.uiState.value.step)
+
+            viewModel.onHistorySkip()
+            advanceUntilIdle()
+            // The gateway rejected the deferral: the local flow must not be dismissed.
+            assertFalse(viewModel.uiState.value.completed)
+
+            viewModel.onHistoryContinue()
+            advanceUntilIdle()
+            assertFalse(viewModel.uiState.value.completed)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun lateOldSteamImportedAfterAccountFlipDoesNotDismiss() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        try {
+            val credentials = FakeCredentials(configured = null)
+            val journey = FakeJourney(
+                scriptedResults = ArrayDeque(listOf(HistoryImportResult.Imported(1, 100))),
+                finishResult = false,
+            )
+            val viewModel = OnboardingViewModel(credentials, FakeBackup(), FakeAccountChange(), journey)
+            advanceUntilIdle()
+            enterCredentialsAndSave(viewModel, credentials)
+            viewModel.onSetupDone()
+            advanceUntilIdle()
+
+            viewModel.onHistoryImport()
+            advanceUntilIdle()
+
+            // The import settled, but the gateway refused to finish (e.g. account flipped before the
+            // late result arrived): the replacement account's local flow stays up.
+            assertFalse(viewModel.uiState.value.completed)
+            assertEquals(FirstRunPhase.IMPORT_REQUESTED, journey.phase())
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
     // ------------------------------------------------------------- cold-launch restoration
 
     @Test
@@ -274,6 +329,8 @@ class OnboardingPhaseNavigationTest {
         var resolved: FirstRunJourney? = null,
         private var scriptedResults: ArrayDeque<HistoryImportResult> = ArrayDeque(),
         private val blockResolved: Boolean = false,
+        private var finishResult: Boolean = true,
+        private var skipResult: Boolean = true,
     ) : FirstRunJourneyGateway {
         private val resolverGate = CompletableDeferred<Unit>()
         private val journeyFlow = MutableStateFlow<FirstRunJourney?>(resolved)
@@ -334,15 +391,19 @@ class OnboardingPhaseNavigationTest {
         override suspend fun recoverPendingImport() = Unit
 
         override suspend fun skipHistory(steamId: String): Boolean {
-            journeyFlow.value = journeyFlow.value?.copy(phase = FirstRunPhase.DEFERRED)
+            if (skipResult) {
+                journeyFlow.value = journeyFlow.value?.copy(phase = FirstRunPhase.DEFERRED)
+            }
             owedFlow.value = false
-            return true
+            return skipResult
         }
 
         override suspend fun finishHistory(steamId: String, requestId: String?): Boolean {
-            journeyFlow.value = journeyFlow.value?.copy(phase = FirstRunPhase.COMPLETE)
+            if (finishResult) {
+                journeyFlow.value = journeyFlow.value?.copy(phase = FirstRunPhase.COMPLETE)
+            }
             owedFlow.value = false
-            return true
+            return finishResult
         }
 
         override suspend fun onImportReset(steamId: String) = Unit

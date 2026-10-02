@@ -440,8 +440,9 @@ class OnboardingViewModel @Inject constructor(
     fun onSetupDone() {
         viewModelScope.launch {
             val steamId = journey.activeAccountSteamId() ?: return@launch
-            journey.setupDone(steamId)
-            _uiState.update { it.copy(step = OnboardingStep.HISTORY_CHOICE) }
+            if (journey.setupDone(steamId)) {
+                _uiState.update { it.copy(step = OnboardingStep.HISTORY_CHOICE) }
+            }
             refreshHistoryChoice(journey.historyImportState.first())
         }
     }
@@ -471,8 +472,9 @@ class OnboardingViewModel @Inject constructor(
     fun onHistorySkip() {
         viewModelScope.launch {
             val steamId = journey.activeAccountSteamId() ?: return@launch
-            journey.skipHistory(steamId)
-            completeFlow()
+            // Only the gateway-accepted deferral dismisses the flow: a stale-account or rejected
+            // phase must never complete the replacement account's local onboarding.
+            if (journey.skipHistory(steamId)) completeFlow()
         }
     }
 
@@ -480,8 +482,7 @@ class OnboardingViewModel @Inject constructor(
     fun onHistoryContinue() {
         viewModelScope.launch {
             val steamId = journey.activeAccountSteamId() ?: return@launch
-            journey.finishHistory(steamId)
-            completeFlow()
+            if (journey.finishHistory(steamId)) completeFlow()
         }
     }
 
@@ -493,10 +494,10 @@ class OnboardingViewModel @Inject constructor(
     private suspend fun handleHistoryImportResult(steamId: String, result: HistoryImportResult) {
         when (result) {
             is HistoryImportResult.Imported, HistoryImportResult.AlreadyImported -> {
-                // Complete the exact request durably before reporting done, so a cold launch after
-                // this cannot reopen the journey.
-                journey.finishHistory(steamId)
-                completeFlow()
+                // Leave the flow only if the journey durably completed for the active account (the
+                // gateway re-verifies eligibility; a late old-account Imported can never dismiss
+                // the replacement account's local flow).
+                if (journey.finishHistory(steamId)) completeFlow()
             }
             HistoryImportResult.PendingRecompute,
             HistoryImportResult.NeedsBaseline,

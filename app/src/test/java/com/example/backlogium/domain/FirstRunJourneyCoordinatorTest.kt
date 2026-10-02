@@ -71,11 +71,15 @@ class FirstRunJourneyCoordinatorTest {
             active?.let { CredentialsState.Configured(apiKey = "key", steamId = it) }
     }
 
-    private class NoFacts : LibraryBaselineGateway {
-        override suspend fun baselineConfirmed(): Boolean = true
-        override suspend fun importBackfilled(steamId: String): Boolean = false
-        override suspend fun recomputePending(steamId: String): Boolean = false
-    }
+    private class Facts(
+    private var baseline: Boolean = true,
+    private var backfilled: Boolean = false,
+    private var recompute: Boolean = false,
+) : LibraryBaselineGateway {
+    override suspend fun baselineConfirmed(): Boolean = baseline
+    override suspend fun importBackfilled(steamId: String): Boolean = backfilled
+    override suspend fun recomputePending(steamId: String): Boolean = recompute
+}
 
     private class Harness(
         val database: BacklogiumDatabase,
@@ -97,6 +101,7 @@ class FirstRunJourneyCoordinatorTest {
     private suspend fun harness(
         activeAccount: String = steamId,
         legacyClaim: Boolean = false,
+        facts: LibraryBaselineGateway = Facts(),
         transaction: (BacklogiumDatabase) -> DatabaseTransactionScope = { RoomDatabaseTransactionScope(it) },
     ): Harness {
         val database = Room.inMemoryDatabaseBuilder(
@@ -151,7 +156,7 @@ class FirstRunJourneyCoordinatorTest {
             historyImport = imports,
             credentials = credentials,
             setupStore = setupStore,
-            facts = NoFacts(),
+            facts = facts,
             appScope = appScope,
         )
         return Harness(database, repo, coordinator, credentials, appScope, dataScope, root)
@@ -539,6 +544,94 @@ class FirstRunJourneyCoordinatorTest {
     }
 
     // ----------------------------------------------------------------- account re-fence + guards
+
+    @Test
+    fun finishHistoryCompletesAnOrdinaryAlreadyImportedJourney() = runBlocking {
+        val h = harness(facts = Facts(backfilled = true))
+        try {
+            h.repo.claim(steamId)
+            assertTrue(h.coordinator.setupDone(steamId))
+            assertEquals(FirstRunPhase.HISTORY_CHOICE, h.repo.current()?.phase)
+
+            // Durable receipt present, no pending recompute: the Continue completes the decision.
+            assertTrue(h.coordinator.finishHistory(steamId))
+            assertEquals(FirstRunPhase.COMPLETE, h.repo.current()?.phase)
+            assertFalse(h.repo.current()!!.owed)
+        } finally {
+            h.close()
+        }
+    }
+
+    @Test
+    fun finishHistoryOnAlreadyCompleteOrDeferredReturnsTrue() = runBlocking {
+        val h = harness(facts = Facts(backfilled = true))
+        try {
+            h.repo.claim(steamId)
+            assertTrue(
+                h.repo.transition(
+                    steamId,
+                    setOf(FirstRunPhase.SETUP),
+                    FirstRunPhase.IMPORT_REQUESTED,
+                    "phase-done",
+                ),
+            )
+            assertTrue(h.repo.completeImport(steamId, "phase-done"))
+            // The coordinator already completed it synchronously: the VM may exit.
+            assertTrue(h.coordinator.finishHistory(steamId))
+            assertEquals(FirstRunPhase.COMPLETE, h.repo.current()?.phase)
+
+            // An explicitly deferred journey (old pending settled) also reports done-but-not-owed.
+            h.repo.claim(steamId)
+            assertTrue(h.coordinator.setupDone(steamId))
+            assertTrue(h.coordinator.skipHistory(steamId))
+            assertTrue(h.coordinator.finishHistory(steamId))
+            assertEquals(FirstRunPhase.DEFERRED, h.repo.current()?.phase)
+        } finally {
+            h.close()
+        }
+    }
+
+    @Test
+    fun finishHistoryWhileRawImportPendsRecomputeReturnsFalse() = runBlocking {
+        val h = harness(facts = Facts(backfilled = true, recompute = true))
+        try {
+            h.repo.claim(steamId)
+            assertTrue(
+                h.repo.transition(
+                    steamId,
+                    setOf(FirstRunPhase.SETUP),
+                    FirstRunPhase.IMPORT_REQUESTED,
+                    "phase-r",
+                ),
+            )
+
+            // Raw flag is set but the recompute marker is still pending: not a done decision.
+            assertFalse(h.coordinator.finishHistory(steamId))
+            assertEquals(FirstRunPhase.IMPORT_REQUESTED, h.repo.current()?.phase)
+            assertTrue(h.repo.current()!!.owed)
+        } finally {
+            h.close()
+        }
+    }
+
+    @Test
+    fun staleAccountFinishSkipAndSetupNeverAdvanceOrDismiss() = runBlocking {
+        val h = harness()
+        try {
+            h.repo.claim(steamId)
+            assertTrue(h.coordinator.setupDone(steamId)) // HISTORY_CHOICE for steamId
+            h.credentials.active = otherAccount
+
+            // The active account is now the replacement: none of these may act on steamId's journey.
+            assertFalse(h.coordinator.finishHistory(steamId))
+            assertFalse(h.coordinator.skipHistory(steamId))
+            assertFalse(h.coordinator.setupDone(steamId))
+            assertEquals(FirstRunPhase.HISTORY_CHOICE, h.repo.current()?.phase)
+            assertTrue(h.repo.current()!!.owed)
+        } finally {
+            h.close()
+        }
+    }
 
     @Test
     fun accountChangeReFencesTheOwedProjectionAfterCredentialsSwitch() = runBlocking {
