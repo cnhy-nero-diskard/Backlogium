@@ -9,6 +9,18 @@ import kotlinx.coroutines.flow.Flow
  */
 @Dao
 interface DailyActivityDao {
+    @Query("SELECT appId, name, iconUrl FROM games WHERE appId NOT IN (SELECT appId FROM hidden_games)")
+    suspend fun momentumGames(): List<com.example.backlogium.domain.MomentumGame>
+
+    @Query("SELECT s.appId, s.startAt, s.minutes, s.open FROM sessions s INNER JOIN games g ON g.appId = s.appId " +
+        "WHERE s.startAt >= :startInclusive AND s.startAt < :endExclusive AND s.open = 0 AND s.minutes > 0 " +
+        "AND s.appId NOT IN (SELECT appId FROM hidden_games)")
+    suspend fun momentumRecords(startInclusive: Long, endExclusive: Long): List<com.example.backlogium.domain.MomentumRecord>
+
+    @Query("SELECT MIN(s.startAt) FROM sessions s INNER JOIN games g ON g.appId = s.appId " +
+        "WHERE s.open = 0 AND s.minutes > 0 AND s.appId NOT IN (SELECT appId FROM hidden_games)")
+    suspend fun earliestMomentumStart(): Long?
+
     @Query("SELECT * FROM sessions WHERE startAt >= :startInclusive AND startAt < :endExclusive " +
         "AND appId NOT IN (SELECT appId FROM hidden_games) ORDER BY startAt DESC")
     suspend fun readVisibleBetween(startInclusive: Long, endExclusive: Long): List<com.example.backlogium.data.local.entity.Session>
