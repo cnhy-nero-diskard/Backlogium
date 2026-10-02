@@ -98,6 +98,7 @@ import com.example.backlogium.data.local.entity.SyncRun
 )
 @TypeConverters(Converters::class)
 abstract class BacklogiumDatabase : RoomDatabase() {
+    abstract fun dailyActivityDao(): com.example.backlogium.data.local.dao.DailyActivityDao
     abstract fun gameDao(): GameDao
     abstract fun sessionDao(): SessionDao
     abstract fun dailyProgressDao(): DailyProgressDao
