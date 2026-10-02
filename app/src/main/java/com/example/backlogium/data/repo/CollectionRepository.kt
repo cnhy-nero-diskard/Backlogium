@@ -11,6 +11,8 @@ import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.CustomCollectionOverview
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.domain.CollectionEditConflict
+import com.example.backlogium.domain.CollectionMembershipState
 import com.example.backlogium.domain.defaultSort
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -30,6 +32,7 @@ data class CollectionSaveDraft(
     val description: String?,
     val memberAppIds: List<Long>,
     val doneAppIds: Set<Long>,
+    val membershipBaseline: List<CollectionMembershipState>? = null,
 )
 
 /**
@@ -90,6 +93,20 @@ class CollectionRepository @Inject constructor(
         return collectionDao.getMembers(collectionId).filterNot { it.appId in hidden }
     }
 
+    /** Atomically capture all retained membership state alongside the visible editing draft. */
+    suspend fun editorSnapshot(id: Long): CollectionSaveDraft? = transaction.run {
+        val collection = getById(id) ?: return@run null
+        val members = collectionDao.getMembers(id)
+        val hidden = hiddenGamesRepository.hiddenAppIdSet()
+        CollectionSaveDraft(
+            id, collection.name, collection.mode, collection.sort, collection.targetDate,
+            collection.accent, collection.timeBasis, collection.description,
+            members.filterNot { it.appId in hidden }.map { it.appId },
+            members.filter { it.done && it.appId !in hidden }.mapTo(mutableSetOf()) { it.appId },
+            members.map { CollectionMembershipState(it.appId, it.orderIndex, it.done) },
+        )
+    }
+
     private fun Flow<List<CollectionMember>>.visibleMembers(): Flow<List<CollectionMember>> =
         combine(hiddenGamesRepository.hiddenAppIds) { members, hidden ->
             if (hidden.isEmpty()) members else members.filterNot { it.appId in hidden }
@@ -141,6 +158,15 @@ class CollectionRepository @Inject constructor(
 
     /** Commit the buffered collection fields and membership reconciliation as one unit. */
     suspend fun save(draft: CollectionSaveDraft): Long = transaction.run {
+        if (draft.id != 0L) {
+            check(collectionDao.getById(draft.id) != null) { "Collection no longer exists. Reopen the editor." }
+            draft.membershipBaseline?.let { baseline ->
+                val current = collectionDao.getMembers(draft.id).map {
+                    CollectionMembershipState(it.appId, it.orderIndex, it.done)
+                }
+                if (current != baseline) throw CollectionEditConflict()
+            }
+        }
         val id = if (draft.id == 0L) {
             create(
                 name = draft.name,

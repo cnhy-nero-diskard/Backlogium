@@ -1,6 +1,8 @@
 package com.example.backlogium.data.local
 
 import androidx.room.Database
+import com.example.backlogium.data.local.dao.GamePreferenceDao
+import com.example.backlogium.data.local.entity.GamePreference
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
@@ -62,6 +64,7 @@ import com.example.backlogium.data.local.entity.SyncRun
 @Database(
     entities = [
         Game::class,
+        GamePreference::class,
         Session::class,
         DailyProgress::class,
         PlayerProfile::class,
@@ -93,11 +96,12 @@ import com.example.backlogium.data.local.entity.SyncRun
         CloudHistoricalBoundary::class,
         CloudHistoricalJournal::class,
     ],
-    version = 42,
+    version = 43,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
 abstract class BacklogiumDatabase : RoomDatabase() {
+    abstract fun gamePreferenceDao(): GamePreferenceDao
     abstract fun gameDao(): GameDao
     abstract fun sessionDao(): SessionDao
     abstract fun dailyProgressDao(): DailyProgressDao
@@ -1037,6 +1041,13 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                     "ALTER TABLE `cloud_historical_operations` " +
                         "ADD COLUMN `lastIngestedPageNumber` INTEGER NOT NULL DEFAULT 0",
                 )
+            }
+        }
+
+        /** v42 -> v43: app-owned favorites, intentionally independent of the games table. */
+        val MIGRATION_42_43 = object : Migration(42, 43) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `game_preferences` (`appId` INTEGER NOT NULL, `isFavorite` INTEGER NOT NULL, PRIMARY KEY(`appId`))")
             }
         }
 

@@ -19,6 +19,7 @@ import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionBanner
 import com.example.backlogium.domain.CollectionMemberSignals
 import com.example.backlogium.domain.CollectionMode
+import com.example.backlogium.domain.CollectionMembershipState
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CollectionTimeBasis
@@ -89,6 +90,7 @@ data class CollectionUiState(
     val done: Boolean = false,
     /** True while save is in flight; guards against double taps and disables controls. */
     val saving: Boolean = false,
+    val saveError: String? = null,
 ) {
     /** Library games not already members — the add-games control's pool. */
     val addableGames: List<LibraryGame>
@@ -139,11 +141,13 @@ class CollectionViewModel @Inject constructor(
     private val _loaded = MutableStateFlow(collectionId == 0L)
     private val _done = MutableStateFlow(false)
     private val _saving = MutableStateFlow(false)
+    private val _saveError = MutableStateFlow<String?>(null)
+    private var membershipBaseline: List<CollectionMembershipState>? = null
 
     init {
         if (collectionId != 0L) {
             viewModelScope.launch {
-                val collection = collectionRepository.getById(collectionId)
+                val collection = collectionRepository.editorSnapshot(collectionId)
                 if (collection != null) {
                     _name.value = collection.name
                     _description.value = collection.description.orEmpty()
@@ -155,10 +159,9 @@ class CollectionViewModel @Inject constructor(
                     _accent.value = collection.accent
                     _timeBasis.value = collection.timeBasis
                 }
-                val members = collectionRepository.getMembers(collectionId)
-                    .sortedBy { it.orderIndex }
-                _memberAppIds.value = members.map { it.appId }
-                _doneMarks.value = members.filter { it.done }.map { it.appId }.toSet()
+                _memberAppIds.value = collection?.memberAppIds.orEmpty()
+                _doneMarks.value = collection?.doneAppIds.orEmpty()
+                membershipBaseline = collection?.membershipBaseline
                 _loaded.value = true
             }
         }
@@ -349,7 +352,7 @@ class CollectionViewModel @Inject constructor(
             done = s.done,
             saving = s.saving,
         )
-    }.stateIn(
+    }.combine(_saveError) { state, error -> state.copy(saveError = error) }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = CollectionUiState(),
@@ -357,6 +360,27 @@ class CollectionViewModel @Inject constructor(
 
     fun setName(value: String) {
         _name.value = value
+    }
+
+    /** Explicitly discard a stale buffer and reload the committed draft before retrying. */
+    fun refreshEditor() {
+        if (_saving.value || collectionId == 0L) return
+        viewModelScope.launch {
+            val draft = collectionRepository.editorSnapshot(collectionId) ?: return@launch
+            _name.value = draft.name
+            _description.value = draft.description.orEmpty()
+            _originalDescription.value = draft.description
+            _descriptionTouched.value = false
+            _mode.value = draft.mode
+            _sort.value = draft.sort
+            _targetDate.value = draft.targetDate?.let(LocalDate::parse)
+            _accent.value = draft.accent
+            _timeBasis.value = draft.timeBasis
+            _memberAppIds.value = draft.memberAppIds
+            _doneMarks.value = draft.doneAppIds
+            membershipBaseline = draft.membershipBaseline
+            _saveError.value = null
+        }
     }
 
     fun setDescription(value: String) {
@@ -482,16 +506,20 @@ class CollectionViewModel @Inject constructor(
             description = description,
             memberAppIds = _memberAppIds.value,
             doneAppIds = _doneMarks.value,
+            membershipBaseline = membershipBaseline,
         )
         _saving.value = true
+        _saveError.value = null
         viewModelScope.launch {
             try {
                 collectionRepository.save(draft)
                 _done.value = true
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                // Keep the buffered draft editable; the saving flag is released below.
+            } catch (failure: Exception) {
+                _saveError.value = if (failure is com.example.backlogium.domain.CollectionEditConflict) {
+                    "Collection membership changed. Refresh to load the latest collection, then retry your edits."
+                } else "Could not save the collection. Retry or refresh."
             } finally {
                 _saving.value = false
             }

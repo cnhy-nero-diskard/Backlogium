@@ -1705,6 +1705,29 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun v42ToV43RetainsGamesAndMembersAndDefaultsToUnfavorited() {
+        val databaseName = "migration-v42-${System.nanoTime()}"
+        migrationTestHelper.createDatabase(databaseName, 42).apply {
+            execSQL("INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, isGoal, lastSyncedAt, backfillMinutes, source, manualSharedMinutes) VALUES (10, 'Ten', '', 120, 0, 120, 1, 0, 0, 'STEAM_OWNED', 0)")
+            execSQL("INSERT INTO collections (id, name, mode, sort, createdAt, timeBasis, displayOrder) VALUES (1, 'Queue', 'ORDERED_QUEUE', 'MANUAL_SEQUENCE', 1, 'COMPLETIONIST', 0)")
+            execSQL("INSERT INTO collection_members (collectionId, appId, orderIndex, done) VALUES (1, 10, 0, 1)")
+            close()
+        }
+        try {
+            migrationTestHelper.runMigrationsAndValidate(databaseName, 43, true,
+                BacklogiumDatabase.MIGRATION_42_43).use { migrated ->
+                migrated.query("SELECT playtimeForever, isGoal FROM games WHERE appId = 10").use {
+                    assertTrue(it.moveToFirst()); assertEquals(120, it.getInt(0)); assertEquals(1, it.getInt(1))
+                }
+                migrated.query("SELECT orderIndex, done FROM collection_members").use {
+                    assertTrue(it.moveToFirst()); assertEquals(0, it.getInt(0)); assertEquals(1, it.getInt(1))
+                }
+                migrated.query("SELECT * FROM game_preferences").use { assertFalse(it.moveToFirst()) }
+            }
+        } finally { context.deleteDatabase(databaseName) }
+    }
+
     private fun assertTableInfo(database: SupportSQLiteDatabase, table: String, expected: List<ColumnInfo>) {
         val actual = mutableListOf<ColumnInfo>()
         database.query("PRAGMA table_info(`$table`)").use { cursor ->

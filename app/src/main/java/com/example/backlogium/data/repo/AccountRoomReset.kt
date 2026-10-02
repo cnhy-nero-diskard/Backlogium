@@ -15,6 +15,7 @@ class AccountRoomReset @Inject constructor(
 ) {
     suspend fun resetForAccountChange(steamId: String) {
         database.withTransaction {
+            database.gamePreferenceDao().deleteAll()
             database.sessionDao().deleteAll()
             database.achievementDao().deleteAll()
             database.gameGenreCacheDao().deleteAll()

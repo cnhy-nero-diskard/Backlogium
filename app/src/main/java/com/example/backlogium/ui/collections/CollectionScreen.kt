@@ -1083,6 +1083,7 @@ data class CollectionFormActions(
     val onToggleMemberDone: (Long) -> Unit = {},
     val onAddGame: (Long) -> Unit = {},
     val onSave: () -> Unit = {},
+    val onRefresh: () -> Unit = {},
 )
 
 /** The management form: name, mode, sort, deadline, members, add-games, save/delete. */
@@ -1107,6 +1108,7 @@ private fun CollectionForm(
             onToggleMemberDone = viewModel::toggleMemberDone,
             onAddGame = viewModel::addGame,
             onSave = viewModel::save,
+            onRefresh = viewModel::refreshEditor,
         ),
     )
 }
@@ -1152,6 +1154,16 @@ fun CollectionFormContent(
             state = formListState,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            state.saveError?.let { error ->
+                item(key = "save-error") {
+                    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        Text(error, color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = actions.onRefresh, enabled = !state.saving) {
+                            Text("Refresh editor")
+                        }
+                    }
+                }
+            }
             item(key = "games-heading") { SectionLabel("Games") }
             if (state.members.isEmpty()) {
                 item(key = "no-members") {
