@@ -13,3 +13,6 @@ gradlew.bat text eol=crlf
 *.jar  binary
 *.keystore binary
 *.jks  binary
+
+# Shared Android/tooling golden is compared with the canonical LF serializer.
+app/src/test/resources/com/example/backlogium/data/hltb/backlogium-hltb-contribution.json text eol=lf
