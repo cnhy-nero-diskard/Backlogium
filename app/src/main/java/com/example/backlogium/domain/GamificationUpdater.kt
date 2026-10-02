@@ -93,6 +93,10 @@ class GamificationUpdater @Inject constructor(
     /**
      * Recompute and persist all derived gamification values. [source] is required so every write
      * declares whether the resulting transition was earned progress or a baseline reset.
+     *
+     * [config] is threaded through to [persist] as the refresh config: when a pending-import
+     * marker is held, the persisted values are recomputed against the *current committed raw
+     * state* under this same config rather than trusting a result computed earlier.
      */
     suspend fun recompute(
         today: LocalDate,
@@ -100,7 +104,7 @@ class GamificationUpdater @Inject constructor(
         config: RuleConfig = RuleConfig(),
         configVersion: Long = 0L,
     ) {
-        persist(compute(today, config), source, configVersion)
+        persist(compute(today, config), source, configVersion, refreshConfig = config)
     }
 
     /**
@@ -230,9 +234,39 @@ class GamificationUpdater @Inject constructor(
     }
 
     /**
+     * The presentation source a persist must use for the profile currently stored.
+     *
+     * Both overrides re-define the delivery baseline instead of emitting earned events, because the
+     * transitions they describe were not earned through play: an #114 overflow correction, or the
+     * unfinished recomputation behind a raw import/merge whose marker this persist is about to
+     * clear. The pending-import provenance picks BACKFILL (explicit history import) vs RESTORE
+     * (backup merge); legacy markers with no provenance could only have come from a backup merge.
+     */
+    private fun effectiveRecomputeSource(
+        previousProfile: PlayerProfile?,
+        declaredSource: RecomputeSource,
+    ): RecomputeSource = when {
+        previousProfile?.pendingXpIntegrityCorrection == true -> RecomputeSource.XP_INTEGRITY_CORRECTION
+        previousProfile?.pendingImportRecompute == true ->
+            if (previousProfile.pendingImportRecomputeSource == RecomputeSource.BACKFILL.name) {
+                RecomputeSource.BACKFILL
+            } else {
+                RecomputeSource.RESTORE
+            }
+        else -> declaredSource
+    }
+
+    /**
      * Write a [compute] result back, then update progress-event delivery state. [source] has no
      * default deliberately: a future derived-value writer cannot compile without declaring why
      * the values changed.
+     *
+     * @param refreshConfig the [RuleConfig] the result was computed under. When a pending-import
+     *   marker is held, the caller's precomputed [result] may describe stale committed raw state
+     *   (e.g. computed before the import's raw commit), so the protocol recomputes fresh from the
+     *   current committed raw under this same config before writing, and **without** it the write
+     *   is refused: a stale or incomplete derived write must never clear pending recovery. The
+     *   caller's config is never ignored — it stays the appropriate rule candidate for the write.
      *
      * The whole protocol — resolve prior pending transition, capture previous state, write the
      * pending-transition write-ahead record, perform the Room writes, finalize the marks, clear the
@@ -245,9 +279,10 @@ class GamificationUpdater @Inject constructor(
         result: GamificationResult,
         source: RecomputeSource,
         configVersion: Long = 0L,
+        refreshConfig: RuleConfig? = null,
     ) {
         transitionCoordinator.withTransition {
-            persistWithinProtocol(result, source, configVersion)
+            persistWithinProtocol(result, source, configVersion, refreshConfig)
         }
     }
 
@@ -265,6 +300,7 @@ class GamificationUpdater @Inject constructor(
         result: GamificationResult,
         source: RecomputeSource,
         configVersion: Long,
+        refreshConfig: RuleConfig?,
     ) {
         val today = result.evaluationDate
 
@@ -275,16 +311,31 @@ class GamificationUpdater @Inject constructor(
         resolvePendingTransitionWithinProtocol(progressMarksStore, playerProfileDao, dailyProgressDao)
 
         val previousProfile = playerProfileDao.get()
+
+        // A raw transaction whose recomputation never finished is the pending-import marker
+        // (stabilize-first-run-setup, task 5.6). Whichever derived writer runs next — a periodic
+        // SYNC, a RULE_CHANGE, a visibility change — is the one that would otherwise clear it, so:
+        // 1. it must present the transition administratively (BACKFILL for an explicit history
+        //    import, RESTORE for a backup merge / legacy marker) rather than announce imported
+        //    historical XP as newly earned play; and
+        // 2. it must never write a possibly-STALE result computed before the raw commit landed.
+        //    The caller's own rule candidate ([refreshConfig]) stays the appropriate config, but
+        //    the values are recomputed fresh against the current committed raw state; without a
+        //    refresh config the write is refused outright (returning with nothing written, the
+        //    marker untouched) so no stale derived write can ever consume pending recovery.
+        var writeResult = result
+        if (previousProfile?.pendingImportRecompute == true) {
+            val refresh = refreshConfig
+            if (refresh == null) return
+            writeResult = compute(today, refresh)
+        }
+
         // A device migrated with a totalXp the #114 overflow bug may have wrapped to 0
         // (PlayerProfile.pendingXpIntegrityCorrection) gets its first post-fix recompute treated
         // as a correction regardless of the caller's own source — the caller has no way to know
         // this device is affected, and the caller-declared source must not smuggle a wrapped
         // total's correction through as earned progress.
-        val effectiveSource = if (previousProfile?.pendingXpIntegrityCorrection == true) {
-            RecomputeSource.XP_INTEGRITY_CORRECTION
-        } else {
-            source
-        }
+        val effectiveSource = effectiveRecomputeSource(previousProfile, source)
         val previousTodayQuestMet = dailyProgressDao.getByDate(today.toString())?.questMet == true
         val previousState = previousProfile?.let {
             ProgressState(
@@ -309,12 +360,25 @@ class GamificationUpdater @Inject constructor(
         }
 
         try {
-            writeAndFinalize(result, effectiveSource, previousState, previousProfile, today, configVersion)
+            writeAndFinalize(writeResult, effectiveSource, previousState, previousProfile, today, configVersion)
+            // The marker and its provenance survive the Room write, and are cleared as the LAST
+            // step of a successful whole-protocol finalization (after the marks finalize): a crash
+            // between the Room write and this clear keeps the BACKFILL/RESTORE provenance recovery
+            // needs. The comparison makes this clear incapable of erasing a newer marker another
+            // raw transaction may have written while this protocol ran.
+            if (previousProfile?.pendingImportRecompute == true) {
+                playerProfileDao.clearPendingImportRecomputeIfMatches(
+                    source = previousProfile.pendingImportRecomputeSource,
+                    steamId = previousProfile.pendingImportRecomputeSteamId,
+                    requestId = previousProfile.pendingImportRecomputeRequestId,
+                )
+            }
         } catch (t: Throwable) {
             // A pending transition suppresses event derivation by design, so returning from this
             // call with our own record still in place would freeze delivery for the rest of the
             // process — the WAL exists to survive process death, not to outlive a caught failure.
             // Resolve it against whatever Room actually committed, then let the failure propagate.
+            // The pending-import marker is intentionally NOT cleared on this path.
             withContext(NonCancellable) {
                 runCatching {
                     resolvePendingTransitionWithinProtocol(

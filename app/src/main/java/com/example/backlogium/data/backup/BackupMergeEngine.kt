@@ -22,6 +22,7 @@ import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
 import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
+import com.example.backlogium.work.SteamSyncCoordinator
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
@@ -68,16 +69,24 @@ class BackupMergeEngine @Inject constructor(
     private val gamificationUpdater: GamificationUpdater,
     private val time: TimeProvider,
     private val derivedStateWrites: DerivedStateWriteCoordinator = DerivedStateWriteCoordinator(),
+    private val syncCoordinator: SteamSyncCoordinator = SteamSyncCoordinator(),
     private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
 ) {
     /**
      * [config] is the app's currently active [RuleConfig] — never the file's own `ruleConfig`,
      * which is export-time-only (see [BackupFile.ruleConfig]'s doc). Passed in rather than read
      * internally so this engine stays a plain, JVM-testable class, mirroring [GamificationUpdater].
+     *
+     * Admitted in the canonical sync -> derived order so a restore cannot interleave with a raw
+     * sync/import/reset commit. In production [BackupRepository] holds the shared
+     * [SteamSyncCoordinator] ahead of its own derived lock (and keeps the visibility ordering
+     * unchanged); the default here only keeps direct JVM construction simple.
      */
     suspend fun merge(file: BackupFile, config: RuleConfig, configVersion: Long = 0L) =
-        derivedStateWrites.withLock {
-            mergeContents(file, config, configVersion)
+        syncCoordinator.withLock {
+            derivedStateWrites.withLock {
+                mergeContents(file, config, configVersion)
+            }
         }
 
     /** Called by [BackupRepository] while it owns the shared rule/write coordinator. */
@@ -139,7 +148,20 @@ class BackupMergeEngine @Inject constructor(
             // Last write in the transaction: commits atomically with the merged data, so a crash
             // before the recompute below is detectable on the next launch
             // (PendingImportRecomputeUseCase) instead of leaving aggregates silently stale.
-            playerProfileDao.markPendingImportRecompute()
+            //
+            // A merge that lands while an explicit history import's recomputation is pending must
+            // NOT clobber that BACKFILL provenance (account/request identity): the existing marker
+            // already signals unfinished recomputation for this account, and recovery recomputes
+            // the merged current raw administratively (BACKFILL preserves its presentation). Only a
+            // marker-less merge writes RESTORE provenance (stabilize-first-run-setup).
+            val markerProfile = playerProfileDao.get()
+            if (markerProfile?.pendingImportRecompute != true) {
+                playerProfileDao.markPendingImportRecompute(
+                    source = RecomputeSource.RESTORE.name,
+                    steamId = null,
+                    requestId = null,
+                )
+            }
         }
     }
 
@@ -162,6 +184,10 @@ class BackupMergeEngine @Inject constructor(
             result.copy(longestStreak = maxOf(result.longestStreak, importedLongestStreak)),
             RecomputeSource.RESTORE,
             configVersion,
+            // If an explicit history import's recomputation is pending when the merge persists,
+            // recompute fresh from current committed raw under the merge's own config so the
+            // commit is never attributed to a stale candidate.
+            refreshConfig = config,
         )
     }
 

@@ -384,7 +384,30 @@ internal class FakePlayerProfileDao(initial: PlayerProfile? = null) : PlayerProf
     }
 
     override suspend fun updateGamification(totalXp: Long, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {
-        state.value = (state.value ?: PlayerProfile()).copy(totalXp = totalXp, level = level, currentStreak = currentStreak, longestStreak = maxOf(state.value?.longestStreak ?: 0, longestStreak), gamificationConfigVersion = gamificationConfigVersion, pendingImportRecompute = false, pendingXpIntegrityCorrection = false)
+        state.value = (state.value ?: PlayerProfile()).copy(
+            totalXp = totalXp,
+            level = level,
+            currentStreak = currentStreak,
+            longestStreak = maxOf(state.value?.longestStreak ?: 0, longestStreak),
+            gamificationConfigVersion = gamificationConfigVersion,
+            // The pending import marker/provenance survive the aggregates write; they are cleared
+            // only by clearPendingImportRecomputeIfMatches after a successful protocol finalize.
+            pendingXpIntegrityCorrection = false,
+        )
+    }
+
+    override suspend fun clearPendingImportRecomputeIfMatches(source: String?, steamId: String?, requestId: String?) {
+        val current = state.value ?: return
+        if (!current.pendingImportRecompute) return
+        if (current.pendingImportRecomputeSource != source) return
+        if (current.pendingImportRecomputeSteamId != steamId) return
+        if (current.pendingImportRecomputeRequestId != requestId) return
+        state.value = current.copy(
+            pendingImportRecompute = false,
+            pendingImportRecomputeSource = null,
+            pendingImportRecomputeSteamId = null,
+            pendingImportRecomputeRequestId = null,
+        )
     }
 
     override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) {
@@ -395,8 +418,13 @@ internal class FakePlayerProfileDao(initial: PlayerProfile? = null) : PlayerProf
         state.value = (state.value ?: PlayerProfile()).copy(lastSyncError = message)
     }
 
-    override suspend fun markPendingImportRecompute() {
-        state.value = (state.value ?: PlayerProfile()).copy(pendingImportRecompute = true)
+    override suspend fun markPendingImportRecompute(source: String, steamId: String?, requestId: String?) {
+        state.value = (state.value ?: PlayerProfile()).copy(
+            pendingImportRecompute = true,
+            pendingImportRecomputeSource = source,
+            pendingImportRecomputeSteamId = steamId,
+            pendingImportRecomputeRequestId = requestId,
+        )
     }
 
     override suspend fun raiseLongestStreak(longestStreak: Int) {

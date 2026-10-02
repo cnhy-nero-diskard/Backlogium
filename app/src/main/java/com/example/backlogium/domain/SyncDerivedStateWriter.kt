@@ -28,12 +28,23 @@ class SyncDerivedStateWriter @Inject constructor(
     suspend fun configuration(): VersionedRuleConfig = settings.ruleConfigWithVersionFlow.first()
 
     suspend fun persist(today: LocalDate, initialConfig: VersionedRuleConfig) {
+        // The exact config each candidate was computed under, captured so persist can refresh a
+        // marker-held result against the current committed raw state with the appropriate rules.
+        var computedConfig = initialConfig.config
         persistVersionChecked(
             initial = initialConfig,
             readCurrent = { settings.ruleConfigWithVersionFlow.first() },
-            compute = { config -> gamificationUpdater.compute(today, config) },
+            compute = { config ->
+                computedConfig = config
+                gamificationUpdater.compute(today, config)
+            },
             persist = { result, version ->
-                gamificationUpdater.persist(result, RecomputeSource.SYNC, version)
+                gamificationUpdater.persist(
+                    result,
+                    RecomputeSource.SYNC,
+                    version,
+                    refreshConfig = computedConfig,
+                )
             },
             coordinator = derivedStateWrites,
         )

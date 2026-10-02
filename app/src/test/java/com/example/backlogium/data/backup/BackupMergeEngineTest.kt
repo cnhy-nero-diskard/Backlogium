@@ -34,6 +34,7 @@ import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.flow.Flow
@@ -41,6 +42,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.time.LocalDate
@@ -161,6 +163,81 @@ class BackupMergeEngineTest {
 
         assertEquals(1_234L, stored.getValue(620L).fetchedAt)
         assertEquals(HltbDataOrigin.MANUAL, stored.getValue(620L).origin)
+    }
+
+    @Test
+    fun mixedRestoreOverPendingBackfillKeepsBackfillIdentityInTheRawTransaction() = runTest {
+        // An explicit history import's recomputation is pending (BACKFILL provenance + account +
+        // request). A backup merge's raw commit must NOT clobber that identity with RESTORE — the
+        // existing marker already signals unfinished recomputation, and recovery will recompute the
+        // merged current raw administratively. Observed mid-protocol (raw commit only, before any
+        // recompute) so the transaction's own write is what is under test.
+        val harness = newEngine(
+            profile = PlayerProfile(
+                steamId = "s",
+                pendingImportRecompute = true,
+                pendingImportRecomputeSource = RecomputeSource.BACKFILL.name,
+                pendingImportRecomputeSteamId = "s",
+                pendingImportRecomputeRequestId = "req-1",
+            ),
+        )
+        val file = baseFile(
+            games = listOf(
+                BackupGame(appId = 620L, name = "Portal 2", isGoal = false, backfillMinutes = 10),
+            ),
+        )
+
+        harness.engine.mergeRawWithLockHeld(file)
+
+        val profile = harness.profileDao.get()!!
+        assertTrue(profile.pendingImportRecompute)
+        assertEquals(RecomputeSource.BACKFILL.name, profile.pendingImportRecomputeSource)
+        assertEquals("s", profile.pendingImportRecomputeSteamId)
+        assertEquals("req-1", profile.pendingImportRecomputeRequestId)
+    }
+
+    @Test
+    fun mergeWithoutPendingMarkerWritesRestoreProvenance() = runTest {
+        // Control: a marker-less merge still writes RESTORE (backup) provenance as before.
+        val harness = newEngine(profile = PlayerProfile(steamId = "s", playtimeBackfilled = true))
+        val file = baseFile()
+
+        harness.engine.mergeRawWithLockHeld(file)
+
+        val profile = harness.profileDao.get()!!
+        assertTrue(profile.pendingImportRecompute)
+        assertEquals(RecomputeSource.RESTORE.name, profile.pendingImportRecomputeSource)
+        assertNull(profile.pendingImportRecomputeSteamId)
+        assertNull(profile.pendingImportRecomputeRequestId)
+    }
+
+    @Test
+    fun mixedRestoreRecomputeResolvesAdministrativelyAndClearsViaBackfillMatch() = runTest {
+        // Full merge over a pending BACKFILL: the whole-protocol recompute presents the transition
+        // with the preserved BACKFILL source (administrative, silent) and clears the marker via the
+        // match-guarded finalizer — never announcing imported XP as newly earned.
+        val harness = newEngine(
+            profile = PlayerProfile(
+                steamId = "s",
+                pendingImportRecompute = true,
+                pendingImportRecomputeSource = RecomputeSource.BACKFILL.name,
+                pendingImportRecomputeSteamId = "s",
+                pendingImportRecomputeRequestId = "req-1",
+            ),
+        )
+        val file = baseFile(
+            games = listOf(
+                BackupGame(appId = 620L, name = "Portal 2", isGoal = false, backfillMinutes = 10),
+            ),
+        )
+
+        harness.engine.merge(file, RuleConfig())
+
+        val profile = harness.profileDao.get()!!
+        assertFalse(profile.pendingImportRecompute)
+        assertNull(profile.pendingImportRecomputeSource)
+        assertNull(profile.pendingImportRecomputeSteamId)
+        assertNull(profile.pendingImportRecomputeRequestId)
     }
 
     @Test
@@ -1427,7 +1504,15 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
     }
 
     override suspend fun updateGamification(totalXp: Long, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {
-        profile = (profile ?: PlayerProfile()).copy(totalXp = totalXp, level = level, currentStreak = currentStreak, longestStreak = maxOf(profile?.longestStreak ?: 0, longestStreak), gamificationConfigVersion = gamificationConfigVersion, pendingImportRecompute = false, pendingXpIntegrityCorrection = false)
+        profile = (profile ?: PlayerProfile()).copy(
+            totalXp = totalXp,
+            level = level,
+            currentStreak = currentStreak,
+            longestStreak = maxOf(profile?.longestStreak ?: 0, longestStreak),
+            gamificationConfigVersion = gamificationConfigVersion,
+            // The pending import marker is cleared by clearPendingImportRecomputeIfMatches only.
+            pendingXpIntegrityCorrection = false,
+        )
     }
 
     override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) {
@@ -1438,8 +1523,27 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
         profile = (profile ?: PlayerProfile()).copy(lastSyncError = message)
     }
 
-    override suspend fun markPendingImportRecompute() {
-        profile = (profile ?: PlayerProfile()).copy(pendingImportRecompute = true)
+    override suspend fun markPendingImportRecompute(source: String, steamId: String?, requestId: String?) {
+        profile = (profile ?: PlayerProfile()).copy(
+            pendingImportRecompute = true,
+            pendingImportRecomputeSource = source,
+            pendingImportRecomputeSteamId = steamId,
+            pendingImportRecomputeRequestId = requestId,
+        )
+    }
+
+    override suspend fun clearPendingImportRecomputeIfMatches(source: String?, steamId: String?, requestId: String?) {
+        val current = profile ?: return
+        if (!current.pendingImportRecompute) return
+        if (current.pendingImportRecomputeSource != source) return
+        if (current.pendingImportRecomputeSteamId != steamId) return
+        if (current.pendingImportRecomputeRequestId != requestId) return
+        profile = current.copy(
+            pendingImportRecompute = false,
+            pendingImportRecomputeSource = null,
+            pendingImportRecomputeSteamId = null,
+            pendingImportRecomputeRequestId = null,
+        )
     }
 
     override suspend fun raiseLongestStreak(longestStreak: Int) {

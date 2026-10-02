@@ -8,6 +8,7 @@ import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.work.SteamSyncCoordinator
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.InputStream
@@ -48,8 +49,9 @@ class BackupRepository @Inject constructor(
     private val time: TimeProvider,
     private val syncScheduler: SyncScheduler,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
+    private val syncCoordinator: SteamSyncCoordinator,
     private val liveStatusRepository: LiveStatusRepository,
-) : BackupExportGateway {
+) : BackupExportGateway, AutoSnapshotWriter {
     /** Export to a user-chosen SAF destination. Independent of the auto-snapshot toggle. */
     override suspend fun exportTo(uri: Uri) {
         val file = exportMapper.buildExport()
@@ -117,21 +119,27 @@ class BackupRepository @Inject constructor(
     /** Merge a validated file into the local database — the one import/restore code path. */
     suspend fun importBackup(file: BackupFile) {
         require(BackupValidator.validate(file) is BackupValidationResult.Valid) { "Invalid backup" }
-        derivedStateWrites.withLock {
-            val rules = settings.ruleConfigWithVersionFlow.first()
-            // The merge's authoritative hidden-set replacement must share the visibility ordering
-            // with normal hide/unhide writes: it commits while holding the live-state mutex (via
-            // mutateHiddenSetAndReconcile), so an older live projection holding that mutex cannot
-            // be interleaved with — it either commits fully before the hidden row lands, or blocks
-            // until after the restore has committed and reconciled. Committing the hidden row
-            // outside the mutex and reconciling afterward leaves a window where the older
-            // projection resumes with a stale hidden read and emits the now-hidden game. The mutex
-            // is held only across the raw-data transaction, never across the gamification
-            // recompute that follows.
-            liveStatusRepository.mutateHiddenSetAndReconcile {
-                mergeEngine.mergeRawWithLockHeld(file)
+        // Admitted in the canonical sync -> derived order, matching raw sync/import/reset commits,
+        // so a restore can never interleave with one of those raw transactions. The shared
+        // SteamSyncCoordinator is the same singleton every writer uses; nothing that calls us
+        // already holds it, so the outer lock cannot nest.
+        syncCoordinator.withLock {
+            derivedStateWrites.withLock {
+                val rules = settings.ruleConfigWithVersionFlow.first()
+                // The merge's authoritative hidden-set replacement must share the visibility ordering
+                // with normal hide/unhide writes: it commits while holding the live-state mutex (via
+                // mutateHiddenSetAndReconcile), so an older live projection holding that mutex cannot
+                // be interleaved with — it either commits fully before the hidden row lands, or blocks
+                // until after the restore has committed and reconciled. Committing the hidden row
+                // outside the mutex and reconciling afterward leaves a window where the older
+                // projection resumes with a stale hidden read and emits the now-hidden game. The mutex
+                // is held only across the raw-data transaction, never across the gamification
+                // recompute that follows.
+                liveStatusRepository.mutateHiddenSetAndReconcile {
+                    mergeEngine.mergeRawWithLockHeld(file)
+                }
+                mergeEngine.recomputeAfterMerge(file, rules.config, rules.version)
             }
-            mergeEngine.recomputeAfterMerge(file, rules.config, rules.version)
         }
         // Restore supplies only unlocked achievements and no per-game metadata, so a restored
         // library reads as entirely unfetched. Kick off a deferred reconciliation pass to
@@ -150,7 +158,7 @@ class BackupRepository @Inject constructor(
      * [com.example.backlogium.work.SteamSyncWorker]'s success path, not a separate scheduler —
      * the throttle/retention checks are cheap guards at the point of writing.
      */
-    suspend fun writeAutoSnapshotIfDue() {
+    override suspend fun writeAutoSnapshotIfDue() {
         val config = settings.autoSnapshotSettingsFlow.first()
         if (!config.enabled) return
         val now = time.nowMillis()

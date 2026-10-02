@@ -130,7 +130,11 @@ class BackupTransactionalIntegrityTest {
             database.gameDao().upsert(existingGame(appId = 1L, name = "Game"))
             database.sessionDao().insert(Session(appId = 1L, startAt = 0L, endAt = 60_000L, minutes = 60, open = false))
             database.playerProfileDao().insertIfMissing()
-            database.playerProfileDao().markPendingImportRecompute()
+            database.playerProfileDao().markPendingImportRecompute(
+                source = RecomputeSource.RESTORE.name,
+                steamId = null,
+                requestId = null,
+            )
         }
 
         val profileBeforeRecovery = database.playerProfileDao().get()!!
