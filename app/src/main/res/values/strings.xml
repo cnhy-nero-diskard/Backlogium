@@ -429,7 +429,7 @@
     <string name="library_clear_genres_action">Clear genres</string>
     <string name="library_show_all_coverage">Show all coverage</string>
     <string name="library_show_all_games">Show all games</string>
-    <string name="library_no_matches_query">No games match "%1$s"</string>
+    <string name="library_no_matches_query">No owned or shared games match "%1$s"</string>
     <string name="library_no_matches_genres">No games match the selected genres</string>
     <string name="library_no_matches_not_covered">No games are marked not covered</string>
     <string name="library_no_matches_family_shared">No Family Shared games match</string>

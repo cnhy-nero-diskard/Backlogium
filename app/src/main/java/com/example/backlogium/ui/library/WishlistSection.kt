@@ -66,11 +66,19 @@ fun LazyListScope.wishlistSection(
     density: GameListDensity,
     onToggle: (Boolean) -> Unit,
     onOpenStore: (WishlistEntryUi) -> Unit,
+    searching: Boolean = false,
 ) {
     if (!state.configured) return
 
     item(key = "wishlist-header") {
-        WishlistSectionHeader(
+        if (searching) {
+            Text(
+                text = "Wishlist results",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(vertical = 8.dp),
+            )
+        } else WishlistSectionHeader(
             expanded = state.expanded,
             count = state.entries.size,
             refreshing = state.refreshing,
@@ -82,14 +90,19 @@ fun LazyListScope.wishlistSection(
 
     if (state.staleNotice) {
         item(key = "wishlist-notice") { WishlistNotice(state.availability, hasEntries = true) }
+    } else if (searching && state.entries.isNotEmpty() && state.availability == WishlistAvailability.UNKNOWN) {
+        item(key = "wishlist-notice") {
+            WishlistMessage("Wishlist not refreshed", "Showing cached matches and last-seen prices.")
+        }
     }
 
     if (state.entries.isEmpty()) {
         item(key = "wishlist-empty") {
             when {
                 state.isEmpty -> WishlistMessage(
-                    title = "Nothing wishlisted",
-                    message = "Games you add to your Steam wishlist show up here.",
+                    title = if (searching) "No cached wishlist matches" else "Nothing wishlisted",
+                    message = if (searching) "No cached wishlist-only titles match your search."
+                        else "Games you add to your Steam wishlist show up here.",
                 )
 
                 state.availability == WishlistAvailability.NOT_READABLE ||
@@ -103,7 +116,8 @@ fun LazyListScope.wishlistSection(
 
                 else -> WishlistMessage(
                     title = "Wishlist not loaded yet",
-                    message = "It is read from Steam when this section is opened.",
+                    message = if (searching) "Clear your search and open Wishlist to read it from Steam."
+                        else "It is read from Steam when this section is opened.",
                 )
             }
         }

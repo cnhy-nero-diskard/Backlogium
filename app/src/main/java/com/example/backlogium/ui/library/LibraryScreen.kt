@@ -173,9 +173,8 @@ internal fun shouldShowWishlistSection(
     wishlistState: WishlistUiState,
     selectedGenreSet: Set<String>,
 ): Boolean = wishlistState.configured &&
-    (libraryState.libraryEmpty ||
-        (libraryState.filters.query.isBlank() && selectedGenreSet.isEmpty() &&
-            !libraryState.filters.notCoveredOnly && !libraryState.filters.familySharedOnly))
+    selectedGenreSet.isEmpty() &&
+    !libraryState.filters.notCoveredOnly && !libraryState.filters.familySharedOnly
 
 /**
  * Whether Library's transient selection resets when the screen's
@@ -331,6 +330,7 @@ internal fun LibraryContent(
     var showToolsSheet by rememberSaveable { mutableStateOf(false) }
     var genreSearchQuery by rememberSaveable { mutableStateOf("") }
     val filters = state.filters
+    val visibleWishlist = remember(state, wishlistState) { wishlistForLibrary(state, wishlistState) }
     val selectedGenreSet = filters.selectedGenreIds
     val genreCatalog = remember(state.availableGenres) {
         genreFilterCatalog(state.availableGenres)
@@ -412,12 +412,21 @@ internal fun LibraryContent(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp),
             ) {
+                item(key = "library-controls") {
+                    SearchField(
+                        query = state.query,
+                        onQueryChange = actions.onSetQuery,
+                        onClear = actions.onClearQuery,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 if (shouldShowWishlistSection(state, wishlistState, selectedGenreSet)) {
                     wishlistSection(
-                        state = wishlistState,
+                        state = visibleWishlist,
                         density = state.density,
                         onToggle = actions.onSetWishlistExpanded,
                         onOpenStore = { actions.onOpenStore(it.storeUrl) },
+                        searching = filters.query.isNotBlank(),
                     )
                 }
                 item(key = "library-empty") { LibraryEmptyNotice() }
@@ -521,15 +530,14 @@ internal fun LibraryContent(
                 }
             }
 
-            // Above the owned lists, and only while nothing is being searched or filtered:
-            // those controls act on the owned library, and an unfiltered wishlist sitting under a
-            // query would read as a result of it.
-            if (!filters.hasActiveFilters) {
+            // Wishlist titles match the query independently; owned-only predicates exclude them.
+            if (shouldShowWishlistSection(state, wishlistState, selectedGenreSet)) {
                 wishlistSection(
-                    state = wishlistState,
+                    state = visibleWishlist,
                     density = state.density,
                     onToggle = actions.onSetWishlistExpanded,
                     onOpenStore = { actions.onOpenStore(it.storeUrl) },
+                    searching = filters.query.isNotBlank(),
                 )
             }
 

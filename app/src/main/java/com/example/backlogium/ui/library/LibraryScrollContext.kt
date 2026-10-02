@@ -7,6 +7,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import com.example.backlogium.domain.GameListDensity
+import com.example.backlogium.data.repo.WishlistAvailability
 
 internal data class LibraryScrollItem(val key: String, val gameIds: List<Long> = emptyList())
 
@@ -16,20 +17,26 @@ internal fun libraryGameItemKey(ids: List<Long>, density: GameListDensity, row: 
 /** Mirrors the lazy sections, including optional rows above the games. */
 internal fun libraryScrollItems(state: LibraryUiState, wishlist: WishlistUiState): List<LibraryScrollItem> =
     buildList {
+        add(LibraryScrollItem("library-controls"))
         if (!state.libraryEmpty) {
-            add(LibraryScrollItem("library-controls"))
             if (state.matchCenterCount > 0) add(LibraryScrollItem("library-attention"))
             if (state.refreshing) add(LibraryScrollItem("library-lookup"))
         }
         if (shouldShowWishlistSection(state, wishlist, state.filters.selectedGenreIds)) {
+            val visibleWishlist = wishlistForLibrary(state, wishlist)
             add(LibraryScrollItem("wishlist-header"))
-            if (wishlist.expanded) {
-                if (wishlist.staleNotice) add(LibraryScrollItem("wishlist-notice"))
-                if (wishlist.entries.isEmpty()) add(LibraryScrollItem("wishlist-empty"))
-                else wishlist.entries.map { it.appId }.chunked(state.density.columns).forEachIndexed { row, ids ->
+            if (visibleWishlist.expanded) {
+                if (visibleWishlist.staleNotice || (state.query.isNotBlank() &&
+                        visibleWishlist.entries.isNotEmpty() &&
+                        visibleWishlist.availability == WishlistAvailability.UNKNOWN)) {
+                    add(LibraryScrollItem("wishlist-notice"))
+                }
+                if (visibleWishlist.entries.isEmpty()) add(LibraryScrollItem("wishlist-empty"))
+                else visibleWishlist.entries.map { it.appId }.chunked(state.density.columns).forEachIndexed { row, ids ->
                     add(LibraryScrollItem(
                         if (state.density.isGrid) "wishlist-grid-row-$row-${ids.first()}"
                         else "wishlist-${ids.first()}",
+                        ids,
                     ))
                 }
             }
