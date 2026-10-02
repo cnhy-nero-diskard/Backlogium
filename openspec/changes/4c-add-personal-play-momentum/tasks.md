@@ -19,5 +19,5 @@
 ## 4. Acceptance
 
 - [x] 4.1 Run relevant domain/repository/Analytics tests and `./gradlew.bat :app:compileDebugKotlin :app:lintDebug`; verify read-only offline behavior, bounded query scope, stale-result rejection, and unchanged existing headline/window/quest/XP behavior.
-- [ ] 4.2 Capture and inspect candidate, newly-recorded, learning, empty-eligibility, and updating device/emulator states in both themes and larger font scale; verify screen-reader scope and detail actions and record available evidence.
-- [ ] 4.3 Run `openspec.cmd validate 4c-add-personal-play-momentum --strict` and `git diff --check`; verify the personal/community distinction and shared #147/#168 coordination without claiming the whole #173 issue complete.
+- [x] 4.2 Capture and inspect candidate, newly-recorded, learning, empty-eligibility, and updating device/emulator states in both themes and larger font scale; verify screen-reader scope and detail actions and record available evidence.
+- [x] 4.3 Run `openspec.cmd validate 4c-add-personal-play-momentum --strict` and `git diff --check`; verify the personal/community distinction and shared #147/#168 coordination without claiming the whole #173 issue complete.
