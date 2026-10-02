@@ -45,12 +45,18 @@ FIXTURE_RENDERED_SOURCES: tuple[str, ...] = (
     "app/src/main/java/com/example/backlogium/ui/home",
     # LibraryContent
     "app/src/main/java/com/example/backlogium/ui/library",
-    # SettingsOverviewScreen. Over-matches SettingsScreen.kt, which the fixtures do not draw.
+    # SettingsOverviewScreen and HistoryImportCard recovery fixtures.
     "app/src/main/java/com/example/backlogium/ui/settings",
+    # SetupChecklist, SetupSummary and HistoryChoiceContent recovery fixtures.
+    "app/src/main/java/com/example/backlogium/ui/setup",
+    "app/src/main/java/com/example/backlogium/ui/onboarding",
     # BacklogiumTheme
     "app/src/main/java/com/example/backlogium/ui/theme",
     # Every rendered label, so a copy change is treated as a visual change.
     "app/src/main/res/values/strings.xml",
+    "app/src/main/res/values/setup_strings.xml",
+    "app/src/main/res/values/history_choice_strings.xml",
+    "app/src/main/res/values/history_settings_strings.xml",
 )
 
 # Editing a fixture changes what the goldens draw by definition, so these are fixture inputs
@@ -59,6 +65,7 @@ FIXTURE_RENDERED_SOURCES: tuple[str, ...] = (
 FIXTURE_SOURCES: tuple[str, ...] = (
     "app/src/test/java/com/example/backlogium/ui/screenshot/MainScreenshotFixtures.kt",
     "app/src/test/java/com/example/backlogium/ui/screenshot/ScreenshotTestSupport.kt",
+    "app/src/test/java/com/example/backlogium/ui/screenshot/SetupRecoveryScreenshotTest.kt",
 )
 
 # The single label that acknowledges a covered change which provably cannot move a pixel.

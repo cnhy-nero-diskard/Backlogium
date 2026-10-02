@@ -17,6 +17,8 @@ internal class MainScreenScreenshotNarrowTest : MainScreenshotTestBase() {
     @Test
     fun homePopulatedLightBaseline() {
         captureFixture("main/home/populated/light/narrow.png", MainFixtureKind.HOME_POPULATED, darkTheme = false)
+        composeRule.onNodeWithText("Import Steam history").assertDoesNotExist()
+        composeRule.onNodeWithText("Reset import").assertDoesNotExist()
     }
 
     @Test

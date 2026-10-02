@@ -1,6 +1,6 @@
 ## 1. Milestone A - Characterize concurrent setup and recovery
 
-- [ ] 1.1 Establish reproducible tests for retry-backoff misclassification, hidden onboarding Retry, and completed-selection masking; verify each fixture fails against the existing behavior for the intended reason.
+- [x] 1.1 Establish reproducible tests for retry-backoff misclassification, hidden onboarding Retry, and completed-selection masking; verify each fixture fails against the existing behavior for the intended reason.
 - [ ] 1.2 Exercise setup with running manual/periodic Steam work and live monitoring/post-play handoff; verify a diagnostic record captures stage/work identities, scheduler states, errors, and reused-versus-new admission without secrets or raw account identifiers, and records any unreproduced report honestly.
 - [x] 1.3 Compare the active presence-attribution deltas and current cloud imported-play transfer/reset behavior with this change; verify a short implementation overlap map identifies shared files without conflicting requirement names or a duplicate session author.
 

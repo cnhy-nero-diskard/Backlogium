@@ -110,7 +110,9 @@ internal fun MainScreenshotFixtureHost(fixture: MainScreenshotFixture) {
                 state = nowPlayingHomeState(),
                 nowMillis = { FIXED_SCREEN_TIME_MILLIS },
             )
-            MainFixtureKind.HOME_FIRST_LOAD -> HomeContent(HomeUiState())
+            MainFixtureKind.HOME_FIRST_LOAD -> HomeContent(
+                HomeUiState(firstRunJourneyLoading = false, firstRunOwed = false),
+            )
             MainFixtureKind.LIBRARY_POPULATED -> LibraryContent(
                 state = populatedLibraryState(),
                 wishlistState = screenshotWishlistState(),
@@ -199,6 +201,8 @@ private fun populatedHomeState(): HomeUiState {
         loading = false,
         hasRenderableContent = true,
         configured = true,
+        firstRunJourneyLoading = false,
+        firstRunOwed = false,
         level = 12,
         xpIntoLevel = 370,
         xpForNext = 500,
