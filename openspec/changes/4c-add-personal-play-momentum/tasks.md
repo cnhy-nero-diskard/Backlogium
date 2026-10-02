@@ -13,8 +13,8 @@
 
 ## 3. Community feasibility decision
 
-- [ ] 3.1 Evaluate primary-source API constraints, aligned observation slots, shortlist/caps, opt-in, low-count/missing-sample rules, retention/cache, and retries; deliver a sourced feasibility record in design.md without adding a sampler, worker, storage, or cloud-poller change.
-- [ ] 3.2 Complete the request/storage/network cost worksheet for a bounded shortlist and whole-library comparison, including retry and multi-device/shared-sampler assumptions; record concrete budgets and a go/no-go, leaving any user-requested `5c` proposal separate and #173's community implementation open.
+- [x] 3.1 Evaluate primary-source API constraints, aligned observation slots, shortlist/caps, opt-in, low-count/missing-sample rules, retention/cache, and retries; deliver a sourced feasibility record in design.md without adding a sampler, worker, storage, or cloud-poller change.
+- [x] 3.2 Complete the request/storage/network cost worksheet for a bounded shortlist and whole-library comparison, including retry and multi-device/shared-sampler assumptions; record concrete budgets and a go/no-go, leaving any user-requested `5c` proposal separate and #173's community implementation open.
 
 ## 4. Acceptance
 

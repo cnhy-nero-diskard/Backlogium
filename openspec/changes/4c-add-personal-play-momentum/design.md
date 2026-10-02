@@ -62,3 +62,45 @@ Record a go/no-go with concrete request/storage/network budgets and verified com
 ## Migration Plan
 
 Apply after `3c`: build bounded snapshot and pure derivation, then wire the card and state transitions, then verify offline/device behavior. No activity write or database migration is expected. Rollback removes the read model/card without altering history. Complete community research as a documented decision; keep #173's community portion open unless separately implemented. `5c` remains conditional future work and is not scaffolded by this series.
+
+## Community feasibility record — 2026-10-03
+
+### Verified constraints
+
+`GetNumberOfCurrentPlayers` accepts one app ID and returns a current connected-player count, excluding offline players. Its documented parameters provide neither historical observations nor a batch list. One unkeyed public HTTPS research probe for app 570 returned HTTP 200/result 1 and a 47-byte JSON body at 2026-10-02T20:20:28.984Z. This verifies one successful lookup, not historical coverage or an availability guarantee. [Valve method documentation](https://partner.steamgames.com/doc/webapi/ISteamUserStats)
+
+Valve distinguishes public HTTPS methods from publisher-key partner-server access. Array parameters require explicit method support. Public traffic uses an edge cache; the overview gives no measurement-freshness SLA for this count. Receipt time therefore cannot establish when Valve measured it. A 403 must stop requests rather than trigger repeated retries. [Valve Web API overview](https://partner.steamgames.com/doc/webapi_overview)
+
+The general API terms permit free use with a 100,000-call daily ceiling and disclaim availability/accuracy guarantees. Treat that ceiling as a shared usage constraint, not a reserved throughput allowance or permanent contract; any deployment needs its own current terms review. Keep keys confidential and disclose collected data and destinations. [Valve API terms](https://steamcommunity.com/dev/apiterms)
+
+Android periodic work accepts timing inexactness from battery optimization and Doze. A local sampler cannot promise four aligned daily observations while the app is idle. [Android PeriodicWorkRequest documentation](https://developer.android.com/reference/androidx/work/PeriodicWorkRequest)
+
+### Evaluation candidate, not implemented defaults
+
+- Explicit opt-in only. Select at most 20 currently visible library titles with positive finalized activity in the last 30 local dates; freeze the shortlist for a 14-day comparison. Visibility/eligibility changes invalidate that title's comparable panel. Stop collection and purge retained samples on opt-out. Do not collect Steam IDs. A shared service would still receive the chosen app IDs, revealing library interest, and needs a separate privacy/security design.
+- Four UTC slots daily (00:00, 06:00, 12:00, 18:00), accepting receipts within ten minutes. Retain actual receipt time, slot identity and lateness; do not call receipt time a server measurement timestamp. Compare matched weekday/slot pairs across the two weeks, requiring at least 20 of 28 pairs and five distinct dates in each week. Disclose coverage. No zero filling, carrying forward, or historical catch-up: a current lookup cannot reconstruct missed observations.
+- Exclude titles whose paired baseline median is below 100 players; low denominators are unstable. These experimental community criteria require a pilot and have no effect on shipped personal thresholds. Even matching slots cannot eliminate unknown upstream cache age.
+- Cache one successful row per app/slot and deduplicate retry receipts. Retain only 14 days: at most 1,120 successful rows. A request has a ten-second deadline and at most one retry for 429/5xx with 30–120-second jitter, honoring Retry-After only within the slot window. Otherwise record missing evidence; stop on authentication/403 failures. Cap requests and transport bytes; do not retry beyond the daily budget.
+- Independent devices duplicate API work and local storage; those duplicates are not extra evidence. A shared sampler can deduplicate by the union of titles, but adds server operations, client reads, credentials, privacy controls and infrastructure costs. None are authorized here.
+
+### Bounded cost worksheet
+
+All figures below are estimates, not measured operational results. Four slots/day, 14-day retention, 5% retry expectation and at most one retry/request are assumptions. Allow 128 bytes per stored observation plus an equal indexing allowance, and 4 KiB transport per request including protocol overhead. The single measured 47-byte body omits headers/TLS/DNS and failed-response sizes. SQLite/WAL/metadata and actual transport must be measured before shipping a sampler.
+
+| Scenario | Scheduled / expected / maximum requests per day | Retained rows | Raw / indexed storage | Expected / maximum transport per day |
+| --- | ---: | ---: | ---: | ---: |
+| One device, 20 titles | 80 / 84 / 160 | 1,120 | 140 / 280 KiB | 336 / 640 KiB |
+| One device, 1,000-title library | 4,000 / 4,200 / 8,000 | 56,000 | 6.84 / 13.67 MiB | 16.41 / 31.25 MiB |
+| Two independent devices, same 20 titles | 160 / 168 / 320 | 2,240 across devices | 280 / 560 KiB | 672 KiB / 1.25 MiB |
+| Shared 100 users, all sharing 20 titles | 80 / 84 / 160 | 1,120 server rows | 140 / 280 KiB | 336 / 640 KiB, server API traffic only |
+| Shared 100 users, disjoint 20-title lists | 8,000 / 8,400 / 16,000 | 112,000 server rows | 13.67 / 27.34 MiB | 32.81 / 62.5 MiB, server API traffic only |
+
+Formulae: scheduled calls = titles × 4; expected calls = scheduled × 1.05; retry maximum = scheduled × 2; rows = titles × 4 × 14; indexed storage = rows × 128 × 2 bytes; transport = requests × 4 KiB. At 47 body bytes, 84 expected requests total only 3,948 body bytes, illustrating why body-only budgeting is insufficient. Whole-library sampling multiplies the 20-title budget by 50. Shared client delivery, compute and database prices remain unpriced because no service/provider is selected; API free use does not imply free infrastructure.
+
+### Decision and concrete gates
+
+**NO-GO for production community momentum now.** The shortlist estimate is small, but there is no measured 14-day paired coverage, upstream freshness evidence, retry/storage/transport distribution or low-count robustness. Local background scheduling cannot guarantee alignment, and shared infrastructure/privacy/operating costs are undecided.
+
+A future user-requested proposal would require an opt-in pilot demonstrating the paired-coverage rule and measured per-device budgets: target at most 100 requests/day, hard cap 160 including retries, hard cap 1 MiB/day transport and 2 MiB retained SQLite data including indexes/metadata/WAL. Over-budget or incomplete days remain missing, never fabricated. Shared sampling needs separate explicit operating and privacy budgets before approval. These are conditional pilot gates, not deployed settings or authorization to implement collection.
+
+This change ships offline personal momentum only. It adds no sampler, worker, schema, persistence or cloud poller and leaves the existing detail lookup unchanged. Do not scaffold `5c`. #173's community implementation remains open; #147's broader roadmap and #168's membership/collection behavior are not completed by this comparison card.
