@@ -1,4 +1,11 @@
 <resources>
+    <string name="hltb_review_skip">Skip for this review session</string>
+    <string name="hltb_review_pass_complete">Review pass complete</string>
+    <string name="hltb_review_skipped_message">Skipped games still need a match. Review them again when you are ready.</string>
+    <string name="hltb_review_skipped">Review skipped</string>
+    <string name="hltb_review_done">Done</string>
+    <string name="hltb_review_empty">Nothing to review or rescue</string>
+    <string name="hltb_review_empty_message">Games needing a match or with no match appear here. Try a HowLongToBeat lookup from the Library.</string>
     <string name="home_connect_steam">Connect your Steam account</string>
     <string name="home_resume_setup">Finish setting up Backlogium</string>
     <string name="home_setup_guidance">Continue setup to load your games. You can explore the other tabs before finishing.</string>

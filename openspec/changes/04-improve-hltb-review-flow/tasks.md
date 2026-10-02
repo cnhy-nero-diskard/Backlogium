@@ -4,10 +4,10 @@
 
 ## 2. Session Progression
 
-- [ ] 2.1 Add route-session deferred app IDs for explicit Skip and navigation past unresolved games; verify the repository still reports each deferred game as unresolved and automatic selection excludes it.
-- [ ] 2.2 Derive next selection from the current ambiguous-plus-unmatched queue by app ID, handling matches, removals, and partition reordering; verify the next unprocessed game is chosen and deferred games are never selected automatically.
-- [ ] 2.3 Show exhaustion and Review skipped behavior, and keep scoped completion tied to actual resolution of the requested game; verify last-item skip, no-wrap completion, another pass, and scoped-game deferral.
-- [ ] 2.4 Preserve selection and deferred IDs across configuration recreation and temporary detail return, then reset on route dismissal or process restart; verify each session boundary with navigation checks.
+- [x] 2.1 Add route-session deferred app IDs for explicit Skip and navigation past unresolved games; verify the repository still reports each deferred game as unresolved and automatic selection excludes it.
+- [x] 2.2 Derive next selection from the current ambiguous-plus-unmatched queue by app ID, handling matches, removals, and partition reordering; verify the next unprocessed game is chosen and deferred games are never selected automatically.
+- [x] 2.3 Show exhaustion and Review skipped behavior, and keep scoped completion tied to actual resolution of the requested game; verify last-item skip, no-wrap completion, another pass, and scoped-game deferral.
+- [x] 2.4 Preserve selection and deferred IDs across configuration recreation and temporary detail return, then reset on route dismissal or process restart; verify each session boundary with navigation checks.
 
 ## 3. Entry Points
 

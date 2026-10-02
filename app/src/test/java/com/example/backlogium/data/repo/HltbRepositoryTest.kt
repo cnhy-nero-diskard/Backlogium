@@ -34,6 +34,28 @@ import java.time.ZoneId
  */
 class HltbRepositoryTest {
     @Test
+    fun reviewSessionDeferralDoesNotChangeStoredRowsOrRepositoryQueue() = runTest {
+        val rows = listOf(
+            HltbData(appId = 1L, fetchedAt = 1_000, matchStatus = HltbMatchStatus.NEEDS_REVIEW),
+            HltbData(appId = 2L, fetchedAt = 1_000, matchStatus = HltbMatchStatus.UNMATCHED),
+        )
+        val dao = FakeHltbDataDao(rows)
+        val repository = repository(dao = dao)
+        val session = com.example.backlogium.ui.review.HltbReviewSession()
+        session.updateQueue(repository.matchCenterQueue.first().map {
+            com.example.backlogium.ui.review.MatchCenterGameUi(
+                appId = it.appId, name = "Game ${it.appId}",
+                matchStatus = it.matchStatus, candidates = it.candidates,
+            )
+        })
+        session.skip()
+        session.skip()
+        assertNull(session.state.value.toUiState().selectedGame)
+        assertEquals(rows, dao.getAll())
+        assertEquals(listOf(1L, 2L), repository.matchCenterQueue.first().map { it.appId })
+    }
+
+    @Test
     fun fetchForGame_usesCacheBeforeDatasetAndNetwork() = runTest {
         val cached = HltbData(
             appId = 1L,

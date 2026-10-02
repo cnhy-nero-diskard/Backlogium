@@ -31,12 +31,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.data.repo.HltbMatchState
-import com.example.backlogium.ui.components.EmptyState
+import com.example.backlogium.R
+import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.ui.components.HltbCandidateCard
 import com.example.backlogium.ui.components.HltbLengthsRow
 
@@ -60,26 +62,76 @@ fun HltbReviewScreen(
 ) {
     val state by viewModel.matchCenterState.collectAsStateWithLifecycle()
 
-    // A scoped single-game route is complete when its requested app is absent from the queue once
-    // loading has finished (see [isScopedAppMissing]): finish the route instead of presenting
-    // whatever the ordinary selection clamped onto, so the user is never stranded reviewing an
-    // unrelated game. `initialAppId` stays fixed for the route's lifetime, so this effect does
-    // not re-run if Room emits a different queue — the check re-evaluates through `state` alone.
-    // The early return keeps the clamped frame from ever rendering below.
-    if (initialAppId != null && state.scopedAppMissing) {
+    LaunchedEffect(initialAppId) {
+        if (initialAppId != null) viewModel.selectGame(initialAppId)
+    }
+    HltbReviewContent(
+        state = state,
+        onDone = onDone,
+        actions = HltbReviewActions(
+            onPrevious = viewModel::selectPrevious,
+            onNext = viewModel::selectNext,
+            onSkip = viewModel::skip,
+            onReviewSkipped = viewModel::reviewSkipped,
+            onResolve = { appId, candidate -> viewModel.resolve(appId, candidate) },
+            onBroaderSearch = viewModel::startBroaderSearch,
+            onClearBroader = viewModel::clearBroaderState,
+            onManualInput = viewModel::updateManualLinkInput,
+            onPreview = viewModel::previewManualLink,
+            onDismissPreview = viewModel::dismissManualLinkPreview,
+            onConfirm = { viewModel.confirmManualLink(it) },
+            onClearManual = viewModel::clearManualLink,
+        ),
+    )
+}
+
+internal data class HltbReviewActions(
+    val onPrevious: () -> Unit = {},
+    val onNext: () -> Unit = {},
+    val onSkip: () -> Unit = {},
+    val onReviewSkipped: () -> Unit = {},
+    val onResolve: (Long, HltbCandidate) -> Unit = { _, _ -> },
+    val onBroaderSearch: (Long, String) -> Unit = { _, _ -> },
+    val onClearBroader: (Long) -> Unit = {},
+    val onManualInput: (Long, String) -> Unit = { _, _ -> },
+    val onPreview: (Long) -> Unit = {},
+    val onDismissPreview: (Long) -> Unit = {},
+    val onConfirm: (Long) -> Unit = {},
+    val onClearManual: (Long) -> Unit = {},
+)
+
+@Composable
+internal fun HltbReviewContent(
+    state: HltbMatchCenterUiState,
+    onDone: () -> Unit = {},
+    actions: HltbReviewActions = HltbReviewActions(),
+) {
+
+    // Only actual removal from the full repository queue completes a scoped route.
+    if (state.scopedAppMissing) {
         LaunchedEffect(Unit) { onDone() }
         return
     }
 
-    LaunchedEffect(initialAppId) {
-        if (initialAppId != null) viewModel.selectGame(initialAppId)
-    }
-
     if (!state.loading && state.total == 0) {
-        EmptyState(
-            title = "Nothing to review or rescue",
-            message = "Games needing a match or with no match appear here. Try a HowLongToBeat lookup from the Library.",
-        )
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                stringResource(if (state.deferredCount > 0) R.string.hltb_review_pass_complete else R.string.hltb_review_empty),
+                style = MaterialTheme.typography.titleLarge,
+            )
+            Text(
+                stringResource(if (state.deferredCount > 0) R.string.hltb_review_skipped_message else R.string.hltb_review_empty_message),
+                modifier = Modifier.padding(vertical = 12.dp),
+            )
+            if (state.deferredCount > 0) {
+                Button(onClick = actions.onReviewSkipped) { Text(stringResource(R.string.hltb_review_skipped)) }
+            }
+            TextButton(onClick = onDone) { Text(stringResource(R.string.hltb_review_done)) }
+        }
         return
     }
 
@@ -117,17 +169,21 @@ fun HltbReviewScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             OutlinedButton(
-                onClick = viewModel::selectPrevious,
-                enabled = state.selectedIndex > 0,
+                onClick = actions.onPrevious,
+                enabled = state.previousGame != null,
             ) { Text("Previous") }
             Text(
                 "${state.currentPosition} / ${state.total}",
                 style = MaterialTheme.typography.bodySmall,
             )
             Button(
-                onClick = viewModel::selectNext,
-                enabled = state.selectedIndex < state.total - 1,
+                onClick = actions.onNext,
+                enabled = state.nextGame != null,
             ) { Text("Next") }
+        }
+
+        TextButton(onClick = actions.onSkip, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.hltb_review_skip))
         }
 
         // Candidate grid (distinct adaptive cards) — or broader rescue when unmatched
@@ -148,7 +204,7 @@ fun HltbReviewScreen(
                 onSelect = { candidate ->
                     // Completion/navigation is queue-driven (see the scoped check above): once
                     // the persist lands, the game leaves the queue and the route finishes.
-                    viewModel.resolve(selected.appId, candidate)
+                    actions.onResolve(selected.appId, candidate)
                 },
             )
             if (selected.candidates.any { it.source == com.example.backlogium.data.hltb.HltbCandidateSource.BROADER_SEARCH }) {
@@ -162,8 +218,8 @@ fun HltbReviewScreen(
             // Unmatched rescue: Try broader search
             BroaderSearchSection(
                 state = broaderState,
-                onTryBroader = { viewModel.startBroaderSearch(selected.appId, selected.name) },
-                onClear = { viewModel.clearBroaderState(selected.appId) },
+                onTryBroader = { actions.onBroaderSearch(selected.appId, selected.name) },
+                onClear = { actions.onClearBroader(selected.appId) },
             )
         }
 
@@ -171,13 +227,13 @@ fun HltbReviewScreen(
         ManualHltbLinkSection(
             gameName = selected.name,
             state = manualState,
-            onInputChange = { viewModel.updateManualLinkInput(selected.appId, it) },
-            onPreview = { viewModel.previewManualLink(selected.appId) },
-            onDismissPreview = { viewModel.dismissManualLinkPreview(selected.appId) },
+            onInputChange = { actions.onManualInput(selected.appId, it) },
+            onPreview = { actions.onPreview(selected.appId) },
+            onDismissPreview = { actions.onDismissPreview(selected.appId) },
             onConfirm = {
-                viewModel.confirmManualLink(selected.appId)
+                actions.onConfirm(selected.appId)
             },
-            onClear = { viewModel.clearManualLink(selected.appId) },
+            onClear = { actions.onClearManual(selected.appId) },
         )
     }
 }
