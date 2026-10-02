@@ -54,6 +54,10 @@ import com.example.backlogium.ui.home.HomeNextAction
 import com.example.backlogium.ui.home.HomeNextGame
 import com.example.backlogium.ui.home.HomeSmartCollectionCard
 import com.example.backlogium.ui.home.HomeUiState
+import com.example.backlogium.ui.gamedetail.*
+import com.example.backlogium.domain.GameArtworkPreference
+import com.example.backlogium.domain.GameArtworkVariant
+import com.example.backlogium.domain.GameFavorite
 import com.example.backlogium.ui.history.HistoryAchievements
 import com.example.backlogium.ui.history.HistoryContent
 import com.example.backlogium.ui.history.HistoryDayGroup
@@ -78,6 +82,7 @@ import java.time.LocalDate
 
 /** Representative states used to cover the five primary destinations and high-risk alternatives. */
 internal enum class MainFixtureKind {
+    DETAIL_OWNED, DETAIL_SHARED, DETAIL_MISSING,
     DERIVED_COLLECTIONS,
     HOME_POPULATED,
     HOME_NOW_PLAYING,
@@ -105,7 +110,7 @@ internal fun MainScreenshotFixtureHost(fixture: MainScreenshotFixture) {
     val context = LocalContext.current
     val imageLoader = remember(context) {
         ImageLoader.Builder(context)
-            .components { add(FixtureArtworkFetcher.Factory()) }
+            .components { add(FixtureArtworkFetcher.Factory(fixture.kind == MainFixtureKind.DETAIL_MISSING)) }
             .build()
     }
     DisposableEffect(imageLoader) {
@@ -114,6 +119,25 @@ internal fun MainScreenshotFixtureHost(fixture: MainScreenshotFixture) {
 
     CompositionLocalProvider(LocalImageLoader provides imageLoader) {
         when (fixture.kind) {
+            MainFixtureKind.DETAIL_OWNED, MainFixtureKind.DETAIL_SHARED, MainFixtureKind.DETAIL_MISSING -> {
+                val missing = fixture.kind == MainFixtureKind.DETAIL_MISSING
+                val shared = fixture.kind == MainFixtureKind.DETAIL_SHARED
+                GameDetailContent(GameDetailUiState(loading = false,
+                    gameName = if (missing) "A game without cached metadata" else "Portal: The Lost Chapter",
+                    summary = if (missing) GameSummaryUi() else GameSummaryUi(playtimeMinutes = 300,
+                        trackedMinutes = 60, importedMinutes = if (shared) 0 else 240, manualMinutes = if (shared) 120 else 0,
+                        mainStoryMinutes = 480, mainExtraMinutes = 720, achievementsUnlocked = 1, achievementsTotal = 2,
+                        xpContributed = 120, activePlayers = 1_234, isFamilyShared = shared,
+                        genres = listOf(GameGenre("adventure", "Adventure")), lastPlayedAt = FIXED_SCREEN_TIME_MILLIS),
+                    achievements = if (missing) emptyList() else listOf(
+                        AchievementUi("earned", "First steps", null, true, RarityTier.RARE, 120,
+                            35.0, FIXED_SCREEN_TIME_MILLIS, "Complete the first chapter.", false, 8.0),
+                        AchievementUi("locked", "The hidden route", null, false, null, 0, 1.5,
+                            null, null, true))), 10,
+                    presentation = if (shared) GameDetailPresentation.COLLECTION_OVERLAY else GameDetailPresentation.FULL_DESTINATION,
+                    favoriteState = FavoriteActionState(GameFavorite(10, shared, "fixture")),
+                    artworkState = ArtworkActionState(GameArtworkPreference(10, if (missing) null else GameArtworkVariant.LIBRARY_HERO, "fixture")))
+            }
             MainFixtureKind.DERIVED_COLLECTIONS -> Column(Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 DerivedCollectionCard("Favorites", "Games you marked with a heart.", 2,
@@ -561,16 +585,19 @@ private fun settingsState(
 )
 
 /** The fake owns every art request in this host, so screenshot composition never reaches the web. */
-private class FixtureArtworkFetcher(private val uri: Uri) : Fetcher {
-    override suspend fun fetch() = DrawableResult(
+private class FixtureArtworkFetcher(private val uri: Uri, private val unavailable: Boolean) : Fetcher {
+    override suspend fun fetch(): DrawableResult {
+        if (unavailable) throw IllegalStateException("Missing fixture cover")
+        return DrawableResult(
         drawable = ColorDrawable(fixtureArtworkColor(uri)),
         isSampled = false,
         dataSource = DataSource.MEMORY,
-    )
+        )
+    }
 
-    class Factory : Fetcher.Factory<Uri> {
+    class Factory(private val unavailable: Boolean = false) : Fetcher.Factory<Uri> {
         override fun create(data: Uri, options: Options, imageLoader: ImageLoader): Fetcher =
-            FixtureArtworkFetcher(data)
+            FixtureArtworkFetcher(data, unavailable)
     }
 }
 

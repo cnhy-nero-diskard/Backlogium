@@ -47,4 +47,33 @@
 
 - The first full-suite runs exposed Windows `AccessDeniedException` when the process-wide Settings DataStore delegate kept writing into a previous Robolectric test's temporary context. A distinct sandbox annotation did not fix the lifetime problem and was removed.
 - SettingsDataStore now has an internal store constructor; its public Hilt/Context constructor still uses the same production settings delegate. All nine JVM fixture classes that construct it use a per-test Preferences DataStore with an owned file and IO scope, cancelled and joined before directory cleanup.
-- The corrected full suite passed 1,858 app JVM tests with no failures/errors/skips; gamification's 53 tests also passed. Log: `%TEMP%/backlogium-02-full-isolated.log`; XML totals: `%TEMP%/backlogium-02-unit-counts.json`.
+- The corrected full suite passed 1,858 app JVM tests with no failures/errors/skips; gamification's 53 tests also passed. Logs: `%TEMP%/backlogium-02-full-isolated.log` and the final picker-budget rebuild `%TEMP%/backlogium-02-final-validation.log`; XML totals: `%TEMP%/backlogium-02-unit-counts.json`.
+
+## Final automated checks
+
+- `./gradlew.bat :app:testDebugUnitTest :gamification:test :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug --no-daemon` completed successfully after the DataStore fixture fix. App: 1,858 tests; gamification: 53 tests; no failures, errors or skips. Lint reported 54 warnings, with 2 existing errors, 34 warnings and 3 hints filtered by the repository baseline; no new lint errors.
+- `:app:verifyRoborazziDebug` filtered to RoborazziSpikeTest, MainScreenScreenshotNarrowTest, MainScreenScreenshotStandardTest, GameDetailScreenshotNarrowTest and GameDetailScreenshotStandardTest passed all 37 screenshot checks. Existing baseline PNGs remain byte-identical. Logs: `%TEMP%/backlogium-02-visual-verify-final.log` and final cached verification `%TEMP%/backlogium-02-goldens-final.log`.
+- Final Android-test build and lint passed again after the system-font fixture update (`%TEMP%/backlogium-02-system-font-build.log`).
+- `python -m unittest discover -s scripts -p 'test_*.py'` passed 32 tests. `openspec.cmd validate 02-improve-game-detail --strict` and `git diff --check` passed.
+
+## Emulator behavior and evidence
+
+- API-35 `Backlogium_OpenSpec_02`, serial `emulator-5556`, passed all seven GameDetailBehaviorTest methods (`OK (7 tests)`), including production Library/Home/collection member controls entering the common production detail body, Back through the focused window, retained filter/sort after Activity recreation, and reset lenses on a new visit. The collection presentation uses a real ModalBottomSheet; its host navigation state is explicit SavedStateHandle fixture state. Logs: `%TEMP%/backlogium-02-detail-green.log` and the final system-font run `%TEMP%/backlogium-02-detail-system-font.log` (all seven passed with system fontScale 1.6; original 1.0 restored).
+- The same isolated emulator passed MigrationTest (30), LibraryDiscoveryTest (4), LibraryGameSelectionSemanticsTest (4) and LibraryVisitContextTest (6): 44 retained-behavior tests. The initial combined 51-test run had one failing new navigation fixture; its 44 existing checks passed. The corrected seven-test batch above passed separately. Log: `%TEMP%/backlogium-02-device-final.log`.
+- Detail coverage includes all six refresh outcomes, repeated-tap pending suppression/retry, last-good rows and independent player refresh, filtered completion totals, actual decoded fallback bitmap/accent behavior, offline network policy and controlled cached previews, real Room-backed selection/reset and favorite preservation, shared/manual provenance and missing-data labels. The final batch sets system fontScale 1.6 as well as the controlled Compose density, covering native dialog windows; cleanup restores the original setting.
+- Pulled and visually reviewed representative captures from `app/build/outputs/game-detail-device-final/game-detail/`: Library/Home/collection visits and unlocked rows, owned cover/favorite selection, offline chooser, completed filtered state, shared and missing metadata, and all refresh outcomes (17 captures). The five committed Roborazzi baselines cover both themes and narrow/standard sizes; device captures remain ignored evidence.
+- Earlier SwiftShader QEMU native crashes were confirmed by Windows crash events; a separate AVD with host GPU and Vulkan disabled completed the tests. New navigation-fixture failures were corrected by selecting the actual Library card, scrolling virtualized/placed rows, using the new composition's Activity, saving fixture open state, and dispatching Back to the focused dialog/window. These were test-host fixes, not product failures.
+- Evidence is **DEGRADED** to one API-35 emulator and deterministic Steam/Coil fixtures. These tests exercise production components with a controlled host, not the authenticated Hilt app root. No physical-device, live Steam-account/API/CDN, or production-root visual acceptance is claimed. The local API key was not needed or read.
+- The whole-library add-game picker retains its original single-header default budget; a saved cover override may fall back to that original header. Main Library/Collection cover frames keep the full shared selected-first chains; icons and wishlist behavior are unchanged.
+
+## Shipped checkpoints
+
+- `419dc533` feat(preferences): retain supported steam cover choices
+- `a3fb5503` feat(detail): separate achievement filters and mixed rarity sorting
+- `d0b1035a` feat(detail): refresh achievements with account-safe commits
+- `16696291` feat(backup): preserve artwork selection and explicit resets
+- `56b5dbf9` test(settings): close isolated datastore writers between tests
+- `7a7e5ee8` feat(detail): add steam cover controls and labeled game information
+- Final validation/evidence checkpoint follows these commits on `feat/streamline-collections`, pushing to its configured `origin/feat/streamline-collections` upstream.
+
+All 17 tasks are complete. The pre-existing untracked `openspec/changes/03-archive-deadline-collections/` was left untouched. This change remains active for a separate archive invocation; no archive was performed.

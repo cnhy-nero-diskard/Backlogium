@@ -1720,7 +1720,10 @@ private fun AddGameRow(
         Box(modifier = Modifier.fillMaxWidth()) {
             GameHeaderBackdrop(
                 headerUrl = game.headerUrl,
-                fallbackUrls = SteamIconMapper.coverUrls(game.appId),
+                // The whole-library picker keeps its original one-candidate budget unless
+                // a saved override needs to fall back to that original header.
+                fallbackUrls = if (game.artworkVariant != null)
+                    listOf(SteamIconMapper.headerUrl(game.appId)) else emptyList(),
                 modifier = Modifier.matchParentSize(),
             )
             Row(

@@ -26,6 +26,6 @@
 ## 5. Detail Refinement and Integrated Verification
 
 - [x] 5.1 Refine labeled identity, metadata, estimates, playtime, and achievements after the controls work; verify shared/imported provenance, Steam link, missing-data behavior, Favorites heart, and readable screenshot framing.
-- [ ] 5.2 Exercise Library/Home/collection detail entry points, refresh outcomes, filters, cover changes, Back, and recreation on a device/emulator; verify large-font controls and record representative owned/shared/missing-data evidence with affected baselines.
-- [ ] 5.3 Run focused comparator/filter, refresh race/recompute, asset, backup, and migration tests plus debug build/relevant lint; verify recorded results also cover unchanged Library visit/discovery and earned-rarity behavior.
-- [ ] 5.4 Run strict OpenSpec validation and diff checks, audit requirement ownership against changes 1/3 and active achievement planning, and record exact evidence without marking unperformed device or visual checks complete.
+- [x] 5.2 Exercise Library/Home/collection detail entry points, refresh outcomes, filters, cover changes, Back, and recreation on a device/emulator; verify large-font controls and record representative owned/shared/missing-data evidence with affected baselines.
+- [x] 5.3 Run focused comparator/filter, refresh race/recompute, asset, backup, and migration tests plus debug build/relevant lint; verify recorded results also cover unchanged Library visit/discovery and earned-rarity behavior.
+- [x] 5.4 Run strict OpenSpec validation and diff checks, audit requirement ownership against changes 1/3 and active achievement planning, and record exact evidence without marking unperformed device or visual checks complete.

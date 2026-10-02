@@ -33,6 +33,8 @@ alter the goldens:
   --tests com.example.backlogium.ui.screenshot.RoborazziSpikeTest `
   --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotNarrowTest `
   --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotStandardTest `
+  --tests com.example.backlogium.ui.screenshot.GameDetailScreenshotNarrowTest `
+  --tests com.example.backlogium.ui.screenshot.GameDetailScreenshotStandardTest `
   --no-daemon
 ```
 
@@ -42,13 +44,14 @@ screen, state, theme, and viewport:
 - `main/<screen>/<state>/<theme>/<viewport>.png` contains the 20 core cells.
 - `alternatives/<screen>/<state>/dark/standard.png` contains the bounded edge-state cells.
 - `spike/dark-standard/theme-card.png` is the toolchain compatibility spike.
+- `detail/<state>/<theme>/<viewport>.png` covers owned, shared-overlay, missing-data, and achievement states.
 
 Generated actual, compare/diff, JSON, and HTML report files live below `app/build/` and are
 ignored. They must not be committed as baselines.
 
 ## Verify baselines locally
 
-Verification never records or rewrites tracked PNGs. Run it with the same three screenshot test
+Verification never records or rewrites tracked PNGs. Run it with the same five screenshot test
 classes used by CI:
 
 ```powershell
@@ -57,6 +60,8 @@ classes used by CI:
   --tests com.example.backlogium.ui.screenshot.RoborazziSpikeTest `
   --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotNarrowTest `
   --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotStandardTest `
+  --tests com.example.backlogium.ui.screenshot.GameDetailScreenshotNarrowTest `
+  --tests com.example.backlogium.ui.screenshot.GameDetailScreenshotStandardTest `
   --offline --no-daemon
 ```
 
@@ -85,7 +90,7 @@ It fails only when a fixture-rendered source changed and no file under
 `app/src/test/snapshots/` changed with it. Two things keep it from firing on most pull requests:
 
 - It is scoped to the composables `MainScreenshotFixtureHost` actually renders — the five screen
-  packages, the shared `ui/components`, `ui/theme`, `res/values/strings.xml`, and the two fixture
+  packages, `ui/gamedetail`, the shared `ui/components`, `ui/theme`, `res/values/strings.xml`, and the two fixture
   files themselves. Adding a fixture-rendered screen means adding one entry to
   `FIXTURE_RENDERED_SOURCES` in `scripts/check_visual_baseline.py` and nothing else.
 - Where a covered directory changes without moving a pixel, label the pull request

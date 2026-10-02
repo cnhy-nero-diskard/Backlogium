@@ -47,6 +47,7 @@ internal abstract class MainScreenshotTestBase {
         path: String,
         kind: MainFixtureKind,
         darkTheme: Boolean,
+        beforeCapture: () -> Unit = {},
     ) {
         val fixture = MainScreenshotFixture(kind = kind, darkTheme = darkTheme)
         composeRule.setContent {
@@ -62,6 +63,7 @@ internal abstract class MainScreenshotTestBase {
         // Compose needs one frame to install the content; subsequent animation frames stay frozen.
         composeRule.mainClock.advanceTimeByFrame()
         composeRule.waitForIdle()
+        beforeCapture()
         composeRule.onRoot().captureRoboImage(path)
     }
 

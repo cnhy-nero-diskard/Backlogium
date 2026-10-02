@@ -58,6 +58,8 @@ jobs:
           --tests com.example.backlogium.ui.screenshot.RoborazziSpikeTest
           --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotNarrowTest
           --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotStandardTest
+          --tests com.example.backlogium.ui.screenshot.GameDetailScreenshotNarrowTest
+          --tests com.example.backlogium.ui.screenshot.GameDetailScreenshotStandardTest
 
       - name: Upload Roborazzi failure artifacts
         if: failure()

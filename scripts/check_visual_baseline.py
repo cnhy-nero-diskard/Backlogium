@@ -45,6 +45,8 @@ FIXTURE_RENDERED_SOURCES: tuple[str, ...] = (
     "app/src/main/java/com/example/backlogium/ui/home",
     # LibraryContent
     "app/src/main/java/com/example/backlogium/ui/library",
+    # GameDetailContent (full destination and collection overlay)
+    "app/src/main/java/com/example/backlogium/ui/gamedetail",
     # SettingsOverviewScreen. Over-matches SettingsScreen.kt, which the fixtures do not draw.
     "app/src/main/java/com/example/backlogium/ui/settings",
     # BacklogiumTheme
