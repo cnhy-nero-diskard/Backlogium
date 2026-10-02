@@ -93,7 +93,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         CloudHistoricalBoundary::class,
         CloudHistoricalJournal::class,
     ],
-    version = 42,
+    version = 43,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -1036,6 +1036,30 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE `cloud_historical_operations` " +
                         "ADD COLUMN `lastIngestedPageNumber` INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        /**
+         * v42 -> v43: additive only — `player_profile` gains explicit confirmed-library-baseline
+         * evidence (stabilize-first-run-setup).
+         *
+         * Both columns arrive NULL and stay NULL for every existing install, imported or not:
+         * readiness must never be inferred from `lastSyncAt`, a nonempty `games` table,
+         * `playtimeBackfilled`, or scheduler success. The next accepted owned-library response —
+         * including an explicitly confirmed empty library — records it through
+         * [com.example.backlogium.data.local.dao.PlayerProfileDao.updateLibraryConfirmation]
+         * inside its own commit transaction; an account reset clears it with the rest of the
+         * account-owned state. No destructive fallback, and the existing v42 schema (games/session
+         * offsets, cloud historical receipt rows) is untouched.
+         */
+        val MIGRATION_42_43 = object : Migration(42, 43) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `player_profile` ADD COLUMN `confirmedLibrarySteamId` TEXT",
+                )
+                db.execSQL(
+                    "ALTER TABLE `player_profile` ADD COLUMN `confirmedLibraryAt` INTEGER",
                 )
             }
         }

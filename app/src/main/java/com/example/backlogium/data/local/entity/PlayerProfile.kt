@@ -59,6 +59,22 @@ data class PlayerProfile(
      * firing a cascade of level-up events for progress earned long ago (design.md Decision 3).
      */
     val pendingXpIntegrityCorrection: Boolean = false,
+    /**
+     * Explicit, durable evidence that an accepted owned-library response established a baseline for
+     * the account named by [steamId] — including an explicitly confirmed empty library. Written
+     * together with [confirmedLibraryAt] (both transition NULL→value atomically) inside the same
+     * transaction that commits the accepted raw library (stabilize-first-run-setup). NULL is
+     * deliberately the only admissible "not confirmed" state: readiness is never inferred from a
+     * nonempty `games` table, a generic/restored [lastSyncAt], [playtimeBackfilled], or scheduler
+     * success alone. Account reset clears it with the rest of the account-owned state
+     * ([com.example.backlogium.data.local.dao.PlayerProfileDao.resetForAccountChange]).
+     */
+    val confirmedLibrarySteamId: String? = null,
+    /**
+     * Commit time (epoch millis) at which [confirmedLibrarySteamId] was durably recorded; paired
+     * with it, never meaningful alone. A later failed refresh must leave both intact.
+     */
+    val confirmedLibraryAt: Long? = null,
 ) {
     companion object {
         const val SINGLETON_ID = 0

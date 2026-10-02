@@ -2,19 +2,19 @@
 
 - [ ] 1.1 Establish reproducible tests for retry-backoff misclassification, hidden onboarding Retry, and completed-selection masking; verify each fixture fails against the existing behavior for the intended reason.
 - [ ] 1.2 Exercise setup with running manual/periodic Steam work and live monitoring/post-play handoff; verify a diagnostic record captures stage/work identities, scheduler states, errors, and reused-versus-new admission without secrets or raw account identifiers, and records any unreproduced report honestly.
-- [ ] 1.3 Compare the active presence-attribution deltas and current cloud imported-play transfer/reset behavior with this change; verify a short implementation overlap map identifies shared files without conflicting requirement names or a duplicate session author.
+- [x] 1.3 Compare the active presence-attribution deltas and current cloud imported-play transfer/reset behavior with this change; verify a short implementation overlap map identifies shared files without conflicting requirement names or a duplicate session author.
 
 ## 2. Milestone A - Attributable sync results and baseline readiness
 
-- [ ] 2.1 Define domain library-poll result and readiness models exposed through repositories, keeping entities out of UI; verify mapper tests distinguish committed, not-performed, recoverable failure, unknown evidence, and confirmed empty.
-- [ ] 2.2 Add minimal account-scoped confirmed-baseline persistence and its Room migration, preserving field-scoped profile writes; verify migration tests initialize uncertain legacy data as unconfirmed while preserving existing imports, offsets, sessions, and cloud receipts.
+- [x] 2.1 Define domain library-poll result and readiness models exposed through repositories, keeping entities out of UI; verify mapper tests distinguish committed, not-performed, recoverable failure, unknown evidence, and confirmed empty.
+- [x] 2.2 Add minimal account-scoped confirmed-baseline persistence and its Room migration, preserving field-scoped profile writes; verify migration tests initialize uncertain legacy data as unconfirmed while preserving existing imports, offsets, sessions, and cloud receipts.
 - [ ] 2.3 Record baseline confirmation in the accepted raw library transaction and clear it on account reset; verify real-database tests cover confirmed zero games, rejected/private responses, rollback during first commit, and a later failed refresh retaining readiness.
 - [ ] 2.4 Publish operation results attributable to exact work/account identity, including crash-after-raw-commit evidence; verify missing credentials, account admission refusal, privacy/unconfirmed response, overlapping polls, and raw-commit-before-output cases cannot produce a false setup success.
 - [ ] 2.5 Keep new local confirmation and transient work identities out of unverified backup restoration; verify backup/restore and account-boundary tests preserve trusted local readiness without granting readiness from uncertain restored rows or timestamps.
 
 ## 3. Milestone A - Durable stage ownership and foreground settlement
 
-- [ ] 3.1 Introduce per-stage operation states and a separate foreground-attempt projection; verify pure state tests distinguish waiting/running/retry scheduled from succeeded/failed/cancelled/skipped and never infer terminal failure from busy work or elapsed time.
+- [x] 3.1 Introduce per-stage operation states and a separate foreground-attempt projection; verify pure state tests distinguish waiting/running/retry scheduled from succeeded/failed/cancelled/skipped and never infer terminal failure from busy work or elapsed time.
 - [ ] 3.2 Extend the setup store with versioned latest-attempt records, cohort selection, account ownership, and exact request/work associations; verify round-trip and legacy-migration tests retain known outcomes, ignore unknown stages, and do not fabricate live jobs.
 - [ ] 3.3 Add an admission-handle seam around existing schedulers, persisting intent before enqueue and reconciling new versus KEEP-reused work after admission; verify WorkManager tests cover immediate completion, existing live work, enqueue/identity-write interruption, duplicate taps, and stale finished records.
 - [ ] 3.4 Replace terminal-backoff observation with live per-stage reconciliation; verify retry scheduled can later become succeeded, HLTB worker failure reasons remain attributable, cancellation remains distinct, and missing/pruned jobs offer explicit recovery rather than loop or claim success.

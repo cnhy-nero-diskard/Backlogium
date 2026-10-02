@@ -404,6 +404,13 @@ internal class FakePlayerProfileDao(initial: PlayerProfile? = null) : PlayerProf
             longestStreak = maxOf(state.value?.longestStreak ?: 0, longestStreak),
         )
     }
+
+    override suspend fun updateLibraryConfirmation(steamId: String, confirmedAt: Long) {
+        state.value = (state.value ?: PlayerProfile()).copy(
+            confirmedLibrarySteamId = steamId,
+            confirmedLibraryAt = confirmedAt,
+        )
+    }
 }
 
 /** Seeded, read-only stand-in: only [getAllUnlocked] is exercised by the updater. */

@@ -18,8 +18,9 @@ interface PlayerProfileDao {
             "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
             "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
             "personaName, avatarUrl, storeRegion, pendingImportRecompute, " +
-            "lastSuccessfulWishlistReadAt, pendingXpIntegrityCorrection) VALUES " +
-            "(0, '', 0, 0, 1, 0, 0, 0, 0, NULL, 0, NULL, NULL, NULL, 0, NULL, 0)",
+            "lastSuccessfulWishlistReadAt, pendingXpIntegrityCorrection, " +
+            "confirmedLibrarySteamId, confirmedLibraryAt) VALUES " +
+            "(0, '', 0, 0, 1, 0, 0, 0, 0, NULL, 0, NULL, NULL, NULL, 0, NULL, 0, NULL, NULL)",
     )
     suspend fun insertIfMissing()
 
@@ -135,13 +136,29 @@ interface PlayerProfileDao {
     @Query("UPDATE player_profile SET lastSyncError = :message WHERE id = 0")
     suspend fun updateLastSyncError(message: String)
 
+    /**
+     * Record explicit confirmed-baseline evidence for the active account, scoped to the two
+     * confirmation fields only — never a whole-profile upsert (stabilize-first-run-setup).
+     *
+     * Callers write this inside the same Room transaction that commits an accepted owned-library
+     * response (including an explicitly confirmed empty library), so a crash before that commit
+     * leaves both columns NULL and the baseline unconfirmed. A later failed refresh must not call
+     * this, preserving the existing confirmation.
+     */
+    @Query(
+        "UPDATE player_profile SET confirmedLibrarySteamId = :steamId, " +
+            "confirmedLibraryAt = :confirmedAt WHERE id = 0",
+    )
+    suspend fun updateLibraryConfirmation(steamId: String, confirmedAt: Long)
+
     /** Reset account-derived profile state while retaining the active rule configuration version. */
     @Query(
         "UPDATE player_profile SET steamId = :steamId, steamLevel = 0, totalXp = 0, level = 1, " +
             "currentStreak = 0, longestStreak = 0, lastSyncAt = 0, lastSyncError = NULL, " +
             "playtimeBackfilled = 0, personaName = NULL, avatarUrl = NULL, " +
             "storeRegion = NULL, pendingImportRecompute = 0, " +
-            "lastSuccessfulWishlistReadAt = NULL, pendingXpIntegrityCorrection = 0 WHERE id = 0",
+            "lastSuccessfulWishlistReadAt = NULL, pendingXpIntegrityCorrection = 0, " +
+            "confirmedLibrarySteamId = NULL, confirmedLibraryAt = NULL WHERE id = 0",
     )
     suspend fun resetForAccountChange(steamId: String)
 }

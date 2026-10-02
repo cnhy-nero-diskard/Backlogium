@@ -97,6 +97,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_39_40,
         BacklogiumDatabase.MIGRATION_40_41,
         BacklogiumDatabase.MIGRATION_41_42,
+        BacklogiumDatabase.MIGRATION_42_43,
     )
 
     @Test
@@ -1695,6 +1696,167 @@ class MigrationTest {
                     assertEquals("history-v41", cursor.getString(0))
                     assertEquals(1, cursor.getInt(1))
                     assertEquals(0, cursor.getInt(2))
+                    assertFalse(cursor.moveToNext())
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    /**
+     * v42 -> v43: `player_profile` gains explicit confirmed-library-baseline evidence
+     * (stabilize-first-run-setup). The migration is additive with NULL defaults: it must never
+     * infer readiness from `lastSyncAt`, a nonempty `games` table, `playtimeBackfilled`,
+     * `pendingImportRecompute`, or scheduler success, and it must leave the imported flag, frozen
+     * backfill offsets, tracked sessions, and the cloud historical operation/journal receipts (with
+     * their v42-only fields) untouched.
+     */
+    @Test
+    fun v42ToV43_addsConfirmedLibraryEvidenceWithoutInferringReadiness() {
+        val databaseName = "migration-v42-${System.nanoTime()}"
+        val database = migrationTestHelper.createDatabase(databaseName, 42)
+        try {
+            database.execSQL(
+                "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                    "lastPlaytime, isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+                    "firstSeenAt, lastPlayedAt, returnedToPlayAt, manualSharedMinutes) VALUES " +
+                    "(440, 'Team Fortress 2', '', 5000, 0, 5000, 1, 1200, 1700000000000, " +
+                    "42, 'STEAM_OWNED', 1700000000000, NULL, NULL, 0), " +
+                    "(441, 'Shared Game', '', 30, 0, 30, 0, NULL, 1700000000001, 17, " +
+                    "'FAMILY_SHARED', 1700000000001, NULL, NULL, 0)",
+            )
+            database.execSQL(
+                "INSERT INTO sessions (id, appId, startAt, endAt, minutes, open, " +
+                    "recoveredSharedPlay, timingInformedSteamPlay) VALUES " +
+                    "(7, 440, 1700000010000, 1700005410000, 90, 0, 'FULL', 'FULL')",
+            )
+            // Every plausible "already ready" hint set: synced, imported, pending recompute,
+            // nonempty games present. Confirmation must still arrive NULL — nothing may infer it.
+            database.execSQL(
+                "INSERT INTO player_profile (id, steamId, steamLevel, totalXp, level, " +
+                    "currentStreak, longestStreak, gamificationConfigVersion, lastSyncAt, " +
+                    "lastSyncError, playtimeBackfilled, personaName, avatarUrl, storeRegion, " +
+                    "pendingImportRecompute, lastSuccessfulWishlistReadAt, " +
+                    "pendingXpIntegrityCorrection) VALUES " +
+                    "(0, '76561198000000000', 42, 9876, 8, 3, 12, 5, 1700000050000, NULL, 1, " +
+                    "'Player One', 'avatar-url', 'PH', 1, 1700000060000, 1)",
+            )
+            database.execSQL(
+                "INSERT INTO cloud_historical_operations (operationId, account, " +
+                    "readerGeneration, endpointIdentity, selectedStartAt, fromAt, throughAt, " +
+                    "pagesFetched, transitionsFetched, acquisitionComplete, state, createdAt, " +
+                    "updatedAt) VALUES " +
+                    "('history-v42', '76561198000000001', 2, " +
+                    "'https://presence.example.test/readPresence', 10, 10, 20, 1, 4, 1, " +
+                    "'COMPLETE', 1, 2)",
+            )
+            database.execSQL(
+                "INSERT INTO cloud_historical_journals (operationId, account, " +
+                    "readerGeneration, endpointIdentity, state, payloadVersion, payloadJson, " +
+                    "updatedAt) VALUES " +
+                    "('history-v42', '76561198000000001', 2, " +
+                    "'https://presence.example.test/readPresence', 'APPLIED', 1, " +
+                    "'{\"appliedAt\":1700000070000}', 1700000070000)",
+            )
+        } finally {
+            database.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                43,
+                true,
+                BacklogiumDatabase.MIGRATION_42_43,
+            )
+            try {
+                assertTableInfo(
+                    migrated,
+                    "player_profile",
+                    listOf(
+                        ColumnInfo("id", "INTEGER", notNull = true, pk = 1),
+                        ColumnInfo("steamId", "TEXT", notNull = true, pk = 0),
+                        ColumnInfo("steamLevel", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("totalXp", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("level", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("currentStreak", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("longestStreak", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("gamificationConfigVersion", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("lastSyncAt", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("lastSyncError", "TEXT", notNull = false, pk = 0),
+                        ColumnInfo("playtimeBackfilled", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("personaName", "TEXT", notNull = false, pk = 0),
+                        ColumnInfo("avatarUrl", "TEXT", notNull = false, pk = 0),
+                        ColumnInfo("storeRegion", "TEXT", notNull = false, pk = 0),
+                        ColumnInfo("pendingImportRecompute", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("lastSuccessfulWishlistReadAt", "INTEGER", notNull = false, pk = 0),
+                        ColumnInfo("pendingXpIntegrityCorrection", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("confirmedLibrarySteamId", "TEXT", notNull = false, pk = 0),
+                        ColumnInfo("confirmedLibraryAt", "INTEGER", notNull = false, pk = 0),
+                    ),
+                )
+                migrated.query(
+                    "SELECT steamId, totalXp, playtimeBackfilled, pendingImportRecompute, " +
+                        "lastSyncAt, confirmedLibrarySteamId, confirmedLibraryAt " +
+                        "FROM player_profile WHERE id = 0",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("76561198000000000", cursor.getString(0))
+                    assertEquals(9876L, cursor.getLong(1))
+                    assertEquals(1, cursor.getInt(2))
+                    assertEquals(1, cursor.getInt(3))
+                    assertEquals(1700000050000L, cursor.getLong(4))
+                    // No inference from a synced/imported/nonempty profile: still unconfirmed.
+                    assertTrue(cursor.isNull(5))
+                    assertTrue(cursor.isNull(6))
+                    assertFalse(cursor.moveToNext())
+                }
+                migrated.query(
+                    "SELECT appId, backfillMinutes FROM games ORDER BY appId",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(440L, cursor.getLong(0))
+                    assertEquals(42, cursor.getInt(1))
+                    assertTrue(cursor.moveToNext())
+                    assertEquals(441L, cursor.getLong(0))
+                    assertEquals(17, cursor.getInt(1))
+                    assertFalse(cursor.moveToNext())
+                }
+                migrated.query(
+                    "SELECT minutes, open, recoveredSharedPlay, timingInformedSteamPlay " +
+                        "FROM sessions WHERE id = 7",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(90, cursor.getInt(0))
+                    assertEquals(0, cursor.getInt(1))
+                    assertEquals("FULL", cursor.getString(2))
+                    assertEquals("FULL", cursor.getString(3))
+                    assertFalse(cursor.moveToNext())
+                }
+                migrated.query(
+                    "SELECT operationId, startChoice, zoneId, lastIngestedPageNumber, state " +
+                        "FROM cloud_historical_operations",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("history-v42", cursor.getString(0))
+                    assertEquals("RECENT_31_DAYS", cursor.getString(1))
+                    assertEquals("UTC", cursor.getString(2))
+                    assertEquals(0, cursor.getInt(3))
+                    assertEquals("COMPLETE", cursor.getString(4))
+                    assertFalse(cursor.moveToNext())
+                }
+                migrated.query(
+                    "SELECT state, payloadVersion, payloadJson, updatedAt " +
+                        "FROM cloud_historical_journals",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("APPLIED", cursor.getString(0))
+                    assertEquals(1, cursor.getInt(1))
+                    assertEquals("{\"appliedAt\":1700000070000}", cursor.getString(2))
+                    assertEquals(1700000070000L, cursor.getLong(3))
                     assertFalse(cursor.moveToNext())
                 }
             } finally {

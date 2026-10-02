@@ -1447,6 +1447,13 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
             longestStreak = maxOf(profile?.longestStreak ?: 0, longestStreak),
         )
     }
+
+    override suspend fun updateLibraryConfirmation(steamId: String, confirmedAt: Long) {
+        profile = (profile ?: PlayerProfile()).copy(
+            confirmedLibrarySteamId = steamId,
+            confirmedLibraryAt = confirmedAt,
+        )
+    }
 }
 
 private class FakeCollectionDao(

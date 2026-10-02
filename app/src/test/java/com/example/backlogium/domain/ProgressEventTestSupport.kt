@@ -99,6 +99,9 @@ internal class GatedPlayerProfileDao(
 
     override suspend fun raiseLongestStreak(longestStreak: Int) =
         delegate.raiseLongestStreak(longestStreak)
+
+    override suspend fun updateLibraryConfirmation(steamId: String, confirmedAt: Long) =
+        delegate.updateLibraryConfirmation(steamId, confirmedAt)
 }
 
 /**

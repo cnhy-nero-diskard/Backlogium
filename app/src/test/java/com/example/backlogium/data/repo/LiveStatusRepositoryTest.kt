@@ -1258,6 +1258,7 @@ class LiveStatusRepositoryTest {
         override suspend fun updateLastSyncError(message: String) = error("not used")
         override suspend fun markPendingImportRecompute() = error("not used")
         override suspend fun raiseLongestStreak(longestStreak: Int) = error("not used")
+        override suspend fun updateLibraryConfirmation(steamId: String, confirmedAt: Long) = error("not used")
     }
 
     /** Configurable player-summary responses; [throwOnNextCall] simulates a transient failure. */
