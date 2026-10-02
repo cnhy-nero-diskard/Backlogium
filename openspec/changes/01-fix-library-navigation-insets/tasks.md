@@ -5,9 +5,9 @@
 
 ## 2. Navigation and Insets
 
-- [ ] 2.1 Replace route-exception bar visibility with an explicit five-destination allowlist; verify Home, Library, History, Analytics, and Settings overview show the bar while onboarding, setup, HLTB review, diagnostics, collections, gap planning, and other pushed screens hide it.
-- [ ] 2.2 Correct bottom inset/padding ownership at the measured layer; verify the Library final item remains fully reachable in list and both grids without a blank strip in gesture and three-button modes.
-- [ ] 2.3 Align bar transition and content viewport behavior; verify opening a pushed route and using system Back restores the right tab, padding, and accessible last item.
+- [x] 2.1 Replace route-exception bar visibility with an explicit five-destination allowlist; verify Home, Library, History, Analytics, and Settings overview show the bar while onboarding, setup, HLTB review, diagnostics, collections, gap planning, and other pushed screens hide it.
+- [x] 2.2 Correct bottom inset/padding ownership at the measured layer; verify the Library final item remains fully reachable in list and both grids without a blank strip in gesture and three-button modes.
+- [x] 2.3 Align bar transition and content viewport behavior; verify opening a pushed route and using system Back restores the right tab, padding, and accessible last item.
 
 ## 3. Device Review
 

@@ -11,6 +11,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -397,9 +398,8 @@ internal fun LibraryContent(
     if (state.libraryEmpty) {
         Column(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
             ) {
                 if (shouldShowWishlistSection(state, wishlistState, selectedGenreSet)) {
                     wishlistSection(
@@ -431,9 +431,9 @@ internal fun LibraryContent(
         }
 
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
+            // Spacing scrolls with the content; the viewport itself reaches the shell's bar.
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
         ) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {

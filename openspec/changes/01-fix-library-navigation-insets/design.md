@@ -24,9 +24,19 @@ Capture the current Library in list and both grids under gesture and three-butto
 
 Compute visibility from the exact five top-level destination routes, with Settings overview treated as the top-level Settings surface. All pushed destinations, including setup, onboarding, HLTB review, and diagnostics, fall outside that set. This replaces a growing exclusion list that can show the bar by accident when new routes are introduced. The shell still leaves unconfigured top-level screens reachable, preserving their setup guidance.
 
+Home's former inline onboarding takeover uses the existing pushed onboarding route. A saved
+Home entry latch presents first-run configuration once, including durable interrupted setup.
+System Back returns to Home's setup guidance with the tabs available; its Continue setup action
+reopens the flow. The onboarding route owns the flow across credential changes and completion.
+
 ### Keep transitions and padding in agreement
 
 The shell remains responsible for app-bar height and system inset coordination. Child screens consume the space the shell supplies without adding a second copy of the same inset. If bar animation would retain bottom padding after the route changes, adjust the transition so the visible bar and content viewport settle together; verify the final item throughout the transition. The alternative of adding a Library-only spacer masks the symptom and does not address pushed screens.
+
+The baseline measurements in `evidence/README.md` locate a fixed 16 dp Library viewport gutter
+and full bar-height padding during slide-out. Library now uses scrollable content padding, keeping
+the end-of-list breathing room while letting rows reach the bar during scrolling. The bar composes
+directly with the current route, and NavHost consumes the shell padding as window insets.
 
 ## Risks / Trade-offs
 

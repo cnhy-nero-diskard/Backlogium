@@ -1,18 +1,11 @@
 package com.example.backlogium.ui
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,7 +18,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavController
 import androidx.navigation.NavType
@@ -50,6 +42,7 @@ import com.example.backlogium.ui.history.HistoryViewModel
 import com.example.backlogium.ui.home.HomeRoute
 import com.example.backlogium.ui.library.LibraryScreen
 import com.example.backlogium.ui.navigation.Destination
+import com.example.backlogium.ui.navigation.AppBottomNavigation
 import com.example.backlogium.ui.navigation.navigateToSettingsTab
 import com.example.backlogium.ui.navigation.navigateToTopLevelDestination
 import com.example.backlogium.ui.onboarding.OnboardingScreen
@@ -133,24 +126,15 @@ fun BacklogiumAppRoot(
         openUpdateRequests.collect { updateSheetVisible = true }
     }
     val navController = rememberNavController()
-    val destinations = Destination.entries
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
-    // Game detail isn't one of the top-level tabs, so the bottom bar would show with nothing
-    // selected — hide it there instead of leaving a misleading state. Same for the collection
-    // collection destination, another pushed sub-destination.
     val fullDestinationGameDetailPresented = currentDestination?.route == ROUTE_GAME_DETAIL
-    val settingsDetailPresented = currentDestination?.route in SettingsRoutes.detailRoutes
     // Query the restored controller back stack so Settings remains hosted when a sibling screen is
     // current, and naturally detaches as soon as the Settings graph is popped.
     val settingsGraphEntry = remember(navController, backStackEntry) {
         navController.settingsGraphBackStackEntryOrNull()
     }
     val settingsViewModel = settingsGraphEntry?.let { hiltViewModel<SettingsViewModel>(it) }
-    val onCollectionScreen = currentDestination?.route == ROUTE_COLLECTION ||
-        currentDestination?.route == ROUTE_COLLECTIONS ||
-        currentDestination?.route == ROUTE_SMART_COLLECTION ||
-        currentDestination?.route == ROUTE_GAP_PLAN
 
     // Hoisted above the Scaffold so a screen-reported wash can paint behind the top bar too, not
     // just its own content area — the game detail screen's header-art wash, and Home's now-playing
@@ -193,50 +177,29 @@ fun BacklogiumAppRoot(
                 )
             },
             bottomBar = {
-                AnimatedVisibility(
-                    visible = !fullDestinationGameDetailPresented &&
-                        !onCollectionScreen &&
-                        !settingsDetailPresented && currentDestination?.route != ROUTE_CLOUD_ACTIVITY,
-                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                    exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-                ) {
-                    NavigationBar {
-                        destinations.forEach { destination ->
-                            val selected = currentDestination
-                                ?.hierarchy
-                                ?.any { it.route == destination.route } == true
-                            val settingsSelected = destination == Destination.SETTINGS &&
-                                settingsGraphEntry != null
-                            NavigationBarItem(
-                                selected = selected || settingsSelected,
-                                onClick = {
-                                    if (destination == Destination.SETTINGS) {
-                                        navController.navigateToSettingsTab()
-                                    } else {
-                                        navController.navigateToTopLevelDestination(destination.route)
-                                    }
-                                },
-                                icon = {
-                                    Icon(
-                                        imageVector = destination.icon,
-                                        contentDescription = destination.label,
-                                    )
-                                },
-                                label = { Text(destination.label) },
-                            )
+                AppBottomNavigation(
+                    currentRoute = currentDestination?.route,
+                    onDestinationSelected = { destination ->
+                        if (destination == Destination.SETTINGS) {
+                            navController.navigateToSettingsTab()
+                        } else {
+                            navController.navigateToTopLevelDestination(destination.route)
                         }
-                    }
-                }
+                    },
+                )
             },
         ) { innerPadding ->
             SettingsGraphScreen(viewModel = settingsViewModel) { settings ->
                 NavHost(
                     navController = navController,
                     startDestination = Destination.HOME.route,
-                    modifier = Modifier.padding(innerPadding),
+                    modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
                 ) {
                 composable(Destination.HOME.route) {
                     HomeRoute(
+                        onOpenOnboarding = {
+                            navController.navigate(ROUTE_ONBOARDING) { launchSingleTop = true }
+                        },
                         onAccentColorChanged = { accentColor = it },
                         onOpenCollection = { id -> navController.navigate(collectionRoute(id)) },
                         onCreateCollection = { navController.navigate(collectionRoute(0L)) },

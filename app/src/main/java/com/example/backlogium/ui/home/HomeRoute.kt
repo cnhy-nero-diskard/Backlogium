@@ -13,6 +13,7 @@ import com.example.backlogium.domain.SmartCollectionId
 /** Home route-level presentation for durable progress events. */
 @Composable
 fun HomeRoute(
+    onOpenOnboarding: () -> Unit = {},
     onAccentColorChanged: (Color?) -> Unit = {},
     onOpenCollection: (Long) -> Unit = {},
     onCreateCollection: () -> Unit = {},
@@ -27,6 +28,7 @@ fun HomeRoute(
 
     Box(Modifier.fillMaxSize()) {
         HomeScreen(
+            onOpenOnboarding = onOpenOnboarding,
             onAccentColorChanged = onAccentColorChanged,
             onOpenCollection = onOpenCollection,
             onCreateCollection = onCreateCollection,

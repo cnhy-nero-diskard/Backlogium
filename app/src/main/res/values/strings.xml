@@ -1,4 +1,8 @@
 <resources>
+    <string name="home_connect_steam">Connect your Steam account</string>
+    <string name="home_resume_setup">Finish setting up Backlogium</string>
+    <string name="home_setup_guidance">Continue setup to load your games. You can explore the other tabs before finishing.</string>
+    <string name="home_continue_setup">Continue setup</string>
     <string name="app_name">Backlogium</string>
     <string name="settings_group_account_sync_title">Account &amp; sync</string>
     <string name="settings_group_gameplay_title">Gameplay</string>
