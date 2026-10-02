@@ -45,3 +45,6 @@ logs/
 
 # Python bytecode from running the release-note tooling tests
 __pycache__/
+
+# Private HLTB targeting, observation history, candidates and recovery state
+/tools/hltb-dataset/.local/
