@@ -10,6 +10,7 @@ data class DailyActivity(
     val games: List<DailyActivityGame>,
     val creditedMinutes: Long?,
     val questMet: Boolean?,
+    val updating: Boolean = false,
 ) {
     val recordedMinutes: Long = games.sumOf { it.minutes }
     val differenceMinutes: Long? = creditedMinutes?.minus(recordedMinutes)

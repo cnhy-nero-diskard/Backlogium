@@ -802,4 +802,24 @@
     <string name="home_smart_rule_almost_done">At least 80%% of Main Story and at least 80%% of achievements unlocked, but not completed.</string>
     <string name="home_smart_rule_dropped">More than 1.5 hours played, not completed, and not played in over 30 days.</string>
     <string name="home_smart_rule_completed">All achievements unlocked, or no achievements and playtime at least the Main Story length.</string>
+    <string name="activity_show_games">Show today’s game breakdown</string>
+    <string name="activity_hide_games">Hide today’s game breakdown</string>
+    <string name="activity_expanded">Expanded</string>
+    <string name="activity_collapsed">Collapsed</string>
+    <string name="activity_loading">Loading recorded activity…</string>
+    <string name="activity_updating">Updating recorded activity…</string>
+    <string name="activity_recorded_total">Visible recorded minutes: %1$s</string>
+    <string name="activity_credited_total">Credited quest minutes: %1$s</string>
+    <string name="activity_credit_unavailable">Quest credit and recorded outcome unavailable</string>
+    <string name="activity_credit_difference">%1$s more credited minutes than visible recorded minutes. Some credited activity is unavailable in this breakdown.</string>
+    <string name="activity_recorded_difference">Visible recorded minutes exceed credited quest minutes by %1$s. The stored quest result is unchanged.</string>
+    <string name="activity_allocation_unavailable">Per-game allocation unavailable</string>
+    <string name="activity_no_records">No visible recorded activity</string>
+    <string name="activity_game_minutes">%1$s · %2$s recorded minutes</string>
+    <string name="activity_app_fallback">App %1$s</string>
+    <string name="activity_open_game">Open %1$s details</string>
+    <string name="activity_detail_unavailable">Game details unavailable</string>
+    <string name="activity_measurement_help">About recorded activity</string>
+    <string name="activity_measurement_explanation">Recorded minutes come from the local session ledger, including the stored amount of open sessions. They are not exact elapsed play. A whole session belongs to the local date when it started. Credited quest minutes and outcomes are stored separately. Differences do not identify a particular source or game; undated imports and manual estimates are not allocated to days.</string>
+    <string name="activity_close">Close</string>
 </resources>

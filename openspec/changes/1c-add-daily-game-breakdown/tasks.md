@@ -6,9 +6,9 @@
 
 ## 2. Home presentation
 
-- [ ] 2.1 Wire the projection into Home and make Today's quest initially collapsed and expandable; verify the collapsed layout remains compact and multi-game rows reconcile with authoritative credit without changing quest state.
-- [ ] 2.2 Add localized recorded/credited/difference/unavailable wording and explanation access; verify no copy invents a source, time allocation, or missing quest result.
-- [ ] 2.3 Add named game-detail actions and date/account-keyed expansion state; verify navigation/return, midnight reset, account replacement, and a target hidden or removed before navigation.
+- [x] 2.1 Wire the projection into Home and make Today's quest initially collapsed and expandable; verify the collapsed layout remains compact and multi-game rows reconcile with authoritative credit without changing quest state.
+- [x] 2.2 Add localized recorded/credited/difference/unavailable wording and explanation access; verify no copy invents a source, time allocation, or missing quest result.
+- [x] 2.3 Add named game-detail actions and date/account-keyed expansion state; verify navigation/return, midnight reset, account replacement, and a target hidden or removed before navigation.
 
 ## 3. Acceptance
 

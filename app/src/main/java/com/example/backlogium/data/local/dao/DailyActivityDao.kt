@@ -21,6 +21,17 @@ interface DailyActivityDao {
     fun observeDay(date: String, startInclusive: Long, endExclusive: Long): Flow<List<DailyActivityRow>>
 
     @Query(
+        "SELECT s.appId, g.name, s.minutes, g.appId AS detailAppId, " +
+            "p.minutesPlayed AS creditedMinutes, p.questMet " +
+            "FROM (SELECT 1) anchor " +
+            "LEFT JOIN daily_progress p ON p.date = :date " +
+            "LEFT JOIN sessions s ON s.startAt >= :startInclusive AND s.startAt < :endExclusive " +
+            "AND s.appId NOT IN (SELECT appId FROM hidden_games) " +
+            "LEFT JOIN games g ON g.appId = s.appId",
+    )
+    suspend fun readDay(date: String, startInclusive: Long, endExclusive: Long): List<DailyActivityRow>
+
+    @Query(
         "SELECT EXISTS(SELECT 1 FROM games WHERE appId = :appId " +
             "AND appId NOT IN (SELECT appId FROM hidden_games))",
     )

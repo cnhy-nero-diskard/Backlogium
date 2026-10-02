@@ -176,6 +176,7 @@ fun HomeScreen(
             onOpenSmartCollection = onOpenSmartCollection,
             onOpenLibrary = onOpenLibrary,
             onOpenGame = onOpenGame,
+            onOpenDailyGame = { viewModel.openDailyGame(it, onOpenGame) },
             onReorderCollections = viewModel::reorderCollections,
         ),
     )
@@ -183,6 +184,7 @@ fun HomeScreen(
 
 /** Actions raised by the stateless Home presentation. */
 internal data class HomeContentActions(
+    val onOpenDailyGame: (Long) -> Unit = {},
     val onAcknowledgeProgressEvent: (ProgressEvent) -> Unit = {},
     val onSyncNow: () -> Unit = {},
     val onOpenCollection: (Long) -> Unit = {},
@@ -330,6 +332,7 @@ internal fun HomeContent(
             onOpenSmartCollection = actions.onOpenSmartCollection,
             onOpenLibrary = actions.onOpenLibrary,
             onOpenGame = actions.onOpenGame,
+            onOpenDailyGame = actions.onOpenDailyGame,
             scrollState = scrollState,
             scrollViewport = scrollViewport,
             onReorderCollections = actions.onReorderCollections,
@@ -352,6 +355,7 @@ private fun InnerHomeContent(
     onOpenSmartCollection: (SmartCollectionId) -> Unit,
     onOpenLibrary: () -> Unit,
     onOpenGame: (Long) -> Unit,
+    onOpenDailyGame: (Long) -> Unit,
     scrollState: ScrollState,
     scrollViewport: Rect?,
     onReorderCollections: (List<Long>) -> Unit,
@@ -556,7 +560,11 @@ private fun InnerHomeContent(
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = stringResource(
-                            if (state.questMet) R.string.home_complete else R.string.home_in_progress,
+                            when {
+                                state.dailyActivity != null && state.dailyActivity.questMet == null -> R.string.activity_credit_unavailable
+                                state.questMet -> R.string.home_complete
+                                else -> R.string.home_in_progress
+                            },
                         ),
                         style = MaterialTheme.typography.bodyLarge,
                     )
@@ -568,6 +576,10 @@ private fun InnerHomeContent(
                         UiFormat.localizedMinutes(state.questThreshold),
                     ),
                     style = MaterialTheme.typography.bodySmall,
+                )
+                DailyActivityDisclosure(
+                    state.dailyActivityKey, state.dailyActivity, state.dailyDetailUnavailable,
+                    onOpenDailyGame,
                 )
             }
         }

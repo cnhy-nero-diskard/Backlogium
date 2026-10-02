@@ -52,8 +52,16 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.example.backlogium.data.repo.DailyActivityRepository
+import com.example.backlogium.domain.DailyActivity
+import com.example.backlogium.domain.DailyActivityKey
+import com.example.backlogium.domain.observeDailyActivity
+import kotlinx.coroutines.flow.MutableStateFlow
 
 data class HomeUiState(
+    val dailyActivityKey: DailyActivityKey? = null,
+    val dailyActivity: DailyActivity? = null,
+    val dailyDetailUnavailable: Boolean = false,
     val loading: Boolean = true,
     /** True once the local Home snapshot can be rendered, even if a refresh is still in flight. */
     val hasRenderableContent: Boolean = false,
@@ -251,7 +259,31 @@ class HomeViewModel @Inject constructor(
     private val setupCoordinator: SetupCoordinator,
     private val smartCollectionFeed: SmartCollectionFeed,
     private val time: TimeProvider,
+    private val dailyActivityRepository: DailyActivityRepository,
 ) : ViewModel() {
+    private val dailyDetailUnavailable = MutableStateFlow(false)
+    private val dailyActivity = observeDailyActivity(
+        combine(credentials.steamIdFlow, currentDate.currentDate) { account, date ->
+            DailyActivityKey(account.orEmpty(), date)
+        },
+    ) { key ->
+        dailyDetailUnavailable.value = false
+        if (key.accountId.isEmpty()) flowOf(DailyActivity(key.date, key.accountId, emptyList(), null, null))
+        else dailyActivityRepository.observeDay(key.date, key.accountId)
+    }
+
+    fun openDailyGame(appId: Long, onOpen: (Long) -> Unit) {
+        val key = uiState.value.dailyActivityKey ?: return
+        viewModelScope.launch {
+            if (credentials.currentCredentials()?.steamId != key.accountId || time.today() != key.date) return@launch
+            val available = dailyActivityRepository.detailAvailable(appId)
+            if (uiState.value.dailyActivityKey != key) return@launch
+            if (available && uiState.value.dailyActivity?.games?.any { it.appId == appId } == true) {
+                dailyDetailUnavailable.value = false
+                onOpen(appId)
+            } else dailyDetailUnavailable.value = true
+        }
+    }
 
     /**
      * The five data inputs, gathered so the current date can join them as a sixth. Combining in one
@@ -293,6 +325,7 @@ class HomeViewModel @Inject constructor(
         val xpState = Gamification.levelState(profile?.totalXp ?: 0L, config.coercedToSafeCeilings())
         val configured = credState as? CredentialsState.Configured
         HomeUiState(
+            dailyActivityKey = DailyActivityKey(configured?.steamId.orEmpty(), today),
             loading = false,
             hasRenderableContent = true,
             configured = configured != null,
@@ -518,6 +551,15 @@ class HomeViewModel @Inject constructor(
             )
             NowPlaying.NotPlaying -> withCards
         }
+    }.combine(dailyActivity) { state, read ->
+        val activity = read.activity.takeIf { read.key == state.dailyActivityKey }
+        state.copy(
+            dailyActivity = activity,
+            todayMinutes = activity?.creditedMinutes?.let(Math::toIntExact) ?: state.todayMinutes,
+            questMet = activity?.questMet ?: state.questMet,
+        )
+    }.combine(dailyDetailUnavailable) { state, unavailable ->
+        state.copy(dailyDetailUnavailable = unavailable)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
