@@ -1,0 +1,12 @@
+light-standard-list: systemBottomPx=153 scaffoldBottomPx=413 viewportBottom=707.38464.dp barTop=707.38464.dp finalItemBottom=687.38464.dp
+light-standard-grid: systemBottomPx=153 scaffoldBottomPx=413 viewportBottom=707.38464.dp barTop=707.38464.dp finalItemBottom=687.38464.dp
+light-standard-compact_grid: systemBottomPx=153 scaffoldBottomPx=413 viewportBottom=707.38464.dp barTop=707.38464.dp finalItemBottom=687.38464.dp
+light-large-list: systemBottomPx=153 scaffoldBottomPx=419 viewportBottom=705.53845.dp barTop=705.53845.dp finalItemBottom=685.53845.dp
+light-large-grid: systemBottomPx=153 scaffoldBottomPx=419 viewportBottom=705.53845.dp barTop=705.53845.dp finalItemBottom=685.53845.dp
+light-large-compact_grid: systemBottomPx=153 scaffoldBottomPx=419 viewportBottom=705.53845.dp barTop=705.53845.dp finalItemBottom=685.53845.dp
+dark-standard-list: systemBottomPx=153 scaffoldBottomPx=413 viewportBottom=707.38464.dp barTop=707.38464.dp finalItemBottom=687.38464.dp
+dark-standard-grid: systemBottomPx=153 scaffoldBottomPx=413 viewportBottom=707.38464.dp barTop=707.38464.dp finalItemBottom=687.38464.dp
+dark-standard-compact_grid: systemBottomPx=153 scaffoldBottomPx=413 viewportBottom=707.38464.dp barTop=707.38464.dp finalItemBottom=687.38464.dp
+dark-large-list: systemBottomPx=153 scaffoldBottomPx=419 viewportBottom=705.53845.dp barTop=705.53845.dp finalItemBottom=685.53845.dp
+dark-large-grid: systemBottomPx=153 scaffoldBottomPx=419 viewportBottom=705.53845.dp barTop=705.53845.dp finalItemBottom=685.53845.dp
+dark-large-compact_grid: systemBottomPx=153 scaffoldBottomPx=419 viewportBottom=705.53845.dp barTop=705.53845.dp finalItemBottom=685.53845.dp

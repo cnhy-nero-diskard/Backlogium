@@ -1,5 +1,8 @@
 # Baseline inset capture
 
+Baseline: checkpoint `21be51c5`. The updated regression test uses the production
+bottom bar. See [phone verification](phone/README.md) for the implemented behavior.
+
 Captured on the Medium Phone API 35 emulator (1080 × 2400, 420 dpi) using
 `LibraryInsetCaptureTest`. The test composes the current `LibraryContent` with
 18 local fixture games inside the shell's `Scaffold`/`NavigationBar` arrangement.

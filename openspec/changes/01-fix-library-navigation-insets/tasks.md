@@ -11,4 +11,4 @@
 
 ## 3. Device Review
 
-- [ ] 3.1 Capture representative phone or emulator screens in both themes and at increased font size; verify bar visibility, safe-area spacing, and final-item access across first-run configuration and Library return.
+- [x] 3.1 Capture representative phone or emulator screens in both themes and at increased font size; verify bar visibility, safe-area spacing, and final-item access across first-run configuration and Library return.
