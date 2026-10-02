@@ -93,8 +93,10 @@ internal const val TAG_ANALYTICS_PREVIOUS_DAY = "analytics-previous-day"
 internal const val TAG_ANALYTICS_NEXT_DAY = "analytics-next-day"
 
 @Composable
-fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
+fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel(),
+    momentumViewModel: PersonalMomentumViewModel = hiltViewModel(), onOpenGame: (Long) -> Unit = {}) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val momentum by momentumViewModel.uiState.collectAsStateWithLifecycle()
     AnalyticsContent(
         state = state,
         actions = AnalyticsActions(
@@ -103,6 +105,8 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
             onStepLater = viewModel::stepAnchorLater,
             onReturnToCurrent = viewModel::returnToCurrentWindow,
         ),
+        momentum = momentum,
+        onOpenMomentumGame = { momentumViewModel.openGame(it, onOpenGame) },
     )
 }
 
@@ -110,6 +114,8 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
 internal fun AnalyticsContent(
     state: AnalyticsUiState,
     actions: AnalyticsActions = AnalyticsActions(),
+    momentum: MomentumUiState? = null,
+    onOpenMomentumGame: (Long) -> Unit = {},
 ) {
     var omitZeroDays by remember { mutableStateOf(true) }
     var windowOptionsExpanded by remember { mutableStateOf(false) }
@@ -164,6 +170,8 @@ internal fun AnalyticsContent(
         }
 
         AnalyticsOverviewCard(analyticsOverviewSnapshot(state))
+
+        momentum?.let { PersonalMomentumCard(it, onOpenMomentumGame) }
 
         AnalyticsPeriodHeader(
             window = state.window,

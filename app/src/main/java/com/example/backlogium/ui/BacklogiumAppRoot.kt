@@ -274,7 +274,9 @@ fun BacklogiumAppRoot(
                         onBack = { navController.popBackStack() },
                     )
                 }
-                composable(Destination.ANALYTICS.route) { AnalyticsScreen() }
+                composable(Destination.ANALYTICS.route) {
+                    AnalyticsScreen(onOpenGame = { navController.navigate(gameDetailRoute(it)) })
+                }
                 navigation(
                     startDestination = SettingsRoutes.OVERVIEW,
                     route = SettingsRoutes.GRAPH,

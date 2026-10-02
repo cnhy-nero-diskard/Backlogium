@@ -829,4 +829,22 @@
     <string name="analytics_all_games_scope">All eligible visible games in this period</string>
     <string name="analytics_represented_dates">%1$s – %2$s</string>
     <string name="analytics_elapsed_dates">%1$s (elapsed to date)</string>
+    <string name="momentum_title">Personal play momentum</string>
+    <string name="momentum_scope">Recorded personal activity in two completed weeks. Independent of the selected Analytics period.</string>
+    <string name="momentum_current_dates">Recent week: %1$s – %2$s</string>
+    <string name="momentum_baseline_dates">Previous week: %1$s – %2$s</string>
+    <string name="momentum_learning">Learning your recorded pattern. A finalized record from on or before the start of the previous week is needed for this comparison.</string>
+    <string name="momentum_empty">No eligible visible library games to compare.</string>
+    <string name="momentum_no_increase">No games meet the recorded activity criteria for an increase or newly recorded play.</string>
+    <string name="momentum_growth_group">Recorded increases</string>
+    <string name="momentum_new_group">Newly recorded this week</string>
+    <string name="momentum_recorded_amounts">Recorded: recent week %1$s · previous week %2$s</string>
+    <string name="momentum_growth_reason">%1$s more recorded (%2$s increase).</string>
+    <string name="momentum_new_reason">No positive finalized activity recorded in the previous week. This does not mean first-ever play.</string>
+    <string name="momentum_updating">Updating personal comparison…</string>
+    <string name="momentum_caveat">Recorded personal activity; missing tracking can affect comparisons.</string>
+    <string name="momentum_unavailable">This game is no longer available in the visible library.</string>
+    <string name="momentum_explain">How personal momentum is calculated</string>
+    <string name="momentum_open_game">Open %1$s details</string>
+    <string name="momentum_criteria" formatted="false">The recent week is the seven completed local dates before today; the previous week is the seven dates before that. Today and open sessions are excluded. Each positive finalized session belongs wholly to its local start date, including overnight play.\n\nA game needs at least 60 recorded minutes on at least two different recent dates. An increase needs at least 30 previous-week minutes, at least 30 additional minutes, and at least 25% growth. A zero previous-week total is shown separately as newly recorded, without a growth percentage. Previous totals from 1 to 29 minutes do not qualify.\n\nUp to five games appear. Increases rank by additional minutes, then recent minutes and game ID; newly recorded games follow by recent minutes and game ID. Hidden games and games outside the current library are excluded.\n\nThe library needs a positive finalized record dated on or before the first previous-week date. That history gate does not establish continuous coverage. Missing tracking or corrections can change the comparison. Lifetime totals, undated manual credit, and Steam community player counts are not included.</string>
 </resources>

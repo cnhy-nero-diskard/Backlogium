@@ -7,9 +7,9 @@
 
 ## 2. Analytics presentation
 
-- [ ] 2.1 Add the compact personal card with both fixed date ranges, current/baseline amounts, comparison reason, and learning/no-increase states; verify main-period selector changes cannot silently relabel the personal comparison.
-- [ ] 2.2 Add localized criteria/recording caveats and distinct newly-recorded wording; verify no complete-coverage, first-ever-play, infinite-growth, or Steam-community claim appears.
-- [ ] 2.3 Wire named accessible detail actions with action-time visibility checks; verify unavailable targets, detail return preserving the main period, narrow screens, large fonts, and non-color-dependent meaning.
+- [x] 2.1 Add the compact personal card with both fixed date ranges, current/baseline amounts, comparison reason, and learning/no-increase states; verify main-period selector changes cannot silently relabel the personal comparison.
+- [x] 2.2 Add localized criteria/recording caveats and distinct newly-recorded wording; verify no complete-coverage, first-ever-play, infinite-growth, or Steam-community claim appears.
+- [x] 2.3 Wire named accessible detail actions with action-time visibility checks; verify unavailable targets, detail return preserving the main period, narrow screens, large fonts, and non-color-dependent meaning.
 
 ## 3. Community feasibility decision
 
@@ -18,6 +18,6 @@
 
 ## 4. Acceptance
 
-- [ ] 4.1 Run relevant domain/repository/Analytics tests and `./gradlew.bat :app:compileDebugKotlin :app:lintDebug`; verify read-only offline behavior, bounded query scope, stale-result rejection, and unchanged existing headline/window/quest/XP behavior.
+- [x] 4.1 Run relevant domain/repository/Analytics tests and `./gradlew.bat :app:compileDebugKotlin :app:lintDebug`; verify read-only offline behavior, bounded query scope, stale-result rejection, and unchanged existing headline/window/quest/XP behavior.
 - [ ] 4.2 Capture and inspect candidate, newly-recorded, learning, empty-eligibility, and updating device/emulator states in both themes and larger font scale; verify screen-reader scope and detail actions and record available evidence.
 - [ ] 4.3 Run `openspec.cmd validate 4c-add-personal-play-momentum --strict` and `git diff --check`; verify the personal/community distinction and shared #147/#168 coordination without claiming the whole #173 issue complete.
