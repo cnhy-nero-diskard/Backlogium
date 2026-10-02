@@ -12,7 +12,7 @@
 
 ## 3. Hide Confirmation
 
-- [ ] 3.1 Condense the Hide game dialog while retaining restore guidance, Hide/Cancel choices, and material XP, level, or Focus effects; verify representative no-change and consequential-change presentations.
+- [x] 3.1 Condense the Hide game dialog while retaining restore guidance, Hide/Cancel choices, and material XP, level, or Focus effects; verify representative no-change and consequential-change presentations.
 
 ## 4. Integrated Review
 
