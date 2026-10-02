@@ -1,5 +1,8 @@
 package com.example.backlogium.domain
 
+import com.example.backlogium.test.SettingsDataStoreRule
+import org.junit.Rule
+
 import androidx.room.Room
 import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.local.BacklogiumDatabase
@@ -36,6 +39,8 @@ import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class CloudPresencePlaytimeRefilingUseCaseTest {
+    @get:Rule val settingsFixture = SettingsDataStoreRule()
+
 
     @Test
     fun historicalApplyAtomicallyTransfersImportedMinutesAndReplaysFromRoomJournal() = runTest {
@@ -43,7 +48,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             RuntimeEnvironment.getApplication(),
             BacklogiumDatabase::class.java,
         ).allowMainThreadQueries().build()
-        val settingsDataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val settingsDataStore = settingsFixture.create()
         val realSettings = DataStoreSettingsRepository(settingsDataStore)
         val marks = InMemoryProgressMarksStore(ProgressMarks(lastCelebratedLevel = 1, initialized = true))
         val updater = GamificationUpdater(
@@ -344,7 +349,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             BacklogiumDatabase::class.java,
         ).allowMainThreadQueries().build()
         val settings = DataStoreSettingsRepository(
-            SettingsDataStore(RuntimeEnvironment.getApplication()),
+            settingsFixture.create(),
         )
         val updater = GamificationUpdater(
             sessionDao = database.sessionDao(),
@@ -429,7 +434,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             BacklogiumDatabase::class.java,
         ).allowMainThreadQueries().build()
         val settings = DataStoreSettingsRepository(
-            SettingsDataStore(RuntimeEnvironment.getApplication()),
+            settingsFixture.create(),
         )
         val marks = InMemoryProgressMarksStore(
             ProgressMarks(
@@ -581,7 +586,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             BacklogiumDatabase::class.java,
         ).allowMainThreadQueries().build()
         val realSettings = DataStoreSettingsRepository(
-            SettingsDataStore(RuntimeEnvironment.getApplication()),
+            settingsFixture.create(),
         )
         val marks = InMemoryProgressMarksStore(
             ProgressMarks(
@@ -732,7 +737,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             BacklogiumDatabase::class.java,
         ).allowMainThreadQueries().build()
         val settings = DataStoreSettingsRepository(
-            SettingsDataStore(RuntimeEnvironment.getApplication()),
+            settingsFixture.create(),
         )
         val marks = InMemoryProgressMarksStore(
             ProgressMarks(

@@ -1,5 +1,8 @@
 package com.example.backlogium.data.backup
 
+import com.example.backlogium.test.SettingsDataStoreRule
+import org.junit.Rule
+
 import androidx.room.Room
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
@@ -35,6 +38,8 @@ import java.time.ZoneId
  */
 @RunWith(RobolectricTestRunner::class)
 class HiddenGamesBackupRoundTripTest {
+    @get:Rule val settingsFixture = SettingsDataStoreRule()
+
 
     private lateinit var source: BacklogiumDatabase
     private lateinit var restored: BacklogiumDatabase
@@ -191,7 +196,7 @@ class HiddenGamesBackupRoundTripTest {
         hiddenGameDao = db.hiddenGameDao(),
         gamePreferenceDao = db.gamePreferenceDao(),
         excludedSharedGameDao = db.excludedSharedGameDao(),
-        settings = SettingsDataStore(RuntimeEnvironment.getApplication()),
+        settings = settingsFixture.create(),
         credentials = ConfiguredCredentials,
         time = FixedTime,
         transaction = transaction,

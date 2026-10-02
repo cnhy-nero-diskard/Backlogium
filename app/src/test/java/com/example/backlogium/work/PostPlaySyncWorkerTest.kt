@@ -1,5 +1,8 @@
 package com.example.backlogium.work
 
+import com.example.backlogium.test.SettingsDataStoreRule
+import org.junit.Rule
+
 import android.content.Context
 import androidx.room.Room
 import androidx.room.withTransaction
@@ -90,6 +93,8 @@ import java.time.ZoneId
  */
 @RunWith(RobolectricTestRunner::class)
 class PostPlaySyncWorkerTest {
+    @get:Rule val settingsFixture = SettingsDataStoreRule()
+
 
     private val zone: ZoneId = ZoneId.of("UTC")
     private val sessionEndAt = Instant.parse("2026-07-27T20:00:00Z").toEpochMilli()
@@ -703,7 +708,7 @@ class PostPlaySyncWorkerTest {
                 profileDao = db.playerProfileDao(),
                 committer = committer(),
                 derivedStateWriter = SyncDerivedStateWriter(
-                    settings = SettingsDataStore(context),
+                    settings = settingsFixture.create(),
                     gamificationUpdater = GamificationUpdater(
                         db.sessionDao(),
                         db.dailyProgressDao(),

@@ -1,5 +1,8 @@
 package com.example.backlogium.data.repo
 
+import com.example.backlogium.test.SettingsDataStoreRule
+import org.junit.Rule
+
 import androidx.room.Room
 import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
@@ -29,6 +32,8 @@ import java.time.ZoneId
 
 @RunWith(RobolectricTestRunner::class)
 class DetailAchievementRefreshTest {
+    @get:Rule val settingsFixture = SettingsDataStoreRule()
+
     private lateinit var db: BacklogiumDatabase
     private lateinit var marker: AccountChangeMarkerStore
     private lateinit var action: RefreshGameAchievementsUseCase
@@ -60,7 +65,7 @@ class DetailAchievementRefreshTest {
         action = RefreshGameAchievementsUseCase(repository, db, object : CredentialsProvider {
             override suspend fun currentCredentials() = configured
         }, marker, SteamSyncCoordinator(), DerivedStateWriteCoordinator(), updater,
-            DataStoreSettingsRepository(SettingsDataStore(context)), time)
+            DataStoreSettingsRepository(settingsFixture.create()), time)
     }
 
     @After fun close() { db.close() }

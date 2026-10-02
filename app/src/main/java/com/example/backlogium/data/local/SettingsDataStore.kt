@@ -1,6 +1,7 @@
 package com.example.backlogium.data.local
 
 import android.content.Context
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -63,9 +64,11 @@ private val cloudPresenceRefilingReceiptJson = Json { ignoreUnknownKeys = true }
  * The two HowLongToBeat taper constants are deliberately absent: they are not exposed.
  */
 @Singleton
-class SettingsDataStore @Inject constructor(
-    @ApplicationContext private val context: Context,
+class SettingsDataStore internal constructor(
+    private val store: DataStore<Preferences>,
 ) {
+    @Inject constructor(@ApplicationContext context: Context) : this(context.dataStore)
+
     private object Keys {
         val XP_PER_MINUTE = intPreferencesKey("xp_per_minute")
         val LEVEL_BASE = intPreferencesKey("level_base")
@@ -190,7 +193,7 @@ class SettingsDataStore @Inject constructor(
         val PENDING_TRANSITION_DATE = stringPreferencesKey("pending_transition_date")
     }
 
-    val ruleConfigWithVersionFlow: Flow<VersionedRuleConfig> = context.dataStore.data.map { prefs ->
+    val ruleConfigWithVersionFlow: Flow<VersionedRuleConfig> = store.data.map { prefs ->
         val defaults = RuleConfig()
         VersionedRuleConfig(
             config = RuleConfig(
@@ -221,7 +224,7 @@ class SettingsDataStore @Inject constructor(
     /** Atomically writes the rules and advances their monotonic provenance version. */
     suspend fun setRuleConfigAndGetVersion(config: RuleConfig): VersionedRuleConfig {
         lateinit var result: VersionedRuleConfig
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.XP_PER_MINUTE] = config.xpPerMinute
             prefs[Keys.LEVEL_BASE] = config.levelBase
             prefs[Keys.QUEST_THRESHOLD_MIN] = config.questThresholdMin
@@ -240,12 +243,12 @@ class SettingsDataStore @Inject constructor(
     }
 
     /** Durable progress-event marks. Unset level/streak keys mean no baseline has been seeded yet. */
-    val progressMarksFlow: Flow<ProgressMarks> = context.dataStore.data.map(::decodeProgressMarks)
+    val progressMarksFlow: Flow<ProgressMarks> = store.data.map(::decodeProgressMarks)
 
     suspend fun readProgressMarks(): ProgressMarks = progressMarksFlow.first()
 
     suspend fun writeProgressMarks(marks: ProgressMarks) {
-        context.dataStore.edit { prefs -> encodeProgressMarks(prefs, marks) }
+        store.edit { prefs -> encodeProgressMarks(prefs, marks) }
     }
 
     /**
@@ -258,7 +261,7 @@ class SettingsDataStore @Inject constructor(
         transform: (ProgressMarks) -> ProgressMarks,
     ): ProgressMarks {
         lateinit var result: ProgressMarks
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             result = transform(decodeProgressMarks(prefs))
             encodeProgressMarks(prefs, result)
         }
@@ -354,7 +357,7 @@ class SettingsDataStore @Inject constructor(
      * stored one, so changing the key of a list the user never reversed keeps it on that key's
      * natural end.
      */
-    val librarySortFlow: Flow<LibrarySortPrefs> = context.dataStore.data.map { prefs ->
+    val librarySortFlow: Flow<LibrarySortPrefs> = store.data.map { prefs ->
         val defaults = LibrarySortPrefs()
         val focus = librarySortKeyOrNull(prefs[Keys.LIBRARY_FOCUS_SORT]) ?: defaults.focus
         val library = librarySortKeyOrNull(prefs[Keys.LIBRARY_ALL_SORT]) ?: defaults.library
@@ -369,45 +372,45 @@ class SettingsDataStore @Inject constructor(
     }
 
     suspend fun setFocusSort(key: LibrarySortKey) {
-        context.dataStore.edit { it[Keys.LIBRARY_FOCUS_SORT] = key.name }
+        store.edit { it[Keys.LIBRARY_FOCUS_SORT] = key.name }
     }
 
     suspend fun setLibrarySort(key: LibrarySortKey) {
-        context.dataStore.edit { it[Keys.LIBRARY_ALL_SORT] = key.name }
+        store.edit { it[Keys.LIBRARY_ALL_SORT] = key.name }
     }
 
     suspend fun setFocusSortDirection(direction: LibrarySortDirection) {
-        context.dataStore.edit { it[Keys.LIBRARY_FOCUS_SORT_DIRECTION] = direction.name }
+        store.edit { it[Keys.LIBRARY_FOCUS_SORT_DIRECTION] = direction.name }
     }
 
     suspend fun setLibrarySortDirection(direction: LibrarySortDirection) {
-        context.dataStore.edit { it[Keys.LIBRARY_ALL_SORT_DIRECTION] = direction.name }
+        store.edit { it[Keys.LIBRARY_ALL_SORT_DIRECTION] = direction.name }
     }
 
     /** Each surface owns its presentation preference; an unset or stale value is the old list. */
-    val libraryDensityFlow: Flow<GameListDensity> = context.dataStore.data.map { prefs ->
+    val libraryDensityFlow: Flow<GameListDensity> = store.data.map { prefs ->
         GameListDensity.fromStored(prefs[Keys.LIBRARY_DENSITY])
     }
 
-    val collectionDensityFlow: Flow<GameListDensity> = context.dataStore.data.map { prefs ->
+    val collectionDensityFlow: Flow<GameListDensity> = store.data.map { prefs ->
         GameListDensity.fromStored(prefs[Keys.COLLECTION_DENSITY])
     }
 
     suspend fun setLibraryDensity(density: GameListDensity) {
-        context.dataStore.edit { it[Keys.LIBRARY_DENSITY] = density.name }
+        store.edit { it[Keys.LIBRARY_DENSITY] = density.name }
     }
 
     suspend fun setCollectionDensity(density: GameListDensity) {
-        context.dataStore.edit { it[Keys.COLLECTION_DENSITY] = density.name }
+        store.edit { it[Keys.COLLECTION_DENSITY] = density.name }
     }
 
     /** Hidden derived collections; absent or malformed ids default to visible. */
-    val smartCollectionVisibilityFlow: Flow<SmartCollectionVisibility> = context.dataStore.data.map { prefs ->
+    val smartCollectionVisibilityFlow: Flow<SmartCollectionVisibility> = store.data.map { prefs ->
         readHiddenSmartCollections(prefs)
     }
 
     suspend fun setSmartCollectionVisibility(visibility: SmartCollectionVisibility) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             writeHiddenSmartCollections(prefs, visibility.hidden)
         }
     }
@@ -418,7 +421,7 @@ class SettingsDataStore @Inject constructor(
      * across calls would let the slower write silently discard a concurrent toggle.
      */
     suspend fun setSmartCollectionVisible(id: SmartCollectionId, visible: Boolean) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             val hidden = readHiddenSmartCollections(prefs).setVisible(id, visible).hidden
             writeHiddenSmartCollections(prefs, hidden)
         }
@@ -443,7 +446,7 @@ class SettingsDataStore @Inject constructor(
      * Automatic rolling snapshot configuration (add-backup-restore): on by default, retaining 7
      * snapshots at a minimum 24-hour interval between writes.
      */
-    val autoSnapshotSettingsFlow: Flow<AutoSnapshotSettings> = context.dataStore.data.map { prefs ->
+    val autoSnapshotSettingsFlow: Flow<AutoSnapshotSettings> = store.data.map { prefs ->
         AutoSnapshotSettings(
             enabled = prefs[Keys.AUTO_SNAPSHOT_ENABLED] ?: true,
             retentionCount = prefs[Keys.SNAPSHOT_RETENTION_COUNT] ?: 7,
@@ -452,15 +455,15 @@ class SettingsDataStore @Inject constructor(
     }
 
     suspend fun setAutoSnapshotEnabled(enabled: Boolean) {
-        context.dataStore.edit { it[Keys.AUTO_SNAPSHOT_ENABLED] = enabled }
+        store.edit { it[Keys.AUTO_SNAPSHOT_ENABLED] = enabled }
     }
 
     suspend fun setSnapshotRetentionCount(count: Int) {
-        context.dataStore.edit { it[Keys.SNAPSHOT_RETENTION_COUNT] = count }
+        store.edit { it[Keys.SNAPSHOT_RETENTION_COUNT] = count }
     }
 
     suspend fun setSnapshotIntervalHours(hours: Int) {
-        context.dataStore.edit { it[Keys.SNAPSHOT_INTERVAL_HOURS] = hours }
+        store.edit { it[Keys.SNAPSHOT_INTERVAL_HOURS] = hours }
     }
 
     /**
@@ -469,7 +472,7 @@ class SettingsDataStore @Inject constructor(
      * app restart. Absent by default, so a fresh install (or a player not currently in a game)
      * behaves exactly as before this existed.
      */
-    val liveSessionFlow: Flow<LiveSessionState> = context.dataStore.data.map { prefs ->
+    val liveSessionFlow: Flow<LiveSessionState> = store.data.map { prefs ->
         LiveSessionState(
             appId = prefs[Keys.LIVE_SESSION_APP_ID],
             startedAt = prefs[Keys.LIVE_SESSION_STARTED_AT],
@@ -477,7 +480,7 @@ class SettingsDataStore @Inject constructor(
     }
 
     /** Session ends recorded before the live session is cleared, oldest first. */
-    val pendingSessionEndsFlow: Flow<List<PendingSessionEnd>> = context.dataStore.data.map { prefs ->
+    val pendingSessionEndsFlow: Flow<List<PendingSessionEnd>> = store.data.map { prefs ->
         prefs[Keys.PENDING_SESSION_ENDS]
             ?.mapNotNull(::decodePendingSessionEnd)
             ?.sortedWith(
@@ -490,13 +493,13 @@ class SettingsDataStore @Inject constructor(
 
     /** [appId] is nullable: Steam's running-game id can fail to parse while still in a game. */
     suspend fun setLiveSession(appId: Long?, startedAt: Long) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             writeLiveSession(prefs, LiveSessionState(appId, startedAt))
         }
     }
 
     suspend fun clearLiveSession() {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             writeLiveSession(prefs, LiveSessionState())
         }
 
@@ -504,22 +507,22 @@ class SettingsDataStore @Inject constructor(
 
     /** Durable cloud-reader watermark; account changes clear it before the new account is used. */
     val cloudReadPositionFlow: Flow<String?> =
-        context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_READ_POSITION] }
+        store.data.map { prefs -> prefs[Keys.CLOUD_READ_POSITION] }
 
     suspend fun setCloudReadPosition(position: String) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.CLOUD_READ_POSITION] = position
         }
     }
 
     suspend fun clearCloudReadPosition() {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs.remove(Keys.CLOUD_READ_POSITION)
         }
     }
 
     val cloudReaderGenerationFlow: Flow<Long> =
-        context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_READER_GENERATION] ?: 0L }
+        store.data.map { prefs -> prefs[Keys.CLOUD_READER_GENERATION] ?: 0L }
 
     /**
      * Fence and abandon any staged replacement in one transaction. Removal and account-change
@@ -534,7 +537,7 @@ class SettingsDataStore @Inject constructor(
      */
     suspend fun abandonCloudReaderPromotion(): Long {
         var next = 0L
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             next = nextGenerationAfter(prefs)
             prefs[Keys.CLOUD_READER_GENERATION] = next
             prefs.remove(Keys.CLOUD_READER_PROMOTION_TARGET)
@@ -554,7 +557,7 @@ class SettingsDataStore @Inject constructor(
         )
 
     val cloudReaderRemovalTargetFlow: Flow<Long?> =
-        context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_READER_REMOVAL_TARGET] }
+        store.data.map { prefs -> prefs[Keys.CLOUD_READER_REMOVAL_TARGET] }
 
     /**
      * Record the removal's fence target before its credential-clear commit point, so recovery
@@ -565,7 +568,7 @@ class SettingsDataStore @Inject constructor(
      */
     suspend fun markCloudReaderRemoval(): Long {
         var target = 0L
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             target = nextGenerationAfter(prefs)
             prefs[Keys.CLOUD_READER_REMOVAL_TARGET] = target
         }
@@ -573,16 +576,16 @@ class SettingsDataStore @Inject constructor(
     }
 
     suspend fun clearCloudReaderRemoval() {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs.remove(Keys.CLOUD_READER_REMOVAL_TARGET)
         }
     }
 
     val cloudReaderPromotionTargetFlow: Flow<Long?> =
-        context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_READER_PROMOTION_TARGET] }
+        store.data.map { prefs -> prefs[Keys.CLOUD_READER_PROMOTION_TARGET] }
 
     suspend fun markCloudReaderPromotion(target: Long) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.CLOUD_READER_PROMOTION_TARGET] = target
         }
     }
@@ -601,7 +604,7 @@ class SettingsDataStore @Inject constructor(
      */
     suspend fun finishCloudReaderPromotion(): Long? {
         var target: Long? = null
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             val marked = prefs[Keys.CLOUD_READER_PROMOTION_TARGET]
             if (marked != null) {
                 prefs[Keys.CLOUD_READER_GENERATION] = marked
@@ -612,17 +615,17 @@ class SettingsDataStore @Inject constructor(
     }
 
     suspend fun clearCloudReaderPromotion() {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs.remove(Keys.CLOUD_READER_PROMOTION_TARGET)
         }
     }
 
-    val cloudRoutineStateFlow: Flow<CloudRoutineState> = context.dataStore.data.map(::cloudRoutineState)
+    val cloudRoutineStateFlow: Flow<CloudRoutineState> = store.data.map(::cloudRoutineState)
 
     /** One transaction makes reconciliation safe against simultaneous startup and verification. */
     suspend fun initializeCloudRoutinePolicy(): CloudRoutineState {
         lateinit var result: CloudRoutineState
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             if (prefs[Keys.CLOUD_ROUTINE_POLICY] == null) {
                 prefs[Keys.CLOUD_ROUTINE_POLICY] = CloudRoutinePolicy.AUTOMATIC.name
                 // Seed the comparison order even if the existing reader has never run a routine job.
@@ -636,14 +639,14 @@ class SettingsDataStore @Inject constructor(
     }
 
     suspend fun setCloudRoutinePolicy(policy: CloudRoutinePolicy) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             // Only a verified reader initializes the policy; changing it never resets cooldown.
             if (prefs[Keys.CLOUD_ROUTINE_POLICY] != null) prefs[Keys.CLOUD_ROUTINE_POLICY] = policy.name
         }
     }
 
     suspend fun clearCloudRoutinePolicy() {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs.remove(Keys.CLOUD_ROUTINE_POLICY)
             prefs.remove(Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT)
             prefs.remove(Keys.CLOUD_ROUTINE_LAST_OUTCOME)
@@ -657,7 +660,7 @@ class SettingsDataStore @Inject constructor(
 
     suspend fun recordCloudRoutineAdmission(at: Long): CloudRoutineState {
         lateinit var result: CloudRoutineState
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             check(prefs[Keys.CLOUD_ROUTINE_POLICY] != null) { "Cloud reader has no routine policy" }
             val order = (prefs[Keys.CLOUD_ROUTINE_ORDER] ?: 0L) + 1L
             prefs[Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT] = at
@@ -670,7 +673,7 @@ class SettingsDataStore @Inject constructor(
     }
 
     suspend fun recordCloudOtherRead(terminal: Boolean) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             if (prefs[Keys.CLOUD_ROUTINE_POLICY] == null) return@edit
             val order = (prefs[Keys.CLOUD_ROUTINE_ORDER] ?: 0L) + 1L
             prefs[Keys.CLOUD_ROUTINE_ORDER] = order
@@ -681,7 +684,7 @@ class SettingsDataStore @Inject constructor(
 
     suspend fun admitCloudRoutine(at: Long): CloudRoutineAdmission {
         var result = CloudRoutineAdmission.UNAVAILABLE
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             val state = cloudRoutineState(prefs)
             val policy = state.policy ?: return@edit
             if (!policy.routineEnabled) {
@@ -723,14 +726,14 @@ class SettingsDataStore @Inject constructor(
     )
 
     suspend fun recordCloudRoutineOutcome(admittedAt: Long, outcome: CloudReadSummaryOutcome) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             if (prefs[Keys.CLOUD_ROUTINE_POLICY] != null &&
                 prefs[Keys.CLOUD_ROUTINE_LAST_ADMITTED_AT] == admittedAt
             ) prefs[Keys.CLOUD_ROUTINE_LAST_OUTCOME] = outcome.name
         }
     }
 
-    val cloudReadSummaryFlow: Flow<CloudReadSummary> = context.dataStore.data.map { prefs ->
+    val cloudReadSummaryFlow: Flow<CloudReadSummary> = store.data.map { prefs ->
         CloudReadSummary(
             lastAttemptAt = prefs[Keys.CLOUD_SUMMARY_ATTEMPT_AT],
             lastTrigger = prefs[Keys.CLOUD_SUMMARY_TRIGGER]?.let(CloudReadTrigger::valueOf),
@@ -749,7 +752,7 @@ class SettingsDataStore @Inject constructor(
         failure: CloudReadFailure?, observedAt: Long?, hasMore: Boolean?,
         windowStart: Long?, windowEnd: Long?,
     ) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.CLOUD_SUMMARY_ATTEMPT_AT] = at
             prefs[Keys.CLOUD_SUMMARY_TRIGGER] = trigger.name
             prefs[Keys.CLOUD_SUMMARY_OUTCOME] = outcome.name
@@ -769,7 +772,7 @@ class SettingsDataStore @Inject constructor(
     }
 
     suspend fun clearCloudReadSummary() {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs.remove(Keys.CLOUD_SUMMARY_ATTEMPT_AT)
             prefs.remove(Keys.CLOUD_SUMMARY_TRIGGER)
             prefs.remove(Keys.CLOUD_SUMMARY_OUTCOME)
@@ -784,38 +787,38 @@ class SettingsDataStore @Inject constructor(
 
     /** Durable cloud-session ingest watermark; account changes clear it with the read watermark. */
     val cloudIngestPositionFlow: Flow<String?> =
-        context.dataStore.data.map { prefs -> prefs[Keys.CLOUD_INGEST_POSITION] }
+        store.data.map { prefs -> prefs[Keys.CLOUD_INGEST_POSITION] }
 
     suspend fun setCloudIngestPosition(position: String) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.CLOUD_INGEST_POSITION] = position
         }
     }
 
     suspend fun clearCloudIngestPosition() {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs.remove(Keys.CLOUD_INGEST_POSITION)
         }
     }
 
     /** Whether the one-time cloud-presence historical refile has completed. */
-    val cloudPresenceRefilingAppliedFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val cloudPresenceRefilingAppliedFlow: Flow<Boolean> = store.data.map { prefs ->
         prefs[Keys.CLOUD_REFILE_APPLIED] ?: false
     }
 
     val cloudPresenceRefilingReceiptFlow: Flow<CloudPresenceRefilingReceipt?> =
-        context.dataStore.data.map { prefs ->
+        store.data.map { prefs ->
             prefs[Keys.CLOUD_REFILE_RECEIPT]?.let(::decodeCloudPresenceRefilingReceipt)
         }
 
     suspend fun setCloudPresenceRefilingApplied(applied: Boolean) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.CLOUD_REFILE_APPLIED] = applied
         }
     }
 
     suspend fun cloudPresenceRefilingBackup(): CloudPresenceRefilingBackup? {
-        val prefs = context.dataStore.data.first()
+        val prefs = store.data.first()
         val encoded = prefs[Keys.CLOUD_REFILE_BACKUP].orEmpty()
         val createdIds = prefs[Keys.CLOUD_REFILE_CREATED_IDS].orEmpty()
             .mapNotNull(String::toLongOrNull)
@@ -834,13 +837,13 @@ class SettingsDataStore @Inject constructor(
     }
 
     suspend fun setCloudPresenceRefilingBackup(backup: CloudPresenceRefilingBackup) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs.writeCloudPresenceRefilingBackup(backup)
         }
     }
 
     suspend fun setCloudPresenceRefilingReceipt(receipt: CloudPresenceRefilingReceipt) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.CLOUD_REFILE_RECEIPT] = cloudPresenceRefilingReceiptJson.encodeToString(receipt)
         }
     }
@@ -850,7 +853,7 @@ class SettingsDataStore @Inject constructor(
         backup: CloudPresenceRefilingBackup,
         receipt: CloudPresenceRefilingReceipt,
     ) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs.writeCloudPresenceRefilingBackup(backup)
             prefs[Keys.CLOUD_REFILE_RECEIPT] = cloudPresenceRefilingReceiptJson.encodeToString(receipt)
             prefs[Keys.CLOUD_REFILE_APPLIED] = true
@@ -891,7 +894,7 @@ class SettingsDataStore @Inject constructor(
         }
 
     suspend fun clearCloudPresenceRefiling() {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs.remove(Keys.CLOUD_REFILE_APPLIED)
             prefs.remove(Keys.CLOUD_REFILE_BACKUP)
             prefs.remove(Keys.CLOUD_REFILE_CREATED_IDS)
@@ -909,7 +912,7 @@ class SettingsDataStore @Inject constructor(
         sessionEnd: PendingSessionEnd,
         nextLiveSession: LiveSessionState,
     ) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             val entries = (prefs[Keys.PENDING_SESSION_ENDS] ?: emptySet()).toMutableSet()
             entries += encodePendingSessionEnd(sessionEnd)
             prefs[Keys.PENDING_SESSION_ENDS] = entries
@@ -919,7 +922,7 @@ class SettingsDataStore @Inject constructor(
 
     /** Remove one successfully handed-off session end, preserving any other pending entries. */
     suspend fun acknowledgeSessionEnd(sessionEnd: PendingSessionEnd) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             val entries = prefs[Keys.PENDING_SESSION_ENDS] ?: return@edit
             val remaining = entries - encodePendingSessionEnd(sessionEnd)
             if (remaining.isEmpty()) {
@@ -961,7 +964,7 @@ class SettingsDataStore @Inject constructor(
      * player has moved on from is worth nothing — it is reconsidered from scratch the next time it
      * is observed.
      */
-    val sharedGameCandidateFlow: Flow<SharedGameCandidate?> = context.dataStore.data.map { prefs ->
+    val sharedGameCandidateFlow: Flow<SharedGameCandidate?> = store.data.map { prefs ->
         val appId = prefs[Keys.SHARED_CANDIDATE_APP_ID]
         val firstObservedAt = prefs[Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT]
         if (appId != null && firstObservedAt != null) {
@@ -972,14 +975,14 @@ class SettingsDataStore @Inject constructor(
     }
 
     suspend fun setSharedGameCandidate(appId: Long, firstObservedAt: Long) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.SHARED_CANDIDATE_APP_ID] = appId
             prefs[Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT] = firstObservedAt
         }
     }
 
     suspend fun clearSharedGameCandidate() {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs.remove(Keys.SHARED_CANDIDATE_APP_ID)
             prefs.remove(Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT)
         }
@@ -987,10 +990,10 @@ class SettingsDataStore @Inject constructor(
 
     /** Store-confirmed non-games are permanent and distinct from player-controlled exclusions. */
     suspend fun isSharedGameNotAGame(appId: Long): Boolean =
-        appId.toString() in context.dataStore.data.first()[Keys.SHARED_GAME_NOT_A_GAME_APP_IDS].orEmpty()
+        appId.toString() in store.data.first()[Keys.SHARED_GAME_NOT_A_GAME_APP_IDS].orEmpty()
 
     suspend fun markSharedGameNotAGame(appId: Long) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.SHARED_GAME_NOT_A_GAME_APP_IDS] =
                 prefs[Keys.SHARED_GAME_NOT_A_GAME_APP_IDS].orEmpty() + appId.toString()
         }
@@ -1000,7 +1003,7 @@ class SettingsDataStore @Inject constructor(
      * Every undismissed durable cue, oldest first — the queue [sharedGameAnnouncementFlow] and
      * [clearSharedGameAnnouncement] present one entry at a time.
      */
-    val sharedGameAnnouncementsFlow: Flow<List<SharedGameAnnouncement>> = context.dataStore.data.map { prefs ->
+    val sharedGameAnnouncementsFlow: Flow<List<SharedGameAnnouncement>> = store.data.map { prefs ->
         prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES].orEmpty()
             .mapNotNull(::decodeSharedGameAnnouncement)
             .sortedBy { it.announcedAt }
@@ -1012,7 +1015,7 @@ class SettingsDataStore @Inject constructor(
 
     /** Queue a cue for [appId], replacing any earlier undismissed entry for the same game. */
     suspend fun setSharedGameAnnouncement(appId: Long, name: String, announcedAt: Long) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             val remaining = prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES].orEmpty()
                 .mapNotNull(::decodeSharedGameAnnouncement)
                 .filterNot { it.appId == appId }
@@ -1024,7 +1027,7 @@ class SettingsDataStore @Inject constructor(
 
     /** Dismiss only [appId]'s cue; any other queued admission's cue is untouched. */
     suspend fun clearSharedGameAnnouncement(appId: Long) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             val remaining = prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES].orEmpty()
                 .mapNotNull(::decodeSharedGameAnnouncement)
                 .filterNot { it.appId == appId }
@@ -1044,7 +1047,7 @@ class SettingsDataStore @Inject constructor(
      * Deliberately not exported in a backup: the banner belongs to a poll that observed previously
      * unknown games on this device, so a restore must not re-announce another device's purchase.
      */
-    val acquiredGamesFlow: Flow<AcquiredGamesAnnouncement> = context.dataStore.data.map { prefs ->
+    val acquiredGamesFlow: Flow<AcquiredGamesAnnouncement> = store.data.map { prefs ->
         AcquiredGamesAnnouncement(
             appIds = prefs[Keys.ACQUIRED_APP_IDS].orEmpty().mapNotNull(String::toLongOrNull).toSet(),
             acquiredAt = prefs[Keys.ACQUIRED_AT] ?: 0L,
@@ -1054,7 +1057,7 @@ class SettingsDataStore @Inject constructor(
 
     /** Replace the announcement with a later poll's arrivals, clearing dismissal. */
     suspend fun setAcquiredGames(appIds: Set<Long>, acquiredAt: Long) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.ACQUIRED_APP_IDS] = appIds.mapTo(mutableSetOf(), Long::toString)
             prefs[Keys.ACQUIRED_AT] = acquiredAt
             prefs[Keys.ACQUIRED_DISMISSED] = false
@@ -1063,7 +1066,7 @@ class SettingsDataStore @Inject constructor(
 
     /** Dismiss the current batch. A later acquisition clears it again. */
     suspend fun setAcquiredGamesDismissed() {
-        context.dataStore.edit { it[Keys.ACQUIRED_DISMISSED] = true }
+        store.edit { it[Keys.ACQUIRED_DISMISSED] = true }
     }
 
     /**
@@ -1072,7 +1075,7 @@ class SettingsDataStore @Inject constructor(
      * protected by the same durable account-change marker, so repeating this operation is safe.
      */
     suspend fun clearAccountDerivedState() {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs.remove(Keys.LIVE_SESSION_APP_ID)
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
             prefs.remove(Keys.CLOUD_READ_POSITION)
@@ -1128,24 +1131,24 @@ class SettingsDataStore @Inject constructor(
      * only stops showing the dialog after the *second* refusal — so without this the user gets
      * prompted twice before the system takes the hint.
      */
-    val notificationPermissionRequestedFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val notificationPermissionRequestedFlow: Flow<Boolean> = store.data.map { prefs ->
         prefs[Keys.NOTIFICATION_PERMISSION_REQUESTED] ?: false
     }
 
     suspend fun setNotificationPermissionRequested() {
-        context.dataStore.edit { it[Keys.NOTIFICATION_PERMISSION_REQUESTED] = true }
+        store.edit { it[Keys.NOTIFICATION_PERMISSION_REQUESTED] = true }
     }
 
     /**
      * Explicit opt-in for the foreground service to poll while no game is running. Off by default:
      * this mode has an ongoing notification and consumes network/battery while armed.
      */
-    val liveMonitorEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val liveMonitorEnabledFlow: Flow<Boolean> = store.data.map { prefs ->
         prefs[Keys.LIVE_MONITOR_ENABLED] ?: false
     }
 
     suspend fun setLiveMonitorEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.LIVE_MONITOR_ENABLED] = enabled
             if (!enabled) prefs.remove(Keys.LIVE_MONITORING_AVAILABILITY)
         }
@@ -1156,14 +1159,14 @@ class SettingsDataStore @Inject constructor(
      * of a value is the normal/available state, so old installs and fresh installs stay quiet.
      */
     val liveMonitoringAvailabilityFlow: Flow<PresenceMonitoringAvailability> =
-        context.dataStore.data.map { prefs ->
+        store.data.map { prefs ->
             prefs[Keys.LIVE_MONITORING_AVAILABILITY]
                 ?.let { raw -> runCatching { PresenceMonitoringAvailability.valueOf(raw) }.getOrNull() }
                 ?: PresenceMonitoringAvailability.AVAILABLE
         }
 
     suspend fun setLiveMonitoringAvailability(availability: PresenceMonitoringAvailability) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             if (availability == PresenceMonitoringAvailability.AVAILABLE) {
                 prefs.remove(Keys.LIVE_MONITORING_AVAILABILITY)
             } else {
@@ -1174,18 +1177,18 @@ class SettingsDataStore @Inject constructor(
 
     /** Whether the one-time daily-totals correction has already been applied. */
     suspend fun dailyProgressBackfilled(): Boolean =
-        context.dataStore.data.map { it[Keys.DAILY_PROGRESS_BACKFILLED] ?: false }.first()
+        store.data.map { it[Keys.DAILY_PROGRESS_BACKFILLED] ?: false }.first()
 
     suspend fun setDailyProgressBackfilled(applied: Boolean) {
-        context.dataStore.edit { it[Keys.DAILY_PROGRESS_BACKFILLED] = applied }
+        store.edit { it[Keys.DAILY_PROGRESS_BACKFILLED] = applied }
     }
 
     /** Whether old diagnostic request identifiers have been purged after the redaction upgrade. */
     suspend fun diagnosticIdentifiersNormalized(): Boolean =
-        context.dataStore.data.map { it[Keys.DIAGNOSTIC_IDENTIFIERS_NORMALIZED] ?: false }.first()
+        store.data.map { it[Keys.DIAGNOSTIC_IDENTIFIERS_NORMALIZED] ?: false }.first()
 
     suspend fun markDiagnosticIdentifiersNormalized() {
-        context.dataStore.edit { it[Keys.DIAGNOSTIC_IDENTIFIERS_NORMALIZED] = true }
+        store.edit { it[Keys.DIAGNOSTIC_IDENTIFIERS_NORMALIZED] = true }
     }
 
     private fun parseDate(value: String?): LocalDate? =
