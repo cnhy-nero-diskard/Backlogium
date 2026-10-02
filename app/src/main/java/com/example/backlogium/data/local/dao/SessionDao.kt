@@ -203,6 +203,10 @@ interface SessionDao {
     @Query("SELECT appId, MAX(COALESCE(endAt, startAt)) AS at FROM sessions GROUP BY appId")
     fun observeLatestSessionInstantByGame(): Flow<List<GameSessionInstant>>
 
+    /** Zero-minute observations do not establish meaningful recent play; open played sessions do. */
+    @Query("SELECT appId, MAX(COALESCE(endAt, startAt)) AS at FROM sessions WHERE minutes > 0 GROUP BY appId")
+    fun observeLatestMeaningfulSessionInstantByGame(): Flow<List<GameSessionInstant>>
+
     /**
      * The same most recent recorded play, as `endAt` where the session has one and `startAt` where
      * it is still open.

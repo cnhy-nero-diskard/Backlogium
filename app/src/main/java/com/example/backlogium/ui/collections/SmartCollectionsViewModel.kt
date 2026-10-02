@@ -75,6 +75,8 @@ data class CollectionsUiState(
 
 /** Fixed names are kept beside the derivation so the list and its detail view cannot diverge. */
 internal fun smartCollectionName(id: SmartCollectionId): String = when (id) {
+    SmartCollectionId.FAVORITES -> "Favorites"
+    SmartCollectionId.PLAYED_RECENTLY -> "Played recently"
     SmartCollectionId.QUICK_WINS -> "Quick wins"
     SmartCollectionId.NEVER_STARTED -> "Never started"
     SmartCollectionId.ALMOST_DONE -> "Almost done"
@@ -84,6 +86,8 @@ internal fun smartCollectionName(id: SmartCollectionId): String = when (id) {
 
 /** The rule is visible at the point where each derived list is presented. */
 internal fun smartCollectionRule(id: SmartCollectionId): String = when (id) {
+    SmartCollectionId.FAVORITES -> "Games you marked with a heart."
+    SmartCollectionId.PLAYED_RECENTLY -> "Dated play in the last 14 local calendar days."
     SmartCollectionId.QUICK_WINS ->
         "Never started, with a Main Story length of at most 6 hours."
     SmartCollectionId.NEVER_STARTED ->

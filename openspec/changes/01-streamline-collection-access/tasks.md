@@ -7,9 +7,9 @@
 
 ## 2. Shared Derived Collections
 
-- [ ] 2.1 Extend the shared smart-collection feed with Favorites using committed preferences and visible tracked games; verify owned/shared inclusion, hidden/absent exclusion, and Home/list count parity.
-- [ ] 2.2 Add Played recently with injected current instant/date/zone and supported Steam/session evidence; verify fourteen-day boundaries, future rejection, offline date/zone changes, and exclusion of undated/manual-only playtime.
-- [ ] 2.3 Extend derived order, labels, hide settings, and empty-list handling; verify the existing five rules and Completed disclosures remain unchanged and the new lists are read-only.
+- [x] 2.1 Extend the shared smart-collection feed with Favorites using committed preferences and visible tracked games; verify owned/shared inclusion, hidden/absent exclusion, and Home/list count parity.
+- [x] 2.2 Add Played recently with injected current instant/date/zone and supported Steam/session evidence; verify fourteen-day boundaries, future rejection, offline date/zone changes, and exclusion of undated/manual-only playtime.
+- [x] 2.3 Extend derived order, labels, hide settings, and empty-list handling; verify the existing five rules and Completed disclosures remain unchanged and the new lists are read-only.
 
 ## 3. Functional UI Actions
 

@@ -567,6 +567,7 @@ class CollectionViewModelTest {
             "observeTrackedMinutesByGame",
             "observeFirstSessionStartByGame",
             "observeLatestSessionInstantByGame",
+            "observeLatestMeaningfulSessionInstantByGame",
             "observeSessionCountsByGame",
             "observeClosedSince",
             -> flowOf(emptyList<Any>())

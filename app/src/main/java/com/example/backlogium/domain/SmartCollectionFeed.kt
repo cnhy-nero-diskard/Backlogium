@@ -4,6 +4,7 @@ import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.SessionRepository
+import com.example.backlogium.data.repo.GamePreferenceRepository
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -30,27 +31,31 @@ class SmartCollectionFeed @Inject constructor(
     achievementRepository: AchievementRepository,
     sessionRepository: SessionRepository,
     private val currentDate: CurrentDateProvider,
+    preferences: GamePreferenceRepository,
 ) {
     private data class SessionFacts(
         val trackedMinutesByGame: Map<Long, Int>,
         val latestSessionAtByGame: Map<Long, Long>,
         val sessionCountByGame: Map<Long, Int>,
+        val latestMeaningfulSessionAtByGame: Map<Long, Long>,
     )
 
     private val sessionFacts: Flow<SessionFacts> = combine(
         sessionRepository.trackedMinutesByGame,
         sessionRepository.latestSessionAtByGame,
         sessionRepository.sessionCountByGame,
-    ) { trackedMinutes, latestSessionAt, sessionCounts ->
-        SessionFacts(trackedMinutes, latestSessionAt, sessionCounts)
+        sessionRepository.latestMeaningfulSessionAtByGame,
+    ) { trackedMinutes, latestSessionAt, sessionCounts, meaningful ->
+        SessionFacts(trackedMinutes, latestSessionAt, sessionCounts, meaningful)
     }
 
     val snapshot: Flow<SmartCollectionSnapshot> = combine(
         gameRepository.library,
         sessionFacts,
         achievementRepository.smartCollectionSignals,
-        currentDate.currentDate,
-    ) { games, sessions, achievementsByGame, today ->
+        currentDate.currentMoment,
+        preferences.favoriteAppIds,
+    ) { games, sessions, achievementsByGame, moment, favorites ->
         SmartCollectionSnapshot(
             games = games,
             achievementsByGame = achievementsByGame,
@@ -80,11 +85,15 @@ class SmartCollectionFeed @Inject constructor(
                             game.lastPlayedAt,
                             sessions.latestSessionAtByGame[game.appId],
                         ),
+                        recentPlayedAt = maxOfNotNull(game.lastPlayedAt,
+                            sessions.latestMeaningfulSessionAtByGame[game.appId]),
                     )
                 },
                 achievementsByGame = achievementsByGame,
-                today = today,
-                sessionZone = currentDate.zone,
+                today = moment.today,
+                sessionZone = moment.zone,
+                nowMillis = moment.nowMillis,
+                favoriteAppIds = favorites,
             ),
         )
     }

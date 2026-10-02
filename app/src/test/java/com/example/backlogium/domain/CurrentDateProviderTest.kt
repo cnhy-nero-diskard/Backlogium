@@ -5,6 +5,10 @@ import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
@@ -23,6 +27,27 @@ import org.junit.Test
 class CurrentDateProviderTest {
 
     private val zone = ZoneId.of("Asia/Manila")
+
+    @Test
+    fun recentPlayClockObservesOfflineZoneAndDateChangesWithinOneMinute() = runTest {
+        var currentZone = ZoneId.of("UTC")
+        val instant = Instant.parse("2026-10-03T23:30:00Z").toEpochMilli()
+        val clock = object : TimeProvider {
+            override fun nowMillis() = instant + testScheduler.currentTime
+            override fun zone() = currentZone
+            override fun today() = Instant.ofEpochMilli(nowMillis()).atZone(currentZone).toLocalDate()
+        }
+        val observed = mutableListOf<CurrentLocalMoment>()
+        val job = backgroundScope.launch { CurrentDateProvider(clock).currentMoment.collect { observed += it } }
+        runCurrent()
+        assertEquals(LocalDate.of(2026, 10, 3), observed.last().today)
+        currentZone = ZoneId.of("Asia/Taipei")
+        advanceTimeBy(60_000)
+        runCurrent()
+        assertEquals(currentZone, observed.last().zone)
+        assertEquals(LocalDate.of(2026, 10, 4), observed.last().today)
+        job.cancel()
+    }
 
     private fun millisAt(date: LocalDate, hour: Int, minute: Int): Long =
         date.atStartOfDay(zone).plusHours(hour.toLong()).plusMinutes(minute.toLong())

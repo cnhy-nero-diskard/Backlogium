@@ -95,7 +95,7 @@ class PersonalPaceRepositoryTest {
                 }
                 "observeEarliestSessionStart", "observeEarliestVisibleSessionStart" -> flowOf(null)
                 "observeTrackedMinutesByGame", "observeSessionCountsByGame",
-                "observeFirstSessionStartByGame", "observeLatestSessionInstantByGame" ->
+                "observeFirstSessionStartByGame", "observeLatestSessionInstantByGame", "observeLatestMeaningfulSessionInstantByGame" ->
                     flowOf(emptyList<Any>())
                 "toString" -> "SessionDao test double"
                 "hashCode" -> 0

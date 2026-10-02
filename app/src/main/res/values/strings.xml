@@ -1,4 +1,8 @@
 <resources>
+    <string name="home_smart_favorites">Favorites</string>
+    <string name="home_smart_played_recently">Played recently</string>
+    <string name="home_smart_rule_favorites">Games you marked with a heart.</string>
+    <string name="home_smart_rule_played_recently">Dated play in the last 14 local calendar days.</string>
     <string name="settings_match_center_title">Match Center</string>
     <string name="settings_match_center_description">Review uncertain completion times or find a match for games with no results.</string>
     <string name="library_completion_times_for_game">Completion times for %1$s</string>

@@ -1,6 +1,7 @@
 package com.example.backlogium.domain
 
 import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.delay
@@ -26,6 +27,15 @@ import kotlinx.coroutines.flow.flow
  */
 @Singleton
 class CurrentDateProvider @Inject constructor(private val time: TimeProvider) {
+    /** Local clock facts for recent-play decisions, refreshed offline while observed. */
+    val currentMoment: Flow<CurrentLocalMoment> = flow {
+        while (true) {
+            val today = time.today()
+            emit(CurrentLocalMoment(time.nowMillis(), today, time.zone()))
+            // Also detects a zone/clock change before the previous zone's midnight arrives.
+            delay(minOf(60_000L, millisUntilNextDay(today)))
+        }
+    }
 
     /** The same device zone used to derive [currentDate], exposed for timestamp-to-date joins. */
     val zone: java.time.ZoneId get() = time.zone()
@@ -54,3 +64,5 @@ class CurrentDateProvider @Inject constructor(private val time: TimeProvider) {
         const val MIN_RESCHEDULE_MILLIS = 1_000L
     }
 }
+
+data class CurrentLocalMoment(val nowMillis: Long, val today: LocalDate, val zone: ZoneId)

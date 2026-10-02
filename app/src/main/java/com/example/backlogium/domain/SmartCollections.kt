@@ -8,6 +8,8 @@ import java.time.temporal.ChronoUnit
 
 /** The fixed derived collection kinds, in their presentation order. */
 enum class SmartCollectionId {
+    FAVORITES,
+    PLAYED_RECENTLY,
     QUICK_WINS,
     NEVER_STARTED,
     ALMOST_DONE,
@@ -41,6 +43,8 @@ data class SmartCollectionGame(
      * lets a game Backlogium never watched still be recognised as abandoned.
      */
     val lastPlayedAt: Long? = null,
+    /** Meaningful dated evidence only; separate from the existing idle-rule input. */
+    val recentPlayedAt: Long? = lastPlayedAt,
 )
 
 /**
@@ -83,7 +87,7 @@ data class SmartCollectionMember(
     val completionBasis: CompletionBasis? = null,
 )
 
-/** All five memberships from one consistent snapshot of local facts. */
+/** All derived memberships from one consistent snapshot of local facts. */
 data class SmartCollectionResult(
     val membersByCollection: Map<SmartCollectionId, List<SmartCollectionMember>>,
 ) {
@@ -91,6 +95,8 @@ data class SmartCollectionResult(
         membersByCollection[id].orEmpty()
 
     val quickWins: List<SmartCollectionMember> get() = this[SmartCollectionId.QUICK_WINS]
+    val favorites: List<SmartCollectionMember> get() = this[SmartCollectionId.FAVORITES]
+    val playedRecently: List<SmartCollectionMember> get() = this[SmartCollectionId.PLAYED_RECENTLY]
     val neverStarted: List<SmartCollectionMember> get() = this[SmartCollectionId.NEVER_STARTED]
     val almostDone: List<SmartCollectionMember> get() = this[SmartCollectionId.ALMOST_DONE]
     val dropped: List<SmartCollectionMember> get() = this[SmartCollectionId.DROPPED]
@@ -137,6 +143,8 @@ object SmartCollections {
         achievementsByGame: Map<Long, SmartCollectionAchievementSignals>,
         today: LocalDate,
         sessionZone: ZoneId = ZoneOffset.UTC,
+        favoriteAppIds: Set<Long> = emptySet(),
+        nowMillis: Long = today.plusDays(1).atStartOfDay(sessionZone).toInstant().toEpochMilli() - 1,
     ): SmartCollectionResult {
         val rows = games
             .distinctBy { it.appId }
@@ -161,6 +169,13 @@ object SmartCollections {
 
         return SmartCollectionResult(
             membersByCollection = mapOf(
+                SmartCollectionId.FAVORITES to membersWhere({ it.game.appId in favoriteAppIds }),
+                SmartCollectionId.PLAYED_RECENTLY to membersWhere({ row ->
+                    row.game.recentPlayedAt?.let { at ->
+                        at <= nowMillis && at >= today.minusDays(13)
+                            .atStartOfDay(sessionZone).toInstant().toEpochMilli()
+                    } == true
+                }),
                 SmartCollectionId.QUICK_WINS to membersWhere(
                     predicate = { row ->
                         row.game.playtimeMinutes == 0 &&

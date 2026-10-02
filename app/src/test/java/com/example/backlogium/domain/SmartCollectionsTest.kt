@@ -166,6 +166,7 @@ class SmartCollectionsTest {
                 today = today,
             )
             val actual = SmartCollectionId.entries
+                .filterNot { it == SmartCollectionId.FAVORITES || it == SmartCollectionId.PLAYED_RECENTLY }
                 .filter { id -> result[id].any { it.game.appId == fixture.game.appId } }
                 .toSet()
 
@@ -183,6 +184,36 @@ class SmartCollectionsTest {
                 )
             }
         }
+    }
+
+    @Test
+    fun favoritesUseVisibleTrackedInputsAndKeepTheExistingOrder() {
+        val result = SmartCollections.derive(
+            listOf(game(appId = 1), game(appId = 2)), emptyMap(), today,
+            favoriteAppIds = setOf(1, 2, 3, 999),
+        )
+        assertEquals(listOf(1L, 2L), result.favorites.map { it.game.appId })
+        assertEquals(listOf(SmartCollectionId.FAVORITES, SmartCollectionId.PLAYED_RECENTLY,
+            SmartCollectionId.QUICK_WINS, SmartCollectionId.NEVER_STARTED, SmartCollectionId.ALMOST_DONE,
+            SmartCollectionId.DROPPED, SmartCollectionId.COMPLETED), result.membersByCollection.keys.toList())
+    }
+
+    @Test
+    fun recentlyPlayedUsesFourteenLocalDatesAndRejectsFutureAndUndatedMinutes() {
+        val zone = java.time.ZoneId.of("Asia/Taipei")
+        val now = today.atTime(12, 0).atZone(zone).toInstant().toEpochMilli()
+        val cutoff = today.minusDays(13).atStartOfDay(zone).toInstant().toEpochMilli()
+        val games = listOf(
+            game(appId = 1).copy(recentPlayedAt = cutoff),
+            game(appId = 2).copy(recentPlayedAt = cutoff - 1),
+            game(appId = 3).copy(recentPlayedAt = now),
+            game(appId = 4).copy(recentPlayedAt = now + 1),
+            game(appId = 5, playtime = 500).copy(recentPlayedAt = null),
+        )
+        val result = SmartCollections.derive(games, emptyMap(), today, zone, nowMillis = now)
+        assertEquals(setOf(1L, 3L), result.playedRecently.map { it.game.appId }.toSet())
+        val tomorrow = SmartCollections.derive(games, emptyMap(), today.plusDays(1), zone, nowMillis = now + 86_400_000)
+        assertFalse(tomorrow.playedRecently.any { it.game.appId == 1L })
     }
 
     @Test
@@ -334,8 +365,8 @@ class SmartCollectionsTest {
     ) = Fixture(name, game, achievements, expected, completionBasis)
 
     private fun game(
-        playtime: Int,
-        mainStory: Int?,
+        playtime: Int = 0,
+        mainStory: Int? = null,
         lastPlayed: LocalDate? = null,
         appId: Long = nextId++,
     ) = SmartCollectionGame(

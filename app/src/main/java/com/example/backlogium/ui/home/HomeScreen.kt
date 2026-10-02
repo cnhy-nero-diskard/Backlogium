@@ -1080,6 +1080,8 @@ internal fun CollectionsSection(
 
 @Composable
 private fun smartCollectionName(id: SmartCollectionId): String = when (id) {
+    SmartCollectionId.FAVORITES -> stringResource(R.string.home_smart_favorites)
+    SmartCollectionId.PLAYED_RECENTLY -> stringResource(R.string.home_smart_played_recently)
     SmartCollectionId.QUICK_WINS -> stringResource(R.string.home_smart_quick_wins)
     SmartCollectionId.NEVER_STARTED -> stringResource(R.string.home_smart_never_started)
     SmartCollectionId.ALMOST_DONE -> stringResource(R.string.home_smart_almost_done)
@@ -1089,6 +1091,8 @@ private fun smartCollectionName(id: SmartCollectionId): String = when (id) {
 
 @Composable
 private fun smartCollectionRule(id: SmartCollectionId): String = when (id) {
+    SmartCollectionId.FAVORITES -> stringResource(R.string.home_smart_rule_favorites)
+    SmartCollectionId.PLAYED_RECENTLY -> stringResource(R.string.home_smart_rule_played_recently)
     SmartCollectionId.QUICK_WINS -> stringResource(R.string.home_smart_rule_quick_wins)
     SmartCollectionId.NEVER_STARTED -> stringResource(R.string.home_smart_rule_never_started)
     SmartCollectionId.ALMOST_DONE -> stringResource(R.string.home_smart_rule_almost_done)

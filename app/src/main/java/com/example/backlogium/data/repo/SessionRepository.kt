@@ -45,6 +45,10 @@ class SessionRepository @Inject constructor(
     private val sessionDao: SessionDao,
     private val hiddenGamesRepository: HiddenGamesRepository,
 ) {
+    val latestMeaningfulSessionAtByGame: Flow<Map<Long, Long>> =
+        sessionDao.observeLatestMeaningfulSessionInstantByGame().combine(hiddenGamesRepository.hiddenAppIds) { rows, hidden ->
+            rows.filterNot { it.appId in hidden }.associate { it.appId to it.at }
+        }
     /**
      * Sessions starting at or after [cutoffMillis]. Backs the History screen's day-grouped view
      * (regroup-history), which needs every session in a window of calendar days rather than a
