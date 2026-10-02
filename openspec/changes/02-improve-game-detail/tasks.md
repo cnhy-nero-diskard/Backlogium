@@ -5,9 +5,9 @@
 
 ## 2. Achievement Filters and Mixed Sorting
 
-- [ ] 2.1 Add visit-local All/Unlocked/Locked filter state independent of sort; verify recreation preserves the current visit while a new visit resets All/date and summary counts remain unfiltered.
-- [ ] 2.2 Replace unlocked-first comparators with date/current-rarity mixed ordering and stable ties; verify locked/unlocked interleaving, null dates/percentages last, and snapshot-only unlocked rows.
-- [ ] 2.3 Separate current percentage from earned snapshot/tier presentation and add filtered empty states; verify labels explain sorting without changing frozen tier/XP and distinguish no locked rows from unavailable data.
+- [x] 2.1 Add visit-local All/Unlocked/Locked filter state independent of sort; verify recreation preserves the current visit while a new visit resets All/date and summary counts remain unfiltered.
+- [x] 2.2 Replace unlocked-first comparators with date/current-rarity mixed ordering and stable ties; verify locked/unlocked interleaving, null dates/percentages last, and snapshot-only unlocked rows.
+- [x] 2.3 Separate current percentage from earned snapshot/tier presentation and add filtered empty states; verify labels explain sorting without changing frozen tier/XP and distinguish no locked rows from unavailable data.
 
 ## 3. Safe Explicit Achievement Refresh
 

@@ -10,15 +10,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The row invariant enhance-game-detail exists to protect: **the percent a row displays is the
- * percent that produced the tier beside it.**
- *
- * Showing the live global percent on unlocked rows would routinely contradict the tier — a
- * 0.8%-at-unlock achievement now sitting at 6% would read "6.0% of players have this · Legendary",
- * which looks like a bug and invites someone to "fix" the tier. Display and tier are pinned to the
- * same frozen snapshot; the live percent is used only for locked rows, which have no snapshot.
- */
+/** Live ordering never replaces the frozen earned rarity used for tier/XP. */
 class AchievementRowMappingTest {
 
     private val config = RuleConfig()
@@ -28,7 +20,8 @@ class AchievementRowMappingTest {
         // The achievement has become far more common since it was unlocked.
         val ui = achievement(unlocked = true, snapshot = 0.8, global = 6.0).toUi(config)
 
-        assertEquals(0.8, ui.unlockPercent!!, 0.0001)
+        assertEquals(0.8, ui.earnedPercent!!, 0.0001)
+        assertEquals(6.0, ui.unlockPercent!!, 0.0001)
     }
 
     @Test
@@ -38,7 +31,7 @@ class AchievementRowMappingTest {
 
         // Both halves of the status line derive from one number, by construction.
         assertEquals(Gamification.tierFor(snapshot), ui.tier)
-        assertEquals(Gamification.tierFor(ui.unlockPercent!!), ui.tier)
+        assertEquals(Gamification.tierFor(ui.earnedPercent!!), ui.tier)
     }
 
     @Test
@@ -47,7 +40,7 @@ class AchievementRowMappingTest {
 
         assertEquals(RarityTier.LEGENDARY, ui.tier)
         // The tier's own boundary must contain the displayed figure — 60.0 would not.
-        assertEquals(RarityTier.LEGENDARY, Gamification.tierFor(ui.unlockPercent!!))
+        assertEquals(RarityTier.LEGENDARY, Gamification.tierFor(ui.earnedPercent!!))
     }
 
     @Test
@@ -103,6 +96,14 @@ class AchievementRowMappingTest {
 
         assertFalse(ui.showHiddenLabel)
         assertNull(ui.description)
+    }
+
+    @Test fun snapshotOnlyUnlockedRowHasUnknownCurrentSortKeyAndLabeledEarnedRate() {
+        val ui = achievement(unlocked = true, snapshot = 0.8, global = null).toUi(config)
+        assertNull(ui.unlockPercent)
+        assertEquals(RarityTier.LEGENDARY, ui.tier)
+        assertTrue(achievementStatusLabel(ui).contains("Earned rarity: 0.8%"))
+        assertFalse(achievementStatusLabel(ui).contains("Current:"))
     }
 
     private fun achievement(

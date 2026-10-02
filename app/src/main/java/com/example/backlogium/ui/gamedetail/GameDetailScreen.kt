@@ -50,6 +50,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -131,6 +132,7 @@ fun GameDetailScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val overlay = presentation == GameDetailPresentation.COLLECTION_OVERLAY
     val detailAppId = appId ?: viewModel.appId
+    val visitToken = rememberSaveable(detailAppId) { java.util.UUID.randomUUID().toString() }
     val favoriteViewModel: GameFavoriteViewModel = hiltViewModel(key = "favorite-$detailAppId")
     val favoriteState by favoriteViewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(detailAppId) { favoriteViewModel.show(detailAppId) }
@@ -145,6 +147,7 @@ fun GameDetailScreen(
 
     LaunchedEffect(viewModel, appId) {
         appId?.let(viewModel::setAppId)
+        viewModel.beginVisit(visitToken)
         viewModel.startPolling()
     }
     LaunchedEffect(viewModel, onRemoved) {
@@ -254,14 +257,23 @@ private fun GameDetailList(
         if (state.allUnlocked) {
             item { GameCompletedBanner() }
         }
-        if (!state.loading && state.achievements.isEmpty()) {
+        if (!state.loading && state.summary.achievementsTotal == 0) {
             item { NoAchievementsNotice() }
-        } else if (state.achievements.isNotEmpty()) {
+        } else if (state.summary.achievementsTotal > 0) {
             item {
+                AchievementFilterControl(state.filter, viewModel::setFilter)
                 AchievementSortControl(
                     selected = state.sort,
                     onSelect = viewModel::setSort,
                 )
+            }
+            if (state.achievements.isEmpty()) {
+                item {
+                    Text(
+                        if (state.filter == AchievementFilter.LOCKED) "No locked achievements." else "No unlocked achievements yet.",
+                        modifier = Modifier.padding(vertical = 16.dp),
+                    )
+                }
             }
             items(state.achievements, key = { it.apiName }) { achievement ->
                 AchievementRow(achievement)
@@ -822,15 +834,29 @@ private fun HltbLengths(summary: GameSummaryUi) {
  * to date-achieved on the next visit rather than costing a persisted key and a settings surface.
  */
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
+internal fun AchievementFilterControl(selected: AchievementFilter, onSelect: (AchievementFilter) -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        AchievementFilter.entries.forEach { option ->
+            FilterChip(
+                selected = selected == option,
+                onClick = { onSelect(option) },
+                label = { Text(option.name.lowercase().replaceFirstChar { it.uppercase() }) },
+            )
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun AchievementSortControl(
     selected: AchievementSort,
     onSelect: (AchievementSort) -> Unit,
 ) {
-    Row(
+    FlowRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 12.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Icon(
@@ -1109,24 +1135,17 @@ private fun AchievementDescription(achievement: AchievementUi) {
     )
 }
 
-/**
- * The row's status line: unlock state, rarity tier and XP when tierable, and the share of players
- * who have it.
- *
- * The percent shown is the one that produced the tier beside it (the frozen snapshot), falling back
- * to the live global percent only for locked rows, which have no snapshot. That is why a Legendary
- * row can never read "6% of players" — the two halves of this line are the same number by
- * construction, not by coincidence.
- */
-private fun achievementStatusLabel(achievement: AchievementUi): String {
-    val rate = achievement.unlockPercent?.let { "${formatPercent(it)}% of players have this" }
+/** Separately labels current rarity and the earned observation behind tier/XP. */
+internal fun achievementStatusLabel(achievement: AchievementUi): String {
+    val rate = achievement.unlockPercent?.let { "Current: ${formatPercent(it)}%" }
+    val earned = achievement.earnedPercent?.let { "Earned rarity: ${formatPercent(it)}%" }
     if (!achievement.unlocked) {
         return listOfNotNull("Locked", rate).joinToString(" · ")
     }
     val tier = achievement.tier
-        ?: return listOfNotNull("Unlocked", rate).joinToString(" · ")
+        ?: return listOfNotNull("Unlocked", earned, rate).joinToString(" · ")
     val tierLabel = tier.name.lowercase().replaceFirstChar { it.uppercase() }
-    return listOfNotNull("$tierLabel · +${achievement.xp} XP", rate).joinToString(" · ")
+    return listOfNotNull("$tierLabel · +${achievement.xp} XP", earned, rate).joinToString(" · ")
 }
 
 /** One decimal: rarity's whole point is the difference between 0.8% and 8%. */
