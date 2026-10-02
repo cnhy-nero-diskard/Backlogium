@@ -43,6 +43,26 @@ import retrofit2.Response
 
 class HltbDatasetRepositoryTest {
     @Test
+    fun emptyLibraryStillStoresDatasetForLaterLookup() = runTest {
+        val harness = harness(
+            releasePayload = payload(2, 2_000L, "[7,70]", "[70,700,null,null,null]"),
+            libraryIds = emptySet(),
+        )
+        try {
+            val result = harness.repository.checkAndApply()
+            assertTrue(result is HltbDatasetCheckResult.Applied)
+            assertEquals(0, (result as HltbDatasetCheckResult.Applied).gamesGainingLengths)
+            assertEquals(2L, harness.repository.appliedState.first()?.datasetVersion)
+            assertTrue("no local game is fabricated while sync has not populated the library", harness.hltb.rows.isEmpty())
+            assertEquals(70L, harness.repository.find(7L)?.hltbId)
+            assertEquals(700, harness.repository.find(7L)?.mainStoryMinutes)
+            assertEquals(1, harness.downloader.downloadCalls)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
     fun applyingDatasetIsAtomicAndHonorsEveryPrecedenceRule() = runTest {
         val gatheredAt = 2_000L
         val payload = payload(
