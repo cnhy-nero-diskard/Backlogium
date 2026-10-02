@@ -886,7 +886,7 @@ private fun CollectionGameCard(
         Box(modifier = Modifier.fillMaxWidth()) {
             GameHeaderBackdrop(
                 headerUrl = member.headerUrl,
-                fallbackUrls = SteamIconMapper.listBackgroundFallbackUrls(member.appId),
+                fallbackUrls = SteamIconMapper.coverUrls(member.appId),
                 modifier = Modifier.matchParentSize(),
             )
             Row(
@@ -998,7 +998,7 @@ private fun CollectionGameTile(
             ) {
                 GameHeroCapsule(
                     heroCapsuleUrl = member.heroCapsuleUrl,
-                    fallbackUrls = SteamIconMapper.gridArtworkFallbackUrls(member.appId),
+                    fallbackUrls = SteamIconMapper.coverUrls(member.appId, portrait = true),
                     modifier = Modifier.matchParentSize(),
                     shape = heroShape,
                 )
@@ -1635,7 +1635,7 @@ private fun MemberRow(
         Box(modifier = Modifier.fillMaxWidth()) {
             GameHeaderBackdrop(
                 headerUrl = member.headerUrl,
-                fallbackUrls = SteamIconMapper.listBackgroundFallbackUrls(member.appId),
+                fallbackUrls = SteamIconMapper.coverUrls(member.appId),
                 modifier = Modifier.matchParentSize(),
             )
             Row(
@@ -1720,8 +1720,7 @@ private fun AddGameRow(
         Box(modifier = Modifier.fillMaxWidth()) {
             GameHeaderBackdrop(
                 headerUrl = game.headerUrl,
-                // This list can contain the whole library; avoid fanning out to several CDN
-                // fallback requests for every visible addable row.
+                fallbackUrls = SteamIconMapper.coverUrls(game.appId),
                 modifier = Modifier.matchParentSize(),
             )
             Row(

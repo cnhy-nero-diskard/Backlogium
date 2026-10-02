@@ -1730,7 +1730,7 @@ internal fun LibraryGameRow(
     GameCard(
         gameName = game.name,
         headerUrl = game.headerUrl,
-        fallbackUrls = SteamIconMapper.listBackgroundFallbackUrls(game.appId),
+        fallbackUrls = SteamIconMapper.coverUrls(game.appId),
         selected = selected,
         selectionMode = selectionMode,
         onClick = onClick,
@@ -1861,7 +1861,7 @@ internal fun LibraryGameCell(
             ) {
                 GameHeroCapsule(
                     heroCapsuleUrl = game.heroCapsuleUrl,
-                    fallbackUrls = SteamIconMapper.gridArtworkFallbackUrls(game.appId),
+                    fallbackUrls = SteamIconMapper.coverUrls(game.appId, portrait = true),
                     modifier = Modifier.matchParentSize(),
                     shape = heroShape,
                 )

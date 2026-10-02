@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOf
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -94,6 +95,7 @@ data class LibraryGame(
     val manualSharedMinutes: Int = 0,
     /** First recorded observation by Backlogium; baseline and legacy games remain undated. */
     val firstSeenAt: Long? = null,
+    val artworkVariant: com.example.backlogium.domain.GameArtworkVariant? = null,
 )
 
 /** Read/write access to the game library, exposing domain models as observable [Flow]s. */
@@ -106,17 +108,28 @@ class GameRepository @Inject constructor(
     private val steamApi: SteamApi,
     private val sessionRepository: SessionRepository,
     private val time: TimeProvider,
+    private val preferences: GamePreferenceRepository? = null,
 ) {
     /**
      * The visible library. Hidden games are dropped here rather than by each surface, so a screen
      * cannot forget: Library, search, History, Analytics, collections, and game detail all read
      * one of these three flows (add-hidden-games).
      */
-    val library: Flow<List<LibraryGame>> = gameDao.observeLibrary().visible().withHltb()
+    val library: Flow<List<LibraryGame>> = gameDao.observeLibrary().visible().withHltb().withArtwork()
 
     /** Focus games, hidden ones excluded — hiding a goal game clears its goal flag anyway. */
-    val goalGames: Flow<List<LibraryGame>> = gameDao.observeGoalGames().visible().withHltb()
-    val backlog: Flow<List<LibraryGame>> = gameDao.observeBacklog().visible().withHltb()
+    val goalGames: Flow<List<LibraryGame>> = gameDao.observeGoalGames().visible().withHltb().withArtwork()
+    val backlog: Flow<List<LibraryGame>> = gameDao.observeBacklog().visible().withHltb().withArtwork()
+
+    private fun Flow<List<LibraryGame>>.withArtwork(): Flow<List<LibraryGame>> =
+        combine(preferences?.artworkByAppId ?: flowOf(emptyMap())) { games, selections ->
+            games.map { game ->
+                val selected = selections[game.appId]
+                game.copy(artworkVariant = selected,
+                    headerUrl = SteamIconMapper.coverUrls(game.appId, selected).first(),
+                    heroCapsuleUrl = SteamIconMapper.coverUrls(game.appId, selected, portrait = true).first())
+            }
+        }
 
     /**
      * The game's current Steam concurrent-player count, or `null` on any failure — network error,

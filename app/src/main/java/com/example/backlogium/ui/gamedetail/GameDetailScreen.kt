@@ -1,6 +1,5 @@
 package com.example.backlogium.ui.gamedetail
 
-import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import androidx.compose.animation.core.LinearEasing
@@ -35,6 +34,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -44,16 +44,13 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -66,6 +63,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -74,8 +72,6 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.SubcomposeAsyncImage
-import coil.imageLoader
-import coil.request.ImageRequest
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.domain.AchievementRefreshOutcome
 import com.example.backlogium.gamification.Gamification
@@ -131,20 +127,14 @@ fun GameDetailScreen(
     onDismiss: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val overlay = presentation == GameDetailPresentation.COLLECTION_OVERLAY
     val detailAppId = appId ?: viewModel.appId
     val visitToken = rememberSaveable(detailAppId) { java.util.UUID.randomUUID().toString() }
     val favoriteViewModel: GameFavoriteViewModel = hiltViewModel(key = "favorite-$detailAppId")
     val favoriteState by favoriteViewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(detailAppId) { favoriteViewModel.show(detailAppId) }
-    val artworkFallbackUrls = remember(detailAppId) {
-        if (detailAppId > 0L) {
-            SteamIconMapper.listBackgroundFallbackUrls(detailAppId)
-        } else {
-            emptyList()
-        }
-    }
-    val accentColor by rememberHeaderAccentColor(state.summary.headerUrl, artworkFallbackUrls)
+    val artworkViewModel: GameArtworkViewModel = hiltViewModel(key = "artwork-$detailAppId")
+    val artworkState by artworkViewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(detailAppId) { artworkViewModel.show(detailAppId) }
 
     LaunchedEffect(viewModel, appId) {
         appId?.let(viewModel::setAppId)
@@ -170,55 +160,63 @@ fun GameDetailScreen(
         )
     }
 
-    // Full destinations report the wash to the shell so it can bleed behind the profile header.
-    // A collection overlay deliberately does not report it: its bounded background below is the
-    // only surface that may receive the game's accent.
+    GameDetailContent(state, detailAppId, presentation, favoriteState, artworkState,
+        GameDetailActions(
+            onFavorite = favoriteViewModel::toggle, onArtwork = artworkViewModel::select,
+            onRemoveSharedGame = viewModel::removeSharedGame, onSetManualPlaytime = viewModel::setManualPlaytime,
+            onHide = viewModel::requestHide, onSort = viewModel::setSort, onFilter = viewModel::setFilter,
+            onRefreshAchievements = viewModel::refreshAchievements, onRefreshPlayerCount = viewModel::refreshPlayerCount,
+        ), onAccentColorChanged)
+}
+
+internal data class GameDetailActions(
+    val onFavorite: () -> Unit = {},
+    val onArtwork: (com.example.backlogium.domain.GameArtworkVariant?) -> Unit = {},
+    val onRemoveSharedGame: () -> Unit = {},
+    val onSetManualPlaytime: (Double) -> Unit = {},
+    val onHide: () -> Unit = {},
+    val onSort: (AchievementSort) -> Unit = {},
+    val onFilter: (AchievementFilter) -> Unit = {},
+    val onRefreshAchievements: () -> Unit = {},
+    val onRefreshPlayerCount: () -> Unit = {},
+)
+
+/** Common production body for full destinations and collection overlays. */
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+internal fun GameDetailContent(
+    state: GameDetailUiState,
+    appId: Long,
+    presentation: GameDetailPresentation = GameDetailPresentation.FULL_DESTINATION,
+    favoriteState: FavoriteActionState = FavoriteActionState(),
+    artworkState: ArtworkActionState = ArtworkActionState(),
+    actions: GameDetailActions = GameDetailActions(),
+    onAccentColorChanged: (Color?) -> Unit = {},
+) {
+    val overlay = presentation == GameDetailPresentation.COLLECTION_OVERLAY
+    val urls = remember(appId, artworkState.preference?.variant) {
+        SteamIconMapper.coverUrls(appId, artworkState.preference?.variant)
+    }
+    var accentColor by remember(urls) { mutableStateOf<Color?>(null) }
+    var placeholder by remember(urls) { mutableStateOf(false) }
+    val resolved: (Bitmap?, Boolean) -> Unit = { bitmap, exhausted ->
+        placeholder = exhausted
+        accentColor = bitmap?.let { averageColor(it).mutedForBackdrop() }
+    }
     LaunchedEffect(presentation, accentColor) {
         if (!overlay) onAccentColorChanged(accentColor)
     }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .then(
-                if (overlay) {
-                    Modifier.background(MaterialTheme.colorScheme.background)
-                } else {
-                    Modifier
-                },
-            )
-            .then(
-                if (overlay) {
-                    accentColor?.let { Modifier.background(gameDetailWash(it)) } ?: Modifier
-                } else {
-                    Modifier
-                },
-            ),
-    ) {
-        if (overlay) {
-            GameDetailList(
-                state = state,
-                appId = detailAppId,
-                artworkFallbackUrls = artworkFallbackUrls,
-                viewModel = viewModel,
-                favoriteState = favoriteState,
-                onFavorite = favoriteViewModel::toggle,
-            )
-        } else {
-            PullToRefreshBox(
-                isRefreshing = state.isRefreshingPlayerCount,
-                onRefresh = viewModel::refreshPlayerCount,
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                GameDetailList(
-                    state = state,
-                    appId = detailAppId,
-                    artworkFallbackUrls = artworkFallbackUrls,
-                    viewModel = viewModel,
-                    favoriteState = favoriteState,
-                    onFavorite = favoriteViewModel::toggle,
-                )
-            }
+    Box(Modifier.fillMaxSize().then(if (overlay) {
+        Modifier.background(MaterialTheme.colorScheme.background)
+            .then(accentColor?.let { Modifier.background(gameDetailWash(it)) } ?: Modifier)
+    } else Modifier)) {
+        val body: @Composable () -> Unit = {
+            GameDetailList(state.copy(summary = state.summary.copy(headerUrl = urls.first())), appId,
+                urls.drop(1), favoriteState, artworkState, placeholder, actions, resolved)
+        }
+        if (overlay) body() else {
+            PullToRefreshBox(isRefreshing = state.isRefreshingPlayerCount,
+                onRefresh = actions.onRefreshPlayerCount, modifier = Modifier.fillMaxSize()) { body() }
         }
     }
 }
@@ -228,13 +226,16 @@ private fun GameDetailList(
     state: GameDetailUiState,
     appId: Long,
     artworkFallbackUrls: List<String>,
-    viewModel: GameDetailViewModel,
     favoriteState: FavoriteActionState,
-    onFavorite: () -> Unit,
+    artworkState: ArtworkActionState,
+    placeholder: Boolean,
+    actions: GameDetailActions,
+    onCoverResolved: (Bitmap?, Boolean) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
+            .testTag("game-detail-list")
             .padding(horizontal = 16.dp),
         contentPadding = PaddingValues(vertical = 16.dp),
     ) {
@@ -244,12 +245,14 @@ private fun GameDetailList(
                 appId = appId,
                 artworkFallbackUrls = artworkFallbackUrls,
                 summary = state.summary,
-                onRemoveSharedGame = viewModel::removeSharedGame,
-                onSetManualPlaytime = viewModel::setManualPlaytime,
+                onRemoveSharedGame = actions.onRemoveSharedGame,
+                onSetManualPlaytime = actions.onSetManualPlaytime,
                 hidePending = state.hidePreviewing,
-                onHide = viewModel::requestHide,
+                onHide = actions.onHide,
                 favoriteState = favoriteState,
-                onFavorite = onFavorite,
+                onFavorite = actions.onFavorite,
+                onCoverResolved = onCoverResolved,
+                artworkControls = { GameArtworkControls(appId, placeholder, artworkState, actions.onArtwork) },
             )
         }
         state.rarityStanding?.let { standing ->
@@ -258,15 +261,15 @@ private fun GameDetailList(
         if (state.allUnlocked) {
             item { GameCompletedBanner() }
         }
-        item { AchievementRefreshControl(state.achievementRefresh, viewModel::refreshAchievements) }
+        item { AchievementRefreshControl(state.achievementRefresh, actions.onRefreshAchievements) }
         if (!state.loading && state.summary.achievementsTotal == 0) {
             item { NoAchievementsNotice() }
         } else if (state.summary.achievementsTotal > 0) {
             item {
-                AchievementFilterControl(state.filter, viewModel::setFilter)
+                AchievementFilterControl(state.filter, actions.onFilter)
                 AchievementSortControl(
                     selected = state.sort,
-                    onSelect = viewModel::setSort,
+                    onSelect = actions.onSort,
                 )
             }
             if (state.achievements.isEmpty()) {
@@ -294,40 +297,8 @@ private fun gameDetailWash(accentColor: Color): Brush = Brush.verticalGradient(
 
 /**
  * The first successful artwork candidate's muted average color, re-derived whenever the art itself
- * changes. Coil already holds the image in its memory cache from [HeaderArt]'s own load, so this
- * is a decode, not a second network fetch in practice.
+ * changes. The decoded banner supplies its pixels directly without a second image request.
  */
-@Composable
-private fun rememberHeaderAccentColor(
-    headerUrl: String,
-    fallbackUrls: List<String>,
-): State<Color?> {
-    val context = LocalContext.current
-    val artworkUrls = remember(headerUrl, fallbackUrls) {
-        (listOf(headerUrl) + fallbackUrls)
-            .filter(String::isNotBlank)
-            .distinct()
-    }
-    return produceState<Color?>(initialValue = null, artworkUrls) {
-        value = null
-        for (url in artworkUrls) {
-            value = loadAverageColor(context, url)
-            if (value != null) break
-        }
-    }
-}
-
-private suspend fun loadAverageColor(context: Context, url: String): Color? {
-    val request = ImageRequest.Builder(context)
-        .data(url)
-        // Palette math needs readable pixels; hardware bitmaps don't allow that.
-        .allowHardware(false)
-        .build()
-    val bitmap = (context.imageLoader.execute(request).drawable as? BitmapDrawable)?.bitmap
-        ?: return null
-    return averageColor(bitmap).mutedForBackdrop()
-}
-
 /**
  * Downsamples to a handful of pixels and averages them — a dominant-color estimate good enough
  * for a background wash, without pulling in a palette library for one number.
@@ -362,8 +333,7 @@ private fun Color.mutedForBackdrop(): Color {
 }
 
 /**
- * The game's own facts, kept deliberately tight — art, one playtime line, the HLTB lengths, and a
- * completion/XP line — so the first achievement row sits at or near the fold on a typical phone.
+ * Identity, playtime provenance, cached metadata, estimates and progress in labeled groups.
  */
 @Composable
 private fun GameSummarySection(
@@ -377,6 +347,8 @@ private fun GameSummarySection(
     onHide: () -> Unit = {},
     favoriteState: FavoriteActionState = FavoriteActionState(),
     onFavorite: () -> Unit = {},
+    onCoverResolved: (Bitmap?, Boolean) -> Unit = { _, _ -> },
+    artworkControls: @Composable () -> Unit = {},
 ) {
     val uriHandler = LocalUriHandler.current
     val linkLabel = name.takeIf { it.isNotBlank() }?.let { "Open $it on Steam" } ?: "Open game on Steam"
@@ -388,9 +360,10 @@ private fun GameSummarySection(
                 HeaderArt(
                     headerUrl = summary.headerUrl,
                     fallbackUrls = artworkFallbackUrls,
+                    onCoverResolved = onCoverResolved,
                 )
             }
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // Unconditional: GameIcon's own themed placeholder covers a blank icon (e.g. a
                     // family-shared game, whose small icon hash Steam never reports for a game the
@@ -400,13 +373,13 @@ private fun GameSummarySection(
                     Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = name,
-                            style = MaterialTheme.typography.titleMedium,
+                            text = name.ifBlank { "Game $appId" },
+                            style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
-                            maxLines = 2,
                         )
                         if (summary.isFamilyShared) FamilySharedBadge()
-                        PlaytimeLine(summary)
+                        else Text("Steam library", style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     // Beside the title rather than over the header art: art is absent for some
                     // games and 404s for others, and a badge that comes and goes with the artwork
@@ -417,19 +390,26 @@ private fun GameSummarySection(
                     )
                 }
                 GameFavoriteAction(favoriteState, onFavorite)
-                CompletionLine(summary)
+                artworkControls()
+                DetailGroupLabel("Playtime")
+                PlaytimeLine(summary)
                 LastPlayedLine(summary)
-                ActivePlayersLine(summary)
-                GenreTiles(summary.genres)
-                if (summary.hasHltb) {
-                    Spacer(Modifier.height(8.dp))
-                    HltbLengths(summary)
-                }
                 if (summary.isFamilyShared) {
                     ObservedCoverageNotice(summary)
                     SetManualPlaytimeAction(summary.manualMinutes, onSetManualPlaytime)
                     RemoveSharedGameAction(name, onRemoveSharedGame)
                 }
+                DetailGroupLabel("Game information")
+                if (summary.genres.isEmpty()) Text("No genre metadata cached.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                else GenreTiles(summary.genres)
+                ActivePlayersLine(summary)
+                DetailGroupLabel("Completion estimates")
+                if (summary.hasHltb) HltbLengths(summary)
+                else Text("No completion estimates cached.", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                DetailGroupLabel("Achievement progress")
+                CompletionLine(summary)
                 TextButton(
                     onClick = { uriHandler.openUri("$STEAM_STORE_URL_PREFIX$appId") },
                     modifier = Modifier
@@ -469,6 +449,13 @@ private fun GameSummarySection(
     }
 }
 
+@Composable
+private fun DetailGroupLabel(label: String) {
+    HorizontalDivider(Modifier.padding(top = 12.dp, bottom = 10.dp))
+    Text(label, style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.padding(bottom = 4.dp))
+}
+
 /** Informational cached genres: surfaces intentionally have no click action or navigation. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -494,14 +481,15 @@ private fun GenreTiles(genres: List<com.example.backlogium.data.repo.GameGenre>)
 
 /** Store header art as a wide banner, advancing through the shared Steam fallback chain. */
 @Composable
-private fun HeaderArt(headerUrl: String, fallbackUrls: List<String>) {
+private fun HeaderArt(headerUrl: String, fallbackUrls: List<String>, onCoverResolved: (Bitmap?, Boolean) -> Unit) {
     SteamArtworkWithFallback(
         urls = listOf(headerUrl) + fallbackUrls,
         contentScale = ContentScale.Crop,
         alignment = Alignment.Center,
         modifier = Modifier
             .fillMaxWidth()
-            .height(120.dp),
+            .height(120.dp)
+            .testTag("game-detail-cover"),
         loading = {
             Box(
                 Modifier
@@ -509,8 +497,10 @@ private fun HeaderArt(headerUrl: String, fallbackUrls: List<String>) {
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
         },
-        // No glyph fallback: a failed banner should read as "no art", not as a broken image.
-        failure = {},
+        failure = { Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) },
+        allowHardware = false,
+        onImageResolved = { result -> onCoverResolved((result.drawable as? BitmapDrawable)?.bitmap, false) },
+        onExhausted = { onCoverResolved(null, true) },
     )
 }
 
@@ -525,12 +515,16 @@ private fun HeaderArt(headerUrl: String, fallbackUrls: List<String>) {
 private fun PlaytimeLine(summary: GameSummaryUi) {
     Text(
         text = if (summary.isFamilyShared) {
-            "${UiFormat.minutes(summary.headlineMinutes)} observed"
+            "${UiFormat.minutes(summary.headlineMinutes)} tracked + estimated"
         } else {
-            "${UiFormat.minutes(summary.headlineMinutes)} played"
+            "Steam lifetime: ${UiFormat.minutes(summary.headlineMinutes)}"
         },
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (summary.isFamilyShared) Text(
+        "${UiFormat.minutes(summary.trackedMinutes)} tracked · ${UiFormat.minutes(summary.manualMinutes)} manual estimate",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     if (summary.showPlaytimeSplit) {
         Text(
@@ -783,9 +777,9 @@ private fun LastPlayedLine(summary: GameSummaryUi) {
  */
 @Composable
 private fun ActivePlayersLine(summary: GameSummaryUi) {
-    val count = summary.activePlayers ?: return
     Text(
-        text = "${UiFormat.count(count)} playing now",
+        text = summary.activePlayers?.let { "${UiFormat.count(it)} playing now on Steam" }
+            ?: "Live player count unavailable.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -901,8 +895,8 @@ private fun AchievementSortControl(
 
 private val AchievementSort.label: String
     get() = when (this) {
-        AchievementSort.DATE_ACHIEVED -> "Recent"
-        AchievementSort.RARITY -> "Rarest"
+        AchievementSort.DATE_ACHIEVED -> "Date achieved"
+        AchievementSort.RARITY -> "Current rarity"
     }
 
 /**
@@ -1104,9 +1098,7 @@ private fun GameCompletedBanner() {
 /**
  * One achievement: icon, name, description, and a status line carrying tier/XP plus how rare it is.
  *
- * The locked treatment stays a whole-row alpha rather than per-element colouring — with the row now
- * carrying a description and an unlock rate as well, dimming the block keeps "locked" legible as one
- * signal instead of three competing muted greys.
+ * Locked state is named explicitly; descriptions retain readable contrast.
  */
 @Composable
 private fun AchievementRow(achievement: AchievementUi) {
@@ -1117,8 +1109,7 @@ private fun AchievementRow(achievement: AchievementUi) {
     ) {
         Row(
             modifier = Modifier
-                .padding(12.dp)
-                .alpha(if (achievement.unlocked) 1f else 0.5f),
+                .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AchievementIcon(achievement.apiName, achievement.iconUrl, achievement.tier)
@@ -1126,6 +1117,8 @@ private fun AchievementRow(achievement: AchievementUi) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(achievement.displayName, style = MaterialTheme.typography.bodyLarge)
                 AchievementDescription(achievement)
+                achievement.unlockedAt?.let { Text("Unlocked ${UiFormat.date(it)}",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 Text(
                     text = achievementStatusLabel(achievement),
                     style = MaterialTheme.typography.bodySmall,

@@ -7,6 +7,22 @@ package com.example.backlogium.data.remote
  */
 object SteamIconMapper {
 
+    fun artworkUrl(appId: Long, variant: com.example.backlogium.domain.GameArtworkVariant): String = when (variant) {
+        com.example.backlogium.domain.GameArtworkVariant.HEADER -> headerUrl(appId)
+        com.example.backlogium.domain.GameArtworkVariant.LIBRARY_HERO -> libraryHeroUrl(appId)
+        com.example.backlogium.domain.GameArtworkVariant.WIDE_CAPSULE -> wideCapsuleUrl(appId)
+        com.example.backlogium.domain.GameArtworkVariant.HERO_CAPSULE -> heroCapsuleUrl(appId)
+        com.example.backlogium.domain.GameArtworkVariant.LIBRARY_CAPSULE -> libraryCapsuleUrl(appId)
+    }
+
+    /** Selected first, then the surface's complete default chain with no duplicated reads. */
+    fun coverUrls(appId: Long, selected: com.example.backlogium.domain.GameArtworkVariant? = null,
+        portrait: Boolean = false): List<String> {
+        val normal = if (portrait) listOf(heroCapsuleUrl(appId)) + gridArtworkFallbackUrls(appId)
+            else listOf(headerUrl(appId)) + listBackgroundFallbackUrls(appId)
+        return (listOfNotNull(selected?.let { artworkUrl(appId, it) }) + normal).distinct()
+    }
+
     private const val CDN_BASE =
         "https://media.steampowered.com/steamcommunity/public/images/apps"
 

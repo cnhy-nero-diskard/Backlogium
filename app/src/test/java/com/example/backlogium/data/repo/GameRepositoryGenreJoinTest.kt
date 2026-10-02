@@ -88,10 +88,29 @@ class GameRepositoryGenreJoinTest {
             steamApi = OfflineSteamApi,
             sessionRepository = SessionRepository(db.sessionDao(), hidden),
             time = OfflineTime,
+            preferences = GamePreferenceRepository(db, object : AccountDataWriteGuard {
+                override suspend fun capture() = "fixture"
+                override suspend fun check(steamId: String) = Unit
+            }),
         )
     }
 
     @After fun tearDown() = db.close()
+
+    @Test fun selectedTokenReachesWideAndPortraitCoversButNeverChangesIcons() = runTest {
+        db.gameDao().upsert(game(1, isGoal = true))
+        db.gamePreferenceDao().upsert(com.example.backlogium.data.local.entity.GamePreference(1, true, "LIBRARY_HERO"))
+        val selected = repository.library.first().single()
+        assertEquals(com.example.backlogium.domain.GameArtworkVariant.LIBRARY_HERO, selected.artworkVariant)
+        assertEquals(com.example.backlogium.data.remote.SteamIconMapper.libraryHeroUrl(1), selected.headerUrl)
+        assertEquals(selected.headerUrl, selected.heroCapsuleUrl)
+        assertEquals(db.gameDao().getById(1)!!.iconUrl, selected.iconUrl)
+        assertEquals(selected.headerUrl, repository.goalGames.first().single().headerUrl)
+        db.gamePreferenceDao().upsert(com.example.backlogium.data.local.entity.GamePreference(1, true))
+        val reset = repository.library.first().single()
+        assertEquals(com.example.backlogium.data.remote.SteamIconMapper.headerUrl(1), reset.headerUrl)
+        assertEquals(com.example.backlogium.data.remote.SteamIconMapper.heroCapsuleUrl(1), reset.heroCapsuleUrl)
+    }
 
     @Test
     fun recordedArrivalSurvivesTheOfflineJoinAndNullsRemainUnknown() = runTest {

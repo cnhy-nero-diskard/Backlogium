@@ -18,14 +18,14 @@
 
 ## 4. Artwork Selection and Backup
 
-- [ ] 4.1 Build shared selected-first cover resolution over supported Steam variants; verify default/selected/dead-asset chains, deduplication, stable frame geometry, and actual-image accent sampling in full detail and overlay.
-- [ ] 4.2 Add placeholder chooser and retained Manage/Reset controls with bounded cached/online previews; verify unavailable candidates, offline behavior, successful selection/reset, and no arbitrary URL or bulk job.
-- [ ] 4.3 Apply preference resolution to tracked cover surfaces in Library/Collections while preserving icons and wishlist behavior; verify list and both grids use the same selected token with their appropriate crop/fallback.
+- [x] 4.1 Build shared selected-first cover resolution over supported Steam variants; verify default/selected/dead-asset chains, deduplication, stable frame geometry, and actual-image accent sampling in full detail and overlay.
+- [x] 4.2 Add placeholder chooser and retained Manage/Reset controls with bounded cached/online previews; verify unavailable candidates, offline behavior, successful selection/reset, and no arbitrary URL or bulk job.
+- [x] 4.3 Apply preference resolution to tracked cover surfaces in Library/Collections while preserving icons and wishlist behavior; verify list and both grids use the same selected token with their appropriate crop/fallback.
 - [x] 4.4 Extend export/validation/import with presence-aware artwork selection/reset; verify selected and reset round-trips, legacy favorite-only imports, invalid tokens, transaction rollback, and unchanged favorite/session-provenance fields.
 
 ## 5. Detail Refinement and Integrated Verification
 
-- [ ] 5.1 Refine labeled identity, metadata, estimates, playtime, and achievements after the controls work; verify shared/imported provenance, Steam link, missing-data behavior, Favorites heart, and readable screenshot framing.
+- [x] 5.1 Refine labeled identity, metadata, estimates, playtime, and achievements after the controls work; verify shared/imported provenance, Steam link, missing-data behavior, Favorites heart, and readable screenshot framing.
 - [ ] 5.2 Exercise Library/Home/collection detail entry points, refresh outcomes, filters, cover changes, Back, and recreation on a device/emulator; verify large-font controls and record representative owned/shared/missing-data evidence with affected baselines.
 - [ ] 5.3 Run focused comparator/filter, refresh race/recompute, asset, backup, and migration tests plus debug build/relevant lint; verify recorded results also cover unchanged Library visit/discovery and earned-rarity behavior.
 - [ ] 5.4 Run strict OpenSpec validation and diff checks, audit requirement ownership against changes 1/3 and active achievement planning, and record exact evidence without marking unperformed device or visual checks complete.

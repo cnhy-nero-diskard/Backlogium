@@ -32,7 +32,7 @@ fun DerivedCollectionCard(name: String, rule: String, memberCount: Int,
                     val placeholder: @Composable () -> Unit = {
                         Box(coverModifier.background(MaterialTheme.colorScheme.surfaceContainerHighest))
                     }
-                    SteamArtworkWithFallback(listOf(cover.headerUrl) + SteamIconMapper.listBackgroundFallbackUrls(cover.appId),
+                    SteamArtworkWithFallback(listOf(cover.headerUrl) + SteamIconMapper.coverUrls(cover.appId),
                         ContentScale.Crop, Alignment.Center, coverModifier, loading = placeholder, failure = placeholder)
                 }
             }
