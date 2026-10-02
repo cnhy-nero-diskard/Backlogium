@@ -17,6 +17,9 @@ interface GamePreferenceDao {
     @Query("SELECT * FROM game_preferences WHERE appId = :appId")
     fun observe(appId: Long): Flow<GamePreference?>
 
+    @Query("SELECT * FROM game_preferences WHERE appId = :appId")
+    suspend fun get(appId: Long): GamePreference?
+
     @Upsert
     suspend fun upsert(preference: GamePreference)
 

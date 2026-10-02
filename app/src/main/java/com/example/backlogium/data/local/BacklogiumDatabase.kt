@@ -96,7 +96,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         CloudHistoricalBoundary::class,
         CloudHistoricalJournal::class,
     ],
-    version = 43,
+    version = 44,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -124,6 +124,13 @@ abstract class BacklogiumDatabase : RoomDatabase() {
 
     companion object {
         const val NAME = "backlogium.db"
+
+        /** v43 -> v44: optional app-owned Steam cover token; favorite values are retained. */
+        val MIGRATION_43_44 = object : Migration(43, 44) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `game_preferences` ADD COLUMN `artworkVariant` TEXT")
+            }
+        }
 
         /**
          * v1 → v2: additive only — create the `hltb_data` cache table. No existing data is

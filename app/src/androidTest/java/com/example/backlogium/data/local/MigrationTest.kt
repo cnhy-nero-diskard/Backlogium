@@ -98,7 +98,28 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_40_41,
         BacklogiumDatabase.MIGRATION_41_42,
         BacklogiumDatabase.MIGRATION_42_43,
+        BacklogiumDatabase.MIGRATION_43_44,
     )
+
+    @Test
+    fun v43To44_retainsFavoritesAndDefaultsArtworkToNull() {
+        val name = "migration-v43-${System.nanoTime()}"
+        migrationTestHelper.createDatabase(name, 43).apply {
+            execSQL("INSERT INTO game_preferences (appId, isFavorite) VALUES (10, 1), (11, 0)")
+            close()
+        }
+        migrationTestHelper.runMigrationsAndValidate(name, 44, true, BacklogiumDatabase.MIGRATION_43_44).use { db ->
+            db.query("SELECT appId, isFavorite, artworkVariant FROM game_preferences ORDER BY appId").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(10L, cursor.getLong(0))
+                assertEquals(1, cursor.getInt(1))
+                assertTrue(cursor.isNull(2))
+                assertTrue(cursor.moveToNext())
+                assertEquals(0, cursor.getInt(1))
+                assertTrue(cursor.isNull(2))
+            }
+        }
+    }
 
     @Test
     fun deepHistory_v13ToCurrent_preservesRepresentativeDataAndTranslatesSentinel() {

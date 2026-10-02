@@ -11,6 +11,7 @@ import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.GameSource
+import com.example.backlogium.domain.GameArtworkVariant
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -46,6 +47,21 @@ class GamePreferenceRepositoryTest {
 
     private fun game(source: GameSource = GameSource.STEAM_OWNED) =
         Game(10, "Ten", "", 0, 0, 0, isGoal = true, source = source)
+
+    @Test fun artworkAndFavoriteMutationsPreserveEachOtherAndResetClearsBoth() = runBlocking {
+        db.gameDao().upsert(game(GameSource.FAMILY_SHARED))
+        repository.setFavorite(10, true, configured)
+        repository.setArtwork(10, GameArtworkVariant.LIBRARY_HERO, configured)
+        db.gameDao().upsert(game())
+        repository.setFavorite(10, false, configured)
+        assertEquals(GameArtworkVariant.LIBRARY_HERO, repository.artwork(10).first().variant)
+        repository.setFavorite(10, true, configured)
+        repository.setArtwork(10, null, configured)
+        assertEquals(GamePreference(10, true), db.gamePreferenceDao().get(10))
+        repository.setArtwork(10, GameArtworkVariant.WIDE_CAPSULE, configured)
+        AccountRoomReset(db).resetForAccountChange("account-b")
+        assertTrue(db.gamePreferenceDao().getAll().isEmpty())
+    }
 
     @Test fun missingDefaultsToFalseAndExplicitClearIsRetained() = runBlocking {
         assertFalse(repository.favorite(10).first().isFavorite)

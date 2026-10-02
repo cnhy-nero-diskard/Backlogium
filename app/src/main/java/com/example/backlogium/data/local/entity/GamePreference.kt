@@ -8,4 +8,5 @@ import androidx.room.PrimaryKey
 data class GamePreference(
     @PrimaryKey val appId: Long,
     val isFavorite: Boolean,
+    val artworkVariant: String? = null,
 )

@@ -10,6 +10,7 @@ internal class FakeGamePreferenceDao : GamePreferenceDao {
     override fun observeAll(): Flow<List<GamePreference>> = flowOf(rows.values.toList())
     override suspend fun getAll() = rows.values.toList()
     override fun observe(appId: Long): Flow<GamePreference?> = flowOf(rows[appId])
+    override suspend fun get(appId: Long): GamePreference? = rows[appId]
     override suspend fun upsert(preference: GamePreference) { rows[preference.appId] = preference }
     override suspend fun deleteAll() { rows.clear() }
 }
