@@ -23,6 +23,20 @@ VIEW_MODEL = "app/src/main/java/com/example/backlogium/ui/history/HistoryViewMod
 
 
 class PathClassificationTest(unittest.TestCase):
+    def test_recovery_fixture_inputs_and_copy_require_current_goldens(self):
+        for path in (
+            "app/src/main/java/com/example/backlogium/ui/setup/SetupChecklist.kt",
+            "app/src/main/java/com/example/backlogium/ui/onboarding/HistoryChoiceContent.kt",
+            "app/src/main/java/com/example/backlogium/ui/settings/SettingsScreen.kt",
+            "app/src/main/res/values/setup_strings.xml",
+            "app/src/main/res/values/history_choice_strings.xml",
+            "app/src/main/res/values/history_settings_strings.xml",
+            "app/src/test/java/com/example/backlogium/ui/screenshot/SetupRecoveryScreenshotTest.kt",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(is_fixture_input(path))
+                self.assertEqual(1, len(check_visual_baseline(changed=[path])[0]))
+
     def test_normalize_removes_leading_dot_slash_without_eating_dotfiles(self):
         self.assertEqual(".github/workflows/ci.yml", normalize_path("./.github/workflows/ci.yml"))
         self.assertEqual("app/build/reports", normalize_path("app\\build\\reports"))

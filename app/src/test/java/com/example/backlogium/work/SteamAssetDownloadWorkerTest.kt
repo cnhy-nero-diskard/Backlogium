@@ -1,6 +1,8 @@
 package com.example.backlogium.work
 
 import android.content.Context
+import android.Manifest
+import org.robolectric.Shadows.shadowOf
 import androidx.work.Data
 import androidx.work.ListenableWorker
 import androidx.work.WorkerFactory
@@ -76,6 +78,18 @@ class SteamAssetDownloadWorkerTest {
         assertEquals(0, output.getInt(SteamAssetDownloadWorker.KEY_PROCESSED, -1))
         assertEquals(0, output.getInt(SteamAssetDownloadWorker.KEY_STORED, -1))
         assertEquals(0, output.getInt(SteamAssetDownloadWorker.KEY_FAILED, -1))
+    }
+
+    @Test
+    fun `denied notifications do not fail detached artwork work or erase its observable result`() = runTest {
+        val context = RuntimeEnvironment.getApplication()
+        shadowOf(context).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val dao = FakeSteamAssetDao()
+        val repository = SteamAssetRepository(dao, SteamAssetStore(context), OkHttpClient())
+        val result = buildWorker(repository).doWork()
+        assertTrue(result is ListenableWorker.Result.Success)
+        assertEquals(0, (result as ListenableWorker.Result.Success).outputData.getInt(SteamAssetDownloadWorker.KEY_TOTAL, -1))
+        assertTrue("without notifications the durable run remains observable", dao.lastSavedRun != null)
     }
 
     @Test
