@@ -112,7 +112,11 @@ class BackupMergeEngine @Inject constructor(
         // these DAO calls happens in here — no settings, no file access, nothing that hops
         // threads — so the transaction cannot deadlock or be left holding a connection open.
         transaction.run {
-            file.gamePreferences?.forEach { gamePreferenceDao.upsert(GamePreference(it.appId, it.isFavorite)) }
+            file.gamePreferences?.forEach { incoming ->
+                val prior = gamePreferenceDao.get(incoming.appId) ?: GamePreference(incoming.appId, false)
+                gamePreferenceDao.upsert(prior.copy(isFavorite = incoming.isFavorite,
+                    artworkVariant = if (incoming.artwork != null) incoming.artwork.variant else prior.artworkVariant))
+            }
             file.excludedSharedGames.forEach { mergeExcludedSharedGame(it) }
             // Games first: Session/Achievement/HltbData all carry a FOREIGN KEY on games.appId, so
             // a fresh-install restore (no games synced yet) needs the skeleton row to exist first.

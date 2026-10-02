@@ -73,6 +73,7 @@ internal object BackupVersionedDecoder {
         while (reader.hasNext()) {
             var appId: Long? = null
             var favoriteSeen = false
+            var artworkSeen = false
             reader.beginObject()
             while (reader.hasNext()) when (reader.nextName()) {
                 "appId" -> {
@@ -84,6 +85,11 @@ internal object BackupVersionedDecoder {
                     require(!favoriteSeen && reader.peek() == JsonToken.BOOLEAN)
                     reader.nextBoolean()
                     favoriteSeen = true
+                }
+                "artwork" -> {
+                    require(!artworkSeen)
+                    artworkSeen = true
+                    inspectArtwork(reader)
                 }
                 else -> reader.skipValue()
             }
@@ -113,6 +119,28 @@ internal object BackupVersionedDecoder {
         }
         reader.endObject()
         require(recovered && timed)
+    }
+
+    private fun inspectArtwork(reader: JsonReader) {
+        require(reader.peek() == JsonToken.BEGIN_OBJECT)
+        var variantSeen = false
+        reader.beginObject()
+        while (reader.hasNext()) when (reader.nextName()) {
+            "variant" -> {
+                require(!variantSeen)
+                variantSeen = true
+                when (reader.peek()) {
+                    JsonToken.NULL -> reader.nextNull()
+                    JsonToken.STRING -> require(
+                        com.example.backlogium.domain.GameArtworkVariant.fromToken(reader.nextString()) != null,
+                    )
+                    else -> error("Invalid artwork variant")
+                }
+            }
+            else -> error("Invalid artwork object")
+        }
+        reader.endObject()
+        require(variantSeen)
     }
 
     private fun readState(reader: JsonReader) {

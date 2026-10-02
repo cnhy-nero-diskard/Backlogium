@@ -21,7 +21,7 @@
 - [ ] 4.1 Build shared selected-first cover resolution over supported Steam variants; verify default/selected/dead-asset chains, deduplication, stable frame geometry, and actual-image accent sampling in full detail and overlay.
 - [ ] 4.2 Add placeholder chooser and retained Manage/Reset controls with bounded cached/online previews; verify unavailable candidates, offline behavior, successful selection/reset, and no arbitrary URL or bulk job.
 - [ ] 4.3 Apply preference resolution to tracked cover surfaces in Library/Collections while preserving icons and wishlist behavior; verify list and both grids use the same selected token with their appropriate crop/fallback.
-- [ ] 4.4 Extend export/validation/import with presence-aware artwork selection/reset; verify selected and reset round-trips, legacy favorite-only imports, invalid tokens, transaction rollback, and unchanged favorite/session-provenance fields.
+- [x] 4.4 Extend export/validation/import with presence-aware artwork selection/reset; verify selected and reset round-trips, legacy favorite-only imports, invalid tokens, transaction rollback, and unchanged favorite/session-provenance fields.
 
 ## 5. Detail Refinement and Integrated Verification
 

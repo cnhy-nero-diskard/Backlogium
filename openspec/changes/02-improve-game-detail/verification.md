@@ -21,3 +21,9 @@
 - Canonical committed-content comparison detects equal-count schema/rate changes and ignores timestamps. Recompute uses the existing owner; first-unlock snapshots/XP are retained and no sessions are created. Retry also finishes a derived write after a raw-commit failure.
 - Presentation-controller tests cover repeated tap suppression, retry, leaving, switching game/visit and a response that ignores cancellation. Player-count refresh remains independent.
 - The first coalescing test run had a test-gate scheduling race; it now waits for the second caller's metadata read before releasing the shared fetch. The corrected run passed.
+
+## Artwork backup checkpoint
+
+- 175 focused artwork, Steam asset, preference, library join and backup tests passed; `:app:assembleDebug` passed. Log: `%TEMP%/backlogium-02-artwork.log`.
+- Export/snapshot/real-Room restore tests include a selected variant, an explicit reset replacing a local override, absent-game rows, idempotence, and favorite-only/omitted records retaining artwork. Cross-account identity and session-provenance tests remain passing.
+- Streaming preflight rejects unsupported tokens, arbitrary URLs, malformed/null/empty artwork objects, missing/duplicate variant fields and duplicate artwork objects before writes. A late FK failure rolls back both favorite and artwork writes.

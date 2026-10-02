@@ -52,20 +52,27 @@ class HiddenGamesBackupRoundTripTest {
     @Test
     fun explicitFavoriteClearsAndAbsentGamePreferencesRoundTripAndLegacyPreservesThem() = runBlocking {
         source.gameDao().upsert(game(KEPT, "Kept Game"))
-        val rows = listOf(GamePreference(KEPT, true), GamePreference(TOOL, false), GamePreference(999, true))
+        val rows = listOf(GamePreference(KEPT, true, "LIBRARY_HERO"), GamePreference(TOOL, false), GamePreference(999, true, "WIDE_CAPSULE"))
         rows.forEach { source.gamePreferenceDao().upsert(it) }
         val file = exportMapper(source).buildExport()
-        assertEquals(rows.map { BackupGamePreference(it.appId, it.isFavorite) }, file.gamePreferences)
+        assertEquals(rows.map { BackupGamePreference(it.appId, it.isFavorite, BackupArtwork(it.artworkVariant)) }, file.gamePreferences)
         assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)
         val snapshots = SnapshotStore(RuntimeEnvironment.getApplication(), kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
         snapshots.write(file, 9_876_543_210L)
         try { assertEquals(file, snapshots.read("9876543210.json")) }
         finally { snapshots.delete("9876543210.json") }
+        restored.gamePreferenceDao().upsert(GamePreference(TOOL, false, "HERO_CAPSULE"))
         mergeEngine(restored).merge(file, RuleConfig())
         assertEquals(rows, restored.gamePreferenceDao().getAll())
         mergeEngine(restored).merge(file, RuleConfig())
         assertEquals(rows, restored.gamePreferenceDao().getAll())
         mergeEngine(restored).merge(file.copy(gamePreferences = null), RuleConfig())
+        assertEquals(rows, restored.gamePreferenceDao().getAll())
+        mergeEngine(restored).merge(file.copy(gamePreferences = file.gamePreferences!!.map { it.copy(artwork = null) }), RuleConfig())
+        assertEquals(rows, restored.gamePreferenceDao().getAll())
+        val invalid = file.copy(gamePreferences = listOf(BackupGamePreference(KEPT, false, BackupArtwork("https://example.com/art.jpg"))))
+        assertTrue(BackupValidator.validate(invalid) is BackupValidationResult.Invalid)
+        assertTrue(runCatching { mergeEngine(restored).merge(invalid, RuleConfig()) }.isFailure)
         assertEquals(rows, restored.gamePreferenceDao().getAll())
     }
 
@@ -86,7 +93,7 @@ class HiddenGamesBackupRoundTripTest {
         val file = exportMapper(source, transaction).buildExport()
         assertEquals(1, snapshots)
         assertEquals(listOf(KEPT), file.games.map { it.appId })
-        assertEquals(listOf(BackupGamePreference(KEPT, true)), file.gamePreferences)
+        assertEquals(listOf(BackupGamePreference(KEPT, true, BackupArtwork(null))), file.gamePreferences)
         assertEquals(listOf(GamePreference(KEPT, false)), source.gamePreferenceDao().getAll())
     }
 

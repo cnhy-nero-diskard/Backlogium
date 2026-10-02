@@ -54,7 +54,11 @@ data class BackupFile(
 data class BackupIdentity(val steamId64: String)
 
 @Serializable
-data class BackupGamePreference(val appId: Long, val isFavorite: Boolean)
+data class BackupGamePreference(val appId: Long, val isFavorite: Boolean, val artwork: BackupArtwork? = null)
+
+/** Omitted object leaves the field untouched; a required explicit null variant resets it. */
+@Serializable
+data class BackupArtwork(val variant: String?)
 
 /** Mirrors [com.example.backlogium.gamification.RuleConfig], captured at export time. */
 @Serializable

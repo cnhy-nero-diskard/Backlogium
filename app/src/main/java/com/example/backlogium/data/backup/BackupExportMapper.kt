@@ -145,7 +145,9 @@ class BackupExportMapper @Inject constructor(
             collections = collections.map { it.toBackup() },
             collectionMembers = collectionMembers.map { it.toBackup() },
             hiddenGames = snapshot.hiddenGames.map { it.toBackup() },
-            gamePreferences = snapshot.gamePreferences.map { BackupGamePreference(it.appId, it.isFavorite) },
+            gamePreferences = snapshot.gamePreferences.map {
+                BackupGamePreference(it.appId, it.isFavorite, BackupArtwork(it.artworkVariant))
+            },
         )
     }
 

@@ -36,6 +36,9 @@ object BackupValidator {
             when {
                 preference.appId <= 0 -> BackupValidationProblem("gamePreference", index, "appId must be positive")
                 !seen.add(preference.appId) -> BackupValidationProblem("gamePreference", index, "duplicate appId ${preference.appId}")
+                preference.artwork?.variant != null &&
+                    com.example.backlogium.domain.GameArtworkVariant.fromToken(preference.artwork.variant) == null ->
+                    BackupValidationProblem("gamePreference", index, "unsupported artwork variant")
                 else -> null
             }
         }
