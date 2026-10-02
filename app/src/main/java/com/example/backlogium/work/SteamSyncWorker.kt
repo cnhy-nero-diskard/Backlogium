@@ -5,12 +5,13 @@ import androidx.hilt.work.HiltWorker
 import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.example.backlogium.data.backup.BackupRepository
+import com.example.backlogium.data.backup.AutoSnapshotWriter
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.diagnostics.SyncOutcome
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
+import com.example.backlogium.data.setup.SetupStateStore
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -18,6 +19,7 @@ import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.repo.AchievementLibraryFetch
 import com.example.backlogium.data.repo.CloudPresencePlacementReader
+import com.example.backlogium.data.repo.LibraryPollRefusal
 import com.example.backlogium.data.repo.readOrNull
 import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.data.remote.SteamApi
@@ -154,7 +156,7 @@ internal fun shouldPersistOwnedGamesPoll(gameCount: Int?, gamesAreEmpty: Boolean
 @HiltWorker
 class SteamSyncWorker @AssistedInject constructor(
     @Assisted appContext: Context,
-    @Assisted params: WorkerParameters,
+    @Assisted private val params: WorkerParameters,
     private val steamApi: SteamApi,
     private val settings: SettingsDataStore,
     private val credentials: CredentialsProvider,
@@ -166,7 +168,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private val differ: SessionDiffer,
     private val gamificationUpdater: GamificationUpdater,
     private val achievementRepository: AchievementRepository,
-    private val backupRepository: BackupRepository,
+    private val autoSnapshotWriter: AutoSnapshotWriter,
     private val genreEnrichmentScheduler: GenreEnrichmentScheduler,
     private val reviewEnrichmentScheduler: ReviewEnrichmentScheduler,
     private val presenceServiceStarter: PresenceServiceStarter,
@@ -178,6 +180,8 @@ class SteamSyncWorker @AssistedInject constructor(
     private val committer: PlaytimeObservationCommitter,
     private val cloudPresencePlacementReader: CloudPresencePlacementReader,
     private val sharedGameConverter: SharedGameConverter,
+    private val evidenceRecorder: LibraryPollEvidenceRecorder,
+    private val setupStateStore: SetupStateStore,
 ) : CoroutineWorker(appContext, params) {
 
     private data class DiffPreview(
@@ -188,12 +192,18 @@ class SteamSyncWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         // The account-change marker is the durable barrier between old credentials and old
         // Room state. A worker that arrives after the marker is written must not poll or diff;
-        // the coordinator owns the reset and startup recovery.
+        // the coordinator owns the reset and startup recovery. The refused poll is recorded as a
+        // not-performed, account-admission-refused outcome (attributed to the stored account when
+        // one exists) so a consumer can never mistake the scheduler success for a committed
+        // library: there is no committed evidence, so the projection stays non-committed.
         return runAfterAccountChangeAdmission(
             coordinator = syncCoordinator,
             accountChangePending = { accountChangeMarker.pendingSteamId() != null },
             work = { doWorkUnlocked() },
-        ) ?: Result.success()
+        ) ?: run {
+            recordAdmissionRefusedIfAttributable()
+            Result.success()
+        }
     }
 
     private suspend fun doWorkUnlocked(): Result {
@@ -204,10 +214,19 @@ class SteamSyncWorker @AssistedInject constructor(
         var examined = 0
         var updated = 0
         var workerSteamId: String? = null
+        // The exact admitted work UUID, not a reusable unique work name: every attributable outcome
+        // this run records is bound to this identity so another operation can never claim it.
+        val workIdentity = params.id.toString()
         return try {
             val creds = credentials.currentCredentials()
             if (creds == null) {
                 recordErrorIfAccountActive(null, "Steam not configured")
+                // The account the work was admitted for is still identifiable from the stored
+                // profile even though no credentials exist right now. Record the attributable
+                // not-performed outcome so a consumer for that account sees a missing-credentials
+                // reason instead of scheduler success; with no stored account there is nothing to
+                // attribute and the projection stays unknown.
+                recordMissingCredentialsIfAttributable()
                 outcome = SyncOutcome.SKIPPED_NO_CREDENTIALS
                 return Result.success()
             }
@@ -219,6 +238,10 @@ class SteamSyncWorker @AssistedInject constructor(
                 recordErrorIfAccountActive(
                     steamId,
                     "Stored library belongs to a different Steam account; confirm the account change first",
+                )
+                recordNotPerformedIfAccountActive(
+                    steamId = steamId,
+                    refusal = LibraryPollRefusal.ACCOUNT_ADMISSION_REFUSED,
                 )
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
                 return Result.success()
@@ -261,6 +284,10 @@ class SteamSyncWorker @AssistedInject constructor(
                     steamId,
                     "No games returned — your Steam profile may be private",
                 )
+                recordNotPerformedIfAccountActive(
+                    steamId = steamId,
+                    refusal = LibraryPollRefusal.UNCONFIRMED_EMPTY,
+                )
                 outcome = SyncOutcome.SKIPPED_EMPTY_OWNED_GAMES
                 return Result.success()
             }
@@ -269,7 +296,15 @@ class SteamSyncWorker @AssistedInject constructor(
                 steamApi.getSteamLevel(apiKey, steamId, scope).response.playerLevel
             }.getOrDefault(profileDao.get()?.steamLevel ?: 0)
 
-            if (!persistPoll(games, apiKey, steamId, steamLevel, summary, scope)) {
+            if (!persistPoll(
+                games = games,
+                apiKey = apiKey,
+                steamId = steamId,
+                steamLevel = steamLevel,
+                summary = summary,
+                scope = scope,
+                workIdentity = workIdentity,
+            )) {
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
                 return Result.success()
             }
@@ -285,6 +320,12 @@ class SteamSyncWorker @AssistedInject constructor(
             // Guarded like every other unlocked account-owned write: an admitted old run that
             // fails after a reset completed must not stamp its error onto the new account.
             recordErrorIfAccountActive(workerSteamId, e.message ?: "Sync failed")
+            // The attempt's failure is durable and attributable — once retries are exhausted a
+            // consumer sees a recoverable failure with this explanation instead of scheduler
+            // success. The evidence recorder refuses to regress a durable COMMITTED record, so a
+            // retry that fails after an earlier attempt's raw commit — or after a crash in this
+            // run's own follow-up writes — never overwrites the committed effect.
+            recordFailedIfAccountActive(workerSteamId, e.message ?: "Sync failed")
             error = e.message ?: "Sync failed"
             Result.retry()
         } finally {
@@ -299,9 +340,41 @@ class SteamSyncWorker @AssistedInject constructor(
                         }
                     }
                 }
+                // Bounded evidence retention (best-effort, never fails the poll). The protected
+                // snapshot is captured outside the raw transaction — the setup store is
+                // DataStore-backed — so retention can keep admitted stage associations without any
+                // DataStore read inside a Room lock. A capture or prune failure (separate
+                // runCatching) only skips this run's cleanup; it never touches the durable record.
+                runCatching {
+                    val protectedIds = captureProtectedWorkIdentities()
+                    syncCoordinator.withLock {
+                        val account = workerSteamId
+                        if (account != null && isAccountActive(account)) {
+                            evidenceRecorder.pruneOlderThanRetained(
+                                accountSteamId = account,
+                                currentWorkId = workIdentity,
+                                protectedWorkIds = protectedIds,
+                            )
+                        }
+                    }
+                }
             }
         }
     }
+
+    /**
+     * The admitted setup stages' latest work identities, captured **outside any Room transaction**
+     * (this runs after the raw commit, in the NonCancellable finally), so bounded retention never
+     * prunes an association the setup store is still observing.
+     *
+     * Protect the exact admitted id, the prepared KEEP candidate, and the request id (also the NEW
+     * WorkRequest id). This covers a raw commit before the post-enqueue association is durable.
+     */
+    private suspend fun captureProtectedWorkIdentities(): Set<String> =
+        setupStateStore.storedAttemptRecords()
+            .values
+            .flatMap { listOfNotNull(it.admittedWorkId, it.candidateWorkId, it.requestId) }
+            .toSet()
 
     private suspend fun persistPoll(
         games: List<com.example.backlogium.data.remote.dto.OwnedGameDto>,
@@ -310,6 +383,7 @@ class SteamSyncWorker @AssistedInject constructor(
         steamLevel: Int,
         summary: com.example.backlogium.data.remote.dto.PlayerSummaryDto?,
         scope: SyncRunRecorder.RunScope,
+        workIdentity: String,
     ): Boolean {
         val now = time.nowMillis()
         val today = time.today()
@@ -379,12 +453,22 @@ class SteamSyncWorker @AssistedInject constructor(
         val arrivedAppIds = withContext(NonCancellable) {
             syncCoordinator.withLock {
                 if (!isAccountActive(steamId)) {
+                    // The run was admitted but the account-barrier refused its commit. Record the
+                    // attributable refusal under the same lock so it can neither race the reset nor
+                    // ever be mistaken for a committed library.
+                    evidenceRecorder.recordNotPerformed(
+                        workIdentity = workIdentity,
+                        accountSteamId = steamId,
+                        refusal = LibraryPollRefusal.ACCOUNT_ADMISSION_REFUSED,
+                        recordedAt = now,
+                    )
                     null
                 } else {
                     committer.withValidatedPlacement(placement) { validatedPlacement, pruningIdentity ->
                         database.withTransaction {
                             commitRawPoll(
                                 games = games,
+                                workIdentity = workIdentity,
                                 steamId = steamId,
                                 steamLevel = steamLevel,
                                 summary = summary,
@@ -430,7 +514,7 @@ class SteamSyncWorker @AssistedInject constructor(
                     persistDerived(today, configAtCompute)
                     // Best-effort: a snapshot-write failure must never fail an otherwise-successful
                     // poll.
-                    runCatching { backupRepository.writeAutoSnapshotIfDue() }
+                    runCatching { autoSnapshotWriter.writeAutoSnapshotIfDue() }
                     true
                 }
             }
@@ -454,6 +538,80 @@ class SteamSyncWorker @AssistedInject constructor(
         syncCoordinator.withLock {
             if (isAccountActive(expectedSteamId)) {
                 recordError(message)
+            }
+        }
+    }
+
+    /**
+     * Records that this run exited because no credentials are available, attributed to the account
+     * the stored profile still names when one is identifiable. Written only under the coordinator
+     * barrier; without a stored account there is nothing attributable and nothing is recorded.
+     */
+    private suspend fun recordMissingCredentialsIfAttributable() {
+        val storedSteamId = profileDao.get()?.steamId?.takeIf { it.isNotBlank() } ?: return
+        syncCoordinator.withLock {
+            evidenceRecorder.recordNotPerformed(
+                workIdentity = params.id.toString(),
+                accountSteamId = storedSteamId,
+                refusal = LibraryPollRefusal.MISSING_CREDENTIALS,
+                recordedAt = time.nowMillis(),
+            )
+        }
+    }
+
+    /**
+     * Records that this admitted run was refused by the account-admission barrier at `doWork`
+     * entry, attributed to the stored account when one is identifiable. Written only under the
+     * coordinator barrier so it can never interleave with the identity reset it describes.
+     */
+    private suspend fun recordAdmissionRefusedIfAttributable() {
+        val storedSteamId = profileDao.get()?.steamId?.takeIf { it.isNotBlank() } ?: return
+        syncCoordinator.withLock {
+            evidenceRecorder.recordNotPerformed(
+                workIdentity = params.id.toString(),
+                accountSteamId = storedSteamId,
+                refusal = LibraryPollRefusal.ACCOUNT_ADMISSION_REFUSED,
+                recordedAt = time.nowMillis(),
+            )
+        }
+    }
+
+    /**
+     * Persists a not-performed outcome for this run, guarded exactly like
+     * [recordErrorIfAccountActive]: only an account that is still the active one may own the row.
+     */
+    private suspend fun recordNotPerformedIfAccountActive(
+        steamId: String?,
+        refusal: LibraryPollRefusal,
+    ) {
+        if (steamId == null) return
+        syncCoordinator.withLock {
+            if (isAccountActive(steamId)) {
+                evidenceRecorder.recordNotPerformed(
+                    workIdentity = params.id.toString(),
+                    accountSteamId = steamId,
+                    refusal = refusal,
+                    recordedAt = time.nowMillis(),
+                )
+            }
+        }
+    }
+
+    /**
+     * Persists a failed outcome for this run under the recorder's durable committed protection.
+     * A retry of the same work identity that fails before its own commit cannot overwrite the
+     * COMMITTED record of an effect an earlier attempt already accepted.
+     */
+    private suspend fun recordFailedIfAccountActive(steamId: String?, reason: String) {
+        if (steamId == null) return
+        syncCoordinator.withLock {
+            if (isAccountActive(steamId)) {
+                evidenceRecorder.recordFailure(
+                    workIdentity = params.id.toString(),
+                    accountSteamId = steamId,
+                    reason = reason,
+                    recordedAt = time.nowMillis(),
+                )
             }
         }
     }
@@ -485,6 +643,7 @@ class SteamSyncWorker @AssistedInject constructor(
      */
     private suspend fun commitRawPoll(
         games: List<com.example.backlogium.data.remote.dto.OwnedGameDto>,
+        workIdentity: String,
         steamId: String,
         steamLevel: Int,
         summary: com.example.backlogium.data.remote.dto.PlayerSummaryDto?,
@@ -585,6 +744,24 @@ class SteamSyncWorker @AssistedInject constructor(
         )
         profileDao.updateSyncStatus(lastSyncAt = now, lastSyncError = null)
 
+        // Durable, attributable evidence for this exact admitted operation, committed atomically
+        // with the accepted library response. A crash after this transaction but before any worker
+        // output leaves the committed outcome recoverable from Room, while a rollback of the raw
+        // commit discards it with the library. `gameCount == 0` is the explicitly confirmed empty
+        // library and commits exactly like a populated one.
+        evidenceRecorder.recordCommitted(
+            workIdentity = workIdentity,
+            accountSteamId = steamId,
+            gameCount = games.size,
+            committedAt = now,
+        )
+
+        // The accepted response is also the account's confirmed-baseline evidence — including an
+        // explicitly confirmed empty library. Same transaction: an interrupted initial commit
+        // leaves confirmation unrecorded together with the library data, and a later failed
+        // refresh never writes here, preserving the existing confirmation.
+        profileDao.updateLibraryConfirmation(steamId = steamId, confirmedAt = now)
+
         // This is the only achievement write path for an inline poll, and it is deliberately
         // called while the same transaction still owns the raw commit.
         achievementRepository.applyRefreshes(achievementFetch.refreshes)
@@ -628,12 +805,29 @@ class SteamSyncWorker @AssistedInject constructor(
         today: java.time.LocalDate,
         initialConfig: com.example.backlogium.domain.VersionedRuleConfig,
     ) {
+        // The exact rule config the value being persisted was computed under. `persistVersionChecked`
+        // recomputes per attempt and only ever hands `persist` a value produced by the matching
+        // `compute(config)`, so capturing from the compute lambda stays in lock-step with the value.
+        var computedUnder: com.example.backlogium.gamification.RuleConfig? = null
         persistVersionChecked(
             initial = initialConfig,
             readCurrent = { settings.ruleConfigWithVersionFlow.first() },
-            compute = { config -> gamificationUpdater.compute(today, config) },
+            compute = { config ->
+                computedUnder = config
+                gamificationUpdater.compute(today, config)
+            },
             persist = { result, version ->
-                gamificationUpdater.persist(result, RecomputeSource.SYNC, version)
+                // Pass the actual config into the persist protocol (task 5.6): when a pending
+                // BACKFILL/RESTORE recomputation marker is held, a no-config persist is refused by
+                // design (never clear pending recovery with a stale derived write). Supplying it
+                // lets this SYNC recompute fresh from the current committed raw under the same
+                // config, then finalize and clear the marker with administrative provenance.
+                gamificationUpdater.persist(
+                    result,
+                    RecomputeSource.SYNC,
+                    version,
+                    refreshConfig = computedUnder,
+                )
             },
             coordinator = derivedStateWrites,
         )

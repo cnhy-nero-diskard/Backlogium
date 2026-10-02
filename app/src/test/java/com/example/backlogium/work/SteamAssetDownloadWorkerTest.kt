@@ -70,6 +70,12 @@ class SteamAssetDownloadWorkerTest {
         val result = worker.doWork()
 
         assertTrue("an empty inventory must still complete successfully", result is ListenableWorker.Result.Success)
+        val output = (result as ListenableWorker.Result.Success).outputData
+        assertEquals("zero inventory is attributable output, not an invented populated download", 0,
+            output.getInt(SteamAssetDownloadWorker.KEY_TOTAL, -1))
+        assertEquals(0, output.getInt(SteamAssetDownloadWorker.KEY_PROCESSED, -1))
+        assertEquals(0, output.getInt(SteamAssetDownloadWorker.KEY_STORED, -1))
+        assertEquals(0, output.getInt(SteamAssetDownloadWorker.KEY_FAILED, -1))
     }
 
     @Test
