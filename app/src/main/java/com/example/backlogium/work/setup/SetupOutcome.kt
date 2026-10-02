@@ -57,3 +57,24 @@ fun projectSetupOutcomes(
     registeredIds: List<String>,
 ): Map<String, SetupOutcome> =
     registeredIds.associateWith { stored[it] ?: SetupOutcome.NeverRun }
+
+/**
+ * The legacy terminal projection of one operation state.
+ *
+ * Only terminal outcomes are representable in [SetupOutcome]; waiting, running, retry-scheduled,
+ * and recovery-required work projects to [SetupOutcome.NeverRun] so surfaces that only know
+ * "in progress / not done" keep treating pending work as unfinished rather than as a result. The
+ * full [SetupOperationState] is what post-3.x surfaces read from the coordinator.
+ */
+fun outcomeOfOperation(operation: SetupOperationState): SetupOutcome = when (operation) {
+    is SetupOperationState.Succeeded -> SetupOutcome.Succeeded
+    is SetupOperationState.Failed -> SetupOutcome.Failed(operation.reason ?: "Didn't finish")
+    is SetupOperationState.Cancelled -> SetupOutcome.Failed("Cancelled before it finished")
+    SetupOperationState.Skipped -> SetupOutcome.Skipped
+    SetupOperationState.NeverRun,
+    is SetupOperationState.Waiting,
+    is SetupOperationState.Running,
+    is SetupOperationState.RetryScheduled,
+    is SetupOperationState.RecoveryRequired,
+    -> SetupOutcome.NeverRun
+}

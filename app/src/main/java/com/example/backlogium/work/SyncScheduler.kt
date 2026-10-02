@@ -6,15 +6,21 @@ import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkRequest
+import androidx.work.await
 import androidx.work.workDataOf
 import com.example.backlogium.di.ApplicationScope
+import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
+import com.example.backlogium.work.setup.AdmittedWork
 import com.example.backlogium.work.setup.HltbDatasetWorker
+import com.example.backlogium.work.setup.resolveAdmittedWork
+import com.example.backlogium.work.setup.setupRequestTag
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -22,6 +28,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -274,6 +281,99 @@ class SyncScheduler @Inject constructor(
             HltbDatasetWorker.UNIQUE_WORK_NAME,
             ExistingWorkPolicy.KEEP,
             request,
+        )
+    }
+
+    /**
+     * Additive setup-admission seam over [syncNow]: enqueue the same `KEEP` manual poll with the
+     * request identity tagged on the work request, then return the exact admitted job.
+     *
+     * The returned [AdmittedWork] distinguishes the request's freshly enqueued job
+     * ([AdmittedWork.New]) from a live job `KEEP` retained ([AdmittedWork.Reused]) — the engine
+     * setup observes is the exact one that was admitted, never an arbitrary historical finished
+     * record — or is null when nothing could be admitted. Existing [syncNow] is untouched.
+     */
+    suspend fun admitSyncNow(requestId: String): AdmittedWork? = admitOneTimeWork(
+        uniqueWorkName = SteamSyncWorker.ONE_TIME_NAME,
+        requestId = requestId,
+        request = {
+            OneTimeWorkRequestBuilder<SteamSyncWorker>()
+                .setConstraints(networkConstraints)
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .setInputData(workDataOf(SteamSyncWorker.KEY_TRIGGER to SteamSyncWorker.TRIGGER_MANUAL))
+        },
+    )
+
+    /**
+     * Additive setup-admission seam over [downloadSteamAssets]; same constraints, mode, and `KEEP`
+     * policy, plus the [requestId] tag on the admitted job.
+     */
+    suspend fun admitDownloadSteamAssets(
+        requestId: String,
+        mode: SteamAssetDownloadMode,
+    ): AdmittedWork? = admitOneTimeWork(
+        uniqueWorkName = SteamAssetDownloadWorker.UNIQUE_WORK_NAME,
+        requestId = requestId,
+        request = {
+            OneTimeWorkRequestBuilder<SteamAssetDownloadWorker>()
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .setRequiresStorageNotLow(true)
+                        .build(),
+                )
+                .setInputData(workDataOf(
+                    SteamAssetDownloadWorker.KEY_MODE to mode.name,
+                    SteamAssetDownloadWorker.KEY_STARTED_AT to System.currentTimeMillis(),
+                ))
+        },
+    )
+
+    /**
+     * Additive setup-admission seam over [ensureCompletionTimes]; same constraints, backoff, and
+     * `KEEP` policy, plus the [requestId] tag on the admitted job.
+     */
+    suspend fun admitEnsureCompletionTimes(requestId: String): AdmittedWork? = admitOneTimeWork(
+        uniqueWorkName = HltbDatasetWorker.UNIQUE_WORK_NAME,
+        requestId = requestId,
+        request = {
+            OneTimeWorkRequestBuilder<HltbDatasetWorker>()
+                .setConstraints(networkConstraints)
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    WorkRequest.MIN_BACKOFF_MILLIS,
+                    TimeUnit.MILLISECONDS,
+                )
+        },
+    )
+
+    /**
+     * The shared admission core every seam uses: record the pre-enqueue candidate (the one live job
+     * `KEEP` may retain), enqueue the request with its **exact request id as the work id** plus the
+     * setup tag, await the enqueue `Operation` (so the chain is read only after the operation
+     * committed), then resolve exactly what was admitted — the request's own job or the recorded
+     * candidate — never an unrelated concurrent job or an arbitrary historical one. Returning null
+     * means no exact operation was established.
+     */
+    private suspend fun admitOneTimeWork(
+        uniqueWorkName: String,
+        requestId: String,
+        request: () -> OneTimeWorkRequest.Builder,
+    ): AdmittedWork? {
+        val requestUuid = UUID.fromString(requestId)
+        val before = workManager.getWorkInfosForUniqueWorkFlow(uniqueWorkName).first()
+        // The unique-name chain holds at most one live job; that is the exact candidate KEEP may retain.
+        val retainedCandidate = before.firstOrNull { !it.state.isFinished }?.id
+        val admittedRequest = request()
+            .setId(requestUuid)
+            .addTag(setupRequestTag(requestId))
+            .build()
+        workManager.enqueueUniqueWork(uniqueWorkName, ExistingWorkPolicy.KEEP, admittedRequest).await()
+        val after = workManager.getWorkInfosForUniqueWorkFlow(uniqueWorkName).first()
+        return resolveAdmittedWork(
+            requestId = requestUuid,
+            retainedCandidateId = retainedCandidate,
+            afterAllIds = after.map { it.id }.toSet(),
         )
     }
 

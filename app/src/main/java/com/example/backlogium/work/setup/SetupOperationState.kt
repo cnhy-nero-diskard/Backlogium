@@ -1,5 +1,7 @@
 package com.example.backlogium.work.setup
 
+import kotlinx.serialization.Serializable
+
 /**
  * One stage's real underlying operation, independent of the foreground journey that admitted it.
  *
@@ -8,34 +10,47 @@ package com.example.backlogium.work.setup
  * of those forcing the setup surface to read as finished, failed, or completed. Scheduler state
  * (queued, running, retry backoff) stays distinct from operation outcome (succeeded, failed,
  * cancelled, skipped), so busy or elapsed work can never masquerade as a terminal failure.
+ *
+ * Serializable so the store can persist each stage's latest state in the versioned attempt record
+ * (task 3.2); the wire form uses the sealed-hierarchy discriminator, so an older app reading a
+ * record written by a newer one with an unknown state drops it rather than failing to render.
  */
+@Serializable
 sealed interface SetupOperationState {
 
     /** Never selected, never admitted — the state of a stage registered after a completed setup. */
+    @Serializable
     data object NeverRun : SetupOperationState
 
     /** Admitted work that cannot start yet (connectivity, storage constraints…). [reason] is user-facing. */
+    @Serializable
     data class Waiting(val reason: String) : SetupOperationState
 
     /**
      * Admitted work currently executing. [progress] is the operation's own real progress: null
      * while it has not published a usable total, determinate once it has.
      */
+    @Serializable
     data class Running(val progress: SetupStageProgress? = null) : SetupOperationState
 
     /** A transient failure scheduled another attempt. Pending work, never a terminal failure. */
+    @Serializable
     data class RetryScheduled(val attempt: Int, val reason: String) : SetupOperationState
 
     /** The domain effect the stage exists for happened. [detail] is optional per-stage detail. */
+    @Serializable
     data class Succeeded(val detail: String? = null) : SetupOperationState
 
     /** Terminally failed. [reason] names which stage failed and why. */
+    @Serializable
     data class Failed(val reason: String? = null) : SetupOperationState
 
     /** This stage's underlying work was cancelled; sibling work is untouched. */
+    @Serializable
     data object Cancelled : SetupOperationState
 
     /** Declined in the initial setup choice; a later subset run preserves unrelated outcomes. */
+    @Serializable
     data object Skipped : SetupOperationState
 
     /**
@@ -43,6 +58,7 @@ sealed interface SetupOperationState {
      * association was never established). It needs an explicit new request and an explanation —
      * never an inferred success or an infinite wait.
      */
+    @Serializable
     data class RecoveryRequired(val reason: String? = null) : SetupOperationState
 
     /**

@@ -7,10 +7,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The immutable foreground-attempt projection: its selection and admission order, its injectable
- * monotonic observation budget, and the pure settlement decisions it makes from one stage's
- * operation state. Settlement never mutates an operation, never cancels one, and never turns busy
- * or elapsed work into a terminal failure.
+ * The immutable foreground-attempt projection: its selection and admission order, its per-stage
+ * settlement map, its injectable monotonic observation budget, and the pure per-stage settlement
+ * decisions (`settlementReasonFor`). Settlement is per stage, never a work verdict and never a
+ * cancellation; a later selected stage keeps being observed even after an earlier one settled.
  */
 class ForegroundAttemptTest {
 
@@ -23,6 +23,7 @@ class ForegroundAttemptTest {
         assertEquals(setOf("a", "b"), attempt.selected)
         // Unknown ids are dropped at construction and order follows the registry, not the set.
         assertEquals(listOf("a", "b"), attempt.admissionOrder)
+        assertTrue("no stage has settled yet", attempt.stageSettlements.isEmpty())
         assertFalse(attempt.isSettled)
     }
 
@@ -32,96 +33,74 @@ class ForegroundAttemptTest {
     }
 
     @Test
-    fun queuedWaitingSettlesTheForegroundAndKeepsTheWaitingOperation() {
+    fun queuedWaitingSettlesTheStageAndKeepsTheWaitingOperation() {
         val waiting = SetupOperationState.Waiting("waiting for connectivity")
-        val attempt = foregroundAttempt(setOf("sync"), listOf("sync"))
-            .settledFor(state = waiting, detached = false, elapsedMonotonicMs = 0L)
+        val reason = settlementReasonFor(waiting, detached = false, admissionDurable = true)
 
-        assertEquals(ForegroundSettledReason.QUEUED, attempt.settledReason)
+        assertEquals(ForegroundSettledReason.QUEUED, reason)
         // The operation itself is untouched: still waiting, never relabelled failed or skipped.
         assertTrue(waiting.isPending)
         assertFalse(waiting.isTerminal)
     }
 
     @Test
-    fun retryBackoffSettlesTheForegroundWithoutManufacturingFailure() {
+    fun retryBackoffSettlesTheStageWithoutManufacturingFailure() {
         val scheduled = SetupOperationState.RetryScheduled(attempt = 1, reason = "backoff")
-        val attempt = foregroundAttempt(setOf("sync"), listOf("sync"))
-            .settledFor(state = scheduled, detached = false, elapsedMonotonicMs = 0L)
-
-        assertEquals(ForegroundSettledReason.BACKOFF, attempt.settledReason)
+        assertEquals(
+            ForegroundSettledReason.BACKOFF,
+            settlementReasonFor(scheduled, detached = false, admissionDurable = true),
+        )
         assertTrue(scheduled.isPending)
         assertFalse(scheduled.isTerminal)
     }
 
     @Test
-    fun terminalStateSettlesTerminal() {
-        val attempt = foregroundAttempt(setOf("a"), listOf("a"))
-            .settledFor(
-                state = SetupOperationState.Succeeded(),
-                detached = false,
-                elapsedMonotonicMs = 0L,
-            )
-        assertEquals(ForegroundSettledReason.TERMINAL, attempt.settledReason)
+    fun terminalStateSettlesTheStageTerminal() {
+        assertEquals(
+            ForegroundSettledReason.TERMINAL,
+            settlementReasonFor(SetupOperationState.Succeeded(), detached = false, admissionDurable = true),
+        )
     }
 
     @Test
     fun runningInScreenStageStaysObservedWithinBudget() {
         val budget = 10L
         val attempt = foregroundAttempt(setOf("sync"), listOf("sync"), observationBudgetMs = budget)
-
-        val withinBudget = attempt.settledFor(
-            state = SetupOperationState.Running(SetupStageProgress(3, 10)),
-            detached = false,
-            elapsedMonotonicMs = 5L,
-        )
-        assertFalse(withinBudget.isSettled)
+        // No settlement reason for a running in-screen stage: the wait keeps observing.
+        assertNull(settlementReasonFor(SetupOperationState.Running(SetupStageProgress(3, 10)), detached = false, admissionDurable = true))
+        assertTrue(attempt.stageObserved("sync"))
         // The budget is measured monotonically and consumed inclusively at the budget value.
         assertTrue(attempt.observationBudgetElapsed(budget))
     }
 
     @Test
-    fun budgetExpirySettlesButNeitherFailsNorCancelsTheOperation() {
+    fun budgetExpirySettlesTheStageButNeitherFailsNorCancelsTheOperation() {
         val running = SetupOperationState.Running(SetupStageProgress(3, 10))
         val attempt = foregroundAttempt(setOf("sync"), listOf("sync"), observationBudgetMs = 10L)
+            .settleStage("sync", ForegroundSettledReason.BUDGET_EXPIRED)
 
-        val expired = attempt.settledFor(running, detached = false, elapsedMonotonicMs = 60_000L)
-
-        assertEquals(ForegroundSettledReason.BUDGET_EXPIRED, expired.settledReason)
+        assertEquals(ForegroundSettledReason.BUDGET_EXPIRED, attempt.settlementOf("sync"))
+        assertFalse(attempt.stageObserved("sync"))
         // Busy work is never turned into a terminal outcome or a cancellation by elapsed time alone.
         assertTrue(running is SetupOperationState.Running)
         assertTrue(running.isPending)
         assertFalse(running.isTerminal)
-        assertEquals(SetupStageProgress(3, 10), (running as SetupOperationState.Running).progress)
-    }
-
-    @Test
-    fun budgetExpiryCannotMutateTheOriginalAttempt() {
-        val attempt = foregroundAttempt(setOf("sync"), listOf("sync"), observationBudgetMs = 10L)
-        attempt.settledFor(
-            state = SetupOperationState.Running(),
-            detached = false,
-            elapsedMonotonicMs = 60_000L,
-        )
-        // The attempt is immutable: settling produced a new value and left the original active.
-        assertTrue(attempt.isActive)
-        assertNull(attempt.settledReason)
     }
 
     @Test
     fun detachedStageSettlesOnceAdmittedAndNotBefore() {
-        val notAdmitted = foregroundAttempt(setOf("assets"), listOf("assets"))
-            .settledFor(state = SetupOperationState.NeverRun, detached = true, elapsedMonotonicMs = 0L)
-        assertFalse(notAdmitted.isSettled)
-
-        val running = foregroundAttempt(setOf("assets"), listOf("assets"))
-            .settledFor(
-                state = SetupOperationState.Running(SetupStageProgress(1, 4)),
+        assertEquals(
+            ForegroundSettledReason.DETACHED,
+            settlementReasonFor(
+                SetupOperationState.Running(SetupStageProgress(1, 4)),
                 detached = true,
-                elapsedMonotonicMs = 0L,
                 admissionDurable = true,
-            )
-        assertEquals(ForegroundSettledReason.DETACHED, running.settledReason)
+            ),
+        )
+        // Without a durable association there is no detached settlement — the wait keeps observing.
+        assertNull(
+            settlementReasonFor(SetupOperationState.Running(), detached = true, admissionDurable = false),
+        )
     }
 
     @Test
@@ -131,7 +110,9 @@ class ForegroundAttemptTest {
             registeredOrder = listOf("sync", "assets", "times"),
         ).continueLater()
 
-        assertEquals(ForegroundSettledReason.CONTINUE, attempt.settledReason)
+        assertTrue(attempt.explicitContinued)
+        assertTrue(attempt.isSettled)
+        assertFalse(attempt.stageObserved("sync"))
         // Merely leaving does not deselect the stages that had not started yet…
         assertEquals(setOf("sync", "assets", "times"), attempt.selected)
         // …and already-selected remaining stages are still admitted in registered order.
@@ -139,64 +120,71 @@ class ForegroundAttemptTest {
     }
 
     @Test
-    fun queuedSettlementStillAdmitsLaterIndependentStagesInOrder() {
+    fun anEarlierStageSettlingDoesNotStopALaterStageBeingObserved() {
         val attempt = foregroundAttempt(
             selected = setOf("sync", "assets", "times"),
             registeredOrder = listOf("sync", "assets", "times"),
-        ).settledFor(
-            state = SetupOperationState.Waiting("queued behind another poll"),
-            detached = false,
-            elapsedMonotonicMs = 0L,
-        )
+        ).settleStage("sync", ForegroundSettledReason.QUEUED)
 
-        assertEquals(ForegroundSettledReason.QUEUED, attempt.settledReason)
+        assertEquals(ForegroundSettledReason.QUEUED, attempt.settlementOf("sync"))
+        // The whole attempt is NOT settled: the later stages still owe their own foreground waits.
+        assertFalse(attempt.isSettled)
+        assertTrue(attempt.stageObserved("assets"))
+        assertTrue(attempt.stageObserved("times"))
         assertEquals(listOf("assets", "times"), attempt.remainingAdmissions(admitted = setOf("sync")))
     }
 
     @Test
-    fun firstSettlementWins() {
-        val attempt = foregroundAttempt(setOf("a"), listOf("a"))
-            .settledFor(
-                state = SetupOperationState.Waiting("queued"),
-                detached = false,
-                elapsedMonotonicMs = 0L,
-            )
-        val later = attempt.settledFor(
-            state = SetupOperationState.Succeeded(),
-            detached = false,
-            elapsedMonotonicMs = 0L,
+    fun laterStagesAreAdmittedInOrderAndEachStaysObservedUntilItSettles() {
+        val attempt = foregroundAttempt(
+            selected = setOf("sync", "assets", "times"),
+            registeredOrder = listOf("sync", "assets", "times"),
         )
-        assertEquals(ForegroundSettledReason.QUEUED, later.settledReason)
+            .settleStage("sync", ForegroundSettledReason.TERMINAL)
+            .settleStage("assets", ForegroundSettledReason.DETACHED)
+
+        assertFalse(attempt.isSettled)
+        assertTrue(attempt.stageObserved("times"))
+        // Late settlement of the last stage completes the whole attempt.
+        val done = attempt.settleStage("times", ForegroundSettledReason.BUDGET_EXPIRED)
+        assertTrue(done.isSettled)
+        assertFalse(done.stageObserved("times"))
+    }
+
+    @Test
+    fun firstSettlementWinsPerStage() {
+        val attempt = foregroundAttempt(setOf("a"), listOf("a"))
+            .settleStage("a", ForegroundSettledReason.QUEUED)
+        val later = attempt.settleStage("a", ForegroundSettledReason.TERMINAL)
+        assertEquals(ForegroundSettledReason.QUEUED, later.settlementOf("a"))
     }
 
     @Test
     fun detachedRunningWorkWithoutDurableAssociationDoesNotClaimDetachedAdmission() {
-        val attempt = foregroundAttempt(setOf("assets"), listOf("assets"))
-            .settledFor(SetupOperationState.Running(), detached = true, elapsedMonotonicMs = 0L)
-        assertFalse(attempt.isSettled)
+        assertNull(
+            settlementReasonFor(SetupOperationState.Running(), detached = true, admissionDurable = false),
+        )
     }
 
     @Test
     fun missingOperationSettlesWithExplicitRecoveryInsteadOfWaitingForBudget() {
-        val attempt = foregroundAttempt(setOf("sync"), listOf("sync"))
-            .settledFor(
+        assertEquals(
+            ForegroundSettledReason.RECOVERY_REQUIRED,
+            settlementReasonFor(
                 SetupOperationState.RecoveryRequired("Work no longer available"),
                 detached = false,
-                elapsedMonotonicMs = 0L,
-            )
-        assertEquals(ForegroundSettledReason.RECOVERY_REQUIRED, attempt.settledReason)
+                admissionDurable = false,
+            ),
+        )
     }
 
     @Test
     fun detachedTerminalWorkIsTerminalNotPendingDetachedAdmission() {
-        val attempt = foregroundAttempt(setOf("assets"), listOf("assets"))
-            .settledFor(
-                SetupOperationState.Succeeded(),
-                detached = true,
-                elapsedMonotonicMs = 0L,
-                admissionDurable = true,
-            )
-        assertEquals(ForegroundSettledReason.TERMINAL, attempt.settledReason)
+        // Terminal always wins over a detached-pending admission.
+        assertEquals(
+            ForegroundSettledReason.TERMINAL,
+            settlementReasonFor(SetupOperationState.Succeeded(), detached = true, admissionDurable = true),
+        )
     }
 
     @Test
