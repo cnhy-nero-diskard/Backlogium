@@ -28,4 +28,4 @@
 
 - [x] 5.1 Refine derived cards after functional actions work, using shared counts/rules and consistent artwork; verify hidden/empty cases, owned/shared examples, accessible labels, and large-font layout.
 - [x] 5.2 Exercise hearts, membership changes, derived lists, wishlist restrictions, and Library return in all densities on a device/emulator; record actual evidence and update affected screenshot baselines or justify unchanged goldens under repository rules.
-- [ ] 5.3 Run focused unit/migration/backup tests, debug build, relevant lint, strict OpenSpec validation, and diff whitespace checks; record exact results and any device/visual limitations without marking unperformed checks complete.
+- [x] 5.3 Run focused unit/migration/backup tests, debug build, relevant lint, strict OpenSpec validation, and diff whitespace checks; record exact results and any device/visual limitations without marking unperformed checks complete.

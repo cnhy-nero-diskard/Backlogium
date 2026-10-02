@@ -49,4 +49,19 @@ The connected run's original selector also contained an incorrect migration pack
 
 Logs are in `%TEMP%/backlogium-01-{backup-final,instrument-final,offline-migrations,migrations-final,final-checks,final-checks2,lint-final}.log`. JVM XML reports are under `app/build/test-results/testDebugUnitTest/` and `gamification/build/test-results/test/`; the connected report is under `app/build/outputs/androidTest-results/connected/debug/`.
 
-Final lint and golden verification results are recorded below when complete.
+## Final checks
+
+- `:app:assembleDebug` and `:app:assembleDebugAndroidTest` passed; the APKs were installed only on the emulator.
+- `:app:lintDebug` passed with **54 reported warnings**; the existing baseline filtered 2 errors, 34 warnings, and 3 hints. The ignored worktree SDK pointer initially triggered `PropertyEscape`; it was corrected to `sdk.dir=C\:/Users/cnhyn/AppData/Local/Android/Sdk`, and stale analysis/report outputs were refreshed with the command below. No lint baseline was changed.
+- `:app:verifyRoborazziDebug` passed **32 tests** (spike plus narrow/standard fixture classes) in 25 seconds, without rewriting tracked PNGs. This filtered run replaces the app JVM XML reports; the full-suite 1,834 count above was read from the preceding unfiltered run.
+- `python scripts/check_visual_baseline.py check --changed-file <temporary changed-path manifest>` passed against changes from `004a508f`.
+- Strict validation of this OpenSpec change and Git whitespace checks passed.
+
+```powershell
+.\gradlew.bat :app:lintAnalyzeDebug --rerun :app:lintReportDebug --rerun :app:lintDebug :gamification:test --no-daemon
+.\gradlew.bat :app:verifyRoborazziDebug --tests com.example.backlogium.ui.screenshot.RoborazziSpikeTest --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotNarrowTest --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotStandardTest --no-daemon
+```
+
+The final lint and golden logs are `%TEMP%/backlogium-01-lint-final.log` and `%TEMP%/backlogium-01-goldens-verify.log`. Emulator network settings were restored after offline acceptance. Gradle runs were kept sequential after an earlier overlap caused a transient generated-code race. That race was resolved by a successful sequential build.
+
+All 17 change tasks are complete. Separate planning changes `02-improve-game-detail` and `03-archive-deadline-collections` remain untouched. Spec sync and archive are outside this autoship invocation.
