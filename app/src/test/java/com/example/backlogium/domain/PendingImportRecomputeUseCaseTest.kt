@@ -6,6 +6,7 @@ import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.work.SteamSyncCoordinator
 import java.time.Instant
 import java.time.LocalDate
@@ -40,9 +41,16 @@ class PendingImportRecomputeUseCaseTest {
     private val steamId = "76561198000000001"
 
     @Before
-    fun clearSharedRequestStore() {
-        // Robolectric reuses the process, so the request DataStore file persists across tests.
-        runBlocking { DataStoreHistoryImportRequestStore(RuntimeEnvironment.getApplication()).clearAll() }
+    fun clearSharedRequestStoreAndSettings() {
+        // Shared-process isolation: clear the durable request bookkeeping AND the real
+        // SettingsDataStore's cloud-refiling state + rule config so no sibling cloud-guard fixture
+        // can leave reset() blocked or skew XP assertions.
+        runBlocking {
+            DataStoreHistoryImportRequestStore(RuntimeEnvironment.getApplication()).clearAll()
+            val settings = SettingsDataStore(RuntimeEnvironment.getApplication())
+            settings.clearCloudPresenceRefiling()
+            settings.setRuleConfig(RuleConfig())
+        }
     }
 
     private class Gateway(
@@ -59,9 +67,14 @@ class PendingImportRecomputeUseCaseTest {
      */
     private val managedAppScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
 
+    /** The most recent in-memory Room database built by [harness], closed at teardown. */
+    private var openRoom: BacklogiumDatabase? = null
+
     @org.junit.After
     fun tearDownManagedScope() {
         runBlocking { managedAppScope.coroutineContext[Job]!!.cancelAndJoin() }
+        openRoom?.close()
+        openRoom = null
     }
 
     private class Harness(
@@ -76,6 +89,7 @@ class PendingImportRecomputeUseCaseTest {
             RuntimeEnvironment.getApplication(),
             BacklogiumDatabase::class.java,
         ).allowMainThreadQueries().build()
+        openRoom = database
         val settings = SettingsDataStore(RuntimeEnvironment.getApplication())
         val marks = InMemoryProgressMarksStore(
             ProgressMarks(lastCelebratedLevel = 1, lastQuestCelebratedDate = null, initialized = true),

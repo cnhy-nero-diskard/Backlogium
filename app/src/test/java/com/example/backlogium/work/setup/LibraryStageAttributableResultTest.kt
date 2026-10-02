@@ -96,6 +96,30 @@ class LibraryStageAttributableResultTest {
     @Before
     fun setUp() {
         context = RuntimeEnvironment.getApplication()
+        // Install this fixture's WorkManager BEFORE any scheduler/registry captures getInstance.
+        // The preceding characterization fixture intentionally closes its WorkManager database.
+        workerExecutor = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "attributable-library-worker").apply { isDaemon = true }
+        }
+        WorkManagerTestInitHelper.initializeTestWorkManager(
+            context,
+            Configuration.Builder()
+                .setExecutor(workerExecutor)
+                .setTaskExecutor(SynchronousExecutor())
+                .setWorkerFactory(object : WorkerFactory() {
+                    override fun createWorker(
+                        appContext: Context,
+                        workerClassName: String,
+                        workerParameters: WorkerParameters,
+                    ): ListenableWorker = when (workerClassName) {
+                        SteamSyncWorker::class.java.name -> AttributableSyncDouble(appContext, workerParameters)
+                        else -> error("unexpected worker for attributable-library test: $workerClassName")
+                    }
+                })
+                .build(),
+            WorkManagerTestInitHelper.ExecutorsMode.PRESERVE_EXECUTORS,
+        )
+        driver = checkNotNull(WorkManagerTestInitHelper.getTestDriver(context))
         database = Room.inMemoryDatabaseBuilder(context, BacklogiumDatabase::class.java)
             .allowMainThreadQueries().build()
         evidenceDao = database.libraryPollEvidenceDao()
@@ -144,29 +168,6 @@ class LibraryStageAttributableResultTest {
         val scheduler = SyncScheduler(context, schedulerScope)
         registry = SetupStageRegistry(context, scheduler, profile, credentials)
 
-        workerExecutor = Executors.newSingleThreadExecutor { runnable ->
-            Thread(runnable, "attributable-library-worker").apply { isDaemon = true }
-        }
-        WorkManagerTestInitHelper.initializeTestWorkManager(
-            context,
-            Configuration.Builder()
-                .setExecutor(workerExecutor)
-                .setTaskExecutor(SynchronousExecutor())
-                .setWorkerFactory(object : WorkerFactory() {
-                    override fun createWorker(
-                        appContext: Context,
-                        workerClassName: String,
-                        workerParameters: WorkerParameters,
-                    ): ListenableWorker = when (workerClassName) {
-                        SteamSyncWorker::class.java.name ->
-                            AttributableSyncDouble(appContext, workerParameters)
-                        else -> error("unexpected worker for attributable-library test: $workerClassName")
-                    }
-                })
-                .build(),
-            WorkManagerTestInitHelper.ExecutorsMode.PRESERVE_EXECUTORS,
-        )
-        driver = checkNotNull(WorkManagerTestInitHelper.getTestDriver(context))
     }
 
     @After

@@ -287,6 +287,9 @@ class HistoryImportCoordinator @Inject constructor(
             // candidate) is the authorization to void its exact request id even when the replay had
             // nothing left to reset — the old consent can never re-import.
             requestStore.recordVoidedImport(voidAccount, voidId)
+            if (activeConsent?.steamId == voidAccount && activeConsent.requestId == voidId) {
+                requestStore.clear()
+            }
             requestStore.clearResetIntent()
         } else {
             // Blocked (cloud transfer / account change) or nothing authorized to void: the intent is

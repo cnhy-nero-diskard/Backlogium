@@ -1,7 +1,6 @@
 # Acceptance coverage — stabilize-first-run-setup
 
-File scope: **this file only** (`openspec/changes/stabilize-first-run-setup/acceptance-coverage.md`).
-No production or test edits, no build, no staging, no commits. Test classes referenced live under
+Test classes referenced live under
 `app/src/test/java/com/example/backlogium/...` (package `work`, `work.setup`, `data.*`, `domain`,
 `ui.*`). Method names are copied from the current source.
 
@@ -10,10 +9,29 @@ either a concrete existing `TestClass#method` or a named manual check (`M1`–`M
 named manual acceptance check where no automated test exists, so a manual row is an acceptance
 assignment, **not** a "blocked host" gap.
 
-## Status legend
+## Verified host checkpoint
 
-- **Aut — pending verification** — a concrete existing test is mapped; initial status is *pending
-  verification*, **not** passed. Nothing below claims a pass.
+The initial mapping statuses below are retained as a planning snapshot; **all automated mappings
+are now verified** by `backlogium-coherent-full3.log`: **2,089 app tests across 252 suites, zero
+failures/errors/skips**. The separate gamification rerun passed **53 tests**. Android instrumented
+sources compiled and the debug APK assembled, but instrumented/device tests were **not executed**.
+Roborazzi recorded and verified **46 captures**, including all **16 new recovery goldens** in
+narrow/standard and light/dark variants; the existing 30 goldens remained byte-identical.
+
+Full app reports are preserved under the approved temporary `backlogium-coherent-full3-reports`
+directory; the separate visual/gamification reports are under `backlogium-coherent-visual-verified`.
+The earlier failed/partial runs are not counted as passes. M1–M7 remain **not run**: no connected
+device. Tasks **1.2 and 8.3 remain unchecked**, including real live-monitor/post-play concurrency.
+
+The final pre-staging rerun, `backlogium-coherent-final-checkpoint.log`, again passed all **2,089
+app tests**, with build/instrumented-source compilation successful. Its full XMLs are preserved in
+`backlogium-coherent-final-checkpoint-reports`. The gamification task was up-to-date on this rerun;
+the **53-test executed rerun** remains the separate evidence cited above. ADB confirmed no device.
+
+## Initial mapping status legend (superseded by the verified host checkpoint above)
+
+- **Aut — pending verification** — the original mapping status, retained below for traceability.
+  The full host run above now verifies these tests; it does not verify their device supplements.
 - **M# — not run — no connected device** — named manual acceptance check; not executed (no ADB
   device available to this session).
 - **Aut + M#** — the automated test covers the host-side/persistence boundary; the real-device
@@ -69,7 +87,7 @@ Task-level fixture (2.4 crash-after-raw-commit evidence, no dedicated scenario):
 | # | #### Scenario | Concrete test class#method / manual check | Status |
 |---|---|---|---|
 | 1 | Importing history | `domain.PlaytimeBackfillUseCaseImportTest#freshImportFreezesOffsetsFlagAndMarkerThenClearsOnSuccessfulRecompute` | Aut — pending verification |
-| 2 | History not counted by default | `domain.PlaytimeBackfillUseCaseImportTest#resetClearsOffsetsAndFlagAndPreservesSessionsAndStreaks` — closest existing test of the invariant (no offsets ⇒ XP is tracked-only, 30 XP); **no dedicated fresh-install test found** | Aut — pending verification |
+| 2 | History not counted by default | `work.SteamSyncLibraryEvidenceWorkerTest#a first library baseline with lifetime playtime never implies history consent or XP` — real first poll with lifetime counters, no offsets/sessions/consent or XP | Aut — verified |
 | 3 | Baseline is unavailable | `domain.PlaytimeBackfillUseCaseImportTest#noBaselineWritesNothing` (+ `#baselineForAnotherAccountIsNotReadiness`) | Aut — pending verification |
 | 4 | Confirmed empty library | `domain.PlaytimeBackfillUseCaseImportTest#confirmedEmptyLibraryImportsZeroChanges` | Aut — pending verification |
 | 5 | Steam counters have no dates | `domain.PlaytimeBackfillUseCaseImportTest#manualSharedAndHiddenEvidenceAreUntouched` (asserts "No dated session is invented from lifetime counters") | Aut — pending verification |
@@ -174,7 +192,7 @@ Task 5.4 preservation fixtures (no dedicated scenario): `domain.PlaytimeBackfill
 | 7 | Edit selections after settlement | `ui.setup.SetupViewModelSelectionTest#foregroundRunLocksSelectionButSettlementAllowsEditingAgain` (+ `ui.onboarding.OnboardingSetupRecoveryTest#editedSelectionAfterSettlementOffersTheNextStartWithoutErasingTheResult`) | Aut — pending verification |
 | 8 | Work continues after onboarding | `work.setup.SetupCoordinatorTest#reconcileResumesEachPendingAssociationAndAdmitsRemainingWithoutDuplicates` (+ `#reconcileNeverReopensAnExplicitlyDismissedJourney`; real cold restart → M4) | Aut + M4 |
 | 9 | Import presented in Settings | `ui.settings.HistoryImportCardTest#deferredChoiceStillOffersImportOnlyAfterExplicitConfirmation` (Data & privacy control retained, confirmation + one-time behavior) | Aut — pending verification |
-| 10 | Import not presented on Home | **M7(d)** — see procedures (parent is adding an actual Compose Home semantics test; until it lands this is manual) | M7 — not run (no connected device) |
+| 10 | Import not presented on Home | `ui.screenshot.MainScreenScreenshotNarrowTest#homePopulatedLightBaseline` — renders the real Home content and asserts import/reset controls absent; device navigation supplement M7(d) | Aut — verified + M7 |
 | 11 | History was skipped during onboarding | `ui.settings.HistoryImportCardTest#deferredChoiceStillOffersImportOnlyAfterExplicitConfirmation` | Aut — pending verification |
 | 12 | Baseline needed | `ui.settings.HistoryImportCardTest#missingBaselineDoesNotCreateConsentAndOffersSetupRecovery` | Aut — pending verification |
 | 13 | Raw import awaits recomputation | `ui.settings.HistoryImportCardTest#rawCommittedPendingDoesNotClaimFullCompletionAndResumesExistingRequest` (+ `ui.screenshot.SetupRecoveryScreenshotTest` renders the recovery-pending card) | Aut — pending verification |
@@ -248,8 +266,8 @@ idempotence requirement.
   credentials configured: it explains Steam must be connected first and admits no stage work. (c)
   Re-edit credentials on an already-configured install: neither setup nor the history decision is
   re-presented unprompted. (d) On Home, verify the Steam history import and its reset are not
-  presented anywhere. (Parent is adding an actual Compose Home semantics test for (d); until it
-  lands that check is manual.) Each exit is truthful (never-run vs pending vs terminal) and
+  presented anywhere. The real Home fixture also asserts absence on the host; this checks device
+  navigation. Each exit is truthful (never-run vs pending vs terminal) and
   idempotent (re-entering does not mutate records).
 
 ---
@@ -257,34 +275,34 @@ idempotence requirement.
 ## Task 8 rows
 
 - **8.1 — verification sweep.** Every scenario above is mapped (95/95, 0 unmapped) to either an
-  existing automated test or a named manual check (M1–M7). The mapped automated tests must be run
-  via the 8.1 command (plus focused Room-migration / WorkManager / UI suites); initial status is
-  **pending verification**, not passed. No test is described as "blocked host" — manual coverage is
+  existing automated test or a named manual check (M1–M7). The full 8.1 command and host migration,
+  WorkManager and UI tests passed as recorded above. No test is described as "blocked host" — manual coverage is
   the assigned acceptance path where automation does not exist.
 - **8.2 — Roborazzi goldens.** `ui.screenshot.SetupRecoveryScreenshotTest` /
   `MainScreenScreenshotTest` re-recording and stale-golden removal follow
   `docs/visual-regression-screenshots.md`; baseline changes must ship with the UI change. Status:
-  pending.
+  **verified**, 46/46 captures. Source/copy and the recovery fixture inputs are also covered by
+  the baseline-currency gate and CI screenshot filters.
 - **8.3 — device acceptance: BLOCKED.** No ADB device is connected to this session, so the
   on-device build exercise (manual/periodic sync, active play/live monitoring, airplane-mode
   transitions, retry backoff, denied notifications, process death before/after Continue and import
   commit) cannot be run. This is an explicit blocker for 8.3 only; the named manual checks M1–M7
   are the ready-to-run device script for it once a device is attached.
-- **8.4 — strict validation and diff review.** Pending; after 8.1–8.3 evidence, `openspec validate
-  --strict`, F06/F32 traceability against the overlap map, and the no-#159/#175 / no-cloud-fetch /
-  no-extra-bundling checks apply.
+- **8.4 — strict validation and diff review.** Verified: `openspec validate stabilize-first-run-setup
+  --strict` passes. F06/F32 and overlap-map review found no achievement-watch work, new cloud
+  dependency or main-spec edits. Unmet device criteria remain explicitly identified; #158 stays open.
 
 ## Counts and unmapped
 
-| Capability (delta spec) | Scenarios | Automated row (pending verification) | Manual row (M1–M7) |
+| Capability (delta spec) | Scenarios | Automated row (host verified) | Manual-only row (M1–M7) |
 |---|---|---|---|
 | `steam-sync` | 11 | 11 | 0 |
 | `playtime-backfill` | 16 | 16 | 0 |
 | `onboarding-credentials` | 15 | 15 | 0 |
 | `first-run-setup` | 39 | 38 (all but #9) | 1 (#9 → M3) |
-| `app-settings` | 14 | 12 (all but #1, #10) | 2 (#1 → M7, #10 → M7) |
-| **Total** | **95** | **92** | **3 manual-only rows; many automated rows carry an M# real-device supplement** |
+| `app-settings` | 14 | 13 (all but #1) | 1 (#1 → M7) |
+| **Total** | **95** | **93** | **2 manual-only rows; many automated rows carry an M# real-device supplement** |
 
 - **Unmapped scenarios: 0** (required: 0).
-- The 92 automated rows are all **pending verification** — the previously verified 55-test run is
-  historical and is not a new pass for this table.
+- The 93 automated rows are **host verified** by the full app and screenshot runs recorded above.
+  The previously verified 55-test run remains historical, not the evidence for this checkpoint.

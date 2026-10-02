@@ -9,6 +9,7 @@ import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.work.SteamSyncCoordinator
 import java.time.Instant
 import java.time.LocalDate
@@ -16,12 +17,15 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -37,6 +41,28 @@ import org.robolectric.RuntimeEnvironment
 class PlaytimeBackfillUseCaseImportTest {
 
     private val steamId = "76561198000000001"
+
+    /** The most recent in-memory Room database built by [harness], closed at teardown. */
+    private var openRoom: BacklogiumDatabase? = null
+
+    @Before
+    fun baselineSharedSettingsAndTrackRoom() {
+        // Shared-process isolation: a prior cloud-guard fixture may have left the refiling applied
+        // flag/receipt in the single real SettingsDataStore, and a modified RuleConfig would skew XP
+        // assertions. Restore a clean baseline WITHOUT weakening the cloud-guard test itself (it
+        // explicitly sets the flags again and still asserts BLOCKED).
+        runBlocking {
+            val settings = SettingsDataStore(RuntimeEnvironment.getApplication())
+            settings.clearCloudPresenceRefiling()
+            settings.setRuleConfig(RuleConfig())
+        }
+    }
+
+    @After
+    fun closeTrackedRoom() {
+        openRoom?.close()
+        openRoom = null
+    }
 
     private class Gateway(
         private val active: String?,
@@ -119,6 +145,7 @@ class PlaytimeBackfillUseCaseImportTest {
             RuntimeEnvironment.getApplication(),
             BacklogiumDatabase::class.java,
         ).allowMainThreadQueries().build()
+        openRoom = database
         val settings = SettingsDataStore(RuntimeEnvironment.getApplication())
         val marks = InMemoryProgressMarksStore()
         val updater = GamificationUpdater(

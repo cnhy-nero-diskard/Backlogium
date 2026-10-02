@@ -8,6 +8,7 @@ import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.work.SteamSyncCoordinator
 import java.time.Instant
 import java.time.LocalDate
@@ -44,9 +45,17 @@ class HistoryImportCoordinatorTest {
     private val steamId = "76561198000000001"
 
     @Before
-    fun clearSharedRequestStore() {
-        // Robolectric reuses the process, so the request DataStore file persists across tests.
-        runBlocking { store().clearAll() }
+    fun clearSharedRequestStoreAndSettings() {
+        // Shared-process isolation: clear the durable request bookkeeping AND the real
+        // SettingsDataStore's cloud-refiling state + rule config, so a cloud-guard fixture in this
+        // or another class can never leave reset() blocked for a sibling test. The cloud-guard test
+        // itself re-sets the flags and still asserts BLOCKED.
+        runBlocking {
+            store().clearAll()
+            val settings = SettingsDataStore(RuntimeEnvironment.getApplication())
+            settings.clearCloudPresenceRefiling()
+            settings.setRuleConfig(RuleConfig())
+        }
     }
 
     private fun store() = DataStoreHistoryImportRequestStore(RuntimeEnvironment.getApplication())

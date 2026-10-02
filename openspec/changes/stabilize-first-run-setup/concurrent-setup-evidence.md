@@ -238,7 +238,51 @@ came from the earlier five-suite run, not this compilation pass. They must not b
 as verification of the new production evidence recorder, real-worker fixtures, import,
 or durable setup reconciliation.
 
-Review also identified exact-admission, callback-fencing, foreground-settlement, typed import
-admission, and mixed backup/import provenance gaps in the drafts. Those tasks remain unchecked
-until their fixes and focused tests are verified. No worker-double result is being substituted
-for active live-monitor or device acceptance.
+Review then identified exact-admission, callback-fencing, foreground-settlement, typed import
+admission and mixed backup/import provenance gaps. They stayed unchecked during the fix/verification
+passes; the verified integrated checkpoint below supersedes that draft status.
+
+## 11. Verified integrated host checkpoint
+
+After fixing the reviewed admission, callback, phase and reset-consent gaps, the integrated run
+`backlogium-coherent-full3.log` passed **2,089 app tests (252 suites; 0 failures/errors/skips)**.
+The separate gamification rerun passed **53 tests**. `compileDebugAndroidTestKotlin` and
+`assembleDebug` succeeded; this is compilation/build evidence, **not instrumented execution**.
+
+The real manual/periodic worker fixture now uses a genuine two-fetch async barrier and the shared
+production sync/derived coordinators. Both real `SteamSyncWorker` bodies commit their own poll
+evidence against Room while one 100→120-minute increase produces **20 tracked minutes exactly
+once**. Steam responses are fake; this does not exercise a real Steam account or Presence service.
+The original #158 cascade remains unreproduced; task **1.2 stays unchecked**.
+
+Host fixtures now use a neutral `HostUnitTestApplication` with on-demand WorkManager configuration,
+not the production Hilt application's startup side effects. The production startup graph compiles;
+its coordinators are tested directly. This prevents unrelated host tests from triggering encrypted
+developer-credential seeding or network/recovery work. Settings fixtures reset their own cloud
+transfer flags and rule configuration; no cloud reset safeguard was disabled in production.
+
+Roborazzi recorded and verified **46 captures**, including **16 new recovery states**. The existing
+30 goldens remained byte-identical. Narrow/standard, light/dark captures were reviewed for readable
+recovery controls, truthful pending copy and explicit history exits. These are Robolectric renders,
+not device screenshots. Full app XMLs are preserved under
+`C:\Users\cnhyn\AppData\Local\Temp\opencode\backlogium-coherent-full3-reports\`; visual and freshly
+rerun gamification XMLs are under `backlogium-coherent-visual-verified\` in that same temporary root.
+
+`acceptance-coverage.md` maps all **95 delta scenarios** to concrete host tests or named device
+checks M1–M7. ADB still has no connected device: **8.3 remains blocked and unchecked**. Do not close
+#158 or archive this change on host evidence alone.
+
+### Final scope review
+
+- F06 setup recovery: exact NEW/KEEP identity, per-stage states, 120-second/Continue settlement,
+  durable reconciliation and non-destructive recovery are covered by host tests.
+- F32 history decision: durable account/request phases, explicit optional consent/exit, readiness,
+  transactional frozen offsets and administrative recomputation are covered by host tests.
+- The overlap map's session authors, presence placement, post-play schedule and cloud re-file/
+  reversal protocols remain unchanged; no achievement-watch work, new cloud dependency, main-spec
+  edits, release/PR actions or issue closure are bundled.
+- Explicit backup aggregate/offset merging and reset's incumbent clear-all-offset semantics remain
+  unchanged. The tightened **import snapshot** preserves existing shared→owned converted credit;
+  this change does not introduce a new conversion-provenance/reset redesign.
+
+No worker-double result is being substituted for active live-monitor or device acceptance.
