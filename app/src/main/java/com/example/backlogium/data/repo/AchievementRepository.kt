@@ -2,6 +2,8 @@ package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.achievement.AchievementFreshness
 import com.example.backlogium.data.achievement.AchievementMerge
+import com.example.backlogium.data.backup.DatabaseTransactionScope
+import com.example.backlogium.data.backup.PassThroughTransactionScope
 import com.example.backlogium.data.local.dao.AchievementCounts
 import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.AchievementRarity
@@ -97,7 +99,10 @@ data class AchievementLibraryFetch(
 /** Outcome of [AchievementRepository.refreshOne] — a tier-independent, single-game fetch. */
 sealed interface SingleGameRefresh {
     /** Steam returned player achievement data (possibly empty) and it was persisted. */
-    data class Persisted(val total: Int, val unlocked: Int) : SingleGameRefresh
+    data class Persisted(val total: Int, val unlocked: Int, val changed: Boolean = false) : SingleGameRefresh
+
+    /** The initiating account or game is no longer eligible at the commit boundary. */
+    data object Discarded : SingleGameRefresh
 
     /** Steam answered but reported no usable player data (private profile, no stats). */
     data object NoUsableData : SingleGameRefresh
@@ -133,6 +138,7 @@ class AchievementRepository @Inject constructor(
     private val gameDao: GameDao,
     private val hiddenGamesRepository: HiddenGamesRepository,
     private val time: TimeProvider,
+    private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
 ) {
 
     /** Serializes merge application so a stale response cannot interleave with a newer one. */
@@ -305,8 +311,10 @@ class AchievementRepository @Inject constructor(
 
     /** Apply already-fetched achievement payloads. The caller may surround this with a Room transaction. */
     suspend fun applyRefreshes(refreshes: List<AchievementRefresh>) {
-        mergeMutex.withLock {
-            for (refresh in refreshes) applyRefresh(refresh)
+        transaction.run {
+            mergeMutex.withLock {
+                for (refresh in refreshes) applyRefresh(refresh)
+            }
         }
     }
 
@@ -327,6 +335,7 @@ class AchievementRepository @Inject constructor(
         steamId: String,
         appId: Long,
         scope: SyncRunRecorder.RunScope? = null,
+        commit: suspend (suspend () -> SingleGameRefresh.Persisted) -> SingleGameRefresh = { it() },
     ): SingleGameRefresh {
         if (hiddenGamesRepository.isHidden(appId)) return SingleGameRefresh.NoUsableData
         val metadata = gameAchievementSyncDao.get(appId)
@@ -344,12 +353,23 @@ class AchievementRepository @Inject constructor(
             return SingleGameRefresh.Unavailable
         } ?: return SingleGameRefresh.NoUsableData
 
-        mergeMutex.withLock { applyRefresh(refresh) }
-        val achievements = refresh.achievements.orEmpty()
-        return SingleGameRefresh.Persisted(
-            total = achievements.size,
-            unlocked = achievements.count { it.achieved != 0 },
-        )
+        return commit {
+            transaction.run {
+                mergeMutex.withLock {
+                    val before = achievementDao.getForGame(appId).canonicalContent()
+                    val beforeHasAchievements = gameAchievementSyncDao.get(appId)?.hasAchievements
+                    applyRefresh(refresh)
+                    val after = achievementDao.getForGame(appId)
+                    val visible = after.filterNot { it.retired }
+                    SingleGameRefresh.Persisted(
+                        total = visible.size,
+                        unlocked = visible.count { it.unlocked },
+                        changed = before != after.canonicalContent() ||
+                            beforeHasAchievements != gameAchievementSyncDao.get(appId)?.hasAchievements,
+                    )
+                }
+            }
+        }
     }
 
     data class ReconciliationResult(
@@ -689,6 +709,9 @@ class AchievementRepository @Inject constructor(
         const val SCHEMA_WINDOW_MILLIS = 30L * 24 * 60 * 60 * 1000
     }
 }
+
+/** Compare committed content, including schema/tombstones, excluding freshness timestamps. */
+private fun List<Achievement>.canonicalContent() = map { it.copy(fetchedAt = 0) }.sortedBy { it.apiName }
 
 private fun AchievementCounts.toDomain() = AchievementCountSummary(
     appId = appId,

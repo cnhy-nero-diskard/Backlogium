@@ -13,3 +13,11 @@
 - Focused AchievementSortTest, AchievementRowMappingTest, DetailVisitStateTest and RarityStanding tests passed; `:app:assembleDebug` passed. Log: `%TEMP%/backlogium-02-filters.log`.
 - Saved visit tokens retain independent sort/filter through recreation, including retained collection ViewModels, and reset both for a new presentation. Full summary totals and completion do not depend on filtered rows.
 - Mixed date/current-percentage sorting uses display name and API identity ties. Snapshot-only rows sort with unknown current percentage while retaining earned tier/XP and its labeled observation. Filtered empty states distinguish no locked/unlocked rows from missing cached data.
+
+## Explicit refresh checkpoint
+
+- 39 focused tests passed across DetailAchievementRefreshTest, AchievementRefreshControllerTest, AchievementRepositoryTest, AccountChangeRecoveryTest and GameDetailRefreshTest. `:app:assembleDebug` passed. Log: `%TEMP%/backlogium-02-refresh.log`.
+- Real Room gated-response tests cover missing credentials, pending reset before/during fetch, A-to-B-to-A reset, hide/removal, same-account key rotation, unusable/private and transport outcomes, shared in-flight requests and serialized commits.
+- Canonical committed-content comparison detects equal-count schema/rate changes and ignores timestamps. Recompute uses the existing owner; first-unlock snapshots/XP are retained and no sessions are created. Retry also finishes a derived write after a raw-commit failure.
+- Presentation-controller tests cover repeated tap suppression, retry, leaving, switching game/visit and a response that ignores cancellation. Player-count refresh remains independent.
+- The first coalescing test run had a test-gate scheduling race; it now waits for the second caller's metadata read before releasing the shared fetch. The corrected run passed.

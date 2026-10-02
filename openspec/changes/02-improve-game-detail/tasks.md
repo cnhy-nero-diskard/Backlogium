@@ -11,10 +11,10 @@
 
 ## 3. Safe Explicit Achievement Refresh
 
-- [ ] 3.1 Add the domain per-game refresh action over the common coordinated fetch/merge path; verify repeated taps and overlap with sync coalesce/serialize without a whole-library or playtime request.
-- [ ] 3.2 Fence the commit by account/reset generation and current game eligibility; verify pending account change, A-to-B-to-A transition, missing credentials, hide/removal during fetch, and same-account key rotation.
-- [ ] 3.3 Derive updated/no-change from canonical committed content and integrate owned recompute; verify equal-count content changes, freshness-only changes, first-unlock rarity preservation, and no duplicated progression.
-- [ ] 3.4 Wire separate pending/success/unusable/failure outcomes with retry and last-good content; verify changing games or leaving detail cannot publish another game's stale action state and player-count pull remains independent.
+- [x] 3.1 Add the domain per-game refresh action over the common coordinated fetch/merge path; verify repeated taps and overlap with sync coalesce/serialize without a whole-library or playtime request.
+- [x] 3.2 Fence the commit by account/reset generation and current game eligibility; verify pending account change, A-to-B-to-A transition, missing credentials, hide/removal during fetch, and same-account key rotation.
+- [x] 3.3 Derive updated/no-change from canonical committed content and integrate owned recompute; verify equal-count content changes, freshness-only changes, first-unlock rarity preservation, and no duplicated progression.
+- [x] 3.4 Wire separate pending/success/unusable/failure outcomes with retry and last-good content; verify changing games or leaving detail cannot publish another game's stale action state and player-count pull remains independent.
 
 ## 4. Artwork Selection and Backup
 

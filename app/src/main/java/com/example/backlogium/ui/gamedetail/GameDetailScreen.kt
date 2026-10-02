@@ -77,6 +77,7 @@ import coil.compose.SubcomposeAsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest
 import com.example.backlogium.data.remote.SteamIconMapper
+import com.example.backlogium.domain.AchievementRefreshOutcome
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.gamification.RarityStanding
@@ -158,7 +159,7 @@ fun GameDetailScreen(
     }
 
     DisposableEffect(viewModel) {
-        onDispose { viewModel.stopPolling() }
+        onDispose { viewModel.endPresentation() }
     }
 
     state.hideEffect?.let { effect ->
@@ -257,6 +258,7 @@ private fun GameDetailList(
         if (state.allUnlocked) {
             item { GameCompletedBanner() }
         }
+        item { AchievementRefreshControl(state.achievementRefresh, viewModel::refreshAchievements) }
         if (!state.loading && state.summary.achievementsTotal == 0) {
             item { NoAchievementsNotice() }
         } else if (state.summary.achievementsTotal > 0) {
@@ -833,6 +835,28 @@ private fun HltbLengths(summary: GameSummaryUi) {
  * Sort lens for the achievement list. Transient by design — a lens, not a preference — so it resets
  * to date-achieved on the next visit rather than costing a persisted key and a settings surface.
  */
+@Composable
+internal fun AchievementRefreshControl(state: AchievementRefreshActionState, onRefresh: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+        Text("Achievements", style = MaterialTheme.typography.titleMedium)
+        TextButton(onClick = onRefresh, enabled = !state.pending) {
+            Text(if (state.pending) "Refreshing achievements…" else if (state.outcome in listOf(
+                AchievementRefreshOutcome.FAILED, AchievementRefreshOutcome.NO_USABLE_DATA,
+            )) "Retry achievement refresh" else "Refresh achievements")
+        }
+        state.outcome?.let { outcome ->
+            Text(when (outcome) {
+                AchievementRefreshOutcome.UPDATED -> "Achievements updated."
+                AchievementRefreshOutcome.NO_CHANGE -> "Achievements are up to date. No changes."
+                AchievementRefreshOutcome.NO_USABLE_DATA -> "Steam returned no usable achievement data. Check your profile privacy or retry. Cached achievements are retained."
+                AchievementRefreshOutcome.FAILED -> "Could not refresh achievements. Check your connection and retry. Cached achievements are retained."
+                AchievementRefreshOutcome.NEEDS_CREDENTIALS -> "Configure Steam credentials in Settings to refresh achievements."
+                AchievementRefreshOutcome.DISCARDED -> "Account or game changed. Reopen this game to refresh."
+            }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 internal fun AchievementFilterControl(selected: AchievementFilter, onSelect: (AchievementFilter) -> Unit) {

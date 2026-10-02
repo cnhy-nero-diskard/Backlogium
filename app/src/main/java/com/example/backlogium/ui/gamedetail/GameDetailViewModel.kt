@@ -20,6 +20,7 @@ import com.example.backlogium.domain.VisibilityChangeEffect
 import com.example.backlogium.domain.GameXpInput
 import com.example.backlogium.domain.LibraryXp
 import com.example.backlogium.domain.SetSharedGamePlaytimeUseCase
+import com.example.backlogium.domain.RefreshGameAchievementsUseCase
 import com.example.backlogium.gamification.AchievementInput
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RarityStanding
@@ -189,6 +190,7 @@ data class GameDetailUiState(
     val sort: AchievementSort = AchievementSort.DATE_ACHIEVED,
     val filter: AchievementFilter = AchievementFilter.ALL,
     val isRefreshingPlayerCount: Boolean = false,
+    val achievementRefresh: AchievementRefreshActionState = AchievementRefreshActionState(),
 ) {
     /** True once every known achievement for this game is unlocked (100% completion). */
     val allUnlocked: Boolean
@@ -213,6 +215,7 @@ class GameDetailViewModel @Inject constructor(
     cloudPresence: CloudPresenceRepository,
     private val hiddenGamesRepository: HiddenGamesRepository,
     private val gameVisibility: GameVisibilityUseCase,
+    refreshAchievements: RefreshGameAchievementsUseCase,
 ) : ViewModel() {
 
     private val appIdState = MutableStateFlow<Long?>(savedStateHandle["appId"])
@@ -224,6 +227,7 @@ class GameDetailViewModel @Inject constructor(
 
     /** Transient: a lens on the list, reset every visit rather than persisted as a preference. */
     private val visit = DetailVisitState(savedStateHandle)
+    private val achievementAction = AchievementRefreshController(viewModelScope, refreshAchievements::invoke)
 
     /**
      * Polled every 30 seconds while this screen is open, not part of [content] — [content]
@@ -292,14 +296,15 @@ class GameDetailViewModel @Inject constructor(
     private val hideState = combine(hidePreviewing, hideEffect) { previewing, effect ->
         previewing to effect
     }
+    private val actionState = combine(hideState, achievementAction.state) { hide, refresh -> hide to refresh }
 
     val uiState: StateFlow<GameDetailUiState> = combine(
         content,
         visit.lens,
         activePlayers,
         refreshingPlayerCount,
-        hideState,
-    ) { content, lens, activePlayers, isRefreshingPlayerCount, hide ->
+        actionState,
+    ) { content, lens, activePlayers, isRefreshingPlayerCount, actions ->
         val rows = content.achievements.map { it.toUi(content.config) }
         GameDetailUiState(
             loading = false,
@@ -311,8 +316,9 @@ class GameDetailViewModel @Inject constructor(
             sort = lens.sort,
             filter = lens.filter,
             isRefreshingPlayerCount = isRefreshingPlayerCount,
-            hidePreviewing = hide.first,
-            hideEffect = hide.second,
+            hidePreviewing = actions.first.first,
+            hideEffect = actions.first.second,
+            achievementRefresh = actions.second,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -375,7 +381,17 @@ class GameDetailViewModel @Inject constructor(
     }
 
     fun setFilter(value: AchievementFilter) = visit.setFilter(value)
-    internal fun beginVisit(token: String) = visit.open(token)
+    internal fun beginVisit(token: String) {
+        visit.open(token)
+        appIdState.value?.let { achievementAction.show(it, token) }
+    }
+
+    fun refreshAchievements() = achievementAction.refresh()
+
+    internal fun endPresentation() {
+        stopPolling()
+        achievementAction.leave()
+    }
 
     /**
      * Remove a family-shared game and record the exclusion, so further play does not re-admit it.

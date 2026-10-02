@@ -358,6 +358,7 @@ class FamilySharedGameRepository @Inject constructor(
             is SingleGameRefresh.Persisted -> PlayerDataProbe.Returned(refresh.total, refresh.unlocked)
             SingleGameRefresh.NoUsableData -> PlayerDataProbe.NoData
             SingleGameRefresh.Unavailable -> PlayerDataProbe.Unavailable
+            SingleGameRefresh.Discarded -> PlayerDataProbe.Unavailable
         }
 
     private suspend fun clearCandidateIfCurrent(appId: Long) {
