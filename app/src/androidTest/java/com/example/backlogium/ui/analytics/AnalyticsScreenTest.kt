@@ -6,6 +6,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -55,7 +56,8 @@ class AnalyticsScreenTest {
             .performClick()
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("Game X").performScrollTo().assertIsDisplayed()
+        // The inspected-day list precedes the period-wide most-played list with the same title.
+        composeRule.onAllNodesWithText("Game X")[0].performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Games played").performScrollTo().assertIsDisplayed()
 
         composeRule.onNodeWithTag(TAG_ANALYTICS_NEXT_DAY)

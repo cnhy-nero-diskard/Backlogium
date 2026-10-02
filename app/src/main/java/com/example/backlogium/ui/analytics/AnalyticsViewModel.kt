@@ -121,10 +121,10 @@ sealed interface AnalyticsHeadline {
         val changeMinutes: Int get() = currentMinutes - previousMinutes
     }
 
-    data class LeadingGame(
-        val gameName: String,
-        val minutes: Int,
-    ) : AnalyticsHeadline
+    data class LeadingGame(val game: AnalyticsGame) : AnalyticsHeadline {
+        val gameName: String get() = game.name
+        val minutes: Int get() = game.minutes
+    }
 
     data class ActiveDays(
         val activeDays: Int,
@@ -148,10 +148,7 @@ fun deriveAnalyticsHeadline(
         )
     }
     if (leadingGame != null) {
-        return AnalyticsHeadline.LeadingGame(
-            gameName = leadingGame.name,
-            minutes = leadingGame.minutes,
-        )
+        return AnalyticsHeadline.LeadingGame(leadingGame)
     }
     return AnalyticsHeadline.ActiveDays(
         activeDays = activeDays,
@@ -620,7 +617,7 @@ class AnalyticsViewModel @Inject constructor(
     }
 }
 
-private fun joinGameMinutes(
+internal fun joinGameMinutes(
     minutesByGame: Map<Long, Int>,
     gamesById: Map<Long, LibraryGame>,
 ): List<AnalyticsGame> = minutesByGame.entries

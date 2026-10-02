@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -162,13 +163,7 @@ internal fun AnalyticsContent(
             return@Column
         }
 
-        AnalyticsOverviewCard(
-            days = state.dailyMinutes,
-            window = state.window,
-            familySharedMinutes = state.familySharedMinutes,
-            headline = state.headline,
-            leadingGame = state.topGames.firstOrNull(),
-        )
+        AnalyticsOverviewCard(analyticsOverviewSnapshot(state))
 
         AnalyticsPeriodHeader(
             window = state.window,
@@ -518,16 +513,18 @@ private fun windowPeriodLabel(window: AnalyticsWindow, bounds: AnalyticsWindowBo
 }
 
 @Composable
-private fun AnalyticsOverviewCard(
-    days: List<AnalyticsDay>,
-    window: AnalyticsWindow,
-    familySharedMinutes: Int,
-    headline: AnalyticsHeadline,
-    leadingGame: AnalyticsGame?,
-) {
-    val activeDays = days.count { it.minutes > 0 }
-    val totalMinutes = days.sumOf { it.minutes }
-    val averageMinutes = if (activeDays == 0) 0 else totalMinutes / activeDays
+internal fun AnalyticsOverviewCard(snapshot: AnalyticsOverviewSnapshot) {
+    val window = snapshot.window
+    val headline = snapshot.headline
+    val leadingGame = snapshot.featuredGame
+    val familySharedMinutes = snapshot.familySharedMinutes
+    val activeDays = snapshot.activeDays
+    val totalMinutes = snapshot.totalMinutes
+    val averageMinutes = snapshot.averageMinutes
+    val dates = stringResource(R.string.analytics_represented_dates,
+        UiFormat.date(snapshot.representedStart), UiFormat.date(snapshot.representedEnd))
+    val scope = if (snapshot.elapsedToDate) stringResource(R.string.analytics_elapsed_dates, dates) else dates
+    val featuredRole = stringResource(R.string.analytics_featured_role)
     val contentColor = MaterialTheme.colorScheme.onPrimaryContainer
     val headlineDescription = analyticsHeadlineText(headline)
     val leadingHeadline = headline as? AnalyticsHeadline.LeadingGame
@@ -556,19 +553,18 @@ private fun AnalyticsOverviewCard(
                     color = contentColor.copy(alpha = 0.7f),
                 )
             }
+            Text(scope, style = MaterialTheme.typography.bodySmall, color = contentColor,
+                modifier = Modifier.padding(top = 8.dp).testTag("analytics-overview-dates"))
             Spacer(Modifier.height(10.dp))
             if (leadingHeadline != null) {
-                // A long title inside a full sentence wraps over several large lines on a
-                // narrow phone. Split the hierarchy instead: artwork plus name on one line
-                // and its time below, with the full sentence kept as the TalkBack
-                // description so assistive tech still hears the complete fact.
+                Text(featuredRole, style = MaterialTheme.typography.labelLarge, color = contentColor)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
                         .semantics(mergeDescendants = true) {
-                            contentDescription = headlineDescription
-                        },
+                            contentDescription = "$featuredRole. $headlineDescription. $scope"
+                        }.testTag("analytics-featured-game"),
                 ) {
                     val heroCapsuleUrl = leadingGame?.heroCapsuleUrl.orEmpty()
                     if (heroCapsuleUrl.isNotBlank() && leadingGame != null) {
@@ -597,16 +593,13 @@ private fun AnalyticsOverviewCard(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = contentColor,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = UiFormat.localizedMinutes(leadingHeadline.minutes),
+                            text = stringResource(R.string.analytics_featured_minutes,
+                                UiFormat.localizedMinutes(leadingHeadline.minutes)),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = contentColor.copy(alpha = 0.9f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
@@ -621,7 +614,10 @@ private fun AnalyticsOverviewCard(
                     },
                 )
             }
-            Spacer(Modifier.height(12.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+            Text(stringResource(R.string.analytics_all_games_scope), style = MaterialTheme.typography.labelLarge,
+                color = contentColor, modifier = Modifier.testTag("analytics-all-games-scope"))
+            Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),

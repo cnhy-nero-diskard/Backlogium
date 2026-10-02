@@ -475,7 +475,7 @@ private fun analyticsState(
         isCurrentWindow = true,
         headline = when {
             empty -> AnalyticsHeadline.NoData
-            selectedDay -> AnalyticsHeadline.LeadingGame("Hades II", 95)
+            selectedDay -> AnalyticsHeadline.LeadingGame(games.first().copy(minutes = 95))
             else -> AnalyticsHeadline.Compared(currentMinutes = 395, previousMinutes = 320)
         },
         dailyMinutes = days,

@@ -824,4 +824,9 @@
     <string name="activity_close">Close</string>
     <string name="history_grouping_caption">Grouped by game · most recorded minutes first. Sessions within each game follow approximate start. Spacing does not measure time.</string>
     <string name="history_recorded_amount">Recorded: %1$s</string>
+    <string name="analytics_featured_role">Most played in this period</string>
+    <string name="analytics_featured_minutes">This game: %1$s recorded</string>
+    <string name="analytics_all_games_scope">All eligible visible games in this period</string>
+    <string name="analytics_represented_dates">%1$s – %2$s</string>
+    <string name="analytics_elapsed_dates">%1$s (elapsed to date)</string>
 </resources>
