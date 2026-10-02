@@ -5,6 +5,8 @@ import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.GamePreferenceDao
+import com.example.backlogium.data.local.entity.GamePreference
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -69,6 +71,7 @@ class BackupMergeEngine @Inject constructor(
     private val time: TimeProvider,
     private val derivedStateWrites: DerivedStateWriteCoordinator = DerivedStateWriteCoordinator(),
     private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
+    private val gamePreferenceDao: GamePreferenceDao,
 ) {
     /**
      * [config] is the app's currently active [RuleConfig] — never the file's own `ruleConfig`,
@@ -101,6 +104,7 @@ class BackupMergeEngine @Inject constructor(
      * outside it (see [recomputeAfterMerge]).
      */
     internal suspend fun mergeRawWithLockHeld(file: BackupFile) {
+        require(BackupValidator.preferenceProblems(file).isEmpty()) { "Invalid game preferences" }
         val importedLongestStreak = file.playerProfile.longestStreak
         val importedBackfilled = file.playerProfile.playtimeBackfilled
 
@@ -108,6 +112,7 @@ class BackupMergeEngine @Inject constructor(
         // these DAO calls happens in here — no settings, no file access, nothing that hops
         // threads — so the transaction cannot deadlock or be left holding a connection open.
         transaction.run {
+            file.gamePreferences?.forEach { gamePreferenceDao.upsert(GamePreference(it.appId, it.isFavorite)) }
             file.excludedSharedGames.forEach { mergeExcludedSharedGame(it) }
             // Games first: Session/Achievement/HltbData all carry a FOREIGN KEY on games.appId, so
             // a fresh-install restore (no games synced yet) needs the skeleton row to exist first.

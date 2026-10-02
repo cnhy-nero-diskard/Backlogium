@@ -4,6 +4,8 @@ import androidx.room.Room
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.GamePreference
+import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.repo.CredentialsProvider
@@ -45,6 +47,64 @@ class HiddenGamesBackupRoundTripTest {
     @After fun tearDown() {
         source.close()
         restored.close()
+    }
+
+    @Test
+    fun explicitFavoriteClearsAndAbsentGamePreferencesRoundTripAndLegacyPreservesThem() = runBlocking {
+        source.gameDao().upsert(game(KEPT, "Kept Game"))
+        val rows = listOf(GamePreference(KEPT, true), GamePreference(TOOL, false), GamePreference(999, true))
+        rows.forEach { source.gamePreferenceDao().upsert(it) }
+        val file = exportMapper(source).buildExport()
+        assertEquals(rows.map { BackupGamePreference(it.appId, it.isFavorite) }, file.gamePreferences)
+        assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)
+        val snapshots = SnapshotStore(RuntimeEnvironment.getApplication(), kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
+        snapshots.write(file, 9_876_543_210L)
+        try { assertEquals(file, snapshots.read("9876543210.json")) }
+        finally { snapshots.delete("9876543210.json") }
+        mergeEngine(restored).merge(file, RuleConfig())
+        assertEquals(rows, restored.gamePreferenceDao().getAll())
+        mergeEngine(restored).merge(file, RuleConfig())
+        assertEquals(rows, restored.gamePreferenceDao().getAll())
+        mergeEngine(restored).merge(file.copy(gamePreferences = null), RuleConfig())
+        assertEquals(rows, restored.gamePreferenceDao().getAll())
+    }
+
+    @Test
+    fun exportReadsPreferencesInsideTheSameSnapshotAsGames() = runBlocking {
+        source.gameDao().upsert(game(KEPT, "Original"))
+        source.gamePreferenceDao().upsert(GamePreference(KEPT, true))
+        var snapshots = 0
+        val transaction = object : DatabaseTransactionScope {
+            override suspend fun <R> run(block: suspend () -> R): R {
+                snapshots++
+                val snapshot = RoomDatabaseTransactionScope(source).run(block)
+                source.gameDao().upsert(game(TOOL, "After snapshot"))
+                source.gamePreferenceDao().upsert(GamePreference(KEPT, false))
+                return snapshot
+            }
+        }
+        val file = exportMapper(source, transaction).buildExport()
+        assertEquals(1, snapshots)
+        assertEquals(listOf(KEPT), file.games.map { it.appId })
+        assertEquals(listOf(BackupGamePreference(KEPT, true)), file.gamePreferences)
+        assertEquals(listOf(GamePreference(KEPT, false)), source.gamePreferenceDao().getAll())
+    }
+
+    @Test
+    fun preferencesRejectInvalidKeysBeforeWritesAndCrossAccountMergePreservesConfiguredIdentity() = runBlocking {
+        restored.playerProfileDao().upsert(PlayerProfile(steamId = "76561198000000000"))
+        restored.gamePreferenceDao().upsert(GamePreference(999, true))
+        val file = exportMapper(source).buildExport().copy(identity = BackupIdentity("76561198000000001"),
+            gamePreferences = listOf(BackupGamePreference(999, false)))
+        val duplicate = file.copy(gamePreferences = file.gamePreferences!! + BackupGamePreference(999, true))
+        assertTrue(BackupValidator.validate(duplicate) is BackupValidationResult.Invalid)
+        assertTrue(runCatching { mergeEngine(restored).merge(duplicate, RuleConfig()) }.isFailure)
+        assertEquals(listOf(GamePreference(999, true)), restored.gamePreferenceDao().getAll())
+        assertTrue(BackupValidator.validate(file.copy(gamePreferences = listOf(BackupGamePreference(0, true)))) is BackupValidationResult.Invalid)
+        mergeEngine(restored).merge(file, RuleConfig())
+        assertEquals(listOf(GamePreference(999, false)), restored.gamePreferenceDao().getAll())
+        assertEquals("76561198000000000", restored.playerProfileDao().get()!!.steamId)
+        assertEquals("76561198000000000", ConfiguredCredentials.currentCredentials()?.steamId)
     }
 
     @Test
@@ -113,7 +173,7 @@ class HiddenGamesBackupRoundTripTest {
         RuntimeEnvironment.getApplication(), BacklogiumDatabase::class.java,
     ).allowMainThreadQueries().build()
 
-    private fun exportMapper(db: BacklogiumDatabase) = BackupExportMapper(
+    private fun exportMapper(db: BacklogiumDatabase, transaction: DatabaseTransactionScope = RoomDatabaseTransactionScope(db)) = BackupExportMapper(
         gameDao = db.gameDao(),
         achievementDao = db.achievementDao(),
         sessionDao = db.sessionDao(),
@@ -122,10 +182,12 @@ class HiddenGamesBackupRoundTripTest {
         playerProfileDao = db.playerProfileDao(),
         collectionDao = db.collectionDao(),
         hiddenGameDao = db.hiddenGameDao(),
+        gamePreferenceDao = db.gamePreferenceDao(),
         excludedSharedGameDao = db.excludedSharedGameDao(),
         settings = SettingsDataStore(RuntimeEnvironment.getApplication()),
         credentials = ConfiguredCredentials,
         time = FixedTime,
+        transaction = transaction,
     )
 
     private fun mergeEngine(db: BacklogiumDatabase) = BackupMergeEngine(
@@ -137,6 +199,7 @@ class HiddenGamesBackupRoundTripTest {
         playerProfileDao = db.playerProfileDao(),
         collectionDao = db.collectionDao(),
         hiddenGameDao = db.hiddenGameDao(),
+        gamePreferenceDao = db.gamePreferenceDao(),
         excludedSharedGameDao = db.excludedSharedGameDao(),
         gamificationUpdater = GamificationUpdater(
             db.sessionDao(),
@@ -148,6 +211,7 @@ class HiddenGamesBackupRoundTripTest {
             db.hiddenGameDao(),
         ),
         time = FixedTime,
+        transaction = RoomDatabaseTransactionScope(db),
         derivedStateWrites = DerivedStateWriteCoordinator(),
     )
 

@@ -75,4 +75,19 @@ class BackupVersionedDecoderTest {
         ))
         assertNull(decode(mixed))
     }
+
+    @Test fun preferencesRequireExactTypesAndUniquePositiveKeysInBothSupportedVersions() {
+        for (version in listOf(1, 2)) {
+            val file = legacy.copy(formatVersion = version, sessions = emptyList(),
+                gamePreferences = listOf(BackupGamePreference(440, false)))
+            val encoded = json.encodeToString(BackupFile.serializer(), file)
+            assertEquals(file, decode(encoded))
+            assertNull(decode(encoded.replace("\"isFavorite\":false", "\"isFavorite\":\"false\"")))
+            assertNull(decode(encoded.replace("\"isFavorite\":false", "\"isFavorite\":0")))
+            assertNull(decode(encoded.replace("\"appId\":440,\"isFavorite\"", "\"appId\":0,\"isFavorite\"")))
+            assertNull(decode(encoded.replace("\"appId\":440,\"isFavorite\"", "\"appId\":\"440\",\"isFavorite\"")))
+            assertNull(decode(json.encodeToString(BackupFile.serializer(), file.copy(
+                gamePreferences = file.gamePreferences!! + BackupGamePreference(440, true)))))
+        }
+    }
 }

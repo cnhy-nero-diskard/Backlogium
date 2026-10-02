@@ -11,6 +11,7 @@ import com.example.backlogium.data.local.dao.CloudReadDao
 import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.GamePreferenceDao
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
@@ -88,6 +89,9 @@ object DatabaseModule {
 
     @Provides
     fun provideGameDao(db: BacklogiumDatabase): GameDao = db.gameDao()
+
+    @Provides
+    fun provideGamePreferenceDao(db: BacklogiumDatabase): GamePreferenceDao = db.gamePreferenceDao()
 
     @Provides
     fun provideGameGenreCacheDao(db: BacklogiumDatabase): GameGenreCacheDao = db.gameGenreCacheDao()

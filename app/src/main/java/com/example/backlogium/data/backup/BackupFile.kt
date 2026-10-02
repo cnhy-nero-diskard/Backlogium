@@ -41,6 +41,8 @@ data class BackupFile(
      * Absent in files written before hiding existed, which correctly restores as nothing hidden.
      */
     val hiddenGames: List<BackupHiddenGame> = emptyList(),
+    /** Omitted legacy records leave local preferences untouched; explicit false is a clear. */
+    val gamePreferences: List<BackupGamePreference>? = null,
 ) {
     companion object {
         const val CURRENT_FORMAT_VERSION = 2
@@ -50,6 +52,9 @@ data class BackupFile(
 /** The public SteamID64 only — the Steam Web API key is never included in an export. */
 @Serializable
 data class BackupIdentity(val steamId64: String)
+
+@Serializable
+data class BackupGamePreference(val appId: Long, val isFavorite: Boolean)
 
 /** Mirrors [com.example.backlogium.gamification.RuleConfig], captured at export time. */
 @Serializable

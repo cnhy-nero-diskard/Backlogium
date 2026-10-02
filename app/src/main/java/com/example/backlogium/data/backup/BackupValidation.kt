@@ -30,6 +30,16 @@ sealed interface BackupValidationResult {
  * this preflight exists to catch before the merge's foreign keys reject it mid-write.
  */
 object BackupValidator {
+    internal fun preferenceProblems(file: BackupFile): List<BackupValidationProblem> {
+        val seen = mutableSetOf<Long>()
+        return file.gamePreferences.orEmpty().mapIndexedNotNull { index, preference ->
+            when {
+                preference.appId <= 0 -> BackupValidationProblem("gamePreference", index, "appId must be positive")
+                !seen.add(preference.appId) -> BackupValidationProblem("gamePreference", index, "duplicate appId ${preference.appId}")
+                else -> null
+            }
+        }
+    }
 
     /**
      * Plausibility window for any date/timestamp in a backup. Steam itself launched in 2003 and
@@ -48,6 +58,7 @@ object BackupValidator {
 
     fun validate(file: BackupFile): BackupValidationResult {
         val problems = mutableListOf<BackupValidationProblem>()
+        problems += preferenceProblems(file)
         if (file.formatVersion !in 1..BackupFile.CURRENT_FORMAT_VERSION) {
             problems += BackupValidationProblem("file", 0, "unsupported formatVersion ${file.formatVersion}")
         }

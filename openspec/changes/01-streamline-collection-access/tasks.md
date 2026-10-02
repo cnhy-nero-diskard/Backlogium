@@ -20,9 +20,9 @@
 
 ## 4. Backup Compatibility
 
-- [ ] 4.1 Export explicit favorite preference rows in manual backups and snapshots; verify true/false and absent-game preferences round-trip from one export snapshot.
-- [ ] 4.2 Validate and merge optional preference records in supported versions 1/2; verify omitted legacy sections preserve local preferences, invalid/duplicate keys fail before writes, and repeated import is idempotent.
-- [ ] 4.3 Preserve the existing identity warning and session-provenance rules; verify confirmed cross-account preference merge leaves configured credentials unchanged and rejected imports leave all data intact.
+- [x] 4.1 Export explicit favorite preference rows in manual backups and snapshots; verify true/false and absent-game preferences round-trip from one export snapshot.
+- [x] 4.2 Validate and merge optional preference records in supported versions 1/2; verify omitted legacy sections preserve local preferences, invalid/duplicate keys fail before writes, and repeated import is idempotent.
+- [x] 4.3 Preserve the existing identity warning and session-provenance rules; verify confirmed cross-account preference merge leaves configured credentials unchanged and rejected imports leave all data intact.
 
 ## 5. Presentation and Integrated Verification
 

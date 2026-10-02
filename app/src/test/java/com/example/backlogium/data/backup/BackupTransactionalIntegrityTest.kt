@@ -60,6 +60,7 @@ class BackupTransactionalIntegrityTest {
             collectionDao = database.collectionDao(),
             excludedSharedGameDao = database.excludedSharedGameDao(),
             hiddenGameDao = database.hiddenGameDao(),
+            gamePreferenceDao = database.gamePreferenceDao(),
             gamificationUpdater = newGamificationUpdater(),
             time = FixedTimeProvider(),
             derivedStateWrites = DerivedStateWriteCoordinator(),
@@ -77,6 +78,7 @@ class BackupTransactionalIntegrityTest {
         // Pre-existing state the merge must leave untouched.
         database.gameDao().upsert(existingGame(appId = 50L, name = "Existing"))
         database.sessionDao().insert(Session(appId = 50L, startAt = 1_000L, endAt = 2_000L, minutes = 10, open = false))
+        database.gamePreferenceDao().upsert(com.example.backlogium.data.local.entity.GamePreference(50, true))
 
         // A collectionMember referencing a collection that exists nowhere violates the FK — the
         // merge processes games/sessions/collections before collectionMembers, so this throws
@@ -85,7 +87,7 @@ class BackupTransactionalIntegrityTest {
             games = listOf(BackupGame(appId = 7L, name = "New", isGoal = false, backfillMinutes = 0)),
             sessions = listOf(BackupSession(appId = 7L, startAt = 9_000L.toIso8601(), endAt = 9_500L.toIso8601(), minutes = 5)),
             collectionMembers = listOf(BackupCollectionMember(collectionId = 999L, appId = 7L, orderIndex = 0)),
-        )
+        ).copy(gamePreferences = listOf(BackupGamePreference(50, false), BackupGamePreference(7, true)))
 
         val failure = runCatching { engine.merge(file, RuleConfig()) }
         assertTrue("expected the FK violation to propagate", failure.isFailure)
@@ -96,6 +98,7 @@ class BackupTransactionalIntegrityTest {
         val survivor = database.gameDao().getById(50L)!!
         assertEquals("Existing", survivor.name)
         assertEquals(1, database.sessionDao().getAll().count { it.appId == 50L })
+        assertEquals(listOf(com.example.backlogium.data.local.entity.GamePreference(50, true)), database.gamePreferenceDao().getAll())
     }
 
     @Test
@@ -173,6 +176,7 @@ class BackupTransactionalIntegrityTest {
             collectionDao = database.collectionDao(),
             excludedSharedGameDao = database.excludedSharedGameDao(),
             hiddenGameDao = database.hiddenGameDao(),
+            gamePreferenceDao = database.gamePreferenceDao(),
             gamificationUpdater = newGamificationUpdater(),
             time = FixedTimeProvider(),
             derivedStateWrites = DerivedStateWriteCoordinator(),

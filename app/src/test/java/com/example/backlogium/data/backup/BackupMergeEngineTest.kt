@@ -93,6 +93,7 @@ class BackupMergeEngineTest {
         val engine = BackupMergeEngine(
             gameDao, sessionDao, dailyProgressDao, hltbDataDao, achievementDao, profileDao,
             collectionDao, excludedDao, hiddenGameDao, gamificationUpdater, time,
+            gamePreferenceDao = FakeGamePreferenceDao(),
         )
         return Harness(engine, gameDao, sessionDao, profileDao, collectionDao, achievementDao, excludedDao, hiddenGameDao)
     }

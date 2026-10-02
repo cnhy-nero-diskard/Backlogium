@@ -24,6 +24,7 @@ internal object BackupVersionedDecoder {
         var sessionsSeen = false
         var missingContribution = false
         var hasContribution = false
+        var preferencesSeen = false
         reader.beginObject()
         while (reader.hasNext()) when (reader.nextName()) {
             "formatVersion" -> {
@@ -51,6 +52,11 @@ internal object BackupVersionedDecoder {
                 }
                 reader.endArray()
             }
+            "gamePreferences" -> {
+                require(!preferencesSeen)
+                preferencesSeen = true
+                inspectPreferences(reader)
+            }
             else -> reader.skipValue()
         }
         reader.endObject()
@@ -59,6 +65,32 @@ internal object BackupVersionedDecoder {
         require(resolved == 1 || resolved == 2)
         require(if (resolved == 1) !hasContribution else !missingContribution)
         return resolved
+    }
+
+    private fun inspectPreferences(reader: JsonReader) {
+        val appIds = mutableSetOf<Long>()
+        reader.beginArray()
+        while (reader.hasNext()) {
+            var appId: Long? = null
+            var favoriteSeen = false
+            reader.beginObject()
+            while (reader.hasNext()) when (reader.nextName()) {
+                "appId" -> {
+                    require(appId == null && reader.peek() == JsonToken.NUMBER)
+                    appId = reader.nextString().toLong()
+                    require(appId > 0 && appIds.add(appId))
+                }
+                "isFavorite" -> {
+                    require(!favoriteSeen && reader.peek() == JsonToken.BOOLEAN)
+                    reader.nextBoolean()
+                    favoriteSeen = true
+                }
+                else -> reader.skipValue()
+            }
+            reader.endObject()
+            require(appId != null && favoriteSeen)
+        }
+        reader.endArray()
     }
 
     private fun inspectContribution(reader: JsonReader) {
