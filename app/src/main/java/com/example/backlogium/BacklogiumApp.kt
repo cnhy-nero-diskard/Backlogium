@@ -20,12 +20,14 @@ import com.example.backlogium.data.repo.CloudPresenceRepository
 import com.example.backlogium.data.steamassets.SteamAssetInterceptor
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.domain.DailyProgressBackfillUseCase
+import com.example.backlogium.domain.FirstRunJourneyCoordinator
 import com.example.backlogium.domain.PendingImportRecomputeUseCase
 import com.example.backlogium.work.PostPlaySyncScheduler
 import com.example.backlogium.work.CloudRoutineScheduler
 import com.example.backlogium.work.PresenceServiceStarter
 import com.example.backlogium.work.SyncScheduler
 import com.example.backlogium.work.UpdateScheduler
+import com.example.backlogium.work.setup.SetupCoordinator
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -110,6 +112,12 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
     lateinit var pendingImportRecompute: PendingImportRecomputeUseCase
 
     @Inject
+    lateinit var setupCoordinator: SetupCoordinator
+
+    @Inject
+    lateinit var firstRunJourney: FirstRunJourneyCoordinator
+
+    @Inject
     lateinit var snapshotStore: SnapshotStore
 
     @Inject
@@ -177,9 +185,26 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
                 .onFailure { Timber.e(it, "Diagnostic history migration failed") }
             correctHistoricalDailyTotals()
             resolvePendingImportRecompute()
+
+            // Reconcile the first-run journey only after account-change recovery and the pending
+            // raw-import recompute have settled, so the durable marker/consent are final before the
+            // phase is repaired or an authorized request is replayed exactly once. Idempotent; a
+            // failure leaves the neutral takeover up so the onboarding surface can re-resolve on
+            // its own. Never opens a deferred/completed journey and never starts an import a phase
+            // did not authorize.
+            runCatching { firstRunJourney.startupRecovery() }
+                .onFailure { Timber.e(it, "First-run journey recovery failed; phases resolve on the next launch") }
             syncScheduler.ensurePeriodicSync()
             syncScheduler.ensurePeriodicReconciliation()
             syncScheduler.ensurePeriodicWishlistSampling()
+
+            // Reconcile saved setup work only after account-change recovery has succeeded: an
+            // admitted job from the pre-recovery generation must not be resumed against the new
+            // account. Recovery never reopens an explicitly dismissed first-run journey and never
+            // starts a polling service of its own — it resumes saved associations and admits the
+            // remaining selected cohort, then WorkManager owns the rest.
+            runCatching { setupCoordinator.reconcile() }
+                .onFailure { Timber.e(it, "Setup recovery failed; saved setup work remains for the next launch") }
         }
         ProcessLifecycleOwner.get().lifecycle.addObserver(ForegroundPresenceCheck())
     }
