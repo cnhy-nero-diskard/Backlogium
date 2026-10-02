@@ -12,6 +12,6 @@
 
 ## 3. Acceptance
 
-- [ ] 3.1 Run relevant domain/repository/Home tests and `./gradlew.bat :app:compileDebugKotlin :app:lintDebug`; verify offline viewing triggers no sync, request, XP award, or persistent progress write.
-- [ ] 3.2 Capture and inspect affected Home device/emulator states in both themes and larger font scale, checking expansion semantics and touch targets; record the evidence and label any unavailable context.
-- [ ] 3.3 Run `openspec.cmd validate 1c-add-daily-game-breakdown --strict` and `git diff --check`; verify shared vocabulary/placement remain compatible with drafts #176/#177 and leave `2c` a reusable daily read contract.
+- [x] 3.1 Run relevant domain/repository/Home tests and `./gradlew.bat :app:compileDebugKotlin :app:lintDebug`; verify offline viewing triggers no sync, request, XP award, or persistent progress write.
+- [x] 3.2 Capture and inspect affected Home device/emulator states in both themes and larger font scale, checking expansion semantics and touch targets; record the evidence and label any unavailable context.
+- [x] 3.3 Run `openspec.cmd validate 1c-add-daily-game-breakdown --strict` and `git diff --check`; verify shared vocabulary/placement remain compatible with drafts #176/#177 and leave `2c` a reusable daily read contract.
