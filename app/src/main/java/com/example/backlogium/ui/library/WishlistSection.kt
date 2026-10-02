@@ -359,7 +359,7 @@ private fun WishlistPrice(
             discountPercent = price.discountPercent,
             // The date survives every density — dropping it to save a line would turn an observed
             // price into an undated claim about the price right now.
-            observedNote = "Seen ${UiFormat.date(price.observedAt)}",
+            observedNote = "Last seen ${UiFormat.date(price.observedAt)}",
             compact = compact,
             modifier = modifier,
         )
@@ -469,7 +469,7 @@ private fun PriceCapsule(
                 text = observedNote,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 2.dp),
             )

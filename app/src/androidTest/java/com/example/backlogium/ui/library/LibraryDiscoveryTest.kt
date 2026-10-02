@@ -112,7 +112,7 @@ class LibraryDiscoveryTest {
                 scrollTo("wishlist-notice")
                 compose.onNodeWithText("Showing what was last seen.", substring = true).assertIsDisplayed()
                 compose.onNodeWithContentDescription("Open Portal wanted on Steam").assertIsDisplayed()
-                compose.onNodeWithText("Seen", substring = true).assertIsDisplayed()
+                compose.onNodeWithText("Last seen", substring = true).assertIsDisplayed()
                 for (entries in listOf(emptyList(), listOf(entry(2, "Different title")))) {
                     compose.runOnIdle { wishlist.value = wishlist.value.copy(entries = entries) }
                     scrollTo("wishlist-empty")

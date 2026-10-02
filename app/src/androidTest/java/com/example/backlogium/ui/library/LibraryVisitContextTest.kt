@@ -34,6 +34,7 @@ import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.backlogium.data.repo.GameGenre
+import com.example.backlogium.data.repo.WishlistAvailability
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.ui.navigation.AppBottomNavigation
@@ -58,19 +59,32 @@ class LibraryVisitContextTest {
     private val elapsed = AtomicLong(1_000)
     private val density = mutableStateOf(GameListDensity.LIST)
     private val selection = mutableStateOf(false)
+    private val discoveryEnabled = mutableStateOf(false)
     private lateinit var visit: LibraryVisitState
     private lateinit var navigation: NavHostController
     private val games = (1L..80L).map {
         BacklogGameUi(
             appId = it, name = "Game %03d".format(it), iconUrl = "", playtimeForever = 0,
             genres = listOf(GameGenre("puzzle", "Puzzle")), isFamilyShared = true,
+            firstSeenAt = 100_000 - it,
         )
     }
     private fun state(filters: LibraryFilters) = LibraryUiState(
         loading = false, libraryEmpty = false, filters = filters,
-        backlog = games.filterByLibraryFilters(filters), density = density.value,
+        backlog = games.filterByLibraryFilters(filters).sortedFor(
+            if (discoveryEnabled.value) LibrarySortKey.ADDED_RECENTLY else LibrarySortKey.NAME,
+            query = filters.query,
+        ), density = density.value,
         availableGenres = listOf(GameGenre("puzzle", "Puzzle")), matchCenterCount = 1,
-        librarySort = LibrarySortKey.NAME, selectionMode = selection.value,
+        librarySort = if (discoveryEnabled.value) LibrarySortKey.ADDED_RECENTLY else LibrarySortKey.NAME,
+        selectionMode = selection.value,
+    )
+    private fun wishlist() = if (!discoveryEnabled.value) WishlistUiState() else WishlistUiState(
+        configured = true, expanded = false, availability = WishlistAvailability.AVAILABLE,
+        entries = (1L..60L).map {
+            WishlistEntryUi(10_000 + it, "Game wanted %03d".format(it), "", WishlistPriceUi.NeverObserved,
+                "https://store.steampowered.com/app/${10_000 + it}")
+        },
     )
 
     @Composable private fun Host() {
@@ -90,7 +104,7 @@ class LibraryVisitContextTest {
                     composable("library") {
                         val filters by holder.visit.filters.collectAsStateWithLifecycle()
                         LibraryContent(
-                            state = state(filters), visit = holder.visit,
+                            state = state(filters), wishlistState = wishlist(), visit = holder.visit,
                             actions = LibraryContentActions(
                                 onOpenGameDetail = { controller.navigate("game_detail") },
                                 onOpenReview = { controller.navigate("hltb_review") },
@@ -232,6 +246,50 @@ class LibraryVisitContextTest {
         }
         compose.onNodeWithText("Home").performClick()
         compose.runOnIdle { assertFalse(selection.value) }
+    }
+
+    @Test fun wishlistSearchAndAddedSortCoexistWithRetainedAndExpiredVisitsInAllDensities() {
+        for (mode in GameListDensity.entries) {
+            compose.runOnIdle {
+                navigation.navigateToTopLevelDestination("home")
+                discoveryEnabled.value = true
+                density.value = mode
+                visit.filters.value = LibraryFilters("Game")
+                navigation.navigateToTopLevelDestination("library")
+            }
+            compose.waitForIdle()
+            val rows = libraryScrollItems(state(visit.filters.value), wishlist())
+            val wantedIndex = rows.indexOfFirst { 10_040L in it.gameIds }
+            compose.onNode(hasScrollToIndexAction()).performScrollToIndex(wantedIndex)
+            compose.onNodeWithText("Game wanted 040").assertIsDisplayed()
+
+            compose.runOnIdle { navigation.navigate("game_detail") }
+            elapsed.addAndGet(600_000)
+            Espresso.pressBack()
+            compose.onNodeWithText("Game wanted 040").assertIsDisplayed()
+
+            compose.onNodeWithText("Home").performClick()
+            elapsed.addAndGet(299_999)
+            compose.onNodeWithText("Library").performClick()
+            compose.onNodeWithText("Game wanted 040").assertIsDisplayed()
+            capture("discovery-${mode.name}-retained")
+            compose.runOnIdle {
+                assertEquals("Game", visit.filters.value.query)
+                assertEquals(LibrarySortKey.ADDED_RECENTLY, state(visit.filters.value).librarySort)
+            }
+
+            compose.onNodeWithText("Home").performClick()
+            elapsed.addAndGet(300_000)
+            compose.onNodeWithText("Library").performClick()
+            verifyExpired()
+            compose.onNodeWithText("Wishlist").assertIsDisplayed()
+            compose.onNodeWithText("Wishlist results").assertDoesNotExist()
+            compose.runOnIdle {
+                assertEquals(LibrarySortKey.ADDED_RECENTLY, state(visit.filters.value).librarySort)
+                assertEquals(mode, state(visit.filters.value).density)
+            }
+            capture("discovery-${mode.name}-expired")
+        }
     }
 
     private fun capture(name: String) {

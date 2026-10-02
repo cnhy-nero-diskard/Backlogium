@@ -16,4 +16,4 @@
 
 ## 4. Integrated Review
 
-- [ ] 4.1 Exercise wishlist search, Added recently, and Hide confirmation in list and both grids on a device or emulator; verify they coexist with the five-minute Library visit behavior from `02-retain-library-visit-context` when both changes are applied.
+- [x] 4.1 Exercise wishlist search, Added recently, and Hide confirmation in list and both grids on a device or emulator; verify they coexist with the five-minute Library visit behavior from `02-retain-library-visit-context` when both changes are applied.
