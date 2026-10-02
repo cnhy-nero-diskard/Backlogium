@@ -457,6 +457,7 @@ class SetupCoordinatorTest {
                 "sync" to attempt(
                     "sync",
                     generation = 2L,
+                    cohortId = "c1",
                     accountMarker = "m",
                     requestId = "r-sync",
                     uniqueWorkName = "steam_sync_now",
@@ -466,6 +467,7 @@ class SetupCoordinatorTest {
                 "completion_times" to attempt(
                     "completion_times",
                     generation = 1L,
+                    cohortId = "c1",
                     accountMarker = "m",
                     requestId = "r-times",
                     uniqueWorkName = "hltb_dataset_check",
@@ -488,16 +490,17 @@ class SetupCoordinatorTest {
         advanceUntilIdle()
 
         // The durably admitted stage is resumed, never re-enqueued.
-        assertTrue(sync.admittedRequestIds.isEmpty())
-        assertEquals(sync.admittedWorkId, store.attemptsRead["sync"]?.admittedWorkId)
+        assertTrue("the durably admitted stage is never re-enqueued", sync.admittedRequestIds.isEmpty())
+        assertEquals("the exact admitted work survives reconcile", sync.admittedWorkId, store.attemptsRead["sync"]?.admittedWorkId)
         // The interrupted admission is recovered by exact request identity, without a new enqueue.
         assertEquals(
+            "recovery adopts the exact located work",
             UUID.fromString("11111111-1111-1111-1111-111111111111").toString(),
             store.attemptsRead["completion_times"]?.admittedWorkId,
         )
-        assertTrue(times.admittedRequestIds.isEmpty())
+        assertTrue("recovery never enqueues a duplicate", times.admittedRequestIds.isEmpty())
         // The remaining selected stage that never started is admitted exactly once.
-        assertTrue(assets.started)
+        assertTrue("the remaining selected stage is admitted", assets.started)
         assertEquals(1, assets.admittedRequestIds.size)
     }
 

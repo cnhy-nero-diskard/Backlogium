@@ -41,9 +41,11 @@ import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
@@ -177,14 +179,14 @@ class LibraryStageAttributableResultTest {
 
     @Test
     fun committedEmptyBaselineForExactWorkAndAccountIsAnHonestEmptySuccess() = runTest {
-        val work = admitWork()
+        val work = admitWorkAsync()
 
         // The Room producer record for this exact admitted work is committed with a confirmed zero.
         recorder.recordCommitted(work.workId.toString(), accountA, gameCount = 0, committedAt = confirmedAt)
         driver.setAllConstraintsMet(work.workId)
-        flushUntil { terminalStateOf(work) != null }
+        flushUntil { settledResultOf(work) != null }
 
-        val terminal = checkNotNull(terminalStateOf(work))
+        val terminal = checkNotNull(settledResultOf(work))
         assertTrue("confirmed empty is a successful empty baseline", terminal is SetupOperationState.Succeeded)
         val detail = (terminal as SetupOperationState.Succeeded).detail
         assertNotNull(detail)
@@ -193,31 +195,31 @@ class LibraryStageAttributableResultTest {
 
     @Test
     fun committedEvidenceWithGamesIsASuccessWithoutInventedDetail() = runTest {
-        val work = admitWork()
+        val work = admitWorkAsync()
 
         recorder.recordCommitted(work.workId.toString(), accountA, gameCount = 137, committedAt = confirmedAt)
         driver.setAllConstraintsMet(work.workId)
-        flushUntil { terminalStateOf(work) != null }
+        flushUntil { settledResultOf(work) != null }
 
-        val terminal = checkNotNull(terminalStateOf(work))
+        val terminal = checkNotNull(settledResultOf(work))
         assertTrue(terminal is SetupOperationState.Succeeded)
         assertTrue((terminal as SetupOperationState.Succeeded).detail == null)
     }
 
     @Test
     fun schedulerSuccessWithoutRoomEvidenceIsRecoveryRequiredNotSuccess() = runTest {
-        val work = admitWork()
+        val work = admitWorkAsync()
 
         // No producer record for this exact work: WorkManager finishing must never be a success.
         driver.setAllConstraintsMet(work.workId)
-        flushUntil { terminalStateOf(work) != null }
+        flushUntil { settledResultOf(work) != null }
 
-        assertTrue(terminalStateOf(work) is SetupOperationState.RecoveryRequired)
+        assertTrue(settledResultOf(work) is SetupOperationState.RecoveryRequired)
     }
 
     @Test
     fun privateOrUnconfirmedResponseIsAnAttributableFailureNotALibrarySuccess() = runTest {
-        val work = admitWork()
+        val work = admitWorkAsync()
 
         evidenceDao.upsert(
             LibraryPollEvidenceRecord(
@@ -232,26 +234,28 @@ class LibraryStageAttributableResultTest {
             ),
         )
         driver.setAllConstraintsMet(work.workId)
-        flushUntil { terminalStateOf(work) != null }
+        flushUntil { settledResultOf(work) != null }
 
-        val terminal = checkNotNull(terminalStateOf(work))
+        val terminal = checkNotNull(settledResultOf(work))
         assertTrue(terminal is SetupOperationState.Failed)
         assertTrue((terminal as SetupOperationState.Failed).reason.orEmpty().contains("private"))
     }
 
-    private suspend fun admitWork(): StageAdmission.Work {
-        val stage = registry.libraryStage()
-        val admission = stage.run.admit(UUID.randomUUID().toString())
-        return admission as StageAdmission.Work
+    private suspend fun TestScope.admitWorkAsync(): StageAdmission.Work {
+        val deferred = async { registry.libraryStage().run.admit(UUID.randomUUID().toString()) }
+        flushUntil { deferred.isCompleted }
+        return deferred.await() as StageAdmission.Work
     }
 
-    private suspend fun terminalStateOf(work: StageAdmission.Work): SetupOperationState? =
+    private suspend fun TestScope.settledResultOf(work: StageAdmission.Work): SetupOperationState? =
         // Non-blocking probe: the runner's observe flow emits the CURRENT state first, so `first()`
         // returns immediately; flushUntil keeps re-probing until the work actually reaches a
-        // terminal state (or gives up).
+        // settled state. RecoveryRequired is deliberately not `isTerminal` in the model, but it IS
+        // the settled result an Unknown attributable library outcome must surface — never weakened
+        // into a manufactured success.
         registry.libraryStage().run.observe(work.workId.toString())
             .first()
-            .takeIf { it.isTerminal }
+            .takeIf { it.isTerminal || it is SetupOperationState.RecoveryRequired }
 
     private fun SetupStageRegistry.libraryStage(): SetupStage =
         stages.single { it.id == SetupStageRegistry.STAGE_LIBRARY_SYNC }

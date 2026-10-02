@@ -305,12 +305,9 @@ class SetupCoordinator @Inject constructor(
         }
         if (recordUnselectedAsSkipped) {
             // Only genuinely never-attempted stages become Skipped here; an already-recorded
-            // terminal sibling (from an earlier run) is preserved.
+            // terminal sibling (from an earlier run, even when the cache is not loaded) is preserved.
             stages.filterNot { it.id in runIds }.forEach { stage ->
-                val existing = attemptsCache[stage.id]
-                if (existing == null || existing.operation == SetupOperationState.NeverRun) {
-                    writeSkipped(stage.id)
-                }
+                if (!hasRecordedOutcome(stage.id)) writeSkipped(stage.id)
             }
         }
         true
@@ -320,6 +317,20 @@ class SetupCoordinator @Inject constructor(
         val record = StageAttemptRecord(stageId = stageId, operation = SetupOperationState.Skipped)
         attemptsCache[stageId] = record
         store.upsertAttempt(record)
+    }
+
+    /**
+     * Whether a stage already carries a recorded outcome in *persisted* state, consulted before a
+     * Skipped write. `attemptsCache` alone is not enough: a freshly-constructed coordinator (no
+     * `ensureLoaded`) has an empty cache while the store already holds an attempt or a legacy
+     * terminal outcome — overwriting that with Skipped would delete a prior success. Uses the
+     * stored attempt first, then the stored legacy outcome projection.
+     */
+    private suspend fun hasRecordedOutcome(stageId: String): Boolean {
+        attemptsCache[stageId]?.let { return it.operation != SetupOperationState.NeverRun }
+        store.attemptRecord(stageId)?.let { return it.operation != SetupOperationState.NeverRun }
+        val legacy = store.storedOutcomes()[stageId] ?: return false
+        return legacy != SetupOutcome.NeverRun
     }
 
     private suspend fun prepareRetryRun(stageId: String): Boolean {
@@ -375,10 +386,7 @@ class SetupCoordinator @Inject constructor(
     ) {
         if (recordUnselectedAsSkipped) {
             stages.forEach { stage ->
-                val existing = attemptsCache[stage.id]
-                if (existing == null || existing.operation == SetupOperationState.NeverRun) {
-                    writeSkipped(stage.id)
-                }
+                if (!hasRecordedOutcome(stage.id)) writeSkipped(stage.id)
             }
         }
         store.clearCohort()
@@ -915,13 +923,20 @@ class SetupCoordinator @Inject constructor(
         for (stage in source.stages) {
             if (!stage.isAvailable || stage.id !in cohort.selectedStageIds) continue
             val record = attemptsCache[stage.id]
+            // A record from an older cohort is not this run's attempt even when its operation is
+            // terminal: a stale success from a previous run must never mask a stage this run never
+            // actually admitted.
             if (record == null || record.cohortId != cohortId) {
                 admitStageInBackground(stage, cohortId, owner)
                 continue
             }
-            if (record.hasDurableAdmission) continue
+            // Any already-associated work — even a partial durable admission — must never be
+            // duplicated by an automatic remaining-cohort admission.
+            if (record.admittedWorkId != null || record.hasDurableAdmission) continue
             if (record.operation.isTerminal) continue
-            if (record.cohortId == cohortId && record.requestId != null) continue
+            // A same-cohort record with a persisted request that never admitted is the user's
+            // explicit recovery: never auto-retrigger.
+            if (record.requestId != null) continue
             admitStageInBackground(stage, cohortId, owner)
         }
     }

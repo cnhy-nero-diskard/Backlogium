@@ -41,9 +41,11 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -205,7 +207,9 @@ class ConcurrentSetupCharacterizationTest {
         journal.append(entry("periodic-chain-running", "n/a", SteamSyncWorker.UNIQUE_PERIODIC_NAME, periodicId.toString(), "n/a", "RUNNING", 0))
 
         val librarySync = stage(STAGE_LIBRARY_SYNC)
-        val admission = librarySync.run.admit(requestId())
+        val admissionDeferred = libraryAdmissionAsync()
+        flushUntil { admissionDeferred.isCompleted }
+        val admission = admissionDeferred.await()
         val work = admission as StageAdmission.Work
         assertEquals(AdmissionKind.REUSED, work.kind)
         assertEquals("the exact RUNNING pre-existing job is named, not a duplicate", manualId, work.workId)
@@ -219,7 +223,7 @@ class ConcurrentSetupCharacterizationTest {
         // The 2-arg test registry returns an Unknown attributable result (no consumer wiring), so
         // the truthful terminal for a finished poll is recovery-required, never a fabricated library
         // success.
-        val terminal = observed.first { it.isTerminal }
+        val terminal = observed.first { it.isSettledResult() }
         assertTrue(
             "the reused job is observed to a terminal state — and a test registry cannot claim a library sync success",
             terminal is SetupOperationState.RecoveryRequired,
@@ -274,7 +278,9 @@ class ConcurrentSetupCharacterizationTest {
         journal.append(entry("first-attempt-retried-by-scheduler", STAGE_LIBRARY_SYNC, SteamSyncWorker.ONE_TIME_NAME, manualId.toString(), "n/a", "ENQUEUED", attemptsAfterRetry))
 
         val librarySync = stage(STAGE_LIBRARY_SYNC)
-        val admission = librarySync.run.admit(requestId())
+        val admissionDeferred = libraryAdmissionAsync()
+        flushUntil { admissionDeferred.isCompleted }
+        val admission = admissionDeferred.await()
         val work = admission as StageAdmission.Work
         assertEquals("the live backed-off job is reused, not duplicated", manualId, work.workId)
 
@@ -304,7 +310,9 @@ class ConcurrentSetupCharacterizationTest {
         journal.append(entry("no-pre-existing-work", STAGE_LIBRARY_SYNC, SteamSyncWorker.ONE_TIME_NAME, null, "NEW", "ABSENT", 0))
 
         val librarySync = stage(STAGE_LIBRARY_SYNC)
-        val admission = librarySync.run.admit(requestId())
+        val admissionDeferred = libraryAdmissionAsync()
+        flushUntil { admissionDeferred.isCompleted }
+        val admission = admissionDeferred.await()
         val work = admission as StageAdmission.Work
         assertEquals(AdmissionKind.NEW, work.kind)
         journal.append(entry("new-work-admitted", STAGE_LIBRARY_SYNC, SteamSyncWorker.ONE_TIME_NAME, work.workId.toString(), "NEW", work.initialState::class.simpleName ?: "-", 0))
@@ -314,10 +322,11 @@ class ConcurrentSetupCharacterizationTest {
             snapshot(SteamSyncWorker.ONE_TIME_NAME).states.contains(WorkInfo.State.SUCCEEDED.name)
         }
         librarySync.run.observe(work.workId.toString())
-            .first { it.isTerminal }
+            .first { it.isTerminal || it is SetupOperationState.RecoveryRequired }
             .let { terminal ->
                 // The 2-arg test registry cannot claim a library success without attributable
-                // evidence: the honest terminal is recovery-required, never a fabricated success.
+                // evidence: the honest settled result is recovery-required, never a fabricated
+                // success.
                 assertTrue(
                     "a fresh job that finishes fast is still the exact NEW admission, and the test registry never fabricates a library success",
                     terminal is SetupOperationState.RecoveryRequired,
@@ -382,7 +391,9 @@ class ConcurrentSetupCharacterizationTest {
         journal.append(entry("live-monitor-post-play-handoff", "n/a", handoffName, enqueuedHandoff.id.toString(), "NEW", "ENQUEUED", 0))
 
         val librarySync = stage(STAGE_LIBRARY_SYNC)
-        val admission = librarySync.run.admit(requestId())
+        val admissionDeferred = libraryAdmissionAsync()
+        flushUntil { admissionDeferred.isCompleted }
+        val admission = admissionDeferred.await()
         val work = admission as StageAdmission.Work
         assertEquals(AdmissionKind.REUSED, work.kind)
         assertEquals(manualId, work.workId)
@@ -393,10 +404,10 @@ class ConcurrentSetupCharacterizationTest {
 
         manualGate.complete(Unit)
         librarySync.run.observe(work.workId.toString())
-            .first { it.isTerminal }
+            .first { it.isTerminal || it is SetupOperationState.RecoveryRequired }
             .let { terminal ->
                 // The 2-arg test registry (Unknown attributable result) never claims a fabricated
-                // library success; the honest terminal is recovery-required.
+                // library success; the honest settled result is recovery-required.
                 assertTrue(terminal is SetupOperationState.RecoveryRequired)
             }
         journal.append(entry("setup-stage-observed-succeeded", STAGE_LIBRARY_SYNC, SteamSyncWorker.ONE_TIME_NAME, manualId.toString(), "REUSED", "SUCCEEDED", 0, outcome = "Succeeded"))
@@ -421,6 +432,23 @@ class ConcurrentSetupCharacterizationTest {
 
     /** Random UUID request identity (the scheduler seam requires exact UUID request ids). */
     private fun requestId(): String = UUID.randomUUID().toString()
+
+    /**
+     * A state a stage can truthfully settle on: a terminal outcome, or an explicit
+     * [SetupOperationState.RecoveryRequired] — which is intentionally *not* "terminal" in the
+     * model, but is still the settled result a test registry's Unknown attributable library result
+     * must surface. Accepting it here never manufactures a terminal success.
+     */
+    private fun SetupOperationState.isSettledResult(): Boolean =
+        isTerminal || this is SetupOperationState.RecoveryRequired
+
+    /**
+     * Admit the registered library stage from the test scope: the enqueue `Operation` awaited by
+     * the scheduler needs the real Looper pumped while suspended, so the admission runs under a
+     * deferred that [flushUntil] settles (real Looper idle + thread yield), then [Deferred.await].
+     */
+    private fun TestScope.libraryAdmissionAsync(): Deferred<StageAdmission> =
+        async { stage(STAGE_LIBRARY_SYNC).run.admit(requestId()) }
 
     private fun manualWorkerFor(appContext: Context, params: WorkerParameters): ListenableWorker =
         when (manualMode) {
