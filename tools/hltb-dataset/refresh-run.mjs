@@ -90,12 +90,14 @@ export async function runRefresh(options, dependencies = {}) {
   for (const id of plan.selected) {
     if (state.observations[id]) continue;
     if (budget.stopped) break;
+    const attemptsBeforeEntry = budget.stats.requests;
     try {
       const page = await budget.request(`https://howlongtobeat.com/game/${id}`, "hltb");
       const observation = parseGamePage(page, id, privateStrings);
       state.observations[id] = { status: observation.lengths.every((v) => v === null) ? "no-lengths" : "usable",
         gatheredAt: budget.now(), lengths: observation.lengths, title: observation.title };
     } catch (error) {
+      if (error.category === "budget-exhausted" && budget.stats.requests === attemptsBeforeEntry) break;
       state.observations[id] = { status: "failed", category: safeCategory(error.category) };
       if (error.category === "challenge-response") budget.stopped = "challenge-response";
     }

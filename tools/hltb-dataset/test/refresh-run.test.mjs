@@ -188,6 +188,6 @@ test("request exhaustion distinguishes failed from unattempted and retains every
   const f = await fixture(t, ["--max-requests", "1"]);
   const r = await runRefresh(f.options, f.dependencies);
   assert.equal(r.exitCode, 2); assert.equal(r.report.requests.budgetExhausted, true);
-  assert.deepEqual(r.report.failures, [{ hltbId: 100, category: "budget-exhausted" }]); assert.deepEqual(r.report.unattempted, [200]);
+  assert.deepEqual(r.report.failures, []); assert.deepEqual(r.report.unattempted, [100, 200]);
   assert.deepEqual(r.candidate, base);
 });

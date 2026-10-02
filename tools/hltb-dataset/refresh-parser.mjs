@@ -12,7 +12,8 @@ export function parseGamePage(html, requestedId, privateStrings = []) {
   const props = root?.props?.pageProps;
   if (!props || props.notFound) fail("not-found");
   // Only documented structured game containers; never regex across unrelated records.
-  const candidates = [props.game, props.gameData, props.gameInside].flat().filter((g) => g && typeof g === "object");
+  const containers = [props.game, props.gameData, props.gameInside].filter(Boolean);
+  const candidates = containers.flatMap((g) => g.data?.game ?? g).flat().filter((g) => g && typeof g === "object");
   if (!candidates.length) fail("unrecognized-page");
   const rows = candidates.map((game) => {
     const id = typeof game.game_id === "string" && /^[1-9]\d*$/.test(game.game_id) ? Number(game.game_id) : game.game_id;
