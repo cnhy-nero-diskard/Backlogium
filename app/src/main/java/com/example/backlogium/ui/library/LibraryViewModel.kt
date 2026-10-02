@@ -378,7 +378,8 @@ class LibraryViewModel @Inject constructor(
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000),
+        // Keep the retained destination's filtered content current for identity-based restoration.
+        started = SharingStarted.Eagerly,
         initialValue = LibraryUiState(),
     )
 

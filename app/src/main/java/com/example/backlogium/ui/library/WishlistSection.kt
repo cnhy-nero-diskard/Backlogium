@@ -69,7 +69,7 @@ fun LazyListScope.wishlistSection(
 ) {
     if (!state.configured) return
 
-    item {
+    item(key = "wishlist-header") {
         WishlistSectionHeader(
             expanded = state.expanded,
             count = state.entries.size,
@@ -81,11 +81,11 @@ fun LazyListScope.wishlistSection(
     if (!state.expanded) return
 
     if (state.staleNotice) {
-        item { WishlistNotice(state.availability, hasEntries = true) }
+        item(key = "wishlist-notice") { WishlistNotice(state.availability, hasEntries = true) }
     }
 
     if (state.entries.isEmpty()) {
-        item {
+        item(key = "wishlist-empty") {
             when {
                 state.isEmpty -> WishlistMessage(
                     title = "Nothing wishlisted",

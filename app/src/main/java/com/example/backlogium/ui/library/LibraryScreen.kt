@@ -58,6 +58,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -180,9 +181,9 @@ internal fun shouldShowWishlistSection(
  * Whether Library's transient selection resets when the screen's
  * composition disposes. Disposal fires both on an actual navigation-away and on a
  * configuration/activity recreation (rotation, locale/theme change) where the Hilt ViewModel
- * survives — so only a navigation-away clears, and a recreation keeps the active filters.
+ * survives, so only a navigation-away clears selection. Filters have a separate visit lifetime.
  */
-internal fun shouldClearLibraryTransientState(isChangingConfigurations: Boolean): Boolean =
+internal fun shouldClearLibrarySelection(isChangingConfigurations: Boolean): Boolean =
     !isChangingConfigurations
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
@@ -229,11 +230,14 @@ fun LibraryScreen(
 
     // A saved destination can emit its old state before the repository combine catches up.
     // Never present that state after expiry, or flash cold-start defaults during a retained visit.
-    if (state.loading || state.filters != visitFilters) return
+    var presented by remember(generation) { mutableStateOf(false) }
+    if (!presented && (state.loading || state.filters != visitFilters)) return
+    SideEffect { presented = true }
     key(generation) {
         LibraryContent(
             state = state,
             wishlistState = wishlistState,
+            visit = viewModel.visit,
             actions = LibraryContentActions(
                 onOpenReview = onOpenReview,
                 onOpenGameDetail = onOpenGameDetail,
@@ -317,6 +321,7 @@ internal fun LibraryContent(
     state: LibraryUiState,
     wishlistState: WishlistUiState = WishlistUiState(),
     actions: LibraryContentActions = LibraryContentActions(),
+    visit: LibraryVisitState = remember { LibraryVisitState() },
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -333,6 +338,8 @@ internal fun LibraryContent(
     val visibleGoalGames = state.goalGames
     val visibleBacklog = state.backlog
     val noVisibleMatches = state.noMatches
+    val generation by visit.generation.collectAsStateWithLifecycle()
+    val listState = rememberLibraryScrollState(visit, generation, state, wishlistState)
 
     // A finished per-game lookup can raise a one-shot "needs the match center" request as state:
     // its ViewModel job lives in `viewModelScope` and may outlive the dialog composition that
@@ -369,7 +376,7 @@ internal fun LibraryContent(
     DisposableEffect(Unit) {
         onDispose {
             val recreation = context.findActivity()?.isChangingConfigurations == true
-            if (shouldClearLibraryTransientState(recreation)) {
+            if (shouldClearLibrarySelection(recreation)) {
                 actions.onClearSelection()
             }
             showFilterSheet = false
@@ -401,6 +408,7 @@ internal fun LibraryContent(
     if (state.libraryEmpty) {
         Column(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp),
             ) {
@@ -412,7 +420,7 @@ internal fun LibraryContent(
                         onOpenStore = { actions.onOpenStore(it.storeUrl) },
                     )
                 }
-                item { LibraryEmptyNotice() }
+                item(key = "library-empty") { LibraryEmptyNotice() }
             }
         }
         return
@@ -434,11 +442,12 @@ internal fun LibraryContent(
         }
 
         LazyColumn(
+            state = listState,
             // Spacing scrolls with the content; the viewport itself reaches the shell's bar.
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
         ) {
-            item {
+            item(key = "library-controls") {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -494,7 +503,7 @@ internal fun LibraryContent(
             // Gated on the actionable match-center count: an unmatched-only queue leaves
             // reviewCount at 0 while rescue entries still need a main-flow entry point.
             if (state.matchCenterCount > 0) {
-                item {
+                item(key = "library-attention") {
                     HltbAttentionRow(
                         reviewCount = state.reviewCount,
                         onOpenReview = { actions.onOpenReview(null) },
@@ -503,7 +512,7 @@ internal fun LibraryContent(
             }
 
             if (state.refreshing) {
-                item {
+                item(key = "library-lookup") {
                     SelectionLookupPanel(
                         progress = state.batchProgress,
                         log = state.batchLog,
@@ -525,7 +534,7 @@ internal fun LibraryContent(
             }
 
             if (visibleGoalGames.isNotEmpty()) {
-                item {
+                item(key = "library-focus") {
                     SectionHeader(
                         text = stringResource(R.string.library_focus_section),
                         sort = state.focusSort,
@@ -557,7 +566,7 @@ internal fun LibraryContent(
             // Heading only for a section that has matches — with a filter active, an empty
             // "Your games" heading would describe nothing.
             if (visibleBacklog.isNotEmpty()) {
-                item {
+                item(key = "library-backlog") {
                     SectionHeader(
                         text = stringResource(R.string.library_your_games_section),
                         sort = state.librarySort,
@@ -589,7 +598,7 @@ internal fun LibraryContent(
             // Inside the column, beneath the search field: the query that produced no matches
             // stays visible and clearable.
             if (noVisibleMatches) {
-                item {
+                item(key = "library-no-matches") {
                     NoMatchesRow(
                         filters = filters,
                         reason = filters.emptyReason() ?: LibraryEmptyReason.COMBINED,
@@ -1625,7 +1634,7 @@ private fun LazyListScope.libraryGameItems(
 ) {
     if (!density.isGrid) {
         games.forEach { game ->
-            item(key = "library-game-${game.appId}") {
+            item(key = libraryGameItemKey(listOf(game.appId), density, 0)) {
                 LibraryGameRow(
                     game = game,
                     density = density,
@@ -1641,7 +1650,7 @@ private fun LazyListScope.libraryGameItems(
     }
 
     games.chunked(density.columns).forEachIndexed { rowIndex, row ->
-        item(key = "library-grid-row-$rowIndex-${row.firstOrNull()?.appId ?: 0}") {
+        item(key = libraryGameItemKey(row.map { it.appId }, density, rowIndex)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),

@@ -2,6 +2,7 @@ package com.example.backlogium.ui.library
 
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
+import com.example.backlogium.domain.GameListDensity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.scopes.ActivityRetainedScoped
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -63,6 +64,7 @@ data class LibraryScrollAnchor(
     val itemKey: String? = null,
     val index: Int = 0,
     val offset: Int = 0,
+    val density: GameListDensity = GameListDensity.LIST,
 )
 
 /** The shell's activity-scoped ViewModel shares the retained holder with destination ViewModels. */
