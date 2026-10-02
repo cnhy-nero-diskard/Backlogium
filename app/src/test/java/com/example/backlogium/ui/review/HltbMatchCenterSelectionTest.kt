@@ -17,6 +17,25 @@ import org.junit.Test
  */
 class HltbMatchCenterSelectionTest {
 
+    @Test
+    fun navigatingPastUnresolvedGames_thenMatchingLastGame_returnsToPassedGame() {
+        val before = queue(
+            game(1, HltbMatchState.NEEDS_REVIEW),
+            game(2, HltbMatchState.UNMATCHED),
+            game(3, HltbMatchState.UNMATCHED),
+        )
+        var selected = deriveViewModelSelection(MatchCenterSelection(0, null), before)
+        assertEquals(1L, selected.persistedAppId)
+        // Current Next navigation changes identity without recording either game as skipped.
+        selected = MatchCenterSelection(1, 2L)
+        assertEquals(2L, stateFor(before, selected).selectedGame?.appId)
+        selected = MatchCenterSelection(2, 3L)
+        assertEquals(3L, stateFor(before, selected).selectedGame?.appId)
+        // A successful match removes 3. Clamping selects the previously passed unresolved 2.
+        selected = deriveViewModelSelection(selected, before.dropLast(1))
+        assertEquals(2L, selected.persistedAppId)
+    }
+
     private fun game(appId: Long, status: HltbMatchState) = MatchCenterGameUi(
         appId = appId,
         name = "Game $appId",
