@@ -17,4 +17,4 @@
 ## 4. Integration Review
 
 - [x] 4.1 Replace the old disposal-reset contract checks with visit-lifetime checks and verify sort/density preferences, selection cleanup, explicit Clear behavior, and cold-start defaults remain correct.
-- [ ] 4.2 Exercise Library → detail/review → Back, tab switch, and app background return on a phone or emulator at both sides of the five-minute boundary; verify the visible query, filters, and scroll position match the spec.
+- [x] 4.2 Exercise Library → detail/review → Back, tab switch, and app background return on a phone or emulator at both sides of the five-minute boundary; verify the visible query, filters, and scroll position match the spec.
