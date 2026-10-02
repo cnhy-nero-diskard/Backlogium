@@ -648,8 +648,8 @@ internal fun LibraryContent(
             },
             onChooseMatch = {
                 actions.onClearPicker(target.appId)
-                pickerTarget = target
                 dialogTarget = null
+                actions.onOpenReview(target.appId)
             },
             onChangeMatch = {
                 pickerTarget = target
@@ -1688,6 +1688,7 @@ private fun LazyListScope.libraryGameItems(
                         selectionMode = selectionMode,
                         onClick = { onClick(game) },
                         onLongClick = { onLongClick(game) },
+                        onManageGoal = { onManageGoal(game) },
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -1771,8 +1772,8 @@ internal fun LibraryGameRow(
 
 /**
  * Grid cell renderer. The two grid densities share a deliberate tile shell and portrait Steam hero
- * capsule stage while changing only the amount of information in the body. Grid cards intentionally
- * have no trailing action control, keeping their visual hierarchy focused on the game itself.
+ * capsule stage while changing only the amount of information in the body. A separate completion
+ * time action exposes the same per-game lookup and review dialog as the list.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1784,6 +1785,7 @@ internal fun LibraryGameCell(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onManageGoal: () -> Unit = {},
 ) {
     val compact = density == GameListDensity.COMPACT_GRID
     val tileShape = RoundedCornerShape(18.dp)
@@ -1858,6 +1860,20 @@ internal fun LibraryGameCell(
                         .align(Alignment.TopEnd)
                         .padding(6.dp),
                 )
+                if (!selectionMode) {
+                    IconButton(
+                        onClick = onManageGoal,
+                        enabled = game.fetchOp != HltbFetchOp.IN_PROGRESS,
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp)
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), CircleShape),
+                    ) {
+                        Icon(
+                            TablerIcons.Clock,
+                            contentDescription = stringResource(R.string.library_completion_times_for_game, game.name),
+                            tint = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
             }
 
             Column(
@@ -2554,7 +2570,7 @@ private fun GoalDialog(
                 Spacer(Modifier.height(12.dp))
                 HltbStatusLabel(status = hltbStatus, op = fetchOp)
                 when (hltbStatus) {
-                    HltbMatchState.NEEDS_REVIEW -> TextButton(
+                    HltbMatchState.NEEDS_REVIEW, HltbMatchState.UNMATCHED -> TextButton(
                         onClick = onChooseMatch,
                         enabled = fetchOp != HltbFetchOp.IN_PROGRESS,
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),

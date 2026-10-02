@@ -46,15 +46,17 @@ internal class HltbReviewSession {
         }
     }
 
-    fun skip() {
+    fun skip(expectedAppId: Long? = null) {
         mutableState.update { prior ->
             val appId = prior.selection.persistedAppId ?: return@update prior
+            if (expectedAppId != null && expectedAppId != appId) return@update prior
             prior.copy(deferredAppIds = prior.deferredAppIds + appId).reconciled()
         }
     }
 
-    fun navigate(direction: Int) {
+    fun navigate(direction: Int, expectedAppId: Long? = null) {
         mutableState.update { prior ->
+            if (expectedAppId != null && expectedAppId != prior.selection.persistedAppId) return@update prior
             val ui = prior.toUiState()
             val target = if (direction > 0) ui.nextGame else ui.previousGame
             if (target == null) return@update prior

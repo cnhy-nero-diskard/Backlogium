@@ -1,4 +1,7 @@
 <resources>
+    <string name="settings_match_center_title">Match Center</string>
+    <string name="settings_match_center_description">Review uncertain completion times or find a match for games with no results.</string>
+    <string name="library_completion_times_for_game">Completion times for %1$s</string>
     <string name="hltb_review_skip">Skip for this review session</string>
     <string name="hltb_review_pass_complete">Review pass complete</string>
     <string name="hltb_review_skipped_message">Skipped games still need a match. Review them again when you are ready.</string>

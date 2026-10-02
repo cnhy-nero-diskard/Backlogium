@@ -216,19 +216,19 @@ class HltbReviewViewModel @Inject constructor(
         initialValue = HltbMatchCenterUiState(),
     )
 
-    fun selectNext() {
-        reviewSession.navigate(1)
+    fun selectNext(expectedAppId: Long? = null) {
+        reviewSession.navigate(1, expectedAppId)
     }
 
-    fun selectPrevious() {
-        reviewSession.navigate(-1)
+    fun selectPrevious(expectedAppId: Long? = null) {
+        reviewSession.navigate(-1, expectedAppId)
     }
 
     fun selectIndex(index: Int) {
         reviewSession.selectIndex(index)
     }
 
-    fun skip() = reviewSession.skip()
+    fun skip(expectedAppId: Long? = null) = reviewSession.skip(expectedAppId)
 
     fun reviewSkipped() = reviewSession.reviewSkipped()
 

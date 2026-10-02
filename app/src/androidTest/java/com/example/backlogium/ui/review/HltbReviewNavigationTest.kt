@@ -94,8 +94,8 @@ class HltbReviewNavigationTest {
                     HltbReviewContent(
                         session.toUiState(), onDone = { controller.popBackStack() },
                         actions = HltbReviewActions(
-                            onNext = { routeHolder.session.navigate(1) },
-                            onPrevious = { routeHolder.session.navigate(-1) },
+                            onNext = { routeHolder.session.navigate(1, it) },
+                            onPrevious = { routeHolder.session.navigate(-1, it) },
                             onSkip = routeHolder.session::skip,
                             onReviewSkipped = routeHolder.session::reviewSkipped,
                             onResolve = { id, _ -> queue.value = queue.value.filterNot { it.appId == id } },

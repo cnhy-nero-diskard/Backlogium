@@ -280,6 +280,7 @@ fun BacklogiumAppRoot(
                                 actions = settings.actions,
                                 onBack = { navController.popBackStack() },
                                 onOpenHiddenGames = { navController.navigate(ROUTE_HIDDEN_GAMES) },
+                                onOpenReview = { navController.navigate(hltbReviewRoute(null)) },
                             )
                         }
                     }

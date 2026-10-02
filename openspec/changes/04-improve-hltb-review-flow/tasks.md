@@ -11,9 +11,9 @@
 
 ## 3. Entry Points
 
-- [ ] 3.1 Add accessible per-game HLTB lookup/review actions to both Library grid densities using the targeted route; verify list and grid parity, correct app ID, and distinct game-opening behavior.
-- [ ] 3.2 Add the general Match Center shortcut to Settings Gameplay and wire it through the app shell; verify it opens with and without an attention count.
+- [x] 3.1 Add accessible per-game HLTB lookup/review actions to both Library grid densities using the targeted route; verify list and grid parity, correct app ID, and distinct game-opening behavior.
+- [x] 3.2 Add the general Match Center shortcut to Settings Gameplay and wire it through the app shell; verify it opens with and without an attention count.
 
 ## 4. Integrated Review
 
-- [ ] 4.1 Exercise ambiguous and unmatched partitions, queue changes, list/both-grid entry, Settings entry, and a scoped single-game route on a device or emulator; verify forward progress, exhaustion, and return behavior match the spec.
+- [x] 4.1 Exercise ambiguous and unmatched partitions, queue changes, list/both-grid entry, Settings entry, and a scoped single-game route on a device or emulator; verify forward progress, exhaustion, and return behavior match the spec.

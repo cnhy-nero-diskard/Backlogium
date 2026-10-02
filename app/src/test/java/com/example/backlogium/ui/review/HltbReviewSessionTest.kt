@@ -110,4 +110,17 @@ class HltbReviewSessionTest {
         assertEquals(1L, fresh.ui().selectedGame?.appId)
         assertTrue(fresh.ui().deferredAppIds.isEmpty())
     }
+
+    @Test fun tapFromStaleDisplayedGameCannotDeferOrNavigateItsReplacement() {
+        val session = HltbReviewSession()
+        session.updateQueue(listOf(game(1), game(2), game(3)))
+        session.updateQueue(listOf(game(2), game(3))) // Room resolves 1 before its UI frame is replaced.
+        session.skip(expectedAppId = 1)
+        session.navigate(1, expectedAppId = 1)
+        assertEquals(2L, session.ui().selectedGame?.appId)
+        assertTrue(session.ui().deferredAppIds.isEmpty())
+        session.skip(expectedAppId = 2)
+        assertEquals(3L, session.ui().selectedGame?.appId)
+        assertEquals(setOf(2L), session.ui().deferredAppIds)
+    }
 }

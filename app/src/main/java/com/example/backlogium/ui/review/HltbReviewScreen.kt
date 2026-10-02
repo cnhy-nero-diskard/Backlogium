@@ -50,9 +50,8 @@ import com.example.backlogium.ui.components.HltbLengthsRow
  * [initialAppId], when present, seeds the selection on entry — used when a caller (e.g. a
  * single-game lookup from the Library) navigates here already knowing which game needs attention,
  * so the user lands directly on it instead of the default first-in-queue game. Resolving *that*
- * game (and only that game — browsing to a different one first does not) then calls [onDone],
- * so a single-game deep link returns the user straight to where they came from instead of leaving
- * them in a multi-game review surface they never asked to browse.
+ * game calls [onDone], returning to the caller. Its active pass is limited to that game;
+ * deferring it offers Review skipped or Done while its stored match stays unresolved.
  */
 @Composable
 fun HltbReviewScreen(
@@ -86,9 +85,9 @@ fun HltbReviewScreen(
 }
 
 internal data class HltbReviewActions(
-    val onPrevious: () -> Unit = {},
-    val onNext: () -> Unit = {},
-    val onSkip: () -> Unit = {},
+    val onPrevious: (Long) -> Unit = {},
+    val onNext: (Long) -> Unit = {},
+    val onSkip: (Long) -> Unit = {},
     val onReviewSkipped: () -> Unit = {},
     val onResolve: (Long, HltbCandidate) -> Unit = { _, _ -> },
     val onBroaderSearch: (Long, String) -> Unit = { _, _ -> },
@@ -169,7 +168,7 @@ internal fun HltbReviewContent(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             OutlinedButton(
-                onClick = actions.onPrevious,
+                onClick = { actions.onPrevious(selected.appId) },
                 enabled = state.previousGame != null,
             ) { Text("Previous") }
             Text(
@@ -177,12 +176,12 @@ internal fun HltbReviewContent(
                 style = MaterialTheme.typography.bodySmall,
             )
             Button(
-                onClick = actions.onNext,
+                onClick = { actions.onNext(selected.appId) },
                 enabled = state.nextGame != null,
             ) { Text("Next") }
         }
 
-        TextButton(onClick = actions.onSkip, modifier = Modifier.fillMaxWidth()) {
+        TextButton(onClick = { actions.onSkip(selected.appId) }, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.hltb_review_skip))
         }
 
