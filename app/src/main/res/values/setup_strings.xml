@@ -1,0 +1,33 @@
+<resources>
+    <string name="setup_connect_first">Connect your Steam account first — every step below needs it.</string>
+    <string name="setup_restoring_journey">Restoring your setup choices…</string>
+    <string name="setup_connected_intro">Your account is connected. Pick the steps you want now to fill your library; you can run the rest later from Settings.</string>
+    <string name="setup_waiting">Waiting</string>
+    <string name="setup_running">Running</string>
+    <string name="setup_retry_scheduled">Retry scheduled</string>
+    <string name="setup_done">Done</string>
+    <string name="setup_failed">Failed</string>
+    <string name="setup_cancelled">Cancelled</string>
+    <string name="setup_skipped">Skipped</string>
+    <string name="setup_not_run">Not run</string>
+    <string name="setup_unavailable">Unavailable</string>
+    <string name="setup_recovery_required">Recovery required — request this step again.</string>
+    <string name="setup_retry">Retry</string>
+    <string name="setup_run_again">Run again</string>
+    <string name="setup_view_progress">View progress</string>
+    <string name="setup_settled">Checklist settled</string>
+    <string name="setup_background">Admitted work continues in the background. You can continue without cancelling it.</string>
+    <string name="setup_progress">%1$d / %2$d</string>
+    <string name="setup_result_line">%1$s — %2$s</string>
+    <string name="setup_skip">Skip setup</string>
+    <string name="setup_continue_later">Continue / do later</string>
+    <string name="setup_continue">Continue</string>
+    <string name="setup_start">Start setup</string>
+    <string name="setup_start_selected">Run selected steps</string>
+    <string name="setup_working">Setting up…</string>
+    <string name="setup_zero_artwork">No artwork was available for this request. Run this step again after library sync.</string>
+    <plurals name="setup_pending_count">
+        <item quantity="one">%d operation is still pending.</item>
+        <item quantity="other">%d operations are still pending.</item>
+    </plurals>
+</resources>

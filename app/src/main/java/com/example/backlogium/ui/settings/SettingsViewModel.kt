@@ -257,6 +257,10 @@ data class SettingsUiState(
     /** True once historical Steam playtime has been imported (one-time). */
     val historyImported: Boolean = false,
     val isImportingHistory: Boolean = false,
+    val historyBaselineReady: Boolean = false,
+    val historyRecomputePending: Boolean = false,
+    val historyRequestPending: Boolean = false,
+    val historyImportResult: com.example.backlogium.domain.HistoryImportResult? = null,
     /** The persisted rules — what "discard" returns to and what a change is measured against. */
     val savedConfig: RuleConfig = RuleConfig(),
     val draft: RuleDraft = RuleDraft.from(RuleConfig()),
@@ -355,7 +359,7 @@ class SettingsViewModel @Inject constructor(
     private val advancedExpanded = MutableStateFlow(false)
     private val previewing = MutableStateFlow(false)
     private val confirmation = MutableStateFlow<RuleChangeConfirmation?>(null)
-    private val isImportingHistory = MutableStateFlow(false)
+    private val isImportingHistory = profileRepository.historyImportInFlight
 
     private val backupBusy = MutableStateFlow(false)
     private val backupMessage = MutableStateFlow<SettingsText?>(null)
@@ -467,6 +471,10 @@ class SettingsViewModel @Inject constructor(
             lastSyncError = profile?.lastSyncError,
             isSyncing = syncing,
             historyImported = profile?.playtimeBackfilled ?: false,
+            historyBaselineReady = profileRepository.libraryBaselineReadiness() ==
+                com.example.backlogium.domain.LibraryBaselineReadiness.Confirmed,
+            historyRecomputePending = profile?.pendingHistoryRecompute == true &&
+                profile.steamId == configured?.steamId,
             savedConfig = config,
             draft = RuleDraft.from(config),
             autoSnapshotEnabled = autoSnapshot.enabled,
@@ -500,6 +508,11 @@ class SettingsViewModel @Inject constructor(
         state.copy(removedSharedGames = removed)
     }.combine(hiddenState) { state, hidden ->
         state.copy(hiddenGameCount = hidden.first, nonGameCandidateCount = hidden.second)
+    }.combine(profileRepository.historyImportState) { state, operation ->
+        val completed = operation as? com.example.backlogium.domain.HistoryImportState.Completed
+        state.copy(historyImportResult = completed?.takeIf { it.accountSteamId == state.steamId }?.result)
+    }.combine(profileRepository.historyImportPendingRequest) { state, request ->
+        state.copy(historyRequestPending = request?.steamId == state.steamId && request != null)
     }
 
     private val ruleLocalState = combine(
@@ -1489,26 +1502,21 @@ class SettingsViewModel @Inject constructor(
     }
 
     /** Run the one-time historical-playtime import. Idempotent in the use case. */
-    fun importSteamHistory() = runHistoryOp { profileRepository.importSteamHistory() }
-
-    /** Undo a prior import so it can be run again (recovery / opt-out). */
-    fun resetHistoryImport() = runHistoryOp {
-        if (profileRepository.resetSteamHistoryImport() == PlaytimeBackfillResetResult.BLOCKED_BY_CLOUD_TRANSFER) {
-            _toastMessages.tryEmit(SettingsText(R.string.settings_history_reset_cloud_refile_required))
-        }
+    fun importSteamHistory() {
+        val state = uiState.value
+        if (!state.historyBaselineReady || state.isImportingHistory || !state.configured) return
+        viewModelScope.launch { profileRepository.importSteamHistory(expectedSteamId = state.steamId) }
     }
 
-    // Serialize import/reset behind one in-flight flag so the buttons show progress and
-    // concurrent taps can't overlap.
-    private fun runHistoryOp(op: suspend () -> Unit) {
-        if (isImportingHistory.value) return
-        viewModelScope.launch {
-            isImportingHistory.update { true }
-            try {
-                op()
-            } finally {
-                isImportingHistory.update { false }
-            }
+    fun resumeHistoryImport() {
+        if (uiState.value.isImportingHistory) return
+        viewModelScope.launch { profileRepository.resumeHistoryImport() }
+    }
+
+    /** Undo a prior import so it can be run again (recovery / opt-out). */
+    fun resetHistoryImport() = viewModelScope.launch {
+        if (profileRepository.resetSteamHistoryImport() == PlaytimeBackfillResetResult.BLOCKED_BY_CLOUD_TRANSFER) {
+            _toastMessages.tryEmit(SettingsText(R.string.settings_history_reset_cloud_refile_required))
         }
     }
 

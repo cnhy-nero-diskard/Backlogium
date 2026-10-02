@@ -204,6 +204,13 @@ internal fun HomeContent(
 ) {
     val haptics = rememberHaptics()
 
+    // The first-run journey is resolved before any Home content or takeover: neither Home nor the
+    // onboarding takeover may flash while the durable phase is being read on a cold launch.
+    if (shouldShowJourneyLoading(state)) {
+        HomeJourneyLoading()
+        return
+    }
+
     if (shouldShowHomeLoading(state)) {
         HomeLoadingContent()
         return
@@ -214,15 +221,15 @@ internal fun HomeContent(
     // continues into first-run setup afterwards — so tearing the takeover down there would
     // dismantle the setup step in the same frame it appeared.
     //
-    // Two latches, because one cannot cover both windows. `state.firstRunSetupActive` is durable and
-    // is what restores the takeover on a cold launch after the process is killed mid-setup, when
-    // credentials are already stored. It is written asynchronously as they are stored, so the
-    // saved-instance latch below holds the surface across an Activity recreation in the gap before
-    // that write lands — and across the gap after it is cleared, before `completed` is reported.
+    // The durable half of the gate is now the first-run journey phase (`state.firstRunOwed`), which
+    // survives process death and is what restores the takeover on a cold launch after the process
+    // is killed mid-journey, when credentials are already stored. The saved-instance latch below
+    // holds the surface across an Activity recreation in the gap before the durable phase write
+    // lands — and across the gap after it resolves, before `completed` is reported.
     var onboardingActive by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(state.configured) { if (!state.configured) onboardingActive = true }
 
-    if (!state.configured || state.firstRunSetupActive || onboardingActive) {
+    if (state.firstRunOwed == true || onboardingActive || !state.configured) {
         // Full-screen onboarding takeover replaces the old dead-end "not configured" message.
         OnboardingScreen(onCompleted = { onboardingActive = false })
         return
@@ -665,6 +672,31 @@ private fun InnerHomeContent(
 internal const val HOME_LOADING_TAG = "home-loading"
 internal const val HOME_LOADING_PLACEHOLDER_TAG = "home-loading-placeholder"
 internal const val HOME_UPDATING_TAG = "home-updating"
+internal const val HOME_JOURNEY_LOADING_TAG = "home-journey-loading"
+
+/**
+ * Neutral first-frame loader shown until the active account's first-run journey is resolved. It is
+ * deliberately neither Home content nor the onboarding takeover, so a cold launch never flashes
+ * either while the durable phase is read (stabilize-first-run-setup, task 7.2).
+ */
+@Composable
+internal fun HomeJourneyLoading(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .testTag(HOME_JOURNEY_LOADING_TAG),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+        Spacer(Modifier.height(16.dp))
+        Text(
+            text = stringResource(R.string.home_journey_loading),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
 
 /** Bounded first-load presentation; it keeps the Home hierarchy recognizable without fake data. */
 @Composable

@@ -700,6 +700,7 @@
         <item quantity="other">%s achievements</item>
     </plurals>
     <string name="home_loading_title">Loading Home</string>
+    <string name="home_journey_loading">Opening Backlogium…</string>
     <string name="home_updating">Updating your Home</string>
     <string name="home_level_up_earned">Level-up earned</string>
     <string name="home_streak_milestone_earned">Streak milestone earned</string>

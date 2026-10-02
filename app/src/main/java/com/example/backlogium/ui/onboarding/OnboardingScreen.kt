@@ -1,6 +1,7 @@
 package com.example.backlogium.ui.onboarding
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -32,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -43,6 +45,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.ui.setup.SetupActions
 import com.example.backlogium.ui.setup.SetupChecklist
 import com.example.backlogium.ui.setup.SetupSummary
+import com.example.backlogium.ui.setup.SetupUiState
 import com.example.backlogium.ui.setup.SetupViewModel
 import compose.icons.TablerIcons
 import compose.icons.tablericons.AlertCircle
@@ -65,12 +68,23 @@ fun OnboardingScreen(
     viewModel: OnboardingViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val historyChoice by viewModel.historyChoice.collectAsStateWithLifecycle()
     val identityExportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri -> uri?.let(viewModel::exportIdentityChange) }
 
     LaunchedEffect(state.completed) {
         if (state.completed) onCompleted()
+    }
+
+    BackHandler(enabled = state.step == OnboardingStep.HISTORY_CHOICE) { viewModel.onReviewSetup() }
+    if (state.loading) {
+        Column(modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator()
+            Text(stringResource(com.example.backlogium.R.string.setup_restoring_journey))
+        }
+        return
     }
 
     Column(
@@ -80,7 +94,7 @@ fun OnboardingScreen(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text(
+        if (state.step != OnboardingStep.HISTORY_CHOICE) Text(
             text = if (state.step == OnboardingStep.SETUP) {
                 "Set up your library"
             } else {
@@ -105,6 +119,14 @@ fun OnboardingScreen(
             // final action, using that step's existing inline treatment.
             OnboardingStep.STEAM_ID, OnboardingStep.VERIFY -> SteamIdStep(state, viewModel)
             OnboardingStep.SETUP -> SetupStep(onDone = viewModel::onSetupDone)
+            OnboardingStep.HISTORY_CHOICE -> HistoryChoiceContent(
+                historyChoice,
+                onImport = viewModel::onHistoryImport,
+                onRetry = viewModel::onHistoryRetry,
+                onSkip = viewModel::onHistorySkip,
+                onContinue = viewModel::onHistoryContinue,
+                onReviewSetup = viewModel::onReviewSetup,
+            )
         }
     }
 
@@ -330,10 +352,9 @@ private fun VerifyMessage(message: String) {
 /**
  * The staged setup checklist, as the last step of a first run.
  *
- * The same composable the Settings entry uses, with each stage's declared default applied — so a
- * stage registered later appears here without this file being touched. Entry into the app is offered
- * as soon as every in-screen stage has settled; detached stages keep going in their own
- * notifications, and "Skip setup" is available throughout so the step can never become a trap.
+ * This wrapper owns the Hilt wiring — the ViewModel, its prepared defaults, and the skip
+ * semantics — and hands the actual surface to [OnboardingSetupContent] so a test can render what a
+ * first-run user sees without Hilt.
  */
 @Composable
 private fun SetupStep(onDone: () -> Unit) {
@@ -342,48 +363,80 @@ private fun SetupStep(onDone: () -> Unit) {
 
     LaunchedEffect(viewModel) { viewModel.prepare(applyDefaults = true) }
 
+    OnboardingSetupContent(
+        state = state,
+        onToggle = viewModel::toggle,
+        onRetry = viewModel::retry,
+        onReobserve = viewModel::reobserve,
+        onStart = viewModel::start,
+        onSkip = {
+            // Offered before the run and during it, so the step can never hold anyone. Before
+            // anything has started it records every stage skipped, which is then the truth. Once a
+            // run is under way it only leaves — relabelling a stage that is actually running as
+            // "skipped" would put a false outcome in front of the Settings list that reads them.
+            // `state` is read through its State delegate, so the click sees the run flags as they
+            // are at that moment.
+            val started = state.running || state.finished
+            if (!started) viewModel.skip() else viewModel.continueLater()
+            onDone()
+        },
+        onDone = { viewModel.continueLater(); onDone() },
+    )
+}
+
+/**
+ * The stateless staging setup checklist surface, as the last step of a first run.
+ *
+ * The same composable the Settings entry uses, with each stage's declared default applied — so a
+ * stage registered later appears here without this file being touched. Entry into the app is offered
+ * as soon as every in-screen stage has settled; detached stages keep going in their own
+ * notifications, and "Skip setup" is available throughout so the step can never become a trap.
+ */
+@Composable
+internal fun OnboardingSetupContent(
+    state: SetupUiState,
+    onToggle: (String, Boolean) -> Unit,
+    onRetry: (String) -> Unit,
+    onStart: () -> Unit,
+    onSkip: () -> Unit,
+    onDone: () -> Unit,
+    onReobserve: (String) -> Unit = onRetry,
+) {
     Text(
-        text = "Your account is connected. These steps fill the app with your library — pick the " +
-            "ones you want now, and run the rest later from Settings.",
+        text = stringResource(com.example.backlogium.R.string.setup_connected_intro),
         style = MaterialTheme.typography.bodyMedium,
     )
 
     SetupChecklist(
         state = state,
-        onToggle = viewModel::toggle,
-        onRetry = viewModel::retry,
-        // Nothing has an outcome worth retrying until this run has finished, and the summary below
-        // plus the Settings entry are where a retry belongs.
-        showRetry = false,
+        onToggle = onToggle,
+        onRetry = onRetry,
+        showRetry = true,
+        onReobserve = onReobserve,
     )
 
     if (state.finished || state.running) SetupSummary(state)
 
     Spacer(Modifier.height(8.dp))
     val started = state.running || state.finished
-    if (started && state.inScreenSettled) {
+    if (started && state.inScreenSettled && !state.canStart) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
-                Text(if (state.detachedStillRunning) "Continue to the app" else "Done")
+                Text(stringResource(com.example.backlogium.R.string.setup_continue))
             }
         }
     } else {
         SetupActions(
             state = state,
-            startLabel = if (state.running) "Setting up…" else "Start setup",
-            onStart = viewModel::start,
-            // Offered before the run and during it, so the step can never hold anyone. Before
-            // anything has started it records every stage skipped, which is then the truth. Once a
-            // run is under way it only leaves — relabelling a stage that is actually running as
-            // "skipped" would put a false outcome in front of the Settings list that reads them.
-            onSkip = {
-                if (!started) viewModel.skip()
-                onDone()
-            },
+            startLabel = stringResource(if (state.running) com.example.backlogium.R.string.setup_working
+                else if (state.finished) com.example.backlogium.R.string.setup_start_selected
+                else com.example.backlogium.R.string.setup_start),
+            onStart = onStart,
+            onSkip = if (started && state.inScreenSettled) onDone else onSkip,
         )
     }
 }

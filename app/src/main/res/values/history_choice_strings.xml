@@ -1,0 +1,14 @@
+<resources>
+    <string name="history_choice_title">Count your Steam history toward XP?</string>
+    <string name="history_choice_effect">This optional, one-time import counts pre-existing Steam lifetime playtime toward XP using your existing rules. New playtime continues to be tracked separately.</string>
+    <string name="history_choice_limits">Steam lifetime totals have no session dates. Importing them cannot recreate past sessions, daily quests, or streaks.</string>
+    <string name="history_choice_needs_baseline">Library sync must confirm a readable library for this account before history can be imported. You can review setup or skip this for now.</string>
+    <string name="history_choice_recompute_pending">Your historical minutes are saved. Updating XP is still pending; recovery will use those saved minutes, without importing them again.</string>
+    <string name="history_choice_working">Your requested import is in progress. You can continue while it finishes.</string>
+    <string name="history_choice_already_imported">Steam history is already imported for this account. No second import is needed.</string>
+    <string name="history_choice_import">Import history</string>
+    <string name="history_choice_resume">Resume import</string>
+    <string name="history_choice_skip">Skip / do later</string>
+    <string name="history_choice_review_setup">Review library setup</string>
+    <string name="history_choice_settings_later">You can import or recover history later in Settings → Data &amp; privacy.</string>
+</resources>

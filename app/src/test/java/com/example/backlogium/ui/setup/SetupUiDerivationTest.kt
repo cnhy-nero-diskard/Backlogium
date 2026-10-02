@@ -1,6 +1,7 @@
 package com.example.backlogium.ui.setup
 
 import com.example.backlogium.work.setup.SetupOutcome
+import com.example.backlogium.work.setup.SetupOperationState
 import com.example.backlogium.work.setup.SetupRunState
 import com.example.backlogium.work.setup.SetupStageExecution
 import com.example.backlogium.work.setup.SetupStageProgress
@@ -26,6 +27,24 @@ class SetupUiDerivationTest {
         fakeStage("assets", execution = SetupStageExecution.DETACHED),
         fakeStage("invented_by_this_test", execution = SetupStageExecution.DETACHED),
     )
+
+    @Test
+    fun backgroundOperationsStayVisibleAfterForegroundSettlement() {
+        val rows = setupStagesUi(registered, emptySet(), SetupRunState(
+            loaded = true, running = false, finished = true,
+            operations = mapOf(
+                "sync" to SetupOperationState.RetryScheduled(2, "Waiting for the scheduled retry"),
+                "assets" to SetupOperationState.Running(SetupStageProgress(2, 4)),
+            ),
+        ))
+        val state = SetupUiState(loading = false, finished = true, stages = rows)
+        assertEquals(2, state.pendingCount)
+        assertTrue(state.detachedStillRunning)
+        assertTrue(rows.single { it.id == "assets" }.running)
+        assertTrue(rows.none { it.selected })
+        assertTrue(setupSummaryLines(rows).any { it.contains("retry scheduled") })
+        assertTrue(setupSummaryLines(rows).none { it.contains("done") })
+    }
 
     @Test
     fun aNewlyRegisteredStageAppearsEverywhere() {
@@ -149,6 +168,26 @@ class SetupUiDerivationTest {
 
         assertTrue(rows.single { it.id == "sync" }.selected)
         assertFalse(rows.single { it.id == "assets" }.selected)
+    }
+
+    @Test
+    fun editingAfterAFinishedRunControlsTheCheckboxesNotTheCompletedRunsSelection() {
+        // The completed run used "sync"; the user has since edited the pending next-run selection
+        // to "assets". The visible checkboxes must reflect what the next start submits — the
+        // finished run's selection must not force the checkboxes back onto the previous attempt.
+        val rows = setupStagesUi(
+            registered,
+            selection = setOf("assets"),
+            run = SetupRunState(
+                loaded = true,
+                finished = true,
+                selected = setOf("sync"),
+                outcomes = mapOf("sync" to SetupOutcome.Succeeded),
+            ),
+        )
+
+        assertTrue(rows.single { it.id == "assets" }.selected)
+        assertFalse(rows.single { it.id == "sync" }.selected)
     }
 
     @Test

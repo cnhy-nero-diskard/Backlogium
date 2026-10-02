@@ -188,6 +188,7 @@ internal fun SettingsGraphScreen(
                 onConfirmSave = viewModel::confirmSave,
                 onDismissConfirmation = viewModel::dismissConfirmation,
                 onImportHistory = viewModel::importSteamHistory,
+                onResumeHistoryImport = viewModel::resumeHistoryImport,
                 onResetHistoryImport = viewModel::resetHistoryImport,
                 onAutoSnapshotEnabledChanged = viewModel::onAutoSnapshotEnabledChanged,
                 onSnapshotRetentionCountChanged = viewModel::onSnapshotRetentionCountChanged,
@@ -277,6 +278,7 @@ data class SettingsActions(
     val onConfirmSave: () -> Unit,
     val onDismissConfirmation: () -> Unit,
     val onImportHistory: () -> Unit,
+    val onResumeHistoryImport: () -> Unit = {},
     val onResetHistoryImport: () -> Unit,
     val onAutoSnapshotEnabledChanged: (Boolean) -> Unit,
     val onSnapshotRetentionCountChanged: (Int) -> Unit,
@@ -349,7 +351,7 @@ fun SettingsScreen(
             actions = actions,
             onOpenHiddenGames = onOpenHiddenGames,
         )
-        DataPrivacySettingsContent(state = state, actions = actions)
+        DataPrivacySettingsContent(state = state, actions = actions, onOpenSetup = onOpenSetup)
         AdvancedSettingsContent(
             state = state,
             actions = actions,
@@ -428,7 +430,7 @@ internal fun GameplaySettingsContent(
 }
 
 @Composable
-internal fun DataPrivacySettingsContent(state: SettingsUiState, actions: SettingsActions) {
+internal fun DataPrivacySettingsContent(state: SettingsUiState, actions: SettingsActions, onOpenSetup: () -> Unit = {}) {
     SectionHeader(stringResource(R.string.settings_section_cloud_presence))
     CloudPresenceCard(state = state, actions = actions)
     SectionHeader(stringResource(R.string.settings_section_completion_times))
@@ -455,6 +457,12 @@ internal fun DataPrivacySettingsContent(state: SettingsUiState, actions: Setting
         cloudTransferApplied = state.cloudPresenceTransferApplied,
         onImport = actions.onImportHistory,
         onReset = actions.onResetHistoryImport,
+        baselineReady = state.historyBaselineReady,
+        recomputePending = state.historyRecomputePending,
+        requestPending = state.historyRequestPending,
+        result = state.historyImportResult,
+        onResume = actions.onResumeHistoryImport,
+        onOpenSetup = onOpenSetup,
     )
     SectionHeader(stringResource(R.string.settings_section_data_backup))
     DataBackupCard(state = state, actions = actions)
@@ -529,7 +537,7 @@ internal fun SettingsDetailScreen(
                     onOpenUpdate,
                 )
                 SettingsGroup.GAMEPLAY -> GameplaySettingsContent(state, actions, onOpenHiddenGames)
-                SettingsGroup.DATA_PRIVACY -> DataPrivacySettingsContent(state, actions)
+                SettingsGroup.DATA_PRIVACY -> DataPrivacySettingsContent(state, actions, onOpenSetup)
                 SettingsGroup.ADVANCED -> AdvancedSettingsContent(state, actions, onOpenDiagnostics)
             }
         }
@@ -2142,12 +2150,18 @@ private fun MismatchImportDialog(
  * completed state and offers a reset that undoes the import so it can be run again.
  */
 @Composable
-private fun HistoryImportCard(
+internal fun HistoryImportCard(
     imported: Boolean,
     importing: Boolean,
     cloudTransferApplied: Boolean,
     onImport: () -> Unit,
     onReset: () -> Unit,
+    baselineReady: Boolean = false,
+    recomputePending: Boolean = false,
+    requestPending: Boolean = false,
+    result: com.example.backlogium.domain.HistoryImportResult? = null,
+    onResume: () -> Unit = {},
+    onOpenSetup: () -> Unit = {},
 ) {
     var showConfirm by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
@@ -2156,7 +2170,34 @@ private fun HistoryImportCard(
         Column(Modifier.padding(16.dp)) {
             Text(stringResource(R.string.settings_history_title), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
-            if (imported) {
+            Text(stringResource(R.string.history_choice_limits), style = MaterialTheme.typography.bodySmall)
+            if (importing) {
+                Text(stringResource(R.string.history_choice_working), style = MaterialTheme.typography.bodyMedium)
+            }
+            val pending = recomputePending || requestPending ||
+                result is com.example.backlogium.domain.HistoryImportResult.PendingRecompute
+            if (pending) {
+                Text(stringResource(if (recomputePending) R.string.history_choice_recompute_pending
+                    else R.string.settings_history_request_pending), style = MaterialTheme.typography.bodyMedium)
+                TextButton(onClick = onResume, enabled = !importing) {
+                    Text(stringResource(R.string.history_choice_resume))
+                }
+            }
+            when (result) {
+                is com.example.backlogium.domain.HistoryImportResult.Failed -> Text(result.reason,
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                com.example.backlogium.domain.HistoryImportResult.Superseded -> Text(
+                    stringResource(R.string.settings_history_superseded), style = MaterialTheme.typography.bodySmall)
+                is com.example.backlogium.domain.HistoryImportResult.Imported -> if (result.creditedGames == 0) {
+                    Text(stringResource(R.string.settings_history_zero_changes), style = MaterialTheme.typography.bodySmall)
+                }
+                else -> Unit
+            }
+            if (!baselineReady && !imported) {
+                Text(stringResource(R.string.history_choice_needs_baseline), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = onOpenSetup) { Text(stringResource(R.string.history_choice_review_setup)) }
+            }
+            if (imported && !pending) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = TablerIcons.CircleCheck,
@@ -2195,7 +2236,7 @@ private fun HistoryImportCard(
                         Text(stringResource(R.string.settings_history_reset))
                     }
                 }
-            } else {
+            } else if (!imported) {
                 Text(
                     text = stringResource(R.string.settings_history_unimported_description),
                     style = MaterialTheme.typography.bodySmall,
@@ -2203,7 +2244,7 @@ private fun HistoryImportCard(
                 Spacer(Modifier.height(12.dp))
                 OutlinedButton(
                     onClick = { showConfirm = true },
-                    enabled = !importing,
+                    enabled = !importing && baselineReady && !pending,
                 ) {
                     if (importing) {
                         CircularProgressIndicator(
@@ -2224,7 +2265,7 @@ private fun HistoryImportCard(
         }
     }
 
-    if (showConfirm) {
+    if (showConfirm && baselineReady && !importing && !imported && !requestPending) {
         AlertDialog(
             onDismissRequest = { showConfirm = false },
             title = { Text(stringResource(R.string.settings_history_import_title)) },
@@ -2249,7 +2290,7 @@ private fun HistoryImportCard(
         )
     }
 
-    if (showResetConfirm) {
+    if (showResetConfirm && imported && !importing && !recomputePending && !cloudTransferApplied) {
         AlertDialog(
             onDismissRequest = { showResetConfirm = false },
             title = { Text(stringResource(R.string.settings_history_reset_title)) },

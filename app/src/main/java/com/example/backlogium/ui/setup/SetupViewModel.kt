@@ -8,6 +8,7 @@ import com.example.backlogium.work.setup.SetupCoordinator
 import com.example.backlogium.work.setup.SetupStageSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -22,11 +23,22 @@ import javax.inject.Inject
  * newly registered stage reaches both without either being touched.
  */
 @HiltViewModel
-class SetupViewModel @Inject constructor(
+class SetupViewModel internal constructor(
     private val source: SetupStageSource,
     private val coordinator: SetupCoordinator,
-    credentials: CredentialsRepository,
+    credentialsConfigured: Flow<Boolean>,
 ) : ViewModel() {
+
+    @Inject
+    constructor(
+        source: SetupStageSource,
+        coordinator: SetupCoordinator,
+        credentials: CredentialsRepository,
+    ) : this(
+        source,
+        coordinator,
+        credentials.credentialsStateFlow.map { it is CredentialsState.Configured },
+    )
 
     /** The user's pending checklist selection, before a run makes it the coordinator's business. */
     private val selection = MutableStateFlow<Set<String>>(emptySet())
@@ -42,7 +54,7 @@ class SetupViewModel @Inject constructor(
     val uiState: StateFlow<SetupUiState> = combine(
         coordinator.state,
         selection,
-        credentials.credentialsStateFlow.map { it is CredentialsState.Configured },
+        credentialsConfigured,
     ) { run, pending, configured ->
         SetupUiState(
             loading = !run.loaded,
@@ -80,6 +92,7 @@ class SetupViewModel @Inject constructor(
     }
 
     fun toggle(stageId: String, selected: Boolean) {
+        if (coordinator.state.value.running) return
         // An unavailable stage is not selectable; a toggle aimed at one is dropped rather than
         // producing a selection that the coordinator would then have to filter out again.
         if (source.stages.none { it.id == stageId && it.isAvailable }) return
@@ -88,14 +101,23 @@ class SetupViewModel @Inject constructor(
         }
     }
 
-    fun start() = coordinator.start(
-        selectedIds = selection.value,
-        recordUnselectedAsSkipped = isFirstRunFlow,
-    )
+    fun start() {
+        if (coordinator.state.value.running) return
+        val requested = selection.value
+        selection.value = emptySet()
+        coordinator.start(
+            selectedIds = requested,
+            recordUnselectedAsSkipped = isFirstRunFlow,
+        )
+    }
 
     /** Re-run one stage, replacing that stage's recorded outcome and no other's. */
     fun retry(stageId: String) =
-        coordinator.start(selectedIds = setOf(stageId), recordUnselectedAsSkipped = false)
+        coordinator.retryStage(stageId)
+
+    fun reobserve(stageId: String) = coordinator.reobserveStage(stageId)
+
+    fun continueLater() = coordinator.continueLater()
 
     /** Decline setup entirely: nothing runs and every stage is recorded as skipped. */
     fun skip() = coordinator.skipAll()

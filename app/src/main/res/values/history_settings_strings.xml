@@ -1,0 +1,5 @@
+<resources>
+    <string name="settings_history_request_pending">Your explicit history request is saved and needs recovery. Resuming uses the existing request, not a second import.</string>
+    <string name="settings_history_superseded">The requested account is no longer active. No history was imported for the replacement account.</string>
+    <string name="settings_history_zero_changes">Your confirmed library contained no new historical minutes to import.</string>
+</resources>

@@ -31,6 +31,7 @@ import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSummary
 import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.exactExpiryTicks
+import com.example.backlogium.domain.FirstRunJourneyGateway
 import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.displayedPlaytimeMinutes
 import com.example.backlogium.domain.ProgressEvent
@@ -39,7 +40,6 @@ import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RuleConfig
-import com.example.backlogium.work.setup.SetupCoordinator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import javax.inject.Inject
@@ -59,11 +59,18 @@ data class HomeUiState(
     val hasRenderableContent: Boolean = false,
     val configured: Boolean = true,
     /**
-     * True while a first configuration still owes the user the setup step. Durable state, so the
-     * onboarding takeover is restored after an abrupt process death — by then credentials are stored
-     * and [configured] alone can no longer tell a half-finished first run from a settled install.
+     * True while the active account's first-run journey is still being resolved. Home keeps a
+     * neutral loader up instead of either Home content or the onboarding takeover, so neither can
+     * flash while the durable phase is read (stabilize-first-run-setup, task 7.2).
      */
-    val firstRunSetupActive: Boolean = false,
+    val firstRunJourneyLoading: Boolean = true,
+    /**
+     * The resolved first-run takeover for the active account: null until the journey has been
+     * read, then true exactly when the active account owes the first-run flow (the durable phase
+     * survives process death; credentials alone cannot distinguish a half-finished first run from
+     * a settled install).
+     */
+    val firstRunOwed: Boolean? = null,
     val level: Int = 1,
     val xpIntoLevel: Long = 0L,
     val xpForNext: Long = 0L,
@@ -122,6 +129,9 @@ data class HomeUiState(
 
 internal fun shouldShowHomeLoading(state: HomeUiState): Boolean =
     state.loading && state.configured && !state.hasRenderableContent
+
+/** True while the first-run journey has not yet resolved; keep the neutral loader up. */
+internal fun shouldShowJourneyLoading(state: HomeUiState): Boolean = state.firstRunJourneyLoading
 
 internal fun shouldShowHomeUpdating(state: HomeUiState): Boolean =
     state.hasRenderableContent && state.isSyncing
@@ -248,10 +258,19 @@ class HomeViewModel @Inject constructor(
     private val personalPaceRepository: PersonalPaceRepository,
     private val sessionRepository: SessionRepository,
     private val progressEventRepository: ProgressEventRepository,
-    private val setupCoordinator: SetupCoordinator,
+    private val firstRunJourney: FirstRunJourneyGateway,
     private val smartCollectionFeed: SmartCollectionFeed,
     private val time: TimeProvider,
 ) : ViewModel() {
+
+    init {
+        // Re-fence the takeover on every credential change: an account edit from Settings must
+        // never leave the previous account's owed journey blocking Home. No polling — this reacts
+        // to the credential flow Home already observes (stabilize-first-run-setup, task 7.2).
+        viewModelScope.launch {
+            credentials.credentialsStateFlow.collect { firstRunJourney.refreshAccountOwed() }
+        }
+    }
 
     /**
      * The five data inputs, gathered so the current date can join them as a sixth. Combining in one
@@ -309,8 +328,8 @@ class HomeViewModel @Inject constructor(
             isSyncing = isSyncing,
             liveMonitoringAvailability = data.liveMonitoringAvailability,
         )
-    }.combine(setupCoordinator.firstRunSetupActive) { state, firstRunActive ->
-        state.copy(firstRunSetupActive = firstRunActive)
+    }.combine(firstRunJourney.firstRunOwed) { state, owed ->
+        state.copy(firstRunOwed = owed, firstRunJourneyLoading = owed == null)
     }
 
     /**
