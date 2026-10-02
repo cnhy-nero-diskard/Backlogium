@@ -1478,7 +1478,18 @@ private fun SortControl(
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 LibrarySortKey.entries.forEach { key ->
                     DropdownMenuItem(
-                        text = { Text(librarySortLabelText(key)) },
+                        text = {
+                            Column {
+                                Text(librarySortLabelText(key))
+                                if (key == LibrarySortKey.ADDED_RECENTLY) {
+                                    Text(
+                                        stringResource(R.string.library_sort_added_explanation),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        },
                         onClick = {
                             onSortChange(key)
                             expanded = false
@@ -1574,6 +1585,7 @@ private fun librarySortLabelText(key: LibrarySortKey): String = when (key) {
     LibrarySortKey.NAME -> stringResource(R.string.library_sort_name)
     LibrarySortKey.RECENT_ACTIVITY -> stringResource(R.string.library_sort_recently_played)
     LibrarySortKey.XP_CONTRIBUTED -> stringResource(R.string.library_sort_xp_contributed)
+    LibrarySortKey.ADDED_RECENTLY -> stringResource(R.string.library_sort_added_recently)
 }
 
 @Composable
@@ -1584,6 +1596,11 @@ private fun librarySortDirectionText(
     LibrarySortKey.NAME -> when (direction) {
         LibrarySortDirection.ASCENDING -> stringResource(R.string.library_sort_a_to_z)
         LibrarySortDirection.DESCENDING -> stringResource(R.string.library_sort_z_to_a)
+    }
+
+    LibrarySortKey.ADDED_RECENTLY -> when (direction) {
+        LibrarySortDirection.ASCENDING -> stringResource(R.string.library_sort_oldest_first)
+        LibrarySortDirection.DESCENDING -> stringResource(R.string.library_sort_newest_first)
     }
 
     LibrarySortKey.PLAYTIME, LibrarySortKey.RECENT_ACTIVITY, LibrarySortKey.XP_CONTRIBUTED ->

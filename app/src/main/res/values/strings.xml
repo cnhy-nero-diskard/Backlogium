@@ -473,6 +473,10 @@
     <string name="library_sort_name">Name</string>
     <string name="library_sort_recently_played">Recently played</string>
     <string name="library_sort_xp_contributed">XP contributed</string>
+    <string name="library_sort_added_recently">Added recently</string>
+    <string name="library_sort_added_explanation">First seen by Backlogium, not the Steam purchase date. Undated games stay last.</string>
+    <string name="library_sort_oldest_first">oldest first</string>
+    <string name="library_sort_newest_first">newest first</string>
     <string name="library_sort_a_to_z">A to Z</string>
     <string name="library_sort_z_to_a">Z to A</string>
     <string name="library_sort_lowest_first">lowest first</string>

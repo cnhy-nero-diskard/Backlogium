@@ -106,6 +106,7 @@ data class GoalGameUi(
      * never as colour alone; false for an owned game, which carries no marking at all.
      */
     override val isFamilyShared: Boolean = false,
+    override val firstSeenAt: Long? = null,
 ) : LibraryRow
 
 data class BacklogGameUi(
@@ -137,6 +138,7 @@ data class BacklogGameUi(
      * never as colour alone; false for an owned game, which carries no marking at all.
      */
     override val isFamilyShared: Boolean = false,
+    override val firstSeenAt: Long? = null,
 ) : LibraryRow
 
 /** One processed game in a running selection lookup, including structured failure evidence. */
@@ -674,7 +676,7 @@ private data class SelectionLookupState(
     val log: List<HltbLogEntry> = emptyList(),
 )
 
-private fun LibraryGame.toGoalUi(
+internal fun LibraryGame.toGoalUi(
     xp: XpInputs,
     counts: Map<Long, AchievementCountSummary>,
     ops: Map<Long, HltbFetchOp>,
@@ -696,13 +698,14 @@ private fun LibraryGame.toGoalUi(
     isCurrentlyPlaying = appId == playingAppId,
     genres = genres,
     recencyState = recencyState,
+    firstSeenAt = firstSeenAt,
     isFamilyShared = when (source) {
         GameSource.FAMILY_SHARED -> true
         GameSource.STEAM_OWNED -> false
     },
 )
 
-private fun LibraryGame.toBacklogUi(
+internal fun LibraryGame.toBacklogUi(
     xp: XpInputs,
     counts: Map<Long, AchievementCountSummary>,
     ops: Map<Long, HltbFetchOp>,
@@ -724,6 +727,7 @@ private fun LibraryGame.toBacklogUi(
     isCurrentlyPlaying = appId == playingAppId,
     genres = genres,
     recencyState = recencyState,
+    firstSeenAt = firstSeenAt,
     isFamilyShared = when (source) {
         GameSource.FAMILY_SHARED -> true
         GameSource.STEAM_OWNED -> false

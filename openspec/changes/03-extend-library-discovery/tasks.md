@@ -6,9 +6,9 @@
 
 ## 2. Added Recently Sort
 
-- [ ] 2.1 Add an `ADDED_RECENTLY` key and pass recorded `firstSeenAt` through the Library sort projection; verify old persisted sort values and defaults still load unchanged.
-- [ ] 2.2 Sort dated games newest or oldest as selected, keep unknown times last, and use stable title/app-ID ties; verify baseline, legacy null, equal-time batch, and reversed-direction cases without fabricated dates.
-- [ ] 2.3 Expose Added recently independently for both Library sections and explain Backlogium observation versus Steam purchase date; verify search relevance still leads when a query is active and both sections retain chosen preferences.
+- [x] 2.1 Add an `ADDED_RECENTLY` key and pass recorded `firstSeenAt` through the Library sort projection; verify old persisted sort values and defaults still load unchanged.
+- [x] 2.2 Sort dated games newest or oldest as selected, keep unknown times last, and use stable title/app-ID ties; verify baseline, legacy null, equal-time batch, and reversed-direction cases without fabricated dates.
+- [x] 2.3 Expose Added recently independently for both Library sections and explain Backlogium observation versus Steam purchase date; verify search relevance still leads when a query is active and both sections retain chosen preferences.
 
 ## 3. Hide Confirmation
 

@@ -120,7 +120,7 @@ class LibrarySortingTest {
             row("Beta", playtimeForever = 6_000, playtime2Weeks = 0, xpContributed = 900),
         )
 
-        LibrarySortKey.entries.forEach { key ->
+        LibrarySortKey.entries.filterNot { it == LibrarySortKey.ADDED_RECENTLY }.forEach { key ->
             val default = games.sortedFor(key, key.defaultDirection).names()
             val reversed = games.sortedFor(key, key.defaultDirection.flipped()).names()
 

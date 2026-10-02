@@ -5,9 +5,10 @@ import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.ui.search.gameSearchMatchTier
+import java.util.Locale
 
 /**
- * The fields a Library sort reads. Both row shapes implement it, so the four comparators exist
+ * The fields a Library sort reads. Both row shapes implement it, so the comparators exist
  * once rather than once per section.
  */
 interface LibraryRow {
@@ -19,19 +20,20 @@ interface LibraryRow {
     val xpContributed: Long
     val hltbStatus: HltbMatchState get() = HltbMatchState.NOT_COVERED
     val isFamilyShared: Boolean get() = false
+    val firstSeenAt: Long? get() = null
 }
 
 /**
  * Order rows by [key] in [direction].
  *
  * Sorting happens here rather than in Room: [LibrarySortKey.XP_CONTRIBUTED] is a read-side
- * derivation SQL cannot express, and the lists are already fully in memory — so all four keys live
+ * derivation SQL cannot express, and the lists are already fully in memory — so all keys live
  * in one place instead of two of them in DAO queries and two in Kotlin.
  *
  * Every key tie-breaks by name then appId, so equal rows never fall back to whatever order Room
  * returned. Games with no value for a key (no recent playtime, no XP) are zero, so a key in its
  * default descending direction places them last, and reversing that places them first — both
- * without needing a special case.
+ * without needing a special case. Added recently keeps unknown dates last in both directions.
  *
  * With a search active, [direction] applies to the sort comparator only. The relevance tier stays
  * ascending whichever way the list is pointed: reversing the whole composition would rank the
@@ -61,14 +63,25 @@ fun <T : LibraryRow> List<T>.sortedFor(
  * directions existed — and the opposite direction is that comparator reversed, rather than a second
  * hand-written comparator per key that could drift from the first.
  *
- * Reversal is total, tie-break included, so the reversed list is the exact reverse of the default
- * one. The `thenBy { appId }` tail keeps both directions a total order, so equal rows never shuffle
- * when the direction flips.
+ * Existing keys reverse their complete order. Added recently reverses only known dates, keeping
+ * unknown dates last and its normalized title/app-ID ties stable in both directions.
  */
 internal fun comparatorFor(
     key: LibrarySortKey,
     direction: LibrarySortDirection = key.defaultDirection,
 ): Comparator<LibraryRow> {
+    // Unknown arrival times stay last in both directions, and ties never invent a batch order.
+    if (key == LibrarySortKey.ADDED_RECENTLY) {
+        val time = if (direction == LibrarySortDirection.DESCENDING) {
+            compareByDescending<LibraryRow> { it.firstSeenAt }
+        } else {
+            compareBy<LibraryRow> { it.firstSeenAt }
+        }
+        return compareBy<LibraryRow> { it.firstSeenAt == null }
+            .then(time)
+            .thenBy { it.name.lowercase(Locale.ROOT) }
+            .thenBy { it.appId }
+    }
     val inDefaultDirection = when (key) {
         LibrarySortKey.NAME -> byNameAscending
         LibrarySortKey.PLAYTIME ->
@@ -79,6 +92,8 @@ internal fun comparatorFor(
 
         LibrarySortKey.XP_CONTRIBUTED ->
             compareByDescending<LibraryRow> { it.xpContributed }.then(byNameAscending)
+
+        LibrarySortKey.ADDED_RECENTLY -> error("Handled above")
     }
     return if (direction == key.defaultDirection) {
         inDefaultDirection
@@ -116,6 +131,11 @@ fun librarySortDirectionLabel(
         LibrarySortDirection.DESCENDING -> "Z to A"
     }
 
+    LibrarySortKey.ADDED_RECENTLY -> when (direction) {
+        LibrarySortDirection.ASCENDING -> "oldest first"
+        LibrarySortDirection.DESCENDING -> "newest first"
+    }
+
     LibrarySortKey.PLAYTIME, LibrarySortKey.RECENT_ACTIVITY, LibrarySortKey.XP_CONTRIBUTED ->
         when (direction) {
             LibrarySortDirection.ASCENDING -> "lowest first"
@@ -129,4 +149,5 @@ fun librarySortLabel(key: LibrarySortKey): String = when (key) {
     LibrarySortKey.NAME -> "Name"
     LibrarySortKey.RECENT_ACTIVITY -> "Recently played"
     LibrarySortKey.XP_CONTRIBUTED -> "XP contributed"
+    LibrarySortKey.ADDED_RECENTLY -> "Added recently"
 }
