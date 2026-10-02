@@ -15,6 +15,7 @@ class CollectionMembershipRepository @Inject constructor(
     private val database: BacklogiumDatabase,
     private val identity: AccountDataWriteGuard,
 ) {
+    suspend fun accountIdentity(): String = identity.capture()
     fun picker(appId: Long): Flow<CollectionPicker> = combine(
         database.collectionDao().observeCollections(), database.collectionDao().observeAllMembers(),
         database.playerProfileDao().observe(),

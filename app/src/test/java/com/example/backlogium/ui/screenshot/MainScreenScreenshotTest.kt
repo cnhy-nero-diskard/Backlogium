@@ -15,6 +15,10 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [35], qualifiers = NARROW_SCREEN_QUALIFIERS)
 internal class MainScreenScreenshotNarrowTest : MainScreenshotTestBase() {
     @Test
+    fun derivedCollectionsNarrowBaseline() {
+        captureFixture("alternatives/collections/derived/dark/narrow.png", MainFixtureKind.DERIVED_COLLECTIONS, darkTheme = true)
+    }
+    @Test
     fun homePopulatedLightBaseline() {
         captureFixture("main/home/populated/light/narrow.png", MainFixtureKind.HOME_POPULATED, darkTheme = false)
     }
@@ -70,6 +74,10 @@ internal class MainScreenScreenshotNarrowTest : MainScreenshotTestBase() {
 @LooperMode(LooperMode.Mode.PAUSED)
 @Config(sdk = [35], qualifiers = STANDARD_SCREEN_QUALIFIERS)
 internal class MainScreenScreenshotStandardTest : MainScreenshotTestBase() {
+    @Test
+    fun derivedCollectionsStandardBaseline() {
+        captureFixture("alternatives/collections/derived/dark/standard.png", MainFixtureKind.DERIVED_COLLECTIONS, darkTheme = true)
+    }
     @Test
     fun homePopulatedLightBaseline() {
         captureFixture("main/home/populated/light/standard.png", MainFixtureKind.HOME_POPULATED, darkTheme = false)

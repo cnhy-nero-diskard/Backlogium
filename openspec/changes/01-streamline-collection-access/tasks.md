@@ -13,10 +13,10 @@
 
 ## 3. Functional UI Actions
 
-- [ ] 3.1 Add the retained-state favorite heart to every tracked-game detail entry point; verify committed-state feedback, pending duplicate suppression, offline use, failure/retry, and Focus/XP independence.
-- [ ] 3.2 Add labeled Library collection menus/picker in list and both grids; verify existing-membership labels, duplicate suppression, preserved achievement long-press selection, and no controls for wishlist-only matches.
-- [ ] 3.3 Wire the empty picker to existing creation navigation; verify query, filters, density, and scroll survive picker/creation return under the current Library visit policy.
-- [ ] 3.4 Add direct removal to custom overviews and retain normal detail navigation; verify only the chosen membership changes, surviving queue state is preserved, and derived overviews offer no removal control.
+- [x] 3.1 Add the retained-state favorite heart to every tracked-game detail entry point; verify committed-state feedback, pending duplicate suppression, offline use, failure/retry, and Focus/XP independence.
+- [x] 3.2 Add labeled Library collection menus/picker in list and both grids; verify existing-membership labels, duplicate suppression, preserved achievement long-press selection, and no controls for wishlist-only matches.
+- [x] 3.3 Wire the empty picker to existing creation navigation; verify query, filters, density, and scroll survive picker/creation return under the current Library visit policy.
+- [x] 3.4 Add direct removal to custom overviews and retain normal detail navigation; verify only the chosen membership changes, surviving queue state is preserved, and derived overviews offer no removal control.
 
 ## 4. Backup Compatibility
 
@@ -26,6 +26,6 @@
 
 ## 5. Presentation and Integrated Verification
 
-- [ ] 5.1 Refine derived cards after functional actions work, using shared counts/rules and consistent artwork; verify hidden/empty cases, owned/shared examples, accessible labels, and large-font layout.
-- [ ] 5.2 Exercise hearts, membership changes, derived lists, wishlist restrictions, and Library return in all densities on a device/emulator; record actual evidence and update affected screenshot baselines or justify unchanged goldens under repository rules.
+- [x] 5.1 Refine derived cards after functional actions work, using shared counts/rules and consistent artwork; verify hidden/empty cases, owned/shared examples, accessible labels, and large-font layout.
+- [x] 5.2 Exercise hearts, membership changes, derived lists, wishlist restrictions, and Library return in all densities on a device/emulator; record actual evidence and update affected screenshot baselines or justify unchanged goldens under repository rules.
 - [ ] 5.3 Run focused unit/migration/backup tests, debug build, relevant lint, strict OpenSpec validation, and diff whitespace checks; record exact results and any device/visual limitations without marking unperformed checks complete.

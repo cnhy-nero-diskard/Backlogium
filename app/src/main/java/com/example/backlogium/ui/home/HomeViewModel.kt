@@ -184,6 +184,7 @@ data class HomeCollectionCard(
 data class HomeSmartCollectionCard(
     val id: SmartCollectionId,
     val memberCount: Int,
+    val artwork: List<com.example.backlogium.domain.DerivedCollectionArtwork> = emptyList(),
 )
 
 
@@ -414,6 +415,10 @@ class HomeViewModel @Inject constructor(
                         HomeSmartCollectionCard(
                             id = id,
                             memberCount = count,
+                            artwork = snapshot.result[id].take(3).map { member ->
+                                com.example.backlogium.domain.DerivedCollectionArtwork(member.game.appId,
+                                    snapshot.games.find { it.appId == member.game.appId }?.headerUrl.orEmpty())
+                            },
                         )
                     }
             }

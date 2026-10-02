@@ -131,8 +131,12 @@ fun CollectionScreen(
     onDone: () -> Unit,
     onOpenGameDetail: ((Long) -> Unit)? = null,
     viewModel: CollectionViewModel = hiltViewModel(),
+    memberActions: CollectionMemberActionsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val removal by memberActions.state.collectAsStateWithLifecycle()
+    LaunchedEffect(viewModel.collectionId) { memberActions.open(viewModel.collectionId) }
+    LaunchedEffect(removal.committed) { if (removal.committed > 0) viewModel.refreshEditor() }
     var showEditor by rememberSaveable { mutableStateOf(viewModel.collectionId == 0L) }
     var showActions by remember { mutableStateOf(false) }
     var showDeleteConfirmation by rememberSaveable { mutableStateOf(false) }
@@ -226,6 +230,9 @@ fun CollectionScreen(
                     onDeadlineChanged = viewModel::changeDeadline,
                     onDensityChanged = viewModel::setDensity,
                     onOpenGameDetail = openGameDetail,
+                    removal = removal,
+                    onRemoveMember = { appId -> memberActions.remove(appId,
+                        state.members.find { it.appId == appId }?.name ?: "Game", state.name) },
                 )
             } else {
                 CollectionForm(state = state, viewModel = viewModel)
@@ -282,6 +289,8 @@ private fun CollectionOverview(
     onDeadlineChanged: (LocalDate) -> Unit,
     onDensityChanged: (GameListDensity) -> Unit,
     onOpenGameDetail: (Long) -> Unit,
+    removal: MemberRemovalState,
+    onRemoveMember: (Long) -> Unit,
 ) {
     val accentColor = state.accent?.let {
         MaterialTheme.colorScheme.collectionAccentColor(it)
@@ -298,6 +307,11 @@ private fun CollectionOverview(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        removal.feedback?.let { feedback ->
+            item(key = "membership-feedback") {
+                Text(feedback, color = if (removal.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
@@ -427,6 +441,8 @@ private fun CollectionOverview(
                 accentColor = accentColor,
                 showQueuePosition = state.mode == CollectionMode.ORDERED_QUEUE,
                 onOpenGameDetail = onOpenGameDetail,
+                onRemoveMember = onRemoveMember,
+                removalEnabled = removal.ready && !removal.pending,
             )
         }
 
@@ -784,18 +800,25 @@ internal fun LazyListScope.collectionMemberItems(
     accentColor: Color,
     showQueuePosition: Boolean,
     onOpenGameDetail: (Long) -> Unit,
+    onRemoveMember: ((Long) -> Unit)? = null,
+    removalEnabled: Boolean = true,
 ) {
     if (!density.isGrid) {
         members.forEachIndexed { index, member ->
             item(key = "collection-member-${member.appId}") {
-                CollectionGameCard(
-                    member = member,
-                    accentColor = accentColor,
-                    position = index,
-                    showQueuePosition = showQueuePosition,
-                    density = density,
-                    onOpenGameDetail = onOpenGameDetail,
-                )
+                Column {
+                    CollectionGameCard(
+                        member = member,
+                        accentColor = accentColor,
+                        position = index,
+                        showQueuePosition = showQueuePosition,
+                        density = density,
+                        onOpenGameDetail = onOpenGameDetail,
+                    )
+                    onRemoveMember?.let { action ->
+                        CollectionMemberRemoveAction(member.name, removalEnabled) { action(member.appId) }
+                    }
+                }
             }
         }
         return
@@ -808,21 +831,34 @@ internal fun LazyListScope.collectionMemberItems(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 row.forEachIndexed { offset, member ->
-                    CollectionGameTile(
-                        member = member,
-                        accentColor = accentColor,
-                        position = rowIndex * density.columns + offset,
-                        showQueuePosition = showQueuePosition,
-                        density = density,
-                        modifier = Modifier.weight(1f),
-                        onOpenGameDetail = onOpenGameDetail,
-                    )
+                    Column(Modifier.weight(1f)) {
+                        CollectionGameTile(
+                            member = member,
+                            accentColor = accentColor,
+                            position = rowIndex * density.columns + offset,
+                            showQueuePosition = showQueuePosition,
+                            density = density,
+                            modifier = Modifier.fillMaxWidth(),
+                            onOpenGameDetail = onOpenGameDetail,
+                        )
+                        onRemoveMember?.let { action ->
+                            CollectionMemberRemoveAction(member.name, removalEnabled) { action(member.appId) }
+                        }
+                    }
                 }
                 repeat(density.columns - row.size) {
                     Spacer(Modifier.weight(1f))
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CollectionMemberRemoveAction(name: String, enabled: Boolean, onRemove: () -> Unit) {
+    TextButton(onClick = onRemove, enabled = enabled,
+        modifier = Modifier.semantics { contentDescription = "Remove $name from this collection" }) {
+        Text("Remove from this collection")
     }
 }
 

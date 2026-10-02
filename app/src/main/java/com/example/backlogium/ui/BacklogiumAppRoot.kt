@@ -228,6 +228,7 @@ fun BacklogiumAppRoot(
                     LibraryScreen(
                         onOpenReview = { appId -> navController.navigate(hltbReviewRoute(appId)) },
                         onOpenGameDetail = { appId -> navController.navigate(gameDetailRoute(appId)) },
+                        onCreateCollection = { navController.navigate(collectionRoute(0L)) },
                     )
                 }
                 composable(Destination.HISTORY.route) {

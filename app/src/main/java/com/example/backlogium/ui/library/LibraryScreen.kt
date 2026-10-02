@@ -220,12 +220,19 @@ fun LibraryScreen(
     onOpenGameDetail: (Long) -> Unit = {},
     viewModel: LibraryViewModel = hiltViewModel(),
     wishlistViewModel: WishlistViewModel = hiltViewModel(),
+    onCreateCollection: () -> Unit = {},
+    collectionPickerViewModel: CollectionPickerViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val visitFilters by viewModel.visit.filters.collectAsStateWithLifecycle()
     val generation by viewModel.visit.generation.collectAsStateWithLifecycle()
     val wishlistState by wishlistViewModel.uiState.collectAsStateWithLifecycle()
     val uriHandler = LocalUriHandler.current
+    val collectionPicker by collectionPickerViewModel.state.collectAsStateWithLifecycle()
+    if (collectionPicker.appId != null) CollectionPickerDialog(
+        collectionPicker, collectionPickerViewModel::add, collectionPickerViewModel::close,
+        onCreate = { collectionPickerViewModel.close(); onCreateCollection() },
+    )
 
     // A saved destination can emit its old state before the repository combine catches up.
     // Never present that state after expiry, or flash cold-start defaults during a retained visit.
@@ -271,6 +278,7 @@ fun LibraryScreen(
                 onEnterSelectionMode = viewModel::enterSelectionMode,
                 onSetWishlistExpanded = wishlistViewModel::setExpanded,
                 onOpenStore = { uriHandler.openUri(it) },
+                onAddToCollection = collectionPickerViewModel::open,
             ),
         )
     }
@@ -311,6 +319,7 @@ internal data class LibraryContentActions(
     val onEnterSelectionMode: () -> Unit = {},
     val onSetWishlistExpanded: (Boolean) -> Unit = {},
     val onOpenStore: (String) -> Unit = {},
+    val onAddToCollection: (Long, String) -> Unit = { _, _ -> },
 )
 
 /** Renders Library from presentation state without requiring ViewModels or Hilt. */
@@ -561,6 +570,7 @@ internal fun LibraryContent(
                         else actions.onOpenGameDetail(game.appId)
                     },
                     onLongClick = { game -> toggleSelection(game.appId) },
+                    onAddCollection = { game -> actions.onAddToCollection(game.appId, game.name) },
                     onManageGoal = { game ->
                         dialogTarget = GoalDialogTarget(
                             appId = game.appId,
@@ -593,6 +603,7 @@ internal fun LibraryContent(
                         else actions.onOpenGameDetail(game.appId)
                     },
                     onLongClick = { game -> toggleSelection(game.appId) },
+                    onAddCollection = { game -> actions.onAddToCollection(game.appId, game.name) },
                     onManageGoal = { game ->
                         dialogTarget = GoalDialogTarget(
                             appId = game.appId,
@@ -1656,6 +1667,7 @@ private fun LazyListScope.libraryGameItems(
     onClick: (LibraryDisplayGame) -> Unit,
     onLongClick: (LibraryDisplayGame) -> Unit,
     onManageGoal: (LibraryDisplayGame) -> Unit,
+    onAddCollection: (LibraryDisplayGame) -> Unit,
 ) {
     if (!density.isGrid) {
         games.forEach { game ->
@@ -1668,6 +1680,7 @@ private fun LazyListScope.libraryGameItems(
                     onClick = { onClick(game) },
                     onLongClick = { onLongClick(game) },
                     onManageGoal = { onManageGoal(game) },
+                    onAddCollection = { onAddCollection(game) },
                 )
             }
         }
@@ -1689,6 +1702,7 @@ private fun LazyListScope.libraryGameItems(
                         onClick = { onClick(game) },
                         onLongClick = { onLongClick(game) },
                         onManageGoal = { onManageGoal(game) },
+                        onAddCollection = { onAddCollection(game) },
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -1711,6 +1725,7 @@ internal fun LibraryGameRow(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onManageGoal: () -> Unit,
+    onAddCollection: () -> Unit = {},
 ) {
     GameCard(
         gameName = game.name,
@@ -1766,6 +1781,8 @@ internal fun LibraryGameRow(
             selected = selected,
             selectionMode = selectionMode,
             onManageGoal = onManageGoal,
+            name = game.name,
+            onAddCollection = onAddCollection,
         )
     }
 }
@@ -1786,6 +1803,7 @@ internal fun LibraryGameCell(
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
     onManageGoal: () -> Unit = {},
+    onAddCollection: () -> Unit = {},
 ) {
     val compact = density == GameListDensity.COMPACT_GRID
     val tileShape = RoundedCornerShape(18.dp)
@@ -1861,6 +1879,9 @@ internal fun LibraryGameCell(
                         .padding(6.dp),
                 )
                 if (!selectionMode) {
+                    LibraryGameMenu(game.name, onManageGoal, onAddCollection,
+                        modifier = Modifier.align(Alignment.BottomStart).padding(4.dp)
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), CircleShape))
                     IconButton(
                         onClick = onManageGoal,
                         enabled = game.fetchOp != HltbFetchOp.IN_PROGRESS,
@@ -2113,7 +2134,8 @@ private fun GameCard(
  */
 /** While selecting, the 3-dot menu gives way to the row's selected state. */
 @Composable
-private fun RowTrailing(selected: Boolean, selectionMode: Boolean, onManageGoal: () -> Unit) {
+private fun RowTrailing(selected: Boolean, selectionMode: Boolean, onManageGoal: () -> Unit,
+    name: String, onAddCollection: () -> Unit) {
     if (selectionMode) {
         Icon(
             imageVector = if (selected) TablerIcons.Check else TablerIcons.Checkbox,
@@ -2129,12 +2151,7 @@ private fun RowTrailing(selected: Boolean, selectionMode: Boolean, onManageGoal:
         )
         return
     }
-    IconButton(onClick = onManageGoal) {
-        Icon(
-            imageVector = TablerIcons.DotsVertical,
-            contentDescription = stringResource(R.string.library_manage_focus),
-        )
-    }
+    LibraryGameMenu(name, onManageGoal, onAddCollection)
 }
 
 /**

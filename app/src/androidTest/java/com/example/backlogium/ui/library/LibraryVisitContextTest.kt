@@ -117,6 +117,7 @@ class LibraryVisitContextTest {
                     }
                     composable("game_detail") { Text("Detail child") }
                     composable("hltb_review") { Text("Review child") }
+                    composable("collection/{collectionId}") { Text("Collection creation child") }
                     composable("history") { Text("History tab") }
                     composable("analytics") { Text("Analytics tab") }
                     composable("settings") { Text("Settings tab") }
@@ -164,15 +165,15 @@ class LibraryVisitContextTest {
         compose.runOnIdle { assertEquals(0, visit.scrollAnchor?.index) }
     }
 
-    @Test fun detailAndReviewBackRetainEveryDensityRegardlessOfForegroundTime() {
+    @Test fun pushedChildrenRetainEveryDensityRegardlessOfForegroundTime() {
         for (mode in GameListDensity.entries) {
-            for (route in listOf("game_detail", "hltb_review")) {
+            for (route in listOf("game_detail", "hltb_review", "collection/0")) {
                 openFilteredLibrary(mode)
                 compose.runOnIdle { navigation.navigate(route) }
                 compose.waitForIdle()
                 elapsed.addAndGet(600_000)
                 Espresso.pressBack()
-                capture("${mode.name}-$route-return")
+                capture("${mode.name}-${route.replace('/', '-')}-return")
                 verifyRetained()
             }
         }

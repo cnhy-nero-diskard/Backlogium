@@ -131,6 +131,9 @@ fun GameDetailScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val overlay = presentation == GameDetailPresentation.COLLECTION_OVERLAY
     val detailAppId = appId ?: viewModel.appId
+    val favoriteViewModel: GameFavoriteViewModel = hiltViewModel(key = "favorite-$detailAppId")
+    val favoriteState by favoriteViewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(detailAppId) { favoriteViewModel.show(detailAppId) }
     val artworkFallbackUrls = remember(detailAppId) {
         if (detailAppId > 0L) {
             SteamIconMapper.listBackgroundFallbackUrls(detailAppId)
@@ -194,6 +197,8 @@ fun GameDetailScreen(
                 appId = detailAppId,
                 artworkFallbackUrls = artworkFallbackUrls,
                 viewModel = viewModel,
+                favoriteState = favoriteState,
+                onFavorite = favoriteViewModel::toggle,
             )
         } else {
             PullToRefreshBox(
@@ -206,6 +211,8 @@ fun GameDetailScreen(
                     appId = detailAppId,
                     artworkFallbackUrls = artworkFallbackUrls,
                     viewModel = viewModel,
+                    favoriteState = favoriteState,
+                    onFavorite = favoriteViewModel::toggle,
                 )
             }
         }
@@ -218,6 +225,8 @@ private fun GameDetailList(
     appId: Long,
     artworkFallbackUrls: List<String>,
     viewModel: GameDetailViewModel,
+    favoriteState: FavoriteActionState,
+    onFavorite: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier
@@ -235,6 +244,8 @@ private fun GameDetailList(
                 onSetManualPlaytime = viewModel::setManualPlaytime,
                 hidePending = state.hidePreviewing,
                 onHide = viewModel::requestHide,
+                favoriteState = favoriteState,
+                onFavorite = onFavorite,
             )
         }
         state.rarityStanding?.let { standing ->
@@ -350,6 +361,8 @@ private fun GameSummarySection(
     onSetManualPlaytime: (Double) -> Unit = {},
     hidePending: Boolean = false,
     onHide: () -> Unit = {},
+    favoriteState: FavoriteActionState = FavoriteActionState(),
+    onFavorite: () -> Unit = {},
 ) {
     val uriHandler = LocalUriHandler.current
     val linkLabel = name.takeIf { it.isNotBlank() }?.let { "Open $it on Steam" } ?: "Open game on Steam"
@@ -389,6 +402,7 @@ private fun GameSummarySection(
                         modifier = Modifier.padding(start = 8.dp),
                     )
                 }
+                GameFavoriteAction(favoriteState, onFavorite)
                 CompletionLine(summary)
                 LastPlayedLine(summary)
                 ActivePlayersLine(summary)

@@ -4,6 +4,14 @@ import android.graphics.Color as AndroidColor
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.example.backlogium.ui.components.DerivedCollectionCard
+import com.example.backlogium.domain.DerivedCollectionArtwork
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
@@ -70,6 +78,7 @@ import java.time.LocalDate
 
 /** Representative states used to cover the five primary destinations and high-risk alternatives. */
 internal enum class MainFixtureKind {
+    DERIVED_COLLECTIONS,
     HOME_POPULATED,
     HOME_NOW_PLAYING,
     HOME_FIRST_LOAD,
@@ -105,6 +114,14 @@ internal fun MainScreenshotFixtureHost(fixture: MainScreenshotFixture) {
 
     CompositionLocalProvider(LocalImageLoader provides imageLoader) {
         when (fixture.kind) {
+            MainFixtureKind.DERIVED_COLLECTIONS -> Column(Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                DerivedCollectionCard("Favorites", "Games you marked with a heart.", 2,
+                    listOf(DerivedCollectionArtwork(220, fixtureArt("favorite-owned")),
+                        DerivedCollectionArtwork(610, fixtureArt("favorite-shared"))), {}, Modifier.fillMaxWidth())
+                DerivedCollectionCard("Played recently", "Dated play in the last 14 local calendar days.", 1,
+                    listOf(DerivedCollectionArtwork(610, fixtureArt("favorite-shared"))), {}, Modifier.fillMaxWidth())
+            }
             MainFixtureKind.HOME_POPULATED -> HomeContent(populatedHomeState())
             MainFixtureKind.HOME_NOW_PLAYING -> HomeContent(
                 state = nowPlayingHomeState(),

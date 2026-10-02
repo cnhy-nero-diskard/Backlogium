@@ -109,6 +109,7 @@ import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.ProgressEvent
 import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.components.DerivedCollectionCard
 import com.example.backlogium.ui.components.RecencyBadge
 import com.example.backlogium.ui.components.accessibilityLabel
 import com.example.backlogium.ui.theme.collectionAccentColor
@@ -1160,44 +1161,10 @@ private fun SmartCollectionCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val name = smartCollectionName(card.id)
-    val rule = smartCollectionRule(card.id)
-    val openDescription = stringResource(
-        R.string.home_open_derived_collection,
-        name,
+    DerivedCollectionCard(
+        name = smartCollectionName(card.id), rule = smartCollectionRule(card.id),
+        memberCount = card.memberCount, artwork = card.artwork, onClick = onClick, modifier = modifier,
     )
-    Card(
-        onClick = onClick,
-        modifier = modifier.semantics {
-            contentDescription = openDescription
-        },
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-        ),
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = UiFormat.count(card.memberCount),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-            Text(
-                text = rule,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
 }
 
 /** One collection's mission card: its name plus its mode-specific banner, accented by palette. */
