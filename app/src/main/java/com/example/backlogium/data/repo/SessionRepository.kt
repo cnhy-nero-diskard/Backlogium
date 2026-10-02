@@ -131,7 +131,7 @@ class SessionRepository @Inject constructor(
         }
 }
 
-private fun Session.toDomain() = PlaySession(
+internal fun Session.toDomain() = PlaySession(
     id = id,
     appId = appId,
     startAt = startAt,

@@ -309,7 +309,7 @@ class HistoryScreenTest {
         gameNode.performClick()
         composeRule.waitForIdle()
         gameNode.assert(hasStateDescription("Expanded"))
-        val playtimeNodes = composeRule.onAllNodesWithText("45 mins played", substring = true)
+        val playtimeNodes = composeRule.onAllNodesWithText("Recorded: 45 mins", substring = true)
         playtimeNodes.assertCountEquals(2)
         playtimeNodes[1].performScrollTo().assertIsDisplayed()
     }

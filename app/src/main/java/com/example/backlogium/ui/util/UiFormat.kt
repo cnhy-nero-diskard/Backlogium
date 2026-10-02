@@ -14,6 +14,18 @@ import java.util.Locale
 
 /** Small presentation helpers shared across screens. */
 object UiFormat {
+    /** Wide ledger totals retain their value; only plural selection is narrowed. */
+    @Composable
+    fun localizedMinutes(minutes: Long): String {
+        val safe = minutes.coerceAtLeast(0L)
+        val hours = safe / 60
+        val remainder = (safe % 60).toInt()
+        if (hours == 0L) return pluralStringResource(R.plurals.duration_minutes, remainder, remainder)
+        val hourText = pluralStringResource(R.plurals.duration_hours, if (hours == 1L) 1 else 2, hours)
+        if (remainder == 0) return hourText
+        return stringResource(R.string.duration_hours_and_minutes, hourText,
+            pluralStringResource(R.plurals.duration_minutes, remainder, remainder))
+    }
 
     /** Locale-aware duration text for user-visible activity summaries. */
     @Composable

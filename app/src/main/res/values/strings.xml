@@ -515,7 +515,7 @@
     <string name="history_title">History</string>
     <string name="history_measurement_help_action">How sessions are measured</string>
     <string name="history_measurement_help_title">How tracked sessions are measured</string>
-    <string name="history_measurement_help_body">Session starts are approximate because play is discovered by periodic polls. The tracked minutes come from changes observed in the Steam playtime counter, so they can differ from the Steam lifetime total change. These are two honest measurements, not an exact start-to-end interval or a sign that data was lost.</string>
+    <string name="history_measurement_help_body">Session starts are approximate. Recorded amounts are stored local session evidence, including open sessions, and are not exact elapsed intervals. The whole record belongs to its start date. The gutter groups games; its spacing is not a time axis. Games are ordered by recorded amount, with approximate starts ordered within each game. Gaps do not prove no play. Quest credit is stored separately; a difference does not identify a source or game.</string>
     <string name="history_measurement_help_close">Got it</string>
     <string name="history_cloud_mark">Cloud</string>
     <string name="history_cloud_both_facts">%1$s. %2$s.</string>
@@ -582,8 +582,8 @@
     <string name="history_steam_not_configured_message">Connect your Steam account from Settings to track sessions.</string>
     <string name="history_empty_title">No history yet</string>
     <string name="history_empty_message">Play a game and, after the next sync, your sessions and daily stats will appear here.</string>
-    <string name="history_day_summary">%1$s played</string>
-    <string name="history_day_summary_with_focus">%1$s played - %2$s on Focus games</string>
+    <string name="history_day_summary">Visible recorded: %1$s</string>
+    <string name="history_day_summary_with_focus">Visible recorded: %1$s · %2$s on current Focus games</string>
     <string name="history_quest_met">Quest met</string>
     <string name="history_quest_not_met">Quest not met</string>
     <string name="history_expanded">Expanded</string>
@@ -595,8 +595,8 @@
     <string name="history_collapse_game">Collapse game</string>
     <string name="history_day_accessibility">%1$s, %2$s, %3$s, %4$s</string>
     <string name="history_game_accessibility">%1$s, %2$s played</string>
-    <string name="history_session">%1$s - %2$s played</string>
-    <string name="history_session_live">%1$s - %2$s played - live</string>
+    <string name="history_session">Approximate start: %1$s · Recorded: %2$s</string>
+    <string name="history_session_live">Approximate start: %1$s · Recorded: %2$s · Live/open</string>
     <string name="history_overflow_count">+%1$s</string>
     <string name="analytics_steam_not_configured">Steam not configured</string>
     <string name="analytics_steam_not_configured_message">Connect your Steam account from Settings to see your analytics.</string>
@@ -822,4 +822,6 @@
     <string name="activity_measurement_help">About recorded activity</string>
     <string name="activity_measurement_explanation">Recorded minutes come from the local session ledger, including the stored amount of open sessions. They are not exact elapsed play. A whole session belongs to the local date when it started. Credited quest minutes and outcomes are stored separately. Differences do not identify a particular source or game; undated imports and manual estimates are not allocated to days.</string>
     <string name="activity_close">Close</string>
+    <string name="history_grouping_caption">Grouped by game · most recorded minutes first. Sessions within each game follow approximate start. Spacing does not measure time.</string>
+    <string name="history_recorded_amount">Recorded: %1$s</string>
 </resources>

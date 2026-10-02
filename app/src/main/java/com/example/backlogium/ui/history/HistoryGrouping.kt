@@ -12,6 +12,9 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
+import com.example.backlogium.domain.DailyActivity
+import com.example.backlogium.domain.DailyActivityEvidence
+import com.example.backlogium.domain.dailyActivity
 
 /** Achievement thumbnails cap per day header before collapsing into a "+N" badge. */
 const val HISTORY_ACHIEVEMENT_CAP = 5
@@ -62,6 +65,8 @@ data class HistoryGameGroup(
     val iconUrl: String,
     val minutesPlayed: Int,
     val sessions: List<HistorySessionUi>,
+    val recordedMinutes: Long = minutesPlayed.toLong(),
+    val detailAvailable: Boolean = true,
 )
 
 /** A day header's achievement row: up to [HISTORY_ACHIEVEMENT_CAP] icons, plus any overflow count. */
@@ -85,6 +90,7 @@ data class HistoryDayGroup(
     val games: List<HistoryGameGroup>,
     val gameThumbnails: HistoryGameThumbnails = HistoryGameThumbnails(),
     val achievements: HistoryAchievements,
+    val activity: DailyActivity? = null,
 )
 
 /** The two presentation groups used to frame the History timeline. */
@@ -144,6 +150,7 @@ fun groupHistory(
     zone: ZoneId = ZoneId.systemDefault(),
     windowStartDate: String? = null,
     windowEndDate: String? = null,
+    accountId: String = "",
 ): List<HistoryDayGroup> {
     val nameById = games.associate { it.appId to it.name }
     val iconById = games.associate { it.appId to it.iconUrl }
@@ -161,6 +168,9 @@ fun groupHistory(
     return allDates.map { date ->
         val daySessions = sessionsByDate[date].orEmpty()
         val progress = progressByDate[date]
+        val activity = dailyActivity(LocalDate.parse(date), accountId, daySessions.map {
+            DailyActivityEvidence(it.appId, nameById[it.appId], it.minutes, it.appId in nameById)
+        }, progress?.minutesPlayed?.toLong(), progress?.questMet)
         val unlocksForDay = achievementsByDate[date].orEmpty().sortedBy { it.unlockedAt }
 
         val gameGroups = daySessions.groupBy { it.appId }
@@ -169,7 +179,9 @@ fun groupHistory(
                     appId = appId,
                     name = nameById[appId] ?: "App $appId",
                     iconUrl = iconById[appId] ?: "",
-                    minutesPlayed = sessionsForGame.sumOf { it.minutes },
+                    minutesPlayed = sessionsForGame.sumOf { it.minutes.toLong() }.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                    recordedMinutes = sessionsForGame.sumOf { it.minutes.toLong() },
+                    detailAvailable = appId in nameById,
                     sessions = sessionsForGame.sortedBy { it.startAt }.map {
                         HistorySessionUi(
                             id = it.id,
@@ -182,17 +194,19 @@ fun groupHistory(
                 )
             }
             .sortedWith(
-                compareByDescending<HistoryGameGroup> { it.minutesPlayed }
+                compareByDescending<HistoryGameGroup> { it.recordedMinutes }
                     .thenBy { it.name }
                     .thenBy { it.appId },
             )
 
         HistoryDayGroup(
             date = date,
-            minutesPlayed = daySessions.sumOf { it.minutes },
-            goalMinutesPlayed = daySessions.filter { it.appId in goalAppIds }.sumOf { it.minutes },
+            minutesPlayed = activity.recordedMinutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+            goalMinutesPlayed = daySessions.filter { it.appId in goalAppIds }.sumOf { it.minutes.toLong() }
+                .coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
             questMet = progress?.questMet ?: false,
             games = gameGroups,
+            activity = activity,
             gameThumbnails = HistoryGameThumbnails(
                 games = gameGroups.take(HISTORY_GAME_THUMBNAIL_CAP),
                 overflowCount = (gameGroups.size - HISTORY_GAME_THUMBNAIL_CAP).coerceAtLeast(0),
