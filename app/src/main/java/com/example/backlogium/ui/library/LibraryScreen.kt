@@ -166,7 +166,9 @@ internal data class LibraryDisplayGame(
 internal fun shouldShowFullScreenLibraryEmptyState(
     libraryState: LibraryUiState,
     wishlistState: WishlistUiState,
-): Boolean = libraryState.libraryEmpty && !wishlistState.configured
+): Boolean = libraryState.libraryEmpty &&
+    !wishlistState.configured &&
+    !libraryState.filters.hasActiveFilters
 
 internal fun shouldShowWishlistSection(
     libraryState: LibraryUiState,
@@ -330,6 +332,14 @@ internal fun LibraryContent(
     var showToolsSheet by rememberSaveable { mutableStateOf(false) }
     var genreSearchQuery by rememberSaveable { mutableStateOf("") }
     val filters = state.filters
+    val removeFilter: (LibraryFilterChip) -> Unit = { chip ->
+        when (chip.kind) {
+            LibraryFilterChipKind.QUERY -> actions.onClearQuery()
+            LibraryFilterChipKind.GENRE -> chip.value?.let(actions.onClearGenreFilter)
+            LibraryFilterChipKind.NOT_COVERED -> actions.onSetNotCoveredOnly(false)
+            LibraryFilterChipKind.FAMILY_SHARED -> actions.onSetFamilySharedOnly(false)
+        }
+    }
     val visibleWishlist = remember(state, wishlistState) { wishlistForLibrary(state, wishlistState) }
     val selectedGenreSet = filters.selectedGenreIds
     val genreCatalog = remember(state.availableGenres) {
@@ -396,7 +406,8 @@ internal fun LibraryContent(
     // Keyed to the *unfiltered* library. If the filtered lists fed this, a query matching nothing
     // would unmount the search field along with everything else, leaving no way to clear the query
     // that caused it. A configured wishlist is the one independent surface that must remain
-    // reachable even when this owned-library state is empty.
+    // reachable even when this owned-library state is empty. Retained filters also keep this list
+    // presentation alive so their chips remain available if data changes beneath the visit.
     if (shouldShowFullScreenLibraryEmptyState(state, wishlistState)) {
         EmptyState(
             title = stringResource(R.string.library_no_games_title),
@@ -413,12 +424,22 @@ internal fun LibraryContent(
                 contentPadding = PaddingValues(16.dp),
             ) {
                 item(key = "library-controls") {
-                    SearchField(
-                        query = state.query,
-                        onQueryChange = actions.onSetQuery,
-                        onClear = actions.onClearQuery,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        SearchField(
+                            query = state.query,
+                            onQueryChange = actions.onSetQuery,
+                            onClear = actions.onClearQuery,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        if (filters.hasActiveFilters) {
+                            ActiveFilterChips(
+                                filters = filters,
+                                availableGenres = state.availableGenres,
+                                onRemove = removeFilter,
+                                onClearAll = actions.onClearFilters,
+                            )
+                        }
+                    }
                 }
                 if (shouldShowWishlistSection(state, wishlistState, selectedGenreSet)) {
                     wishlistSection(
@@ -495,14 +516,7 @@ internal fun LibraryContent(
                         ActiveFilterChips(
                             filters = filters,
                             availableGenres = state.availableGenres,
-                            onRemove = { chip ->
-                                when (chip.kind) {
-                                    LibraryFilterChipKind.QUERY -> actions.onClearQuery()
-                                    LibraryFilterChipKind.GENRE -> chip.value?.let(actions.onClearGenreFilter)
-                                    LibraryFilterChipKind.NOT_COVERED -> actions.onSetNotCoveredOnly(false)
-                                    LibraryFilterChipKind.FAMILY_SHARED -> actions.onSetFamilySharedOnly(false)
-                                }
-                            },
+                            onRemove = removeFilter,
                             onClearAll = actions.onClearFilters,
                         )
                     }
