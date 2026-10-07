@@ -13,6 +13,7 @@ import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
@@ -69,7 +70,8 @@ class HltbBroaderRepositoryTest {
         // The broader run has passed its pre-flight eligibility check and is waiting on the network.
         enteredSearch.await()
         // A manual resolution lands while the broader requests are in flight.
-        repo.resolveMatch(1L, HltbCandidate(hltbId = 999L, name = "Manual Pick", imageUrl = null))
+        val revision = repo.matchCenterQueue.first().single().revision
+        repo.resolveMatch(1L, HltbCandidate(hltbId = 999L, name = "Manual Pick", imageUrl = null), revision)
         releaseSearch.complete(Unit)
         broader.join()
 
@@ -197,7 +199,8 @@ class HltbBroaderRepositoryTest {
         )
         val preview = repo.previewLinkedCandidate("https://howlongtobeat.com/game/555")
         assertTrue(preview is ManualLinkPreviewResult.Preview)
-        repo.resolveMatch(1L, (preview as ManualLinkPreviewResult.Preview).candidate)
+        val revision = repo.matchCenterQueue.first().single().revision
+        assertTrue(repo.resolveMatch(1L, (preview as ManualLinkPreviewResult.Preview).candidate, revision))
         val row = dao.getByAppId(1L)!!
         assertEquals(HltbMatchStatus.RESOLVED, row.matchStatus)
         assertEquals(555L, row.hltbId)
@@ -238,6 +241,35 @@ class HltbBroaderRepositoryTest {
             val row = store[appId] ?: return 0
             if (row.matchStatus != HltbMatchStatus.UNMATCHED) return 0
             store[appId] = row.copy(matchStatus = HltbMatchStatus.NEEDS_REVIEW, candidatesJson = candidatesJson)
+            return 1
+        }
+
+        override suspend fun resolveMatchIfUnchanged(
+            appId: Long,
+            expectedMatchStatus: HltbMatchStatus,
+            expectedFetchedAt: Long,
+            expectedCandidatesJson: String?,
+            hltbId: Long,
+            mainStoryMinutes: Int?,
+            mainExtraMinutes: Int?,
+            completionistMinutes: Int?,
+            allStylesMinutes: Int?,
+        ): Int {
+            val row = store[appId] ?: return 0
+            if (row.matchStatus != expectedMatchStatus ||
+                row.matchStatus !in setOf(HltbMatchStatus.NEEDS_REVIEW, HltbMatchStatus.UNMATCHED) ||
+                row.fetchedAt != expectedFetchedAt || row.candidatesJson != expectedCandidatesJson
+            ) return 0
+            store[appId] = row.copy(
+                hltbId = hltbId,
+                mainStoryMinutes = mainStoryMinutes,
+                mainExtraMinutes = mainExtraMinutes,
+                completionistMinutes = completionistMinutes,
+                allStylesMinutes = allStylesMinutes,
+                matchStatus = HltbMatchStatus.RESOLVED,
+                candidatesJson = null,
+                origin = HltbDataOrigin.MANUAL,
+            )
             return 1
         }
     }

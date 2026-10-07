@@ -642,6 +642,18 @@ class HltbDatasetRepositoryTest {
 
         override suspend fun markNeedsReviewWithBroaderCandidates(appId: Long, candidatesJson: String): Int = 0
 
+        override suspend fun resolveMatchIfUnchanged(
+            appId: Long,
+            expectedMatchStatus: HltbMatchStatus,
+            expectedFetchedAt: Long,
+            expectedCandidatesJson: String?,
+            hltbId: Long,
+            mainStoryMinutes: Int?,
+            mainExtraMinutes: Int?,
+            completionistMinutes: Int?,
+            allStylesMinutes: Int?,
+        ): Int = 0
+
         fun restore(snapshot: Map<Long, HltbData>) {
             rows.clear()
             rows.putAll(snapshot)

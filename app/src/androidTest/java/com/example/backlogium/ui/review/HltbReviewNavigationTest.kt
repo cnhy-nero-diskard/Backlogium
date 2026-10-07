@@ -98,7 +98,7 @@ class HltbReviewNavigationTest {
                             onPrevious = { routeHolder.session.navigate(-1, it) },
                             onSkip = routeHolder.session::skip,
                             onReviewSkipped = routeHolder.session::reviewSkipped,
-                            onResolve = { id, _ -> queue.value = queue.value.filterNot { it.appId == id } },
+                            onResolve = { id, _, _ -> queue.value = queue.value.filterNot { it.appId == id } },
                         ),
                     )
                 }
