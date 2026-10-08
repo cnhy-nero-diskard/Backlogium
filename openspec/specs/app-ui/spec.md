@@ -1145,8 +1145,9 @@ Matches SHALL be presented in order of how closely they matched the query, stron
 name match, then a name beginning with the query, then a name containing a word beginning with the
 query, then a name containing the query elsewhere, then a match on a genre label alone. Ranking
 SHALL ignore case. The search SHALL also offer a genre filter that narrows results to games carrying
-any selected genre. That genre selection SHALL apply to the current visit only and SHALL NOT be
-remembered between visits, unlike each list's chosen sort order.
+any selected genre. The text query and genre selection SHALL remain active for the current Library
+visit as defined by Library visit context retention, but SHALL NOT be remembered after that visit
+expires, unlike each list's chosen sort order.
 
 The search field SHALL keep a stable width and a legible input while it is focused and while text is
 entered, so neither focusing the field nor typing into it changes the size of the field or of the
@@ -1187,8 +1188,12 @@ text within it.
 - **WHEN** the user selects one or more genres in the Library search
 - **THEN** only games carrying at least one selected genre are shown, ranked as above
 
+#### Scenario: Genre filter retained during a visit
+- **WHEN** the user selects genres, leaves Library for another tab, and returns in less than five minutes
+- **THEN** the selected genres remain active with the other Library discovery filters
+
 #### Scenario: Genre filter not remembered between visits
-- **WHEN** the user selects genres in the Library search, leaves the Library, and returns
+- **WHEN** the user selects genres, leaves Library for another tab, and returns five minutes or more later
 - **THEN** no genre filter is active and the full Library is shown, while each list's chosen sort
   order is still remembered
 
@@ -3384,3 +3389,65 @@ or showing the app bar SHALL not leave stale padding or apply bottom space twice
 #### Scenario: Display variations
 - **WHEN** Library is shown in either theme or with increased font size
 - **THEN** the final item remains reachable without overlap or an unexplained bottom gap
+
+### Requirement: Library visit context retention
+The system SHALL preserve the Library text query, selected genres, coverage-only and Family
+Shared-only filters, and the current useful scroll position during a Library visit. A pushed screen
+opened from Library, including game detail or HLTB review, SHALL remain part of that visit. Switching
+to another top-level tab or backgrounding the app SHALL start a five-minute absence interval. If
+both happen, the earliest departure time SHALL govern; backgrounding SHALL NOT extend an interval
+already running. Returning while less than five minutes have elapsed SHALL resume the visit. At
+five minutes or later, the next Library presentation SHALL start a fresh visit with those filters
+cleared and scroll reset to the top. A cold launch SHALL start a fresh visit. Library sort and
+density preferences SHALL retain their existing persistence behavior.
+
+#### Scenario: Return from a pushed screen
+- **WHEN** the player opens game detail or HLTB review from a filtered Library and returns, regardless
+  of time spent on that screen while the app remains foregrounded
+- **THEN** the same query and filters remain active and the Library returns to the same useful scroll
+  position when its prior content is still available
+
+#### Scenario: Short tab departure
+- **WHEN** the player switches away from Library and returns less than five minutes later
+- **THEN** the query, filters, and useful scroll position are restored
+
+#### Scenario: Tab departure reaches the threshold
+- **WHEN** the player switches away from Library and returns five minutes or more later
+- **THEN** the query and filters are cleared and Library opens at the top
+
+#### Scenario: Short background departure
+- **WHEN** the player backgrounds the app while in Library or a screen pushed from it, and resumes
+  the Library visit less than five minutes later
+- **THEN** the query, filters, and useful scroll position are restored
+
+#### Scenario: Background departure reaches the threshold
+- **WHEN** the player backgrounds the app while in Library or a screen pushed from it, and next sees
+  Library five minutes or more later
+- **THEN** the query and filters are cleared and Library opens at the top
+
+#### Scenario: Backgrounding does not renew an earlier tab departure
+- **WHEN** the player switches away from Library, later backgrounds the app, and returns to Library
+  five minutes or more after the tab switch
+- **THEN** a fresh Library visit starts even if less than five minutes have passed since backgrounding
+
+#### Scenario: Repeated short departures
+- **WHEN** the player returns to Library before expiry, then leaves it again
+- **THEN** the next five-minute absence interval starts from the later departure
+
+#### Scenario: Configuration recreation
+- **WHEN** the device configuration recreates the current Library visit
+- **THEN** the query, filters, scroll context, and any running absence interval remain unchanged
+
+#### Scenario: Cold launch
+- **WHEN** the app launches into a new process after a previous Library visit
+- **THEN** Library starts with no transient query or filters and at the top, while saved sort and
+  density preferences remain available
+
+#### Scenario: Explicit clear
+- **WHEN** the player uses a Library Clear control during an active visit
+- **THEN** the selected query or filters clear immediately without waiting for visit expiry
+
+#### Scenario: Items change during a retained visit
+- **WHEN** Library content changes while the player is away and the visit has not expired
+- **THEN** the retained query and filters apply to current content and the scroll position stays near
+  the previously visible item when possible, or at the nearest valid position when that item is gone
