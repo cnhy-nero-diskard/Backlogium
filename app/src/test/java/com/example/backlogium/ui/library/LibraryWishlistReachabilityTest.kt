@@ -37,4 +37,14 @@ class LibraryWishlistReachabilityTest {
         assertFalse(shouldShowWishlistSection(library, wishlist, emptySet()))
         assertTrue(shouldShowFullScreenLibraryEmptyState(library, wishlist))
     }
+
+    @Test
+    fun emptyOwnedLibrary_withRetainedFilter_keepsFilterRecoveryControlsReachable() {
+        val library = LibraryUiState(
+            libraryEmpty = true,
+            filters = LibraryFilters(familySharedOnly = true),
+        )
+
+        assertFalse(shouldShowFullScreenLibraryEmptyState(library, WishlistUiState(configured = false)))
+    }
 }

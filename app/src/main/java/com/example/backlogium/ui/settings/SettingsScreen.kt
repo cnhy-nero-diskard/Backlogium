@@ -114,6 +114,7 @@ fun SettingsScreen(
     onOpenSetup: () -> Unit = {},
     onOpenUpdate: () -> Unit = {},
     onOpenHiddenGames: () -> Unit = {},
+    onOpenReview: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     SettingsGraphScreen(viewModel = viewModel) { graph ->
@@ -125,6 +126,7 @@ fun SettingsScreen(
                 onOpenSetup = onOpenSetup,
                 onOpenUpdate = onOpenUpdate,
                 onOpenHiddenGames = onOpenHiddenGames,
+                onOpenReview = onOpenReview,
                 actions = it.actions,
             )
         }
@@ -323,6 +325,7 @@ fun SettingsScreen(
     onOpenSetup: () -> Unit = {},
     onOpenUpdate: () -> Unit = {},
     onOpenHiddenGames: () -> Unit = {},
+    onOpenReview: () -> Unit = {},
     actions: SettingsActions,
 ) {
     if (state.loading) {
@@ -348,6 +351,7 @@ fun SettingsScreen(
             state = state,
             actions = actions,
             onOpenHiddenGames = onOpenHiddenGames,
+            onOpenReview = onOpenReview,
         )
         DataPrivacySettingsContent(state = state, actions = actions)
         AdvancedSettingsContent(
@@ -401,7 +405,19 @@ internal fun GameplaySettingsContent(
     state: SettingsUiState,
     actions: SettingsActions,
     onOpenHiddenGames: () -> Unit,
+    onOpenReview: () -> Unit = {},
 ) {
+    SectionHeader(stringResource(R.string.settings_section_completion_times))
+    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenReview)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(stringResource(R.string.settings_match_center_title), style = MaterialTheme.typography.titleMedium)
+            Text(
+                stringResource(R.string.settings_match_center_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
     SectionHeader(stringResource(R.string.settings_section_live_monitor))
     LiveMonitorCard(
         enabled = state.liveMonitorEnabled,
@@ -493,6 +509,7 @@ internal fun SettingsDetailScreen(
     onOpenSetup: () -> Unit = {},
     onOpenUpdate: () -> Unit = {},
     onOpenHiddenGames: () -> Unit = {},
+    onOpenReview: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -528,7 +545,7 @@ internal fun SettingsDetailScreen(
                     onOpenSetup,
                     onOpenUpdate,
                 )
-                SettingsGroup.GAMEPLAY -> GameplaySettingsContent(state, actions, onOpenHiddenGames)
+                SettingsGroup.GAMEPLAY -> GameplaySettingsContent(state, actions, onOpenHiddenGames, onOpenReview)
                 SettingsGroup.DATA_PRIVACY -> DataPrivacySettingsContent(state, actions)
                 SettingsGroup.ADVANCED -> AdvancedSettingsContent(state, actions, onOpenDiagnostics)
             }

@@ -31,8 +31,8 @@ fun VisibilityChangeDialog(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     if (effect.hiding) {
-                        "It leaves the Library, search, collections, analytics, and history, and " +
-                            "stops counting toward XP. Nothing is deleted — unhiding restores it."
+                        "Leaves the Library and other views, and no longer counts toward XP. " +
+                            "Restore it from Hidden Games."
                     } else {
                         "It returns to every surface, and its playtime counts toward XP again."
                     },
@@ -44,17 +44,34 @@ fun VisibilityChangeDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (effect.noDerivedChange) {
-                    Text("No XP or level change: nothing recorded for it counts toward either.")
+                if (effect.hiding) {
+                    if (effect.totalXpBefore != effect.totalXpAfter) {
+                        Text("XP: ${effect.totalXpBefore} → ${effect.totalXpAfter}")
+                    }
+                    if (effect.levelBefore != effect.levelAfter) {
+                        Text(
+                            text = if (effect.levelDrops) {
+                                "Level drops: ${effect.levelBefore} → ${effect.levelAfter}"
+                            } else {
+                                "Level: ${effect.levelBefore} → ${effect.levelAfter}"
+                            },
+                            color = if (effect.levelDrops) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                 } else {
-                    Text("Total XP: ${effect.totalXpBefore} → ${effect.totalXpAfter}")
-                    Text("Level: ${effect.levelBefore} → ${effect.levelAfter}")
-                }
-                if (effect.levelDrops) {
-                    Text(
-                        text = "Your level drops from ${effect.levelBefore} to ${effect.levelAfter}.",
-                        color = MaterialTheme.colorScheme.error,
-                    )
+                    if (effect.noDerivedChange) {
+                        Text("No XP or level change: nothing recorded for it counts toward either.")
+                    } else {
+                        Text("Total XP: ${effect.totalXpBefore} → ${effect.totalXpAfter}")
+                        Text("Level: ${effect.levelBefore} → ${effect.levelAfter}")
+                    }
+                    if (effect.levelDrops) {
+                        Text(
+                            text = "Your level drops from ${effect.levelBefore} to ${effect.levelAfter}.",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
                 if (effect.clearedGoalNames.isNotEmpty()) {
                     Text(
@@ -62,12 +79,14 @@ fun VisibilityChangeDialog(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
-                Text(
-                    text = "Days you already met their quest stay met, and your longest streak " +
-                        "is never lowered.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (!effect.hiding) {
+                    Text(
+                        text = "Days you already met their quest stay met, and your longest streak " +
+                            "is never lowered.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         },
         confirmButton = {

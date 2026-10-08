@@ -111,7 +111,6 @@ import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.ui.components.GameIcon
 import com.example.backlogium.ui.components.RecencyBadge
 import com.example.backlogium.ui.components.accessibilityLabel
-import com.example.backlogium.ui.onboarding.OnboardingScreen
 import com.example.backlogium.ui.theme.collectionAccentColor
 import com.example.backlogium.ui.theme.deadlineWarning
 import com.example.backlogium.ui.theme.playingIndicator
@@ -142,6 +141,7 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun HomeScreen(
+    onOpenOnboarding: () -> Unit = {},
     onAccentColorChanged: (Color?) -> Unit = {},
     onOpenCollection: (Long) -> Unit = {},
     onCreateCollection: () -> Unit = {},
@@ -153,6 +153,8 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    HomeFirstRunNavigation(state, onOpenOnboarding)
 
     val nowPlayingAccent = MaterialTheme.colorScheme.tertiaryContainer
     val inGame = state.isInGame && state.nowPlayingName != null
@@ -167,6 +169,7 @@ fun HomeScreen(
     HomeContent(
         state = state,
         actions = HomeContentActions(
+            onOpenOnboarding = onOpenOnboarding,
             onAcknowledgeProgressEvent = viewModel::acknowledgeProgressEvent,
             onSyncNow = viewModel::syncNow,
             onOpenCollection = onOpenCollection,
@@ -181,8 +184,21 @@ fun HomeScreen(
     )
 }
 
+/** The pushed flow owns setup across credential changes; Back exposes Home's setup guidance. */
+@Composable
+internal fun HomeFirstRunNavigation(state: HomeUiState, onOpenOnboarding: () -> Unit) {
+    var firstRunPresented by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state.loading, state.configured, state.firstRunSetupActive) {
+        if (!state.loading && (!state.configured || state.firstRunSetupActive) && !firstRunPresented) {
+            firstRunPresented = true
+            onOpenOnboarding()
+        }
+    }
+}
+
 /** Actions raised by the stateless Home presentation. */
 internal data class HomeContentActions(
+    val onOpenOnboarding: () -> Unit = {},
     val onAcknowledgeProgressEvent: (ProgressEvent) -> Unit = {},
     val onSyncNow: () -> Unit = {},
     val onOpenCollection: (Long) -> Unit = {},
@@ -209,22 +225,25 @@ internal fun HomeContent(
         return
     }
 
-    // The takeover latches on the first unconfigured composition and is released by the flow
-    // itself, not by `configured` flipping. Saving credentials flips it *mid-flow* — the flow
-    // continues into first-run setup afterwards — so tearing the takeover down there would
-    // dismantle the setup step in the same frame it appeared.
-    //
-    // Two latches, because one cannot cover both windows. `state.firstRunSetupActive` is durable and
-    // is what restores the takeover on a cold launch after the process is killed mid-setup, when
-    // credentials are already stored. It is written asynchronously as they are stored, so the
-    // saved-instance latch below holds the surface across an Activity recreation in the gap before
-    // that write lands — and across the gap after it is cleared, before `completed` is reported.
-    var onboardingActive by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(state.configured) { if (!state.configured) onboardingActive = true }
-
-    if (!state.configured || state.firstRunSetupActive || onboardingActive) {
-        // Full-screen onboarding takeover replaces the old dead-end "not configured" message.
-        OnboardingScreen(onCompleted = { onboardingActive = false })
+    if (!state.configured || state.firstRunSetupActive) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                stringResource(if (state.configured) R.string.home_resume_setup else R.string.home_connect_steam),
+                style = MaterialTheme.typography.titleLarge,
+            )
+            Text(
+                stringResource(R.string.home_setup_guidance),
+                modifier = Modifier.padding(vertical = 16.dp),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Button(onClick = actions.onOpenOnboarding) {
+                Text(stringResource(R.string.home_continue_setup))
+            }
+        }
         return
     }
 

@@ -1345,6 +1345,17 @@ private class FakeHltbDataDao(private val store: MutableMap<Long, HltbData>) : H
     override fun observeMatchCenter(): Flow<List<HltbData>> = flowOf(emptyList())
     override suspend fun getMatchCenter(): List<HltbData> = emptyList()
     override suspend fun markNeedsReviewWithBroaderCandidates(appId: Long, candidatesJson: String): Int = 0
+    override suspend fun resolveMatchIfUnchanged(
+        appId: Long,
+        expectedMatchStatus: HltbMatchStatus,
+        expectedFetchedAt: Long,
+        expectedCandidatesJson: String?,
+        hltbId: Long,
+        mainStoryMinutes: Int?,
+        mainExtraMinutes: Int?,
+        completionistMinutes: Int?,
+        allStylesMinutes: Int?,
+    ): Int = 0
 }
 
 private class FakeAchievementDao(private val store: MutableList<Achievement>) : AchievementDao {

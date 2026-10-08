@@ -17,6 +17,25 @@ import org.junit.Test
  */
 class HltbMatchCenterSelectionTest {
 
+    @Test
+    fun navigatingPastUnresolvedGames_thenMatchingLastGame_exhaustsThePass() {
+        val before = queue(
+            game(1, HltbMatchState.NEEDS_REVIEW),
+            game(2, HltbMatchState.UNMATCHED),
+            game(3, HltbMatchState.UNMATCHED),
+        )
+        val session = HltbReviewSession()
+        session.updateQueue(before)
+        assertEquals(1L, session.state.value.selection.persistedAppId)
+        session.navigate(1)
+        assertEquals(2L, session.state.value.selection.persistedAppId)
+        session.navigate(1)
+        assertEquals(3L, session.state.value.selection.persistedAppId)
+        session.updateQueue(before.dropLast(1))
+        assertNull(session.state.value.selection.persistedAppId)
+        assertEquals(setOf(1L, 2L), session.state.value.deferredAppIds)
+    }
+
     private fun game(appId: Long, status: HltbMatchState) = MatchCenterGameUi(
         appId = appId,
         name = "Game $appId",
@@ -88,18 +107,16 @@ class HltbMatchCenterSelectionTest {
     }
 
     @Test
-    fun lastGameRemoved_clampsToTheSurvivingNeighbor() {
-        // Resolving the last game must clamp onto the neighbor of the old position (B), not
-        // jump back to the first game.
+    fun lastGameRemoved_selectsAnEarlierUnprocessedGame() {
         val queue2 = queue(
             game(1, HltbMatchState.NEEDS_REVIEW),
             game(2, HltbMatchState.NEEDS_REVIEW),
         )
         val clamped = deriveViewModelSelection(MatchCenterSelection(index = 2, persistedAppId = 3L), queue2)
 
-        assertEquals(1, clamped.index)
-        assertEquals(2L, clamped.persistedAppId)
-        assertEquals(2L, stateFor(queue2, clamped).selectedGame?.appId)
+        assertEquals(0, clamped.index)
+        assertEquals(1L, clamped.persistedAppId)
+        assertEquals(1L, stateFor(queue2, clamped).selectedGame?.appId)
     }
 
     @Test

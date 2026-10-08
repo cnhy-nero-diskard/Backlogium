@@ -6,7 +6,9 @@ Defines the Android app's UI behavior: the app shell and navigation, the Steam p
 header, the Home screen,
 visual theming, typography, iconography, game art states, celebratory animations, the
 Library screen, the History screen, and sync feedback in the app shell.
+
 ## Requirements
+
 ### Requirement: App shell and navigation
 The system SHALL present a Compose UI with navigation between Home, Library, History, Analytics,
 and Settings screens, and all screens SHALL render from locally stored state so the app
@@ -1143,8 +1145,9 @@ Matches SHALL be presented in order of how closely they matched the query, stron
 name match, then a name beginning with the query, then a name containing a word beginning with the
 query, then a name containing the query elsewhere, then a match on a genre label alone. Ranking
 SHALL ignore case. The search SHALL also offer a genre filter that narrows results to games carrying
-any selected genre. That genre selection SHALL apply to the current visit only and SHALL NOT be
-remembered between visits, unlike each list's chosen sort order.
+any selected genre. The text query and genre selection SHALL remain active for the current Library
+visit as defined by Library visit context retention, but SHALL NOT be remembered after that visit
+expires, unlike each list's chosen sort order.
 
 The search field SHALL keep a stable width and a legible input while it is focused and while text is
 entered, so neither focusing the field nor typing into it changes the size of the field or of the
@@ -1185,8 +1188,12 @@ text within it.
 - **WHEN** the user selects one or more genres in the Library search
 - **THEN** only games carrying at least one selected genre are shown, ranked as above
 
+#### Scenario: Genre filter retained during a visit
+- **WHEN** the user selects genres, leaves Library for another tab, and returns in less than five minutes
+- **THEN** the selected genres remain active with the other Library discovery filters
+
 #### Scenario: Genre filter not remembered between visits
-- **WHEN** the user selects genres in the Library search, leaves the Library, and returns
+- **WHEN** the user selects genres, leaves Library for another tab, and returns five minutes or more later
 - **THEN** no genre filter is active and the full Library is shown, while each list's chosen sort
   order is still remembered
 
@@ -3332,3 +3339,263 @@ While the cloud reader is configured, History SHALL offer a compact Cloud activi
 #### Scenario: Observation ages while detail stays open
 - **WHEN** the newest known observation becomes stale while Cloud activity remains on screen or the app resumes
 - **THEN** its freshness warning reflects the current time without requiring another reader request
+
+### Requirement: App bottom navigation visibility
+Backlogium SHALL show its bottom navigation bar only on the five top-level destinations: Home,
+Library, History, Analytics, and Settings overview. First-run configuration and all pushed
+destinations SHALL hide the app bar while retaining system navigation and system Back. Top-level
+destinations SHALL remain reachable before Steam credentials are configured.
+
+#### Scenario: Top-level destination
+- **WHEN** the player visits Home, Library, History, Analytics, or Settings overview
+- **THEN** the app bottom navigation is visible with the corresponding destination selected
+
+#### Scenario: First-run configuration
+- **WHEN** first-run credential onboarding or the setup step is shown
+- **THEN** the app bottom navigation is hidden and system Back remains available
+
+#### Scenario: Pushed destinations
+- **WHEN** the player opens game detail, HLTB review, collection or derived collection, gap planning,
+  Settings detail, diagnostics, cloud activity, or another pushed destination
+- **THEN** the app bottom navigation is hidden
+
+#### Scenario: Return to a top-level destination
+- **WHEN** the player returns from a pushed destination
+- **THEN** the app bottom navigation reappears for the restored top-level destination and its tab
+  state remains intact
+
+#### Scenario: Unconfigured top-level guidance remains reachable
+- **WHEN** Steam credentials have not been configured and the player visits a top-level destination
+- **THEN** the app bottom navigation remains available so the destination's setup guidance is reachable
+
+### Requirement: Library bottom content spacing
+The Library SHALL use the space above the app bottom navigation without an unexplained blank strip.
+It SHALL respect the system navigation inset and keep the final list or grid item reachable. Hiding
+or showing the app bar SHALL not leave stale padding or apply bottom space twice.
+
+#### Scenario: Library list and grids
+- **WHEN** Library is shown in list or either grid density
+- **THEN** content reaches the intended space above the app bar and the last item can be fully seen
+  and selected
+
+#### Scenario: System navigation modes
+- **WHEN** the device uses gesture navigation or three-button navigation
+- **THEN** Library content and the app bar respect the system safe area without an extra blank band
+
+#### Scenario: Bar transition
+- **WHEN** the player opens a pushed screen from Library and returns
+- **THEN** bottom spacing follows the visible app bar without retaining the prior screen's padding
+
+#### Scenario: Display variations
+- **WHEN** Library is shown in either theme or with increased font size
+- **THEN** the final item remains reachable without overlap or an unexplained bottom gap
+
+### Requirement: Library visit context retention
+The system SHALL preserve the Library text query, selected genres, coverage-only and Family
+Shared-only filters, and the current useful scroll position during a Library visit. A pushed screen
+opened from Library, including game detail or HLTB review, SHALL remain part of that visit. Switching
+to another top-level tab or backgrounding the app SHALL start a five-minute absence interval. If
+both happen, the earliest departure time SHALL govern; backgrounding SHALL NOT extend an interval
+already running. Returning while less than five minutes have elapsed SHALL resume the visit. At
+five minutes or later, the next Library presentation SHALL start a fresh visit with those filters
+cleared and scroll reset to the top. A cold launch SHALL start a fresh visit. Library sort and
+density preferences SHALL retain their existing persistence behavior.
+
+#### Scenario: Return from a pushed screen
+- **WHEN** the player opens game detail or HLTB review from a filtered Library and returns, regardless
+  of time spent on that screen while the app remains foregrounded
+- **THEN** the same query and filters remain active and the Library returns to the same useful scroll
+  position when its prior content is still available
+
+#### Scenario: Short tab departure
+- **WHEN** the player switches away from Library and returns less than five minutes later
+- **THEN** the query, filters, and useful scroll position are restored
+
+#### Scenario: Tab departure reaches the threshold
+- **WHEN** the player switches away from Library and returns five minutes or more later
+- **THEN** the query and filters are cleared and Library opens at the top
+
+#### Scenario: Short background departure
+- **WHEN** the player backgrounds the app while in Library or a screen pushed from it, and resumes
+  the Library visit less than five minutes later
+- **THEN** the query, filters, and useful scroll position are restored
+
+#### Scenario: Background departure reaches the threshold
+- **WHEN** the player backgrounds the app while in Library or a screen pushed from it, and next sees
+  Library five minutes or more later
+- **THEN** the query and filters are cleared and Library opens at the top
+
+#### Scenario: Backgrounding does not renew an earlier tab departure
+- **WHEN** the player switches away from Library, later backgrounds the app, and returns to Library
+  five minutes or more after the tab switch
+- **THEN** a fresh Library visit starts even if less than five minutes have passed since backgrounding
+
+#### Scenario: Repeated short departures
+- **WHEN** the player returns to Library before expiry, then leaves it again
+- **THEN** the next five-minute absence interval starts from the later departure
+
+#### Scenario: Configuration recreation
+- **WHEN** the device configuration recreates the current Library visit
+- **THEN** the query, filters, scroll context, and any running absence interval remain unchanged
+
+#### Scenario: Cold launch
+- **WHEN** the app launches into a new process after a previous Library visit
+- **THEN** Library starts with no transient query or filters and at the top, while saved sort and
+  density preferences remain available
+
+#### Scenario: Explicit clear
+- **WHEN** the player uses a Library Clear control during an active visit
+- **THEN** the selected query or filters clear immediately without waiting for visit expiry
+
+#### Scenario: Items change during a retained visit
+- **WHEN** Library content changes while the player is away and the visit has not expired
+- **THEN** the retained query and filters apply to current content and the scroll position stays near
+  the previously visible item when possible, or at the nearest valid position when that item is gone
+
+### Requirement: Wishlist matches in Library search
+Library text search SHALL include cached wishlist titles alongside owned and Family Shared games.
+Wishlist-only matches SHALL appear in a clearly labeled wishlist result section and SHALL use
+wishlist-appropriate store actions rather than owned-game tracking or collection actions. A title
+present in both sources SHALL not appear as two indistinguishable results. Search SHALL preserve
+the existing owned-game ranking and grouping behavior.
+
+#### Scenario: Wishlist title matches
+- **WHEN** a text query matches a cached wishlist-only title
+- **THEN** that title appears as a labeled wishlist result in list and both grid densities
+
+#### Scenario: Owned and wishlist title overlap
+- **WHEN** a Steam app ID appears in both owned/shared results and the cached wishlist
+- **THEN** its owned/shared result retains the Library detail and tracking actions, and no duplicate
+  wishlist-only result is shown
+
+#### Scenario: Wishlist-only action
+- **WHEN** the player opens a wishlist-only search result
+- **THEN** its available store action is offered without owned-game tracking or collection controls
+
+#### Scenario: Owned-only filters with a query
+- **WHEN** an owned-game genre, HLTB coverage, or Family Shared filter is active with a text query
+- **THEN** wishlist-only titles are not presented as if they satisfied that filter
+
+#### Scenario: Wishlist read fails with cached entries
+- **WHEN** the latest wishlist read fails but cached wishlist entries exist
+- **THEN** matching cached entries remain searchable and the wishlist's unavailable or stale state
+  remains distinguishable from a fresh result
+
+#### Scenario: Wishlist read fails without cached entries
+- **WHEN** the wishlist cannot be read and has no cached entries
+- **THEN** search does not claim there are no matching wishlist games; it identifies wishlist
+  unavailability separately from an owned-game no-match state
+
+### Requirement: Added recently Library sorting
+Each owned/shared Library section SHALL offer an Added recently sort based on the game's recorded
+first observation by Backlogium. It SHALL be separate from Recent activity, which describes play.
+Known observation times SHALL order by time, with stable title and app-ID tie-breaks. Unknown times,
+including baseline and legacy games, SHALL remain grouped after known times in either direction
+without implying an acquisition order. The chosen sort and direction SHALL retain the existing
+per-section preference behavior.
+
+#### Scenario: Newest observed games first
+- **WHEN** the player selects Added recently in its default direction
+- **THEN** games with known observation times appear newest first within that Library section
+
+#### Scenario: Reverse added order
+- **WHEN** the player reverses Added recently
+- **THEN** games with known observation times appear oldest first, while unknown times remain after
+  dated games
+
+#### Scenario: Equal observation time
+- **WHEN** multiple games share the same observation time, including a first-sync batch
+- **THEN** their order is stable by title and app ID and does not claim one was acquired first
+
+#### Scenario: Unknown observation time
+- **WHEN** a baseline or legacy game has no recorded observation time
+- **THEN** it remains sortable and is not assigned a fabricated date
+
+#### Scenario: Sort explanation
+- **WHEN** the Added recently option or its explanation is shown
+- **THEN** the app makes clear the time is when Backlogium first observed the game, not its Steam
+  purchase date
+
+### Requirement: Concise Hide game confirmation
+The Hide game confirmation SHALL state the immediate consequence and how to restore the game in
+short, direct copy. When hiding changes XP, level, or Focus membership, the dialog SHALL still
+disclose those material effects. It SHALL retain distinct confirm and cancel actions.
+
+#### Scenario: Confirm or cancel hiding
+- **WHEN** the player chooses Hide game from Library
+- **THEN** the dialog explains that the game will leave visible surfaces and can be restored from
+  Hidden Games, with clear Hide and Cancel choices
+
+#### Scenario: Material progress effect
+- **WHEN** hiding the selected game changes XP, level, or Focus membership
+- **THEN** the confirmation states those effects concisely before the player confirms
+
+### Requirement: HLTB review session deferral and forward progression
+The HLTB Match Center SHALL let the player defer an unresolved game for the current review session.
+Explicit Skip and moving past an unresolved game SHALL defer its app ID without changing its stored
+match status. Automatic forward navigation and post-match selection SHALL exclude deferred app IDs
+and choose the next unprocessed game by the current queue order. When none remains, the Match Center
+SHALL show a completion or exhaustion state rather than wrap to a deferred game. The player SHALL
+be able to deliberately review skipped games again. The session SHALL survive configuration
+recreation and temporary detail return, and SHALL end when the Match Center route is dismissed or
+the app process ends.
+
+#### Scenario: Explicit skip
+- **WHEN** the player chooses Skip for this review session on an unresolved game
+- **THEN** that game remains unresolved in storage, is excluded from automatic forward selection,
+  and the next unprocessed game is shown
+
+#### Scenario: Navigate past an unresolved game
+- **WHEN** the player uses Next or Previous to leave an unresolved game
+- **THEN** the game is deferred for this session and is not selected automatically later in that pass
+
+#### Scenario: Match removes selected game
+- **WHEN** the selected game is matched or leaves the queue after a data update
+- **THEN** selection moves forward to the next unprocessed app ID in the current actionable order
+
+#### Scenario: Queue partitions reorder
+- **WHEN** a game changes between ambiguous and unmatched partitions while review is in progress
+- **THEN** selection follows the intended app ID and deferred games remain excluded from automatic
+  progression
+
+#### Scenario: No unprocessed games remain
+- **WHEN** all actionable games have been matched or deferred
+- **THEN** the Match Center shows completion or exhaustion with a deliberate Review skipped action
+  when deferred games remain, without wrapping automatically
+
+#### Scenario: Review skipped games
+- **WHEN** the player chooses Review skipped
+- **THEN** deferred games become selectable for another pass without changing their stored match
+  status until the player resolves one
+
+#### Scenario: Session survives temporary interruption
+- **WHEN** configuration recreation occurs or the player temporarily opens detail and returns
+- **THEN** current selection and the deferred app IDs remain part of the same review session
+
+#### Scenario: Session ends on route dismissal
+- **WHEN** the player leaves the Match Center and later opens a new Match Center route
+- **THEN** no game remains deferred solely because of the prior review session
+
+#### Scenario: Scoped game is deferred
+- **WHEN** the Match Center was opened for one game and the player defers that game
+- **THEN** the scoped game stays unresolved and the route offers completion or Review skipped;
+  automatic return to Library occurs only when that scoped game is actually resolved
+
+### Requirement: HLTB reviewer entry points across Library and Settings
+Library list and both grid densities SHALL offer an accessible per-game completion-time lookup or
+review action that reaches the existing targeted HLTB route. Settings Gameplay SHALL offer a direct
+Match Center shortcut even when no attention badge is present.
+
+#### Scenario: Per-game action in both grids
+- **WHEN** the player uses either Library grid density
+- **THEN** each eligible game has a labeled, accessible completion-time lookup or review action
+  with the same target game behavior as the list
+
+#### Scenario: Settings Gameplay shortcut
+- **WHEN** the player opens Settings Gameplay
+- **THEN** a Match Center shortcut opens the general reviewer regardless of attention count
+
+#### Scenario: Targeted route remains scoped
+- **WHEN** a per-game Library action opens the reviewer
+- **THEN** that game's app ID is the initial review target, and resolving a different game does not
+  falsely complete the scoped route

@@ -11,6 +11,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -57,7 +58,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -163,24 +166,25 @@ internal data class LibraryDisplayGame(
 internal fun shouldShowFullScreenLibraryEmptyState(
     libraryState: LibraryUiState,
     wishlistState: WishlistUiState,
-): Boolean = libraryState.libraryEmpty && !wishlistState.configured
+): Boolean = libraryState.libraryEmpty &&
+    !wishlistState.configured &&
+    !libraryState.filters.hasActiveFilters
 
 internal fun shouldShowWishlistSection(
     libraryState: LibraryUiState,
     wishlistState: WishlistUiState,
     selectedGenreSet: Set<String>,
 ): Boolean = wishlistState.configured &&
-    (libraryState.libraryEmpty ||
-        (libraryState.filters.query.isBlank() && selectedGenreSet.isEmpty() &&
-            !libraryState.filters.notCoveredOnly && !libraryState.filters.familySharedOnly))
+    selectedGenreSet.isEmpty() &&
+    !libraryState.filters.notCoveredOnly && !libraryState.filters.familySharedOnly
 
 /**
- * Whether Library's transient ViewModel state (selection and filters) resets when the screen's
+ * Whether Library's transient selection resets when the screen's
  * composition disposes. Disposal fires both on an actual navigation-away and on a
  * configuration/activity recreation (rotation, locale/theme change) where the Hilt ViewModel
- * survives — so only a navigation-away clears, and a recreation keeps the active filters.
+ * survives, so only a navigation-away clears selection. Filters have a separate visit lifetime.
  */
-internal fun shouldClearLibraryTransientState(isChangingConfigurations: Boolean): Boolean =
+internal fun shouldClearLibrarySelection(isChangingConfigurations: Boolean): Boolean =
     !isChangingConfigurations
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
@@ -220,48 +224,58 @@ fun LibraryScreen(
     wishlistViewModel: WishlistViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val visitFilters by viewModel.visit.filters.collectAsStateWithLifecycle()
+    val generation by viewModel.visit.generation.collectAsStateWithLifecycle()
     val wishlistState by wishlistViewModel.uiState.collectAsStateWithLifecycle()
     val uriHandler = LocalUriHandler.current
 
-    LibraryContent(
-        state = state,
-        wishlistState = wishlistState,
-        actions = LibraryContentActions(
-            onOpenReview = onOpenReview,
-            onOpenGameDetail = onOpenGameDetail,
-            onConsumeNeedsAttention = viewModel::consumeNeedsAttention,
-            onToggleSelection = viewModel::toggleSelection,
-            onClearSelection = viewModel::clearSelection,
-            onClearFilters = viewModel::clearFilters,
-            onRefreshSelection = viewModel::refreshSelection,
-            onSetQuery = viewModel::setQuery,
-            onClearQuery = viewModel::clearQuery,
-            onToggleGenreFilter = viewModel::toggleGenreFilter,
-            onClearGenreFilter = viewModel::clearGenreFilter,
-            onClearGenreFilters = viewModel::clearGenreFilters,
-            onSetNotCoveredOnly = viewModel::setNotCoveredOnly,
-            onSetFamilySharedOnly = viewModel::setFamilySharedOnly,
-            onSetFocusSort = viewModel::setFocusSort,
-            onSetFocusSortDirection = viewModel::setFocusSortDirection,
-            onSetLibrarySort = viewModel::setLibrarySort,
-            onSetLibrarySortDirection = viewModel::setLibrarySortDirection,
-            onSetDensity = viewModel::setDensity,
-            onStopHltbRefresh = viewModel::stopHltbRefresh,
-            onTagGoal = viewModel::tagGoal,
-            onUntagGoal = viewModel::untagGoal,
-            onRefreshGame = viewModel::refreshGame,
-            onClearPicker = viewModel::clearPicker,
-            onChangeMatch = viewModel::changeMatch,
-            onResolveMatch = viewModel::resolveMatch,
-            onUpdatePickerManualLinkInput = viewModel::updatePickerManualLinkInput,
-            onPreviewPickerManualLink = viewModel::previewPickerManualLink,
-            onDismissPickerManualLinkPreview = viewModel::dismissPickerManualLinkPreview,
-            onConfirmPickerManualLink = viewModel::confirmPickerManualLink,
-            onEnterSelectionMode = viewModel::enterSelectionMode,
-            onSetWishlistExpanded = wishlistViewModel::setExpanded,
-            onOpenStore = { uriHandler.openUri(it) },
-        ),
-    )
+    // A saved destination can emit its old state before the repository combine catches up.
+    // Never present that state after expiry, or flash cold-start defaults during a retained visit.
+    var presented by remember(generation) { mutableStateOf(false) }
+    if (!presented && (state.loading || state.filters != visitFilters)) return
+    SideEffect { presented = true }
+    key(generation) {
+        LibraryContent(
+            state = state,
+            wishlistState = wishlistState,
+            visit = viewModel.visit,
+            actions = LibraryContentActions(
+                onOpenReview = onOpenReview,
+                onOpenGameDetail = onOpenGameDetail,
+                onConsumeNeedsAttention = viewModel::consumeNeedsAttention,
+                onToggleSelection = viewModel::toggleSelection,
+                onClearSelection = viewModel::clearSelection,
+                onClearFilters = viewModel::clearFilters,
+                onRefreshSelection = viewModel::refreshSelection,
+                onSetQuery = viewModel::setQuery,
+                onClearQuery = viewModel::clearQuery,
+                onToggleGenreFilter = viewModel::toggleGenreFilter,
+                onClearGenreFilter = viewModel::clearGenreFilter,
+                onClearGenreFilters = viewModel::clearGenreFilters,
+                onSetNotCoveredOnly = viewModel::setNotCoveredOnly,
+                onSetFamilySharedOnly = viewModel::setFamilySharedOnly,
+                onSetFocusSort = viewModel::setFocusSort,
+                onSetFocusSortDirection = viewModel::setFocusSortDirection,
+                onSetLibrarySort = viewModel::setLibrarySort,
+                onSetLibrarySortDirection = viewModel::setLibrarySortDirection,
+                onSetDensity = viewModel::setDensity,
+                onStopHltbRefresh = viewModel::stopHltbRefresh,
+                onTagGoal = viewModel::tagGoal,
+                onUntagGoal = viewModel::untagGoal,
+                onRefreshGame = viewModel::refreshGame,
+                onClearPicker = viewModel::clearPicker,
+                onChangeMatch = viewModel::changeMatch,
+                onResolveMatch = viewModel::resolveMatch,
+                onUpdatePickerManualLinkInput = viewModel::updatePickerManualLinkInput,
+                onPreviewPickerManualLink = viewModel::previewPickerManualLink,
+                onDismissPickerManualLinkPreview = viewModel::dismissPickerManualLinkPreview,
+                onConfirmPickerManualLink = viewModel::confirmPickerManualLink,
+                onEnterSelectionMode = viewModel::enterSelectionMode,
+                onSetWishlistExpanded = wishlistViewModel::setExpanded,
+                onOpenStore = { uriHandler.openUri(it) },
+            ),
+        )
+    }
 }
 
 /** Callbacks raised by Library's state-driven presentation. */
@@ -308,6 +322,7 @@ internal fun LibraryContent(
     state: LibraryUiState,
     wishlistState: WishlistUiState = WishlistUiState(),
     actions: LibraryContentActions = LibraryContentActions(),
+    visit: LibraryVisitState = remember { LibraryVisitState() },
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -317,6 +332,15 @@ internal fun LibraryContent(
     var showToolsSheet by rememberSaveable { mutableStateOf(false) }
     var genreSearchQuery by rememberSaveable { mutableStateOf("") }
     val filters = state.filters
+    val removeFilter: (LibraryFilterChip) -> Unit = { chip ->
+        when (chip.kind) {
+            LibraryFilterChipKind.QUERY -> actions.onClearQuery()
+            LibraryFilterChipKind.GENRE -> chip.value?.let(actions.onClearGenreFilter)
+            LibraryFilterChipKind.NOT_COVERED -> actions.onSetNotCoveredOnly(false)
+            LibraryFilterChipKind.FAMILY_SHARED -> actions.onSetFamilySharedOnly(false)
+        }
+    }
+    val visibleWishlist = remember(state, wishlistState) { wishlistForLibrary(state, wishlistState) }
     val selectedGenreSet = filters.selectedGenreIds
     val genreCatalog = remember(state.availableGenres) {
         genreFilterCatalog(state.availableGenres)
@@ -324,6 +348,8 @@ internal fun LibraryContent(
     val visibleGoalGames = state.goalGames
     val visibleBacklog = state.backlog
     val noVisibleMatches = state.noMatches
+    val generation by visit.generation.collectAsStateWithLifecycle()
+    val listState = rememberLibraryScrollState(visit, generation, state, wishlistState)
 
     // A finished per-game lookup can raise a one-shot "needs the match center" request as state:
     // its ViewModel job lives in `viewModelScope` and may outlive the dialog composition that
@@ -356,17 +382,12 @@ internal fun LibraryContent(
         }
     }
 
-    // Selection and filters are transient: leaving the Library drops them, so they can never
-    // outlive the screen that shows them. Composition disposal alone is not "leaving", though:
-    // a configuration/activity recreation (rotation, locale/theme change) also disposes the
-    // composition while the Hilt ViewModel survives, so an unconditional clear would wipe active
-    // filters the user never left. Only reset ViewModel state on an actual navigation-away.
+    // Selection and dialogs keep their screen lifetime. Discovery filters belong to the visit.
     DisposableEffect(Unit) {
         onDispose {
             val recreation = context.findActivity()?.isChangingConfigurations == true
-            if (shouldClearLibraryTransientState(recreation)) {
+            if (shouldClearLibrarySelection(recreation)) {
                 actions.onClearSelection()
-                actions.onClearFilters()
             }
             showFilterSheet = false
             showToolsSheet = false
@@ -385,7 +406,8 @@ internal fun LibraryContent(
     // Keyed to the *unfiltered* library. If the filtered lists fed this, a query matching nothing
     // would unmount the search field along with everything else, leaving no way to clear the query
     // that caused it. A configured wishlist is the one independent surface that must remain
-    // reachable even when this owned-library state is empty.
+    // reachable even when this owned-library state is empty. Retained filters also keep this list
+    // presentation alive so their chips remain available if data changes beneath the visit.
     if (shouldShowFullScreenLibraryEmptyState(state, wishlistState)) {
         EmptyState(
             title = stringResource(R.string.library_no_games_title),
@@ -397,19 +419,38 @@ internal fun LibraryContent(
     if (state.libraryEmpty) {
         Column(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
             ) {
+                item(key = "library-controls") {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        SearchField(
+                            query = state.query,
+                            onQueryChange = actions.onSetQuery,
+                            onClear = actions.onClearQuery,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        if (filters.hasActiveFilters) {
+                            ActiveFilterChips(
+                                filters = filters,
+                                availableGenres = state.availableGenres,
+                                onRemove = removeFilter,
+                                onClearAll = actions.onClearFilters,
+                            )
+                        }
+                    }
+                }
                 if (shouldShowWishlistSection(state, wishlistState, selectedGenreSet)) {
                     wishlistSection(
-                        state = wishlistState,
+                        state = visibleWishlist,
                         density = state.density,
                         onToggle = actions.onSetWishlistExpanded,
                         onOpenStore = { actions.onOpenStore(it.storeUrl) },
+                        searching = filters.query.isNotBlank(),
                     )
                 }
-                item { LibraryEmptyNotice() }
+                item(key = "library-empty") { LibraryEmptyNotice() }
             }
         }
         return
@@ -431,11 +472,12 @@ internal fun LibraryContent(
         }
 
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
+            state = listState,
+            // Spacing scrolls with the content; the viewport itself reaches the shell's bar.
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
         ) {
-            item {
+            item(key = "library-controls") {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -474,14 +516,7 @@ internal fun LibraryContent(
                         ActiveFilterChips(
                             filters = filters,
                             availableGenres = state.availableGenres,
-                            onRemove = { chip ->
-                                when (chip.kind) {
-                                    LibraryFilterChipKind.QUERY -> actions.onClearQuery()
-                                    LibraryFilterChipKind.GENRE -> chip.value?.let(actions.onClearGenreFilter)
-                                    LibraryFilterChipKind.NOT_COVERED -> actions.onSetNotCoveredOnly(false)
-                                    LibraryFilterChipKind.FAMILY_SHARED -> actions.onSetFamilySharedOnly(false)
-                                }
-                            },
+                            onRemove = removeFilter,
                             onClearAll = actions.onClearFilters,
                         )
                     }
@@ -491,7 +526,7 @@ internal fun LibraryContent(
             // Gated on the actionable match-center count: an unmatched-only queue leaves
             // reviewCount at 0 while rescue entries still need a main-flow entry point.
             if (state.matchCenterCount > 0) {
-                item {
+                item(key = "library-attention") {
                     HltbAttentionRow(
                         reviewCount = state.reviewCount,
                         onOpenReview = { actions.onOpenReview(null) },
@@ -500,7 +535,7 @@ internal fun LibraryContent(
             }
 
             if (state.refreshing) {
-                item {
+                item(key = "library-lookup") {
                     SelectionLookupPanel(
                         progress = state.batchProgress,
                         log = state.batchLog,
@@ -509,20 +544,19 @@ internal fun LibraryContent(
                 }
             }
 
-            // Above the owned lists, and only while nothing is being searched or filtered:
-            // those controls act on the owned library, and an unfiltered wishlist sitting under a
-            // query would read as a result of it.
-            if (!filters.hasActiveFilters) {
+            // Wishlist titles match the query independently; owned-only predicates exclude them.
+            if (shouldShowWishlistSection(state, wishlistState, selectedGenreSet)) {
                 wishlistSection(
-                    state = wishlistState,
+                    state = visibleWishlist,
                     density = state.density,
                     onToggle = actions.onSetWishlistExpanded,
                     onOpenStore = { actions.onOpenStore(it.storeUrl) },
+                    searching = filters.query.isNotBlank(),
                 )
             }
 
             if (visibleGoalGames.isNotEmpty()) {
-                item {
+                item(key = "library-focus") {
                     SectionHeader(
                         text = stringResource(R.string.library_focus_section),
                         sort = state.focusSort,
@@ -554,7 +588,7 @@ internal fun LibraryContent(
             // Heading only for a section that has matches — with a filter active, an empty
             // "Your games" heading would describe nothing.
             if (visibleBacklog.isNotEmpty()) {
-                item {
+                item(key = "library-backlog") {
                     SectionHeader(
                         text = stringResource(R.string.library_your_games_section),
                         sort = state.librarySort,
@@ -586,7 +620,7 @@ internal fun LibraryContent(
             // Inside the column, beneath the search field: the query that produced no matches
             // stays visible and clearable.
             if (noVisibleMatches) {
-                item {
+                item(key = "library-no-matches") {
                     NoMatchesRow(
                         filters = filters,
                         reason = filters.emptyReason() ?: LibraryEmptyReason.COMBINED,
@@ -628,8 +662,8 @@ internal fun LibraryContent(
             },
             onChooseMatch = {
                 actions.onClearPicker(target.appId)
-                pickerTarget = target
                 dialogTarget = null
+                actions.onOpenReview(target.appId)
             },
             onChangeMatch = {
                 pickerTarget = target
@@ -1458,7 +1492,18 @@ private fun SortControl(
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 LibrarySortKey.entries.forEach { key ->
                     DropdownMenuItem(
-                        text = { Text(librarySortLabelText(key)) },
+                        text = {
+                            Column {
+                                Text(librarySortLabelText(key))
+                                if (key == LibrarySortKey.ADDED_RECENTLY) {
+                                    Text(
+                                        stringResource(R.string.library_sort_added_explanation),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        },
                         onClick = {
                             onSortChange(key)
                             expanded = false
@@ -1554,6 +1599,7 @@ private fun librarySortLabelText(key: LibrarySortKey): String = when (key) {
     LibrarySortKey.NAME -> stringResource(R.string.library_sort_name)
     LibrarySortKey.RECENT_ACTIVITY -> stringResource(R.string.library_sort_recently_played)
     LibrarySortKey.XP_CONTRIBUTED -> stringResource(R.string.library_sort_xp_contributed)
+    LibrarySortKey.ADDED_RECENTLY -> stringResource(R.string.library_sort_added_recently)
 }
 
 @Composable
@@ -1564,6 +1610,11 @@ private fun librarySortDirectionText(
     LibrarySortKey.NAME -> when (direction) {
         LibrarySortDirection.ASCENDING -> stringResource(R.string.library_sort_a_to_z)
         LibrarySortDirection.DESCENDING -> stringResource(R.string.library_sort_z_to_a)
+    }
+
+    LibrarySortKey.ADDED_RECENTLY -> when (direction) {
+        LibrarySortDirection.ASCENDING -> stringResource(R.string.library_sort_oldest_first)
+        LibrarySortDirection.DESCENDING -> stringResource(R.string.library_sort_newest_first)
     }
 
     LibrarySortKey.PLAYTIME, LibrarySortKey.RECENT_ACTIVITY, LibrarySortKey.XP_CONTRIBUTED ->
@@ -1622,7 +1673,7 @@ private fun LazyListScope.libraryGameItems(
 ) {
     if (!density.isGrid) {
         games.forEach { game ->
-            item(key = "library-game-${game.appId}") {
+            item(key = libraryGameItemKey(listOf(game.appId), density, 0)) {
                 LibraryGameRow(
                     game = game,
                     density = density,
@@ -1638,7 +1689,7 @@ private fun LazyListScope.libraryGameItems(
     }
 
     games.chunked(density.columns).forEachIndexed { rowIndex, row ->
-        item(key = "library-grid-row-$rowIndex-${row.firstOrNull()?.appId ?: 0}") {
+        item(key = libraryGameItemKey(row.map { it.appId }, density, rowIndex)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1651,6 +1702,7 @@ private fun LazyListScope.libraryGameItems(
                         selectionMode = selectionMode,
                         onClick = { onClick(game) },
                         onLongClick = { onLongClick(game) },
+                        onManageGoal = { onManageGoal(game) },
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -1734,8 +1786,8 @@ internal fun LibraryGameRow(
 
 /**
  * Grid cell renderer. The two grid densities share a deliberate tile shell and portrait Steam hero
- * capsule stage while changing only the amount of information in the body. Grid cards intentionally
- * have no trailing action control, keeping their visual hierarchy focused on the game itself.
+ * capsule stage while changing only the amount of information in the body. A separate completion
+ * time action exposes the same per-game lookup and review dialog as the list.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1747,6 +1799,7 @@ internal fun LibraryGameCell(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onManageGoal: () -> Unit = {},
 ) {
     val compact = density == GameListDensity.COMPACT_GRID
     val tileShape = RoundedCornerShape(18.dp)
@@ -1821,6 +1874,20 @@ internal fun LibraryGameCell(
                         .align(Alignment.TopEnd)
                         .padding(6.dp),
                 )
+                if (!selectionMode) {
+                    IconButton(
+                        onClick = onManageGoal,
+                        enabled = game.fetchOp != HltbFetchOp.IN_PROGRESS,
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp)
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), CircleShape),
+                    ) {
+                        Icon(
+                            TablerIcons.Clock,
+                            contentDescription = stringResource(R.string.library_completion_times_for_game, game.name),
+                            tint = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
             }
 
             Column(
@@ -2517,7 +2584,7 @@ private fun GoalDialog(
                 Spacer(Modifier.height(12.dp))
                 HltbStatusLabel(status = hltbStatus, op = fetchOp)
                 when (hltbStatus) {
-                    HltbMatchState.NEEDS_REVIEW -> TextButton(
+                    HltbMatchState.NEEDS_REVIEW, HltbMatchState.UNMATCHED -> TextButton(
                         onClick = onChooseMatch,
                         enabled = fetchOp != HltbFetchOp.IN_PROGRESS,
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
