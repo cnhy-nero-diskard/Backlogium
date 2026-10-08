@@ -125,6 +125,44 @@ class LibraryDiscoveryTest {
         }
     }
 
+    @Test fun retainedWishlistAnchorWaitsForCachedWishlistBeforeCapturingFallback() {
+        val retainedVisit = LibraryVisitState()
+        val retainedAnchor = LibraryScrollAnchor(gameId = 3, index = 2)
+        retainedVisit.captureScroll(retainedAnchor, retainedVisit.generation.value)
+        library.value = LibraryUiState(
+            loading = false,
+            configured = true,
+            libraryEmpty = false,
+            filters = LibraryFilters("Portal"),
+            backlog = listOf(BacklogGameUi(1, "Portal owned", "", playtimeForever = 1)),
+        )
+        wishlist.value = WishlistUiState()
+
+        compose.setContent {
+            BacklogiumTheme {
+                LibraryContent(
+                    state = library.value,
+                    wishlistState = wishlist.value,
+                    visit = retainedVisit,
+                )
+            }
+        }
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(retainedAnchor, retainedVisit.scrollAnchor) }
+
+        compose.runOnIdle {
+            wishlist.value = WishlistUiState(
+                configured = true,
+                availability = WishlistAvailability.AVAILABLE,
+                entries = listOf(entry(2, "Portal early"), entry(3, "Portal wanted")),
+            )
+        }
+        compose.waitForIdle()
+
+        compose.onNodeWithText("Portal wanted").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(3L, retainedVisit.scrollAnchor?.gameId) }
+    }
+
     @Test fun ownedOnlyFiltersExcludeWishlistResultsInAllDensities() {
         showLibrary()
         for (density in GameListDensity.entries) {
