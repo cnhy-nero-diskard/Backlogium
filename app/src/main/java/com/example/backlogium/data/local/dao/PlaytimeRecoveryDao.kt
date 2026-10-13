@@ -297,11 +297,19 @@ interface PlaytimeRecoveryDao {
     suspend fun insertContributionIfAbsent(contribution: PlaytimeContribution): Boolean =
         insertContributionChecked(contribution)
 
+    /** Compatibility alias for focused persistence fixtures; production must use the checked name. */
+    @Deprecated("Use insertContributionChecked")
+    suspend fun insertContribution(contribution: PlaytimeContribution): Boolean =
+        insertContributionChecked(contribution)
+
     @Query(
         "SELECT * FROM playtime_contributions WHERE account = :account AND appId = :appId " +
             "ORDER BY baselineEpoch ASC, fromMinutes ASC",
     )
     suspend fun contributionsForGame(account: String, appId: Long): List<PlaytimeContribution>
+
+    @Query("SELECT * FROM playtime_contributions WHERE account = :account ORDER BY appId, baselineEpoch, fromMinutes")
+    suspend fun contributionsForAccount(account: String): List<PlaytimeContribution>
 
     @Query(
         "SELECT COUNT(*) FROM playtime_contributions " +
@@ -337,6 +345,9 @@ interface PlaytimeRecoveryDao {
     )
     suspend fun activeTimedPlacements(contributionId: String): List<TimedContributionPlacement>
 
+    @Query("SELECT * FROM recovery_timed_placements WHERE account = :account AND superseded = 0")
+    suspend fun activeTimedPlacementsForAccount(account: String): List<TimedContributionPlacement>
+
     /** Active funded shares sitting inside one session — the mixed-row legacy remainder subtracts these. */
     @Query(
         "SELECT * FROM recovery_timed_placements " +
@@ -370,6 +381,9 @@ interface PlaytimeRecoveryDao {
             "ORDER BY pendingDate ASC, date ASC",
     )
     suspend fun activeAllocations(contributionId: String): List<UnknownTimeAllocation>
+
+    @Query("SELECT * FROM recovery_unknown_allocations WHERE account = :account AND superseded = 0")
+    suspend fun activeAllocationsForAccount(account: String): List<UnknownTimeAllocation>
 
     /** Active allocations touching one date — History/Analytics canonical dated credit. */
     @Query(
@@ -911,7 +925,7 @@ data class SessionFundedMinutes(
 private class RecipeWindow(
     val start: LocalDate,
     val end: LocalDate,
-    val excluded: List<LocalDate>,
+    val excluded: List<ClosedRange<LocalDate>>,
     val eligibleCount: Int,
     val total: Long,
     val quotient: Long,
@@ -927,10 +941,9 @@ private class RecipeWindow(
      */
     fun rank(date: LocalDate): Long? {
         if (date.isBefore(start) || date.isAfter(end)) return null
-        if (excluded.contains(date)) return null
+        if (excluded.any { date >= it.start && date <= it.endInclusive }) return null
         val ordinal = ChronoUnit.DAYS.between(start, date)
-        val excludedBefore = excluded.count { !it.isAfter(date) }
-        val rank = ordinal + 1L - excludedBefore
+        val rank = ordinal + 1L - excludedCountThrough(date)
         return if (rank >= 1L) rank else null
     }
 
@@ -940,8 +953,16 @@ private class RecipeWindow(
     /** How many eligible dates lie at or before [date] (the first `rank`-1 invariants). */
     fun eligibleCountAtOrBefore(date: LocalDate): Int {
         val ordinal = ChronoUnit.DAYS.between(start, date)
-        val eligibleUpTo = ordinal - excluded.count { !it.isAfter(date) } + 1L
+        val eligibleUpTo = ordinal - excludedCountThrough(date) + 1L
         return eligibleUpTo.coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    }
+
+    private fun excludedCountThrough(date: LocalDate): Long = excluded.sumOf { range ->
+        when {
+            range.start.isAfter(date) -> 0L
+            range.endInclusive <= date -> ChronoUnit.DAYS.between(range.start, range.endInclusive) + 1L
+            else -> ChronoUnit.DAYS.between(range.start, date) + 1L
+        }
     }
 }
 
@@ -962,12 +983,14 @@ private fun recipeWindow(recipe: UnknownTimeAllocationRecipe): RecipeWindow? {
     if (end.isBefore(start)) return null
     val exclusionTokens = recipe.excludedDatesCsv?.takeIf { it.isNotBlank() }
         ?.split(',')?.map { it.trim() }.orEmpty()
-    val excluded = exclusionTokens.map { token -> parseIso(token) ?: return null }.sorted()
-    if (excluded.distinct().size != excluded.size) return null
-    if (excluded.any { it.isBefore(start) || it.isAfter(end) }) return null
+    val excluded = exclusionTokens.map { token -> parseExclusionRange(token) ?: return null }
+        .sortedBy { it.start }
+    if (excluded.any { it.start.isBefore(start) || it.endInclusive.isAfter(end) }) return null
+    if (excluded.zipWithNext().any { (first, second) -> !second.start.isAfter(first.endInclusive) }) return null
     val calendarCount = ChronoUnit.DAYS.between(start, end) + 1L
     if (calendarCount > Int.MAX_VALUE) return null
-    val eligibleCount = calendarCount.toInt() - excluded.size
+    val excludedCount = excluded.sumOf { ChronoUnit.DAYS.between(it.start, it.endInclusive) + 1L }
+    val eligibleCount = (calendarCount - excludedCount).toInt()
     if (eligibleCount < 1) return null
     val q = recipe.quotient ?: 0L
     val r = recipe.remainderCount ?: 0L
@@ -980,6 +1003,20 @@ private fun recipeWindow(recipe: UnknownTimeAllocationRecipe): RecipeWindow? {
     }
     if (total <= 0L) return null
     return RecipeWindow(start, end, excluded, eligibleCount, total, q, r)
+}
+
+/** One compact exclusion token is an ISO date or an inclusive `first..last` ISO-date range. */
+private fun parseExclusionRange(value: String): ClosedRange<LocalDate>? {
+    val separator = value.indexOf("..")
+    if (separator < 0) {
+        val date = parseIso(value) ?: return null
+        return date..date
+    }
+    if (value.indexOf("..", separator + 2) >= 0) return null
+    val first = parseIso(value.substring(0, separator)) ?: return null
+    val last = parseIso(value.substring(separator + 2)) ?: return null
+    if (last.isBefore(first)) return null
+    return first..last
 }
 
 /**

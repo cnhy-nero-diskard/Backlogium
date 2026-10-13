@@ -595,6 +595,28 @@ class PlaytimeRecoveryDaoTest {
     }
 
     @Test
+    fun compactExcludedDateRangeUsesBoundedRankArithmetic() = runBlocking {
+        val id = contributionId(100L, 103L)
+        val recipe = recipe(
+            id = id,
+            revision = 1L,
+            quotient = 1L,
+            remainder = 0L,
+            start = "2026-09-01",
+            end = "2026-09-06",
+            eligible = 3,
+            excluded = "2026-09-01..2026-09-03",
+        )
+        assertTrue(dao.commitAllocatedGraph(contribution(from = 100L, to = 103L), emptyList(), emptyList(), recipe))
+        dao.materializeRecipeSlice(listOf(allocation(id, revision = 1L, date = "2026-09-04", minutes = 1L)))
+        assertEquals(2L, dao.recipeResidual(id))
+        assertTrue(dao.validateGraph(id))
+        assertTrue(runCatching {
+            dao.materializeRecipeSlice(listOf(allocation(id, revision = 1L, date = "2026-09-02", minutes = 1L)))
+        }.isFailure)
+    }
+
+    @Test
     fun explicitMaterializedThroughDateBindsTheProvenCursor() = runBlocking {
         val id = contributionId(100L, 102L)
         val recipe = recipe(id = id, revision = 1L, quotient = 0L, remainder = 2L, start = "2026-09-01", end = "2026-09-04", eligible = 4)
