@@ -13,12 +13,12 @@
 
 ## 3. Pure attribution planning
 
-- [ ] 3.1 Separate existing authoritative diff quantity from candidate session placement and introduce one pure attribution plan; verify existing high-water quantity tests still pass and no Android/Room/network dependency enters the planner.
-- [ ] 3.2 Implement short-gap usability and same/consecutive-date fallback, including stale-open closure and targeted date-known timing; verify tests cover the 30-minute boundary, elapsed-minute rounding guard, midnight continuity, no-evidence Wed 70 and preservation of supplied targeted play instants.
-- [ ] 3.3 Implement recovery-zone normalization, frozen date keys and exact earliest-date-first residual allocation; verify 105 -> 27/26/26/26, zero shares, partial/full date coverage, leap dates, DST transitions and timezone changes without later re-bucketing.
-- [ ] 3.4 Normalize/deduplicate validated local/cloud intervals, subtract already consumed spans, bound evidence placement and use deterministic largest-remainder rounding; verify 35/70 conservation, partial overlaps, fractional-minute spans, same-game overlapping observers, wrong identity/generation and retained-gap rejection fixtures.
-- [ ] 3.5 Implement pending date-unknown quantity for inverted timing and subsequent zero-delta placement; verify no minutes are lost, no future/pre-baseline day is invented, and corrective placement is idempotent after clock recovery.
-- [ ] 3.6 Implement compact exact allocation recipes and bounded date expansion for long windows; verify a ten-year gap, a one-minute long gap, overflow guards and paged projections preserve exact quantity without zero activity rows or an arbitrary minute-dropping cap.
+- [x] 3.1 Separate existing authoritative diff quantity from candidate session placement and introduce one pure attribution plan; verify existing high-water quantity tests still pass and no Android/Room/network dependency enters the planner.
+- [x] 3.2 Implement short-gap usability and same/consecutive-date fallback, including stale-open closure and targeted date-known timing; verify tests cover the 30-minute boundary, elapsed-minute rounding guard, midnight continuity, no-evidence Wed 70 and preservation of supplied targeted play instants.
+- [x] 3.3 Implement recovery-zone normalization, frozen date keys and exact earliest-date-first residual allocation; verify 105 -> 27/26/26/26, zero shares, partial/full date coverage, leap dates, DST transitions and timezone changes without later re-bucketing.
+- [x] 3.4 Normalize/deduplicate validated local/cloud intervals, subtract already consumed spans, bound evidence placement and use deterministic largest-remainder rounding; verify 35/70 conservation, partial overlaps, fractional-minute spans, same-game overlapping observers, wrong identity/generation and retained-gap rejection fixtures.
+- [x] 3.5 Implement pending date-unknown quantity for inverted timing and subsequent zero-delta placement; verify no minutes are lost, no future/pre-baseline day is invented, and corrective placement is idempotent after clock recovery.
+- [x] 3.6 Implement compact exact allocation recipes and bounded date expansion for long windows; verify a ten-year gap, a one-minute long gap, overflow guards and paged projections preserve exact quantity without zero activity rows or an arbitrary minute-dropping cap.
 
 ## 4. Shared atomic commit path
 
