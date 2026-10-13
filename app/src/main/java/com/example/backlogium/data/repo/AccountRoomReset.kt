@@ -39,6 +39,10 @@ class AccountRoomReset @Inject constructor(
             // Which shared games were removed is a decision about one person's borrowed library;
             // carrying it to another account would silently refuse to admit their games.
             database.excludedSharedGameDao().deleteAll()
+            // Recovery observation state, funded contributions and their placements are about one
+            // Steam identity's quantity history; a new account must start with a fresh detector
+            // baseline, never diff against the previous account's high-water marks.
+            database.playtimeRecoveryDao().clearAll()
             // What the previous account wanted, and what those games cost while they wanted it,
             // is that account's data — and the new account's wishlist is a different list.
             database.wishlistDao().deleteAllItems()

@@ -5,20 +5,28 @@ import androidx.room.withTransaction
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.CloudReadRecord
 import com.example.backlogium.data.local.entity.CollectionMember
+import com.example.backlogium.data.local.entity.DailyPlaytimeSnapshot
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.local.entity.GameGenreCache
+import com.example.backlogium.data.local.entity.GameRecoveryState
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.data.local.entity.PlaytimeContribution
+import com.example.backlogium.data.local.entity.PlaytimeRecoveryJournal
 import com.example.backlogium.data.local.entity.PresenceDecision
+import com.example.backlogium.data.local.entity.RecoveryAllocationMethods
+import com.example.backlogium.data.local.entity.RecoveryProvenance
 import com.example.backlogium.data.local.entity.RequestBreakdown
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.SyncRun
+import com.example.backlogium.data.local.entity.UnknownTimeAllocation
 import com.example.backlogium.data.local.entity.WishlistItem
 import com.example.backlogium.data.local.entity.WishlistPriceObservation
 import com.example.backlogium.data.local.entity.Collection as CollectionEntity
+import com.example.backlogium.data.local.recovery.PlaytimeRecoveryIdentity
 import com.example.backlogium.data.repo.AccountRoomReset
 import com.example.backlogium.data.repo.SessionActionWriter
 import com.example.backlogium.domain.GameSource
@@ -404,6 +412,74 @@ class WriteIntegrityDaoTest {
                 matchStatus = HltbMatchStatus.RESOLVED,
             ),
         )
+        // Recovery observation state and funded contributions are one Steam identity's quantity
+        // history: a reset must clear them alongside sessions and the library.
+        val recoveryDao = database.playtimeRecoveryDao()
+        recoveryDao.upsertState(
+            GameRecoveryState(
+                account = "old-account",
+                appId = appId,
+                baselineEpoch = 1L,
+                highWaterMinutes = 90L,
+                lastObservationAt = 1L,
+                updatedAt = 10L,
+            ),
+        )
+        recoveryDao.upsertSnapshot(
+            DailyPlaytimeSnapshot(
+                account = "old-account",
+                appId = appId,
+                date = "2026-08-13",
+                zone = "UTC",
+                absoluteMinutes = 90L,
+                observedAt = 10L,
+            ),
+        )
+        val contributionId = PlaytimeRecoveryIdentity.contributionId("old-account", appId, 1L, 90L, 100L)
+        recoveryDao.insertContributionChecked(
+            PlaytimeContribution(
+                contributionId = contributionId,
+                account = "old-account",
+                appId = appId,
+                baselineEpoch = 1L,
+                fromMinutes = 90L,
+                toMinutes = 100L,
+                windowEndAt = 10L,
+                authorizedMinutes = 10L,
+                revision = 1L,
+                provenance = RecoveryProvenance.RETROACTIVE_PLAY,
+                zone = "UTC",
+                createdAt = 10L,
+            ),
+        )
+        recoveryDao.insertAllocations(
+            listOf(
+                UnknownTimeAllocation(
+                    placementId = PlaytimeRecoveryIdentity.allocationPlacementId(contributionId, 1L, "2026-08-14"),
+                    contributionId = contributionId,
+                    account = "old-account",
+                    appId = appId,
+                    revision = 1L,
+                    date = "2026-08-14",
+                    minutes = 10L,
+                    method = RecoveryAllocationMethods.MULTI_DAY_ESTIMATE,
+                    zone = "UTC",
+                    createdAt = 10L,
+                ),
+            ),
+        )
+        recoveryDao.upsertJournal(
+            PlaytimeRecoveryJournal(
+                operationId = "old-op",
+                contributionId = contributionId,
+                account = "old-account",
+                appId = appId,
+                currentRevision = 1L,
+                affectedDatesCsv = "2026-08-14",
+                createdAt = 10L,
+                updatedAt = 10L,
+            ),
+        )
         database.sessionDao().insert(Session(appId = appId, startAt = 1L, minutes = 30, open = false))
         database.dailyProgressDao().upsert(DailyProgress(DATE, minutesPlayed = 30, questMet = true))
         database.achievementDao().upsertAll(
@@ -531,6 +607,14 @@ class WriteIntegrityDaoTest {
         assertFalse(profile.pendingImportRecompute)
         assertTrue(database.wishlistDao().observeItems().first().isEmpty())
         assertTrue(database.wishlistDao().observeLatestPrices().first().isEmpty())
+
+        // The old identity's recovery state is fully cleared: baselines, snapshots, contributions,
+        // placements/allocations and the journal mutate only under the account that owns them.
+        assertTrue(recoveryDao.statesForAccount("old-account").isEmpty())
+        assertTrue(recoveryDao.recentSnapshots("old-account", appId, 5).isEmpty())
+        assertTrue(recoveryDao.contributionsForGame("old-account", appId).isEmpty())
+        assertTrue(recoveryDao.activeAllocations(contributionId).isEmpty())
+        assertNull(recoveryDao.journal("old-op"))
     }
 
     @Test

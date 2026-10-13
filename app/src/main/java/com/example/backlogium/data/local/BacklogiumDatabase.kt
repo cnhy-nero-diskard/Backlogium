@@ -21,6 +21,7 @@ import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.HltbDatasetDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
+import com.example.backlogium.data.local.dao.PlaytimeRecoveryDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.dao.PendingCloudEvidenceDao
 import com.example.backlogium.data.local.dao.CloudHistoricalDao
@@ -48,6 +49,14 @@ import com.example.backlogium.data.local.entity.CloudHistoricalBoundary
 import com.example.backlogium.data.local.entity.CloudHistoricalInterval
 import com.example.backlogium.data.local.entity.CloudHistoricalJournal
 import com.example.backlogium.data.local.entity.CloudHistoricalOperation
+import com.example.backlogium.data.local.entity.GameRecoveryState
+import com.example.backlogium.data.local.entity.DailyPlaytimeSnapshot
+import com.example.backlogium.data.local.entity.PlaytimeContribution
+import com.example.backlogium.data.local.entity.TimedContributionPlacement
+import com.example.backlogium.data.local.entity.LocalTimingEvidence
+import com.example.backlogium.data.local.entity.UnknownTimeAllocation
+import com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe
+import com.example.backlogium.data.local.entity.PlaytimeRecoveryJournal
 import com.example.backlogium.data.local.entity.WishlistItem
 import com.example.backlogium.data.local.entity.WishlistPriceObservation
 import com.example.backlogium.data.local.entity.PresenceDecision
@@ -92,8 +101,16 @@ import com.example.backlogium.data.local.entity.SyncRun
         CloudHistoricalInterval::class,
         CloudHistoricalBoundary::class,
         CloudHistoricalJournal::class,
+        GameRecoveryState::class,
+        DailyPlaytimeSnapshot::class,
+        PlaytimeContribution::class,
+        TimedContributionPlacement::class,
+        UnknownTimeAllocation::class,
+        UnknownTimeAllocationRecipe::class,
+        PlaytimeRecoveryJournal::class,
+        LocalTimingEvidence::class,
     ],
-    version = 42,
+    version = 43,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -117,6 +134,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun wishlistDao(): WishlistDao
     abstract fun hiddenGameDao(): HiddenGameDao
     abstract fun steamReviewCacheDao(): SteamReviewCacheDao
+    abstract fun playtimeRecoveryDao(): PlaytimeRecoveryDao
 
     companion object {
         const val NAME = "backlogium.db"
@@ -1036,6 +1054,233 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE `cloud_historical_operations` " +
                         "ADD COLUMN `lastIngestedPageNumber` INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        /**
+         * v42 → v43: trustworthy observation state and funded contribution storage
+         * (recover-missed-playtime, design.md Decisions 2-4, 6-8).
+         *
+         * Additive: eight new tables, no existing row altered. The only backfill is the honest
+         * seeding of `game_recovery_state` from the pre-recovery detector baseline: for every
+         * matching-account owned game the existing `lastPlaytime` is the quantity high-water (the
+         * value the session differ already diffs beyond), `lastSyncedAt` is the last trustworthy
+         * observation instant when one exists, and the historical zone/date are left NULL —
+         * recorded as `UNKNOWN` rather than claiming the pre-recovery install ever captured a
+         * timezone. A blank profile identity seeds nothing: the next successful owned read is a
+         * genuine first baseline. Family-shared games are never seeded because they carry no owned
+         * cumulative total.
+         *
+         * Unknown-time allocations, recipes, timed placements, local timing evidence and the
+         * replacement journal start empty; they are only ever produced by the attribution
+         * committer and the live observer.
+         */
+        val MIGRATION_42_43 = object : Migration(42, 43) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `game_recovery_state` (" +
+                        "`account` TEXT NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`baselineEpoch` INTEGER NOT NULL, " +
+                        "`highWaterMinutes` INTEGER NOT NULL, " +
+                        "`lastObservationAt` INTEGER, " +
+                        "`lastObservationDate` TEXT, " +
+                        "`lastObservationZone` TEXT, " +
+                        "`clockState` TEXT NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`account`, `appId`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `playtime_daily_snapshots` (" +
+                        "`account` TEXT NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`date` TEXT NOT NULL, " +
+                        "`zone` TEXT NOT NULL, " +
+                        "`absoluteMinutes` INTEGER NOT NULL, " +
+                        "`observedAt` INTEGER NOT NULL, " +
+                        "`classification` TEXT NOT NULL, " +
+                        "PRIMARY KEY(`account`, `appId`, `date`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `playtime_contributions` (" +
+                        "`contributionId` TEXT NOT NULL, " +
+                        "`account` TEXT NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`baselineEpoch` INTEGER NOT NULL, " +
+                        "`fromMinutes` INTEGER NOT NULL, " +
+                        "`toMinutes` INTEGER NOT NULL, " +
+                        "`windowStartAt` INTEGER, " +
+                        "`windowEndAt` INTEGER NOT NULL, " +
+                        "`authorizedMinutes` INTEGER NOT NULL, " +
+                        "`revision` INTEGER NOT NULL, " +
+                        "`provenance` TEXT NOT NULL, " +
+                        "`zone` TEXT, " +
+                        "`observedZone` TEXT, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`contributionId`))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_playtime_contributions_account_appId` " +
+                        "ON `playtime_contributions` (`account`, `appId`)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `recovery_timed_placements` (" +
+                        "`placementId` TEXT NOT NULL, " +
+                        "`contributionId` TEXT NOT NULL, " +
+                        "`account` TEXT NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`revision` INTEGER NOT NULL, " +
+                        "`sessionId` INTEGER, " +
+                        "`minutes` INTEGER NOT NULL, " +
+                        "`creditedDate` TEXT NOT NULL, " +
+                        "`zone` TEXT NOT NULL, " +
+                        "`evidenceIdentity` TEXT, " +
+                        "`evidenceQuality` TEXT NOT NULL, " +
+                        "`hiddenAtCredit` INTEGER NOT NULL, " +
+                        "`goalAtCredit` INTEGER NOT NULL, " +
+                        "`superseded` INTEGER NOT NULL, " +
+                        "`protected` INTEGER NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`placementId`), " +
+                        "FOREIGN KEY(`contributionId`) REFERENCES `playtime_contributions`(`contributionId`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_recovery_timed_placements_contributionId` " +
+                        "ON `recovery_timed_placements` (`contributionId`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_recovery_timed_placements_account_appId` " +
+                        "ON `recovery_timed_placements` (`account`, `appId`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_recovery_timed_placements_sessionId` " +
+                        "ON `recovery_timed_placements` (`sessionId`)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `recovery_unknown_allocations` (" +
+                        "`placementId` TEXT NOT NULL, " +
+                        "`contributionId` TEXT NOT NULL, " +
+                        "`account` TEXT NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`revision` INTEGER NOT NULL, " +
+                        "`date` TEXT, " +
+                        "`minutes` INTEGER NOT NULL, " +
+                        "`method` TEXT NOT NULL, " +
+                        "`zone` TEXT, " +
+                        "`windowStartAt` INTEGER, " +
+                        "`windowEndAt` INTEGER, " +
+                        "`pendingDate` INTEGER NOT NULL, " +
+                        "`hiddenAtCredit` INTEGER NOT NULL, " +
+                        "`goalAtCredit` INTEGER NOT NULL, " +
+                        "`superseded` INTEGER NOT NULL, " +
+                        "`protected` INTEGER NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`placementId`), " +
+                        "FOREIGN KEY(`contributionId`) REFERENCES `playtime_contributions`(`contributionId`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_recovery_unknown_allocations_contributionId` " +
+                        "ON `recovery_unknown_allocations` (`contributionId`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_recovery_unknown_allocations_account_appId` " +
+                        "ON `recovery_unknown_allocations` (`account`, `appId`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_recovery_unknown_allocations_account_date` " +
+                        "ON `recovery_unknown_allocations` (`account`, `date`)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `recovery_allocation_recipes` (" +
+                        "`contributionId` TEXT NOT NULL, " +
+                        "`account` TEXT NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`revision` INTEGER NOT NULL, " +
+                        "`method` TEXT NOT NULL, " +
+                        "`quotient` INTEGER, " +
+                        "`remainderCount` INTEGER, " +
+                        "`dateStart` TEXT, " +
+                        "`dateEnd` TEXT, " +
+                        "`eligibleCount` INTEGER NOT NULL, " +
+                        "`zone` TEXT, " +
+                        "`windowStartAt` INTEGER, " +
+                        "`windowEndAt` INTEGER, " +
+                        "`excludedDatesCsv` TEXT, " +
+                        "`pending` INTEGER NOT NULL, " +
+                        "`materializedMinutes` INTEGER NOT NULL, " +
+                        "`materializedThroughDate` TEXT, " +
+                        "`hiddenAtCredit` INTEGER NOT NULL, " +
+                        "`goalAtCredit` INTEGER NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`contributionId`), " +
+                        "FOREIGN KEY(`contributionId`) REFERENCES `playtime_contributions`(`contributionId`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `recovery_journal` (" +
+                        "`operationId` TEXT NOT NULL, " +
+                        "`contributionId` TEXT NOT NULL, " +
+                        "`account` TEXT NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`priorRevision` INTEGER, " +
+                        "`currentRevision` INTEGER NOT NULL, " +
+                        "`affectedDatesCsv` TEXT NOT NULL, " +
+                        "`replacedPlacementIdsCsv` TEXT, " +
+                        "`replacedRecipeJson` TEXT, " +
+                        "`derivedStatus` TEXT NOT NULL, " +
+                        "`payloadJson` TEXT, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`operationId`), " +
+                        "FOREIGN KEY(`contributionId`) REFERENCES `playtime_contributions`(`contributionId`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_recovery_journal_contributionId` " +
+                        "ON `recovery_journal` (`contributionId`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_recovery_journal_account_derivedStatus` " +
+                        "ON `recovery_journal` (`account`, `derivedStatus`)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `recovery_local_evidence` (" +
+                        "`account` TEXT NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, " +
+                        "`generation` INTEGER NOT NULL, " +
+                        "`firstSampleAt` INTEGER, " +
+                        "`lastSuccessAt` INTEGER, " +
+                        "`observedUntil` INTEGER, " +
+                        "`continuityLossFrom` INTEGER, " +
+                        "`continuityLossRecoveredAt` INTEGER, " +
+                        "`windowStart` INTEGER NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`account`, `appId`, `generation`))",
+                )
+                // Seed matching-account owned high-water state honestly: zone/date stay unknown
+                // rather than inventing a historical timezone. No lifetime total is imported —
+                // `lastPlaytime` is the committing diff baseline, so the next reading only ever
+                // recovers post-baseline minutes exactly as the previous differ would have.
+                db.execSQL(
+                    "INSERT INTO `game_recovery_state` " +
+                        "(`account`, `appId`, `baselineEpoch`, `highWaterMinutes`, " +
+                        "`lastObservationAt`, `lastObservationDate`, `lastObservationZone`, " +
+                        "`clockState`, `updatedAt`) " +
+                        "SELECT p.`steamId`, g.`appId`, 1, g.`lastPlaytime`, " +
+                        "CASE WHEN g.`lastSyncedAt` > 0 THEN g.`lastSyncedAt` ELSE NULL END, " +
+                        "NULL, NULL, 'UNKNOWN', g.`lastSyncedAt` " +
+                        "FROM `games` g INNER JOIN `player_profile` p ON p.`id` = 0 " +
+                        "WHERE p.`steamId` <> '' AND g.`source` = 'STEAM_OWNED' AND g.`lastPlaytime` >= 0",
                 )
             }
         }

@@ -6,10 +6,10 @@
 ## 2. Trustworthy observations and storage migration
 
 - [x] 2.1 Preserve cumulative-field presence and validate owned/recently-played responses; verify decoding tests distinguish explicit zero from omitted, malformed, negative, private and empty-library responses.
-- [ ] 2.2 Add account/game recovery state and daily snapshot persistence with high-water and baseline-epoch semantics; verify tests cover first read, same-day replacement, successful unchanged reads, regressions, missing games and restart recovery.
-- [ ] 2.3 Add funded contribution, timed-share, unknown-time placement/recipe and revision/finalization journal records with uniqueness/referential constraints; verify conservation checks reject conflicting quantity graphs and repeated identity insertion cannot add credit.
-- [ ] 2.4 Add the next additive Room migration and export its schema from the actual implementation base; verify real per-hop and composed-chain migration tests preserve legacy sessions, daily progress, manual/backfill offsets, hidden/Focus state, rarity snapshots and streak high-water marks.
-- [ ] 2.5 Seed matching-account legacy high-water state without inventing historical zones or windows, and integrate reset/account-switch/shared-to-owned conversion; verify missing metadata remains unknown, conversion creates no lifetime delta and inactive-account workers cannot repopulate cleared state.
+- [x] 2.2 Add account/game recovery state and daily snapshot persistence with high-water and baseline-epoch semantics; verify tests cover first read, same-day replacement, successful unchanged reads, regressions, missing games and restart recovery.
+- [x] 2.3 Add funded contribution, timed-share, unknown-time placement/recipe and revision/finalization journal records with uniqueness/referential constraints; verify conservation checks reject conflicting quantity graphs and repeated identity insertion cannot add credit.
+- [x] 2.4 Add the next additive Room migration and export its schema from the actual implementation base; verify real per-hop and composed-chain migration tests preserve legacy sessions, daily progress, manual/backfill offsets, hidden/Focus state, rarity snapshots and streak high-water marks.
+- [x] 2.5 Seed matching-account legacy high-water state without inventing historical zones or windows, and integrate reset/account-switch/shared-to-owned conversion; verify missing metadata remains unknown, conversion creates no lifetime delta and inactive-account workers cannot repopulate cleared state.
 
 ## 3. Pure attribution planning
 

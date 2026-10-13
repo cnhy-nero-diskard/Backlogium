@@ -1,6 +1,7 @@
 package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.PlaytimeRecoveryDao
 import com.example.backlogium.data.remote.dto.OwnedGameDto
 import com.example.backlogium.data.remote.dto.validatedPlaytime2Weeks
 import com.example.backlogium.data.remote.dto.validatedPlaytimeForever
@@ -28,6 +29,8 @@ import javax.inject.Inject
  */
 class SharedGameConverter @Inject constructor(
     private val gameDao: GameDao,
+    private val recoveryDao: PlaytimeRecoveryDao? = null,
+    private val time: TimeProvider = SystemTimeProvider(),
 ) {
 
     /**
@@ -53,7 +56,26 @@ class SharedGameConverter @Inject constructor(
                 playtime2Weeks = dto.validatedPlaytime2Weeks ?: 0,
                 convertedAt = now,
             )
-            if (rows > 0) converted += dto.appid
+            if (rows > 0) {
+                recoveryDao?.let { recovery ->
+                    val account = recovery.activeAccount()?.takeIf { it.isNotBlank() }
+                    if (account != null) {
+                        val oldEpoch = recovery.state(account, dto.appid)?.baselineEpoch ?: 0L
+                        val epoch = Math.addExact(oldEpoch, 1L)
+                        val zone = time.zone()
+                        recovery.reestablishBaseline(
+                            account = account,
+                            appId = dto.appid,
+                            absoluteMinutes = playtimeForever.toLong(),
+                            observedAt = now,
+                            date = java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate().toString(),
+                            zone = zone.id,
+                            epoch = epoch,
+                        )
+                    }
+                }
+                converted += dto.appid
+            }
         }
         return converted
     }
