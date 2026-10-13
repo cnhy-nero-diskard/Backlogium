@@ -1,6 +1,6 @@
 ## 1. Acceptance fixtures and compatibility audit
 
-- [ ] 1.1 Add failing specification-driven fixtures for Tue 500 -> Wed 570, Mon 500 -> Fri 605, 35 evidence-informed plus 70 residual, repeat reads and no-cloud recovery; verify failures identify the missing behavior before implementation and fixtures assert exact quantities and absent invented timestamps.
+- [x] 1.1 Add failing specification-driven fixtures for Tue 500 -> Wed 570, Mon 500 -> Fri 605, 35 evidence-informed plus 70 residual, repeat reads and no-cloud recovery; verify failures identify the missing behavior before implementation and fixtures assert exact quantities and absent invented timestamps.
 - [x] 1.2 Inventory direct session-quantity consumers and conflicting fallback assertions in `attribute-playtime-from-presence`; verify a checked-in implementation note maps XP, backfill, History, Analytics, Library/detail, collections, recency, backup and historical re-filing to the new canonical inputs without depending on unfinished cloud validation.
 
 ## 2. Trustworthy observations and storage migration
