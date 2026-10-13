@@ -2,6 +2,8 @@ package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.remote.dto.OwnedGameDto
+import com.example.backlogium.data.remote.dto.validatedPlaytime2Weeks
+import com.example.backlogium.data.remote.dto.validatedPlaytimeForever
 import javax.inject.Inject
 
 /**
@@ -39,12 +41,16 @@ class SharedGameConverter @Inject constructor(
         val converted = mutableListOf<Long>()
         for (dto in ownedGames) {
             if (dto.appid !in sharedAppIds) continue
+            // The conversion stores Steam's reported total as the fresh diffing baseline, so a
+            // response without a usable cumulative reading cannot convert: writing zero would
+            // re-seed the baseline at nothing and lose the boundary.
+            val playtimeForever = dto.validatedPlaytimeForever ?: continue
             // Guarded on `source = 'FAMILY_SHARED'` in SQL, so a concurrent writer that already
             // converted this row cannot be walked back over.
             val rows = gameDao.convertSharedToOwned(
                 appId = dto.appid,
-                playtimeForever = dto.playtimeForever,
-                playtime2Weeks = dto.playtime2Weeks,
+                playtimeForever = playtimeForever,
+                playtime2Weeks = dto.validatedPlaytime2Weeks ?: 0,
                 convertedAt = now,
             )
             if (rows > 0) converted += dto.appid

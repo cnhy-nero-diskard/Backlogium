@@ -276,7 +276,9 @@ class PostPlaySyncWorker @AssistedInject constructor(
                                             // alone. Steam owns the field; the next periodic poll sets it.
                                             iconUrl = "",
                                             playtimeForever = observed.playtimeForever,
-                                            playtime2Weeks = observed.playtime2Weeks,
+                                            playtime2Weeks = observed.playtime2Weeks
+                                                ?: gameDao.getById(observed.appId)?.playtime2Weeks
+                                                ?: 0,
                                         ),
                                     ),
                                     // The session end this schedule was triggered by, not this attempt's own

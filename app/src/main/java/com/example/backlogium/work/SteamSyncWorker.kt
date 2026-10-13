@@ -23,6 +23,10 @@ import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.remote.dto.lastPlayedAtMillis
+import com.example.backlogium.data.remote.dto.isConfirmedOwnedEnvelope
+import com.example.backlogium.data.remote.dto.validatedOwnedGames
+import com.example.backlogium.data.remote.dto.validatedPlaytime2Weeks
+import com.example.backlogium.data.remote.dto.validatedPlaytimeForever
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.domain.GamificationUpdater
@@ -139,12 +143,17 @@ internal fun isLibraryBaseline(existingGameCount: Int, lastSyncAt: Long): Boolea
     existingGameCount == 0 && lastSyncAt <= 0L
 
 /**
- * Steam uses an empty response envelope for profiles whose libraries cannot be read. Only its
- * explicit `game_count: 0` confirms that an empty list is a successful library snapshot; persisting
- * that snapshot establishes the durable baseline for the first later acquisition.
+ * Whether an owned-games response may be persisted as a library snapshot.
+ *
+ * Steam answers a private/unreadable profile with an empty `response` envelope and no `game_count`;
+ * only a present nonnegative count confirms the endpoint answered a library question. An empty list
+ * is therefore a successful snapshot only when that count is explicitly zero. A positive count with
+ * no games, a zero count with games present, and a negative or absent count are all contradictory
+ * or unconfirmed and must leave last-good data in place. Per-game omissions are handled separately:
+ * an absent game never becomes a zero reading merely because the library envelope was confirmed.
  */
 internal fun shouldPersistOwnedGamesPoll(gameCount: Int?, gamesAreEmpty: Boolean): Boolean =
-    !gamesAreEmpty || gameCount == 0
+    isConfirmedOwnedEnvelope(gameCount, gamesAreEmpty)
 
 /**
  * Runs one Steam poll: fetch -> diff into sessions -> persist -> recompute gamification.
@@ -265,11 +274,17 @@ class SteamSyncWorker @AssistedInject constructor(
                 return Result.success()
             }
 
+            // Per-game trust, applied once at the envelope boundary: positive identity, a usable
+            // cumulative total, and no conflicting duplicate app rows. Rows that fail (an omitted
+            // playtime field, a duplicate that disagrees) keep their stored baseline and metadata;
+            // the confirmed library as a whole still syncs.
+            val trustedGames = games.validatedOwnedGames()
+
             val steamLevel = runCatching {
                 steamApi.getSteamLevel(apiKey, steamId, scope).response.playerLevel
             }.getOrDefault(profileDao.get()?.steamLevel ?: 0)
 
-            if (!persistPoll(games, apiKey, steamId, steamLevel, summary, scope)) {
+            if (!persistPoll(trustedGames, apiKey, steamId, steamLevel, summary, scope)) {
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
                 return Result.success()
             }
@@ -313,7 +328,13 @@ class SteamSyncWorker @AssistedInject constructor(
     ): Boolean {
         val now = time.nowMillis()
         val today = time.today()
-        val polls = games.map { SessionDiffer.PollGame(it.appid, it.playtimeForever) }
+        // Only games Steam actually reported a cumulative total for may enter the diff. An absent
+        // or negative `playtime_forever` is not a reading of zero: excluding it here keeps the
+        // game's stored baseline at last-good instead of flattening it, and the same filter is
+        // applied to the committed observations below.
+        val polls = games.mapNotNull { dto ->
+            dto.validatedPlaytimeForever?.let { SessionDiffer.PollGame(dto.appid, it) }
+        }
         val configAtCompute = settings.ruleConfigWithVersionFlow.first()
         val (preview, trackedByAppId, sharedGames) = syncCoordinator.withLock {
             Triple(
@@ -347,11 +368,12 @@ class SteamSyncWorker @AssistedInject constructor(
         // AchievementFreshness never excludes a shared game from missing-data eligibility on the
         // strength of zero tracked minutes alone (fix-shared-game-achievement-visibility).
 
-        val achievementScope = games.map {
+        val achievementScope = games.mapNotNull { dto ->
+            val playtimeForever = dto.validatedPlaytimeForever ?: return@mapNotNull null
             com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
-                appId = it.appid,
-                playtimeForever = it.playtimeForever.toLong(),
-                playtime2Weeks = it.playtime2Weeks.toLong(),
+                appId = dto.appid,
+                playtimeForever = playtimeForever.toLong(),
+                playtime2Weeks = (dto.validatedPlaytime2Weeks ?: 0).toLong(),
                 source = com.example.backlogium.domain.GameSource.STEAM_OWNED,
             )
         } + sharedGames.map { shared ->
@@ -523,13 +545,20 @@ class SteamSyncWorker @AssistedInject constructor(
         val sessionInstantBefore = sessionDao.latestSessionInstantByGame()
             .associate { it.appId to it.at }
         val committed = committer.commit(
-            observed = games.map { dto ->
+            observed = games.mapNotNull { dto ->
+                // Same trust filter as the diff preview in persistPoll: a game whose cumulative
+                // field Steam omitted or malformed is left at last-good, never committed as a zero.
+                val playtimeForever = dto.validatedPlaytimeForever ?: return@mapNotNull null
                 PlaytimeObservationCommitter.ObservedGame(
                     appId = dto.appid,
                     name = dto.name,
                     iconUrl = SteamIconMapper.iconUrl(dto.appid, dto.imgIconUrl),
-                    playtimeForever = dto.playtimeForever,
-                    playtime2Weeks = dto.playtime2Weeks,
+                    playtimeForever = playtimeForever,
+                    // An absent recent-window field is genuine "not played recently" (zero); a
+                    // negative one is malformed and keeps the stored recent-play metadata instead.
+                    playtime2Weeks = dto.validatedPlaytime2Weeks
+                        ?: existingGames[dto.appid]?.playtime2Weeks
+                        ?: 0,
                 )
             },
             observedPlayAt = now,
@@ -540,7 +569,11 @@ class SteamSyncWorker @AssistedInject constructor(
         committed.clockRollbacks.forEach { scope.recordClockRollback() }
 
         val arrivedAppIds = mutableSetOf<Long>()
+        // Recency is only stamped for games whose cumulative reading was trusted above: a game
+        // Steam reported nothing usable for was never committed, so stamping an arrival or recency
+        // on it would announce a row that does not exist and could never be diffed.
         games.forEach { dto ->
+            if (dto.validatedPlaytimeForever == null) return@forEach
             val reportedPlayAt = dto.lastPlayedAtMillis
             val recency = recencyPollWrite(
                 isBaseline = isLibraryBaseline,
