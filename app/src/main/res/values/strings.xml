@@ -342,6 +342,8 @@
     <string name="settings_backup_invalid_file">That file isn\u0027t a valid Backlogium backup.</string>
     <string name="settings_backup_snapshot_unreadable">That snapshot could not be read.</string>
     <string name="settings_backup_imported">Backup imported.</string>
+    <string name="settings_backup_imported_recovery_conflict">Backup imported with %1$d recovery conflict(s). %2$s</string>
+    <string name="settings_backup_imported_recovery_warning">Backup imported with %1$d recovery warning(s). %2$s</string>
     <string name="settings_backup_snapshot_deleted">Snapshot deleted.</string>
     <string name="settings_backup_snapshot_unavailable">That snapshot is no longer available.</string>
     <string name="settings_backup_operation_failed">Backup operation failed: %1$s</string>
@@ -616,6 +618,21 @@
     <string name="history_session">%1$s - %2$s played</string>
     <string name="history_session_live">%1$s - %2$s played - live</string>
     <string name="history_overflow_count">+%1$s</string>
+    <string name="history_allocation_leaf">%1$s · exact session times unavailable</string>
+    <string name="history_allocation_accessibility">%1$s of estimated playtime, exact session times unavailable</string>
+    <string name="history_recovery_status_unavailable">Steam playtime is unavailable right now. Recovery keeps your last-known totals and continues when Steam publishes an updated total.</string>
+    <string name="history_recovery_status_awaiting">Play was observed, but Steam has not published an updated total yet. Recovered minutes are added as soon as Steam reports them.</string>
+    <string name="history_recovery_status_unchanged">Steam reported its playtime successfully and the total has not changed, so no play is known to be waiting for recovery.</string>
+    <string name="history_recovery_status_pending">%1$s of recovered play could not be assigned to a date yet. It stays credited to this library and is placed the next time a valid observation window is available.</string>
+    <string name="recovery_explanation_title">Estimated playtime</string>
+    <string name="recovery_explanation_indicator_label">Estimated</string>
+    <string name="recovery_explanation_button">Estimated playtime — show explanation</string>
+    <string name="recovery_explanation_close">Got it</string>
+    <string name="recovery_explanation_multi_day">%1$s were recovered from a cumulative Steam total between %2$s and %3$s and distributed evenly. Exact session times are unavailable.</string>
+    <string name="recovery_explanation_single_day">%1$s were recovered from a cumulative Steam total and placed on %2$s. Exact session times are unavailable; the whole amount falls on one date.</string>
+    <string name="recovery_explanation_targeted_date">%1$s were recovered from a cumulative Steam total and attributed to %2$s from a targeted check. The exact session time is unavailable.</string>
+    <string name="recovery_explanation_share">%1$s of that window fall on this day; the window recovered %2$s in total.</string>
+    <string name="recovery_explanation_zone">Attributed in the %1$s timezone.</string>
     <string name="analytics_steam_not_configured">Steam not configured</string>
     <string name="analytics_steam_not_configured_message">Connect your Steam account from Settings to see your analytics.</string>
     <string name="analytics_title">Analytics</string>
@@ -717,6 +734,12 @@
         <item quantity="one">%s achievement</item>
         <item quantity="other">%s achievements</item>
     </plurals>
+    <string name="analytics_session_timing_unavailable">Session timing is unavailable for this period. Played minutes were recovered without exact session times.</string>
+    <string name="analytics_time_of_day_unavailable">Time of day is unavailable for this period. Played minutes were recovered without exact session times.</string>
+    <string name="analytics_estimated_day_total">%1$s played · %2$s estimated</string>
+    <string name="analytics_recorded_estimated_accessibility">%1$s, of which %2$s estimated, without exact session times</string>
+    <string name="analytics_pending_recovery">%1$s of recovered play are not assigned to a date yet. They stay credited and are placed when a valid clock window is available.</string>
+    <string name="analytics_includes_estimates">Includes estimated playtime</string>
     <string name="home_loading_title">Loading Home</string>
     <string name="home_updating">Updating your Home</string>
     <string name="home_level_up_earned">Level-up earned</string>

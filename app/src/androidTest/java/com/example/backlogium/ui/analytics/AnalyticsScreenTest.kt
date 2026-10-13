@@ -9,6 +9,10 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.backlogium.ui.history.HistoryAllocationUi
+import com.example.backlogium.ui.history.HistoryAllocationMethod
+import com.example.backlogium.ui.history.HistoryAllocationWindow
+import com.example.backlogium.ui.history.recoveryShares
 import com.example.backlogium.ui.theme.BacklogiumTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -85,6 +89,53 @@ class AnalyticsScreenTest {
     }
 
     @Test
+    fun allocationsOnlyWindowShowsPlayedMinutesAndDeclaresSessionTimingUnavailable() {
+        setContent(allocationsOnlyState())
+
+        // The window's played minutes and leading game are real even without any session.
+        composeRule.onNodeWithText("Hades II led this window with 1 hr 45 mins")
+            .performScrollTo().assertIsDisplayed()
+
+        // Session-shape and time-of-day insights state that timing is unavailable rather than
+        // presenting measured zeros.
+        composeRule.onNodeWithText(
+            "Session timing is unavailable for this period",
+            substring = true,
+        ).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(
+            "Time of day is unavailable for this period",
+            substring = true,
+        ).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun estimatedChartDayExplainsWindowAndShareWithoutAPreciseChartTap() {
+        setContent(allocationsOnlyState())
+
+        // The selected estimated day exposes its ! control directly; selection can also move via
+        // the accessible previous/next day buttons, so no precise chart touch is required.
+        composeRule.onNodeWithTag(TAG_ANALYTICS_CHART_ESTIMATE_HELP)
+            .performScrollTo().performClick()
+        composeRule.onNodeWithText("Estimated playtime").assertIsDisplayed()
+        composeRule.onNodeWithText("recovered 1 hr 45 mins in total", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("Attributed in the UTC timezone", substring = true)
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun pendingRecoveryIsDisclosedSeparatelyFromDatedCharts() {
+        setContent(analyticsState().copy(pendingDateUnknownMinutes = 35))
+
+        composeRule.onNodeWithTag(TAG_ANALYTICS_PENDING_RECOVERY)
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(
+            "of recovered play are not assigned to a date yet",
+            substring = true,
+        ).assertIsDisplayed()
+    }
+
+    @Test
     fun periodNavigationUsesAccessibleEarlierLaterAndCurrentActions() {
         var earlier = 0
         var later = 0
@@ -121,6 +172,65 @@ class AnalyticsScreenTest {
                 AnalyticsContent(state = state, actions = actions)
             }
         }
+    }
+
+    /** Allocations-only window: 105 recovered minutes, no timestamped sessions. */
+    private fun allocationsOnlyState(): AnalyticsUiState {
+        val window = AnalyticsWindow(TODAY, AnalyticsWindowLength.THIRTY_DAYS)
+        val shares = listOf(27, 26, 26, 26)
+        val dates = (0..3).map { TODAY.minusDays(it.toLong()) }
+        val game = AnalyticsGame(
+            appId = 440L,
+            name = "Hades II",
+            iconUrl = "",
+            minutes = 105,
+            estimatedMinutes = 105,
+        )
+        val windowModel = HistoryAllocationWindow(
+            windowStartDate = TODAY.minusDays(3),
+            windowEndDate = TODAY,
+            zone = "UTC",
+            totalMinutes = 105,
+        )
+        val allocations = dates.mapIndexed { index, date ->
+            HistoryAllocationUi(
+                placementId = "alloc-$index",
+                appId = 440L,
+                date = date,
+                minutes = shares[index],
+                method = HistoryAllocationMethod.MULTI_DAY_ESTIMATE,
+                window = windowModel,
+            )
+        }
+        return AnalyticsUiState(
+            loading = false,
+            configured = true,
+            window = window,
+            windowBounds = window.resolve(),
+            earliestTrackedDate = TODAY.minusDays(3),
+            canStepEarlier = true,
+            canStepLater = false,
+            isCurrentWindow = true,
+            headline = AnalyticsHeadline.LeadingGame("Hades II", 105),
+            dailyMinutes = dates.mapIndexed { index, date ->
+                AnalyticsDay(date = date, minutes = shares[index], estimatedMinutes = shares[index])
+            },
+            questThreshold = 45,
+            currentStreak = 0,
+            longestStreak = 0,
+            questMetDaysCount = 0,
+            topGames = listOf(game),
+            sessionInsights = SessionInsights(),
+            timeOfDayPattern = TimeOfDayPattern(),
+            gamesByDate = dates.mapIndexed { index, date ->
+                date to listOf(game.copy(minutes = shares[index], estimatedMinutes = shares[index]))
+            }.toMap(),
+            timingUnavailable = true,
+            estimatedSharesByDate = dates.mapIndexed { index, date ->
+                date to recoveryShares(listOf(allocations[index]))
+            }.toMap(),
+            estimatedShares = recoveryShares(allocations),
+        )
     }
 
     private fun analyticsState(

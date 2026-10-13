@@ -1555,8 +1555,8 @@ class SettingsViewModel @Inject constructor(
         if (backupRepository.isMismatched(file)) {
             pendingMismatchImport.value = file
         } else {
-            backupRepository.importBackup(file)
-            backupMessage.value = SettingsText(R.string.settings_backup_imported)
+            val summary = backupRepository.importBackup(file)
+            backupMessage.value = summary.toSettingsMessage()
             refreshSnapshots()
             _hapticIntents.tryEmit(HapticIntent.Confirm)
         }
@@ -1567,11 +1567,23 @@ class SettingsViewModel @Inject constructor(
         val file = pendingMismatchImport.value ?: return
         pendingMismatchImport.value = null
         runBackupOp {
-            backupRepository.importBackup(file)
-            backupMessage.value = SettingsText(R.string.settings_backup_imported)
+            val summary = backupRepository.importBackup(file)
+            backupMessage.value = summary.toSettingsMessage()
             refreshSnapshots()
             _hapticIntents.tryEmit(HapticIntent.Confirm)
         }
+    }
+
+    private fun com.example.backlogium.data.backup.BackupImportSummary.toSettingsMessage(): SettingsText = when {
+        recoveryConflicts.isNotEmpty() -> SettingsText(
+            R.string.settings_backup_imported_recovery_conflict,
+            args = listOf(recoveryConflicts.size, recoveryConflicts.joinToString(" • ") { it.detail }),
+        )
+        recoveryWarnings.isNotEmpty() -> SettingsText(
+            R.string.settings_backup_imported_recovery_warning,
+            args = listOf(recoveryWarnings.size, recoveryWarnings.joinToString(" • ") { it.detail }),
+        )
+        else -> SettingsText(R.string.settings_backup_imported)
     }
 
     /** Delete one retained automatic snapshot after the user confirms the action in the UI. */

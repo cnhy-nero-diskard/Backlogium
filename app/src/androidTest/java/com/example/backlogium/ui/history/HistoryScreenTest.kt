@@ -6,9 +6,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasStateDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -19,6 +21,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -31,6 +34,7 @@ import com.example.backlogium.data.repo.SessionCloudContribution
 import com.example.backlogium.ui.theme.BacklogiumTheme
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -384,6 +388,254 @@ class HistoryScreenTest {
         composeRule.onNodeWithText(
             "That cloud-assisted session is no longer in the loaded History window.",
         ).assertIsDisplayed()
+    }
+
+    @Test
+    fun estimatedAllocationLeafExplainsItselfWithoutFabricatedClockTimes() {
+        val allocation = HistoryAllocationUi(
+            placementId = "leaf-1",
+            appId = 42L,
+            date = LocalDate.parse(TODAY),
+            minutes = 70,
+            method = HistoryAllocationMethod.SINGLE_DAY_ESTIMATE,
+            window = HistoryAllocationWindow(
+                windowStartDate = LocalDate.parse(TODAY),
+                windowEndDate = LocalDate.parse(TODAY),
+                zone = "UTC",
+                totalMinutes = 70,
+            ),
+        )
+        val allocationGame = HistoryGameGroup(
+            appId = 42L,
+            name = "Estimated game",
+            iconUrl = "",
+            minutesPlayed = 70,
+            sessions = emptyList(),
+            allocations = listOf(allocation),
+        )
+        val state = HistoryUiState(
+            loading = false,
+            configured = true,
+            today = TODAY,
+            days = listOf(
+                HistoryDayGroup(
+                    date = TODAY,
+                    minutesPlayed = 70,
+                    goalMinutesPlayed = 0,
+                    questMet = false,
+                    games = listOf(allocationGame),
+                    achievements = HistoryAchievements(iconUrls = emptyList(), overflowCount = 0),
+                    estimatedMinutes = 70,
+                ),
+            ),
+        )
+        setContent(state)
+        composeRule.waitForIdle()
+
+        // Today auto-expands; expand the game to reveal the allocation leaf.
+        composeRule.onNode(hasContentDescription("Estimated game", substring = true))
+            .performScrollTo().performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(historyAllocationTestTag("leaf-1")).assertIsDisplayed()
+        composeRule.onNodeWithText("1 hr 10 mins · exact session times unavailable").assertIsDisplayed()
+
+        // No clock boundary may be fabricated for unknown-time play: the visible leaf text is
+        // exactly the "minutes · exact session times unavailable" template, and the accessible
+        // description carries no approximate start marker, AM/PM clock text or open/live status.
+        val leafDescription = composeRule.onNodeWithTag(historyAllocationTestTag("leaf-1"))
+            .fetchSemanticsNode()
+            .config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
+            .joinToString { it.text }
+        assertFalse(leafDescription.contains("~"))
+        assertFalse(leafDescription.contains("AM") || leafDescription.contains("PM"))
+        assertFalse(leafDescription.contains("live"))
+
+        // Activating the ! opens the single-day explanation, which must not claim a multi-day
+        // distribution.
+        composeRule.onNode(
+            hasTestTag(TAG_HISTORY_ESTIMATE_HELP) and
+                hasAnyAncestor(hasTestTag(historyAllocationTestTag("leaf-1"))),
+        ).performClick()
+        composeRule.onNodeWithText("Estimated playtime").assertIsDisplayed()
+        composeRule.onNodeWithText("placed on", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("and distributed evenly", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithText("Got it").performClick()
+        composeRule.onNodeWithText("Estimated playtime").assertDoesNotExist()
+    }
+
+    @Test
+    fun mixedDayAggregateExplainsWindowTotalVersusDayShare() {
+        val allocation = HistoryAllocationUi(
+            placementId = "agg-1",
+            appId = 42L,
+            date = LocalDate.parse(TODAY),
+            minutes = 26,
+            method = HistoryAllocationMethod.MULTI_DAY_ESTIMATE,
+            window = HistoryAllocationWindow(
+                windowStartDate = LocalDate.parse(TODAY).minusDays(3),
+                windowEndDate = LocalDate.parse(TODAY),
+                zone = "UTC",
+                totalMinutes = 105,
+            ),
+        )
+        val game = HistoryGameGroup(
+            appId = 42L,
+            name = "Windowed game",
+            iconUrl = "",
+            minutesPlayed = 26,
+            sessions = emptyList(),
+            allocations = listOf(allocation),
+        )
+        setContent(
+            HistoryUiState(
+                loading = false,
+                configured = true,
+                today = TODAY,
+                days = listOf(
+                    HistoryDayGroup(
+                        date = TODAY,
+                        minutesPlayed = 26,
+                        goalMinutesPlayed = 0,
+                        questMet = false,
+                        games = listOf(game),
+                        achievements = HistoryAchievements(iconUrls = emptyList(), overflowCount = 0),
+                        estimatedMinutes = 26,
+                    ),
+                ),
+            ),
+        )
+        composeRule.waitForIdle()
+
+        // The day aggregate carries a visible ! that explains the residual window's total against
+        // this day's share of it.
+        composeRule.onNodeWithTag(TAG_HISTORY_DAY_ESTIMATE_HELP)
+            .performScrollTo().performClick()
+        composeRule.onNodeWithText("Estimated playtime").assertIsDisplayed()
+        composeRule.onNodeWithText("26 mins of that window fall on this day", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("recovered 1 hr 45 mins in total", substring = true)
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun estimatedControlsAndLeavesRemainLegibleAtLargeFontScale() {
+        val allocation = HistoryAllocationUi(
+            placementId = "font-1",
+            appId = 42L,
+            date = LocalDate.parse(TODAY),
+            minutes = 26,
+            method = HistoryAllocationMethod.MULTI_DAY_ESTIMATE,
+            window = HistoryAllocationWindow(
+                windowStartDate = LocalDate.parse(TODAY).minusDays(3),
+                windowEndDate = LocalDate.parse(TODAY),
+                zone = "UTC",
+                totalMinutes = 105,
+            ),
+        )
+        val game = HistoryGameGroup(
+            appId = 42L,
+            name = "Font size target",
+            iconUrl = "",
+            minutesPlayed = 26,
+            sessions = emptyList(),
+            allocations = listOf(allocation),
+        )
+        val state = HistoryUiState(
+            loading = false,
+            configured = true,
+            today = TODAY,
+            days = listOf(
+                HistoryDayGroup(
+                    date = TODAY,
+                    minutesPlayed = 26,
+                    goalMinutesPlayed = 0,
+                    questMet = false,
+                    games = listOf(game),
+                    achievements = HistoryAchievements(iconUrls = emptyList(), overflowCount = 0),
+                    estimatedMinutes = 26,
+                ),
+            ),
+        )
+        composeRule.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale = 1.3f)) {
+                BacklogiumTheme {
+                    HistoryContent(state = state)
+                }
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNode(hasContentDescription("Font size target", substring = true))
+            .performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(historyAllocationTestTag("font-1")).assertIsDisplayed()
+        composeRule.onNodeWithText("exact session times unavailable", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNode(
+            hasTestTag(TAG_HISTORY_ESTIMATE_HELP) and
+                hasAnyAncestor(hasTestTag(historyAllocationTestTag("font-1"))),
+        ).assertIsDisplayed()
+    }
+
+    @Test
+    fun unavailableRecoveryKeepsLastGoodDataAndDisclosesHonestly() {
+        setContent(
+            HistoryUiState(
+                loading = false,
+                configured = true,
+                today = TODAY,
+                days = listOf(day(TODAY, game = game())),
+                recoveryStatus = RecoveryStatusUi.REMOTE_UNAVAILABLE,
+            ),
+        )
+
+        composeRule.onNodeWithText(
+            "Steam playtime is unavailable right now",
+            substring = true,
+        ).assertIsDisplayed()
+        // Last-good figures stay on screen rather than being cleared or zeroed.
+        composeRule.onNodeWithTag(historyDayTestTag(TODAY)).assertIsDisplayed()
+    }
+
+    @Test
+    fun unchangedReadIsNotPresentedAsKnownRecoveryDebt() {
+        setContent(
+            HistoryUiState(
+                loading = false,
+                configured = true,
+                today = TODAY,
+                days = listOf(day(TODAY, game = game())),
+                recoveryStatus = RecoveryStatusUi.UNCHANGED_NO_KNOWN_PLAY,
+            ),
+        )
+
+        composeRule.onNodeWithText(
+            "reported its playtime successfully",
+            substring = true,
+        ).assertIsDisplayed()
+    }
+
+    @Test
+    fun pendingDateUnknownQuantityIsDisclosedSeparatelyFromDatedRows() {
+        setContent(
+            HistoryUiState(
+                loading = false,
+                configured = true,
+                today = TODAY,
+                days = listOf(day(TODAY, game = game())),
+                pendingDateUnknownMinutes = 35,
+            ),
+        )
+
+        composeRule.onNodeWithTag(TAG_HISTORY_RECOVERY_STATUS).assertIsDisplayed()
+        composeRule.onNodeWithText(
+            "of recovered play could not be assigned to a date yet",
+            substring = true,
+        ).assertIsDisplayed()
+        // The dated day rows remain normally present.
+        composeRule.onNodeWithTag(historyDayTestTag(TODAY)).assertIsDisplayed()
     }
 
     @Test
