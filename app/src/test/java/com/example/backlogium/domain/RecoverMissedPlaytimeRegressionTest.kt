@@ -5,6 +5,7 @@ import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.repo.PlaytimeRecoveryCommitAdapter
 import com.example.backlogium.data.repo.SessionActionWriter
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -290,6 +291,7 @@ class RecoverMissedPlaytimeRegressionTest {
                 override fun today() = LocalDate.of(2026, 7, 24)
             },
         ),
+        recoveryAdapter = PlaytimeRecoveryCommitAdapter(db.playtimeRecoveryDao(), db.sessionDao()),
     )
 
     private suspend fun playedByDate(): Map<String, Int> =

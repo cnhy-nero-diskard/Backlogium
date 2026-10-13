@@ -37,6 +37,9 @@ enum class PlaytimeAllocationMethod {
 
     /** A supplied targeted play instant established the activity date but no usable start. */
     KNOWN_TARGETED_DATE,
+
+    /** Steam-authorized quantity retained without a valid calendar date yet. */
+    PENDING_DATE_UNKNOWN,
 }
 
 /** Why authorized minutes could not be dated yet. */
@@ -952,7 +955,9 @@ object PlaytimeAttributionPlanner {
         Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalDate()
 
     private fun ceilMinutes(elapsedMillis: Long): Long =
-        if (elapsedMillis <= 0L) 0L else (elapsedMillis + 59_999L) / 60_000L
+        if (elapsedMillis <= 0L) 0L else {
+            elapsedMillis / 60_000L + if (elapsedMillis % 60_000L == 0L) 0L else 1L
+        }
 
     private data class Span(
         val startAt: Long,

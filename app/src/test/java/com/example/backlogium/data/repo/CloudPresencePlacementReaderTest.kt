@@ -25,6 +25,7 @@ import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.PlaytimeObservationCommitter
 import com.example.backlogium.domain.SessionDiffer
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.PlayerProfile
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -62,6 +63,9 @@ class CloudPresencePlacementReaderTest {
             RuntimeEnvironment.getApplication(),
             BacklogiumDatabase::class.java,
         ).allowMainThreadQueries().build()
+        kotlinx.coroutines.runBlocking {
+            database.playerProfileDao().upsert(PlayerProfile(steamId = ACCOUNT))
+        }
     }
 
     @After
@@ -112,7 +116,9 @@ class CloudPresencePlacementReaderTest {
         }
         val settings = FakeSettingsRepository()
         val (reader, placement) = readerPair(api, settings)
-        database.gameDao().upsert(Game(10L, "Owned", "", 100, 0, 100))
+        database.gameDao().upsert(
+            Game(10L, "Owned", "", 100, 0, 100, lastSyncedAt = Instant.parse(periodStart).toEpochMilli()),
+        )
         database.playerProfileDao().insertIfMissing()
         val startAt = Instant.parse(periodStart).toEpochMilli()
         val endAt = Instant.parse(periodEnd).toEpochMilli()
@@ -137,6 +143,7 @@ class CloudPresencePlacementReaderTest {
             time = FixedTimeProvider(), sessionActionWriter = SessionActionWriter(
                 database.sessionDao(), database.dailyProgressDao(), database.hiddenGameDao(), FixedTimeProvider(),
             ),
+            recoveryAdapter = PlaytimeRecoveryCommitAdapter(database.playtimeRecoveryDao(), database.sessionDao()),
             pendingEvidencePruner = CloudPendingEvidencePruner(
                 database.pendingCloudEvidenceDao(), FakeCredentials(ACCOUNT), settings,
             ),
@@ -199,7 +206,9 @@ class CloudPresencePlacementReaderTest {
         val startAt = Instant.parse(initial).toEpochMilli()
         val nextBaselineAt = Instant.parse(nextBaseline).toEpochMilli()
         val endAt = Instant.parse(end).toEpochMilli()
-        database.gameDao().upsert(Game(10L, "Owned", "", 100, 0, 100))
+        database.gameDao().upsert(
+            Game(10L, "Owned", "", 100, 0, 100, lastSyncedAt = startAt),
+        )
         database.playerProfileDao().insertIfMissing()
         database.playerProfileDao().updateSyncStatus(startAt, null)
         val evidence = database.pendingCloudEvidenceDao()
@@ -213,6 +222,7 @@ class CloudPresencePlacementReaderTest {
             hiddenGameDao = database.hiddenGameDao(), differ = SessionDiffer(), time = FixedTimeProvider(),
             sessionActionWriter = SessionActionWriter(database.sessionDao(), database.dailyProgressDao(),
                 database.hiddenGameDao(), FixedTimeProvider()),
+            recoveryAdapter = PlaytimeRecoveryCommitAdapter(database.playtimeRecoveryDao(), database.sessionDao()),
             pendingEvidencePruner = CloudPendingEvidencePruner(evidence, FakeCredentials(ACCOUNT), settings),
         )
         val observed = listOf(PlaytimeObservationCommitter.ObservedGame(10L, "Owned", "", 130, 0))
@@ -285,7 +295,9 @@ class CloudPresencePlacementReaderTest {
         val settings = FakeSettingsRepository()
         val (reader, placement) = readerPair(api, settings)
         val evidence = database.pendingCloudEvidenceDao()
-        database.gameDao().upsert(Game(10L, "Owned", "", 100, 0, 100))
+        database.gameDao().upsert(
+            Game(10L, "Owned", "", 100, 0, 100, lastSyncedAt = Instant.parse(start).toEpochMilli()),
+        )
         database.playerProfileDao().insertIfMissing()
         database.playerProfileDao().updateSyncStatus(Instant.parse(start).toEpochMilli(), null)
 
@@ -305,6 +317,7 @@ class CloudPresencePlacementReaderTest {
             hiddenGameDao = database.hiddenGameDao(), differ = SessionDiffer(), time = FixedTimeProvider(),
             sessionActionWriter = SessionActionWriter(database.sessionDao(), database.dailyProgressDao(),
                 database.hiddenGameDao(), FixedTimeProvider()),
+            recoveryAdapter = PlaytimeRecoveryCommitAdapter(database.playtimeRecoveryDao(), database.sessionDao()),
             pendingEvidencePruner = CloudPendingEvidencePruner(evidence, FakeCredentials(ACCOUNT), settings),
         )
         val firstAt = Instant.parse(firstBaseline).toEpochMilli()
@@ -350,7 +363,9 @@ class CloudPresencePlacementReaderTest {
         val settings = FakeSettingsRepository()
         val pending = RoomCloudPendingEvidence(database.pendingCloudEvidenceDao(), database.gameDao(),
             RoomDatabaseTransactionScope(database))
-        database.gameDao().upsert(Game(10L, "Owned", "", 100, 0, 100))
+        database.gameDao().upsert(
+            Game(10L, "Owned", "", 100, 0, 100, lastSyncedAt = origin),
+        )
         database.playerProfileDao().insertIfMissing()
         database.playerProfileDao().updateSyncStatus(origin + minute, null)
         pending.retain(ACCOUNT, 0L, origin, listOf(first, future), null)
@@ -361,6 +376,7 @@ class CloudPresencePlacementReaderTest {
             hiddenGameDao = database.hiddenGameDao(), differ = SessionDiffer(), time = FixedTimeProvider(),
             sessionActionWriter = SessionActionWriter(database.sessionDao(), database.dailyProgressDao(),
                 database.hiddenGameDao(), FixedTimeProvider()),
+            recoveryAdapter = PlaytimeRecoveryCommitAdapter(database.playtimeRecoveryDao(), database.sessionDao()),
             pendingEvidencePruner = CloudPendingEvidencePruner(dao, FakeCredentials(ACCOUNT), settings),
         )
         val at50 = origin + 50 * minute
@@ -643,6 +659,7 @@ class CloudPresencePlacementReaderTest {
             time = FixedTimeProvider(), sessionActionWriter = SessionActionWriter(
                 database.sessionDao(), database.dailyProgressDao(), database.hiddenGameDao(), FixedTimeProvider(),
             ),
+            recoveryAdapter = PlaytimeRecoveryCommitAdapter(database.playtimeRecoveryDao(), database.sessionDao()),
             pendingEvidencePruner = CloudPendingEvidencePruner(
                 database.pendingCloudEvidenceDao(), FakeCredentials(ACCOUNT), settings,
             ),
@@ -663,11 +680,12 @@ class CloudPresencePlacementReaderTest {
             }
         }
 
-        val session = database.sessionDao().getAll().single { it.appId == 10L }
         assertEquals(30, commit.playedDeltaByAppId[10L])
-        assertEquals(30, session.minutes)
-        assertEquals(TimingInformedSteamPlayState.NONE, session.timingInformedSteamPlay)
-        assertTrue(session.startAt != placementStart)
+        // The acquired evidence was fenced out by reader promotion. The Steam-authoritative
+        // quantity is still credited, but rejected timing cannot become a fabricated session.
+        assertTrue(database.sessionDao().getAll().none { it.appId == 10L })
+        val contribution = database.playtimeRecoveryDao().contributionsForGame(ACCOUNT, 10L).single()
+        assertEquals(30L, database.playtimeRecoveryDao().sumActiveAllocatedMinutes(contribution.contributionId))
         assertTrue(database.pendingCloudEvidenceDao().intervals(ACCOUNT, 1L).none { it.appId == 10L })
     }
 

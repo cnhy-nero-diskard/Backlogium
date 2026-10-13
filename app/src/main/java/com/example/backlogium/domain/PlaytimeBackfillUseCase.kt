@@ -18,13 +18,17 @@ enum class PlaytimeBackfillResetResult {
  * One-time, opt-in import of historical Steam playtime into XP (add-playtime-backfill).
  *
  * For each game it freezes the historical portion —
- * `backfillMinutes = max(0, playtimeForever − trackedMinutes(appId))` — onto the `Game` row,
+ * `backfillMinutes = max(0, playtimeForever − creditedMinutes(appId))` — onto the `Game` row,
  * marks the profile flag, and triggers a recompute. Freezing the offset (rather than feeding
  * the live, ever-growing `playtimeForever`) makes the import genuinely one-time: ongoing
  * tracked sessions accrue on top, and later syncs never re-import.
  *
+ * The subtraction uses the *canonical credited* total (`SessionDao.creditedMinutesByGame()`,
+ * recover-missed-playtime Decision 7), so a recovery bucket is never double-counted against the
+ * frozen lifetime offset; on the reset path the cleared offset is simply dropped.
+ *
  * The engine is unchanged: [GamificationUpdater.recompute] simply feeds
- * `backfillMinutes + trackedMinutes` as one cumulative total, which the existing per-game
+ * `backfillMinutes + creditedMinutes` as one cumulative total, which the existing per-game
  * taper bounds naturally.
  */
 class PlaytimeBackfillUseCase @Inject constructor(
@@ -51,7 +55,7 @@ class PlaytimeBackfillUseCase @Inject constructor(
         if (profile.playtimeBackfilled) {
             false
         } else {
-            val trackedByGame = sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes }
+            val trackedByGame = sessionDao.creditedMinutesByGame().associate { it.appId to it.minutes }
             val backfillByAppId = gameDao.getAll().associate { game ->
                 val tracked = trackedByGame[game.appId] ?: 0
                 game.appId to (game.playtimeForever - tracked).coerceAtLeast(0)
