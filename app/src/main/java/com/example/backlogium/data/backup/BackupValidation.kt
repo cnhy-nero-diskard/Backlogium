@@ -55,9 +55,18 @@ object BackupValidator {
             if (file.formatVersion == 1 && session.cloudContribution != null) {
                 problems += BackupValidationProblem("session", index, "v1 cannot contain cloudContribution")
             }
-            if (file.formatVersion == 2 && session.cloudContribution == null) {
-                problems += BackupValidationProblem("session", index, "v2 requires cloudContribution")
+            if (file.formatVersion >= 2 && session.cloudContribution == null) {
+                problems += BackupValidationProblem("session", index, "v${file.formatVersion} requires cloudContribution")
             }
+        }
+        if (file.formatVersion < 3 && file.recovery != null) {
+            problems += BackupValidationProblem(
+                "file", 0,
+                "v${file.formatVersion} cannot contain recovery sections",
+            )
+        }
+        if (file.formatVersion == 3) {
+            BackupRecoveryValidator.validate(file, problems)
         }
         val gameAppIds = file.games.mapTo(mutableSetOf()) { it.appId }
         val collectionIds = file.collections.mapTo(mutableSetOf()) { it.id }

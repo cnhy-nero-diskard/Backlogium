@@ -24,6 +24,8 @@ internal object BackupVersionedDecoder {
         var sessionsSeen = false
         var missingContribution = false
         var hasContribution = false
+        var recoverySeen = false
+        var recoveryIsObject = false
         reader.beginObject()
         while (reader.hasNext()) when (reader.nextName()) {
             "formatVersion" -> {
@@ -51,13 +53,20 @@ internal object BackupVersionedDecoder {
                 }
                 reader.endArray()
             }
+            "recovery" -> {
+                require(!recoverySeen)
+                recoverySeen = true
+                recoveryIsObject = reader.peek() == JsonToken.BEGIN_OBJECT
+                reader.skipValue()
+            }
             else -> reader.skipValue()
         }
         reader.endObject()
         require(reader.peek() == JsonToken.END_DOCUMENT)
         val resolved = version ?: 1
-        require(resolved == 1 || resolved == 2)
+        require(resolved in 1..3)
         require(if (resolved == 1) !hasContribution else !missingContribution)
+        require(if (resolved < 3) !recoverySeen else (recoverySeen && recoveryIsObject))
         return resolved
     }
 

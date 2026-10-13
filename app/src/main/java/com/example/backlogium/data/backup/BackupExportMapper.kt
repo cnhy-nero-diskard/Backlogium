@@ -28,6 +28,7 @@ import com.example.backlogium.gamification.GamePlaytimeInput
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.flow.first
+import java.time.LocalDate
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -43,6 +44,8 @@ private data class ExportSnapshot(
     val collections: List<Collection>,
     val collectionMembers: List<CollectionMember>,
     val hiddenGames: List<HiddenGame>,
+    /** The active account's recovery graph, read in the same transaction as everything else. */
+    val recovery: BackupRecovery,
 )
 
 /**
@@ -67,6 +70,11 @@ class BackupExportMapper @Inject constructor(
     private val collectionDao: CollectionDao,
     private val excludedSharedGameDao: ExcludedSharedGameDao,
     private val hiddenGameDao: HiddenGameDao,
+    /**
+     * The recovery graph's read seam. Defaulted to the no-op store so a plain JVM test that does
+     * not exercise recovery stays constructible; production binds [DaoRecoveryBackupStore].
+     */
+    private val recoveryStore: RecoveryBackupStore = NoopRecoveryBackupStore,
     private val settings: SettingsDataStore,
     /**
      * Narrowed to the provider interface: the export reads the configured SteamID64 and nothing
@@ -83,6 +91,8 @@ class BackupExportMapper @Inject constructor(
         val steamId64FromCredentials = credentials.currentCredentials()?.steamId
 
         val snapshot = transaction.run {
+            val profile = playerProfileDao.get() ?: PlayerProfile()
+            val account = steamId64FromCredentials ?: profile.steamId
             ExportSnapshot(
                 games = gameDao.getAll(),
                 excludedSharedGames = excludedSharedGameDao.getAll(),
@@ -90,10 +100,11 @@ class BackupExportMapper @Inject constructor(
                 sessions = sessionDao.getAll(),
                 days = dailyProgressDao.getAllOrdered(),
                 hltb = hltbDataDao.getAll(),
-                profile = playerProfileDao.get() ?: PlayerProfile(),
+                profile = profile,
                 collections = collectionDao.getAll(),
                 collectionMembers = collectionDao.getAllMembers(),
                 hiddenGames = hiddenGameDao.getAll(),
+                recovery = recoveryStore.read(account),
             )
         }
         val (games, excludedSharedGames, achievements, sessions, days, hltb, profile, collections, collectionMembers) = snapshot
@@ -136,10 +147,11 @@ class BackupExportMapper @Inject constructor(
                 longestStreak = profile.longestStreak,
                 playtimeBackfilled = profile.playtimeBackfilled,
             ),
-            computed = buildComputed(games, achievements, sessions, days, hltb, config),
+            computed = buildComputed(games, achievements, sessions, days, hltb, config, snapshot.recovery),
             collections = collections.map { it.toBackup() },
             collectionMembers = collectionMembers.map { it.toBackup() },
             hiddenGames = snapshot.hiddenGames.map { it.toBackup() },
+            recovery = snapshot.recovery,
         )
     }
 
@@ -150,17 +162,24 @@ class BackupExportMapper @Inject constructor(
         days: List<DailyProgress>,
         hltb: List<com.example.backlogium.data.local.entity.HltbData>,
         config: RuleConfig,
+        recovery: BackupRecovery,
     ): BackupComputed {
         // Same ceiling GamificationUpdater recomputes under: a legacy above-ceiling value
         // bypasses Settings validation, so the raw persisted config cannot reach the engine here
         // (auditfix-session-ledger-integrity, #114). The exported ruleConfig above stays raw.
         val safeConfig = config.coercedToSafeCeilings()
         val hltbByAppId = hltb.associateBy { it.appId }
-        val trackedByGame = sessions.groupBy { it.appId }.mapValues { (_, s) -> s.sumOf { it.minutes } }
+        // Canonical quantity is each funded contribution once plus only each session's unlinked
+        // legacy remainder. Timed shares are not added to their host session a second time, and a
+        // detached share still counts through its contribution (design.md §7).
+        val trackedByGame = canonicalTrackedMinutesByGame(sessions, recovery)
+        val trackedMinutes: (Long) -> Int = { appId ->
+            (trackedByGame[appId] ?: 0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        }
         val achievementsByGame = unlockedAchievements.groupBy { it.appId }
 
         val xpPerGame = games.mapNotNull { game ->
-            val minutes = game.backupXpMinutes(trackedByGame[game.appId] ?: 0)
+            val minutes = game.backupXpMinutes(trackedMinutes(game.appId))
             val achievementXp = Gamification.achievementXp(
                 achievementsByGame[game.appId].orEmpty().toAchievementInputs(),
                 safeConfig,
@@ -176,17 +195,20 @@ class BackupExportMapper @Inject constructor(
 
         val zone = time.zone()
         val xpTimeline = days.map { day ->
-            val cutoffMillis = java.time.LocalDate.parse(day.date)
-                .plusDays(1)
-                .atStartOfDay(zone)
-                .toInstant()
-                .toEpochMilli()
+            val cutoffDate = java.time.LocalDate.parse(day.date).plusDays(1)
+            val cutoffMillis = cutoffDate.atStartOfDay(zone).toInstant().toEpochMilli()
 
             val cumulativeGames = games.mapNotNull { game ->
-                val trackedSoFar = sessions
-                    .filter { it.appId == game.appId && it.startAt < cutoffMillis }
-                    .sumOf { it.minutes }
-                val minutes = game.backupXpMinutes(trackedSoFar)
+                val creditedSoFar = canonicalDatedMinutesBefore(
+                    appId = game.appId,
+                    sessions = sessions,
+                    recovery = recovery,
+                    cutoffDate = cutoffDate,
+                    cutoffMillis = cutoffMillis,
+                )
+                val minutes = game.backupXpMinutes(
+                    creditedSoFar.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                )
                 if (minutes <= 0) null else GamePlaytimeInput(
                     gameId = game.appId.toString(),
                     minutesPlayed = minutes,
@@ -306,3 +328,116 @@ private fun CollectionMember.toBackup() = BackupCollectionMember(
     orderIndex = orderIndex,
     done = done,
 )
+
+/** One dated allocation used only to place canonical recovery minutes on the XP timeline. */
+/** A natural session key portable across export/import and autoincrement ids. */
+private data class BackupSessionKey(val appId: Long, val startAt: Long, val endAt: Long?)
+
+private fun Session.backupSessionKey() = BackupSessionKey(appId, startAt, endAt)
+
+/** Canonical all-time quantity for computed rollups; does not depend on allocation materialization. */
+private fun canonicalTrackedMinutesByGame(
+    sessions: List<Session>,
+    recovery: BackupRecovery,
+): Map<Long, Long> {
+    val rowsByKey = sessions.associateBy(Session::backupSessionKey)
+    val fundedBySession = mutableMapOf<BackupSessionKey, Long>()
+    recovery.timedPlacements.orEmpty().filterNot { it.superseded }.forEach { placement ->
+        val start = placement.sessionStartAt?.iso8601ToEpochMilli() ?: return@forEach
+        val key = BackupSessionKey(
+            placement.appId,
+            start,
+            placement.sessionEndAt?.iso8601ToEpochMilli(),
+        )
+        require(rowsByKey.containsKey(key)) {
+            "funded backup share ${placement.placementId} links no exported session"
+        }
+        fundedBySession[key] = Math.addExact(fundedBySession[key] ?: 0L, placement.minutes)
+    }
+    val legacyRemainder = mutableMapOf<Long, Long>()
+    sessions.forEach { session ->
+        val funded = fundedBySession[session.backupSessionKey()] ?: 0L
+        require(funded <= session.minutes.toLong()) {
+            "funded shares $funded exceed exported session ${session.id} minutes ${session.minutes}"
+        }
+        val remainder = session.minutes.toLong() - funded
+        legacyRemainder[session.appId] = Math.addExact(legacyRemainder[session.appId] ?: 0L, remainder)
+    }
+    val contributions = recovery.contributions.orEmpty().distinctBy { it.contributionId }
+        .groupBy { it.appId }
+        .mapValues { (_, rows) -> rows.fold(0L) { sum, row -> Math.addExact(sum, row.authorizedMinutes) } }
+    return (legacyRemainder.keys + contributions.keys).associateWith { appId ->
+        Math.addExact(legacyRemainder[appId] ?: 0L, contributions[appId] ?: 0L)
+    }
+}
+/**
+ * Cumulative dated playtime for one export timeline point. Pending quantity is intentionally absent:
+ * its observation endpoint is not a gameplay date. Recipe totals are projected by bounded rank
+ * arithmetic, so a long backup window is never expanded into one allocation row per date.
+ */
+private fun canonicalDatedMinutesBefore(
+    appId: Long,
+    sessions: List<Session>,
+    recovery: BackupRecovery,
+    cutoffDate: LocalDate,
+    cutoffMillis: Long,
+): Long {
+    val recipes = recovery.recipes.orEmpty().filter { it.appId == appId && !it.pending }
+        .associateBy { it.contributionId }
+    val timed = recovery.timedPlacements.orEmpty().filter { !it.superseded && it.appId == appId }
+    val fundedBySession = mutableMapOf<BackupSessionKey, Long>()
+    timed.forEach { placement ->
+        val start = placement.sessionStartAt?.iso8601ToEpochMilli() ?: return@forEach
+        val key = BackupSessionKey(placement.appId, start, placement.sessionEndAt?.iso8601ToEpochMilli())
+        fundedBySession[key] = Math.addExact(fundedBySession[key] ?: 0L, placement.minutes)
+    }
+    var total = 0L
+    sessions.filter { it.appId == appId && it.startAt < cutoffMillis }.forEach { session ->
+        val remainder = session.minutes.toLong() - (fundedBySession[session.backupSessionKey()] ?: 0L)
+        require(remainder >= 0L) { "funded timed shares exceed session ${session.id}" }
+        total = Math.addExact(total, remainder)
+    }
+    timed.forEach { placement ->
+        val date = placement.creditedDate?.let(LocalDate::parse) ?: return@forEach
+        if (date < cutoffDate) total = Math.addExact(total, placement.minutes)
+    }
+    recovery.unknownAllocations.orEmpty().filter { !it.superseded && it.appId == appId && !it.pendingDate }
+        .filter { it.contributionId !in recipes }
+        .forEach { allocation ->
+            val date = allocation.date?.let(LocalDate::parse) ?: return@forEach
+            if (date < cutoffDate) total = Math.addExact(total, allocation.minutes)
+        }
+    recipes.values.forEach { recipe ->
+        val start = recipe.dateStart?.let(LocalDate::parse) ?: return@forEach
+        val end = recipe.dateEnd?.let(LocalDate::parse) ?: return@forEach
+        val last = minOf(end, cutoffDate.minusDays(1))
+        if (last.isBefore(start)) return@forEach
+        val exclusions = recipe.excludedDatesCsv.orEmpty().split(',')
+            .filter(String::isNotBlank).map { token ->
+                val separator = token.indexOf("..")
+                if (separator < 0) {
+                    val date = LocalDate.parse(token)
+                    date..date
+                } else {
+                    LocalDate.parse(token.substring(0, separator))..
+                        LocalDate.parse(token.substring(separator + 2))
+                }
+            }
+        val eligible = java.time.temporal.ChronoUnit.DAYS.between(start, last) + 1L -
+            exclusions.sumOf { range ->
+                val first = maxOf(start, range.start)
+                val final = minOf(last, range.endInclusive)
+                if (final.isBefore(first)) 0L
+                else java.time.temporal.ChronoUnit.DAYS.between(first, final) + 1L
+            }
+        if (eligible <= 0L) return@forEach
+        val quotient = recipe.quotient ?: 0L
+        val remainder = recipe.remainderCount ?: 0L
+        val shareTotal = Math.addExact(
+            Math.multiplyExact(quotient, eligible),
+            minOf(remainder, eligible),
+        )
+        total = Math.addExact(total, shareTotal)
+    }
+    return total
+}
